@@ -1,4 +1,4 @@
-package io.haifa.agent.cli;
+package io.haifa.agent.auth.localmodel.codex;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -6,12 +6,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
+import io.haifa.agent.auth.localmodel.ExternalLoginOperationContext;
+import io.haifa.agent.auth.localmodel.StoredExternalCredential;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -20,101 +23,81 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-class CodexDeviceLoginAttemptTest {
+class CodexDeviceLoginOperationTest {
     private static final ObjectMapper JSON = new ObjectMapper();
-
-    @TempDir
-    Path temp;
+    private static final String ATTEMPT_ID = "01890f6c-7b2a-7cc0-8000-000000000001";
 
     @Test
-    void handlesSlowDownAndPendingBeforeExchangingAndPersistingTokens() throws Exception {
+    void handlesSlowDownAndPendingBeforeReturningCredential() throws Exception {
         AtomicInteger polls = new AtomicInteger();
         List<Duration> sleeps = new ArrayList<>();
-        AtomicReference<String> instruction = new AtomicReference<>();
+        List<ExternalLoginAttemptSnapshot> progress = new ArrayList<>();
         try (Stub stub = Stub.start(exchange -> {
             int attempt = polls.incrementAndGet();
-            if (attempt == 1) {
-                respond(exchange, 429, "{\"error\":\"slow_down\"}");
-            } else if (attempt == 2) {
+            if (attempt == 1) respond(exchange, 429, "{\"error\":\"slow_down\"}");
+            else if (attempt == 2) {
                 respond(exchange, 403, "{\"error\":{\"code\":\"deviceauth_authorization_pending\"}}");
             } else {
                 respond(
                         exchange,
                         200,
-                        "{\"authorization_code\":\"authorization-code\"," + "\"code_verifier\":\"code-verifier\"}");
+                        "{\"authorization_code\":\"authorization-code\",\"code_verifier\":\"code-verifier\"}");
             }
         })) {
             CodexOAuthClientRegistration registration = registration(stub.port());
-            CodingAuthFileStore store = new CodingAuthFileStore(temp.resolve("auth.json"), JSON);
-            var attempt = new CodexDeviceLoginAttempt(
-                    registration,
-                    tokenClient(registration),
-                    store,
-                    HttpClient.newHttpClient(),
-                    JSON,
-                    fixedClock(),
-                    sleeps::add);
+            CodexDeviceLoginOperation operation = operation(registration, sleeps::add, progress::add);
 
-            attempt.execute(value -> instruction.set(value.verificationUri() + "#" + value.userCode()));
+            StoredExternalCredential credential = operation.execute();
 
-            assertThat(instruction.get()).isEqualTo("http://127.0.0.1:" + stub.port() + "/codex/device#TEST-CODE");
+            ExternalLoginAttemptSnapshot instruction = progress.stream()
+                    .filter(value -> value.userCode().isPresent())
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(instruction.verificationUri())
+                    .contains(URI.create("http://127.0.0.1:" + stub.port() + "/codex/device"));
+            assertThat(instruction.userCode()).contains("TEST-CODE");
             assertThat(sleeps).containsExactly(Duration.ofSeconds(6), Duration.ofSeconds(6));
-            assertThat(store.find(CodexLoginAttempt.CREDENTIAL_REFERENCE))
-                    .isPresent()
-                    .get()
-                    .satisfies(credential -> {
-                        assertThat(credential.kind()).isEqualTo(CodingAuthCredential.Kind.OAUTH2);
-                        assertThat(credential.accountId()).isEqualTo("account-1");
-                        assertThat(credential.clientRegistrationRef()).isEqualTo("test-registration");
-                    });
+            assertThat(credential.accountId()).isEqualTo("account-1");
+            assertThat(credential.clientRegistrationRef()).isEqualTo("test-registration");
         }
     }
 
     @Test
-    void mapsDenialAndCancellationWithoutPersistingCredentials() throws Exception {
+    void mapsDenialAndCancellationWithoutReturningCredential() throws Exception {
         try (Stub stub = Stub.start(exchange -> respond(exchange, 400, "{\"error\":\"access_denied\"}"))) {
             CodexOAuthClientRegistration registration = registration(stub.port());
-            CodingAuthFileStore store = new CodingAuthFileStore(temp.resolve("auth.json"), JSON);
-            var denied = new CodexDeviceLoginAttempt(
-                    registration,
-                    tokenClient(registration),
-                    store,
-                    HttpClient.newHttpClient(),
-                    JSON,
-                    fixedClock(),
-                    duration -> {});
-
-            assertThatThrownBy(() -> denied.execute(value -> {}))
+            CodexDeviceLoginOperation denied = operation(registration, duration -> {}, snapshot -> {});
+            assertThatThrownBy(denied::execute)
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("AUTH_DEVICE_CODE_DENIED");
-            assertThat(store.list()).isEmpty();
 
-            var cancelled = new CodexDeviceLoginAttempt(
-                    registration,
-                    tokenClient(registration),
-                    store,
-                    HttpClient.newHttpClient(),
-                    JSON,
-                    fixedClock(),
-                    duration -> {});
+            CodexDeviceLoginOperation cancelled = operation(registration, duration -> {}, snapshot -> {});
             cancelled.cancel();
-            assertThatThrownBy(() -> cancelled.execute(value -> {}))
+            assertThatThrownBy(cancelled::execute)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("AUTH_DEVICE_CODE_CANCELLED");
-            assertThat(store.list()).isEmpty();
+                    .hasMessage("AUTH_CANCELLED");
         }
     }
 
-    private CodexTokenClient tokenClient(CodexOAuthClientRegistration registration) {
-        return new CodexTokenClient(
-                HttpClient.newHttpClient(), JSON, fixedClock(), Duration.ofSeconds(5), registration);
+    private CodexDeviceLoginOperation operation(
+            CodexOAuthClientRegistration registration,
+            CodexDeviceLoginOperation.Sleeper sleeper,
+            java.util.function.Consumer<ExternalLoginAttemptSnapshot> progress) {
+        ExternalLoginOperationContext context = new ExternalLoginOperationContext(
+                new ExternalLoginAttemptId(ATTEMPT_ID), fixedClock(), uri -> true, progress);
+        return new CodexDeviceLoginOperation(
+                registration,
+                new CodexTokenClient(
+                        HttpClient.newHttpClient(), JSON, fixedClock(), Duration.ofSeconds(5), registration),
+                context,
+                HttpClient.newHttpClient(),
+                JSON,
+                sleeper);
     }
 
-    private CodexOAuthClientRegistration registration(int port) {
+    private static CodexOAuthClientRegistration registration(int port) {
         String root = "http://127.0.0.1:" + port;
         return new CodexOAuthClientRegistration(
                 "test-registration",
@@ -165,8 +148,7 @@ class CodexDeviceLoginAttemptTest {
                     exchange -> respond(
                             exchange,
                             200,
-                            "{\"device_auth_id\":\"device-auth-id\","
-                                    + "\"user_code\":\"TEST-CODE\",\"interval\":\"1\"}"));
+                            "{\"device_auth_id\":\"device-auth-id\",\"user_code\":\"TEST-CODE\",\"interval\":\"1\"}"));
             server.createContext("/api/accounts/deviceauth/token", poll::handle);
             server.createContext(
                     "/oauth/token",

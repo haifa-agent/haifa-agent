@@ -1,88 +1,107 @@
-package io.haifa.agent.cli;
+package io.haifa.agent.auth.localmodel.codex;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
+import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
+import io.haifa.agent.auth.localmodel.ExternalLoginMode;
+import io.haifa.agent.auth.localmodel.ExternalLoginOperation;
+import io.haifa.agent.auth.localmodel.ExternalLoginOperationContext;
+import io.haifa.agent.auth.localmodel.StoredExternalCredential;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
 
-/** One bounded OpenAI Codex device-code login attempt. */
-final class CodexDeviceLoginAttempt {
+/** One bounded OpenAI Codex device-code login operation. */
+public final class CodexDeviceLoginOperation implements ExternalLoginOperation {
     private static final int MAX_RESPONSE_BYTES = 256 * 1024;
     private static final Duration MAX_LIFETIME = Duration.ofMinutes(15);
 
     private final CodexOAuthClientRegistration registration;
     private final CodexTokenClient tokens;
-    private final CodingAuthFileStore store;
+    private final ExternalLoginOperationContext context;
     private final HttpClient http;
     private final ObjectMapper json;
-    private final Clock clock;
     private final Sleeper sleeper;
+    private final long expiresAtEpochMillis;
+    private final AtomicBoolean started = new AtomicBoolean();
     private final AtomicBoolean cancelled = new AtomicBoolean();
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private volatile ExternalLoginAttemptSnapshot snapshot;
 
-    CodexDeviceLoginAttempt(
+    public CodexDeviceLoginOperation(
             CodexOAuthClientRegistration registration,
             CodexTokenClient tokens,
-            CodingAuthFileStore store,
+            ExternalLoginOperationContext context,
             HttpClient http,
             ObjectMapper json,
-            Clock clock,
             Sleeper sleeper) {
         this.registration = Objects.requireNonNull(registration, "registration must not be null");
         this.tokens = Objects.requireNonNull(tokens, "tokens must not be null");
-        this.store = Objects.requireNonNull(store, "store must not be null");
+        this.context = Objects.requireNonNull(context, "context must not be null");
         this.http = Objects.requireNonNull(http, "http must not be null");
         this.json = Objects.requireNonNull(json, "json must not be null");
-        this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.sleeper = Objects.requireNonNull(sleeper, "sleeper must not be null");
+        this.expiresAtEpochMillis = Math.addExact(context.clock().millis(), MAX_LIFETIME.toMillis());
+        this.snapshot = snapshot(ExternalLoginAttemptState.CREATED, Optional.empty(), Optional.empty());
     }
 
-    void execute(Consumer<CodingDeviceLoginView> instructions) {
-        Consumer<CodingDeviceLoginView> checkedInstructions =
-                Objects.requireNonNull(instructions, "instructions must not be null");
-        DeviceAuthorization device = start();
-        long expiresAt = Math.addExact(clock.millis(), MAX_LIFETIME.toMillis());
-        checkedInstructions.accept(
-                new CodingDeviceLoginView(registration.deviceVerificationUri(), device.userCode(), expiresAt));
+    @Override
+    public ExternalLoginAttemptSnapshot snapshot() {
+        return snapshot;
+    }
+
+    @Override
+    public StoredExternalCredential execute() {
+        if (!started.compareAndSet(false, true)) throw new IllegalStateException("AUTH_ATTEMPT_ALREADY_USED");
+        DeviceAuthorization device = startAuthorization();
+        progress(
+                ExternalLoginAttemptState.WAITING_USER,
+                Optional.of(registration.deviceVerificationUri()),
+                Optional.of(device.userCode()));
         Duration interval = device.interval();
-        while (clock.millis() < expiresAt) {
+        while (context.clock().millis() < expiresAtEpochMillis) {
             checkCancelled();
             PollResult poll = poll(device);
             if (poll.authorizationCode() != null) {
+                progress(ExternalLoginAttemptState.EXCHANGING, Optional.empty(), Optional.empty());
                 CodexTokenClient.TokenSet tokenSet = tokens.exchange(
                         poll.authorizationCode(), poll.codeVerifier(), registration.deviceRedirectUri());
-                store.save(CodingAuthCredential.oauth2(
-                        CodexLoginAttempt.CREDENTIAL_REFERENCE,
+                return new StoredExternalCredential(
+                        CodexBrowserLoginOperation.CREDENTIAL_REFERENCE,
+                        ExternalLoginMethodId.OPENAI_CODEX,
+                        registration.reference(),
                         tokenSet.accessToken(),
                         tokenSet.refreshToken(),
                         tokenSet.expiresAtEpochMillis(),
-                        tokenSet.accountId(),
-                        registration.reference(),
-                        tokenSet.issuedAtEpochMillis()));
-                return;
+                        tokenSet.issuedAtEpochMillis(),
+                        tokenSet.accountId());
             }
-            if (poll.slowDown()) {
-                interval = interval.plusSeconds(5);
-            }
+            if (poll.slowDown()) interval = interval.plusSeconds(5);
             sleep(interval);
         }
         throw new IllegalStateException("AUTH_DEVICE_CODE_EXPIRED");
     }
 
-    void cancel() {
+    @Override
+    public void cancel() {
         cancelled.set(true);
     }
 
-    private DeviceAuthorization start() {
+    @Override
+    public void close() {
+        closed.compareAndSet(false, true);
+    }
+
+    private DeviceAuthorization startAuthorization() {
         var body = json.createObjectNode().put("client_id", registration.clientId());
         Response response = send(HttpRequest.newBuilder(registration.deviceUserCodeEndpoint())
                 .timeout(Duration.ofSeconds(30))
@@ -90,9 +109,7 @@ final class CodexDeviceLoginAttempt {
                 .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
                 .build());
-        if (response.status() == 404) {
-            throw new IllegalStateException("AUTH_DEVICE_CODE_UNAVAILABLE");
-        }
+        if (response.status() == 404) throw new IllegalStateException("AUTH_DEVICE_CODE_UNAVAILABLE");
         if (response.status() < 200 || response.status() >= 300) {
             throw new IllegalStateException("AUTH_DEVICE_CODE_REQUEST_FAILED");
         }
@@ -129,23 +146,13 @@ final class CodexDeviceLoginAttempt {
             return PollResult.complete(
                     required(root, "authorization_code", 64 * 1024), required(root, "code_verifier", 64 * 1024));
         }
-        if (response.status() == 403 || response.status() == 404) {
-            return PollResult.pending(false);
-        }
+        if (response.status() == 403 || response.status() == 404) return PollResult.pending(false);
         JsonNode root = parseJsonIfPossible(response);
         String code = errorCode(root);
-        if ("deviceauth_authorization_pending".equals(code)) {
-            return PollResult.pending(false);
-        }
-        if ("slow_down".equals(code) || response.status() == 429) {
-            return PollResult.pending(true);
-        }
-        if ("access_denied".equals(code)) {
-            throw new IllegalStateException("AUTH_DEVICE_CODE_DENIED");
-        }
-        if ("expired_token".equals(code)) {
-            throw new IllegalStateException("AUTH_DEVICE_CODE_EXPIRED");
-        }
+        if ("deviceauth_authorization_pending".equals(code)) return PollResult.pending(false);
+        if ("slow_down".equals(code) || response.status() == 429) return PollResult.pending(true);
+        if ("access_denied".equals(code)) throw new IllegalStateException("AUTH_DEVICE_CODE_DENIED");
+        if ("expired_token".equals(code)) throw new IllegalStateException("AUTH_DEVICE_CODE_EXPIRED");
         throw new IllegalStateException("AUTH_DEVICE_CODE_POLL_FAILED");
     }
 
@@ -155,9 +162,8 @@ final class CodexDeviceLoginAttempt {
             HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             try (InputStream input = response.body()) {
                 byte[] bytes = input.readNBytes(MAX_RESPONSE_BYTES + 1);
-                if (bytes.length > MAX_RESPONSE_BYTES) {
+                if (bytes.length > MAX_RESPONSE_BYTES)
                     throw new IllegalStateException("AUTH_DEVICE_RESPONSE_TOO_LARGE");
-                }
                 return new Response(
                         response.statusCode(),
                         response.headers().firstValue("Content-Type").orElse(""),
@@ -165,7 +171,7 @@ final class CodexDeviceLoginAttempt {
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("AUTH_DEVICE_CODE_CANCELLED", exception);
+            throw new IllegalStateException("AUTH_CANCELLED", exception);
         } catch (IOException exception) {
             throw new IllegalStateException("AUTH_DEVICE_CODE_UNAVAILABLE", exception);
         }
@@ -190,11 +196,36 @@ final class CodexDeviceLoginAttempt {
         }
     }
 
+    private void progress(
+            ExternalLoginAttemptState state, Optional<java.net.URI> verificationUri, Optional<String> userCode) {
+        snapshot = new ExternalLoginAttemptSnapshot(
+                context.attemptId(),
+                ExternalLoginMethodId.OPENAI_CODEX,
+                ExternalLoginMode.DEVICE_CODE,
+                state,
+                verificationUri,
+                userCode,
+                expiresAtEpochMillis,
+                Optional.empty());
+        context.progressSink().accept(snapshot);
+    }
+
+    private ExternalLoginAttemptSnapshot snapshot(
+            ExternalLoginAttemptState state, Optional<java.net.URI> verificationUri, Optional<String> userCode) {
+        return new ExternalLoginAttemptSnapshot(
+                context.attemptId(),
+                ExternalLoginMethodId.OPENAI_CODEX,
+                ExternalLoginMode.DEVICE_CODE,
+                state,
+                verificationUri,
+                userCode,
+                expiresAtEpochMillis,
+                Optional.empty());
+    }
+
     private static String required(JsonNode root, String field, int maxLength) {
         JsonNode value = root.get(field);
-        if (value == null || !value.isTextual()) {
-            throw new IllegalStateException("AUTH_DEVICE_CODE_RESPONSE_INVALID");
-        }
+        if (value == null || !value.isTextual()) throw new IllegalStateException("AUTH_DEVICE_CODE_RESPONSE_INVALID");
         String text = value.textValue().trim();
         if (text.isEmpty() || text.length() > maxLength || text.indexOf('\0') >= 0) {
             throw new IllegalStateException("AUTH_DEVICE_CODE_RESPONSE_INVALID");
@@ -215,16 +246,16 @@ final class CodexDeviceLoginAttempt {
             sleeper.sleep(duration);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("AUTH_DEVICE_CODE_CANCELLED", exception);
+            throw new IllegalStateException("AUTH_CANCELLED", exception);
         }
     }
 
     private void checkCancelled() {
-        if (cancelled.get()) throw new IllegalStateException("AUTH_DEVICE_CODE_CANCELLED");
+        if (cancelled.get() || closed.get()) throw new IllegalStateException("AUTH_CANCELLED");
     }
 
     @FunctionalInterface
-    interface Sleeper {
+    public interface Sleeper {
         void sleep(Duration duration) throws InterruptedException;
 
         static Sleeper system() {

@@ -15,6 +15,7 @@
         <module>haifa-agent-web</module>
         <module>haifa-agent-mcp</module>
         <module>haifa-agent-model-openai-compatible</module>
+        <module>haifa-agent-local-model-auth</module>
         <module>haifa-agent-git</module>
         <module>haifa-agent-store-sqlite</module>
         <module>haifa-agent-store-jsonl</module>

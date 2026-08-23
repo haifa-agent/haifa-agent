@@ -7,7 +7,7 @@ models:
     - id: deepseek
       displayName: DeepSeek
       endpoint: https://api.deepseek.com
-      credentialRef: coding-auth://deepseek/default
+      credentialRef: model-auth://deepseek/default
       nativeStreaming: true
       apiBindings:
         - style: openai-chat-completions

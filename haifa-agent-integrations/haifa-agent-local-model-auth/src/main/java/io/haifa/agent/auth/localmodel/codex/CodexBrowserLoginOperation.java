@@ -1,21 +1,25 @@
-package io.haifa.agent.cli;
+package io.haifa.agent.auth.localmodel.codex;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import java.awt.Desktop;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
+import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
+import io.haifa.agent.auth.localmodel.ExternalLoginMode;
+import io.haifa.agent.auth.localmodel.ExternalLoginOperation;
+import io.haifa.agent.auth.localmodel.ExternalLoginOperationContext;
+import io.haifa.agent.auth.localmodel.LocalModelAuthReference;
+import io.haifa.agent.auth.localmodel.StoredExternalCredential;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.time.Duration;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -24,119 +28,110 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** One local browser OAuth attempt with PKCE, state, exact loopback callback, and scoped cleanup. */
-final class CodexLoginAttempt implements AutoCloseable {
-    static final String CREDENTIAL_REFERENCE = "openai-codex/default";
+/** One local browser OAuth operation with PKCE, state, exact loopback callback, and scoped cleanup. */
+public final class CodexBrowserLoginOperation implements ExternalLoginOperation {
+    public static final LocalModelAuthReference CREDENTIAL_REFERENCE =
+            LocalModelAuthReference.parse("model-auth://openai-codex/default");
     private static final int MAX_QUERY_LENGTH = 8 * 1024;
     private static final String SCOPE = "openid profile email offline_access";
 
-    enum State {
-        CREATED,
-        WAITING_CALLBACK,
-        EXCHANGING_TOKEN,
-        SUCCEEDED,
-        CANCELLED,
-        FAILED
-    }
-
     private final CodexOAuthClientRegistration registration;
     private final CodexTokenClient tokens;
-    private final CodingAuthFileStore store;
-    private final BrowserLauncher browser;
-    private final SecureRandom random;
+    private final ExternalLoginOperationContext context;
+    private final CodexPkce pkce;
     private final Duration timeout;
+    private final long expiresAtEpochMillis;
     private final AtomicBoolean started = new AtomicBoolean();
     private final AtomicBoolean cancelled = new AtomicBoolean();
+    private final AtomicBoolean closed = new AtomicBoolean();
     private final CompletableFuture<String> authorizationCode = new CompletableFuture<>();
-    private volatile State state = State.CREATED;
+    private volatile ExternalLoginAttemptSnapshot snapshot;
     private volatile HttpServer callbackServer;
     private volatile ExecutorService callbackExecutor;
 
-    CodexLoginAttempt(
+    public CodexBrowserLoginOperation(
             CodexOAuthClientRegistration registration,
             CodexTokenClient tokens,
-            CodingAuthFileStore store,
-            BrowserLauncher browser,
-            SecureRandom random,
+            ExternalLoginOperationContext context,
+            CodexPkce pkce,
             Duration timeout) {
         this.registration = Objects.requireNonNull(registration, "registration must not be null");
         this.tokens = Objects.requireNonNull(tokens, "tokens must not be null");
-        this.store = Objects.requireNonNull(store, "store must not be null");
-        this.browser = Objects.requireNonNull(browser, "browser must not be null");
-        this.random = Objects.requireNonNull(random, "random must not be null");
+        this.context = Objects.requireNonNull(context, "context must not be null");
+        this.pkce = Objects.requireNonNull(pkce, "pkce must not be null");
         this.timeout = Objects.requireNonNull(timeout, "timeout must not be null");
         if (timeout.isZero() || timeout.isNegative() || timeout.compareTo(Duration.ofMinutes(15)) > 0) {
             throw new IllegalArgumentException("Codex login timeout is invalid");
         }
+        this.expiresAtEpochMillis = Math.addExact(context.clock().millis(), timeout.toMillis());
+        this.snapshot = snapshot(ExternalLoginAttemptState.CREATED, Optional.empty());
     }
 
-    Result execute() {
-        if (!started.compareAndSet(false, true)) throw new IllegalStateException("Codex login attempt is single use");
-        String verifier = randomToken(64);
-        String stateToken = randomToken(32);
+    @Override
+    public ExternalLoginAttemptSnapshot snapshot() {
+        return snapshot;
+    }
+
+    @Override
+    public StoredExternalCredential execute() {
+        if (!started.compareAndSet(false, true)) throw new IllegalStateException("AUTH_ATTEMPT_ALREADY_USED");
+        String verifier = pkce.verifier();
+        String stateToken = pkce.state();
         try {
             startCallbackServer(stateToken);
-            state = State.WAITING_CALLBACK;
-            URI authorizationUri = authorizationUri(verifier, stateToken);
-            if (!browser.open(authorizationUri)) {
+            progress(ExternalLoginAttemptState.WAITING_USER, Optional.empty());
+            if (!context.browserLauncher().open(authorizationUri(verifier, stateToken))) {
                 throw new IllegalStateException("AUTH_BROWSER_OPEN_FAILED");
             }
             String code = authorizationCode.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            if (cancelled.get()) throw new IllegalStateException("AUTH_CANCELLED");
-            state = State.EXCHANGING_TOKEN;
+            checkCancelled();
+            progress(ExternalLoginAttemptState.EXCHANGING, Optional.empty());
             CodexTokenClient.TokenSet tokenSet = tokens.exchange(code, verifier, registration.redirectUri());
-            store.save(CodingAuthCredential.oauth2(
-                    CREDENTIAL_REFERENCE,
-                    tokenSet.accessToken(),
-                    tokenSet.refreshToken(),
-                    tokenSet.expiresAtEpochMillis(),
-                    tokenSet.accountId(),
-                    registration.reference(),
-                    tokenSet.issuedAtEpochMillis()));
-            state = State.SUCCEEDED;
-            return new Result(
-                    tokenSet.accountId(), registration.reference(), registration.unofficialLocalCompatibility());
+            return credential(tokenSet);
         } catch (TimeoutException exception) {
-            state = State.FAILED;
             throw new IllegalStateException("AUTH_CALLBACK_TIMEOUT", exception);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            state = State.CANCELLED;
             throw new IllegalStateException("AUTH_CANCELLED", exception);
         } catch (ExecutionException exception) {
-            state = cancelled.get() ? State.CANCELLED : State.FAILED;
             Throwable cause = exception.getCause();
             if (cause instanceof RuntimeException runtimeException) throw runtimeException;
             throw new IllegalStateException("AUTH_CALLBACK_FAILED", cause);
-        } catch (RuntimeException exception) {
-            state = cancelled.get() ? State.CANCELLED : State.FAILED;
-            throw exception;
         } finally {
-            close();
             verifier = null;
             stateToken = null;
+            close();
         }
     }
 
-    State state() {
-        return state;
-    }
-
-    void cancel() {
+    @Override
+    public void cancel() {
         cancelled.set(true);
-        state = State.CANCELLED;
         authorizationCode.completeExceptionally(new IllegalStateException("AUTH_CANCELLED"));
         close();
     }
 
     @Override
     public void close() {
+        if (!closed.compareAndSet(false, true)) return;
         HttpServer server = callbackServer;
         callbackServer = null;
         if (server != null) server.stop(0);
         ExecutorService executor = callbackExecutor;
         callbackExecutor = null;
         if (executor != null) executor.shutdownNow();
+    }
+
+    private StoredExternalCredential credential(CodexTokenClient.TokenSet tokenSet) {
+        return new StoredExternalCredential(
+                CREDENTIAL_REFERENCE,
+                ExternalLoginMethodId.OPENAI_CODEX,
+                registration.reference(),
+                tokenSet.accessToken(),
+                tokenSet.refreshToken(),
+                tokenSet.expiresAtEpochMillis(),
+                tokenSet.issuedAtEpochMillis(),
+                tokenSet.accountId());
     }
 
     private void startCallbackServer(String expectedState) {
@@ -207,7 +202,7 @@ final class CodexLoginAttempt implements AutoCloseable {
         query.put("client_id", registration.clientId());
         query.put("redirect_uri", registration.redirectUri().toString());
         query.put("scope", SCOPE);
-        query.put("code_challenge", challenge(verifier));
+        query.put("code_challenge", CodexPkce.challenge(verifier));
         query.put("code_challenge_method", "S256");
         query.put("state", stateToken);
         query.put("id_token_add_organizations", "true");
@@ -219,19 +214,33 @@ final class CodexLoginAttempt implements AutoCloseable {
         return URI.create(registration.authorizationEndpoint() + "?" + encoded);
     }
 
-    private String randomToken(int bytes) {
-        byte[] value = new byte[bytes];
-        random.nextBytes(value);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(value);
+    private void progress(ExternalLoginAttemptState state, Optional<String> reason) {
+        snapshot = new ExternalLoginAttemptSnapshot(
+                context.attemptId(),
+                ExternalLoginMethodId.OPENAI_CODEX,
+                ExternalLoginMode.BROWSER,
+                state,
+                Optional.empty(),
+                Optional.empty(),
+                expiresAtEpochMillis,
+                reason);
+        context.progressSink().accept(snapshot);
     }
 
-    private static String challenge(String verifier) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII));
-            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is required", exception);
-        }
+    private ExternalLoginAttemptSnapshot snapshot(ExternalLoginAttemptState state, Optional<String> reason) {
+        return new ExternalLoginAttemptSnapshot(
+                context.attemptId(),
+                ExternalLoginMethodId.OPENAI_CODEX,
+                ExternalLoginMode.BROWSER,
+                state,
+                Optional.empty(),
+                Optional.empty(),
+                expiresAtEpochMillis,
+                reason);
+    }
+
+    private void checkCancelled() {
+        if (cancelled.get()) throw new IllegalStateException("AUTH_CANCELLED");
     }
 
     private static Map<String, String> query(String rawQuery) {
@@ -240,9 +249,8 @@ final class CodexLoginAttempt implements AutoCloseable {
             String[] parts = pair.split("=", 2);
             String name = java.net.URLDecoder.decode(parts[0], StandardCharsets.UTF_8);
             String value = parts.length == 2 ? java.net.URLDecoder.decode(parts[1], StandardCharsets.UTF_8) : "";
-            if (values.putIfAbsent(name, value) != null) {
+            if (values.putIfAbsent(name, value) != null)
                 throw new IllegalArgumentException("duplicate callback parameter");
-            }
         }
         return values;
     }
@@ -259,26 +267,5 @@ final class CodexLoginAttempt implements AutoCloseable {
         exchange.sendResponseHeaders(status, body.length);
         exchange.getResponseBody().write(body);
         exchange.close();
-    }
-
-    record Result(String accountId, String clientRegistrationRef, boolean unofficialLocalCompatibility) {}
-
-    @FunctionalInterface
-    interface BrowserLauncher {
-        boolean open(URI uri);
-
-        static BrowserLauncher system() {
-            return uri -> {
-                if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-                    return false;
-                }
-                try {
-                    Desktop.getDesktop().browse(uri);
-                    return true;
-                } catch (IOException | SecurityException exception) {
-                    return false;
-                }
-            };
-        }
     }
 }

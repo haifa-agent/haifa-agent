@@ -1,55 +1,45 @@
 package io.haifa.agent.cli;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView;
-import java.net.http.HttpClient;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.time.Clock;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
+import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
+import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
+import io.haifa.agent.auth.localmodel.ExternalLoginMode;
+import io.haifa.agent.auth.localmodel.LocalModelAuthReference;
+import io.haifa.agent.auth.localmodel.LocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.LocalModelConnectionView;
+import io.haifa.agent.auth.localmodel.StoredApiKeyCredential;
 import java.time.Duration;
 import java.util.Arrays;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.OptionalLong;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-/** Highest-layer local implementation of Coding Agent authentication use cases. */
-final class CliCodingAuthenticationClient implements CodingAuthenticationClient {
-    private final CodingAuthFileStore store;
-    private final Optional<CodexOAuthClientRegistration> registration;
-    private final Optional<CodexTokenClient> tokens;
-    private final CodexLoginAttempt.BrowserLauncher browser;
+/** Highest-layer adapter from Coding Agent authentication use cases to shared local model auth. */
+final class CliCodingAuthenticationClient implements CodingAuthenticationClient, AutoCloseable {
+    private static final Duration POLL_INTERVAL = Duration.ofMillis(50);
+
+    private final LocalModelAuthStore store;
+    private final Optional<ExternalLoginCoordinator> coordinator;
     private final String selectedCredentialReference;
     private final String selectedProviderId;
     private final Function<String, String> environment;
-    private final HttpClient http;
-    private final ObjectMapper json;
-    private final Clock clock;
-    private final AtomicReference<Object> activeLogin = new AtomicReference<>();
 
     CliCodingAuthenticationClient(
-            CodingAuthFileStore store,
-            Optional<CodexOAuthClientRegistration> registration,
-            Optional<CodexTokenClient> tokens,
-            CodexLoginAttempt.BrowserLauncher browser,
+            LocalModelAuthStore store,
+            Optional<ExternalLoginCoordinator> coordinator,
             String selectedCredentialReference,
             String selectedProviderId,
-            Function<String, String> environment,
-            HttpClient http,
-            ObjectMapper json,
-            Clock clock) {
+            Function<String, String> environment) {
         this.store = Objects.requireNonNull(store, "store must not be null");
-        this.registration = Objects.requireNonNull(registration, "registration must not be null");
-        this.tokens = Objects.requireNonNull(tokens, "tokens must not be null");
-        this.browser = Objects.requireNonNull(browser, "browser must not be null");
+        this.coordinator = Objects.requireNonNull(coordinator, "coordinator must not be null");
         this.selectedCredentialReference = Objects.requireNonNull(
                         selectedCredentialReference, "selectedCredentialReference must not be null")
                 .trim();
@@ -60,12 +50,6 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient 
             throw new IllegalArgumentException("selectedProviderId is invalid");
         }
         this.environment = Objects.requireNonNull(environment, "environment must not be null");
-        this.http = Objects.requireNonNull(http, "http must not be null");
-        this.json = Objects.requireNonNull(json, "json must not be null");
-        this.clock = Objects.requireNonNull(clock, "clock must not be null");
-        if (registration.isPresent() != tokens.isPresent()) {
-            throw new IllegalArgumentException("Codex registration and token client must be configured together");
-        }
     }
 
     @Override
@@ -74,8 +58,8 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient 
             String value = environment.apply(selectedCredentialReference.substring("env://".length()));
             return value == null || value.isBlank();
         }
-        if (selectedCredentialReference.startsWith("coding-auth://")) {
-            return store.find(selectedCredentialReference.substring("coding-auth://".length()))
+        if (selectedCredentialReference.startsWith("model-auth://")) {
+            return store.find(LocalModelAuthReference.parse(selectedCredentialReference))
                     .isEmpty();
         }
         return false;
@@ -88,56 +72,33 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient 
 
     @Override
     public boolean apiKeyConnectionSupported() {
-        return !selectedCredentialReference.startsWith("coding-auth://openai-codex/");
+        return !selectedCredentialReference.startsWith("model-auth://openai-codex/");
     }
 
     @Override
     public List<CodingAuthenticationView> connections() {
-        return store.list().stream().map(this::view).toList();
+        return store.listSafe().stream()
+                .map(CliCodingAuthenticationClient::view)
+                .toList();
     }
 
     @Override
     public CodingAuthenticationView loginCodexBrowser() {
-        CodexOAuthClientRegistration configured =
-                registration.orElseThrow(() -> new IllegalStateException("AUTH_EXTERNAL_APPROVAL_REQUIRED"));
-        CodexLoginAttempt attempt = new CodexLoginAttempt(
-                configured, tokens.orElseThrow(), store, browser, new SecureRandom(), Duration.ofMinutes(5));
-        if (!activeLogin.compareAndSet(null, attempt)) {
-            throw new IllegalStateException("AUTH_LOGIN_IN_PROGRESS");
-        }
-        try {
-            attempt.execute();
-            return store.find(CodexLoginAttempt.CREDENTIAL_REFERENCE)
-                    .map(this::view)
-                    .orElseThrow(() -> new IllegalStateException("AUTH_STORE_FAILED"));
-        } catch (CodexTokenClient.CodexTokenException exception) {
-            throw new IllegalStateException(
-                    exception.status() == 400 ? "AUTH_REAUTH_REQUIRED" : "AUTH_TOKEN_EXCHANGE_FAILED", exception);
-        } finally {
-            activeLogin.compareAndSet(attempt, null);
-        }
+        ExternalLoginCoordinator available =
+                coordinator.orElseThrow(() -> new IllegalStateException("AUTH_EXTERNAL_APPROVAL_REQUIRED"));
+        ExternalLoginAttemptSnapshot started =
+                available.start(ExternalLoginMethodId.OPENAI_CODEX, ExternalLoginMode.BROWSER);
+        return await(available, started.attemptId(), null);
     }
 
     @Override
     public CodingAuthenticationView loginCodexDevice(Consumer<CodingDeviceLoginView> instructions) {
-        CodexOAuthClientRegistration configured =
-                registration.orElseThrow(() -> new IllegalStateException("AUTH_EXTERNAL_APPROVAL_REQUIRED"));
-        CodexDeviceLoginAttempt attempt = new CodexDeviceLoginAttempt(
-                configured, tokens.orElseThrow(), store, http, json, clock, CodexDeviceLoginAttempt.Sleeper.system());
-        if (!activeLogin.compareAndSet(null, attempt)) {
-            throw new IllegalStateException("AUTH_LOGIN_IN_PROGRESS");
-        }
-        try {
-            attempt.execute(instructions);
-            return store.find(CodexLoginAttempt.CREDENTIAL_REFERENCE)
-                    .map(this::view)
-                    .orElseThrow(() -> new IllegalStateException("AUTH_STORE_FAILED"));
-        } catch (CodexTokenClient.CodexTokenException exception) {
-            throw new IllegalStateException(
-                    exception.status() == 400 ? "AUTH_REAUTH_REQUIRED" : "AUTH_TOKEN_EXCHANGE_FAILED", exception);
-        } finally {
-            activeLogin.compareAndSet(attempt, null);
-        }
+        ExternalLoginCoordinator available =
+                coordinator.orElseThrow(() -> new IllegalStateException("AUTH_EXTERNAL_APPROVAL_REQUIRED"));
+        ExternalLoginAttemptSnapshot started =
+                available.start(ExternalLoginMethodId.OPENAI_CODEX, ExternalLoginMode.DEVICE_CODE);
+        return await(
+                available, started.attemptId(), Objects.requireNonNull(instructions, "instructions must not be null"));
     }
 
     @Override
@@ -153,10 +114,10 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient 
             if (secret.length < 1 || secret.length > 64 * 1024) {
                 throw new IllegalArgumentException("AUTH_SECRET_INVALID");
             }
-            String value = new String(secret);
-            CodingAuthCredential credential = CodingAuthCredential.apiKey(provider + "/default", value);
+            StoredApiKeyCredential credential = new StoredApiKeyCredential(
+                    LocalModelAuthReference.parse("model-auth://" + provider + "/default"), new String(secret));
             store.save(credential);
-            return view(credential);
+            return view(credential.safeView(false));
         } finally {
             Arrays.fill(secret, '\0');
         }
@@ -164,54 +125,65 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient 
 
     @Override
     public boolean logout(String connectionId) {
-        String reference = Objects.requireNonNull(connectionId, "connectionId must not be null")
-                .trim();
-        Object attempt = activeLogin.get();
-        if (attempt instanceof CodexLoginAttempt browserAttempt
-                && CodexLoginAttempt.CREDENTIAL_REFERENCE.equals(reference)) browserAttempt.cancel();
-        if (attempt instanceof CodexDeviceLoginAttempt deviceAttempt
-                && CodexLoginAttempt.CREDENTIAL_REFERENCE.equals(reference)) deviceAttempt.cancel();
-        return store.delete(reference);
+        return store.delete(LocalModelAuthReference.parse(connectionId));
     }
 
-    private CodingAuthenticationView view(CodingAuthCredential credential) {
-        if (credential.kind() == CodingAuthCredential.Kind.API_KEY) {
-            return new CodingAuthenticationView(
-                    credential.reference(),
-                    provider(credential.reference()),
-                    CodingAuthenticationView.Method.API_KEY,
-                    CodingAuthenticationView.Status.AUTHENTICATED,
-                    "Saved API key",
-                    Optional.empty(),
-                    OptionalLong.empty(),
-                    false);
+    @Override
+    public void close() {
+        coordinator.ifPresent(ExternalLoginCoordinator::close);
+    }
+
+    private static CodingAuthenticationView await(
+            ExternalLoginCoordinator coordinator,
+            ExternalLoginAttemptId attemptId,
+            Consumer<CodingDeviceLoginView> instructions) {
+        AtomicBoolean instructionsSent = new AtomicBoolean();
+        while (true) {
+            ExternalLoginAttemptSnapshot snapshot = coordinator.find(attemptId);
+            if (instructions != null
+                    && snapshot.verificationUri().isPresent()
+                    && snapshot.userCode().isPresent()
+                    && instructionsSent.compareAndSet(false, true)) {
+                instructions.accept(new CodingDeviceLoginView(
+                        snapshot.verificationUri().orElseThrow(),
+                        snapshot.userCode().orElseThrow(),
+                        snapshot.expiresAtEpochMillis()));
+            }
+            if (snapshot.state() == ExternalLoginAttemptState.SUCCEEDED) {
+                return view(coordinator
+                        .completedConnection(attemptId)
+                        .orElseThrow(() -> new IllegalStateException("AUTH_STORE_FAILED")));
+            }
+            if (snapshot.state() == ExternalLoginAttemptState.FAILED
+                    || snapshot.state() == ExternalLoginAttemptState.CANCELLED
+                    || snapshot.state() == ExternalLoginAttemptState.EXPIRED) {
+                throw new IllegalStateException(snapshot.reasonCode().orElse("AUTH_LOGIN_FAILED"));
+            }
+            try {
+                Thread.sleep(POLL_INTERVAL.toMillis());
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                coordinator.cancel(attemptId);
+                throw new IllegalStateException("AUTH_CANCELLED", exception);
+            }
         }
-        boolean unofficial = registration
-                .filter(value -> value.reference().equals(credential.clientRegistrationRef()))
-                .map(CodexOAuthClientRegistration::unofficialLocalCompatibility)
-                .orElse(credential.clientRegistrationRef().contains("local-compat"));
+    }
+
+    private static CodingAuthenticationView view(LocalModelConnectionView connection) {
         return new CodingAuthenticationView(
-                credential.reference(),
-                "openai-codex",
-                CodingAuthenticationView.Method.CHATGPT_SUBSCRIPTION,
-                CodingAuthenticationView.Status.AUTHENTICATED,
-                "ChatGPT account " + safeAccountLabel(credential.accountId()),
+                connection.connectionId().value(),
+                connection.providerId(),
+                connection.method() == LocalModelConnectionView.Method.API_KEY
+                        ? CodingAuthenticationView.Method.API_KEY
+                        : CodingAuthenticationView.Method.CHATGPT_SUBSCRIPTION,
+                switch (connection.status()) {
+                    case AUTHENTICATED -> CodingAuthenticationView.Status.AUTHENTICATED;
+                    case REAUTH_REQUIRED -> CodingAuthenticationView.Status.REAUTH_REQUIRED;
+                    case RATE_LIMITED -> CodingAuthenticationView.Status.RATE_LIMITED;
+                },
+                connection.accountLabel(),
                 Optional.empty(),
-                OptionalLong.empty(),
-                unofficial);
-    }
-
-    private static String provider(String reference) {
-        int separator = reference.indexOf('/');
-        return separator < 0 ? reference : reference.substring(0, separator);
-    }
-
-    private static String safeAccountLabel(String accountId) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(accountId.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest, 0, 4);
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is required", exception);
-        }
+                connection.expiresAtEpochMillis(),
+                connection.unofficialLocalCompatibility());
     }
 }

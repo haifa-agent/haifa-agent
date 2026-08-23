@@ -107,7 +107,7 @@ public final class OpenAiResponsesDialects {
         if (userAgent.length() > 128 || containsHeaderSeparator(userAgent)) {
             throw new IllegalArgumentException("Codex user agent is invalid");
         }
-        if (!loopback && !snapshot.credentialRef().value().startsWith("coding-auth://openai-codex/")) {
+        if (!loopback && !snapshot.credentialRef().value().startsWith("model-auth://openai-codex/")) {
             throw new IllegalArgumentException("Codex Responses requires a Coding Auth credential reference");
         }
     }

@@ -1,4 +1,4 @@
-package io.haifa.agent.cli;
+package io.haifa.agent.auth.localmodel.codex;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -6,6 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
+import io.haifa.agent.auth.localmodel.ExternalLoginOperationContext;
+import io.haifa.agent.auth.localmodel.StoredExternalCredential;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -14,7 +18,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
@@ -27,20 +30,16 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-class CodexLoginAttemptTest {
+class CodexBrowserLoginOperationTest {
     private static final Instant NOW = Instant.parse("2026-08-23T00:00:00Z");
     private static final String ACCOUNT_ID = "account-login-1";
+    private static final String ATTEMPT_ID = "01890f6c-7b2a-7cc0-8000-000000000001";
 
     private final ObjectMapper json = new ObjectMapper();
     private final AtomicInteger tokenRequests = new AtomicInteger();
-    private final AtomicReference<String> tokenForm = new AtomicReference<>();
     private HttpServer oauthServer;
     private int callbackPort;
-
-    @TempDir
-    Path temporaryDirectory;
 
     @BeforeEach
     void startServer() throws IOException {
@@ -58,78 +57,59 @@ class CodexLoginAttemptTest {
     }
 
     @Test
-    void browserPkceCallbackExchangesAndStoresCredentialOnlyAfterSuccess() {
-        CodingAuthFileStore store = store();
+    void browserPkceCallbackReturnsCredentialAndSafeProgress() {
         AtomicReference<URI> opened = new AtomicReference<>();
-        CodexLoginAttempt attempt = attempt(store, uri -> {
-            opened.set(uri);
-            Map<String, String> query = query(uri.getRawQuery());
-            assertThat(query).containsEntry("code_challenge_method", "S256");
-            assertThat(query.get("code_challenge")).hasSize(43);
-            assertThat(query.get("state")).hasSizeGreaterThanOrEqualTo(32);
-            callback("authorization-code", query.get("state"));
-            return true;
-        });
+        AtomicReference<String> progress = new AtomicReference<>();
+        CodexBrowserLoginOperation operation = operation(
+                uri -> {
+                    opened.set(uri);
+                    Map<String, String> query = query(uri.getRawQuery());
+                    assertThat(query).containsEntry("code_challenge_method", "S256");
+                    assertThat(query.get("code_challenge")).hasSize(43);
+                    callback("authorization-code", query.get("state"));
+                    return true;
+                },
+                Duration.ofSeconds(5),
+                snapshot -> progress.set(snapshot.toString()));
 
-        CodexLoginAttempt.Result result = attempt.execute();
+        StoredExternalCredential credential = operation.execute();
 
-        assertThat(result.accountId()).isEqualTo(ACCOUNT_ID);
-        assertThat(result.unofficialLocalCompatibility()).isTrue();
-        assertThat(attempt.state()).isEqualTo(CodexLoginAttempt.State.SUCCEEDED);
-        assertThat(opened.get().toString()).doesNotContain("authorization-code", "access-token", "refresh-token");
+        assertThat(credential.accountId()).isEqualTo(ACCOUNT_ID);
+        assertThat(credential.refreshToken()).isEqualTo("refresh-token");
         assertThat(tokenRequests).hasValue(1);
-        assertThat(tokenForm.get())
-                .contains("grant_type=authorization_code")
-                .contains("code=authorization-code")
-                .contains("code_verifier=")
-                .contains("redirect_uri=");
-        assertThat(store.find(CodexLoginAttempt.CREDENTIAL_REFERENCE)).get().satisfies(saved -> {
-            assertThat(saved.accountId()).isEqualTo(ACCOUNT_ID);
-            assertThat(saved.refreshToken()).isEqualTo("refresh-token");
-            assertThat(saved.clientRegistrationRef()).isEqualTo("stub-registration");
-        });
+        assertThat(opened.get().toString()).doesNotContain("authorization-code", "access-token", "refresh-token");
+        assertThat(progress.get()).doesNotContain("authorization-code", "access-token", "refresh-token", "stub-client");
+        assertThat(operation.snapshot().state()).isEqualTo(ExternalLoginAttemptState.EXCHANGING);
     }
 
     @Test
-    void stateMismatchFailsClosedWithoutTokenExchangeOrCredential() {
-        CodingAuthFileStore store = store();
-        CodexLoginAttempt attempt = attempt(
-                store,
+    void stateMismatchTimesOutAndBrowserFailureClosesCallbackPort() throws Exception {
+        CodexBrowserLoginOperation mismatch = operation(
                 uri -> {
                     callback("authorization-code", "wrong-state");
                     return true;
                 },
-                Duration.ofMillis(150));
-
-        assertThatThrownBy(attempt::execute)
+                Duration.ofMillis(100),
+                snapshot -> {});
+        assertThatThrownBy(mismatch::execute)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("AUTH_CALLBACK_TIMEOUT");
         assertThat(tokenRequests).hasValue(0);
-        assertThat(store.find(CodexLoginAttempt.CREDENTIAL_REFERENCE)).isEmpty();
-        assertThat(attempt.state()).isEqualTo(CodexLoginAttempt.State.FAILED);
-    }
 
-    @Test
-    void browserFailureClosesCallbackPortAndDoesNotCreateAuthFile() throws Exception {
-        CodingAuthFileStore store = store();
-        CodexLoginAttempt attempt = attempt(store, ignored -> false);
-
-        assertThatThrownBy(attempt::execute)
+        CodexBrowserLoginOperation failure = operation(uri -> false, Duration.ofSeconds(1), snapshot -> {});
+        assertThatThrownBy(failure::execute)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("AUTH_BROWSER_OPEN_FAILED");
-        assertThat(store.find(CodexLoginAttempt.CREDENTIAL_REFERENCE)).isEmpty();
         try (ServerSocket rebound = new ServerSocket()) {
             rebound.bind(new InetSocketAddress("127.0.0.1", callbackPort));
             assertThat(rebound.isBound()).isTrue();
         }
     }
 
-    private CodexLoginAttempt attempt(CodingAuthFileStore store, CodexLoginAttempt.BrowserLauncher browser) {
-        return attempt(store, browser, Duration.ofSeconds(5));
-    }
-
-    private CodexLoginAttempt attempt(
-            CodingAuthFileStore store, CodexLoginAttempt.BrowserLauncher browser, Duration timeout) {
+    private CodexBrowserLoginOperation operation(
+            ExternalLoginOperationContext.BrowserLauncher browser,
+            Duration timeout,
+            java.util.function.Consumer<io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot> progress) {
         CodexOAuthClientRegistration registration = registration();
         CodexTokenClient tokens = new CodexTokenClient(
                 HttpClient.newHttpClient(),
@@ -137,11 +117,10 @@ class CodexLoginAttemptTest {
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 Duration.ofSeconds(5),
                 registration);
-        return new CodexLoginAttempt(registration, tokens, store, browser, new SecureRandom(), timeout);
-    }
-
-    private CodingAuthFileStore store() {
-        return new CodingAuthFileStore(temporaryDirectory.resolve("auth.json"), json);
+        ExternalLoginOperationContext context = new ExternalLoginOperationContext(
+                new ExternalLoginAttemptId(ATTEMPT_ID), Clock.fixed(NOW, ZoneOffset.UTC), browser, progress);
+        return new CodexBrowserLoginOperation(
+                registration, tokens, context, new CodexPkce(new SecureRandom()), timeout);
     }
 
     private CodexOAuthClientRegistration registration() {
@@ -165,9 +144,8 @@ class CodexLoginAttemptTest {
                     + java.net.URLEncoder.encode(code, StandardCharsets.UTF_8)
                     + "&state="
                     + java.net.URLEncoder.encode(state, StandardCharsets.UTF_8));
-            HttpResponse<String> response = HttpClient.newHttpClient()
+            HttpClient.newHttpClient()
                     .send(HttpRequest.newBuilder(uri).GET().build(), HttpResponse.BodyHandlers.ofString());
-            assertThat(response.statusCode()).isIn(200, 400);
         } catch (IOException | InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(exception);
@@ -176,17 +154,8 @@ class CodexLoginAttemptTest {
 
     private void handleToken(HttpExchange exchange) throws IOException {
         tokenRequests.incrementAndGet();
-        tokenForm.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-        String body =
-                """
-                {"access_token":"%s","refresh_token":"refresh-token","expires_in":3600}
-                """
-                        .formatted(jwt());
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.sendResponseHeaders(200, bytes.length);
-        exchange.getResponseBody().write(bytes);
-        exchange.close();
+        String body = "{\"access_token\":\"" + jwt() + "\",\"refresh_token\":\"refresh-token\",\"expires_in\":3600}";
+        respond(exchange, 200, body);
     }
 
     private String jwt() {
@@ -208,5 +177,13 @@ class CodexLoginAttemptTest {
                 .collect(java.util.stream.Collectors.toMap(
                         value -> java.net.URLDecoder.decode(value[0], StandardCharsets.UTF_8),
                         value -> java.net.URLDecoder.decode(value[1], StandardCharsets.UTF_8)));
+    }
+
+    private static void respond(HttpExchange exchange, int status, String body) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
     }
 }

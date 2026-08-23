@@ -1,4 +1,4 @@
-package io.haifa.agent.cli;
+package io.haifa.agent.auth.localmodel.codex;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,8 +17,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
-/** Bounded OAuth token exchange/refresh client. Raw token responses never enter exceptions. */
-final class CodexTokenClient {
+/** Bounded OAuth token exchange/refresh client. Raw responses never enter exceptions. */
+public final class CodexTokenClient {
     private static final int MAX_RESPONSE_BYTES = 256 * 1024;
     private static final String AUTH_CLAIM = "https://api.openai.com/auth";
 
@@ -28,7 +28,7 @@ final class CodexTokenClient {
     private final Duration timeout;
     private final CodexOAuthClientRegistration registration;
 
-    CodexTokenClient(
+    public CodexTokenClient(
             HttpClient http,
             ObjectMapper json,
             Clock clock,
@@ -80,24 +80,26 @@ final class CodexTokenClient {
                 responseBody = input.readNBytes(MAX_RESPONSE_BYTES + 1);
             }
             if (responseBody.length > MAX_RESPONSE_BYTES) {
-                throw new CodexTokenException("Codex token response exceeds the size limit", false, 0);
+                throw new CodexTokenException("AUTH_TOKEN_RESPONSE_TOO_LARGE", false, 0);
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 boolean retryable =
                         response.statusCode() == 408 || response.statusCode() == 429 || response.statusCode() >= 500;
                 throw new CodexTokenException(
-                        "Codex token " + operation + " was rejected", retryable, response.statusCode());
+                        retryable ? "AUTH_LOGIN_SERVICE_UNAVAILABLE" : "AUTH_REAUTH_REQUIRED",
+                        retryable,
+                        response.statusCode());
             }
             String contentType = response.headers().firstValue("Content-Type").orElse("");
             if (!contentType.toLowerCase(java.util.Locale.ROOT).contains("application/json")) {
-                throw new CodexTokenException("Codex token response content type is invalid", false, 0);
+                throw new CodexTokenException("AUTH_TOKEN_RESPONSE_INVALID", false, 0);
             }
             return parse(responseBody);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new CodexTokenException("Codex token request was cancelled", false, 0, exception);
+            throw new CodexTokenException("AUTH_CANCELLED", false, 0, exception);
         } catch (IOException exception) {
-            throw new CodexTokenException("Codex token service is unavailable", true, 0, exception);
+            throw new CodexTokenException("AUTH_LOGIN_SERVICE_UNAVAILABLE", true, 0, exception);
         }
     }
 
@@ -108,11 +110,11 @@ final class CodexTokenClient {
             String refreshToken = requiredText(root, "refresh_token");
             JsonNode expires = root.get("expires_in");
             if (expires == null || !expires.canConvertToLong()) {
-                throw new CodexTokenException("Codex token response is missing required fields", false, 0);
+                throw new CodexTokenException("AUTH_TOKEN_RESPONSE_INVALID", false, 0);
             }
             long expiresIn = expires.longValue();
             if (expiresIn < 1 || expiresIn > Duration.ofDays(365).toSeconds()) {
-                throw new CodexTokenException("Codex token expiry is invalid", false, 0);
+                throw new CodexTokenException("AUTH_TOKEN_RESPONSE_INVALID", false, 0);
             }
             long issuedAt = clock.instant().toEpochMilli();
             long expiresAt = Math.addExact(issuedAt, Math.multiplyExact(expiresIn, 1000));
@@ -120,7 +122,7 @@ final class CodexTokenClient {
         } catch (CodexTokenException exception) {
             throw exception;
         } catch (IOException | RuntimeException exception) {
-            throw new CodexTokenException("Codex token response is invalid", false, 0, exception);
+            throw new CodexTokenException("AUTH_TOKEN_RESPONSE_INVALID", false, 0, exception);
         }
     }
 
@@ -135,7 +137,7 @@ final class CodexTokenClient {
             if (!accountId.matches("[A-Za-z0-9_-]{1,256}")) throw new IllegalArgumentException();
             return accountId;
         } catch (IOException | IllegalArgumentException exception) {
-            throw new CodexTokenException("Codex token account identity is invalid", false, 0, exception);
+            throw new CodexTokenException("AUTH_TOKEN_ACCOUNT_INVALID", false, 0, exception);
         }
     }
 
@@ -152,7 +154,7 @@ final class CodexTokenClient {
     private static String requiredText(JsonNode node, String name) {
         JsonNode value = node.get(name);
         if (value == null || !value.isTextual() || value.textValue().isBlank()) {
-            throw new CodexTokenException("Codex token response is missing required fields", false, 0);
+            throw new CodexTokenException("AUTH_TOKEN_RESPONSE_INVALID", false, 0);
         }
         return value.textValue();
     }
@@ -182,25 +184,25 @@ final class CodexTokenClient {
             String accountId,
             long issuedAtEpochMillis) {}
 
-    static final class CodexTokenException extends RuntimeException {
+    public static final class CodexTokenException extends RuntimeException {
         private final boolean retryable;
         private final int status;
 
-        private CodexTokenException(String message, boolean retryable, int status) {
-            this(message, retryable, status, null);
+        CodexTokenException(String reasonCode, boolean retryable, int status) {
+            this(reasonCode, retryable, status, null);
         }
 
-        private CodexTokenException(String message, boolean retryable, int status, Throwable cause) {
-            super(message, cause);
+        CodexTokenException(String reasonCode, boolean retryable, int status, Throwable cause) {
+            super(reasonCode, cause);
             this.retryable = retryable;
             this.status = status;
         }
 
-        boolean retryable() {
+        public boolean retryable() {
             return retryable;
         }
 
-        int status() {
+        public int status() {
             return status;
         }
     }

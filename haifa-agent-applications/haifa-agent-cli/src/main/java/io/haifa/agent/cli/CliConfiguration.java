@@ -91,7 +91,7 @@ record CliConfiguration(
                 "deepseek-v4-flash",
                 URI.create("https://api.deepseek.com"),
                 URI.create("https://api.deepseek.com"),
-                "coding-auth://deepseek/default",
+                "model-auth://deepseek/default",
                 io.haifa.agent.model.api.ModelApiStyles.OPENAI_RESPONSES,
                 "deepseek-openai-responses",
                 true,
@@ -112,7 +112,7 @@ record CliConfiguration(
                 "deepseek-v4-pro",
                 URI.create("https://api.deepseek.com"),
                 URI.create("https://api.deepseek.com"),
-                "coding-auth://deepseek/default",
+                "model-auth://deepseek/default",
                 io.haifa.agent.model.api.ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
                 OpenAiCompatibleDialects.DEEPSEEK,
                 true,
@@ -133,7 +133,7 @@ record CliConfiguration(
                 "deepseek-v4-flash",
                 URI.create("https://api.deepseek.com"),
                 URI.create("https://api.deepseek.com/anthropic"),
-                "coding-auth://deepseek/default",
+                "model-auth://deepseek/default",
                 io.haifa.agent.model.api.ModelApiStyles.ANTHROPIC_MESSAGES,
                 AnthropicMessagesDialects.DEEPSEEK,
                 true,
@@ -420,8 +420,8 @@ record CliConfiguration(
             if (contextWindow < 1 || maxOutputTokens < 1 || maxOutputTokens > contextWindow) {
                 throw new IllegalArgumentException("model token limits are invalid");
             }
-            if (!credentialRef.startsWith("env://") && !credentialRef.startsWith("coding-auth://")) {
-                throw new IllegalArgumentException("model.credentialRef must use env:// or coding-auth://");
+            if (!credentialRef.startsWith("env://") && !credentialRef.startsWith("model-auth://")) {
+                throw new IllegalArgumentException("model.credentialRef must use env:// or model-auth://");
             }
             providerEndpoint = normalizeEndpoint(
                     Objects.requireNonNull(providerEndpoint, "model.providerEndpoint must not be null"));
@@ -450,7 +450,7 @@ record CliConfiguration(
             userAgent = optionalText(userAgent);
             if (dialect.equals(io.haifa.agent.model.openai.responses.OpenAiResponsesDialects.OPENAI_CODEX)) {
                 if (!style.equals(io.haifa.agent.model.api.ModelApiStyles.OPENAI_RESPONSES)
-                        || !credentialRef.startsWith("coding-auth://openai-codex/")
+                        || !credentialRef.startsWith("model-auth://openai-codex/")
                         || originator == null
                         || userAgent == null) {
                     throw new IllegalArgumentException(

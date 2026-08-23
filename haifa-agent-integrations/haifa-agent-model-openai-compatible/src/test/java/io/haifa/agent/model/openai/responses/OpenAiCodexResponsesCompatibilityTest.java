@@ -150,7 +150,7 @@ class OpenAiCodexResponsesCompatibilityTest {
                 new ApiStyleId("openai-responses"),
                 OpenAiResponsesDialects.OPENAI_CODEX,
                 endpoint,
-                new CredentialRef("coding-auth://openai-codex/default"),
+                new CredentialRef("model-auth://openai-codex/default"),
                 false,
                 Set.of(ModelCapability.TEXT_CHAT),
                 128_000,

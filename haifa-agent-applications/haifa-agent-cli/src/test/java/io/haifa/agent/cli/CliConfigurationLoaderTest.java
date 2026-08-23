@@ -33,7 +33,7 @@ class CliConfigurationLoaderTest {
                       displayName: ChatGPT Codex
                       nativeStreaming: true
                       endpoint: https://chatgpt.com/backend-api/codex
-                      credentialRef: coding-auth://openai-codex/default
+                      credentialRef: model-auth://openai-codex/default
                       originator: haifa
                       userAgent: haifa-agent/1
                       apiBindings:
@@ -54,7 +54,7 @@ class CliConfigurationLoaderTest {
         var snapshot = LocalCodingAgent.modelSnapshot(result);
 
         assertThat(result.model().dialect()).isEqualTo("openai-codex-responses");
-        assertThat(result.model().credentialRef()).isEqualTo("coding-auth://openai-codex/default");
+        assertThat(result.model().credentialRef()).isEqualTo("model-auth://openai-codex/default");
         assertThat(snapshot.endpoint()).hasToString("https://chatgpt.com/backend-api/codex");
         assertThat(snapshot.providerOptions())
                 .containsEntry("codex_originator", "haifa")
@@ -164,7 +164,7 @@ class CliConfigurationLoaderTest {
 
         assertThat(result.model().providerId()).isEqualTo("deepseek");
         assertThat(result.model().id()).isEqualTo("deepseek-responses-flash");
-        assertThat(result.model().credentialRef()).isEqualTo("coding-auth://deepseek/default");
+        assertThat(result.model().credentialRef()).isEqualTo("model-auth://deepseek/default");
         assertThat(result.availableModels())
                 .extracting(CliConfiguration.Model::id)
                 .containsExactly(

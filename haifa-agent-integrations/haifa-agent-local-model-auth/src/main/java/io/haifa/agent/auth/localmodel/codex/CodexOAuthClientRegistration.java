@@ -1,14 +1,12 @@
-package io.haifa.agent.cli;
+package io.haifa.agent.auth.localmodel.codex;
 
 import java.net.URI;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 
-/** Trusted OAuth client registration. No third-party client id is compiled into the distribution. */
-record CodexOAuthClientRegistration(
+/** Trusted public OAuth client registration. No client id is compiled into the distribution. */
+public record CodexOAuthClientRegistration(
         String reference,
         String clientId,
         URI authorizationEndpoint,
@@ -19,11 +17,11 @@ record CodexOAuthClientRegistration(
         String userAgent,
         boolean unofficialLocalCompatibility,
         boolean allowLoopbackStub) {
-    private static final URI OFFICIAL_AUTHORIZATION_ENDPOINT = URI.create("https://auth.openai.com/oauth/authorize");
-    private static final URI OFFICIAL_TOKEN_ENDPOINT = URI.create("https://auth.openai.com/oauth/token");
-    private static final URI CODEX_API_ENDPOINT = URI.create("https://chatgpt.com/backend-api/codex");
+    public static final URI OFFICIAL_AUTHORIZATION_ENDPOINT = URI.create("https://auth.openai.com/oauth/authorize");
+    public static final URI OFFICIAL_TOKEN_ENDPOINT = URI.create("https://auth.openai.com/oauth/token");
+    public static final URI CODEX_API_ENDPOINT = URI.create("https://chatgpt.com/backend-api/codex");
 
-    CodexOAuthClientRegistration {
+    public CodexOAuthClientRegistration {
         reference = text(reference, "reference");
         clientId = text(clientId, "clientId");
         authorizationEndpoint = cleanEndpoint(authorizationEndpoint, "authorizationEndpoint");
@@ -47,58 +45,34 @@ record CodexOAuthClientRegistration(
         boolean loopbackEndpoints =
                 isLoopback(authorizationEndpoint) && isLoopback(tokenEndpoint) && isLoopback(apiEndpoint);
         if (allowLoopbackStub) {
-            if (!loopbackEndpoints) {
-                throw new IllegalArgumentException("Codex OAuth stub endpoints must all use loopback");
-            }
-        } else {
-            if (!OFFICIAL_AUTHORIZATION_ENDPOINT.equals(authorizationEndpoint)
-                    || !OFFICIAL_TOKEN_ENDPOINT.equals(tokenEndpoint)
-                    || !CODEX_API_ENDPOINT.equals(apiEndpoint)) {
-                throw new IllegalArgumentException("Codex OAuth endpoints are not approved");
-            }
+            if (!loopbackEndpoints) throw new IllegalArgumentException("Codex OAuth stub endpoints must use loopback");
+        } else if (!OFFICIAL_AUTHORIZATION_ENDPOINT.equals(authorizationEndpoint)
+                || !OFFICIAL_TOKEN_ENDPOINT.equals(tokenEndpoint)
+                || !CODEX_API_ENDPOINT.equals(apiEndpoint)) {
+            throw new IllegalArgumentException("Codex OAuth endpoints are not approved");
         }
         if (!isLoopback(redirectUri)
                 || !"http".equalsIgnoreCase(redirectUri.getScheme())
+                || redirectUri.getPort() < 1
+                || redirectUri.getPort() > 65_535
                 || !"/auth/callback".equals(normalizedPath(redirectUri))) {
             throw new IllegalArgumentException("Codex OAuth redirect must be an exact loopback callback URI");
         }
     }
 
-    static Optional<CodexOAuthClientRegistration> localCompatibility(Map<String, String> environment) {
-        Objects.requireNonNull(environment, "environment must not be null");
-        if (!"true".equalsIgnoreCase(trim(environment.get("HAIFA_CODEX_LOCAL_COMPAT_TEST")))) {
-            return Optional.empty();
-        }
-        String clientId = required(environment, "HAIFA_CODEX_OAUTH_CLIENT_ID");
-        String originator = required(environment, "HAIFA_CODEX_ORIGINATOR");
-        String redirect = environment.getOrDefault("HAIFA_CODEX_REDIRECT_URI", "http://localhost:1455/auth/callback");
-        String userAgent = environment.getOrDefault("HAIFA_CODEX_USER_AGENT", "haifa-agent-local-compat/1");
-        return Optional.of(new CodexOAuthClientRegistration(
-                "openai-codex-local-compat",
-                clientId,
-                OFFICIAL_AUTHORIZATION_ENDPOINT,
-                OFFICIAL_TOKEN_ENDPOINT,
-                URI.create(redirect),
-                CODEX_API_ENDPOINT,
-                originator,
-                userAgent,
-                true,
-                false));
-    }
-
-    URI deviceUserCodeEndpoint() {
+    public URI deviceUserCodeEndpoint() {
         return endpointAtAuthorizationOrigin("/api/accounts/deviceauth/usercode");
     }
 
-    URI deviceTokenEndpoint() {
+    public URI deviceTokenEndpoint() {
         return endpointAtAuthorizationOrigin("/api/accounts/deviceauth/token");
     }
 
-    URI deviceVerificationUri() {
+    public URI deviceVerificationUri() {
         return endpointAtAuthorizationOrigin("/codex/device");
     }
 
-    URI deviceRedirectUri() {
+    public URI deviceRedirectUri() {
         return endpointAtAuthorizationOrigin("/deviceauth/callback");
     }
 
@@ -145,18 +119,6 @@ record CodexOAuthClientRegistration(
         if (path == null || path.isBlank() || "/".equals(path)) return "";
         while (path.endsWith("/")) path = path.substring(0, path.length() - 1);
         return path;
-    }
-
-    private static String required(Map<String, String> environment, String name) {
-        String value = trim(environment.get(name));
-        if (value == null || value.isEmpty()) {
-            throw new IllegalArgumentException(name + " is required for local compatibility testing");
-        }
-        return value;
-    }
-
-    private static String trim(String value) {
-        return value == null ? null : value.trim();
     }
 
     private static String text(String value, String field) {
