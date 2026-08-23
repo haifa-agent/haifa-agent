@@ -154,6 +154,7 @@ class SqliteOperationalAdaptersTest {
         journal.recordReconciliation(
                 run.id(), uncertainKey, ToolReconciliationStatus.STILL_UNKNOWN, "LOCAL_EVIDENCE_MISSING");
         assertThat(journal.hasUncertain(run.id())).isTrue();
+        assertThat(journal.uncertainResult(run.id(), uncertainKey)).isEmpty();
         assertThat(journal.dispatchEvidence(run.id(), uncertainKey)).contains(dispatchEvidence);
         assertThat(journal.reconciliation(run.id(), uncertainKey)).hasValueSatisfying(reconciliation -> {
             assertThat(reconciliation.status()).isEqualTo(ToolReconciliationStatus.STILL_UNKNOWN);

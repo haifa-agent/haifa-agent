@@ -391,6 +391,7 @@ public final class ExecutionToolProvider implements ToolProvider {
                     case SUCCEEDED -> parsed.mode.equals("SCRIPT") ? "Script succeeded" : "Command succeeded";
                     case FAILED -> parsed.mode.equals("SCRIPT") ? "Script failed" : "Command failed";
                     case OUTPUT_LIMIT_EXCEEDED -> "Execution stopped after reaching its output budget";
+                    case PROCESS_LIMIT_EXCEEDED -> "Execution stopped after reaching its process-count budget";
                     case TIMED_OUT -> "Execution timed out";
                     case CANCELLED -> "Execution was cancelled";
                     case UNKNOWN -> "Execution outcome is unknown";

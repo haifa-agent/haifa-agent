@@ -24,6 +24,7 @@ import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
+import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
@@ -459,11 +460,11 @@ public final class ProjectExecutionToolOperations {
                 .isPresent()) {
             return ToolReconciliation.stillUnknown("EXECUTION_ID_EVIDENCE_MISMATCH");
         }
-        String semanticOutcome = String.valueOf(data.getOrDefault("semanticOutcome", "OUTCOME_UNKNOWN"));
-        if (!semanticOutcome.equals("OUTCOME_UNKNOWN")) {
+        String status = String.valueOf(data.getOrDefault("status", "UNKNOWN"));
+        if (!status.equals("UNKNOWN")) {
             return ToolReconciliation.resolved(
-                    reconciledResult(observed, "PROCESS_TERMINAL_RESULT_CONFIRMED"),
-                    "PROCESS_TERMINAL_RESULT_CONFIRMED");
+                    reconciledResult(observed, "EXECUTION_TERMINAL_AND_WORKSPACE_OBSERVATION_CONFIRMED"),
+                    "EXECUTION_TERMINAL_AND_WORKSPACE_OBSERVATION_CONFIRMED");
         }
         if (data.get("fileChangeSetId") instanceof String changeSetId && !changeSetId.isBlank()) {
             return ToolReconciliation.resolved(
@@ -687,12 +688,13 @@ public final class ProjectExecutionToolOperations {
         data.put("semanticReasonCode", semantic.reasonCode());
         data.put("semanticInterpreterVersion", CommandSemanticOutcomeInterpreter.VERSION);
         data.put("commandOutcomeCode", commandOutcomeCode(semantic.outcome()));
-        if (semantic.outcome() == io.haifa.agent.execution.core.command.CommandSemanticOutcome.OUTCOME_UNKNOWN) {
+        if (result.status() == ExecutionStatus.UNKNOWN) {
             data.put("runtimeOutcome", "OUTCOME_UNKNOWN");
         }
         data.put("output", output);
         data.put("truncated", truncated);
         data.put("durationMillis", result.resourceUsage().wallTime().toMillis());
+        data.put("observedProcessCount", result.resourceUsage().observedProcessCount());
         data.put("operationFamily", operationFamily);
         data.put("declaredOperationFamily", operationFamily);
         data.put("effectiveOperationFamily", effectiveOperationFamily(commandClassification));
@@ -729,11 +731,16 @@ public final class ProjectExecutionToolOperations {
         result.optionalFileChangeSetId().ifPresent(value -> {
             data.put("fileChangeSetId", value.value());
             if (changeReviews != null && reviewToolCallRef != null) {
-                changeReviews.create(runRef, List.of(value.value())).ifPresent(review -> {
-                    data.put("changeReviewArtifact", review.toStructuredData());
-                    data.put("changeReviewArtifactRef", review.artifactRef());
-                    data.put("artifactRef", review.artifactRef());
-                });
+                try {
+                    changeReviews.create(runRef, List.of(value.value())).ifPresent(review -> {
+                        data.put("changeReviewArtifact", review.toStructuredData());
+                        data.put("changeReviewArtifactRef", review.artifactRef());
+                        data.put("artifactRef", review.artifactRef());
+                    });
+                } catch (RuntimeException ignored) {
+                    data.put("changeReviewStatus", "UNAVAILABLE");
+                    data.put("changeReviewReasonCode", "CHANGE_REVIEW_PROJECTION_FAILED");
+                }
             }
         });
         CodingValidationAttemptFactory.create(
@@ -809,6 +816,7 @@ public final class ProjectExecutionToolOperations {
                         switch (result.status()) {
                             case OUTPUT_LIMIT_EXCEEDED ->
                                 "Command stopped after reaching its output budget; outcome is unknown";
+                            case PROCESS_LIMIT_EXCEEDED -> "Command stopped after reaching its process-count budget";
                             case TIMED_OUT -> "Command timed out; outcome is unknown";
                             case CANCELLED -> "Command was cancelled; outcome is unknown";
                             default -> "Command outcome is unknown";

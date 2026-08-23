@@ -63,6 +63,7 @@ import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.retry.BackoffStrategy;
+import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
@@ -592,7 +593,7 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void terminatesAfterTwoEmptyStreamingResponsesWithoutDispatchingTools() {
+    void terminatesAfterFourEmptyStreamingResponsesWithoutDispatchingTools() {
         AtomicInteger calls = new AtomicInteger();
         List<AgentChatRequest> requests = new ArrayList<>();
         AgentChatModel model = new AgentChatModel() {
@@ -609,15 +610,18 @@ class RuntimeCoreTest {
                 return emptyResponse("empty-streaming-" + calls.get());
             }
         };
-        Fixture fixture = fixture(model);
+        Fixture fixture = fixture(
+                model,
+                builder -> builder.modelRetry(
+                        new ModelRetryPolicy(new RetryPolicy(4, ignored -> true, BackoffStrategy.none()))));
 
         var accepted = fixture.runtime.start(request("empty-streaming-terminal"));
         fixture.scheduler.runAll();
 
-        assertThat(calls).hasValue(2);
-        assertThat(requests).extracting(AgentChatRequest::attempt).containsExactly(1, 2);
+        assertThat(calls).hasValue(4);
+        assertThat(requests).extracting(AgentChatRequest::attempt).containsExactly(1, 2, 3, 4);
         assertThat(requests.getFirst().requestId()).isEqualTo(requests.getLast().requestId());
-        assertThat(requests.getFirst().callId()).isNotEqualTo(requests.getLast().callId());
+        assertThat(requests).extracting(AgentChatRequest::callId).doesNotHaveDuplicates();
         var run = fixture.runtime.find(accepted.runId()).orElseThrow();
         assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
         assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_RESPONSE_INVALID);
@@ -625,16 +629,66 @@ class RuntimeCoreTest {
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .filteredOn(event -> event.type().equals("model.empty-response"))
                 .extracting(event -> event.data().get("attempt"))
-                .containsExactly(1, 2);
+                .containsExactly(1, 2, 3, 4);
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .filteredOn(event -> event.type().equals("model.attempt.exhausted"))
                 .singleElement()
                 .satisfies(event -> assertThat(event.data())
-                        .containsEntry("attempt", 2)
+                        .containsEntry("attempt", 4)
                         .containsEntry("category", "EMPTY_RESPONSE")
                         .containsEntry(
                                 "modelRequestId",
                                 requests.getFirst().requestId().value())
+                        .doesNotContainKeys("response", "reasoning", "prompt"));
+    }
+
+    @Test
+    void retriesMalformedResponseBeforeOutputOnTheSameFrozenRequest() {
+        AtomicInteger calls = new AtomicInteger();
+        List<AgentChatRequest> requests = new ArrayList<>();
+        AgentChatModel model = request -> {
+            requests.add(request);
+            if (calls.incrementAndGet() == 1) {
+                throw new ModelInvocationException(
+                        ModelErrorCategory.MALFORMED_RESPONSE,
+                        true,
+                        200,
+                        "malformed_response",
+                        request.callId(),
+                        "safe malformed response",
+                        null,
+                        null,
+                        false);
+            }
+            return response(finalDecision("recovered from malformed response"));
+        };
+        Fixture fixture = fixture(model);
+
+        var accepted = fixture.runtime.start(request("malformed-response-retry"));
+        fixture.scheduler.runAll();
+
+        assertThat(calls).hasValue(2);
+        assertThat(requests).extracting(AgentChatRequest::attempt).containsExactly(1, 2);
+        assertThat(requests.getFirst().requestId()).isEqualTo(requests.getLast().requestId());
+        assertThat(requests.getFirst().callId()).isNotEqualTo(requests.getLast().callId());
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(run.usage().modelCalls()).isEqualTo(2);
+        });
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
+                .containsSubsequence(
+                        "model.call.failed",
+                        "model.attempt.retry-scheduled",
+                        "model.attempt.scheduled",
+                        "model.call.succeeded");
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.attempt.retry-scheduled"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("category", "MALFORMED_RESPONSE")
+                        .containsEntry("retryable", true)
+                        .containsEntry("outputObserved", false)
                         .doesNotContainKeys("response", "reasoning", "prompt"));
     }
 

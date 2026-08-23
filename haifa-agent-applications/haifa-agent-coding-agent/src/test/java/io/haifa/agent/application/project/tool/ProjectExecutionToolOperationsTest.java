@@ -64,6 +64,7 @@ import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
 import io.haifa.agent.tool.api.ToolReconciliationRequest;
 import io.haifa.agent.tool.api.ToolReconciliationStatus;
+import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -151,12 +152,20 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void ignoresRunnerCountsAndUsesExactFrozenCandidateScope() {
+    void validatesExactFrozenCandidateScopeAcrossDirectAndReconciledResults() {
+        AtomicReference<ExecutionResult> completed = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 observer.onOutput(chunk("1 passed, 7 deselected in 0.25s\n"));
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                ExecutionResult result = result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                completed.set(result);
+                return result;
+            }
+
+            @Override
+            public Optional<ExecutionResult> findByIdempotencyKey(String idempotencyKey) {
+                return Optional.ofNullable(completed.get());
             }
         };
 
@@ -171,8 +180,16 @@ class ProjectExecutionToolOperationsTest {
                 CodingValidationScope.SELECTED);
         CodingSessionVerificationConfiguration configuration = CodingSessionVerificationConfiguration.freeze(
                 new CodingVerificationProfile(List.of(candidate), List.of()));
-        ToolResult result = operations(broker, 4096, 100, null, ignored -> configuration)
-                .execute(invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false), access());
+        ToolInvocationRequest invocation =
+                invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false);
+        var operations = operations(broker, 4096, 100, null, ignored -> configuration);
+        ToolResult result = operations.execute(invocation, access());
+        String expectedValidationAttemptRef = io.haifa.agent.policy.api.PolicyDigest.sha256Fields(List.of(
+                "coding-validation-evidence/2",
+                "PASSED",
+                configuration.digest(),
+                configuration.candidateDigest(candidate),
+                "TRUSTED_SELECTED_SCOPE"));
 
         assertThat(result.structuredData().get("validationEvidence"))
                 .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
@@ -182,15 +199,42 @@ class ProjectExecutionToolOperationsTest {
                         .containsEntry("verificationSource", "USER_EXPLICIT")
                         .containsEntry("claimCode", "TRUSTED_SELECTED_SCOPE")
                         .doesNotContainKeys("discoveredTestCount", "selectedTestCount", "ignoredTestCount"));
-        assertThat(result.structuredData())
-                .containsEntry(
-                        "validationAttemptRef",
-                        io.haifa.agent.policy.api.PolicyDigest.sha256Fields(List.of(
-                                "coding-validation-evidence/2",
-                                "PASSED",
-                                configuration.digest(),
-                                configuration.candidateDigest(candidate),
-                                "TRUSTED_SELECTED_SCOPE")));
+        assertThat(result.structuredData()).containsEntry("validationAttemptRef", expectedValidationAttemptRef);
+        var validator = new JsonSchema202012Validator();
+        assertThat(validator
+                        .validate(invocation.binding().definition().outputSchema(), result.structuredData())
+                        .valid())
+                .isTrue();
+
+        var reconciled = operations.reconcile(
+                new ToolReconciliationRequest(
+                        invocation.binding(),
+                        invocation.toolCallId(),
+                        invocation.runId(),
+                        invocation.tenant(),
+                        invocation.principal(),
+                        invocation.arguments(),
+                        invocation.idempotencyKey().orElseThrow(),
+                        Optional.of(new ToolDispatchEvidence(
+                                completed.get().id().value(),
+                                OptionalLong.empty(),
+                                PolicyDigest.sha256Fields(
+                                        List.of("execution-working-directory-v1", WORKSPACE_ID.value(), ".")))),
+                        Optional.empty()),
+                access());
+
+        assertThat(reconciled.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
+        assertThat(reconciled.result()).hasValueSatisfying(reconciledResult -> {
+            assertThat(reconciledResult.structuredData())
+                    .containsEntry("reconcileStatus", "RESOLVED")
+                    .containsEntry("replayAllowed", false)
+                    .containsEntry("validationAttemptRef", expectedValidationAttemptRef);
+            assertThat(validator
+                            .validate(
+                                    invocation.binding().definition().outputSchema(), reconciledResult.structuredData())
+                            .valid())
+                    .isTrue();
+        });
     }
 
     @Test
@@ -217,6 +261,99 @@ class ProjectExecutionToolOperationsTest {
                         new FileVersion(FileType.FILE, 12, "sha256:" + "c".repeat(64)))),
                 true,
                 NOW.plusSeconds(1)));
+        AtomicReference<ExecutionResult> completed = new AtomicReference<>();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                ExecutionResult result = result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                completed.set(result);
+                return result;
+            }
+
+            @Override
+            public Optional<ExecutionResult> findByIdempotencyKey(String idempotencyKey) {
+                return Optional.ofNullable(completed.get());
+            }
+        };
+
+        ToolInvocationRequest invocation =
+                invocation(Map.of("command", "generate result", "operationFamily", "MUTATE"), () -> false);
+        var operations = operations(
+                broker,
+                4096,
+                100,
+                new CodingChangeReviewArtifactFactory(
+                        changeSets, (set, change) -> CodingChangeContentKind.BINARY, 1024));
+        ToolResult result = operations.execute(invocation, access());
+
+        assertThat(result.structuredData()).containsKeys("changeReviewArtifactRef", "artifactRef");
+        var validator = new JsonSchema202012Validator();
+        assertThat(validator
+                        .validate(invocation.binding().definition().outputSchema(), result.structuredData())
+                        .valid())
+                .isTrue();
+        assertThat(result.structuredData().get("changeReviewArtifact")).isInstanceOfSatisfying(Map.class, review -> {
+            assertThat(review).containsEntry("complete", true).containsEntry("totalFileCount", 1);
+            assertThat(review.get("counts")).isInstanceOfSatisfying(Map.class, counts -> assertThat(counts)
+                    .containsEntry("created", 1)
+                    .containsEntry("binary", 1));
+        });
+
+        var reconciled = operations.reconcile(
+                new ToolReconciliationRequest(
+                        invocation.binding(),
+                        invocation.toolCallId(),
+                        invocation.runId(),
+                        invocation.tenant(),
+                        invocation.principal(),
+                        invocation.arguments(),
+                        invocation.idempotencyKey().orElseThrow(),
+                        Optional.of(new ToolDispatchEvidence(
+                                completed.get().id().value(),
+                                OptionalLong.of(991),
+                                PolicyDigest.sha256Fields(
+                                        List.of("execution-working-directory-v1", WORKSPACE_ID.value(), ".")))),
+                        Optional.of(result)),
+                access());
+
+        assertThat(reconciled.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
+        assertThat(reconciled.result()).hasValueSatisfying(reconciledResult -> {
+            assertThat(reconciledResult.structuredData())
+                    .containsEntry("reconcileStatus", "RESOLVED")
+                    .containsEntry("replayAllowed", false)
+                    .containsKeys("changeReviewArtifactRef", "artifactRef");
+            assertThat(validator
+                            .validate(
+                                    invocation.binding().definition().outputSchema(), reconciledResult.structuredData())
+                            .valid())
+                    .isTrue();
+        });
+    }
+
+    @Test
+    void preservesAuthoritativeExecutionWhenDerivedChangeReviewProjectionFails() {
+        var changeSets = new InMemoryFileChangeSetStore();
+        FileChangeSet pending = FileChangeSet.pending(
+                new FileChangeSetId("changes-1"),
+                new ProjectId("project-1"),
+                WORKSPACE_ID,
+                "execution:execution-1",
+                "run-1",
+                "execution-1",
+                new WorkspaceRevision(1, "sha256:" + "a".repeat(64)),
+                new PrincipalRef("operator", "user"),
+                "policy-1",
+                NOW);
+        changeSets.create(pending.applied(
+                new WorkspaceRevision(2, "sha256:" + "b".repeat(64)),
+                List.of(new FileChange(
+                        FileChangeType.CREATE,
+                        ProjectPath.of("target/generated.bin"),
+                        null,
+                        null,
+                        new FileVersion(FileType.FILE, 12, "sha256:" + "c".repeat(64)))),
+                true,
+                NOW.plusSeconds(1)));
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
@@ -229,22 +366,24 @@ class ProjectExecutionToolOperationsTest {
                         4096,
                         100,
                         new CodingChangeReviewArtifactFactory(
-                                changeSets, (set, change) -> CodingChangeContentKind.BINARY, 1024))
-                .execute(
-                        invocation(Map.of("command", "generate result", "operationFamily", "MUTATE"), () -> false),
-                        access());
+                                changeSets,
+                                (set, change) -> {
+                                    throw new IllegalStateException("simulated derived projection failure");
+                                },
+                                1024))
+                .execute(invocation(Map.of("command", "mvn test", "operationFamily", "TEST"), () -> false), access());
 
-        assertThat(result.structuredData()).containsKeys("changeReviewArtifactRef", "artifactRef");
-        assertThat(result.structuredData().get("changeReviewArtifact")).isInstanceOfSatisfying(Map.class, review -> {
-            assertThat(review).containsEntry("complete", true).containsEntry("totalFileCount", 1);
-            assertThat(review.get("counts")).isInstanceOfSatisfying(Map.class, counts -> assertThat(counts)
-                    .containsEntry("created", 1)
-                    .containsEntry("binary", 1));
-        });
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("status", "SUCCEEDED")
+                .containsEntry("fileChangeSetId", "changes-1")
+                .containsEntry("changeReviewStatus", "UNAVAILABLE")
+                .containsEntry("changeReviewReasonCode", "CHANGE_REVIEW_PROJECTION_FAILED")
+                .doesNotContainKeys("runtimeOutcome", "changeReviewArtifact", "changeReviewArtifactRef");
     }
 
     @Test
-    void reconcilesTimedOutExecutionFromTheCompletedProcessAndObservedChangeSetWithoutReplaying() {
+    void treatsTimedOutExecutionWithCompletedWorkspaceObservationAsTerminalWithoutReplaying() {
         AtomicInteger executions = new AtomicInteger();
         AtomicReference<ExecutionResult> completed = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {
@@ -252,7 +391,7 @@ class ProjectExecutionToolOperationsTest {
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 executions.incrementAndGet();
                 observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(991));
-                ExecutionResult result = result(request.id(), ExecutionStatus.TIMED_OUT, null);
+                ExecutionResult result = resultWithoutChangeSet(request.id(), ExecutionStatus.TIMED_OUT, null);
                 completed.set(result);
                 return result;
             }
@@ -285,17 +424,42 @@ class ProjectExecutionToolOperationsTest {
                 access());
 
         assertThat(executions).hasValue(1);
-        assertThat(observed.structuredData()).containsEntry("runtimeOutcome", "OUTCOME_UNKNOWN");
+        assertThat(observed.structuredData()).doesNotContainKey("runtimeOutcome");
         assertThat(reconciled.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
-        assertThat(reconciled.reasonCode()).isEqualTo("WORKSPACE_CHANGE_SET_CONFIRMED");
+        assertThat(reconciled.reasonCode()).isEqualTo("EXECUTION_TERMINAL_AND_WORKSPACE_OBSERVATION_CONFIRMED");
         assertThat(reconciled.result()).hasValueSatisfying(result -> {
             assertThat(result.successful()).isFalse();
             assertThat(result.structuredData())
                     .containsEntry("status", "TIMED_OUT")
-                    .containsEntry("fileChangeSetId", "changes-1")
                     .containsEntry("reconcileStatus", "RESOLVED")
                     .containsEntry("replayAllowed", false);
         });
+    }
+
+    @Test
+    void exposesConfirmedProcessLimitAsAStableResourceFailure() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                return resultWithFailure(
+                        request.id(),
+                        ExecutionStatus.PROCESS_LIMIT_EXCEEDED,
+                        new ExecutionFailure("PROCESS_LIMIT_EXCEEDED", "process count exceeded its budget"));
+            }
+        };
+
+        ToolResult result = operations(broker, 4096, 100)
+                .execute(invocation(Map.of("command", "mvn test", "operationFamily", "TEST"), () -> false), access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("status", "PROCESS_LIMIT_EXCEEDED")
+                .containsEntry("semanticOutcome", "COMMAND_FAILED")
+                .containsEntry("semanticReasonCode", "PROCESS_LIMIT_EXCEEDED")
+                .containsEntry("failureCategory", "PROCESS_LIMIT")
+                .containsEntry("stableFailureCode", "PROCESS_LIMIT_EXCEEDED")
+                .containsEntry("observedProcessCount", 1)
+                .doesNotContainKey("runtimeOutcome");
     }
 
     @Test
@@ -1311,6 +1475,40 @@ class ProjectExecutionToolOperationsTest {
                         ? new ExecutionFailure("PROCESS_EXIT_NONZERO", "process exited with a non-zero code")
                         : null,
                 false);
+    }
+
+    private static ExecutionResult resultWithoutChangeSet(ExecutionId id, ExecutionStatus status, Integer exitCode) {
+        var base = result(id, status, exitCode);
+        return new ExecutionResult(
+                base.id(),
+                base.status(),
+                base.exitCode(),
+                base.startedAt(),
+                base.endedAt(),
+                base.stdout(),
+                base.stderr(),
+                null,
+                base.sandboxSessionRef(),
+                base.resourceUsage(),
+                base.failure(),
+                base.replayed());
+    }
+
+    private static ExecutionResult resultWithFailure(ExecutionId id, ExecutionStatus status, ExecutionFailure failure) {
+        var base = result(id, status, null);
+        return new ExecutionResult(
+                base.id(),
+                base.status(),
+                base.exitCode(),
+                base.startedAt(),
+                base.endedAt(),
+                base.stdout(),
+                base.stderr(),
+                base.fileChangeSetId(),
+                base.sandboxSessionRef(),
+                base.resourceUsage(),
+                failure,
+                base.replayed());
     }
 
     private static ToolProvider provider() {

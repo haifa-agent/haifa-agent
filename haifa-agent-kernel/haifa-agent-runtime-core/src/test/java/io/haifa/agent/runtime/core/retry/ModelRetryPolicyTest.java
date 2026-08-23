@@ -11,9 +11,37 @@ import org.junit.jupiter.api.Test;
 
 class ModelRetryPolicyTest {
     @Test
-    void defaultsToTwoAttemptsButRespectsAnExplicitSingleAttemptPolicy() {
-        assertThat(ModelRetryPolicy.defaults().policy().maxAttempts()).isEqualTo(2);
-        assertThat(ModelRetryPolicy.none().policy().maxAttempts()).isEqualTo(1);
+    void defaultsToFourAttemptsOnlyForEmptyResponses() {
+        ModelRetryPolicy defaults = ModelRetryPolicy.defaults();
+        ModelInvocationException empty = failure(ModelErrorCategory.EMPTY_RESPONSE, true, false, null);
+        ModelInvocationException rateLimited = failure(ModelErrorCategory.RATE_LIMITED, true, false, null);
+
+        assertThat(defaults.policy().maxAttempts()).isEqualTo(4);
+        assertThat(defaults.maxAttempts(empty)).isEqualTo(4);
+        assertThat(defaults.maxAttempts(rateLimited)).isEqualTo(2);
+        assertThat(ModelRetryPolicy.none().maxAttempts(empty)).isEqualTo(1);
+    }
+
+    @Test
+    void usesTheExplicitEmptyResponseRetrySchedule() {
+        ModelRetryPolicy defaults = ModelRetryPolicy.defaults();
+        ModelInvocationException empty = failure(ModelErrorCategory.EMPTY_RESPONSE, true, false, null);
+
+        assertThat(defaults.delay(1, empty)).isEqualTo(Duration.ofSeconds(1));
+        assertThat(defaults.delay(2, empty)).isEqualTo(Duration.ofSeconds(3));
+        assertThat(defaults.delay(3, empty)).isEqualTo(Duration.ofSeconds(6));
+    }
+
+    @Test
+    void customPoliciesRetainTheirConfiguredAttemptLimitAndBackoff() {
+        ModelRetryPolicy custom = new ModelRetryPolicy(
+                new RetryPolicy(3, ignored -> true, ignored -> Duration.ofMillis(25)), Duration.ofSeconds(1));
+        ModelInvocationException empty = failure(ModelErrorCategory.EMPTY_RESPONSE, true, false, null);
+
+        assertThat(custom.maxAttempts(empty)).isEqualTo(3);
+        assertThat(custom.maxAttempts(failure(ModelErrorCategory.TIMEOUT, true, false, null)))
+                .isEqualTo(3);
+        assertThat(custom.delay(1, empty)).isEqualTo(Duration.ofMillis(25));
     }
 
     @Test

@@ -240,6 +240,7 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
                     unitOfWork.mapper(RuntimeStoreMapper.class).findToolJournal(runId.value(), key.value());
             if (row == null || !expectedState.name().equals(row.state())) return Optional.empty();
             if (row.resultPayload() == null) {
+                if (expectedState == ToolJournalState.OUTCOME_UNKNOWN) return Optional.empty();
                 throw new IllegalStateException("tool journal result payload is missing");
             }
             return Optional.of(decodeResult(row));

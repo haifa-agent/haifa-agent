@@ -26,6 +26,13 @@ final class CodingExecutionFailureClassifier {
                     "OUTPUT",
                     "Use a machine-readable command with narrower fields or a smaller result limit.");
         }
+        if (result.status() == ExecutionStatus.PROCESS_LIMIT_EXCEEDED) {
+            return new Classification(
+                    "PROCESS_LIMIT",
+                    "PROCESS_LIMIT_EXCEEDED",
+                    "PROCESS",
+                    "Use a narrower test target or reduce command concurrency before retrying.");
+        }
         if (result.status() == ExecutionStatus.UNKNOWN) {
             return new Classification(
                     "OUTCOME_UNKNOWN",

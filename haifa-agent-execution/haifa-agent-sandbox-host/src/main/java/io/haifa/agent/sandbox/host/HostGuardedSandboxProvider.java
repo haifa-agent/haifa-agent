@@ -312,8 +312,8 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     treeTerminated = terminateTree(process);
                     status = outcome == WaitOutcome.OUTPUT_LIMIT_EXCEEDED && treeTerminated
                             ? SandboxProcessStatus.OUTPUT_LIMIT_EXCEEDED
-                            : outcome == WaitOutcome.PROCESS_LIMIT_EXCEEDED
-                                    ? SandboxProcessStatus.UNKNOWN
+                            : outcome == WaitOutcome.PROCESS_LIMIT_EXCEEDED && treeTerminated
+                                    ? SandboxProcessStatus.PROCESS_LIMIT_EXCEEDED
                                     : treeTerminated ? SandboxProcessStatus.TIMED_OUT : SandboxProcessStatus.UNKNOWN;
                 }
                 BoundedBytes out = stdout.get(5, TimeUnit.SECONDS);

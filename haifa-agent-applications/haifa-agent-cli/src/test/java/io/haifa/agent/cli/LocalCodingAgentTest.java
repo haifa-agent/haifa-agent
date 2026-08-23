@@ -546,6 +546,81 @@ class LocalCodingAgentTest {
     }
 
     @Test
+    void testExecutionIgnoresGradleCacheChangesAndCanComplete() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        Files.writeString(workspace.resolve("build.gradle"), "");
+        String command;
+        if (isWindows()) {
+            Files.writeString(
+                    workspace.resolve("gradlew.bat"),
+                    "@echo off\r\n"
+                            + "if not exist .gradle mkdir .gradle\r\n"
+                            + "> .gradle\\validation.lock echo cache\r\n"
+                            + "exit /b 0\r\n");
+            command = ".\\gradlew.bat test";
+        } else {
+            Path wrapper = workspace.resolve("gradlew");
+            Files.writeString(
+                    wrapper,
+                    "#!/bin/sh\n" + "set -eu\n" + "mkdir -p .gradle\n" + "printf cache > .gradle/validation.lock\n");
+            assertThat(wrapper.toFile().setExecutable(true)).isTrue();
+            command = "./gradlew test";
+        }
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            if (calls.incrementAndGet() == 1) {
+                return toolResponse(
+                        "gradle-cache-validation",
+                        "execution_run",
+                        Map.of(
+                                "command",
+                                command,
+                                "workdir",
+                                ".",
+                                "timeoutMillis",
+                                5000,
+                                "description",
+                                "Run validation that only updates Gradle cache state",
+                                "operationFamily",
+                                "TEST"));
+            }
+            assertThat(request.messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && "SUCCEEDED".equals(message.toolResultData().get("status"))
+                            && message.toolResultData().containsKey("validationEvidence")
+                            && message.toolResultData().containsKey("validationAttemptRef")
+                            && !message.toolResultData().containsKey("fileChangeSetId"));
+            return answer("gradle-cache-validation-complete", "validation completed");
+        };
+        CliConfiguration defaults = CliConfiguration.defaults();
+        var automatic = new CliConfiguration(
+                defaults.model(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                hostExecution(defaults.execution()),
+                ApprovalMode.AUTO,
+                Duration.ofSeconds(15),
+                defaults.maxIterations(),
+                defaults.maxToolCalls());
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                automatic,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            var accepted = agent.start("Run the validation and report its result.");
+            var completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(20));
+
+            assertThat(completed.status())
+                    .withFailMessage("run failed: %s", completed.error())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+        }
+        assertThat(Files.readString(workspace.resolve(".gradle/validation.lock"))
+                        .trim())
+                .isEqualTo("cache");
+        assertThat(calls).hasValue(2);
+    }
+
+    @Test
     void stubModelCompletesChangeAfterDeliveryEvidenceExists() throws Exception {
         Path successfulWorkspace = Files.createDirectory(workspace.resolve("delivery-success"));
         AtomicInteger successfulCalls = new AtomicInteger();

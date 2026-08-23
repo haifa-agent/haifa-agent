@@ -27,6 +27,11 @@ class CommandSemanticOutcomeInterpreterTest {
         assertThat(interpret("mvn test", ExecutionStatus.FAILED, 1)).isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
         assertThat(interpret("git push", ExecutionStatus.TIMED_OUT, null))
                 .isEqualTo(CommandSemanticOutcome.OUTCOME_UNKNOWN);
+        assertThat(interpret("mvn test", ExecutionStatus.PROCESS_LIMIT_EXCEEDED, null))
+                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
+        assertThat(CommandSemanticOutcomeInterpreter.interpret("mvn test", ExecutionStatus.PROCESS_LIMIT_EXCEEDED, null)
+                        .reasonCode())
+                .isEqualTo("PROCESS_LIMIT_EXCEEDED");
     }
 
     private static CommandSemanticOutcome interpret(String command, ExecutionStatus status, Integer exitCode) {

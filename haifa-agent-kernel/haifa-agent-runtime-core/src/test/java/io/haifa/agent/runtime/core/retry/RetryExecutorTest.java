@@ -94,6 +94,33 @@ class RetryExecutorTest {
     }
 
     @Test
+    void appliesTheFailureSpecificAttemptLimitWithoutChangingThePolicyCeiling() {
+        AtomicInteger calls = new AtomicInteger();
+        List<Integer> exhausted = new ArrayList<>();
+        RetryExecutor executor = new RetryExecutor(ignored -> {});
+
+        assertThatThrownBy(() -> executor.execute(
+                        attempt -> {
+                            calls.incrementAndGet();
+                            throw new IllegalStateException("temporary");
+                        },
+                        new RetryPolicy(4, ignored -> true, BackoffStrategy.none()),
+                        (attempt, ignored) -> Duration.ZERO,
+                        () -> {},
+                        new RetryListener() {
+                            @Override
+                            public void exhausted(int finalAttempt, RuntimeException failure) {
+                                exhausted.add(finalAttempt);
+                            }
+                        },
+                        ignored -> 2))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(calls).hasValue(2);
+        assertThat(exhausted).containsExactly(2);
+    }
+
+    @Test
     void nonRetryableFailureDoesNotMasqueradeAsRetryExhaustion() {
         List<Integer> exhausted = new ArrayList<>();
         RetryExecutor executor = new RetryExecutor(ignored -> {});

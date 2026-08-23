@@ -21,11 +21,13 @@ bounded provider-neutral `ModelLifecycle` and `ModelAttemptLifecycle` fields; mo
 provider payloads remain outside the durable client feed.
 
 An HTTP-success response with no content, Tool Call, or structured output is normalized as retryable
-`EMPTY_RESPONSE/empty_response`. Runtime defaults to two physical attempts with bounded exponential backoff and jitter,
-keeps one logical request identity and frozen binding, honors a bounded `Retry-After`, counts every physical call
-against the Run budget, and checks cancellation/deadline throughout backoff. Authentication, invalid request,
-context-too-long and partial-output failures are never replayed by the generic retry policy. Each empty occurrence adds
-only a safe `model.empty-response` event; exhaustion terminates through the existing stable model failure path.
+`EMPTY_RESPONSE/empty_response`. Runtime defaults to the initial physical attempt plus at most three retries after 1,
+3, and 6 seconds for this category. Other retryable model failures retain the default two-physical-attempt limit and
+bounded exponential backoff with jitter. Runtime keeps one logical request identity and frozen binding, honors a
+bounded `Retry-After` for non-empty failures, counts every physical call against the Run budget, and checks
+cancellation/deadline throughout backoff. Authentication, invalid request, context-too-long and partial-output failures
+are never replayed by the generic retry policy. Each empty occurrence adds only a safe `model.empty-response` event;
+exhaustion terminates through the existing stable model failure path.
 
 ## 结构化完成纠偏
 

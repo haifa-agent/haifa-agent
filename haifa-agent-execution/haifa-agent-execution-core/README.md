@@ -28,6 +28,9 @@ inline 阈值后返回 `AssetRef`。`ExecutionOutputOverflowPolicy.RETAIN_HEAD_T
 `TERMINATE` 则在预算耗尽时终止进程树并返回 `OUTPUT_LIMIT_EXCEEDED`，供产品对探索性调用执行收窄重试。
 策略来自可信结构化请求，不检查 Shell 命令字符串或具体 CLI 选项。
 
+Provider 检测到进程数超过预算且已确认收敛进程树时返回 `PROCESS_LIMIT_EXCEEDED`；只有进程树终止或
+Workspace 观察无法确认时才返回 `UNKNOWN`。资源上限触发与未知副作用必须保持不同语义。
+
 长驻会话与一次性执行共享相同的可信上下文、授权、环境解析、Sandbox Profile、输出预算、脱敏、Manifest 和审计流程。会话关闭、取消或异常退出时，Broker 先收敛底层进程与输出，再释放环境租约并完成审计记录。
 
 ## Sandbox resolution
@@ -78,7 +81,8 @@ Git Credential 配置/子命令和 GH Token 披露继续硬拒绝；为了覆盖
 0 为 `SUCCEEDED`，`git diff --exit-code` / `git diff --no-index` 的退出 1 为
 `EXPECTED_VARIANT/DIFFERENCES_FOUND`，`git grep` 的退出 1 为 `EMPTY_RESULT/NO_MATCHES`；其他非零退出仍为
 `COMMAND_FAILED`，超时、取消、输出截断终止或缺失退出码为 `OUTCOME_UNKNOWN`。该解释器不把 Build/Test
-失败改写成成功，也不推断复合命令内部各 Segment 的状态。
+失败改写成成功，也不推断复合命令内部各 Segment 的状态。进程数超限是已确认收敛的资源失败，解释为
+`COMMAND_FAILED/PROCESS_LIMIT_EXCEEDED`，不升级为未知副作用。
 
 冻结输入只包含 `mode`、`content`、`language`、`args`、`purpose`、`timeoutMillis`；只有显式允许
 Workspace 的产品配置才可以增加 `workingDirectory`。操作系统、可执行文件和 Provider 均由可信

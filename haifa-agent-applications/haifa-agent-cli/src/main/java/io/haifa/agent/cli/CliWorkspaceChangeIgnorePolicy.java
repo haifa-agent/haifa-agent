@@ -22,6 +22,7 @@ final class CliWorkspaceChangeIgnorePolicy implements WorkspaceChangeIgnorePolic
     private static final long MAX_GITIGNORE_BYTES = 64 * 1024;
     private static final Set<String> STANDARD_DIRECTORY_NAMES = Set.of(
             ".git",
+            ".gradle",
             ".idea",
             ".mypy_cache",
             ".pytest_cache",

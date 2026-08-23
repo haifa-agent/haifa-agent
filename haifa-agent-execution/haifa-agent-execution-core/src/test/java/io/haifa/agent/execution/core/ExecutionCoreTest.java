@@ -128,6 +128,21 @@ class ExecutionCoreTest {
     }
 
     @Test
+    void brokerPreservesConfirmedProcessLimitAsATerminalResourceFailure() {
+        Fixture fixture = fixture();
+        SandboxProvider provider = fakeProvider(() -> {}, new byte[0], SandboxProcessStatus.PROCESS_LIMIT_EXCEEDED);
+        DefaultExecutionBroker broker = fixture.broker(provider, request -> {});
+
+        var result = broker.execute(
+                fixture.request("process-limit", "process-limit-key", Set.of("execution.run"), List.of("fake")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.PROCESS_LIMIT_EXCEEDED);
+        assertThat(result.exitCode()).isNull();
+        assertThat(result.optionalFailure())
+                .hasValueSatisfying(failure -> assertThat(failure.code()).isEqualTo("PROCESS_LIMIT_EXCEEDED"));
+    }
+
+    @Test
     void streamingObserverRedactsSecretsSplitAcrossChunks() {
         Fixture fixture = fixture();
         SandboxProvider provider = new SandboxProvider() {
@@ -383,6 +398,10 @@ class ExecutionCoreTest {
     }
 
     private static SandboxProvider fakeProvider(Runnable effect, byte[] stdout) {
+        return fakeProvider(effect, stdout, SandboxProcessStatus.EXITED);
+    }
+
+    private static SandboxProvider fakeProvider(Runnable effect, byte[] stdout, SandboxProcessStatus processStatus) {
         return new SandboxProvider() {
             @Override
             public String providerId() {
@@ -406,8 +425,8 @@ class ExecutionCoreTest {
                     public SandboxProcessResult execute(SandboxExecution execution) {
                         effect.run();
                         return new SandboxProcessResult(
-                                SandboxProcessStatus.EXITED,
-                                0,
+                                processStatus,
+                                processStatus == SandboxProcessStatus.EXITED ? 0 : null,
                                 stdout,
                                 new byte[0],
                                 NOW,
