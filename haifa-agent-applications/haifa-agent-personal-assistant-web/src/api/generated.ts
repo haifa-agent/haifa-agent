@@ -68,6 +68,36 @@ export interface Model {
   recommendedPreferences: ModelPreferences;
 }
 
+export interface ModelConnection {
+  connectionId: string;
+  providerId: string;
+  method: "API_KEY" | "EXTERNAL_LOGIN";
+  status: "AUTHENTICATED" | "REAUTH_REQUIRED" | "RATE_LIMITED";
+  accountLabel: string;
+  expiresAtEpochMillis?: number | null;
+  reasonCode?: string | null;
+  apiKeySupported: boolean;
+  externalLoginSupported: boolean;
+  logoutSupported: boolean;
+  unofficialLocalCompatibility: boolean;
+}
+
+export interface SaveModelApiKey {
+  providerId: string;
+  apiKey: string;
+}
+
+export interface ExternalLoginAttempt {
+  attemptId: string;
+  methodId: string;
+  mode: "BROWSER" | "DEVICE_CODE";
+  state: "CREATED" | "AUTHORIZING" | "WAITING_USER" | "EXCHANGING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "EXPIRED";
+  verificationUri?: string | null;
+  userCode?: string | null;
+  expiresAtEpochMillis: number;
+  reasonCode?: string | null;
+}
+
 export interface ModelControls {
   responseMode: ResponseModeControl;
   reasoningEffort: ReasoningEffortControl;
@@ -438,4 +468,4 @@ export interface ApiError {
   actions: Array<string>;
 }
 
-export type OperationId = "bootstrap" | "listModels" | "uploadImage" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "downloadMissionArtifact" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";
+export type OperationId = "bootstrap" | "listModels" | "listModelConnections" | "saveModelApiKey" | "startCodexBrowserAttempt" | "getCodexBrowserAttempt" | "cancelCodexBrowserAttempt" | "deleteModelConnection" | "uploadImage" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "downloadMissionArtifact" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";

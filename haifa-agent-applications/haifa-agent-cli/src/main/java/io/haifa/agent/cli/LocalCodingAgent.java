@@ -37,6 +37,7 @@ import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
 import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
 import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
@@ -269,12 +270,12 @@ final class LocalCodingAgent implements AutoCloseable {
                 }),
                 LocalCodingAgent::openBrowser,
                 8));
+        var authenticationService =
+                new LocalModelAuthenticationService(authStore, authCoordinator, credentials, resolvedEnvironment::get);
         var authentication = new CliCodingAuthenticationClient(
-                authStore,
-                authCoordinator,
+                authenticationService,
                 configuration.model().credentialRef(),
-                configuration.model().providerId(),
-                resolvedEnvironment::get);
+                configuration.model().providerId());
         var chat = new OpenAiCompatibleChatModel(
                 "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var responses = new OpenAiResponsesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);

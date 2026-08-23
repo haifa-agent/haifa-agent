@@ -4,9 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -47,7 +47,13 @@ class CliCodingAuthenticationClientTest {
             String credentialReference,
             String providerId,
             Map<String, String> environment) {
-        return new CliCodingAuthenticationClient(
-                store, Optional.empty(), credentialReference, providerId, environment::get);
+        var service = new LocalModelAuthenticationService(
+                store,
+                java.util.Optional.empty(),
+                reference -> {
+                    throw new AssertionError("credential resolution is not expected");
+                },
+                environment::get);
+        return new CliCodingAuthenticationClient(service, credentialReference, providerId);
     }
 }

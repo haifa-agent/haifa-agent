@@ -19,6 +19,53 @@
         "responses": {"200": {"description": "Available models", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Model"}}}}}}
       }
     },
+    "/api/v1/model-connections": {
+      "get": {
+        "operationId": "listModelConnections",
+        "responses": {"200": {"description": "Safe model credential readiness", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/ModelConnection"}}}}}}
+      }
+    },
+    "/api/v1/model-connections/api-key": {
+      "post": {
+        "operationId": "saveModelApiKey",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SaveModelApiKey"}}}},
+        "responses": {
+          "201": {"description": "Saved connection", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ModelConnection"}}}},
+          "400": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/model-connections/codex/browser-attempts": {
+      "post": {
+        "operationId": "startCodexBrowserAttempt",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {
+          "202": {"description": "OAuth attempt started", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalLoginAttempt"}}}},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/model-connections/codex/browser-attempts/{attemptId}": {
+      "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "get": {
+        "operationId": "getCodexBrowserAttempt",
+        "responses": {"200": {"description": "Safe OAuth attempt state", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalLoginAttempt"}}}}}
+      },
+      "delete": {
+        "operationId": "cancelCodexBrowserAttempt",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {"204": {"description": "OAuth attempt cancelled"}, "404": {"$ref": "#/components/responses/Error"}}
+      }
+    },
+    "/api/v1/model-connections/{connectionId}": {
+      "parameters": [{"name": "connectionId", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "delete": {
+        "operationId": "deleteModelConnection",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {"204": {"description": "Connection deleted"}, "404": {"$ref": "#/components/responses/Error"}}
+      }
+    },
     "/api/v1/images": {
       "post": {
         "operationId": "uploadImage",
@@ -455,6 +502,45 @@
           "profileDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
           "controls": {"$ref": "#/components/schemas/ModelControls"},
           "recommendedPreferences": {"$ref": "#/components/schemas/ModelPreferences"}
+        }
+      },
+      "ModelConnection": {
+        "type": "object",
+        "required": ["connectionId", "providerId", "method", "status", "accountLabel", "apiKeySupported", "externalLoginSupported", "logoutSupported", "unofficialLocalCompatibility"],
+        "properties": {
+          "connectionId": {"type": "string"},
+          "providerId": {"type": "string"},
+          "method": {"type": "string", "enum": ["API_KEY", "EXTERNAL_LOGIN"]},
+          "status": {"type": "string", "enum": ["AUTHENTICATED", "REAUTH_REQUIRED", "RATE_LIMITED"]},
+          "accountLabel": {"type": "string"},
+          "expiresAtEpochMillis": {"type": ["integer", "null"], "format": "int64"},
+          "reasonCode": {"type": ["string", "null"]},
+          "apiKeySupported": {"type": "boolean"},
+          "externalLoginSupported": {"type": "boolean"},
+          "logoutSupported": {"type": "boolean"},
+          "unofficialLocalCompatibility": {"type": "boolean"}
+        }
+      },
+      "SaveModelApiKey": {
+        "type": "object",
+        "required": ["providerId", "apiKey"],
+        "properties": {
+          "providerId": {"type": "string", "maxLength": 64},
+          "apiKey": {"type": "string", "format": "password", "minLength": 1, "maxLength": 65536, "writeOnly": true}
+        }
+      },
+      "ExternalLoginAttempt": {
+        "type": "object",
+        "required": ["attemptId", "methodId", "mode", "state", "expiresAtEpochMillis"],
+        "properties": {
+          "attemptId": {"type": "string"},
+          "methodId": {"type": "string"},
+          "mode": {"type": "string", "enum": ["BROWSER", "DEVICE_CODE"]},
+          "state": {"type": "string", "enum": ["CREATED", "AUTHORIZING", "WAITING_USER", "EXCHANGING", "SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"]},
+          "verificationUri": {"type": ["string", "null"], "format": "uri"},
+          "userCode": {"type": ["string", "null"]},
+          "expiresAtEpochMillis": {"type": "integer", "format": "int64"},
+          "reasonCode": {"type": ["string", "null"]}
         }
       },
       "ModelControls": {

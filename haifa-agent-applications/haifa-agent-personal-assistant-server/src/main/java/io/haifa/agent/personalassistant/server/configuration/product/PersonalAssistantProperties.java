@@ -261,6 +261,12 @@ public record PersonalAssistantProperties(
                 throw new IllegalArgumentException("modelProvider.endpoint must be absolute");
             }
             credentialReference = text(credentialReference, "modelProvider.credentialReference");
+            if ((!credentialReference.startsWith("env://") || credentialReference.length() == "env://".length())
+                    && (!credentialReference.startsWith("model-auth://")
+                            || credentialReference.length() == "model-auth://".length())) {
+                throw new IllegalArgumentException(
+                        "modelProvider.credentialReference must use env:// or model-auth://");
+            }
             apiBindings = List.copyOf(apiBindings == null ? List.of() : apiBindings);
             if (apiBindings.isEmpty())
                 throw new IllegalArgumentException("modelProvider.apiBindings must not be empty");
@@ -278,6 +284,15 @@ public record PersonalAssistantProperties(
                     apiBindings.stream().map(ApiBinding::style).collect(java.util.stream.Collectors.toSet());
             if (models.stream().anyMatch(model -> !styles.contains(model.style()))) {
                 throw new IllegalArgumentException("model references an unbound API style");
+            }
+            boolean codex =
+                    apiBindings.stream().anyMatch(binding -> "openai-codex-responses".equals(binding.dialect()));
+            if (codex && !credentialReference.startsWith("model-auth://openai-codex/")) {
+                throw new IllegalArgumentException(
+                        "Codex Responses requires model-auth://openai-codex/ credential reference");
+            }
+            if (codex && !"openai-codex".equals(id)) {
+                throw new IllegalArgumentException("Codex Responses provider id must be openai-codex");
             }
         }
     }

@@ -58,6 +58,37 @@ describe("HttpPersonalAssistantClient deployment boundary", () => {
     });
   });
 
+  it("sends model credentials only in the protected mutation body", async () => {
+    const fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => ({
+        text: async () => JSON.stringify({
+          connectionId: "model-auth://deepseek/default",
+          providerId: "deepseek",
+          method: "API_KEY",
+          status: "AUTHENTICATED",
+          accountLabel: "Saved API key",
+          apiKeySupported: true,
+          externalLoginSupported: false,
+          logoutSupported: true,
+          unofficialLocalCompatibility: false,
+        }),
+        ok: true,
+        status: 201,
+      }) as Response,
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    await new HttpPersonalAssistantClient().saveModelApiKey("deepseek", "secret-canary", {
+      idempotencyKey: "model-key-1",
+    });
+
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe("http://127.0.0.1:20001/api/v1/model-connections/api-key");
+    expect(init?.headers).toMatchObject({ "Idempotency-Key": "model-key-1", "X-Haifa-CSRF": "1" });
+    expect(init?.body).toBe(JSON.stringify({ providerId: "deepseek", apiKey: "secret-canary" }));
+    expect(url).not.toContain("secret-canary");
+  });
+
   it("sends Mission commands with the frozen idempotency and revision headers", async () => {
     const mission = {
       missionId: "mission/1",

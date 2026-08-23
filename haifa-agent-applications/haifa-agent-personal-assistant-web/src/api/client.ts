@@ -14,6 +14,8 @@ import type {
   ReplaceMissionPlan,
   ModelSelection,
   Model,
+  ModelConnection,
+  ExternalLoginAttempt,
   ModelPreferences,
   RecommendedQuestions,
   Run,
@@ -67,6 +69,12 @@ function selectionRequest(model: Model, preferences: ModelPreferences) {
 
 export interface PersonalAssistantClient {
   bootstrap(signal?: AbortSignal): Promise<Bootstrap>;
+  modelConnections?(signal?: AbortSignal): Promise<ModelConnection[]>;
+  saveModelApiKey?(providerId: string, apiKey: string, options?: CommandOptions): Promise<ModelConnection>;
+  startCodexBrowserLogin?(options?: CommandOptions): Promise<ExternalLoginAttempt>;
+  modelLoginAttempt?(attemptId: string, signal?: AbortSignal): Promise<ExternalLoginAttempt>;
+  cancelModelLogin?(attemptId: string, options?: CommandOptions): Promise<void>;
+  logoutModelConnection?(connectionId: string, options?: CommandOptions): Promise<void>;
   conversations(query?: string, signal?: AbortSignal): Promise<Conversation[]>;
   createConversation(
     displayName: string,
@@ -221,6 +229,54 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
 
   bootstrap(signal?: AbortSignal) {
     return this.request<Bootstrap>("/bootstrap", {}, signal);
+  }
+
+  modelConnections(signal?: AbortSignal) {
+    return this.request<ModelConnection[]>("/model-connections", {}, signal);
+  }
+
+  saveModelApiKey(providerId: string, apiKey: string, options: CommandOptions = {}) {
+    return this.request<ModelConnection>(
+      "/model-connections/api-key",
+      {
+        method: "POST",
+        headers: commandHeaders(undefined, options.idempotencyKey),
+        body: JSON.stringify({ providerId, apiKey }),
+      },
+      options.signal,
+    );
+  }
+
+  startCodexBrowserLogin(options: CommandOptions = {}) {
+    return this.request<ExternalLoginAttempt>(
+      "/model-connections/codex/browser-attempts",
+      { method: "POST", headers: commandHeaders(undefined, options.idempotencyKey), body: "{}" },
+      options.signal,
+    );
+  }
+
+  modelLoginAttempt(attemptId: string, signal?: AbortSignal) {
+    return this.request<ExternalLoginAttempt>(
+      `/model-connections/codex/browser-attempts/${encoded(attemptId)}`,
+      {},
+      signal,
+    );
+  }
+
+  cancelModelLogin(attemptId: string, options: CommandOptions = {}) {
+    return this.request<void>(
+      `/model-connections/codex/browser-attempts/${encoded(attemptId)}`,
+      { method: "DELETE", headers: commandHeaders(undefined, options.idempotencyKey) },
+      options.signal,
+    );
+  }
+
+  logoutModelConnection(connectionId: string, options: CommandOptions = {}) {
+    return this.request<void>(
+      `/model-connections/${encoded(connectionId)}`,
+      { method: "DELETE", headers: commandHeaders(undefined, options.idempotencyKey) },
+      options.signal,
+    );
   }
 
   conversations(query = "", signal?: AbortSignal) {
