@@ -50,6 +50,7 @@ import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
@@ -57,6 +58,7 @@ import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
 import io.haifa.agent.model.openai.anthropic.AnthropicMessagesModel;
+import io.haifa.agent.model.openai.responses.OpenAiResponsesDialects;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
@@ -1022,6 +1024,12 @@ final class LocalCodingAgent implements AutoCloseable {
         boolean deepSeek = OpenAiCompatibleDialects.DEEPSEEK.equals(model.dialect())
                 || AnthropicMessagesDialects.DEEPSEEK.equals(model.dialect());
         if (deepSeek) providerOptions.put("thinking", "disabled");
+        Map<String, Object> invocationOptions = new java.util.LinkedHashMap<>();
+        if (deepSeek) invocationOptions.put("thinking", "disabled");
+        if (OpenAiResponsesDialects.ALIYUN_BAILIAN.equals(model.dialect())
+                && model.reasoningMode() == ModelReasoningMode.ENABLED) {
+            invocationOptions.put("reasoning_effort", "high");
+        }
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),
                 "cli-v1",
@@ -1039,7 +1047,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 model.contextWindow(),
                 model.maxOutputTokens(),
                 Map.copyOf(providerOptions),
-                deepSeek ? Map.of("thinking", "disabled") : Map.of());
+                Map.copyOf(invocationOptions));
     }
 
     private static ResolvedModelSnapshot bailianModelSnapshot(CliConfiguration.Model model) {
