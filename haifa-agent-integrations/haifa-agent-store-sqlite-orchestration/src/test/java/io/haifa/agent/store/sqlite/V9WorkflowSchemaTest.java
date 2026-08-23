@@ -2,6 +2,9 @@ package io.haifa.agent.store.sqlite;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.agent.store.sqlite.migration.RuntimeStoreMigrations;
+import io.haifa.agent.store.sqlite.migration.SqliteMigrationRunner;
+import io.haifa.agent.store.sqlite.orchestration.migration.WorkflowStoreMigrations;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -11,14 +14,19 @@ import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class V8WorkflowSchemaTest {
+class V9WorkflowSchemaTest {
     @TempDir
     Path directory;
 
     @Test
     void createsNormalizedWorkflowFactsAndRequiredIndexes() throws Exception {
-        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory);
-                Connection connection = foundation.connections().openConnection()) {
+        SqliteConnectionFactory connections =
+                new SqliteConnectionFactory(SqliteWorkflowStoreTestSupport.configuration(directory));
+        connections.initialize();
+        new SqliteMigrationRunner(connections, SqliteWorkflowStoreTestSupport.CLOCK)
+                .migrate(WorkflowStoreMigrations.complete()
+                        .subList(0, RuntimeStoreMigrations.all().size() + 1));
+        try (Connection connection = connections.openConnection()) {
             assertThat(names(
                             connection, "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'workflow_%'"))
                     .containsExactlyInAnyOrder(
@@ -28,16 +36,14 @@ class V8WorkflowSchemaTest {
                             "workflow_checkpoint",
                             "workflow_event",
                             "workflow_outbox",
-                            "workflow_command",
-                            "workflow_subgraph_instance");
+                            "workflow_command");
             assertThat(names(
                             connection, "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE '%workflow%'"))
                     .contains(
                             "idx_workflow_run_recovery",
                             "uq_workflow_active_attempt",
                             "idx_workflow_attempt_agent_run",
-                            "idx_workflow_outbox_pending",
-                            "idx_workflow_subgraph_parent");
+                            "idx_workflow_outbox_pending");
             assertThat(foreignKeys(connection, "workflow_node_attempt"))
                     .contains("agent_run_id->run.run_id", "workflow_run_id->workflow_run.workflow_run_id");
             assertThat(columns(connection, "workflow_run"))

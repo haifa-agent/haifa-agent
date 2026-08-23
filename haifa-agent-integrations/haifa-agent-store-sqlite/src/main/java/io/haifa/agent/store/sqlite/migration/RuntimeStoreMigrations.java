@@ -16,12 +16,22 @@ public final class RuntimeStoreMigrations {
     private static final String V5_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V5__sdk_conversation.sql";
     private static final String V6_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V6__memory_foundation.sql";
     private static final String V7_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V7__artifact_foundation.sql";
-    private static final String V8_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V8__workflow_recovery.sql";
-    private static final String V9_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V9__workflow_subgraph.sql";
+    private static final String V8_RESOURCE =
+            "/io/haifa/agent/store/sqlite/migration/V8__tool_reconciliation_evidence.sql";
+    private static final List<SqliteMigration> MIGRATIONS = load();
 
     private RuntimeStoreMigrations() {}
 
     public static List<SqliteMigration> all() {
+        return MIGRATIONS;
+    }
+
+    /** Returns the last bundled Runtime migration version from the authoritative catalog. */
+    public static long currentVersion() {
+        return MIGRATIONS.getLast().version();
+    }
+
+    private static List<SqliteMigration> load() {
         try {
             return List.of(
                     read(1, "runtime_store", V1_RESOURCE),
@@ -31,8 +41,7 @@ public final class RuntimeStoreMigrations {
                     read(5, "sdk_conversation", V5_RESOURCE),
                     read(6, "memory_foundation", V6_RESOURCE),
                     read(7, "artifact_foundation", V7_RESOURCE),
-                    read(8, "workflow_recovery", V8_RESOURCE),
-                    read(9, "workflow_subgraph", V9_RESOURCE));
+                    read(8, "tool_reconciliation_evidence", V8_RESOURCE));
         } catch (IOException exception) {
             throw new SqliteStoreException(
                     SqliteStoreFailure.MIGRATION_FAILED, "Unable to read bundled SQLite migration", exception);

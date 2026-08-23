@@ -1,9 +1,13 @@
 # Changelog
 
+- SQLite Workflow persistence 从基础 Runtime Store 拆为显式可选的
+  `haifa-agent-store-sqlite-orchestration`：基础 Store 保持 PR #92 的 Runtime V1～V8 且默认不创建
+  `workflow_*` 表；Workflow 从 V9、受限子图关系从 V10 开始，当前版本由迁移目录派生，PA 备份恢复不再
+  复制硬编码版本。
 - Incubating Workflow/Graph M5 新增固定 Definition、显式 State 映射和独立 child Workflow Run 的受限
-  子图；支持嵌套 Wait/Resume、父取消/超时传播、固定并行分支确定合并，并以 SQLite V9 保存可恢复的父子
+  子图；支持嵌套 Wait/Resume、父取消/超时传播、固定并行分支确定合并，并以可选 SQLite V10 保存可恢复的父子
   attempt 关系。动态 fan-out、`ANY_OF`、并行分支内可中断子图和现有产品默认路由继续拒绝。
-- Incubating Workflow/Graph M3 新增 SQLite V8 单机持久恢复：冻结 Definition/Adapter/Codec，使用共享
+- Incubating Workflow/Graph M3 新增可选 SQLite V9 单机持久恢复：冻结 Definition/Adapter/Codec，使用共享
   Runtime/Workflow UoW、两阶段 Node Attempt、原子 Agent Run 关联、Wait/Resume、固定 `ALL_OF` 游标、
   幂等命令及 Event/Outbox；未知副作用结果不重放，现有产品仍不自动或被动触发 Graph。
 - Personal Assistant 真实环境脚本改从按内容摘要生成的 Maven `target/` 外运行副本启动后端 JAR，避免运行中的

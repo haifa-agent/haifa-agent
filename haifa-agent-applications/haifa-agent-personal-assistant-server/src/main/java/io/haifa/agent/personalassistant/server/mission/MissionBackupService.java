@@ -3,6 +3,7 @@ package io.haifa.agent.personalassistant.server.mission;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.mission.MissionException;
+import io.haifa.agent.store.sqlite.migration.RuntimeStoreMigrations;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -33,7 +34,7 @@ import org.springframework.stereotype.Component;
 public final class MissionBackupService {
     private static final String MANIFEST_SCHEMA = "pa.mission-backup/v1";
     private static final String APPLICATION_VERSION = "0.1.0-SNAPSHOT";
-    private static final int RUNTIME_SCHEMA_VERSION = 9;
+    private static final int RUNTIME_SCHEMA_VERSION = Math.toIntExact(RuntimeStoreMigrations.currentVersion());
     private static final int MISSION_SCHEMA_VERSION = 7;
 
     private final SqliteMissionStore store;

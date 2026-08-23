@@ -70,6 +70,8 @@
 | [`haifa-agent-capabilities/haifa-agent-model-core/`](haifa-agent-capabilities/haifa-agent-model-core/README.md) | 模型目录、选择、访问策略与健康状态 | 选择必须确定；首版无隐式 fallback/轮询 |
 | [`haifa-agent-integrations/haifa-agent-model-openai-compatible/`](haifa-agent-integrations/haifa-agent-model-openai-compatible/README.md) | OpenAI Chat Completions 兼容适配及 DeepSeek 默认配置 | Provider 细节留在适配层；首版强制关闭 thinking |
 | [`haifa-agent-integrations/haifa-agent-web/`](haifa-agent-integrations/haifa-agent-web/README.md) | 通用 Web Search/Fetch Tool 与 HTTP Provider | 产品显式选择 Provider 和凭据；公共模块不依赖 Runtime、Spring 或具体产品 |
+| [`haifa-agent-integrations/haifa-agent-store-sqlite/`](haifa-agent-integrations/haifa-agent-store-sqlite/README.md) | 基础 Runtime SQLite V1～V8、Codec 与 Store | 不依赖 Orchestration Core；默认不得创建 Workflow 表 |
+| [`haifa-agent-integrations/haifa-agent-store-sqlite-orchestration/`](haifa-agent-integrations/haifa-agent-store-sqlite-orchestration/README.md) | 显式可选 Workflow SQLite V9/V10 Store | 依赖基础 SQLite 与 Orchestration Core；不得被现有产品默认引入 |
 | [`haifa-agent-applications/haifa-agent-runtime-demo/`](haifa-agent-applications/haifa-agent-runtime-demo/README.md) | Runtime/Tool/MCP/Skill 可执行示例 | 不是测试事实源；真实调用必须显式 opt-in |
 | [`examples/haifa-agent-example/`](examples/haifa-agent-example/README.md) | 独立 Pure Java/Spring Boot 消费者应用 | 主仓跟踪但不加入 Reactor；先安装匹配版本制品，再独立构建 |
 | [`haifa-agent-applications/haifa-agent-sdk-example/`](haifa-agent-applications/haifa-agent-sdk-example/README.md) | Basic/Intermediate/Advanced 可运行 SDK 示例与 SQLite 单机持久化参考装配 | 除显式真实 Provider Quickstart 外默认离线；示例模块不发布 |
@@ -84,6 +86,7 @@
 ```text
 common <- core <- runtime-api <- runtime-core -> model-api
           └── orchestration-api <- orchestration-core -> runtime-api
+                 runtime-core <- store-sqlite <- store-sqlite-orchestration -> orchestration-core
                   model-api <- model-core
                   model-api <- model-openai-compatible
    ^

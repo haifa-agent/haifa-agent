@@ -5,33 +5,16 @@ Memory、Policy 与 Artifact。应用应在自己的装配层选择这些 Contri
 独立生产 Starter。单机持久化参考代码见 `haifa-agent-sdk-example` 的
 `SqliteDurableReferenceAssemblyExample`；示例模块不是发布制品或 Stable API。
 
-## V8 Workflow durable recovery
+## Runtime V8 boundary
 
-Runtime Migration V8 adds the provider-neutral `workflow_run`, `workflow_node_attempt`, `workflow_wait`,
-`workflow_checkpoint`, `workflow_event`, `workflow_outbox`, and `workflow_command` facts:
+Runtime Migration V8 is the released Tool reconciliation evidence migration. This base artifact owns Runtime V1-V8
+only. It has no Orchestration dependency, does not expose a Workflow Store, and default initialization does not create
+any `workflow_*` table.
 
-- `SqliteWorkflowStore` implements the Orchestration Core Store port; `SqliteRuntimeUnitOfWork` implements both
-  Runtime and Workflow UoW contracts. `DurableWorkflowAgentGateway.start` runs inside that boundary, so nested Agent Run
-  creation and Node Attempt association share one SQLite transaction; terminal await occurs after commit;
-- Definition ID/version/digest, exact adapter coordinate/version/configuration digest, and state codec version are
-  frozen per Run and fail closed on restart drift;
-- a node first commits a RUNNING Attempt, then stores a bounded typed result Delta and authoritative Agent Run link,
-  and only then merges State and commits completion; restart applies a committed Delta without replay, while an
-  unresolved side effect becomes observable `OUTCOME_UNKNOWN`;
-- fixed `ALL_OF` branch position, visits, consumed signals, pending cancellation, Wait and Checkpoint are Haifa control
-  data. LangGraph4j objects and `MemorySaver` payloads never enter the database format;
-- Event and Outbox rows are inserted in the same `BEGIN IMMEDIATE` transaction. Projection retries only change Outbox
-  delivery metadata and never mutate Workflow facts;
-- `SqliteStoreFoundation.workflows()` is an explicit contribution. No existing Coding, Personal Assistant, SDK, or
-  Runtime path enables Graph because this module is present.
-
-## V9 restricted subgraph relation
-
-Runtime Migration V9 adds `workflow_subgraph_instance` without changing V8 payload schemas. It freezes the child
-Workflow Run, parent Workflow Run, parent node ID and parent node attempt, and tracks whether the relation is still the
-parent's active subgraph. The indexed relation reconstructs an active child even if the child creation transaction
-committed before the parent snapshot was linked. Child Wait/Checkpoint remain child Run facts; parent Wait/Checkpoint
-remain parent Run facts. Parent cancel/timeout is propagated and persisted before the parent reaches its terminal state.
+Durable Workflow persistence is an explicit optional artifact:
+`haifa-agent-store-sqlite-orchestration`. Installing that artifact and calling its assembly applies Workflow migrations
+from V9. Merely placing Core, SDK, Coding, Personal Assistant, or this base SQLite Store on the classpath does not alter
+their schema.
 
 ## V5 SDK Conversation
 
@@ -87,7 +70,7 @@ Runtime Migration V3 追加 `policy_snapshot`、`policy_decision`、`approval_re
 
 `SqliteStoreFoundation` 暴露与 Policy API 对齐的 Store。Project Application 和 CLI 在 SQLite 模式下把同一组实例同时注入 Policy、Runtime Tool 与 Execution，避免进程内 Store 和 SQLite 各持一份授权事实。
 
-本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V9 Migration、
+本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V8 Migration、
 版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
 
 V6 只新增 `memory_candidate`、`memory_record` 和 `memory_audit_event`。Candidate/Memory 正文以
@@ -120,7 +103,7 @@ worker ID 驱动。
 ## 初始化与所有权
 
 调用方通过 `SqliteStoreFoundation.initialize(configuration, clock)` 完成纯 Runtime 初始化；拥有额外
-Schema 的 Application 使用扩展重载，在一次校验中传入包含 Runtime V1～V9 原文的完整 Migration 集合，
+Schema 的 Application 使用扩展重载，在一次校验中传入包含 Runtime V1～V8 原文的完整 Migration 集合，
 并可传入由 Application 自己拥有的静态 `MapperXml`。附加 Mapper 与内建 Mapper 使用相同的
 namespace/statement 唯一性、`${}` 禁止和启动期解析校验：
 
@@ -167,9 +150,8 @@ Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校
 
 V3 提供 Policy/Approval/Trust 权威表。V4 提供稳定 Event Journal range/head/earliest、Interaction
 revision/state 和 durable Run Input；旧库通过连续 Migration 升级，重复启动只校验 name/checksum。
-V5～V7 分别提供 SDK Conversation、Memory 与 Artifact；V8 提供 Workflow 单机持久恢复，V9 提供受限
-子图父子 Run 关系。M6 中立动态 fan-out/固定 `ANY_OF` 复用现有 Workflow continuation BLOB；新增可选
-fork mode，旧 payload 缺失时仍按 `ALL_OF` 解码，不新增数据库 Migration。
+V5～V7 分别提供 SDK Conversation、Memory 与 Artifact；V8 提供 Tool dispatch/reconciliation evidence。
+Workflow 表不属于基础 Runtime Schema。
 
 ## Port—表—Codec 对照
 
@@ -183,7 +165,6 @@ fork mode，旧 payload 缺失时仍按 `ALL_OF` 解码，不新增数据库 Mig
 | Event/Outbox/Idempotency | runtime_event/runtime_event_stream/outbox/outbox_consumer/idempotency | bounded event/result DTO |
 | Journal/Interaction/Input | tool_journal + interaction 三表 + run_input | ToolResult、Target、Content Parts DTO |
 | Summary/Memory/Continuation/Skill/Asset | extended-state 六表 | 对应显式 DTO；Continuation 只保存 protector 输出 |
-| Workflow | workflow_run/attempt/wait/checkpoint/event/outbox/command | 有界 typed State/Delta/Control/Snapshot Codec |
 
 Task 01 快照中的标量字段均有固定列；嵌套值只落入上表列出的版本化 Payload。所有 Row DTO 与业务
 Codec 都使用受控重建入口，不把领域对象直接交给 MyBatis。
@@ -209,10 +190,9 @@ Codec 都使用受控重建入口，不把领域对象直接交给 MyBatis。
 | Event / Outbox / Idempotency | `SqliteRuntimeEventAppender`、`SqliteRuntimeOutboxPublisher`、`SqliteIdempotencyRepository` |
 | Tool journal / Interaction / Input | `SqliteToolExecutionJournal`、`SqliteInteractionPort`、`SqliteRunInputPort` |
 | Summary / Memory / Continuation / Skill / Asset | 对应 `Sqlite*Repository` / `SqliteToolResultAssetStore` |
-| Workflow / Workflow UoW | `SqliteWorkflowStore`、`SqliteRuntimeUnitOfWork` |
+| Atomic composition | `SqliteRuntimeUnitOfWork`、`SqliteStoreFoundation.persistencePorts(...)` |
 
 Tool Result Asset 使用 Tool Call ID 形成稳定且逐调用唯一的 Asset ID；内容哈希只承担完整性校验，不用于跨 Tool Call 归并相同结果。
-| Atomic composition | `SqliteRuntimeUnitOfWork`、`SqliteStoreFoundation.persistencePorts(...)` |
 
 Project Application/CLI 已实现显式 `MEMORY`、`SQLITE`、`SQLITE_WITH_JSONL` 选择，并在启动时注入
 Runtime Port、唯一 worker ID 与安全 busy retry。持久 payload protection 可显式选择本地明文 `NONE`

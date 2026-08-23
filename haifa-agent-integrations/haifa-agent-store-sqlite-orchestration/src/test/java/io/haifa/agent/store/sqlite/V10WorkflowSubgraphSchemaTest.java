@@ -11,14 +11,14 @@ import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class V9WorkflowSubgraphSchemaTest {
+class V10WorkflowSubgraphSchemaTest {
     @TempDir
     Path directory;
 
     @Test
     void createsImmutableParentChildIdentityAndRecoveryIndex() throws Exception {
-        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory);
-                Connection connection = foundation.connections().openConnection()) {
+        try (SqliteWorkflowStoreFoundation foundation = SqliteWorkflowStoreTestSupport.foundation(directory);
+                Connection connection = foundation.runtime().connections().openConnection()) {
             assertThat(columns(connection, "workflow_subgraph_instance"))
                     .containsExactlyInAnyOrder(
                             "child_workflow_run_id",
