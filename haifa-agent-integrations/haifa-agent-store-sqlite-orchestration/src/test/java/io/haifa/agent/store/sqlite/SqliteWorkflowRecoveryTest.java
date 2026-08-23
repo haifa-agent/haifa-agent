@@ -71,14 +71,14 @@ class SqliteWorkflowRecoveryTest {
     void resumesWaitingRunAcrossProcessRestartAndKeepsCommandsAndOutboxIdempotent() {
         CompiledWorkflowDefinition definition = waitDefinition();
         WorkflowRunSnapshot waiting;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             waiting = runtime(first, definition, noAction(), WorkflowFailureInjector.NONE, "first")
                     .start(start(definition, Map.of(), "start-wait"));
             assertThat(waiting.status()).isEqualTo(WorkflowStatus.WAITING);
             assertThat(first.workflows().recoverable()).singleElement();
         }
 
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             DurableWorkflowRuntime runtime =
                     runtime(second, definition, noAction(), WorkflowFailureInjector.NONE, "second");
             WorkflowResumeRequest request = new WorkflowResumeRequest(
@@ -119,7 +119,7 @@ class SqliteWorkflowRecoveryTest {
             return new WorkflowStateDelta(Map.of("count", 1));
         };
         WorkflowRunSnapshot crashed;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             DurableWorkflowRuntime runtime =
                     runtime(first, definition, action, once(WorkflowFailurePoint.AFTER_ATTEMPT_SCHEDULED), "first");
             assertThatThrownBy(() -> runtime.start(start(definition, Map.of(), "start-crash-before-dispatch")))
@@ -132,7 +132,7 @@ class SqliteWorkflowRecoveryTest {
             assertThat(calls).hasValue(0);
         }
 
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             WorkflowRunSnapshot recovered = runtime(second, definition, action, WorkflowFailureInjector.NONE, "second")
                     .recover(crashed.id());
             assertThat(recovered.status()).isEqualTo(WorkflowStatus.FAILED);
@@ -151,7 +151,7 @@ class SqliteWorkflowRecoveryTest {
             return new WorkflowStateDelta(Map.of("count", 1));
         };
         WorkflowRunSnapshot crashed;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             assertThatThrownBy(() -> runtime(
                                     first, definition, action, once(WorkflowFailurePoint.AFTER_RUN_CREATED), "first")
                             .start(start(definition, Map.of(), "start-before-schedule")))
@@ -159,7 +159,7 @@ class SqliteWorkflowRecoveryTest {
             crashed = first.workflows().recoverable().getFirst().snapshot();
             assertThat(crashed.attempts()).isEmpty();
         }
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             WorkflowRunSnapshot recovered = runtime(second, definition, action, WorkflowFailureInjector.NONE, "second")
                     .recover(crashed.id());
             assertThat(recovered.status()).isEqualTo(WorkflowStatus.COMPLETED);
@@ -179,7 +179,7 @@ class SqliteWorkflowRecoveryTest {
             return new WorkflowStateDelta(Map.of("count", 7L));
         };
         WorkflowRunSnapshot crashed;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             DurableWorkflowRuntime runtime =
                     runtime(first, definition, action, once(WorkflowFailurePoint.AFTER_NODE_RESULT_STORED), "first");
             assertThatThrownBy(() -> runtime.start(start(definition, Map.of(), "start-crash-after-result")))
@@ -188,7 +188,7 @@ class SqliteWorkflowRecoveryTest {
             assertThat(calls).hasValue(1);
         }
 
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             WorkflowRunSnapshot recovered = runtime(second, definition, action, WorkflowFailureInjector.NONE, "second")
                     .recover(crashed.id());
             assertThat(recovered.status()).isEqualTo(WorkflowStatus.COMPLETED);
@@ -201,7 +201,7 @@ class SqliteWorkflowRecoveryTest {
     void atomicallyCommitsAgentRunCreationAndAttemptAssociationThenRecoversTerminalResult() {
         CompiledWorkflowDefinition definition = agentDefinition();
         WorkflowRunSnapshot crashed;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             DurableWorkflowAgentGateway gateway = agentGateway(first, true);
             assertThatThrownBy(() -> runtime(
                                     first,
@@ -215,9 +215,9 @@ class SqliteWorkflowRecoveryTest {
                     .isInstanceOf(SimulatedCrash.class);
             crashed = first.workflows().recoverable().getFirst().snapshot();
             assertThat(crashed.attempts().getFirst().agentRunId()).contains(new AgentRunId("run"));
-            assertThat(first.runs().find(new AgentRunId("run"))).isPresent();
+            assertThat(first.runtime().runs().find(new AgentRunId("run"))).isPresent();
         }
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             WorkflowRunSnapshot recovered = runtime(
                             second,
                             definition,
@@ -235,8 +235,8 @@ class SqliteWorkflowRecoveryTest {
     @Test
     void rollsBackAgentRunCreationWhenAttemptAssociationCannotCommit() throws Exception {
         CompiledWorkflowDefinition definition = agentDefinition();
-        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
-            try (Connection connection = foundation.connections().openConnection();
+        try (SqliteWorkflowStoreFoundation foundation = SqliteWorkflowStoreTestSupport.foundation(directory)) {
+            try (Connection connection = foundation.runtime().connections().openConnection();
                     Statement statement = connection.createStatement()) {
                 statement.execute(
                         "CREATE TRIGGER fail_workflow_agent_association BEFORE INSERT ON workflow_node_attempt "
@@ -254,11 +254,11 @@ class SqliteWorkflowRecoveryTest {
             assertThatThrownBy(() -> runtime.start(start(definition, Map.of(), "agent-rollback")))
                     .isInstanceOf(SqliteStoreException.class);
 
-            assertThat(foundation.runs().find(new AgentRunId("run"))).isEmpty();
+            assertThat(foundation.runtime().runs().find(new AgentRunId("run"))).isEmpty();
             WorkflowRunSnapshot unresolved =
                     foundation.workflows().recoverable().getFirst().snapshot();
             assertThat(unresolved.attempts().getFirst().agentRunId()).isEmpty();
-            try (Connection connection = foundation.connections().openConnection();
+            try (Connection connection = foundation.runtime().connections().openConnection();
                     Statement statement = connection.createStatement()) {
                 statement.execute("DROP TRIGGER fail_workflow_agent_association");
             }
@@ -298,13 +298,13 @@ class SqliteWorkflowRecoveryTest {
             }
         };
         WorkflowRunSnapshot crashed;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             assertThatThrownBy(() -> runtime(first, definition, action, failSecondResult, "first")
                             .start(start(definition, Map.of(), "start-fork")))
                     .isInstanceOf(SimulatedCrash.class);
             crashed = first.workflows().recoverable().getFirst().snapshot();
         }
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             WorkflowRunSnapshot recovered = runtime(second, definition, action, WorkflowFailureInjector.NONE, "second")
                     .recover(crashed.id());
             assertThat(recovered.status()).isEqualTo(WorkflowStatus.COMPLETED);
@@ -324,7 +324,7 @@ class SqliteWorkflowRecoveryTest {
                     node.id().value().equals("left") ? Map.of("left", "L") : Map.of("right", "R"));
         };
         WorkflowRunSnapshot crashed;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             assertThatThrownBy(() -> runtime(
                                     first,
                                     definition,
@@ -338,7 +338,7 @@ class SqliteWorkflowRecoveryTest {
                     .isInstanceOf(SimulatedCrash.class);
             crashed = first.workflows().recoverable().getFirst().snapshot();
         }
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             WorkflowRunSnapshot result = runtime(
                             second,
                             definition,
@@ -376,7 +376,7 @@ class SqliteWorkflowRecoveryTest {
             return new WorkflowStateDelta(Map.of("choice", "third"));
         };
         WorkflowRunSnapshot crashed;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             assertThatThrownBy(() -> runtime(
                                     first,
                                     definition,
@@ -387,7 +387,7 @@ class SqliteWorkflowRecoveryTest {
                     .isInstanceOf(SimulatedCrash.class);
             crashed = first.workflows().recoverable().getFirst().snapshot();
         }
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             DurableWorkflowRuntime recoveredRuntime =
                     runtime(second, definition, action, WorkflowFailureInjector.NONE, "any-second");
             WorkflowRunSnapshot result = recoveredRuntime.recover(crashed.id());
@@ -407,7 +407,7 @@ class SqliteWorkflowRecoveryTest {
         CompiledWorkflowDefinition definition = subgraphForkDefinition();
         WorkflowActionGateway increment = (runId, node, state) ->
                 new WorkflowStateDelta(Map.of("count", ((Integer) state.values().get("count")) + 1));
-        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation foundation = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             WorkflowRunSnapshot result = runtime(
                             foundation, definition, increment, WorkflowFailureInjector.NONE, "parallel-subgraph")
                     .start(start(definition, Map.of("left", 1, "right", 5), "parallel-subgraphs"));
@@ -424,7 +424,7 @@ class SqliteWorkflowRecoveryTest {
     void preservesCheckpointAndConsumesResumeExactlyOnceAcrossCrashes() {
         CompiledWorkflowDefinition definition = waitDefinition();
         WorkflowRunSnapshot waiting;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             assertThatThrownBy(() -> runtime(
                                     first,
                                     definition,
@@ -444,7 +444,7 @@ class SqliteWorkflowRecoveryTest {
                 new WorkflowSignalId("resume-crash-signal"),
                 "resume-crash-command",
                 new WorkflowStateDelta(Map.of("choice", true)));
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             assertThatThrownBy(() -> runtime(
                                     second,
                                     definition,
@@ -460,7 +460,7 @@ class SqliteWorkflowRecoveryTest {
                             .status())
                     .isEqualTo(WorkflowStatus.RUNNING);
         }
-        try (SqliteStoreFoundation third = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation third = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             DurableWorkflowRuntime runtime =
                     runtime(third, definition, noAction(), WorkflowFailureInjector.NONE, "third");
             WorkflowRunSnapshot completed = runtime.recover(waiting.id());
@@ -494,7 +494,7 @@ class SqliteWorkflowRecoveryTest {
             }
             return new WorkflowStateDelta(Map.of("count", 1));
         };
-        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation foundation = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             DurableWorkflowRuntime starter =
                     runtime(foundation, definition, blocking, WorkflowFailureInjector.NONE, "starter");
             AtomicReference<Throwable> startFailure = new AtomicReference<>();
@@ -532,7 +532,7 @@ class SqliteWorkflowRecoveryTest {
     @Test
     void rollsBackOutboxProjectionMutationWithTheSharedUnitOfWork() {
         CompiledWorkflowDefinition definition = actionDefinition();
-        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation foundation = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             runtime(foundation, definition, noAction(), WorkflowFailureInjector.NONE, "outbox")
                     .start(start(definition, Map.of(), "outbox-rollback"));
             var pending = foundation.workflows().pendingOutbox(1).getFirst();
@@ -559,11 +559,11 @@ class SqliteWorkflowRecoveryTest {
     void failsClosedWhenFrozenAdapterBindingOrCodecDoesNotMatch() {
         CompiledWorkflowDefinition definition = waitDefinition();
         WorkflowRunSnapshot waiting;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             waiting = runtime(first, definition, noAction(), WorkflowFailureInjector.NONE, "first")
                     .start(start(definition, Map.of(), "binding"));
         }
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             WorkflowPersistenceBinding drift = new WorkflowPersistenceBinding("other-adapter", "1", "0".repeat(64), 1);
             DurableWorkflowRuntime runtime =
                     runtime(second, definition, noAction(), WorkflowFailureInjector.NONE, "second", drift);
@@ -577,21 +577,21 @@ class SqliteWorkflowRecoveryTest {
     void failsClosedForCodecDefinitionAndPayloadIntegrityDrift() throws Exception {
         CompiledWorkflowDefinition definition = waitDefinition();
         WorkflowRunSnapshot waiting;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             waiting = runtime(first, definition, noAction(), WorkflowFailureInjector.NONE, "first")
                     .start(start(definition, Map.of(), "drift"));
-            try (Connection connection = first.connections().openConnection();
+            try (Connection connection = first.runtime().connections().openConnection();
                     Statement statement = connection.createStatement()) {
                 statement.executeUpdate("UPDATE workflow_run SET state_codec_version=2 WHERE workflow_run_id='"
                         + waiting.id().value() + "'");
             }
         }
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             assertThatThrownBy(() -> runtime(second, definition, noAction(), WorkflowFailureInjector.NONE, "second")
                             .recover(waiting.id()))
                     .isInstanceOfSatisfying(WorkflowException.class, error -> assertThat(error.code())
                             .isEqualTo(WorkflowErrorCode.CODEC_MISMATCH));
-            try (Connection connection = second.connections().openConnection();
+            try (Connection connection = second.runtime().connections().openConnection();
                     Statement statement = connection.createStatement()) {
                 statement.executeUpdate("UPDATE workflow_run SET state_codec_version=1, state_hash='" + "f".repeat(64)
                         + "' WHERE workflow_run_id='" + waiting.id().value() + "'");
@@ -612,7 +612,7 @@ class SqliteWorkflowRecoveryTest {
             return new WorkflowStateDelta(Map.of("count", 6));
         };
         WorkflowRunSnapshot parent;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             assertThatThrownBy(() -> runtime(
                                     first,
                                     definition,
@@ -630,7 +630,7 @@ class SqliteWorkflowRecoveryTest {
             assertThat(calls).hasValue(0);
         }
 
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             WorkflowRunSnapshot recovered = runtime(second, definition, action, WorkflowFailureInjector.NONE, "second")
                     .recover(parent.id());
             assertThat(recovered.status()).isEqualTo(WorkflowStatus.COMPLETED);
@@ -648,7 +648,7 @@ class SqliteWorkflowRecoveryTest {
             return new WorkflowStateDelta(Map.of("count", 8));
         };
         WorkflowRunSnapshot parent;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             assertThatThrownBy(() -> runtime(
                                     first,
                                     definition,
@@ -664,7 +664,7 @@ class SqliteWorkflowRecoveryTest {
                     .orElseThrow();
             assertThat(calls).hasValue(1);
         }
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             WorkflowRunSnapshot recovered = runtime(second, definition, action, WorkflowFailureInjector.NONE, "second")
                     .recover(parent.id());
             assertThat(recovered.status()).isEqualTo(WorkflowStatus.COMPLETED);
@@ -678,7 +678,7 @@ class SqliteWorkflowRecoveryTest {
         CompiledWorkflowDefinition definition = subgraphDefinition(true);
         WorkflowRunSnapshot waiting;
         io.haifa.agent.orchestration.api.WorkflowRunId childId;
-        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation first = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             waiting = runtime(first, definition, noAction(), WorkflowFailureInjector.NONE, "first")
                     .start(start(definition, Map.of("count", 1), "subgraph-wait"));
             assertThat(waiting.status()).isEqualTo(WorkflowStatus.WAITING);
@@ -687,7 +687,7 @@ class SqliteWorkflowRecoveryTest {
                     .isPresent();
         }
 
-        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+        try (SqliteWorkflowStoreFoundation second = SqliteWorkflowStoreTestSupport.foundation(directory)) {
             DurableWorkflowRuntime runtime =
                     runtime(second, definition, noAction(), WorkflowFailureInjector.NONE, "second");
             WorkflowRunSnapshot completed = runtime.resume(new WorkflowResumeRequest(
@@ -707,7 +707,7 @@ class SqliteWorkflowRecoveryTest {
         } catch (java.io.IOException exception) {
             throw new IllegalStateException(exception);
         }
-        try (SqliteStoreFoundation third = SqliteTestSupport.foundation(cancelDirectory)) {
+        try (SqliteWorkflowStoreFoundation third = SqliteWorkflowStoreTestSupport.foundation(cancelDirectory)) {
             DurableWorkflowRuntime runtime =
                     runtime(third, definition, noAction(), WorkflowFailureInjector.NONE, "third");
             WorkflowRunSnapshot parent = runtime.start(start(definition, Map.of("count", 1), "cancel-parent"));
@@ -722,7 +722,7 @@ class SqliteWorkflowRecoveryTest {
         } catch (java.io.IOException exception) {
             throw new IllegalStateException(exception);
         }
-        try (SqliteStoreFoundation fourth = SqliteTestSupport.foundation(timeoutDirectory)) {
+        try (SqliteWorkflowStoreFoundation fourth = SqliteWorkflowStoreTestSupport.foundation(timeoutDirectory)) {
             DurableWorkflowRuntime runtime =
                     runtime(fourth, definition, noAction(), WorkflowFailureInjector.NONE, "fourth");
             WorkflowRunSnapshot parent = runtime.start(start(definition, Map.of("count", 1), "timeout-parent"));
@@ -742,7 +742,7 @@ class SqliteWorkflowRecoveryTest {
         }
         WorkflowRunSnapshot crashWaiting;
         WorkflowResumeRequest crashResume;
-        try (SqliteStoreFoundation fifth = SqliteTestSupport.foundation(resumeCrashDirectory)) {
+        try (SqliteWorkflowStoreFoundation fifth = SqliteWorkflowStoreTestSupport.foundation(resumeCrashDirectory)) {
             crashWaiting = runtime(fifth, definition, noAction(), WorkflowFailureInjector.NONE, "fifth")
                     .start(start(definition, Map.of("count", 1), "resume-crash-parent"));
             crashResume = new WorkflowResumeRequest(
@@ -761,7 +761,7 @@ class SqliteWorkflowRecoveryTest {
                             .resume(crashResume))
                     .isInstanceOf(SimulatedCrash.class);
         }
-        try (SqliteStoreFoundation sixth = SqliteTestSupport.foundation(resumeCrashDirectory)) {
+        try (SqliteWorkflowStoreFoundation sixth = SqliteWorkflowStoreTestSupport.foundation(resumeCrashDirectory)) {
             DurableWorkflowRuntime runtime =
                     runtime(sixth, definition, noAction(), WorkflowFailureInjector.NONE, "sixth");
             WorkflowRunSnapshot recovered = runtime.recover(crashWaiting.id());
@@ -771,7 +771,7 @@ class SqliteWorkflowRecoveryTest {
     }
 
     private DurableWorkflowRuntime runtime(
-            SqliteStoreFoundation foundation,
+            SqliteWorkflowStoreFoundation foundation,
             CompiledWorkflowDefinition definition,
             WorkflowActionGateway actions,
             WorkflowFailureInjector failures,
@@ -780,7 +780,7 @@ class SqliteWorkflowRecoveryTest {
     }
 
     private DurableWorkflowRuntime runtime(
-            SqliteStoreFoundation foundation,
+            SqliteWorkflowStoreFoundation foundation,
             CompiledWorkflowDefinition definition,
             WorkflowActionGateway actions,
             WorkflowFailureInjector failures,
@@ -790,7 +790,7 @@ class SqliteWorkflowRecoveryTest {
     }
 
     private DurableWorkflowRuntime runtime(
-            SqliteStoreFoundation foundation,
+            SqliteWorkflowStoreFoundation foundation,
             CompiledWorkflowDefinition definition,
             WorkflowActionGateway actions,
             WorkflowAgentGateway agents,
@@ -814,7 +814,7 @@ class SqliteWorkflowRecoveryTest {
     }
 
     private DurableWorkflowRuntime runtime(
-            SqliteStoreFoundation foundation,
+            SqliteWorkflowStoreFoundation foundation,
             CompiledWorkflowDefinition definition,
             WorkflowActionGateway actions,
             WorkflowAgentGateway agents,
@@ -825,14 +825,16 @@ class SqliteWorkflowRecoveryTest {
                 foundation, definition, actions, agents, (condition, state) -> false, failures, idPrefix, binding);
     }
 
-    private static DurableWorkflowAgentGateway agentGateway(SqliteStoreFoundation foundation, boolean recoverable) {
+    private static DurableWorkflowAgentGateway agentGateway(
+            SqliteWorkflowStoreFoundation foundation, boolean recoverable) {
         return new DurableWorkflowAgentGateway() {
             @Override
             public AgentRunId start(
                     io.haifa.agent.orchestration.api.WorkflowRunId workflowRunId,
                     WorkflowNodeDefinition node,
                     WorkflowState state) {
-                return SqliteAggregateTestData.prepareRun(foundation).id();
+                return SqliteWorkflowAggregateTestData.prepareRun(foundation.runtime())
+                        .id();
             }
 
             @Override

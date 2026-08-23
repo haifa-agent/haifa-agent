@@ -22,6 +22,7 @@
         <module>haifa-agent-local-model-auth-antigravity-local-compat</module>
         <module>haifa-agent-git</module>
         <module>haifa-agent-store-sqlite</module>
+        <module>haifa-agent-store-sqlite-orchestration</module>
         <module>haifa-agent-store-jsonl</module>
         <module>haifa-agent-transport-http</module>
         <module>haifa-agent-graph-langgraph4j</module>
