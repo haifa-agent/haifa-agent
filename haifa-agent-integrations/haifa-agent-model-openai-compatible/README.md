@@ -3,8 +3,9 @@
 ## Profile factory
 
 `OpenAiCompatibleModelProfileFactory` derives a versioned binding profile from an already resolved snapshot. It
-recognizes only exact model/style/dialect combinations that completed contract verification: DeepSeek, selected
-Bailian Qwen bindings, Kimi K3/K2.7/K2.6, and selected Zhipu GLM bindings. Unknown vendor bindings remain unverified
+recognizes only exact model/style/dialect combinations that completed contract verification: DeepSeek, the reviewed
+SiliconFlow DeepSeek V4 Flash Chat binding, selected Bailian Qwen bindings, Kimi K3/K2.7/K2.6, and selected Zhipu
+GLM bindings. Unknown vendor bindings remain unverified
 instead of inheriting capabilities merely because they share an OpenAI-compatible transport. Product exposure can
 still keep a verified control read-only. Provider request mapping remains in the dialect/adapter layer.
 
@@ -73,6 +74,7 @@ Chat Completions 当前支持：
 | Kimi | `kimi-openai-chat` | 是 | 是 | 是 | K3/K2.7 始终推理，K2.6 可切换，安全 continuation |
 | 智谱 GLM | `zhipu-openai-chat` | 是 | 是 | 是 | 动态/强制 thinking、有效 effort 与采样限制由精确 profile 决定 |
 | 火山方舟 | `volcengine-ark-openai-chat` | 是 | 是 | 是 | 由受治理豆包/Endpoint profile 决定 |
+| SiliconFlow | `siliconflow-openai-chat` | 是 | 是 | 是 | 不发送厂商推理控制扩展 |
 
 配置通过 Provider 下的 `apiBindings` 声明 Style。省略 dialect 即 `standard`；只有存在已验证协议差异
 时才声明非标准 dialect。当前未发布旧配置或快照，不保留旧 options、Provider-ID 猜测或双轨入口。
@@ -166,6 +168,7 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 | Kimi | 是 | 是 | model-gated | 必须 | opt-in |
 | Zhipu | 是 | 是 | dynamic/forced profile | 必须 | opt-in |
 | Ark | 是 | 是 | profile-gated | profile-gated | opt-in |
+| SiliconFlow DeepSeek V4 Flash | 是 | 是 | 不声明 | 否 | opt-in |
 
 图片输入不是 dialect 推断结果。冻结模型只有声明 `IMAGE_INPUT` 时才可发送图片；纯文本消息继续使用
 字符串 `content`，包含 `ImageUrlPart` 或临时 `ImageDataPart` 的 USER 消息映射为标准 Chat Completions
@@ -179,6 +182,7 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 | Kimi | `https://api.moonshot.cn/v1` | `env://KIMI_API_KEY` | reviewed Kimi model id | thinking/keep/reasoning_effort |
 | Zhipu | `https://open.bigmodel.cn/api/paas/v4` | `env://BIGMODEL_API_KEY` | reviewed GLM model id | thinking/reasoning_effort/do_sample |
 | Ark | `https://ark.cn-beijing.volces.com/api/v3` | `env://ARK_API_KEY` | typed Model ID/Endpoint ID | thinking/service_tier/token parameter |
+| SiliconFlow | `https://api.siliconflow.cn/v1` | `env://SILICONFLOW_API_KEY` | reviewed model id | cumulative stream usage |
 
 标准 OpenAI dialect 可冻结 `native_streaming=false`。此时 Adapter 使用同步 Chat Completions 获取权威
 `usage`，再通过 provider-neutral 默认桥接发出有界 Content/Usage 事件，适用于不实现 SSE usage 的本机中转。
@@ -196,6 +200,11 @@ The adapter supports synchronous JSON Chat Completions and `text/event-stream`. 
 `stream=true` and `stream_options.include_usage=true`, then aggregate content, reasoning, tool-call arguments,
 and final usage. A normalized `AgentChatResponse` is returned only after identity, finish reason, usage, and tool
 JSON validation. Reasoning is an internal sensitive event and is never projected to public Runtime output.
+
+`standard` and existing vendor dialects retain strict final-usage validation. `siliconflow-openai-chat` accepts only
+monotonically cumulative usage snapshots, rejects any token field decrease as `non_monotonic_stream_usage`, and
+publishes exactly one final `UsageReported` event after `[DONE]`. The first release accepts only
+`https://api.siliconflow.cn/v1`; insecure HTTP remains restricted to explicitly enabled loopback stubs.
 
 The parser bounds each SSE event, the total response, delta count, content, reasoning, and tool arguments.
 Consumer cancellation closes the response body and maps to standard `CANCELLED`; synchronous behavior remains
@@ -314,6 +323,14 @@ ARK_API_KEY=<secret>
 HAIFA_ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 HAIFA_ARK_MODEL_ID=<model-or-endpoint-id>
 HAIFA_ARK_MODEL_REFERENCE_KIND=MODEL_ID|ENDPOINT_ID
+
+HAIFA_SILICONFLOW_LIVE_TEST=true
+SILICONFLOW_API_KEY=<secret>
+
+# Explicit paid 2x2 comparison: SiliconFlow/DeepSeek x native streaming true/false
+HAIFA_STREAMING_MODE_COMPARISON_LIVE_TEST=true
+SILICONFLOW_API_KEY=<secret>
+DEEPSEEK_API_KEY=<secret>
 ```
 
 ```powershell

@@ -10,6 +10,8 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
@@ -20,6 +22,7 @@ import java.io.IOException;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.io.PrintStream;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -27,6 +30,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -39,6 +43,34 @@ import org.junit.jupiter.api.io.TempDir;
 class LocalCodingProductAssemblyTest {
     @TempDir
     Path root;
+
+    @Test
+    void freezesSiliconFlowDialectAndNativeStreamingForProductAssembly() {
+        URI endpoint = URI.create("https://api.siliconflow.cn/v1");
+        var model = new CliConfiguration.Model(
+                "siliconflow",
+                "SiliconFlow",
+                "deepseek-ai/DeepSeek-V4-Flash",
+                endpoint,
+                endpoint,
+                "env://SILICONFLOW_API_KEY",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                io.haifa.agent.model.openai.OpenAiCompatibleDialects.SILICONFLOW,
+                true,
+                null,
+                null,
+                "siliconflow-deepseek-v4-flash",
+                "SiliconFlow DeepSeek V4 Flash",
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                1_000_000,
+                8_192);
+
+        var snapshot = LocalCodingAgent.modelSnapshot(model);
+
+        assertThat(snapshot.nativeStreaming()).isTrue();
+        assertThat(snapshot.dialect()).isEqualTo(io.haifa.agent.model.openai.OpenAiCompatibleDialects.SILICONFLOW);
+        assertThat(snapshot.providerOptions()).containsEntry("endpoint_host", "api.siliconflow.cn");
+    }
 
     @Test
     void nonInteractiveTerminalFailsBeforeTheProductRuntimeIsAssembled() throws Exception {

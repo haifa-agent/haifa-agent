@@ -401,6 +401,27 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void standardDialectStillRejectsDifferentStreamUsageSnapshots() {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"));
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"strict-stream","model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}
+
+                data: {"id":"strict-stream","model":"gpt-5.6-luna","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1}}
+
+                data: [DONE]
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(openAiRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> assertThat(((ModelInvocationException) error).providerCode())
+                        .isEqualTo("conflicting_stream_usage"));
+    }
+
+    @Test
     void closesStreamWhenConsumerCancels() {
         response.set(
                 Response.sse(

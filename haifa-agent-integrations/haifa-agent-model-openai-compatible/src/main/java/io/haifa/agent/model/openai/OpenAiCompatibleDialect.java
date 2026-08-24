@@ -18,6 +18,14 @@ public interface OpenAiCompatibleDialect {
 
     void applyRequest(AgentChatRequest request, Map<String, Object> body);
 
+    default void applyStreamingRequest(AgentChatRequest request, Map<String, Object> body) {
+        body.put("stream_options", Map.of("include_usage", true));
+    }
+
+    default StreamUsageMode streamUsageMode() {
+        return StreamUsageMode.FINAL_ONLY_STRICT;
+    }
+
     default boolean acceptsResponseObject(String object, boolean streaming) {
         return true;
     }

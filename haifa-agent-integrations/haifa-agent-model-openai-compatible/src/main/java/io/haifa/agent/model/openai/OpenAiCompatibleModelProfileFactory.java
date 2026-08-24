@@ -158,7 +158,8 @@ public final class OpenAiCompatibleModelProfileFactory {
                 || verifiedKimiOptional(snapshot)
                 || verifiedZhipuDynamic52(snapshot)
                 || verifiedZhipuDynamicLegacy(snapshot)
-                || verifiedZhipuForced(snapshot);
+                || verifiedZhipuForced(snapshot)
+                || verifiedSiliconFlowBinding(snapshot);
     }
 
     private static boolean verifiedReadOnlyResponsesBinding(ResolvedModelSnapshot snapshot) {
@@ -208,6 +209,11 @@ public final class OpenAiCompatibleModelProfileFactory {
 
     private static boolean verifiedZhipuForced(ResolvedModelSnapshot snapshot) {
         return verifiedChat(snapshot, "zhipu", OpenAiCompatibleDialects.ZHIPU, Set.of("glm-4.7"));
+    }
+
+    private static boolean verifiedSiliconFlowBinding(ResolvedModelSnapshot snapshot) {
+        return verifiedChat(
+                snapshot, "siliconflow", OpenAiCompatibleDialects.SILICONFLOW, Set.of("deepseek-ai/DeepSeek-V4-Flash"));
     }
 
     private static boolean verifiedChat(
