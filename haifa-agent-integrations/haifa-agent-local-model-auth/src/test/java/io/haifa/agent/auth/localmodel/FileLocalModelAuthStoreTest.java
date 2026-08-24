@@ -12,6 +12,7 @@ import java.nio.file.attribute.AclEntryType;
 import java.nio.file.attribute.AclFileAttributeView;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.nio.file.attribute.UserPrincipal;
 import java.time.Instant;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -117,10 +118,13 @@ class FileLocalModelAuthStoreTest {
             return;
         }
         AclFileAttributeView acl = Files.getFileAttributeView(path, AclFileAttributeView.class);
+        UserPrincipal current = path.getFileSystem()
+                .getUserPrincipalLookupService()
+                .lookupPrincipalByName(System.getProperty("user.name"));
         assertThat(acl).isNotNull();
         assertThat(acl.getAcl()).isNotEmpty().allSatisfy(entry -> {
             assertThat(entry.type()).isEqualTo(AclEntryType.ALLOW);
-            assertThat(entry.principal()).isEqualTo(Files.getOwner(path));
+            assertThat(entry.principal()).isEqualTo(current);
         });
     }
 }
