@@ -13,6 +13,7 @@ import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
+import io.haifa.agent.core.run.RunTerminationReason;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -106,5 +107,41 @@ class AgentRunTest {
         assertThat(run.budget().isExceededBy(run.usage())).isTrue();
         assertThatThrownBy(() -> new AgentRunUsageDelta(-1, 0, 0, 0, 0, 0, 0, 0))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void excludesOpenAndCompletedHumanWaitsFromActiveElapsedTime() {
+        AgentRun run = AgentRun.createRoot(new AgentRunId("run-human-wait"), runSpec(1), NOW);
+        run.start(NOW.plusSeconds(1));
+        run.waitForApproval(new InteractionRequestRef("approval", "tool"), NOW.plusSeconds(10));
+
+        var afterOneYear = NOW.plusSeconds(10 + 365L * 24 * 60 * 60);
+        assertThat(run.activeElapsedMillis(afterOneYear)).isEqualTo(10_000);
+        assertThat(run.accumulatedHumanWaitMillis()).isZero();
+        assertThat(run.humanWaitStartedAt()).contains(NOW.plusSeconds(10));
+
+        run.resume(afterOneYear);
+        assertThat(run.activeElapsedMillis(afterOneYear)).isEqualTo(10_000);
+        assertThat(run.accumulatedHumanWaitMillis()).isEqualTo(365L * 24 * 60 * 60 * 1_000);
+        assertThat(run.humanWaitStartedAt()).isEmpty();
+        assertThat(run.activeElapsedMillis(afterOneYear.plusSeconds(5))).isEqualTo(15_000);
+
+        assertThat(AgentRun.reconstitute(run.persistenceSnapshot()).persistenceSnapshot())
+                .isEqualTo(run.persistenceSnapshot());
+    }
+
+    @Test
+    void closesHumanWaitWhenRunTerminatesWhileWaiting() {
+        AgentRun run = AgentRun.createRoot(new AgentRunId("run-cancelled-wait"), runSpec(1), NOW);
+        run.start(NOW.plusSeconds(1));
+        run.waitForInteraction(new InteractionRequestRef("question", "clarification"), NOW.plusSeconds(2));
+
+        run.cancel(new RunTerminationReason("USER_CANCELLED", "cancelled by user"), NOW.plusSeconds(12));
+
+        assertThat(run.accumulatedHumanWaitMillis()).isEqualTo(10_000);
+        assertThat(run.humanWaitStartedAt()).isEmpty();
+        assertThat(run.waitingFor()).isEmpty();
+        assertThat(AgentRun.reconstitute(run.persistenceSnapshot()).persistenceSnapshot())
+                .isEqualTo(run.persistenceSnapshot());
     }
 }

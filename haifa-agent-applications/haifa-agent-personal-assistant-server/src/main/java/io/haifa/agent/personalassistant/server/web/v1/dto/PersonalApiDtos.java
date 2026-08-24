@@ -338,7 +338,7 @@ public final class PersonalApiDtos {
             String inputType,
             int maximumCharacters,
             Instant createdAt,
-            Instant expiresAt) {}
+            Optional<Instant> expiresAt) {}
 
     public record InteractionResponse(String action, String text) {}
 

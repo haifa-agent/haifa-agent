@@ -1,7 +1,6 @@
 package io.haifa.agent.runtime.core.recovery;
 
 import io.haifa.agent.core.run.AgentRun;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -25,10 +24,8 @@ public record RunBudgetSnapshot(
         long model = remaining(run.budget().maxModelCalls(), run.usage().modelCalls());
         long tools = remaining(run.budget().maxToolCalls(), run.usage().toolCalls());
         long iterations = Math.max(0, (long) run.limits().maxIterations() - iteration + 1L);
-        long wall = Math.max(
-                0,
-                run.limits().maxWallTimeMillis()
-                        - Math.max(0, Duration.between(run.createdAt(), now).toMillis()));
+        long activeElapsedMillis = run.activeElapsedMillis(now);
+        long wall = Math.max(0, run.limits().maxWallTimeMillis() - activeElapsedMillis);
         long input = remaining(run.budget().maxInputTokens(), run.usage().inputTokens());
         long output = remaining(run.budget().maxOutputTokens(), run.usage().outputTokens());
         long cachedInput =
@@ -53,7 +50,7 @@ public record RunBudgetSnapshot(
                         percent(iterations, run.limits().maxIterations())),
                 new BudgetDimension(
                         "WALL_TIME_MILLIS",
-                        Math.max(0, Duration.between(run.createdAt(), now).toMillis()),
+                        activeElapsedMillis,
                         run.limits().maxWallTimeMillis(),
                         percent(wall, run.limits().maxWallTimeMillis())),
                 new BudgetDimension(

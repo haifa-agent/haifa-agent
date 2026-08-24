@@ -62,6 +62,7 @@ import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
+import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.retry.BackoffStrategy;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
@@ -1149,6 +1150,56 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void humanApprovalWaitDoesNotConsumeTheRunWallTimeLimit() {
+        AtomicReference<Instant> now = new AtomicReference<>(Instant.parse("2026-07-21T00:00:00Z"));
+        AtomicInteger modelCalls = new AtomicInteger();
+        AgentChatModel model = ignored -> response(
+                modelCalls.incrementAndGet() == 1
+                        ? new ToolCallDecision(List.of(toolRequest(
+                                "long-wait",
+                                "write",
+                                "1.0.0",
+                                new ToolArguments("write.input", "1.0", Map.of("v", 1)))))
+                        : finalDecision("completed after long approval wait"));
+        Fixture fixture = fixture(
+                model,
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        request -> new ToolResult(true, "written", Map.of(), List.of(), List.of(), false)),
+                now::get);
+
+        var accepted = fixture.runtime.start(request("long-human-wait"));
+        fixture.scheduler.runAll();
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+        var interaction = fixture.interactions.pending(accepted.runId()).orElseThrow();
+
+        now.set(now.get().plus(Duration.ofDays(365)));
+        var waitingRun = fixture.store.find(accepted.runId()).orElseThrow();
+        assertThat(RunBudgetSnapshot.from(waitingRun, 1, 0, 0, now.get()).remainingWallTimeMillis())
+                .isEqualTo(waitingRun.limits().maxWallTimeMillis());
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("long-wait-response"),
+                interaction.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "long-wait-approval-key",
+                now.get()));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.store.find(accepted.runId()).orElseThrow().accumulatedHumanWaitMillis())
+                .isEqualTo(Duration.ofDays(365).toMillis());
+    }
+
+    @Test
     void multipleApprovalRequiredToolsResumeSequentiallyWithoutRepeatingTheModelCall() {
         AtomicInteger modelCalls = new AtomicInteger();
         List<Integer> executed = new ArrayList<>();
@@ -1382,6 +1433,11 @@ class RuntimeCoreTest {
 
     private static Fixture fixture(
             AgentChatModel model, java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer) {
+        return fixture(model, customizer, () -> Instant.parse("2026-07-21T00:00:00Z"));
+    }
+
+    private static Fixture fixture(
+            AgentChatModel model, java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer, TimeProvider time) {
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         InMemoryInteractionPort interactions = new InMemoryInteractionPort();
@@ -1389,7 +1445,6 @@ class RuntimeCoreTest {
         InMemoryToolExecutionJournal journal = new InMemoryToolExecutionJournal();
         AtomicInteger sequence = new AtomicInteger();
         IdentifierGenerator ids = () -> "id-" + sequence.incrementAndGet();
-        TimeProvider time = () -> Instant.parse("2026-07-21T00:00:00Z");
         RuntimeCoreBuilder builder = new RuntimeCoreBuilder()
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .scheduler(scheduler)

@@ -277,7 +277,7 @@ export interface Interaction {
   inputType: string;
   maximumCharacters: number;
   createdAt: string;
-  expiresAt: string;
+  expiresAt?: string | null;
 }
 
 export interface InteractionResponse {

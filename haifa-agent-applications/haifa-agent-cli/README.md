@@ -635,7 +635,8 @@ Push、remote ref 与 PR 权威证据；`auto` 允许其中非硬拒绝的 HIGH 
 
 CLI 在冻结 Definition 时把可信配置解析后的 Shell 显示名加入模型指令，要求 `execution_run` 只生成该
 Shell 支持的命令语法，避免在 Windows PowerShell 中混入 POSIX 命令；Shell 的实际路径、审批、能力与
-Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。该环境指令同时说明 `PATH` 中任意非交互 CLI
+Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。Terminal 和 one-shot CLI 在人工交互/审批期间
+暂停整体活动时间预算；等待没有自动截止时间，批准后从剩余预算继续。该环境指令同时说明 `PATH` 中任意非交互 CLI
 均可使用，并要求模型在命令缺失时探测和切换替代方案、收窄过宽查询、保持输出有界。
 
 CLI 还会从 Workspace 根的 `pom.xml`、Gradle 文件、`pyproject.toml`/`pytest.ini`、`package.json`、

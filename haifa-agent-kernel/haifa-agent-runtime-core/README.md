@@ -1,5 +1,13 @@
 # Haifa Agent Runtime Core
 
+## Human interaction lifetime
+
+Runtime 生成的 Clarification 与 Tool Approval 默认不自动过期，并在 Interaction Store 中持久保持
+Pending，直到响应或显式取消。Approval 响应仍重新校验精确 Tool Target 与操作者权限；通过后只签发
+从批准时刻开始计算的短期授权证据，因此无限人工等待不会扩大执行权限。
+Run 会持久化累计人工等待和当前等待起点；AgentLoop、模型重试窗口与恢复预算使用排除人工等待后的
+活动执行时间。进程重启后继续等待或批准恢复，都不会把人工等待计入 `maxWallTimeMillis`。
+
 ## Tool outcome convergence
 
 At the irreversible dispatch boundary, Tool Journal records an optional bounded execution identity, host-local PID,

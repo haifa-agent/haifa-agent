@@ -22,8 +22,44 @@ public record InteractionView(
         TargetView target,
         RequesterView requester,
         Instant createdAt,
-        Instant expiresAt,
+        Optional<Instant> expiresAt,
         ConsequenceView consequences) {
+    public InteractionView(
+            ApiVersion apiVersion,
+            String requestId,
+            String runId,
+            String sessionId,
+            long revision,
+            String kind,
+            String state,
+            String title,
+            String safePrompt,
+            List<String> allowedActions,
+            InputContract inputContract,
+            TargetView target,
+            RequesterView requester,
+            Instant createdAt,
+            Instant expiresAt,
+            ConsequenceView consequences) {
+        this(
+                apiVersion,
+                requestId,
+                runId,
+                sessionId,
+                revision,
+                kind,
+                state,
+                title,
+                safePrompt,
+                allowedActions,
+                inputContract,
+                target,
+                requester,
+                createdAt,
+                Optional.of(Objects.requireNonNull(expiresAt, "expiresAt must not be null")),
+                consequences);
+    }
+
     public InteractionView {
         apiVersion = Objects.requireNonNull(apiVersion, "apiVersion must not be null");
         requestId = text(requestId, "requestId", 256);
@@ -44,6 +80,9 @@ public record InteractionView(
         createdAt = Objects.requireNonNull(createdAt, "createdAt must not be null");
         expiresAt = Objects.requireNonNull(expiresAt, "expiresAt must not be null");
         consequences = Objects.requireNonNull(consequences, "consequences must not be null");
+        if (expiresAt.isPresent() && !expiresAt.orElseThrow().isAfter(createdAt)) {
+            throw new IllegalArgumentException("expiresAt must be after createdAt");
+        }
     }
 
     private static String text(String value, String field, int maximumLength) {

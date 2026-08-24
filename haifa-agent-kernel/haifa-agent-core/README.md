@@ -16,6 +16,7 @@
 - `AgentSession` 只组织多轮交互和多次 Run，不固定绑定任何 AgentDefinition，也不内嵌完整消息或 Run 集合。
 - `AgentRun` 统一表达根 Run 和子 Run，通过 `rootRunId`、`parentRunId`、`depth` 与 `invocationMode` 建模委派和 Fork/Join。
 - Run 使用 `PENDING`、`QUEUED`、`RUNNING`、挂起/等待、`COMPLETING` 及四种终态的完整状态机。状态只能通过命名领域行为改变，终态不可恢复。
+- `AgentRun` 累计记录人工交互/审批等待时长和当前等待起点；`activeElapsedMillis` 从活动执行时间中排除人工等待，并随持久化快照恢复。
 - 最终结构化结果为 Core 的 `AgentRunResult`；Message 原生使用不可变 `List<ContentPart>`；Asset 与 Artifact 只以 Ref 进入 Core。
 - ID 和时间由调用方生成后传入，Core 不调用随机生成或 `Instant.now()`。
 - 集合及 Metadata 均进行防御性复制；聚合不公开 Setter。

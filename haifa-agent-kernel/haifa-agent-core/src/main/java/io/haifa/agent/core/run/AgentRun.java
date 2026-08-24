@@ -11,6 +11,7 @@ import io.haifa.agent.core.reference.ProjectRef;
 import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.session.AgentSessionId;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.Objects;
@@ -52,6 +53,8 @@ public final class AgentRun {
     private AgentError error;
     private InteractionRequestRef waitingFor;
     private RunTerminationReason terminationReason;
+    private long accumulatedHumanWaitMillis;
+    private Instant humanWaitStartedAt;
     private Instant queuedAt;
     private Instant startedAt;
     private Instant suspendedAt;
@@ -147,6 +150,8 @@ public final class AgentRun {
             run.error = snapshot.error();
             run.waitingFor = snapshot.waitingFor();
             run.terminationReason = snapshot.terminationReason();
+            run.accumulatedHumanWaitMillis = snapshot.accumulatedHumanWaitMillis();
+            run.humanWaitStartedAt = snapshot.humanWaitStartedAt();
             run.queuedAt = snapshot.queuedAt();
             run.startedAt = snapshot.startedAt();
             run.suspendedAt = snapshot.suspendedAt();
@@ -174,6 +179,24 @@ public final class AgentRun {
                 snapshot.resumedAt(), snapshot.createdAt(), snapshot.updatedAt(), "resumedAt", "run");
         DomainReconstitution.requireWithinHistory(
                 snapshot.completedAt(), snapshot.createdAt(), snapshot.updatedAt(), "completedAt", "run");
+        DomainReconstitution.requireWithinHistory(
+                snapshot.humanWaitStartedAt(), snapshot.createdAt(), snapshot.updatedAt(), "humanWaitStartedAt", "run");
+        long totalElapsedMillis =
+                Duration.between(snapshot.createdAt(), snapshot.updatedAt()).toMillis();
+        if (snapshot.accumulatedHumanWaitMillis() < 0 || snapshot.accumulatedHumanWaitMillis() > totalElapsedMillis) {
+            DomainReconstitution.invalid("run accumulated human wait is outside run history");
+        }
+        boolean waitingForHuman = isHumanWait(status);
+        if (waitingForHuman != (snapshot.humanWaitStartedAt() != null)) {
+            DomainReconstitution.invalid("run human wait start is inconsistent for status " + status);
+        }
+        if (snapshot.humanWaitStartedAt() != null) {
+            long currentWaitMillis = Duration.between(snapshot.humanWaitStartedAt(), snapshot.updatedAt())
+                    .toMillis();
+            if (snapshot.accumulatedHumanWaitMillis() > totalElapsedMillis - currentWaitMillis) {
+                DomainReconstitution.invalid("run human wait exceeds run history");
+            }
+        }
         if (snapshot.queuedAt() != null
                 && snapshot.startedAt() != null
                 && snapshot.startedAt().isBefore(snapshot.queuedAt())) {
@@ -286,6 +309,8 @@ public final class AgentRun {
                 error,
                 waitingFor,
                 terminationReason,
+                accumulatedHumanWaitMillis,
+                humanWaitStartedAt,
                 queuedAt,
                 startedAt,
                 suspendedAt,
@@ -408,9 +433,23 @@ public final class AgentRun {
         if (at.isBefore(updatedAt)) {
             throw new IllegalArgumentException("run transition time must not move backwards");
         }
+        boolean leavingHumanWait = isHumanWait(status) && !isHumanWait(target);
+        boolean enteringHumanWait = !isHumanWait(status) && isHumanWait(target);
+        if (leavingHumanWait) {
+            long currentWaitMillis = Duration.between(humanWaitStartedAt, at).toMillis();
+            accumulatedHumanWaitMillis = Math.addExact(accumulatedHumanWaitMillis, currentWaitMillis);
+            humanWaitStartedAt = null;
+            waitingFor = null;
+        } else if (enteringHumanWait) {
+            humanWaitStartedAt = at;
+        }
         status = target;
         updatedAt = at;
         version++;
+    }
+
+    private static boolean isHumanWait(AgentRunStatus candidate) {
+        return candidate == AgentRunStatus.WAITING_INTERACTION || candidate == AgentRunStatus.WAITING_APPROVAL;
     }
 
     private void requireNonTerminal() {
@@ -521,6 +560,28 @@ public final class AgentRun {
 
     public Optional<RunTerminationReason> terminationReason() {
         return Optional.ofNullable(terminationReason);
+    }
+
+    public long accumulatedHumanWaitMillis() {
+        return accumulatedHumanWaitMillis;
+    }
+
+    public Optional<Instant> humanWaitStartedAt() {
+        return Optional.ofNullable(humanWaitStartedAt);
+    }
+
+    /** Returns wall-clock run time excluding intervals spent waiting for a human response. */
+    public long activeElapsedMillis(Instant at) {
+        Objects.requireNonNull(at, "at must not be null");
+        if (at.isBefore(updatedAt)) {
+            throw new IllegalArgumentException("elapsed time must not precede the latest run transition");
+        }
+        long totalElapsedMillis = Duration.between(createdAt, at).toMillis();
+        long currentWaitMillis = humanWaitStartedAt == null
+                ? 0
+                : Duration.between(humanWaitStartedAt, at).toMillis();
+        return Math.subtractExact(
+                Math.subtractExact(totalElapsedMillis, accumulatedHumanWaitMillis), currentWaitMillis);
     }
 
     public Optional<Instant> queuedAt() {

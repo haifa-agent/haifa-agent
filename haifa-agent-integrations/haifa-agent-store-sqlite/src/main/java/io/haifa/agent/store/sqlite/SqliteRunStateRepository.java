@@ -142,6 +142,8 @@ public final class SqliteRunStateRepository implements RunStateRepository {
                 value.terminationReason() == null
                         ? null
                         : value.terminationReason().description(),
+                value.accumulatedHumanWaitMillis(),
+                value.humanWaitStartedAt(),
                 value.createdAt(),
                 value.queuedAt(),
                 value.startedAt(),
@@ -225,6 +227,8 @@ public final class SqliteRunStateRepository implements RunStateRepository {
                 row.terminationReason() == null
                         ? null
                         : new RunTerminationReason(row.terminationReason(), row.terminationDescription()),
+                row.accumulatedHumanWaitMillis(),
+                row.humanWaitStartedAt(),
                 row.queuedAt(),
                 row.startedAt(),
                 row.suspendedAt(),

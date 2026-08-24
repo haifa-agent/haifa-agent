@@ -498,7 +498,6 @@ public final class DecisionExecutor {
         var binding = approval.binding();
         String interactionType = approval.reauthentication() ? "tool-reauthentication" : "tool-approval";
         var createdAt = time.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
-        var expiresAt = createdAt.plus(java.time.Duration.ofHours(1));
         var approvalContext = new ApprovalRequestContext(
                 approval.decision().id(),
                 ApprovalSemantics.CAPABILITY_CONFIRMATION,
@@ -513,7 +512,7 @@ public final class DecisionExecutor {
                         binding.definition().title()),
                 Optional.empty(),
                 createdAt,
-                expiresAt,
+                Optional.empty(),
                 Optional.empty());
         unitOfWork.execute(() -> {
             interactions.create(new InteractionRequest(
@@ -532,7 +531,7 @@ public final class DecisionExecutor {
                             run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
                                     + run.principal().principalId()),
                     createdAt,
-                    expiresAt,
+                    Optional.empty(),
                     Optional.of(approvalContext)));
             checkpoints.capture(
                     run,
@@ -820,7 +819,7 @@ public final class DecisionExecutor {
                     decision.prompt(),
                     decision.approval(),
                     createdAt,
-                    createdAt.plus(java.time.Duration.ofHours(1))));
+                    Optional.empty()));
             checkpoints.capture(
                     run,
                     loopContext.iteration(),

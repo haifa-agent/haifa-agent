@@ -120,6 +120,9 @@
             <arg column="waiting_request_type" javaType="java.lang.String"/>
             <arg column="termination_reason" javaType="java.lang.String"/>
             <arg column="termination_description" javaType="java.lang.String"/>
+            <arg column="accumulated_human_wait_millis" javaType="_long"/>
+            <arg column="human_wait_started_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
             <arg column="created_at" javaType="java.time.Instant"
                  typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
             <arg column="queued_at" javaType="java.time.Instant"
@@ -150,8 +153,9 @@
         usage_model_calls, usage_tool_calls, usage_child_runs, usage_cost_minor_units,
         usage_wall_time_millis, result_schema_version, result_payload, result_hash,
         error_schema_version, error_payload, error_hash, waiting_request_id, waiting_request_type,
-        termination_reason, termination_description, created_at, queued_at, started_at, suspended_at,
-        resumed_at, completed_at, updated_at, version
+        termination_reason, termination_description, accumulated_human_wait_millis,
+        human_wait_started_at, created_at, queued_at, started_at, suspended_at, resumed_at,
+        completed_at, updated_at, version
     </sql>
 
     <insert id="insertRun">
@@ -174,8 +178,10 @@
             #{row.resultSchemaVersion}, #{row.resultPayload}, #{row.resultHash},
             #{row.errorSchemaVersion}, #{row.errorPayload}, #{row.errorHash},
             #{row.waitingRequestId}, #{row.waitingRequestType}, #{row.terminationReason},
-            #{row.terminationDescription}, #{row.createdAt}, #{row.queuedAt}, #{row.startedAt},
-            #{row.suspendedAt}, #{row.resumedAt}, #{row.completedAt}, #{row.updatedAt}, #{row.version}
+            #{row.terminationDescription}, #{row.accumulatedHumanWaitMillis},
+            #{row.humanWaitStartedAt}, #{row.createdAt}, #{row.queuedAt}, #{row.startedAt},
+            #{row.suspendedAt}, #{row.resumedAt}, #{row.completedAt}, #{row.updatedAt},
+            #{row.version}
         )
     </insert>
 
@@ -217,6 +223,8 @@
             waiting_request_type = #{row.waitingRequestType},
             termination_reason = #{row.terminationReason},
             termination_description = #{row.terminationDescription},
+            accumulated_human_wait_millis = #{row.accumulatedHumanWaitMillis},
+            human_wait_started_at = #{row.humanWaitStartedAt},
             created_at = #{row.createdAt}, queued_at = #{row.queuedAt}, started_at = #{row.startedAt},
             suspended_at = #{row.suspendedAt}, resumed_at = #{row.resumedAt},
             completed_at = #{row.completedAt}, updated_at = #{row.updatedAt}, version = #{row.version}
@@ -1007,7 +1015,8 @@
     <select id="dueInteractions" resultMap="interactionRequestRow">
         SELECT <include refid="interactionRequestColumns"/>
         FROM interaction_request
-        WHERE run_id = #{runId} AND state = 'PENDING' AND expires_at &lt;= #{at}
+        WHERE run_id = #{runId} AND state = 'PENDING'
+          AND expires_at IS NOT NULL AND expires_at &lt;= #{at}
         ORDER BY expires_at ASC, request_id ASC
         LIMIT #{limit}
     </select>

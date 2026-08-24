@@ -58,6 +58,34 @@ class PolicyContractTest {
     }
 
     @Test
+    void capabilityConfirmationMayWaitWithoutExpiryButBusinessAuthorizationMayNot() {
+        ApprovalRequestContext capability = new ApprovalRequestContext(
+                new PolicyDecisionId("decision"),
+                ApprovalSemantics.CAPABILITY_CONFIRMATION,
+                Set.of(ApprovalReuseScope.ONCE),
+                new ApprovalRequester(TENANT, PRINCIPAL),
+                target(),
+                Optional.empty(),
+                NOW,
+                Optional.empty(),
+                Optional.empty());
+
+        assertThat(capability.expiresAt()).isEmpty();
+        assertThatThrownBy(() -> new ApprovalRequestContext(
+                        new PolicyDecisionId("decision"),
+                        ApprovalSemantics.BUSINESS_AUTHORIZATION,
+                        Set.of(ApprovalReuseScope.ONCE),
+                        new ApprovalRequester(TENANT, PRINCIPAL),
+                        target(),
+                        Optional.of(new ApprovalAuthorityRequirementRef("enterprise", "manager", "1")),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requires an expiry");
+    }
+
+    @Test
     void scopedGrantsRequireTheirScopeIdentity() {
         assertThatThrownBy(() -> grant(
                         ApprovalSemantics.CAPABILITY_CONFIRMATION,

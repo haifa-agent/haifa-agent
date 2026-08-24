@@ -266,6 +266,46 @@ class SqliteOperationalAdaptersTest {
     }
 
     @Test
+    void noExpiryInteractionSurvivesReopenAndAcceptsALateResponse(@TempDir java.nio.file.Path directory) {
+        SqliteStoreFoundation first = SqliteTestSupport.foundation(directory);
+        var run = SqliteAggregateTestData.prepareRun(first);
+        var tenant = new TenantRef("tenant");
+        var principal = new PrincipalRef("principal", "user");
+        var request = new InteractionRequest(
+                new InteractionRequestId("no-expiry-request"),
+                run.id(),
+                tenant,
+                principal,
+                "clarification",
+                "Provide a safe value",
+                false,
+                NOW,
+                Optional.empty());
+        first.interactions().create(request);
+
+        SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory);
+        Instant muchLater = NOW.plus(java.time.Duration.ofDays(365));
+        assertThat(reopened.interactions().pending(run.id())).get().satisfies(pending -> assertThat(pending.expiresAt())
+                .isEmpty());
+        assertThat(reopened.interactions().due(run.id(), muchLater, 10)).isEmpty();
+        assertThat(reopened.interactions()
+                        .respond(
+                                new InteractionResponseSubmission(
+                                        new InteractionResponseId("late-response"),
+                                        request.id(),
+                                        run.id(),
+                                        0,
+                                        InteractionAction.SUBMIT,
+                                        List.of(new TextPart("safe answer", "plain")),
+                                        "late-response-key",
+                                        muchLater),
+                                new RuntimeCallerContext(tenant, principal),
+                                muchLater)
+                        .newlyRecorded())
+                .isTrue();
+    }
+
+    @Test
     void concurrentConnectionsAllocateDistinctEventsAndOneInteractionResponse(@TempDir java.nio.file.Path directory)
             throws Exception {
         SqliteStoreFoundation setup = SqliteTestSupport.foundation(directory);

@@ -2,6 +2,7 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jCodingTerminal;
+import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.InteractionResponse;
@@ -175,19 +176,33 @@ public final class HaifaCliMain {
             ApprovalMode approval,
             PrintStream output)
             throws InterruptedException {
-        long deadlineMillis = System.currentTimeMillis() + timeout.toMillis();
+        long remainingNanos = timeout.toNanos();
+        long lastObservedNanos = System.nanoTime();
         BufferedReader input = new BufferedReader(new InputStreamReader(System.in));
-        while (System.currentTimeMillis() < deadlineMillis) {
+        while (remainingNanos > 0) {
             var snapshot = agent.runtime().find(runId).orElseThrow();
             if (snapshot.status().isTerminal()) return snapshot;
+            long observedNanos = System.nanoTime();
+            if (!isHumanWait(snapshot.status())) {
+                remainingNanos -= Math.max(0, observedNanos - lastObservedNanos);
+                if (remainingNanos <= 0) break;
+            }
+            lastObservedNanos = observedNanos;
             if (agent.executionSettled(runId)) {
-                agent.interactions()
-                        .pending(runId)
-                        .ifPresent(request -> respond(agent, request, approval, input, output));
+                var pending = agent.interactions().pending(runId);
+                if (pending.isPresent()) {
+                    respond(agent, pending.orElseThrow(), approval, input, output);
+                    lastObservedNanos = System.nanoTime();
+                    continue;
+                }
             }
             Thread.sleep(50);
         }
         return agent.runtime().find(runId).orElseThrow();
+    }
+
+    private static boolean isHumanWait(AgentRunStatus status) {
+        return status == AgentRunStatus.WAITING_INTERACTION || status == AgentRunStatus.WAITING_APPROVAL;
     }
 
     private static void respond(

@@ -35,6 +35,13 @@ working-directory digest) and the latest reconciliation status/reason. An outcom
 observed Tool Result payload. Resolved reconciliation returns through `PENDING_RESULT -> COMPLETED`; unresolved
 side-effecting work remains `OUTCOME_UNKNOWN`, so restart recovery does not infer or replay a mutation.
 
+## V10 Human wait timing
+
+Runtime migration V10 adds `run.accumulated_human_wait_millis` and
+`run.human_wait_started_at`. Human-in-the-loop waits therefore survive process restart and can be excluded from
+the active wall-time budget. Existing waiting runs begin accounting at migration time because older schemas did
+not retain a trustworthy wait start timestamp.
+
 ## V4 Interaction / Run Input / Runtime Journal
 
 Runtime Migration V4 在不修改 V1～V3 的前提下完成 11 号能力 Task 02：
@@ -146,6 +153,8 @@ Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校
 
 V3 提供 Policy/Approval/Trust 权威表。V4 提供稳定 Event Journal range/head/earliest、Interaction
 revision/state 和 durable Run Input；旧库通过连续 Migration 升级，重复启动只校验 name/checksum。
+V9 将 `interaction_request.expires_at` 迁移为可空列；既有请求保留原截止时间，新建无截止时间的请求
+不会进入 due/expire 查询，响应、取消、revision 与恢复语义保持不变。
 
 ## Port—表—Codec 对照
 

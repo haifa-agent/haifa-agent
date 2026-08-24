@@ -68,8 +68,9 @@ public final class InteractionViewProjector {
                     "The requested action will not execute",
                     "The run will be cancelled without approving the action");
         }
-        String expiration =
-                switch (request.expirationOutcome()) {
+        String expiration = request.expiresAt().isEmpty()
+                ? "The interaction will remain pending until it is answered or explicitly cancelled"
+                : switch (request.expirationOutcome()) {
                     case FAIL_RUN -> "The run will fail with a bounded interaction-expired error";
                     case CANCEL_RUN -> "The run will be cancelled without applying input";
                     case RETURN_TO_AGENT -> "The run will resume in a new attempt without response input";

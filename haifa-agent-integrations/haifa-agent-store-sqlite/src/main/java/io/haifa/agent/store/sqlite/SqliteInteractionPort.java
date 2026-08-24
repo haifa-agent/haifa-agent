@@ -90,7 +90,7 @@ public final class SqliteInteractionPort implements InteractionPort {
                     target.bytes(),
                     target.hash(),
                     request.createdAt(),
-                    request.expiresAt(),
+                    request.expiresAt().orElse(null),
                     0L,
                     InteractionSemantics.kind(request).value(),
                     InteractionState.PENDING.name(),
@@ -356,7 +356,10 @@ public final class SqliteInteractionPort implements InteractionPort {
         InteractionRecord current = requireRecord(requestId);
         if (current.revision() != expectedRevision) revisionConflict();
         if (current.state() != InteractionState.PENDING) return current;
-        if (at.isBefore(current.request().expiresAt())) {
+        Instant expiresAt = current.request()
+                .expiresAt()
+                .orElseThrow(() -> new IllegalArgumentException("interaction does not expire automatically"));
+        if (at.isBefore(expiresAt)) {
             throw new IllegalArgumentException("interaction has not expired");
         }
         return transition(
@@ -454,7 +457,11 @@ public final class SqliteInteractionPort implements InteractionPort {
                 || (request.approvalContext().isEmpty() && !request.requester().equals(caller.principal()))) {
             throw new SecurityException("caller cannot respond to this interaction");
         }
-        if (!receivedAt.isBefore(request.expiresAt())) throw new IllegalStateException("interaction has expired");
+        if (request.expiresAt()
+                .map(expiresAt -> !receivedAt.isBefore(expiresAt))
+                .orElse(false)) {
+            throw new IllegalStateException("interaction has expired");
+        }
         if (receivedAt.isBefore(response.respondedAt())) {
             throw new IllegalArgumentException("receivedAt must not precede respondedAt");
         }
@@ -542,7 +549,7 @@ public final class SqliteInteractionPort implements InteractionPort {
                 row.approval(),
                 target.toDomain(),
                 row.createdAt(),
-                row.expiresAt(),
+                Optional.ofNullable(row.expiresAt()),
                 InteractionExpirationOutcome.valueOf(row.expirationOutcome()),
                 approvalContext);
     }
@@ -686,7 +693,9 @@ public final class SqliteInteractionPort implements InteractionPort {
             throw new RuntimeContractException(
                     RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
-        if (!receivedAt.isBefore(request.expiresAt())) {
+        if (request.expiresAt()
+                .map(expiresAt -> !receivedAt.isBefore(expiresAt))
+                .orElse(false)) {
             throw new RuntimeContractException(RuntimeApiErrorCode.INTERACTION_EXPIRED, "The interaction has expired");
         }
     }

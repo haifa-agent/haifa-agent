@@ -391,6 +391,55 @@ class SqliteRuntimeRecoveryTest {
     }
 
     @Test
+    void longApprovalWaitSurvivesRestartWithoutConsumingWallTime() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AgentRunId runId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = toolRuntime(
+                    first,
+                    model(toolResponse()),
+                    "long-wait-process-a",
+                    new TestIds("long-wait-a"),
+                    providerCalls,
+                    ToolPolicyDecision.REQUIRE_APPROVAL);
+            runId = processA.runtime().start(request("long-wait-restart")).runId();
+            processA.scheduler().runAll();
+
+            assertThat(processA.runtime().find(runId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+        }
+
+        Instant resumedAt = NOW.plus(Duration.ofDays(365));
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB = toolRuntime(
+                    reopened,
+                    finalModel("completed after restart and long wait"),
+                    "long-wait-process-b",
+                    new TestIds("long-wait-b"),
+                    providerCalls,
+                    ToolPolicyDecision.REQUIRE_APPROVAL,
+                    () -> resumedAt);
+            InteractionRequest interaction =
+                    processB.ports().interactions().pending(runId).orElseThrow();
+            processB.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId("long-wait-restart-response"),
+                            interaction.id(),
+                            runId,
+                            InteractionResponseType.APPROVE,
+                            List.of(),
+                            "long-wait-restart-key",
+                            resumedAt));
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(processB.ports().runs().find(runId).orElseThrow().accumulatedHumanWaitMillis())
+                    .isEqualTo(Duration.ofDays(365).toMillis());
+            assertThat(providerCalls).hasValue(1);
+        }
+    }
+
+    @Test
     void recoversFrozenStructuredOutputRequirementAndPersistsValidatedResult() {
         AgentRunId runId;
         StructuredOutputRequirement requirement = tripPlanRequirement();
@@ -773,9 +822,19 @@ class SqliteRuntimeRecoveryTest {
             String workerId,
             IdentifierGenerator ids,
             java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer) {
+        return runtime(foundation, model, workerId, ids, customizer, TIME);
+    }
+
+    private RuntimeInstance runtime(
+            SqliteStoreFoundation foundation,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer,
+            TimeProvider time) {
         RuntimePersistencePorts ports = foundation.persistencePorts(protector());
         ensureSession(ports);
-        return runtime(ports, model, workerId, ids, customizer);
+        return runtime(ports, model, workerId, ids, customizer, time);
     }
 
     private RuntimeInstance runtime(
@@ -789,13 +848,23 @@ class SqliteRuntimeRecoveryTest {
             String workerId,
             IdentifierGenerator ids,
             java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer) {
+        return runtime(ports, model, workerId, ids, customizer, TIME);
+    }
+
+    private RuntimeInstance runtime(
+            RuntimePersistencePorts ports,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer,
+            TimeProvider time) {
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
         RuntimeCoreBuilder builder = new RuntimeCoreBuilder()
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .scheduler(scheduler)
                 .persistence(ports)
                 .identifierGenerator(ids)
-                .timeProvider(TIME)
+                .timeProvider(time)
                 .workerId(workerId);
         return new RuntimeInstance(customizer.apply(builder).build(), scheduler, ports);
     }
@@ -807,6 +876,17 @@ class SqliteRuntimeRecoveryTest {
             IdentifierGenerator ids,
             AtomicInteger providerCalls,
             ToolPolicyDecision decision) {
+        return toolRuntime(foundation, model, workerId, ids, providerCalls, decision, TIME);
+    }
+
+    private RuntimeInstance toolRuntime(
+            SqliteStoreFoundation foundation,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            AtomicInteger providerCalls,
+            ToolPolicyDecision decision,
+            TimeProvider time) {
         foundation
                 .policySnapshots()
                 .save(new PolicySnapshot(
@@ -818,8 +898,14 @@ class SqliteRuntimeRecoveryTest {
                         Optional.empty(),
                         "legacy-tool-policy-v1",
                         NOW));
-        return runtime(foundation, model, workerId, ids, builder -> installTool(builder, providerCalls, decision)
-                .policyStores(foundation.policyDecisions(), foundation.policyAuthorizationEvidence()));
+        return runtime(
+                foundation,
+                model,
+                workerId,
+                ids,
+                builder -> installTool(builder, providerCalls, decision)
+                        .policyStores(foundation.policyDecisions(), foundation.policyAuthorizationEvidence()),
+                time);
     }
 
     private static RuntimeCoreBuilder installTool(

@@ -88,7 +88,7 @@ HEAD/remote ref 不能满足新动作后的确认，Outcome Unknown 必须先只
 不能互相复用拓扑、Diff、验证或结果确认事实。
 
 默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为控制面事实，
-不增加 Runtime 的总预算或时限，也不逐轮进入模型 Prompt。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
+其中 Wall Time 与 Runtime 一致地排除人工交互/审批等待；预留不增加 Runtime 的总预算或时限，也不逐轮进入模型 Prompt。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
 从持久消息重建次数，耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 稳定失败。
 
 生产控制面不维护 Verification Plan/Dimension/Evidence，也不接受模型自报的验证标签。外部
