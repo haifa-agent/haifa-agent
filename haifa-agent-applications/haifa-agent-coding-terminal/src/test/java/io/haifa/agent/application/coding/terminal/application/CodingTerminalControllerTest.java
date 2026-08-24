@@ -287,7 +287,10 @@ class CodingTerminalControllerTest {
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
             assertThat(item.title()).isEqualTo("ChatGPT Codex connection failed");
             assertThat(item.body())
-                    .contains("Reason: AUTH_REAUTH_REQUIRED", "verify the OAuth Client ID and redirect registration");
+                    .contains(
+                            "Last stage: Authorization received. Exchanging it for Codex credentials.",
+                            "Reason: AUTH_REAUTH_REQUIRED",
+                            "verify the OAuth Client ID and redirect registration");
             assertThat(item.status()).isEqualTo("FAILED");
         });
         assertThat(controller.state().recoverableError()).contains("AUTH_REAUTH_REQUIRED");

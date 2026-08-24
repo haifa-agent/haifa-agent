@@ -18,6 +18,8 @@ import java.util.Set;
 public final class TerminalUiReducer {
     private static final int MAX_TRANSCRIPT_TITLE_LENGTH = 256;
     private static final Set<String> TERMINAL_RUN_STATUSES = Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
+    private static final Set<String> AUTHENTICATION_PROGRESS_STATUSES =
+            Set.of("STARTING", "WAITING_USER", "EXCHANGING", "STORING");
 
     public TerminalUiState reduce(TerminalUiState state, TerminalUiAction action) {
         if (action instanceof TerminalUiAction.SessionLoaded loaded) {
@@ -249,13 +251,19 @@ public final class TerminalUiReducer {
         }
         if (action instanceof TerminalUiAction.AuthenticationFailed failure) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            String lastStage = items.stream()
+                    .filter(item -> item.id().equals("auth-chatgpt-progress"))
+                    .filter(item -> AUTHENTICATION_PROGRESS_STATUSES.contains(item.status()))
+                    .findFirst()
+                    .map(TranscriptItem::body)
+                    .orElse("");
             upsert(
                     items,
                     new TranscriptItem(
                             "auth-chatgpt-progress",
                             TranscriptItem.Kind.ERROR,
                             "ChatGPT Codex connection failed",
-                            authenticationFailureBody(failure.code()),
+                            authenticationFailureBody(failure.code(), lastStage),
                             "FAILED",
                             true));
             return reduce(
@@ -838,7 +846,7 @@ public final class TerminalUiReducer {
         };
     }
 
-    private static String authenticationFailureBody(String code) {
+    private static String authenticationFailureBody(String code, String lastStage) {
         String next =
                 switch (code) {
                     case "AUTH_REAUTH_REQUIRED" ->
@@ -854,7 +862,8 @@ public final class TerminalUiReducer {
                     default ->
                         "The login did not complete. Retry /login and inspect the safe application log entry for this attempt.";
                 };
-        return "Reason: " + code + "\nNext: " + next;
+        String stage = lastStage.isBlank() ? "" : "Last stage: " + lastStage + "\n";
+        return stage + "Reason: " + code + "\nNext: " + next;
     }
 
     private static String toolTitle(RunEventPayloads.ToolLifecycle payload) {
