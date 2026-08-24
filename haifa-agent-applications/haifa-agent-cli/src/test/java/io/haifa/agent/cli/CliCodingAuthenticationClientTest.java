@@ -45,6 +45,26 @@ class CliCodingAuthenticationClientTest {
     }
 
     @Test
+    void existingCodexConnectionSuppressesOnboardingWhenTheDefaultProviderIsUnconfigured() {
+        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var service = new LocalModelAuthenticationService(
+                store,
+                java.util.Optional.empty(),
+                reference -> {
+                    throw new AssertionError("credential resolution is not expected");
+                },
+                ignored -> null);
+        service.saveApiKey("openai-codex", "test-codex-credential".toCharArray());
+        var client = new CliCodingAuthenticationClient(
+                service,
+                "env://DEEPSEEK_API_KEY",
+                "deepseek",
+                java.util.List.of("env://DEEPSEEK_API_KEY", "model-auth://openai-codex/default"));
+
+        assertThat(client.connectionRequired()).isFalse();
+    }
+
+    @Test
     void mapsExternalLoginStagesToSecretFreeProductProgress() {
         assertThat(CliCodingAuthenticationClient.progressPhase(ExternalLoginAttemptState.AUTHORIZING))
                 .contains(CodingAuthenticationProgressView.Phase.STARTING);

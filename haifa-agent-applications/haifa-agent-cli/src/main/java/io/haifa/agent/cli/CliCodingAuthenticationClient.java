@@ -13,6 +13,8 @@ import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.model.api.CredentialRef;
 import java.time.Duration;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -26,12 +28,21 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     private final LocalModelAuthenticationService authentication;
     private final String selectedCredentialReference;
     private final String selectedProviderId;
+    private final List<CredentialRef> availableCredentialReferences;
     private final CodingAuthenticationMapper mapper;
 
     CliCodingAuthenticationClient(
             LocalModelAuthenticationService authentication,
             String selectedCredentialReference,
             String selectedProviderId) {
+        this(authentication, selectedCredentialReference, selectedProviderId, List.of(selectedCredentialReference));
+    }
+
+    CliCodingAuthenticationClient(
+            LocalModelAuthenticationService authentication,
+            String selectedCredentialReference,
+            String selectedProviderId,
+            Collection<String> availableCredentialReferences) {
         this.authentication = Objects.requireNonNull(authentication, "authentication must not be null");
         this.selectedCredentialReference = Objects.requireNonNull(
                         selectedCredentialReference, "selectedCredentialReference must not be null")
@@ -42,12 +53,22 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
         if (!this.selectedProviderId.matches("[a-z][a-z0-9-]{0,63}")) {
             throw new IllegalArgumentException("selectedProviderId is invalid");
         }
+        LinkedHashSet<CredentialRef> references = new LinkedHashSet<>();
+        for (String reference : Objects.requireNonNull(
+                availableCredentialReferences, "availableCredentialReferences must not be null")) {
+            references.add(new CredentialRef(reference));
+        }
+        if (references.isEmpty()
+                || references.stream().noneMatch(value -> value.value().equals(this.selectedCredentialReference))) {
+            throw new IllegalArgumentException("availableCredentialReferences must contain the selected credential");
+        }
+        this.availableCredentialReferences = List.copyOf(references);
         this.mapper = new CodingAuthenticationMapper();
     }
 
     @Override
     public boolean connectionRequired() {
-        return authentication.connectionRequired(new CredentialRef(selectedCredentialReference));
+        return availableCredentialReferences.stream().allMatch(authentication::connectionRequired);
     }
 
     @Override

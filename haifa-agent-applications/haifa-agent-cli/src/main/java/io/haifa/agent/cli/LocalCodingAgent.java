@@ -275,7 +275,10 @@ final class LocalCodingAgent implements AutoCloseable {
         var authentication = new CliCodingAuthenticationClient(
                 authenticationService,
                 configuration.model().credentialRef(),
-                configuration.model().providerId());
+                configuration.model().providerId(),
+                configuration.availableModels().stream()
+                        .map(CliConfiguration.Model::credentialRef)
+                        .toList());
         var chat = new OpenAiCompatibleChatModel(
                 "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var responses = new OpenAiResponsesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);

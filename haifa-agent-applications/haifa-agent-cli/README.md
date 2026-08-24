@@ -103,6 +103,7 @@ haifa-coding-agent/
   data/
     runtime.db          # 首次运行后创建；SQLite 权威存储
     transcripts/        # JSONL 审计投影
+  logs/                 # 有界轮转的必要运行日志，不记录 Secret、Prompt 或模型正文
 ```
 
 默认发布到用户目录 `~/.haifa-agent/coding/`：
@@ -131,7 +132,8 @@ haifa-coding resume --last "继续前面的工作"
 `SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Policy 证据等恢复状态
 的唯一事实源；本地默认 payload 在磁盘上可读，不提供保密性，但仍执行格式、binding 和 digest 校验。
 JSONL 只用于审计投影，不参与恢复。启动器按自身目录设置绝对数据路径，因此发行目录整体移动后仍可
-使用；重新打包只覆盖 JAR、配置和启动器，不删除既有 `data/`。可通过
+使用；重新打包以原子替换部署经关键类检查的 shaded JAR，只覆盖 JAR、配置和启动器，不删除既有
+`data/` 或 `logs/`。启动时只要配置目录中任一模型已有可用凭据，就不会重复打开首次连接引导。可通过
 `haifa-coding --config /absolute/path/to/config.yaml` 使用自定义配置，也可显式传
 `--workspace /absolute/path/to/project`；调用方参数位于默认参数之后，因此优先级更高。
 
@@ -155,6 +157,8 @@ coding\
   data\
     runtime.db
     transcripts\
+  logs\
+    haifa-coding-0.log
 ```
 
 默认输出到当前用户的 `%USERPROFILE%\.haifa-agent\coding`，也可以指定绝对路径或相对仓库根目录的
