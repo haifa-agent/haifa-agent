@@ -8,8 +8,10 @@ import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.project.product.ProjectProductException;
+import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
+import io.haifa.agent.application.project.product.coding.CodingSessionCreateOptions;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryItem;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
@@ -52,6 +54,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class CodingTerminalControllerTest {
@@ -595,6 +598,26 @@ class CodingTerminalControllerTest {
     }
 
     @Test
+    void modelCanBeSelectedBeforeTheFirstSessionAndIsAppliedAtCreation() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.models = List.of(
+                new CodingModelOption("default-model", "Default", "provider", "Provider", Set.of(), 128_000),
+                new CodingModelOption("codex-model", "Codex", "openai-codex", "ChatGPT Codex", Set.of(), 128_000));
+        var controller = controller(client);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/model"));
+
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().title()).isEqualTo("Model for next session");
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "first message"));
+
+        assertThat(client.createOptions.initialModelId()).contains("codex-model");
+        assertThat(controller.state().session()).isPresent();
+    }
+
+    @Test
     void tabOpensVisibleCommandCandidatesAndInsertsTheSelection() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         var controller = controller(client);
@@ -964,6 +987,8 @@ class CodingTerminalControllerTest {
         private CodingSessionHistoryPage history = CodingSessionHistoryPage.empty(SESSION_ID);
         private List<CodingQueuedMessage> restorable = List.of();
         private List<String> logicalPaths = List.of();
+        private List<CodingModelOption> models = List.of();
+        private CodingSessionCreateOptions createOptions = CodingSessionCreateOptions.defaults();
         private ProjectProductException submitFailure;
         private int submitAttempts;
         private int listLimit;
@@ -996,6 +1021,18 @@ class CodingTerminalControllerTest {
         @Override
         public CodingSessionView create(ProjectId projectId, String firstTurn, String idempotencyKey) {
             return view;
+        }
+
+        @Override
+        public CodingSessionView create(
+                ProjectId projectId, String firstTurn, String idempotencyKey, CodingSessionCreateOptions options) {
+            createOptions = options;
+            return view;
+        }
+
+        @Override
+        public List<CodingModelOption> models() {
+            return models;
         }
 
         @Override

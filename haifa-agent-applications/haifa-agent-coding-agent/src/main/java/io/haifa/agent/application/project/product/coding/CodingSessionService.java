@@ -175,8 +175,19 @@ public final class CodingSessionService {
         candidates.addAll(defaultVerificationProfile.ignoredCandidates());
         CodingSessionVerificationConfiguration verification = CodingSessionVerificationConfiguration.freeze(
                 new CodingVerificationProfileResolver().resolve(candidates));
+        String requestedModelId = trustedOptions.initialModelId().orElse(models.defaultModelId());
+        requireAvailableModel(caller, requestedModelId);
+        String requestedModelIdentity = trustedOptions.initialModelId().orElse("DEFAULT_MODEL");
         String requestDigest = requestDigest(
-                projectId.value() + "|" + frozenIntent.name() + "|" + verification.digest(), message, safeAttachments);
+                projectId.value()
+                        + "|"
+                        + frozenIntent.name()
+                        + "|"
+                        + verification.digest()
+                        + "|"
+                        + requestedModelIdentity,
+                message,
+                safeAttachments);
         String scope = callerScope(caller);
         String dispatchKey = dispatchKey(CREATE, scope + "|" + keyDigest);
         CodingCommandBinding binding = codingSessions.reserveCommand(new CodingCommandBinding(
@@ -195,7 +206,7 @@ public final class CodingSessionService {
         String modelId = codingSessions
                 .findModelPreference(binding.sessionId())
                 .map(CodingModelPreference::modelId)
-                .orElse(models.defaultModelId());
+                .orElse(requestedModelId);
         requireAvailableModel(caller, modelId);
 
         ProjectProductService.ProjectProductRun started = projectProducts.startWithSessionId(

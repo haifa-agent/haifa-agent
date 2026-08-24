@@ -10,6 +10,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
+import io.haifa.agent.application.project.product.coding.CodingSessionCreateOptions;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
@@ -86,6 +87,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
     private String pendingApiKeyProvider;
+    private String pendingNewSessionModelId;
     private RunEventCursor pendingAcknowledgement;
     private boolean acknowledgementInFlight;
     private boolean reconcileInFlight;
@@ -277,7 +279,11 @@ public final class CodingTerminalController implements AutoCloseable {
         try {
             CodingSessionView view;
             if (submission.sessionId().isEmpty()) {
-                view = client.create(projectId, submission.text(), submission.idempotencyKey());
+                CodingSessionCreateOptions options = submission
+                        .initialModelId()
+                        .map(CodingSessionCreateOptions::withInitialModel)
+                        .orElseGet(CodingSessionCreateOptions::defaults);
+                view = client.create(projectId, submission.text(), submission.idempotencyKey(), options);
             } else {
                 AgentSessionId sessionId = submission.sessionId().orElseThrow();
                 dispatchMessage(
@@ -316,6 +322,7 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         try {
             applyLoadedSession(result.loadedSession().orElseThrow());
+            if (result.submission().sessionId().isEmpty()) pendingNewSessionModelId = null;
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         }
@@ -632,16 +639,26 @@ public final class CodingTerminalController implements AutoCloseable {
         Optional<AgentSessionId> sessionId =
                 state.session().map(value -> value.summary().sessionId());
         Optional<AgentRunId> activeRunId = state.currentRunId();
+        Optional<String> initialModelId = Optional.empty();
         if (awaitingNewSessionMessage || sessionId.isEmpty()) {
             awaitingNewSessionMessage = false;
             sessionId = Optional.empty();
             activeRunId = Optional.empty();
+            initialModelId = Optional.ofNullable(pendingNewSessionModelId);
         }
         apply(new TerminalUiAction.EditorChanged("", 0));
         apply(new TerminalUiAction.UserMessageCommitted(key, text));
         apply(new TerminalUiAction.StatusChanged("Submitting"));
         return new PreparedMessageSubmission(
-                text, followUp, key, sessionId, activeRunId, state.appliedCursor(), outputRunId, outputCursor);
+                text,
+                followUp,
+                key,
+                sessionId,
+                activeRunId,
+                initialModelId,
+                state.appliedCursor(),
+                outputRunId,
+                outputCursor);
     }
 
     private void shell(String input) {
@@ -732,6 +749,7 @@ public final class CodingTerminalController implements AutoCloseable {
             String idempotencyKey,
             Optional<AgentSessionId> sessionId,
             Optional<AgentRunId> activeRunId,
+            Optional<String> initialModelId,
             Optional<RunEventCursor> appliedCursor,
             AgentRunId outputRunId,
             RunOutputCursor outputCursor) {
@@ -740,6 +758,7 @@ public final class CodingTerminalController implements AutoCloseable {
             idempotencyKey = Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
             sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
             activeRunId = Objects.requireNonNull(activeRunId, "activeRunId must not be null");
+            initialModelId = Objects.requireNonNull(initialModelId, "initialModelId must not be null");
             appliedCursor = Objects.requireNonNull(appliedCursor, "appliedCursor must not be null");
             outputCursor = Objects.requireNonNull(outputCursor, "outputCursor must not be null");
         }
@@ -885,7 +904,7 @@ public final class CodingTerminalController implements AutoCloseable {
             case ACCOUNT -> loadAuthenticationOptions(false);
             case LOGOUT -> loadAuthenticationOptions(true);
             case MODEL -> {
-                CodingSessionView current = requireCurrentSession();
+                Optional<CodingSessionView> current = awaitingNewSessionMessage ? Optional.empty() : state.session();
                 Optional<RunEventCursor> cursor = state.appliedCursor();
                 AgentRunId previousOutputRunId = outputRunId;
                 RunOutputCursor previousOutputCursor = outputCursor;
@@ -1348,16 +1367,21 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             case "session" -> apply(new TerminalUiAction.SelectorClosed());
             case "model" -> {
-                CodingSessionView current = requireCurrentSession();
                 CodingModelOption option = modelOptions.get(selected);
                 Optional<RunEventCursor> cursor = state.appliedCursor();
                 AgentRunId previousOutputRunId = outputRunId;
                 RunOutputCursor previousOutputCursor = outputCursor;
                 apply(new TerminalUiAction.SelectorClosed());
-                apply(new TerminalUiAction.StatusChanged("Changing model"));
-                submitEffect(
-                        () -> selectModel(current, option.id(), cursor, previousOutputRunId, previousOutputCursor),
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                if (awaitingNewSessionMessage || state.session().isEmpty()) {
+                    pendingNewSessionModelId = option.id();
+                    apply(new TerminalUiAction.StatusChanged("Model selected for next session"));
+                } else {
+                    CodingSessionView current = state.session().orElseThrow();
+                    apply(new TerminalUiAction.StatusChanged("Changing model"));
+                    submitEffect(
+                            () -> selectModel(current, option.id(), cursor, previousOutputRunId, previousOutputCursor),
+                            code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                }
             }
             case "auth-login" -> {
                 apply(new TerminalUiAction.SelectorClosed());
@@ -1534,15 +1558,27 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private Runnable loadModels(
-            CodingSessionView current,
+            Optional<CodingSessionView> current,
             String argument,
             Optional<RunEventCursor> cursor,
             AgentRunId previousOutputRunId,
             RunOutputCursor previousOutputCursor) {
-        CodingSessionView reconciled = client.reconcile(current.summary().sessionId());
+        Optional<CodingSessionView> reconciled =
+                current.map(value -> client.reconcile(value.summary().sessionId()));
         List<CodingModelOption> options = client.models();
         if (!argument.isBlank()) {
-            return selectModel(reconciled, argument, cursor, previousOutputRunId, previousOutputCursor);
+            if (reconciled.isPresent()) {
+                return selectModel(
+                        reconciled.orElseThrow(), argument, cursor, previousOutputRunId, previousOutputCursor);
+            }
+            CodingModelOption selected = options.stream()
+                    .filter(option -> option.id().equals(argument))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("MODEL_UNAVAILABLE"));
+            return () -> {
+                pendingNewSessionModelId = selected.id();
+                apply(new TerminalUiAction.StatusChanged("Model selected for next session"));
+            };
         }
         return () -> {
             modelOptions = List.copyOf(options);
@@ -1550,16 +1586,15 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
                 return;
             }
+            String selectedModelId =
+                    reconciled.map(value -> value.model().model().id()).orElse(pendingNewSessionModelId);
             int selected = java.util.stream.IntStream.range(0, modelOptions.size())
-                    .filter(index -> modelOptions
-                            .get(index)
-                            .id()
-                            .equals(reconciled.model().model().id()))
+                    .filter(index -> modelOptions.get(index).id().equals(selectedModelId))
                     .findFirst()
                     .orElse(0);
             apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                     "model",
-                    "Model for future new Runs",
+                    reconciled.isPresent() ? "Model for future new Runs" : "Model for next session",
                     modelOptions.stream()
                             .map(value -> value.displayName() + " · " + value.providerDisplayName())
                             .toList(),

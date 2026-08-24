@@ -1,11 +1,14 @@
 package io.haifa.agent.execution.core.command;
 
 import io.haifa.agent.execution.api.ExecutionStatus;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 
 /** Product-neutral, bounded exit-code semantics for commands with documented non-zero variants. */
 public final class CommandSemanticOutcomeInterpreter {
-    public static final String VERSION = "1";
+    public static final String VERSION = "2";
+    private static final Set<String> RIPGREP_EXECUTABLES = Set.of("rg", "rg.exe", "ripgrep", "ripgrep.exe");
 
     private CommandSemanticOutcomeInterpreter() {}
 
@@ -37,7 +40,33 @@ public final class CommandSemanticOutcomeInterpreter {
                 && classification.reasonCode().equals("GIT_GREP")) {
             return new Interpretation(CommandSemanticOutcome.EMPTY_RESULT, "NO_MATCHES");
         }
+        if (exitCode == 1 && isRipgrep(command)) {
+            return new Interpretation(CommandSemanticOutcome.EMPTY_RESULT, "NO_MATCHES");
+        }
         return new Interpretation(CommandSemanticOutcome.COMMAND_FAILED, "COMMAND_NONZERO_EXIT");
+    }
+
+    private static boolean isRipgrep(String command) {
+        String remaining = command.stripLeading();
+        if (remaining.startsWith("&")) remaining = remaining.substring(1).stripLeading();
+        if (remaining.isEmpty()) return false;
+        String executable;
+        char first = remaining.charAt(0);
+        if (first == '\"' || first == '\'') {
+            int closingQuote = remaining.indexOf(first, 1);
+            if (closingQuote < 0) return false;
+            executable = remaining.substring(1, closingQuote);
+        } else {
+            int separator = 0;
+            while (separator < remaining.length() && !Character.isWhitespace(remaining.charAt(separator))) {
+                separator++;
+            }
+            executable = remaining.substring(0, separator);
+        }
+        String normalized = executable.replace('\\', '/');
+        int lastSlash = normalized.lastIndexOf('/');
+        String name = normalized.substring(lastSlash + 1).toLowerCase(Locale.ROOT);
+        return RIPGREP_EXECUTABLES.contains(name);
     }
 
     private static boolean hasOption(String command, String... options) {

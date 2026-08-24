@@ -221,7 +221,8 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 - `/command` 与 `/commands` 打开同一命令选择器；`@path` 候选来自受限 Workspace 文件和目录，
   目录以 `/` 结尾，不列出任意路径层级中点号开头的隐藏文件/目录、敏感路径、版本库元数据和常见生成目录；
 - pending Approval 在同一 tui4j Program input owner 中 approve/reject；
-- `/model` 打开安全 Selector，也支持 `/model <internal-id>`；活动 Run 期间拒绝切换，成功后只影响
+- `/model` 打开安全 Selector，也支持 `/model <internal-id>`；无 Session 或执行 `/new` 后的选择会冻结到
+  下一次 Session 创建，创建失败时保留以便重试；已有 Session 的选择在活动 Run 期间拒绝切换，成功后只影响
   下一新 Run；
 - `/login`、`/account` 和 `/logout` 通过 Coding 产品的安全认证客户端实现；首次启动且所选模型凭据缺失时
   打开同一连接选择器。ChatGPT 登录可选 Browser Callback 或 Device Code；设备 URL/设备码作为持久可见的

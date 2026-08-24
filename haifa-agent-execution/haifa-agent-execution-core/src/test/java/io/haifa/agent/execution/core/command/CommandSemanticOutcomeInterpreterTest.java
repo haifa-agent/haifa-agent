@@ -19,6 +19,18 @@ class CommandSemanticOutcomeInterpreterTest {
     }
 
     @Test
+    void recognizesRipgrepNoMatchesWithoutMaskingRealRipgrepFailures() {
+        assertThat(interpret("rg needle .", ExecutionStatus.FAILED, 1)).isEqualTo(CommandSemanticOutcome.EMPTY_RESULT);
+        assertThat(interpret("rg needle . | Select-Object -First 20", ExecutionStatus.FAILED, 1))
+                .isEqualTo(CommandSemanticOutcome.EMPTY_RESULT);
+        assertThat(interpret("& 'C:\\tools\\rg.exe' needle .", ExecutionStatus.FAILED, 1))
+                .isEqualTo(CommandSemanticOutcome.EMPTY_RESULT);
+        assertThat(interpret("rg needle .", ExecutionStatus.FAILED, 2))
+                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
+        assertThat(interpret("echo rg", ExecutionStatus.FAILED, 1)).isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
+    }
+
+    @Test
     void keepsRealFailuresAndUncertainTerminationDistinct() {
         assertThat(interpret("git diff --exit-code", ExecutionStatus.FAILED, 2))
                 .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
