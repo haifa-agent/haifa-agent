@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -21,6 +22,7 @@ public final class OpenAiCompatibleDialects {
     public static final String KIMI = "kimi-openai-chat";
     public static final String ZHIPU = "zhipu-openai-chat";
     public static final String VOLCENGINE_ARK = "volcengine-ark-openai-chat";
+    public static final String SILICONFLOW = "siliconflow-openai-chat";
     public static final String VERSION_1 = "1.0";
     private static final String BAILIAN_PATH = "/compatible-mode/v1";
     private static final Pattern BAILIAN_HOST = Pattern.compile("^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\\."
@@ -42,6 +44,9 @@ public final class OpenAiCompatibleDialects {
         }
         if (ALIYUN_BAILIAN.equals(normalizedId)) {
             freezeBailianEndpoint(configuredEndpoint, options);
+        }
+        if (SILICONFLOW.equals(normalizedId)) {
+            freezeSiliconFlowEndpoint(configuredEndpoint, options);
         }
         return Map.copyOf(options);
     }
@@ -95,6 +100,27 @@ public final class OpenAiCompatibleDialects {
         options.put("region", matcher.group(2));
     }
 
+    private static void freezeSiliconFlowEndpoint(URI endpoint, Map<String, Object> options) {
+        String host = endpoint.getHost();
+        if (host == null
+                || endpoint.getUserInfo() != null
+                || endpoint.getQuery() != null
+                || endpoint.getFragment() != null
+                || !"/v1".equals(endpoint.getPath())) {
+            throw new IllegalArgumentException("SiliconFlow endpoint must be a clean /v1 network endpoint");
+        }
+        String normalizedHost = host.toLowerCase(Locale.ROOT);
+        boolean officialHttps = "https".equalsIgnoreCase(endpoint.getScheme())
+                && endpoint.getPort() == -1
+                && "api.siliconflow.cn".equals(normalizedHost);
+        boolean loopbackHttp = "http".equalsIgnoreCase(endpoint.getScheme())
+                && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1").contains(normalizedHost);
+        if (!officialHttps && !loopbackHttp) {
+            throw new IllegalArgumentException("SiliconFlow endpoint host is not allowed");
+        }
+        options.put(ENDPOINT_HOST, normalizedHost);
+    }
+
     public static OpenAiCompatibleDialect resolve(ModelProviderDefinition provider) {
         return resolve(provider.binding(ModelApiStyles.OPENAI_CHAT_COMPLETIONS).dialect());
     }
@@ -112,6 +138,7 @@ public final class OpenAiCompatibleDialects {
             case KIMI -> KimiOpenAiChatDialect.INSTANCE;
             case ZHIPU -> ZhipuOpenAiChatDialect.INSTANCE;
             case VOLCENGINE_ARK -> VolcengineArkOpenAiChatDialect.INSTANCE;
+            case SILICONFLOW -> SiliconFlowOpenAiChatDialect.INSTANCE;
             default -> throw new IllegalArgumentException("unsupported OpenAI-compatible dialect: " + dialectId);
         };
     }

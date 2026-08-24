@@ -22,6 +22,29 @@ import org.junit.jupiter.api.Test;
 
 class OpenAiCompatibleModelProfileFactoryTest {
     @Test
+    void verifiesOnlyTheReviewedSiliconFlowV4FlashChatBinding() {
+        ResolvedModelSnapshot reviewed = snapshot(
+                "siliconflow",
+                "siliconflow-v4-flash",
+                "deepseek-ai/DeepSeek-V4-Flash",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.SILICONFLOW,
+                "https://api.siliconflow.cn/v1");
+        ResolvedModelSnapshot differentModel = snapshot(
+                "siliconflow",
+                "siliconflow-other",
+                "deepseek-ai/DeepSeek-V4-Pro",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.SILICONFLOW,
+                "https://api.siliconflow.cn/v1");
+
+        assertThat(profile(reviewed).status()).isEqualTo(ModelProfileStatus.VERIFIED);
+        assertThat(profile(reviewed).selectable()).isTrue();
+        assertThat(profile(differentModel).status()).isEqualTo(ModelProfileStatus.UNVERIFIED);
+        assertThat(profile(differentModel).selectable()).isFalse();
+    }
+
+    @Test
     void describesOnlyCapabilitiesVerifiedByCurrentDeepSeekDialect() {
         ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
                 new ModelProviderId("deepseek"),

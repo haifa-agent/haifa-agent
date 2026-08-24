@@ -347,7 +347,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         body.put("max_tokens", request.maxOutputTokens());
         dialect(request).applyRequest(request, body);
         body.put("stream", stream);
-        if (stream) body.put("stream_options", Map.of("include_usage", true));
+        if (stream) dialect(request).applyStreamingRequest(request, body);
         Object temperature = options.get("temperature");
         if (temperature != null) body.put("temperature", validateTemperature(temperature));
         if (request.structuredOutput().isPresent() && options.containsKey("response_format")) {
@@ -446,7 +446,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "provider stream ended before completion",
                     null);
         }
-        return accumulator.finish();
+        return accumulator.finish(sink, eventIndex);
     }
 
     private boolean dispatchStreamEvent(
@@ -890,6 +890,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         private final StringBuilder content = new StringBuilder();
         private final StringBuilder reasoning = new StringBuilder();
         private final Map<Integer, StreamToolCall> tools = new LinkedHashMap<>();
+        private final StreamUsageMode streamUsageMode;
         private String responseId = "";
         private String actualModelId = "";
         private String systemFingerprint = "";
@@ -899,6 +900,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
 
         private StreamAccumulator(AgentChatRequest request) {
             this.request = request;
+            this.streamUsageMode = dialect(request).streamUsageMode();
         }
 
         private void accept(JsonNode chunk, ModelStreamSink sink, long[] eventIndex) {
@@ -922,7 +924,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             JsonNode usageNode = chunk.path("usage");
             if (usageNode.isObject()) {
                 ModelUsage parsed = parseUsage(request, usageNode);
-                if (usage != null && !usage.equals(parsed)) {
+                if (streamUsageMode == StreamUsageMode.FINAL_ONLY_STRICT && usage != null && !usage.equals(parsed)) {
                     throw failure(
                             request,
                             ModelErrorCategory.MALFORMED_RESPONSE,
@@ -932,8 +934,22 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                             "provider stream contains conflicting token usage",
                             null);
                 }
-                usage = parsed;
-                emit(request, sink, new ModelStreamEvent.UsageReported(request.callId(), eventIndex[0]++, parsed));
+                if (streamUsageMode == StreamUsageMode.MONOTONIC_CUMULATIVE) {
+                    if (usage != null && !monotonic(usage, parsed)) {
+                        throw failure(
+                                request,
+                                ModelErrorCategory.MALFORMED_RESPONSE,
+                                false,
+                                200,
+                                "non_monotonic_stream_usage",
+                                "provider stream usage must be monotonically cumulative",
+                                null);
+                    }
+                    if (!parsed.equals(usage)) usage = parsed;
+                } else {
+                    usage = parsed;
+                    emit(request, sink, new ModelStreamEvent.UsageReported(request.callId(), eventIndex[0]++, parsed));
+                }
             }
 
             JsonNode choices = chunk.path("choices");
@@ -1022,7 +1038,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                             request.callId(), eventIndex[0]++, 0, index, id, name, arguments));
         }
 
-        private AgentChatResponse finish() {
+        private AgentChatResponse finish(ModelStreamSink sink, long[] eventIndex) {
             if (responseId.isBlank() || actualModelId.isBlank()) {
                 malformed("missing_stream_identity", "provider stream is missing response identity");
             }
@@ -1062,6 +1078,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                         "provider response message is empty",
                         null);
             }
+            if (streamUsageMode == StreamUsageMode.MONOTONIC_CUMULATIVE) {
+                emit(request, sink, new ModelStreamEvent.UsageReported(request.callId(), eventIndex[0]++, usage));
+            }
             return new AgentChatResponse(
                     responseId,
                     actualModelId,
@@ -1075,6 +1094,14 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                             ? java.util.Optional.empty()
                             : java.util.Optional.of(SensitiveModelReasoning.of(reasoning.toString())),
                     structuredOutput(request, content.toString(), calls));
+        }
+
+        private boolean monotonic(ModelUsage previous, ModelUsage current) {
+            return current.inputTokens() >= previous.inputTokens()
+                    && current.outputTokens() >= previous.outputTokens()
+                    && current.cacheHitTokens() >= previous.cacheHitTokens()
+                    && current.cacheMissTokens() >= previous.cacheMissTokens()
+                    && current.reasoningTokens() >= previous.reasoningTokens();
         }
 
         private String consistentText(JsonNode node, String field, String current) {
