@@ -36,7 +36,7 @@ class SqliteMigrationRunnerTest {
     }
 
     @Test
-    void upgradesAnExistingV3DatabaseToV8WithoutReapplyingHistory() throws Exception {
+    void upgradesAnExistingV3DatabaseToV9WithoutReapplyingHistory() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
 
@@ -75,6 +75,11 @@ class SqliteMigrationRunnerTest {
                                     + "WHERE name IN ('dispatch_execution_id', 'dispatch_process_id', "
                                     + "'dispatch_workdir_digest', 'reconcile_status', 'reconcile_reason')"))
                     .isEqualTo(5);
+            assertThat(queryLong(
+                            connection,
+                            "SELECT \"notnull\" FROM pragma_table_info('interaction_request') "
+                                    + "WHERE name = 'expires_at'"))
+                    .isZero();
         }
     }
 
@@ -89,6 +94,39 @@ class SqliteMigrationRunnerTest {
                 .isInstanceOf(SqliteStoreException.class)
                 .extracting(exception -> ((SqliteStoreException) exception).failure())
                 .isEqualTo(SqliteStoreFailure.MIGRATION_CHECKSUM_MISMATCH);
+    }
+
+    @Test
+    void preservesExistingInteractionDeadlineWhileMakingTheColumnNullable() throws Exception {
+        SqliteConnectionFactory connections = initializedConnections();
+        SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
+        runner.migrate(RuntimeStoreMigrations.all().subList(0, 8));
+        long createdAt = SqliteTestSupport.NOW.toEpochMilli();
+        long expiresAt = createdAt + 60_000;
+        try (Connection connection = connections.openConnection();
+                Statement statement = connection.createStatement()) {
+            statement.execute("PRAGMA foreign_keys = OFF");
+            statement.executeUpdate("INSERT INTO interaction_request (request_id, run_id, tenant_id, principal_id, "
+                    + "principal_type, type, prompt, approval, target_type, target_schema_version, "
+                    + "target_payload, target_hash, created_at, expires_at, revision, kind, state, "
+                    + "expiration_outcome) VALUES ('request-1', 'run-1', 'tenant', 'principal', "
+                    + "'user', 'clarification', 'Safe prompt', 0, 'generic', '1', X'00', "
+                    + "'hash', " + createdAt + ", " + expiresAt
+                    + ", 0, 'clarification', 'PENDING', 'FAIL_RUN')");
+        }
+
+        runner.migrate(RuntimeStoreMigrations.all());
+
+        try (Connection connection = connections.openConnection()) {
+            assertThat(queryLong(
+                            connection, "SELECT expires_at FROM interaction_request WHERE request_id = 'request-1'"))
+                    .isEqualTo(expiresAt);
+            assertThat(queryLong(
+                            connection,
+                            "SELECT \"notnull\" FROM pragma_table_info('interaction_request') "
+                                    + "WHERE name = 'expires_at'"))
+                    .isZero();
+        }
     }
 
     @Test

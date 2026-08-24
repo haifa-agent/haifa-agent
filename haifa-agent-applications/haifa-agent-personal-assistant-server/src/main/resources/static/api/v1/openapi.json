@@ -764,7 +764,7 @@
       },
       "Interaction": {
         "type": "object",
-        "required": ["id", "runId", "conversationId", "revision", "kind", "state", "title", "safePrompt", "allowedActions", "inputType", "maximumCharacters", "createdAt", "expiresAt"],
+        "required": ["id", "runId", "conversationId", "revision", "kind", "state", "title", "safePrompt", "allowedActions", "inputType", "maximumCharacters", "createdAt"],
         "properties": {
           "id": {"type": "string"},
           "runId": {"type": "string"},
@@ -778,7 +778,7 @@
           "inputType": {"type": "string"},
           "maximumCharacters": {"type": "integer"},
           "createdAt": {"type": "string", "format": "date-time"},
-          "expiresAt": {"type": "string", "format": "date-time"}
+          "expiresAt": {"type": ["string", "null"], "format": "date-time"}
         }
       },
       "InteractionResponse": {

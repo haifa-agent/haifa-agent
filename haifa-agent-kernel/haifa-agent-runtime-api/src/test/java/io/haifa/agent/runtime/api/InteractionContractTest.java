@@ -41,6 +41,29 @@ class InteractionContractTest {
     }
 
     @Test
+    void permitsAnInteractionWithoutAnAutomaticExpiry() {
+        Instant createdAt = Instant.parse("2026-07-26T00:00:00Z");
+        InteractionView view = new InteractionView(
+                new InteractionRequestId("request-1"),
+                new AgentRunId("run-1"),
+                new io.haifa.agent.core.session.AgentSessionId("session-1"),
+                0,
+                InteractionKind.CLARIFICATION,
+                InteractionState.PENDING,
+                "Input required",
+                "Provide a safe value",
+                List.of(InteractionAction.SUBMIT),
+                InteractionInputContract.text(128),
+                new InteractionTargetView("interaction", "clarification", Optional.empty(), Optional.empty(), "Input"),
+                new InteractionRequesterView("user", "requester"),
+                createdAt,
+                Optional.empty(),
+                new InteractionConsequenceView("Continue", "Stop", "No automatic expiry"));
+
+        assertThat(view.expiresAt()).isEmpty();
+    }
+
+    @Test
     void rejectsToolProtocolPartsFromSteerInput() {
         ToolCallPart toolCall = new ToolCallPart(
                 new ToolCallId("tool-call"), new ProviderToolCallCorrelationId("provider-call"), "echo", "1.0.0");

@@ -227,7 +227,9 @@ final class HttpJsonCodec {
         requester.put("principalType", view.requester().principalType());
         requester.put("displayLabel", view.requester().displayLabel());
         node.put("createdAt", TimePrecision.toMilliseconds(view.createdAt()).toString());
-        node.put("expiresAt", TimePrecision.toMilliseconds(view.expiresAt()).toString());
+        view.expiresAt()
+                .ifPresent(expiresAt -> node.put(
+                        "expiresAt", TimePrecision.toMilliseconds(expiresAt).toString()));
         ObjectNode consequences = node.putObject("consequences");
         consequences.put("accepted", view.consequences().accepted());
         consequences.put("rejected", view.consequences().rejected());

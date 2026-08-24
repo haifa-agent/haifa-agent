@@ -146,6 +146,8 @@ Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校
 
 V3 提供 Policy/Approval/Trust 权威表。V4 提供稳定 Event Journal range/head/earliest、Interaction
 revision/state 和 durable Run Input；旧库通过连续 Migration 升级，重复启动只校验 name/checksum。
+V9 将 `interaction_request.expires_at` 迁移为可空列；既有请求保留原截止时间，新建无截止时间的请求
+不会进入 due/expire 查询，响应、取消、revision 与恢复语义保持不变。
 
 ## Port—表—Codec 对照
 

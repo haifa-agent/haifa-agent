@@ -87,20 +87,48 @@ class InMemoryInteractionPortTest {
         InteractionRequest request = request("request-1", "run-1", false);
         port.create(request);
 
-        assertThat(port.due(request.runId(), request.expiresAt().minusMillis(1), 10))
-                .isEmpty();
-        assertThat(port.due(request.runId(), request.expiresAt(), 10)).hasSize(1);
+        Instant expiresAt = request.expiresAt().orElseThrow();
+        assertThat(port.due(request.runId(), expiresAt.minusMillis(1), 10)).isEmpty();
+        assertThat(port.due(request.runId(), expiresAt, 10)).hasSize(1);
         assertThatThrownBy(() -> port.respond(
                         submission(request, "response-at-deadline", 0, InteractionAction.SUBMIT, "late", "late-key"),
                         CALLER,
-                        request.expiresAt()))
+                        expiresAt))
                 .isInstanceOf(RuntimeContractException.class)
                 .extracting("code")
                 .isEqualTo(RuntimeApiErrorCode.INTERACTION_EXPIRED);
-        InteractionRecord expired = port.expire(request.id(), 0, request.expiresAt());
+        InteractionRecord expired = port.expire(request.id(), 0, expiresAt);
 
         assertThat(expired.state()).isEqualTo(InteractionState.EXPIRED);
         assertThat(expired.reasonCode()).contains("INTERACTION_EXPIRED");
+    }
+
+    @Test
+    void keepsNoExpiryInteractionPendingAndAcceptsALateResponse() {
+        InMemoryInteractionPort port = new InMemoryInteractionPort();
+        InteractionRequest request = new InteractionRequest(
+                new InteractionRequestId("no-expiry"),
+                new AgentRunId("run-no-expiry"),
+                TENANT,
+                OWNER,
+                "clarification",
+                "Safe public prompt",
+                false,
+                NOW,
+                java.util.Optional.empty());
+        port.create(request);
+
+        Instant muchLater = NOW.plus(java.time.Duration.ofDays(365));
+        assertThat(port.due(request.runId(), muchLater, 10)).isEmpty();
+        assertThatThrownBy(() -> port.expire(request.id(), 0, muchLater))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not expire");
+        assertThat(port.respond(
+                                submission(request, "late-response", 0, InteractionAction.SUBMIT, "answer", "late-key"),
+                                CALLER,
+                                muchLater)
+                        .newlyRecorded())
+                .isTrue();
     }
 
     @Test

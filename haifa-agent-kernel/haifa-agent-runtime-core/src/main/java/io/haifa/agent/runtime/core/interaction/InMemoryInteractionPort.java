@@ -186,8 +186,12 @@ public final class InMemoryInteractionPort implements InteractionPort {
         return records.values().stream()
                 .filter(record -> record.request().runId().equals(runId))
                 .filter(record -> record.state() == InteractionState.PENDING)
-                .filter(record -> !at.isBefore(record.request().expiresAt()))
-                .sorted(Comparator.comparing(record -> record.request().expiresAt()))
+                .filter(record -> record.request()
+                        .expiresAt()
+                        .map(expiresAt -> !at.isBefore(expiresAt))
+                        .orElse(false))
+                .sorted(Comparator.comparing(
+                        record -> record.request().expiresAt().orElse(Instant.MAX)))
                 .limit(limit)
                 .toList();
     }
@@ -200,7 +204,10 @@ public final class InMemoryInteractionPort implements InteractionPort {
                     RuntimeApiErrorCode.INTERACTION_REVISION_CONFLICT, "The interaction revision is no longer current");
         }
         if (current.state() != InteractionState.PENDING) return current;
-        if (at.isBefore(current.request().expiresAt())) {
+        Instant expiresAt = current.request()
+                .expiresAt()
+                .orElseThrow(() -> new IllegalArgumentException("interaction does not expire automatically"));
+        if (at.isBefore(expiresAt)) {
             throw new IllegalArgumentException("interaction has not expired");
         }
         return replaceState(current, InteractionState.EXPIRED, "INTERACTION_EXPIRED", at);
@@ -312,7 +319,9 @@ public final class InMemoryInteractionPort implements InteractionPort {
             throw new RuntimeContractException(
                     RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
-        if (!receivedAt.isBefore(request.expiresAt())) {
+        if (request.expiresAt()
+                .map(expiresAt -> !receivedAt.isBefore(expiresAt))
+                .orElse(false)) {
             throw new RuntimeContractException(RuntimeApiErrorCode.INTERACTION_EXPIRED, "The interaction has expired");
         }
     }
@@ -326,7 +335,9 @@ public final class InMemoryInteractionPort implements InteractionPort {
                 || (request.approvalContext().isEmpty() && !request.requester().equals(caller.principal()))) {
             throw new SecurityException("caller is not allowed to respond to interaction");
         }
-        if (!receivedAt.isBefore(request.expiresAt())) {
+        if (request.expiresAt()
+                .map(expiresAt -> !receivedAt.isBefore(expiresAt))
+                .orElse(false)) {
             throw new IllegalStateException("interaction expired");
         }
     }

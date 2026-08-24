@@ -15,8 +15,30 @@ public record ApprovalRequestContext(
         ApprovalTargetRef target,
         Optional<ApprovalAuthorityRequirementRef> authorityRequirement,
         Instant createdAt,
-        Instant expiresAt,
+        Optional<Instant> expiresAt,
         Optional<String> externalCorrelationRef) {
+    public ApprovalRequestContext(
+            PolicyDecisionId decisionId,
+            ApprovalSemantics semantics,
+            Set<ApprovalReuseScope> allowedReuseScopes,
+            ApprovalRequester requester,
+            ApprovalTargetRef target,
+            Optional<ApprovalAuthorityRequirementRef> authorityRequirement,
+            Instant createdAt,
+            Instant expiresAt,
+            Optional<String> externalCorrelationRef) {
+        this(
+                decisionId,
+                semantics,
+                allowedReuseScopes,
+                requester,
+                target,
+                authorityRequirement,
+                createdAt,
+                Optional.of(Objects.requireNonNull(expiresAt, "expiresAt must not be null")),
+                externalCorrelationRef);
+    }
+
     public ApprovalRequestContext {
         decisionId = Objects.requireNonNull(decisionId, "decisionId must not be null");
         semantics = Objects.requireNonNull(semantics, "semantics must not be null");
@@ -31,10 +53,13 @@ public record ApprovalRequestContext(
         if (allowedReuseScopes.isEmpty()) {
             throw new IllegalArgumentException("allowedReuseScopes must not be empty");
         }
-        if (!expiresAt.isAfter(createdAt)) {
+        if (expiresAt.isPresent() && !expiresAt.orElseThrow().isAfter(createdAt)) {
             throw new IllegalArgumentException("expiresAt must be after createdAt");
         }
         if (semantics == ApprovalSemantics.BUSINESS_AUTHORIZATION) {
+            if (expiresAt.isEmpty()) {
+                throw new IllegalArgumentException("business authorization requires an expiry");
+            }
             if (!allowedReuseScopes.equals(Set.of(ApprovalReuseScope.ONCE))) {
                 throw new IllegalArgumentException("business authorization only allows ONCE");
             }

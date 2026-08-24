@@ -1007,7 +1007,8 @@
     <select id="dueInteractions" resultMap="interactionRequestRow">
         SELECT <include refid="interactionRequestColumns"/>
         FROM interaction_request
-        WHERE run_id = #{runId} AND state = 'PENDING' AND expires_at &lt;= #{at}
+        WHERE run_id = #{runId} AND state = 'PENDING'
+          AND expires_at IS NOT NULL AND expires_at &lt;= #{at}
         ORDER BY expires_at ASC, request_id ASC
         LIMIT #{limit}
     </select>

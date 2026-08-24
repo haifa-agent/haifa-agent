@@ -52,6 +52,8 @@ Listener 失败不会中断 AgentLoop。
 - 新的 `InteractionView`、`InteractionResponseSubmission/Receipt` 使用稳定 Kind/Action/Input、
   revision 和错误码；旧 `InteractionResponse`/Snapshot 返回路径暂时保留为单向兼容层。新增入口使用
   fail-fast default method，既有第三方 `AgentRuntime` 实现保持源码兼容，支持新能力时再显式覆盖。
+- `InteractionView.expiresAt` 是可选的：空值表示请求保持 Pending，直到收到响应或显式取消；它不表示
+  Tool、Model、Lease 或授权证据没有自己的安全时限。
 - `RunInputSubmission` 只表达活动 Run 的 Steer，拒绝 Tool 协议 Part；Follow-up 仍由产品层在同一
   Session 创建新 Run。
 - `events`/`subscribe` 是 provider-neutral 的完整 Run Feed 接口。默认接口实现仍显式

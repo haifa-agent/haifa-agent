@@ -92,6 +92,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Snapshot-first, asynchronous pure-Java Runtime implementation. */
 public final class DefaultAgentRuntime implements AgentRuntime {
+    private static final Duration APPROVAL_EVIDENCE_TTL = Duration.ofMinutes(5);
     private final CallerContextProvider callers;
     private final RunBootstrapper bootstrapper;
     private final RunStateRepository runs;
@@ -511,13 +512,14 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             var decision = policyDecisions
                     .find(context.decisionId())
                     .orElseThrow(() -> new SecurityException("policy decision is unavailable"));
+            var approvedAt = time.now();
             policyAuthorizationEvidence.save(new PolicyAuthorizationEvidence(
                     context.decisionId(),
                     decision.requestDigest(),
                     context.requester(),
                     new ApprovalResponder(caller.tenant(), caller.principal()),
-                    time.now(),
-                    context.expiresAt()));
+                    approvedAt,
+                    approvedAt.plus(APPROVAL_EVIDENCE_TTL)));
         }
         appendInteractionResponseMessage(
                 run, response, toolApproval ? MessageVisibility.INTERNAL : MessageVisibility.AGENT_VISIBLE);

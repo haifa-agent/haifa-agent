@@ -937,7 +937,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             String inputType,
             int maximumCharacters,
             Instant createdAt,
-            Instant expiresAt) {}
+            Optional<Instant> expiresAt) {}
 
     public record InteractionReceipt(
             String responseId,

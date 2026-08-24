@@ -50,6 +50,34 @@ class HaifaHttpTransportAdapterTest {
     private static final TrustedCallerContext CALLER = new TrustedCallerContext("tenant-a", "user", "alice", "coding");
 
     @Test
+    void omitsAutomaticExpiryWhenInteractionHasNoDeadline() {
+        var view = new io.haifa.agent.contract.interaction.InteractionView(
+                io.haifa.agent.contract.common.ApiVersion.CURRENT,
+                "request-1",
+                RUN_ID.value(),
+                SESSION_ID.value(),
+                0,
+                "clarification",
+                "PENDING",
+                "Input required",
+                "Provide a safe value",
+                List.of("submit", "cancel"),
+                new io.haifa.agent.contract.interaction.InteractionView.InputContract(
+                        "text", 512, 0, 0, 0, 0, List.of(), Optional.empty()),
+                new io.haifa.agent.contract.interaction.InteractionView.TargetView(
+                        "interaction", "clarification", Optional.empty(), Optional.empty(), "Runtime interaction"),
+                new io.haifa.agent.contract.interaction.InteractionView.RequesterView("user", "requester"),
+                NOW,
+                Optional.empty(),
+                new io.haifa.agent.contract.interaction.InteractionView.ConsequenceView(
+                        "Continue", "Stop", "No automatic expiry"));
+
+        String json = new String(new HttpJsonCodec(new ObjectMapper()).write(view), StandardCharsets.UTF_8);
+
+        assertThat(json).doesNotContain("expiresAt");
+    }
+
+    @Test
     void routesStartQueryAndEventPageThroughTrustedBoundaries() {
         StubRuntime runtime = new StubRuntime();
         AtomicInteger scopedCalls = new AtomicInteger();
