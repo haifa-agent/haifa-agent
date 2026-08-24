@@ -115,6 +115,7 @@ const turns: Turn[] = [
     sequence: 1,
     text: "请整理今天的待办",
     images: [],
+    audios: [],
     createdAt: "2026-07-28T01:00:00Z",
   },
   {
@@ -124,6 +125,7 @@ const turns: Turn[] = [
     sequence: 2,
     text: "已经按优先级整理完成。",
     images: [],
+    audios: [],
     createdAt: "2026-07-28T01:00:01Z",
   },
 ];
@@ -977,6 +979,7 @@ describe("Personal Assistant application", () => {
       sequence: 3,
       text: "<!-- haifa-mission-delivery:mission-1 -->\nDeep Research Mission 已完成。完整报告与证据已保存在 Mission 中。",
       images: [],
+      audios: [],
       createdAt: "2026-08-12T02:15:00Z",
     };
     const delivered: MissionSnapshot = {
@@ -1070,6 +1073,7 @@ describe("Personal Assistant application", () => {
       sequence: 3,
       text: report,
       images: [],
+      audios: [],
       createdAt: "2026-08-11T06:00:00Z",
     };
     const delivered: MissionSnapshot = {
@@ -1534,7 +1538,7 @@ describe("Personal Assistant application", () => {
       target: { value: "https://images.example.test/architecture.png" },
     });
     fireEvent.click(within(secondDialog).getByRole("button", { name: "确认添加图片 URL" }));
-    fireEvent.click(screen.getByRole("button", { name: /^解释图片/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^分析媒体/ }));
     expect((screen.getByRole("textbox", { name: "给个人助理发送消息" }) as HTMLTextAreaElement).value)
       .toBe("请解释这张图片");
     fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
@@ -1569,6 +1573,53 @@ describe("Personal Assistant application", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "更多功能" })).toBeNull();
+  });
+
+  it("uploads native audio for an audio-capable model and submits its opaque reference", async () => {
+    const audioModel = {
+      ...model,
+      id: "gemini-audio",
+      capabilities: ["TEXT_CHAT", "IMAGE_INPUT", "AUDIO_INPUT"],
+    };
+    const audioConversation = {
+      ...conversation,
+      model: { ...conversation.model, model: audioModel },
+    };
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({ ...bootstrap, defaultModelId: audioModel.id, models: [audioModel] });
+    vi.mocked(api.conversations).mockResolvedValue([audioConversation]);
+    vi.mocked(api.conversation).mockResolvedValue(audioConversation);
+    vi.mocked(api.submitMessage).mockResolvedValue(audioConversation);
+    api.uploadAudio = vi.fn(async () => ({
+      audioId: "22222222-2222-4222-8222-222222222222",
+      mediaType: "audio/wav",
+      sizeBytes: 16,
+      originalFilename: "verification.wav",
+      sha256: `sha256:${"b".repeat(64)}`,
+    }));
+    const { container } = render(<App client={api} />);
+    const wav = new File([new TextEncoder().encode("RIFF....WAVEfmt ")], "verification.wav", {
+      type: "audio/wav",
+    });
+
+    await screen.findByRole("button", { name: "更多功能" });
+    const inputs = container.querySelectorAll('input[type="file"]');
+    fireEvent.change(inputs[1], { target: { files: [wav] } });
+
+    expect(await screen.findByText("verification.wav")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "待发送媒体" })).getByText("1/4")).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "给个人助理发送消息" }), {
+      target: { value: "转写音频" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+
+    await waitFor(() => expect(api.submitMessage).toHaveBeenCalledWith(
+      audioConversation,
+      "转写音频",
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+      [],
+      [{ kind: "upload", audioId: "22222222-2222-4222-8222-222222222222" }],
+    ));
   });
 
   it("renders sent images inside the user message without exposing opaque ids", async () => {
@@ -1907,6 +1958,7 @@ describe("Personal Assistant application", () => {
       sequence: 1,
       text: "请重新处理这条消息",
       images: [],
+      audios: [],
       createdAt: "2026-07-28T01:00:00Z",
     };
     const api = client();

@@ -9,7 +9,9 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.model.api.AgentChatRequest;
+import io.haifa.agent.model.api.AudioDataPart;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ImageDataPart;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelCapability;
@@ -32,6 +34,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -107,6 +110,36 @@ class GeminiGenerateContentModelTest {
         assertThat(response.toolCalls()).hasSize(1);
         assertThat(response.reasoning()).isPresent();
         assertThat(response.reasoning().orElseThrow().toString()).doesNotContain("signature-secret");
+    }
+
+    @Test
+    void mapsUploadedImageAndAudioAsNativeGeminiInlineData() throws Exception {
+        AtomicReference<JsonNode> requestBody = new AtomicReference<>();
+        start(new AtomicReference<>(), requestBody, List.of(Response.json(200, textResponse("media-ok"))));
+        byte[] image = new byte[] {1, 2, 3};
+        byte[] audio = new byte[] {4, 5, 6, 7};
+
+        var response = model(true)
+                .invoke(request(
+                        dialectSnapshot(),
+                        List.of(ModelMessage.user(
+                                "inspect media",
+                                List.of(new ImageDataPart("image/png", image)),
+                                List.of(new AudioDataPart("audio/wav", audio)))),
+                        List.of()));
+
+        assertThat(response.content()).isEqualTo("media-ok");
+        JsonNode parts = requestBody.get().path("contents").get(0).path("parts");
+        assertThat(parts).hasSize(3);
+        assertThat(parts.get(0).path("text").asText()).isEqualTo("inspect media");
+        assertThat(parts.get(1).path("inlineData").path("mimeType").asText()).isEqualTo("image/png");
+        assertThat(Base64.getDecoder()
+                        .decode(parts.get(1).path("inlineData").path("data").asText()))
+                .containsExactly(image);
+        assertThat(parts.get(2).path("inlineData").path("mimeType").asText()).isEqualTo("audio/wav");
+        assertThat(Base64.getDecoder()
+                        .decode(parts.get(2).path("inlineData").path("data").asText()))
+                .containsExactly(audio);
     }
 
     @Test
@@ -265,6 +298,8 @@ class GeminiGenerateContentModelTest {
                         ModelCapability.TEXT_CHAT,
                         ModelCapability.TOOL_CALLING,
                         ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.IMAGE_INPUT,
+                        ModelCapability.AUDIO_INPUT,
                         ModelCapability.REASONING),
                 8192,
                 1024,

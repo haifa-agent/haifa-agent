@@ -23,6 +23,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionExecutionCoor
 import io.haifa.agent.personalassistant.application.mission.MissionPlanValidator;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanner;
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
+import io.haifa.agent.personalassistant.server.audio.PersonalAudioStore;
 import io.haifa.agent.personalassistant.server.configuration.execution.PersonalExecutionRuntime;
 import io.haifa.agent.personalassistant.server.configuration.mcp.PersonalMcpRuntime;
 import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelFactory;
@@ -118,6 +119,7 @@ public class PersonalAssistantConfiguration {
             Clock personalClock,
             PersonalMcpRuntime mcpRuntime,
             PersonalImageStore imageStore,
+            PersonalAudioStore audioStore,
             LocalModelAuthenticationService modelAuthentication) {
         Path dataDirectory = prepare(properties.dataDirectory());
         byte[] key = decodeKey(properties.continuationKeyBase64());
@@ -192,7 +194,8 @@ public class PersonalAssistantConfiguration {
                             dataDirectory,
                             Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath()),
                     personalClock,
-                    imageStore));
+                    imageStore,
+                    audioStore));
         } catch (RuntimeException | Error exception) {
             if (execution != null) {
                 try {
@@ -213,6 +216,11 @@ public class PersonalAssistantConfiguration {
     @Bean
     PersonalImageStore personalImageStore(PersonalAssistantProperties properties) {
         return new PersonalImageStore(prepare(properties.dataDirectory()));
+    }
+
+    @Bean
+    PersonalAudioStore personalAudioStore(PersonalAssistantProperties properties) {
+        return new PersonalAudioStore(prepare(properties.dataDirectory()));
     }
 
     @Bean

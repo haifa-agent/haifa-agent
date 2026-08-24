@@ -196,6 +196,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         if (request.messages().stream().anyMatch(message -> !message.images().isEmpty())) {
             throw new IllegalArgumentException("Anthropic Messages image input is not enabled by this adapter profile");
         }
+        if (request.messages().stream().anyMatch(message -> !message.audios().isEmpty())) {
+            throw new IllegalArgumentException("Anthropic Messages audio input is not enabled by this adapter profile");
+        }
         if (!request.tools().isEmpty()
                 && !request.model().capabilities().contains(io.haifa.agent.model.api.ModelCapability.TOOL_CALLING)) {
             throw new IllegalArgumentException("selected model does not declare tool calling capability");

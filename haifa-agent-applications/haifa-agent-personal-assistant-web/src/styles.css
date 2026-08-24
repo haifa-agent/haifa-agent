@@ -809,6 +809,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-radius: 6px;
   background: #4c6fff;
 }
+.turn-audios { display: grid; gap: 7px; margin-bottom: 10px; }
+.turn-audio-file {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  color: #405477;
+  border: 1px solid #d5def3;
+  border-radius: 10px;
+  background: #f8faff;
+}
+.turn-audio-file > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.turn-audio-file > span b { margin-right: 7px; color: #4c6fff; }
+.turn-audio-file > small { color: #78859d; }
 .message time, .activity-card time, .memory-card time { display: block; margin-top: 6px; color: #9ba3b2; font-size: 10px; }
 .message-content { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .message-content p { margin: 0 0 10px; }
@@ -1033,6 +1048,40 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .image-attachment:hover > button,
 .image-attachment:focus-within > button { opacity: 1; }
+.audio-attachment {
+  position: relative;
+  width: 154px;
+  height: 58px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  color: #5269bd;
+  border: 1px solid #d7e0f3;
+  border-radius: 11px;
+  background: #e7edff;
+}
+.audio-attachment > span { min-width: 0; overflow: hidden; color: #405477; font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
+.audio-attachment > span b { margin-right: 5px; color: #4c6fff; }
+.audio-attachment > button {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: white;
+  border: 2px solid white;
+  border-radius: 50%;
+  background: #66728a;
+  cursor: pointer;
+  opacity: 0;
+}
+.audio-attachment:hover > button,
+.audio-attachment:focus-within > button { opacity: 1; }
 .explain-image-action {
   min-height: 24px;
   display: inline-flex;

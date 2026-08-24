@@ -7,6 +7,7 @@ public sealed interface ContentPart
                 ArtifactRefPart,
                 ImageUrlContentPart,
                 StoredImageContentPart,
+                StoredAudioContentPart,
                 ToolCallPart,
                 ToolResultPart {
 

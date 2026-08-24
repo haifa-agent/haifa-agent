@@ -6,6 +6,7 @@ import type {
   Interaction,
   InteractionReceipt,
   ImageInput,
+  AudioInput,
   Memory,
   MemoryCandidate,
   CreateMission,
@@ -22,6 +23,7 @@ import type {
   StreamEvent,
   Turn,
   UploadedImage,
+  UploadedAudio,
   UpdateConversation,
 } from "./generated";
 
@@ -83,6 +85,7 @@ export interface PersonalAssistantClient {
     modelId?: string,
     images?: ImageInput[],
     modelSelection?: { model: Model; preferences: ModelPreferences },
+    audios?: AudioInput[],
   ): Promise<Conversation>;
   selectModel?(
     conversation: Conversation,
@@ -102,8 +105,10 @@ export interface PersonalAssistantClient {
     message: string,
     options?: CommandOptions,
     images?: ImageInput[],
+    audios?: AudioInput[],
   ): Promise<Conversation>;
   uploadImage?(file: File, options?: CommandOptions): Promise<UploadedImage>;
+  uploadAudio?(file: File, options?: CommandOptions): Promise<UploadedAudio>;
   recommendedQuestions(
     conversationId: string,
     runId: string,
@@ -295,6 +300,7 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     modelId?: string,
     images: ImageInput[] = [],
     modelSelection?: { model: Model; preferences: ModelPreferences },
+    audios: AudioInput[] = [],
   ) {
     return this.request<Conversation>(
       "/conversations",
@@ -307,6 +313,7 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
           ...(!modelSelection && modelId ? { modelId } : {}),
           ...(modelSelection ? { modelSelection: selectionRequest(modelSelection.model, modelSelection.preferences) } : {}),
           ...(images.length ? { images } : {}),
+          ...(audios.length ? { audios } : {}),
         }),
       },
       options.signal,
@@ -359,13 +366,18 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     message: string,
     options: CommandOptions = {},
     images: ImageInput[] = [],
+    audios: AudioInput[] = [],
   ) {
     return this.request<Conversation>(
       `/conversations/${encoded(conversation.id)}/messages`,
       {
         method: "POST",
         headers: commandHeaders(conversation.revision, options.idempotencyKey),
-        body: JSON.stringify({ message, ...(images.length ? { images } : {}) }),
+        body: JSON.stringify({
+          message,
+          ...(images.length ? { images } : {}),
+          ...(audios.length ? { audios } : {}),
+        }),
       },
       options.signal,
     );
@@ -381,6 +393,23 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
           "X-Haifa-CSRF": "1",
           "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID(),
           "X-Image-Filename": encodeURIComponent(file.name),
+        },
+        body: file,
+      },
+      options.signal,
+    );
+  }
+
+  uploadAudio(file: File, options: CommandOptions = {}) {
+    return this.request<UploadedAudio>(
+      "/audios",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": file.type,
+          "X-Haifa-CSRF": "1",
+          "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID(),
+          "X-Audio-Filename": encodeURIComponent(file.name),
         },
         body: file,
       },

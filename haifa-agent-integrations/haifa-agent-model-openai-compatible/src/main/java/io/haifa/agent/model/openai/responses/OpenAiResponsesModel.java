@@ -193,6 +193,9 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             throw new IllegalArgumentException("snapshot selects a different model adapter");
         }
         OpenAiResponsesDialects.Profile profile = OpenAiResponsesDialects.resolve(request.model(), allowInsecureHttp);
+        if (request.messages().stream().anyMatch(message -> !message.audios().isEmpty())) {
+            throw new IllegalArgumentException("audio input is not enabled by this Responses adapter profile");
+        }
         if (profile == OpenAiResponsesDialects.Profile.DEEPSEEK
                 && request.messages().stream()
                         .anyMatch(message -> !message.images().isEmpty())) {

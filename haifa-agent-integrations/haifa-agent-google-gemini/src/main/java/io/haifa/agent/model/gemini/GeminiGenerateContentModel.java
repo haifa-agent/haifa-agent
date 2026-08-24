@@ -8,7 +8,10 @@ import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.AudioDataPart;
 import io.haifa.agent.model.api.CredentialResolver;
+import io.haifa.agent.model.api.ImageDataPart;
+import io.haifa.agent.model.api.ImageUrlPart;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
@@ -38,6 +41,7 @@ import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -52,6 +56,7 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
     public static final String CLIPROXY_CREDENTIAL_REF = "env://HAIFA_CLIPROXYAPI_API_KEY";
     private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private static final int MAX_SSE_LINE_CHARS = 1024 * 1024;
+    private static final int MAX_INLINE_MEDIA_BYTES = 12 * 1024 * 1024;
     private static final Set<String> LOOPBACK_NAMES = Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1");
 
     private final HttpClient http;
@@ -306,13 +311,34 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
         List<Map<String, Object>> systemParts = new ArrayList<>();
         Map<String, CallIdentity> calls = new LinkedHashMap<>();
         List<ModelMessage> messages = request.messages();
+        int inlineMediaBytes = 0;
         for (int index = 0; index < messages.size(); index++) {
             ModelMessage message = messages.get(index);
-            if (!message.images().isEmpty()) throw new IllegalArgumentException("Gemini image input is not enabled");
             if (message.role() == ModelMessageRole.SYSTEM) {
                 systemParts.add(Map.of("text", message.content()));
             } else if (message.role() == ModelMessageRole.USER) {
-                contents.add(content("user", List.of(Map.of("text", message.content()))));
+                List<Map<String, Object>> parts = new ArrayList<>();
+                if (!message.content().isBlank()) parts.add(Map.of("text", message.content()));
+                for (var image : message.images()) {
+                    if (image instanceof ImageUrlPart) {
+                        throw new IllegalArgumentException("Gemini image URLs are not supported; upload image bytes");
+                    }
+                    ImageDataPart data = (ImageDataPart) image;
+                    byte[] bytes = data.bytes();
+                    inlineMediaBytes += bytes.length;
+                    parts.add(inlineData(data.mediaType(), bytes));
+                }
+                for (var audio : message.audios()) {
+                    AudioDataPart data = (AudioDataPart) audio;
+                    byte[] bytes = data.bytes();
+                    inlineMediaBytes += bytes.length;
+                    parts.add(inlineData(data.mediaType(), bytes));
+                }
+                if (inlineMediaBytes > MAX_INLINE_MEDIA_BYTES) {
+                    throw new IllegalArgumentException("Gemini inline media exceeds the bounded request limit");
+                }
+                if (parts.isEmpty()) throw new IllegalArgumentException("Gemini user message must not be empty");
+                contents.add(content("user", parts));
             } else if (message.role() == ModelMessageRole.ASSISTANT) {
                 List<Map<String, Object>> parts;
                 if (message.toolCalls().isEmpty()) {
@@ -432,6 +458,12 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
 
     private static Map<String, Object> content(String role, List<Map<String, Object>> parts) {
         return Map.of("role", role, "parts", parts);
+    }
+
+    private static Map<String, Object> inlineData(String mediaType, byte[] bytes) {
+        return Map.of(
+                "inlineData",
+                Map.of("mimeType", mediaType, "data", Base64.getEncoder().encodeToString(bytes)));
     }
 
     private AgentChatResponse parseResponse(AgentChatRequest request, byte[] body) {

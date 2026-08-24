@@ -88,6 +88,31 @@
         }
       }
     },
+    "/api/v1/audios": {
+      "post": {
+        "operationId": "uploadAudio",
+        "parameters": [
+          {"$ref": "#/components/parameters/IdempotencyKey"},
+          {"name": "X-Audio-Filename", "in": "header", "schema": {"type": "string", "maxLength": 255}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "audio/wav": {"schema": {"type": "string", "format": "binary"}},
+            "audio/mpeg": {"schema": {"type": "string", "format": "binary"}},
+            "audio/mp3": {"schema": {"type": "string", "format": "binary"}},
+            "audio/aiff": {"schema": {"type": "string", "format": "binary"}},
+            "audio/aac": {"schema": {"type": "string", "format": "binary"}},
+            "audio/ogg": {"schema": {"type": "string", "format": "binary"}},
+            "audio/flac": {"schema": {"type": "string", "format": "binary"}}
+          }
+        },
+        "responses": {
+          "201": {"description": "Uploaded audio reference", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UploadedAudio"}}}},
+          "400": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
     "/api/v1/conversations": {
       "get": {
         "operationId": "listConversations",
@@ -433,7 +458,8 @@
           "message": {"type": "string"},
           "modelId": {"type": "string"},
           "modelSelection": {"$ref": "#/components/schemas/SelectModel"},
-          "images": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/ImageInput"}}
+          "images": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/ImageInput"}},
+          "audios": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/AudioInput"}}
         }
       },
       "SubmitMessage": {
@@ -441,7 +467,8 @@
         "required": ["message"],
         "properties": {
           "message": {"type": "string"},
-          "images": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/ImageInput"}}
+          "images": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/ImageInput"}},
+          "audios": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/AudioInput"}}
         }
       },
       "ImageInput": {
@@ -458,6 +485,25 @@
         "required": ["imageId", "mediaType", "sizeBytes", "originalFilename", "sha256"],
         "properties": {
           "imageId": {"type": "string"},
+          "mediaType": {"type": "string"},
+          "sizeBytes": {"type": "integer", "format": "int64"},
+          "originalFilename": {"type": "string"},
+          "sha256": {"type": "string"}
+        }
+      },
+      "AudioInput": {
+        "type": "object",
+        "required": ["kind", "audioId"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["upload"]},
+          "audioId": {"type": "string"}
+        }
+      },
+      "UploadedAudio": {
+        "type": "object",
+        "required": ["audioId", "mediaType", "sizeBytes", "originalFilename", "sha256"],
+        "properties": {
+          "audioId": {"type": "string"},
           "mediaType": {"type": "string"},
           "sizeBytes": {"type": "integer", "format": "int64"},
           "originalFilename": {"type": "string"},
@@ -643,7 +689,7 @@
       },
       "Turn": {
         "type": "object",
-        "required": ["id", "role", "sequence", "text", "images", "createdAt"],
+        "required": ["id", "role", "sequence", "text", "images", "audios", "createdAt"],
         "properties": {
           "id": {"type": "string"},
           "role": {"type": "string"},
@@ -651,6 +697,7 @@
           "sequence": {"type": "integer", "format": "int64"},
           "text": {"type": "string"},
           "images": {"type": "array", "items": {"$ref": "#/components/schemas/TurnImage"}},
+          "audios": {"type": "array", "items": {"$ref": "#/components/schemas/TurnAudio"}},
           "createdAt": {"type": "string", "format": "date-time"}
         }
       },
@@ -662,6 +709,16 @@
           "url": {"type": ["string", "null"]},
           "imageId": {"type": ["string", "null"]},
           "mediaType": {"type": ["string", "null"]},
+          "sizeBytes": {"type": "integer", "format": "int64"},
+          "originalFilename": {"type": "string"}
+        }
+      },
+      "TurnAudio": {
+        "type": "object",
+        "required": ["audioId", "mediaType", "sizeBytes", "originalFilename"],
+        "properties": {
+          "audioId": {"type": "string"},
+          "mediaType": {"type": "string"},
           "sizeBytes": {"type": "integer", "format": "int64"},
           "originalFilename": {"type": "string"}
         }

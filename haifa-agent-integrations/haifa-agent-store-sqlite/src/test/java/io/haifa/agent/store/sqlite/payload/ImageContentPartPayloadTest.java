@@ -3,6 +3,7 @@ package io.haifa.agent.store.sqlite.payload;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredAudioContentPart;
 import io.haifa.agent.core.content.StoredImageContentPart;
 import java.net.URI;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,20 @@ class ImageContentPartPayloadTest {
         assertThat(remotePayload.toDomain()).isEqualTo(remote);
         assertThat(storedPayload.toDomain()).isEqualTo(stored);
         assertThat(storedPayload.toString())
+                .doesNotContain("data:")
+                .doesNotContain("\\")
+                .doesNotContain("/tmp/");
+    }
+
+    @Test
+    void roundTripsStoredAudioWithoutBinaryOrPaths() {
+        var stored = new StoredAudioContentPart(
+                "personal-local", "audio-1", "audio/wav", 12, "sha256:" + "b".repeat(64), "sample.wav");
+
+        var payload = ContentPartPayload.from(stored);
+
+        assertThat(payload.toDomain()).isEqualTo(stored);
+        assertThat(payload.toString())
                 .doesNotContain("data:")
                 .doesNotContain("\\")
                 .doesNotContain("/tmp/");

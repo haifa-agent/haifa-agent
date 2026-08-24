@@ -4,6 +4,7 @@ package io.haifa.agent.model.api;
 public enum ModelCapability {
     TEXT_CHAT,
     IMAGE_INPUT,
+    AUDIO_INPUT,
     TOOL_CALLING,
     STRUCTURED_OUTPUT,
     REASONING

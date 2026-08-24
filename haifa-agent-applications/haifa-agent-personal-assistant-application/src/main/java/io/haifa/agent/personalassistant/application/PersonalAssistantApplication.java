@@ -4,6 +4,7 @@ import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredAudioContentPart;
 import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.run.AgentRunId;
@@ -150,7 +151,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             PersonalResolvedModelSelection selection,
             List<ContentPart> inputs) {
         PersonalModelOption selected = selection.option();
-        requireImageInput(selected, inputs);
+        requireMediaInput(selected, inputs);
         ConversationRecord started = agent.conversations()
                 .start(new StartConversationCommand(
                         idempotencyKey, displayName, message, Optional.of(selection.runProfileId()), inputs));
@@ -232,7 +233,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 selected.profileVersion(),
                 selected.profileDigest(),
                 preference.userPreferences()));
-        requireImageInput(selected, inputs);
+        requireMediaInput(selected, inputs);
         return conversation(agent.conversations()
                 .submit(new SubmitConversationTurnCommand(
                         new AgentSessionId(sessionId),
@@ -604,6 +605,12 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                                 content instanceof ImageUrlContentPart || content instanceof StoredImageContentPart)
                         .map(PersonalAssistantApplication::image)
                         .toList(),
+                value.contents().stream()
+                        .filter(StoredAudioContentPart.class::isInstance)
+                        .map(StoredAudioContentPart.class::cast)
+                        .map(audio -> new AudioView(
+                                audio.audioId(), audio.mediaType(), audio.sizeBytes(), audio.originalFilename()))
+                        .toList(),
                 value.createdAt());
     }
 
@@ -624,9 +631,16 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         };
     }
 
-    private static void requireImageInput(PersonalModelOption model, List<ContentPart> inputs) {
-        if (!inputs.isEmpty() && !model.capabilities().contains("IMAGE_INPUT")) {
+    private static void requireMediaInput(PersonalModelOption model, List<ContentPart> inputs) {
+        if (inputs.stream()
+                        .anyMatch(value ->
+                                value instanceof ImageUrlContentPart || value instanceof StoredImageContentPart)
+                && !model.capabilities().contains("IMAGE_INPUT")) {
             throw new IllegalArgumentException("selected model does not support image input");
+        }
+        if (inputs.stream().anyMatch(StoredAudioContentPart.class::isInstance)
+                && !model.capabilities().contains("AUDIO_INPUT")) {
+            throw new IllegalArgumentException("selected model does not support audio input");
         }
     }
 
@@ -874,6 +888,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             long sequence,
             String text,
             List<ImageView> images,
+            List<AudioView> audios,
             Instant createdAt) {}
 
     public record ImageView(
@@ -883,6 +898,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             Optional<String> mediaType,
             long sizeBytes,
             String originalFilename) {}
+
+    public record AudioView(String audioId, String mediaType, long sizeBytes, String originalFilename) {}
 
     public record UsageView(
             long inputTokens,

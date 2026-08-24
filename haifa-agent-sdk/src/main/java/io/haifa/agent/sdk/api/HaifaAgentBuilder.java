@@ -67,6 +67,7 @@ public final class HaifaAgentBuilder {
     private java.util.function.UnaryOperator<PublicToolPolicy> publicToolPolicyDecorator =
             java.util.function.UnaryOperator.identity();
     private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
+    private ModelAudioResolver modelAudioResolver = ModelAudioResolver.unsupported();
     private RetryPolicy toolRetry = RetryPolicy.none();
     private ModelRetryPolicy modelRetry = ModelRetryPolicy.defaults();
     private final Map<String, ProductRunProfile> runProfiles = new LinkedHashMap<>();
@@ -124,6 +125,11 @@ public final class HaifaAgentBuilder {
 
     public HaifaAgentBuilder modelImageResolver(ModelImageResolver value) {
         modelImageResolver = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder modelAudioResolver(ModelAudioResolver value) {
+        modelAudioResolver = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
@@ -242,6 +248,7 @@ public final class HaifaAgentBuilder {
                     .toolRetry(toolRetry)
                     .publicToolPolicyDecorator(publicToolPolicyDecorator)
                     .modelImageResolver(modelImageResolver::resolve)
+                    .modelAudioResolver(modelAudioResolver::resolve)
                     .promptDiagnostics(processPromptDiagnostics)
                     .persistence(persistence.runtimePersistence())
                     .callers(() -> {

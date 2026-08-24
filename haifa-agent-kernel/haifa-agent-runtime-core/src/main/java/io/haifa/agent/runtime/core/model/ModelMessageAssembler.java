@@ -14,6 +14,7 @@ import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredAudioContentPart;
 import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolCallPart;
@@ -23,6 +24,7 @@ import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.model.api.ImageUrlPart;
+import io.haifa.agent.model.api.ModelAudioPart;
 import io.haifa.agent.model.api.ModelImagePart;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
@@ -42,14 +44,20 @@ import java.util.stream.Collectors;
 public final class ModelMessageAssembler {
     private final RuntimeStateRepository state;
     private final ModelImageResolver images;
+    private final ModelAudioResolver audios;
 
     public ModelMessageAssembler(RuntimeStateRepository state) {
-        this(state, ModelImageResolver.unsupported());
+        this(state, ModelImageResolver.unsupported(), ModelAudioResolver.unsupported());
     }
 
     public ModelMessageAssembler(RuntimeStateRepository state, ModelImageResolver images) {
+        this(state, images, ModelAudioResolver.unsupported());
+    }
+
+    public ModelMessageAssembler(RuntimeStateRepository state, ModelImageResolver images, ModelAudioResolver audios) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.images = Objects.requireNonNull(images, "images must not be null");
+        this.audios = Objects.requireNonNull(audios, "audios must not be null");
     }
 
     public List<ModelMessage> assemble(AgentRunId runId, AgentContext context) {
@@ -217,13 +225,14 @@ public final class ModelMessageAssembler {
             throw new IllegalStateException("tool message has no typed provider correlation");
         }
         List<ModelImagePart> mappedImages = renderImages(message.contents());
-        if (!mappedImages.isEmpty()) {
+        List<ModelAudioPart> mappedAudios = renderAudios(message.contents());
+        if (!mappedImages.isEmpty() || !mappedAudios.isEmpty()) {
             if (message.role() != MessageRole.USER) {
                 throw new ContextBuildException(
                         ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
-                        "image inputs are only allowed on user messages");
+                        "media inputs are only allowed on user messages");
             }
-            return List.of(ModelMessage.user(text, mappedImages));
+            return List.of(ModelMessage.user(text, mappedImages, mappedAudios));
         }
         return List.of(ModelMessage.text(mapRole(message.role()), text));
     }
@@ -242,6 +251,7 @@ public final class ModelMessageAssembler {
                         "raw asset references require a derived text, OCR, or transcript context item");
             } else if (!(content instanceof ImageUrlContentPart)
                     && !(content instanceof StoredImageContentPart)
+                    && !(content instanceof StoredAudioContentPart)
                     && !(content instanceof ToolCallPart)
                     && !(content instanceof ToolResultPart)) {
                 throw new ContextBuildException(
@@ -257,6 +267,14 @@ public final class ModelMessageAssembler {
         for (ContentPart content : contents) {
             if (content instanceof ImageUrlContentPart image) values.add(new ImageUrlPart(image.url()));
             else if (content instanceof StoredImageContentPart image) values.add(images.resolve(image));
+        }
+        return List.copyOf(values);
+    }
+
+    private List<ModelAudioPart> renderAudios(List<ContentPart> contents) {
+        List<ModelAudioPart> values = new ArrayList<>();
+        for (ContentPart content : contents) {
+            if (content instanceof StoredAudioContentPart audio) values.add(audios.resolve(audio));
         }
         return List.copyOf(values);
     }

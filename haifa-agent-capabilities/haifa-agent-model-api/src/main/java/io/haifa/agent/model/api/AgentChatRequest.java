@@ -87,6 +87,10 @@ public record AgentChatRequest(
                 && !model.capabilities().contains(ModelCapability.IMAGE_INPUT)) {
             throw new IllegalArgumentException("selected model does not declare image input capability");
         }
+        if (messages.stream().anyMatch(message -> !message.audios().isEmpty())
+                && !model.capabilities().contains(ModelCapability.AUDIO_INPUT)) {
+            throw new IllegalArgumentException("selected model does not declare audio input capability");
+        }
         tools = List.copyOf(Objects.requireNonNull(tools, "tools must not be null"));
         if (maxOutputTokens < 1) throw new IllegalArgumentException("maxOutputTokens must be positive");
         timeout = Objects.requireNonNull(timeout, "timeout must not be null");

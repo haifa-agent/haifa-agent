@@ -236,7 +236,8 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 - OpenAI-compatible Adapter 支持同步与 SSE、Tool Call、最终 usage、结构化输出和受保护的
   reasoning continuation；
 - Google Gemini Integration 支持官方 `generateContent` / `streamGenerateContent` 文本、Function Calling、
-  结构化输出、Usage 和受保护 Thought Signature continuation；本机 CLIProxyAPI Antigravity 仅作为独立方言；
+  结构化输出、原生 inline 图片/音频、Usage 和受保护 Thought Signature continuation；本机 CLIProxyAPI
+  Antigravity 仅作为独立方言；
 - 已治理的 OpenAI、DeepSeek、阿里云百炼、Kimi、智谱和火山方舟接入，覆盖当前已验证的
   Chat Completions、Responses 与 Anthropic Messages Binding；
 - 不进行隐式模型 fallback、轮询或运行中热替换。

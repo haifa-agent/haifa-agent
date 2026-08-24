@@ -120,6 +120,23 @@ class ModelApiTest {
     }
 
     @Test
+    void audioPartsAreBoundedTypedNormalizedAndRedacted() {
+        byte[] source = {(byte) 'I', (byte) 'D', (byte) '3', 1};
+        AudioDataPart audio = new AudioDataPart("audio/mpeg", source);
+        ModelMessage message = ModelMessage.user("transcribe", List.of(), List.of(audio));
+
+        source[0] = 0;
+
+        assertThat(message.audios()).containsExactly(audio);
+        assertThat(audio.mediaType()).isEqualTo("audio/mp3");
+        assertThat(audio.bytes()).containsExactly((byte) 'I', (byte) 'D', (byte) '3', (byte) 1);
+        assertThat(audio.toString()).doesNotContain("SUQz");
+        assertThatThrownBy(() -> new AudioDataPart("video/mp4", new byte[] {1}))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("audio media type");
+    }
+
+    @Test
     void providerOptionsAreDeeplyImmutable() {
         List<Object> nested = new ArrayList<>(List.of("disabled"));
         Map<String, Object> options = new LinkedHashMap<>();

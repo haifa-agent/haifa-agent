@@ -152,15 +152,22 @@ Workspace ID 和 region；Kimi 与智谱分别使用 `env://KIMI_API_KEY`、`env
 实际 Provider Model ID 与完整 Snapshot 不返回浏览器。检测到可选 Provider 时只扩展目录，默认仍是
 `deepseek-chat-flash`；只有显式传入 `--default-model-id` 才改变默认 Binding。
 
+设置 `HAIFA_CLIPROXYAPI_API_KEY` 后，真实环境还会装配 loopback
+`cliproxyapi-antigravity` Provider；`HAIFA_CLIPROXYAPI_MODEL_ID` 默认是 `gemini-3-flash`。显式选择
+`--default-model-id gemini-cliproxy-flash` 才将它设为默认模型。该 Binding 声明文本、Tool、结构化输出、
+图片和音频输入能力，且只把下游 Key 传入 PA 子进程，不读取 CLIProxyAPI 的 OAuth、Token 或 Keyring。
+
 百炼目录提供 Qwen Chat 与已验证的 Max/Plus Responses；Kimi 只提供官方 API Key Chat；智谱提供通用
 OpenAI Chat，并仅为 GLM-5.2 提供通过 Contract 的 Anthropic Messages 高级连接方式。所有可见状态、
 推荐值、允许值和只读状态由后端精确 Binding Profile 驱动；UI 不包含 Provider/Model 条件分支。
 
-`IMAGE_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。启用后，Conversation 请求可带
-最多四个 `{kind: url|upload}` 图片输入。外部 URL 只接受受限 HTTPS；上传通过 `POST /api/v1/images`
+`IMAGE_INPUT` 与 `AUDIO_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。Conversation 每条
+消息合计最多携带四个媒体输入；图片使用 `{kind: url|upload}`，外部 URL 只接受受限 HTTPS，上传通过 `POST /api/v1/images`
 写入 `<data-directory>/images`，单文件上限 10 MiB、目录上限 1 GiB，类型限 PNG/JPEG/WEBP/非动画
-GIF。SQLite 与 Turn 只保存 opaque 引用、MIME、长度和摘要，不保存图片 Base64 或绝对路径。本阶段
-没有下载、缩略图、OCR、单附件删除或自动过期任务。
+GIF。音频只接受上传，通过 `POST /api/v1/audios` 写入独立的 `<data-directory>/audio` Store，采用同样的
+文件和目录上限，类型限 WAV、MP3、AIFF、AAC、OGG Vorbis、FLAC。SQLite 与 Turn 只保存 opaque 引用、
+MIME、长度和摘要，不保存媒体 Base64 或绝对路径；调用模型前会重新校验摘要。本阶段没有下载、缩略图、
+OCR、单附件删除或自动过期任务。
 
 Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。

@@ -25,6 +25,7 @@ import io.haifa.agent.context.prompt.PromptLayer;
 import io.haifa.agent.context.prompt.PromptRole;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredAudioContentPart;
 import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolCallPart;
@@ -177,6 +178,36 @@ class ModelMessageAssemblerTest {
                 .hasSize(2)
                 .anyMatch(io.haifa.agent.model.api.ImageUrlPart.class::isInstance)
                 .anyMatch(io.haifa.agent.model.api.ImageDataPart.class::isInstance);
+    }
+
+    @Test
+    void mapsStoredAudioOnlyAtTheModelBoundary() {
+        StoredAudioContentPart stored = new StoredAudioContentPart(
+                "personal-local", "audio-1", "audio/wav", 4, "sha256:" + "b".repeat(64), "sample.wav");
+        AgentMessage message = message(
+                "audio-message",
+                new AgentSessionId("session-1"),
+                RUN_ID,
+                MessageRole.USER,
+                1,
+                List.of(new TextPart("transcribe", "plain"), stored));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item("audio-message", ContextItemType.MESSAGE, new MessageContextContent(message))),
+                List.of(),
+                budget(),
+                20);
+
+        var messages = new ModelMessageAssembler(
+                        new InMemoryRuntimeStore(),
+                        ModelImageResolver.unsupported(),
+                        audio -> new io.haifa.agent.model.api.AudioDataPart("audio/wav", new byte[] {1, 2, 3, 4}))
+                .assemble(RUN_ID, context);
+
+        assertThat(messages.getLast().content()).isEqualTo("transcribe");
+        assertThat(messages.getLast().audios())
+                .singleElement()
+                .isInstanceOf(io.haifa.agent.model.api.AudioDataPart.class);
     }
 
     @Test

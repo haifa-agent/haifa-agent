@@ -234,6 +234,59 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertFalse(any(name.startswith("OPENAI_") for name in environment))
         self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_1_") for name in environment))
 
+    def test_cliproxy_configuration_adds_gemini_native_media_capabilities(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            repository=root,
+            server=root / "server",
+            web=root / "web",
+            runtime=root / "runtime",
+            data=root / "runtime/data",
+            logs=root / "runtime/logs",
+            state=root / "runtime/last-start.json",
+            stop_state=root / "runtime/last-stop.json",
+            maven_wrapper=root / "mvnw",
+        )
+
+        environment = real_environment.backend_environment(
+            "deepseek-secret",
+            real_environment.CLIPROXY_GEMINI_MODEL_ID,
+            None,
+            "aliyun-secret",
+            "continuation-secret",
+            paths,
+            root / "skills",
+            None,
+            tavily_key="tavily-secret",
+            cliproxy=("cliproxy-secret", "gemini-3-flash"),
+        )
+
+        prefix = "HAIFA_PERSONAL_MODELPROVIDERS_1"
+        self.assertEqual("cliproxyapi-antigravity", environment[f"{prefix}_ID"])
+        self.assertEqual("http://127.0.0.1:8317/v1beta", environment[f"{prefix}_ENDPOINT"])
+        self.assertEqual("google-gemini-generate-content", environment[f"{prefix}_APIBINDINGS_0_STYLE"])
+        self.assertEqual("cliproxyapi-antigravity", environment[f"{prefix}_APIBINDINGS_0_DIALECT"])
+        self.assertEqual("gemini-3-flash", environment[f"{prefix}_MODELS_0_PROVIDERMODELID"])
+        self.assertEqual("IMAGE_INPUT", environment[f"{prefix}_MODELS_0_CAPABILITIES_3"])
+        self.assertEqual("AUDIO_INPUT", environment[f"{prefix}_MODELS_0_CAPABILITIES_4"])
+        self.assertEqual("env://HAIFA_CLIPROXYAPI_API_KEY", environment[f"{prefix}_CREDENTIALREFERENCE"])
+        self.assertNotIn("cliproxy-secret", json.dumps(list(environment)))
+
+        self.assertEqual(
+            ("cliproxy-secret", "gemini-3-flash"),
+            real_environment.optional_cliproxy_environment(
+                {
+                    "HAIFA_CLIPROXYAPI_API_KEY": "cliproxy-secret",
+                    "HAIFA_CLIPROXYAPI_MODEL_ID": "gemini-3-flash",
+                }
+            ),
+        )
+        with self.assertRaisesRegex(RuntimeError, "requires HAIFA_CLIPROXYAPI_API_KEY"):
+            real_environment.resolve_default_model_id(
+                real_environment.CLIPROXY_GEMINI_MODEL_ID,
+                None,
+            )
+
     def test_bailian_key_value_file_adds_qwen_models_without_exposing_secret_in_names(self) -> None:
         root = Path("repository")
         paths = real_environment.Paths(

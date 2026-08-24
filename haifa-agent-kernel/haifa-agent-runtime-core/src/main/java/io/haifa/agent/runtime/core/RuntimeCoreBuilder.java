@@ -106,6 +106,7 @@ import io.haifa.agent.runtime.core.middleware.ToolDisclosureMiddleware;
 import io.haifa.agent.runtime.core.middleware.TraceMiddleware;
 import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
 import io.haifa.agent.runtime.core.model.ModelAdapterKey;
+import io.haifa.agent.runtime.core.model.ModelAudioResolver;
 import io.haifa.agent.runtime.core.model.ModelImageResolver;
 import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
 import io.haifa.agent.runtime.core.policy.RuntimePolicyAuthorizationEvidenceStore;
@@ -223,6 +224,7 @@ public final class RuntimeCoreBuilder {
     private MemoryAuditSink memoryAudit;
     private MemoryService memoryService;
     private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
+    private ModelAudioResolver modelAudioResolver = ModelAudioResolver.unsupported();
 
     public RuntimeCoreBuilder registerChatModel(String adapterType, String adapterVersion, AgentChatModel value) {
         ModelAdapterKey key = new ModelAdapterKey(adapterType, adapterVersion);
@@ -235,6 +237,11 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder modelImageResolver(ModelImageResolver value) {
         modelImageResolver = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public RuntimeCoreBuilder modelAudioResolver(ModelAudioResolver value) {
+        modelAudioResolver = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
@@ -518,8 +525,8 @@ public final class RuntimeCoreBuilder {
         ExecutionOwnershipPort configuredOwnership =
                 ownership != null ? ownership : ExecutionOwnershipPort.local(workerId);
         RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(time);
-        FrozenModelInvoker models =
-                new FrozenModelInvoker(state, chatModels, ids, modelOutput, controls, events, time, modelImageResolver);
+        FrozenModelInvoker models = new FrozenModelInvoker(
+                state, chatModels, ids, modelOutput, controls, events, time, modelImageResolver, modelAudioResolver);
         InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
         var defaultMemoryPolicy = new DefaultMemoryPolicy();
         MemoryRetriever configuredMemoryRetriever = memoryRetriever != null

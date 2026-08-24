@@ -610,6 +610,47 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
+    void uploadedAudioFlowsThroughTheConversationAndRemainsAnOpaqueTurnReference() throws Exception {
+        byte[] wav = "RIFF\u0004\u0000\u0000\u0000WAVEfmt ".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+        String uploadBody = web.post()
+                .uri("/api/v1/audios")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "audio-" + IDS.incrementAndGet())
+                .header("X-Audio-Filename", "verification.wav")
+                .contentType(MediaType.parseMediaType("audio/wav"))
+                .bodyValue(wav)
+                .exchange()
+                .expectStatus()
+                .isCreated()
+                .expectBody(String.class)
+                .returnResult()
+                .getResponseBody();
+        String audioId = mapper.readTree(uploadBody).path("audioId").asText();
+
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Audio","message":"Transcribe this audio","audios":[{"kind":"upload","audioId":%s}]}
+                """
+                        .formatted(mapper.writeValueAsString(audioId)));
+        assertThat(awaitTerminal(conversation.path("activeRunId").asText())
+                        .path("status")
+                        .asText())
+                .isEqualTo("COMPLETED");
+
+        web.get()
+                .uri("/api/v1/conversations/{id}/turns", conversation.path("id").asText())
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].audios[0].audioId")
+                .isEqualTo(audioId)
+                .jsonPath("$[0].audios[0].mediaType")
+                .isEqualTo("audio/wav");
+    }
+
+    @Test
     void recommendationEndpointBindsToTheCompletedAnswerAndAllowsAnEmptyResult() throws Exception {
         JsonNode conversation = post(
                 "/api/v1/conversations",

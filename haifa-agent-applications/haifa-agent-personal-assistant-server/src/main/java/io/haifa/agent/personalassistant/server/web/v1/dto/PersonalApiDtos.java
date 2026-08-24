@@ -20,14 +20,24 @@ public final class PersonalApiDtos {
             List<Model> models) {}
 
     public record CreateConversation(
-            String displayName, String message, String modelId, SelectModel modelSelection, List<ImageInput> images) {}
+            String displayName,
+            String message,
+            String modelId,
+            SelectModel modelSelection,
+            List<ImageInput> images,
+            List<AudioInput> audios) {}
 
-    public record SubmitMessage(String message, List<ImageInput> images) {}
+    public record SubmitMessage(String message, List<ImageInput> images, List<AudioInput> audios) {}
 
     public record ImageInput(String kind, String url, String imageId) {}
 
+    public record AudioInput(String kind, String audioId) {}
+
     public record UploadedImage(
             String imageId, String mediaType, long sizeBytes, String originalFilename, String sha256) {}
+
+    public record UploadedAudio(
+            String audioId, String mediaType, long sizeBytes, String originalFilename, String sha256) {}
 
     public record RecommendedQuestions(List<String> questions) {}
 
@@ -258,6 +268,7 @@ public final class PersonalApiDtos {
             long sequence,
             String text,
             List<TurnImage> images,
+            List<TurnAudio> audios,
             Instant createdAt) {}
 
     public record TurnImage(
@@ -267,6 +278,8 @@ public final class PersonalApiDtos {
             Optional<String> mediaType,
             long sizeBytes,
             String originalFilename) {}
+
+    public record TurnAudio(String audioId, String mediaType, long sizeBytes, String originalFilename) {}
 
     public record Usage(
             long inputTokens,

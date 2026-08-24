@@ -32,6 +32,7 @@ EXPECTED_SERVER_START_CLASS = (
     "io.haifa.agent.personalassistant.server.PersonalAssistantServerApplication"
 )
 BAILIAN_DEFAULT_MODEL_ID = "qwen3.7-max-2026-05-17"
+CLIPROXY_GEMINI_MODEL_ID = "gemini-cliproxy-flash"
 SUPPORTED_DEFAULT_MODEL_IDS = (
     "deepseek-chat-pro",
     "deepseek-chat-flash",
@@ -52,6 +53,7 @@ SUPPORTED_DEFAULT_MODEL_IDS = (
     "glm-5.2-anthropic",
     "glm-5.1-chat",
     "glm-5-chat",
+    CLIPROXY_GEMINI_MODEL_ID,
 )
 ALLOWED_MCP_TOOLS = ",".join(
     (
@@ -447,6 +449,22 @@ def optional_openai_environment(environment: Mapping[str, str] | None = None) ->
     return values["OPENAI_BASE_URL"], values["OPENAI_API_KEY"], values["OPENAI_MODEL_ID"]
 
 
+def optional_cliproxy_environment(
+    environment: Mapping[str, str] | None = None,
+) -> tuple[str, str] | None:
+    api_key = environment_value("HAIFA_CLIPROXYAPI_API_KEY") if environment is None else environment.get(
+        "HAIFA_CLIPROXYAPI_API_KEY", ""
+    ).strip()
+    if not api_key:
+        return None
+    provider_model_id = (
+        environment_value("HAIFA_CLIPROXYAPI_MODEL_ID")
+        if environment is None
+        else environment.get("HAIFA_CLIPROXYAPI_MODEL_ID", "").strip()
+    ) or "gemini-3-flash"
+    return api_key, provider_model_id
+
+
 def optional_bailian_configuration(
     key_file: str,
     default_region: str = "cn-beijing",
@@ -820,6 +838,7 @@ def backend_environment(
     tavily_key: str | None = None,
     web_search_provider: str = "tavily",
     web_fetch_provider: str = "tavily",
+    cliproxy: tuple[str, str] | None = None,
 ) -> dict[str, str]:
     environment = {
         "DEEPSEEK_API_KEY": deepseek_key,
@@ -1147,6 +1166,36 @@ def backend_environment(
                 f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
             }
         )
+        next_provider_index += 1
+    if cliproxy is not None:
+        cliproxy_key, provider_model_id = cliproxy
+        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
+        environment.update(
+            {
+                "HAIFA_CLIPROXYAPI_API_KEY": cliproxy_key,
+                f"{prefix}_ID": "cliproxyapi-antigravity",
+                f"{prefix}_DISPLAYNAME": "Gemini via CLIProxyAPI",
+                f"{prefix}_MODE": "remote",
+                f"{prefix}_ALLOWDETERMINISTIC": "false",
+                f"{prefix}_NATIVESTREAMING": "true",
+                f"{prefix}_ENDPOINT": "http://127.0.0.1:8317/v1beta",
+                f"{prefix}_CREDENTIALREFERENCE": "env://HAIFA_CLIPROXYAPI_API_KEY",
+                f"{prefix}_APIBINDINGS_0_STYLE": "google-gemini-generate-content",
+                f"{prefix}_APIBINDINGS_0_DIALECT": "cliproxyapi-antigravity",
+                f"{prefix}_MODELS_0_ID": CLIPROXY_GEMINI_MODEL_ID,
+                f"{prefix}_MODELS_0_DISPLAYNAME": "Gemini Flash · CLIProxyAPI Antigravity",
+                f"{prefix}_MODELS_0_MODELDISPLAYNAME": "Gemini Flash",
+                f"{prefix}_MODELS_0_PROVIDERMODELID": provider_model_id,
+                f"{prefix}_MODELS_0_STYLE": "google-gemini-generate-content",
+                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
+                f"{prefix}_MODELS_0_CAPABILITIES_2": "STRUCTURED_OUTPUT",
+                f"{prefix}_MODELS_0_CAPABILITIES_3": "IMAGE_INPUT",
+                f"{prefix}_MODELS_0_CAPABILITIES_4": "AUDIO_INPUT",
+                f"{prefix}_MODELS_0_CONTEXTWINDOW": "1048576",
+                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "65536",
+            }
+        )
     return environment
 
 
@@ -1155,6 +1204,7 @@ def resolve_default_model_id(
     bailian: tuple[str, str, str] | None,
     kimi_key: str | None = None,
     bigmodel_key: str | None = None,
+    cliproxy: tuple[str, str] | None = None,
 ) -> str:
     selected = requested or DEFAULT_MODEL_ID
     if selected.startswith("qwen") and bailian is None:
@@ -1163,6 +1213,8 @@ def resolve_default_model_id(
         fail("A Kimi default model requires a Kimi API key.")
     if selected.startswith("glm") and bigmodel_key is None:
         fail("A GLM default model requires a BigModel API key.")
+    if selected == CLIPROXY_GEMINI_MODEL_ID and cliproxy is None:
+        fail("The CLIProxyAPI Gemini default model requires HAIFA_CLIPROXYAPI_API_KEY.")
     return selected
 
 
@@ -1261,7 +1313,8 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     bailian = optional_bailian_configuration(args.bailian_key_file, args.bailian_region)
     kimi_key = optional_secret_file(args.kimi_key_file, "Kimi", "KIMI_API_KEY")
     bigmodel_key = optional_secret_file(args.bigmodel_key_file, "BigModel", "BIGMODEL_API_KEY")
-    default_model_id = resolve_default_model_id(args.default_model_id, bailian, kimi_key, bigmodel_key)
+    cliproxy = optional_cliproxy_environment()
+    default_model_id = resolve_default_model_id(args.default_model_id, bailian, kimi_key, bigmodel_key, cliproxy)
     continuation = continuation_key(args.continuation_key_file)
     for directory in (value.runtime, value.data, value.logs):
         directory.mkdir(parents=True, exist_ok=True)
@@ -1334,6 +1387,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
             tavily_key,
             args.web_search_provider,
             args.web_fetch_provider,
+            cliproxy=cliproxy,
         ),
         args.startup_timeout_seconds,
         value,

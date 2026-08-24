@@ -17,11 +17,13 @@ export interface CreateConversation {
   modelId?: string;
   modelSelection?: SelectModel;
   images?: Array<ImageInput>;
+  audios?: Array<AudioInput>;
 }
 
 export interface SubmitMessage {
   message: string;
   images?: Array<ImageInput>;
+  audios?: Array<AudioInput>;
 }
 
 export interface ImageInput {
@@ -32,6 +34,19 @@ export interface ImageInput {
 
 export interface UploadedImage {
   imageId: string;
+  mediaType: string;
+  sizeBytes: number;
+  originalFilename: string;
+  sha256: string;
+}
+
+export interface AudioInput {
+  kind: "upload";
+  audioId: string;
+}
+
+export interface UploadedAudio {
+  audioId: string;
   mediaType: string;
   sizeBytes: number;
   originalFilename: string;
@@ -184,6 +199,7 @@ export interface Turn {
   sequence: number;
   text: string;
   images: Array<TurnImage>;
+  audios: Array<TurnAudio>;
   createdAt: string;
 }
 
@@ -192,6 +208,13 @@ export interface TurnImage {
   url?: string | null;
   imageId?: string | null;
   mediaType?: string | null;
+  sizeBytes: number;
+  originalFilename: string;
+}
+
+export interface TurnAudio {
+  audioId: string;
+  mediaType: string;
   sizeBytes: number;
   originalFilename: string;
 }
@@ -468,4 +491,4 @@ export interface ApiError {
   actions: Array<string>;
 }
 
-export type OperationId = "bootstrap" | "listModels" | "listModelConnections" | "saveModelApiKey" | "startCodexBrowserAttempt" | "getCodexBrowserAttempt" | "cancelCodexBrowserAttempt" | "deleteModelConnection" | "uploadImage" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "downloadMissionArtifact" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";
+export type OperationId = "bootstrap" | "listModels" | "listModelConnections" | "saveModelApiKey" | "startCodexBrowserAttempt" | "getCodexBrowserAttempt" | "cancelCodexBrowserAttempt" | "deleteModelConnection" | "uploadImage" | "uploadAudio" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "downloadMissionArtifact" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";

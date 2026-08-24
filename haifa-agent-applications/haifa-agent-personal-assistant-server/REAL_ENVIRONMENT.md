@@ -25,6 +25,8 @@ loopback `20000` 的 Origin，方案中没有反向代理。
   `API_KEY`、`WORKSPACE_ID` 和可选 `REGION`；region 缺省为 `cn-beijing`；
 - 可选 Kimi Key 文件：`D:\workspace\ss-kimi.txt`，文件中只放 Key 本身；
 - 可选智谱 Key 文件：`D:\workspace\ss-bigmodel.txt`，文件中只放 Key 本身；
+- 可选 CLIProxyAPI：本机 `127.0.0.1:8317` 服务和下游 API Key；只通过
+  `HAIFA_CLIPROXYAPI_API_KEY` 传给 PA，不读取 Antigravity OAuth、Token 或系统 Keyring；
 - Tavily Key 文件：`D:\workspace\ss-tavily.txt`，文件中只放 Key 本身；默认 Search 与 Fetch 均读取此文件；
 - 可选 Aliyun IQS Key 文件：`D:\workspace\ss-aliyun-iqs.txt`，仅在 Search 或 Fetch 选择 Aliyun 时读取；
 - 可选 Browserless Token 文件：`D:\workspace\ss-browserless.txt`，仅在 Fetch 选择 Browserless 时读取；
@@ -44,6 +46,10 @@ Provider。三项都配置时启用该 Provider；全部缺失或仅配置一部
 `deepseek-chat-flash`。启动本身不会调用任何模型 API；百炼 Chat/Responses、Kimi Chat、智谱 Chat/
 Anthropic 的真实调用必须另行明确发起。
 
+CLIProxyAPI 只有设置 `HAIFA_CLIPROXYAPI_API_KEY` 时才装配，Provider model 可通过
+`HAIFA_CLIPROXYAPI_MODEL_ID` 覆盖，默认 `gemini-3-flash`。它同样只扩展模型目录；需要显式传入
+`--default-model-id gemini-cliproxy-flash` 才成为 PA 默认模型。启动健康检查不会调用 Gemini。
+
 ## 2. 一键启动
 
 在普通 PowerShell 中执行：
@@ -51,6 +57,14 @@ Anthropic 的真实调用必须另行明确发起。
 ```powershell
 Set-Location D:\workspace\haifa-agent
 & .\scripts\start-real-environment.ps1
+```
+
+使用 CLIProxyAPI Gemini dialect：
+
+```powershell
+$env:HAIFA_CLIPROXYAPI_API_KEY = '<CLIProxyAPI downstream key>'
+$env:HAIFA_CLIPROXYAPI_MODEL_ID = 'gemini-3-flash' # optional
+& .\scripts\start-real-environment.ps1 --default-model-id gemini-cliproxy-flash
 ```
 
 `.ps1` 与同目录 `.sh` 只处理各自平台的参数入口和 Python 3 解释器发现；服务配置、构建、健康检查、

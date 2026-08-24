@@ -61,6 +61,15 @@ python3 scripts/test_analyze_coding_runtime.py
 `ss-kimi.txt`、`ss-bigmodel.txt`；也可使用 `KIMI_API_KEY`、`BIGMODEL_API_KEY`。凭据只进入后端子进程
 环境，配置冻结为 `env://...` 引用。可选 Provider 只扩展模型目录，不自动替换 DeepSeek 默认 Binding。
 
+本机 CLIProxyAPI 已在 `127.0.0.1:8317` 运行时，可通过环境变量选择性装配 Gemini dialect；脚本只读取
+下游 API Key，不读取 Antigravity OAuth 文件或系统 Keyring：
+
+```powershell
+$env:HAIFA_CLIPROXYAPI_API_KEY = '<CLIProxyAPI downstream key>'
+$env:HAIFA_CLIPROXYAPI_MODEL_ID = 'gemini-3-flash' # optional
+& .\scripts\start-real-environment.ps1 --default-model-id gemini-cliproxy-flash
+```
+
 ```powershell
 .\scripts\start-real-environment.ps1
 .\scripts\start-real-environment.ps1 --stop --dry-run

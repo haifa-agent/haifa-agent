@@ -24,6 +24,7 @@ import io.haifa.agent.personalassistant.application.trust.PersonalTrustedScriptM
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.sdk.api.HaifaAgents;
+import io.haifa.agent.sdk.api.ModelAudioResolver;
 import io.haifa.agent.sdk.api.ModelImageResolver;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
@@ -107,6 +108,7 @@ public final class PersonalAssistantAssembler {
                     .publicToolPolicyDecorator(PersonalWebAllowPolicy.decorator(
                             tools.tool().catalog(), dependencies.web(), dependencies.policy(), dependencies.clock()))
                     .modelImageResolver(dependencies.imageResolver())
+                    .modelAudioResolver(dependencies.audioResolver())
                     .toolRetry(
                             2,
                             PersonalAssistantAssembler::isTransientToolFailure,
@@ -389,7 +391,8 @@ public final class PersonalAssistantAssembler {
             Optional<Path> trustedScriptManifest,
             List<Path> protectedPaths,
             Clock clock,
-            ModelImageResolver imageResolver) {
+            ModelImageResolver imageResolver,
+            ModelAudioResolver audioResolver) {
         public Dependencies(
                 TenantRef tenant,
                 PrincipalRef principal,
@@ -424,7 +427,8 @@ public final class PersonalAssistantAssembler {
                     Optional.empty(),
                     protectedPaths,
                     clock,
-                    ModelImageResolver.unsupported());
+                    ModelImageResolver.unsupported(),
+                    ModelAudioResolver.unsupported());
         }
 
         public Dependencies(
@@ -462,7 +466,8 @@ public final class PersonalAssistantAssembler {
                     trustedScriptManifest,
                     protectedPaths,
                     clock,
-                    ModelImageResolver.unsupported());
+                    ModelImageResolver.unsupported(),
+                    ModelAudioResolver.unsupported());
         }
 
         public Dependencies {
@@ -485,6 +490,7 @@ public final class PersonalAssistantAssembler {
             protectedPaths = List.copyOf(protectedPaths);
             Objects.requireNonNull(clock);
             Objects.requireNonNull(imageResolver);
+            Objects.requireNonNull(audioResolver);
         }
 
         private static PersonalModelCatalog defaultCatalog(ModelContribution model) {
