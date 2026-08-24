@@ -8,7 +8,6 @@ import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -102,8 +101,7 @@ public final class CodingWorkProjectionService {
                 remaining(run.budget().maxToolCalls(), run.usage().toolCalls());
         int modelPercent = percent(remainingModelCalls, run.budget().maxModelCalls());
         int toolPercent = percent(remainingToolCalls, run.budget().maxToolCalls());
-        long wallUsed =
-                Math.max(0, Duration.between(run.createdAt(), time.now()).toMillis());
+        long wallUsed = run.activeElapsedMillis(time.now());
         long wallRemaining = Math.max(0, run.limits().maxWallTimeMillis() - wallUsed);
         int wallPercent = percent(wallRemaining, run.limits().maxWallTimeMillis());
         int remainingPercent = Math.min(modelPercent, Math.min(toolPercent, wallPercent));

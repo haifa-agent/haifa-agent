@@ -177,8 +177,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                     "evidence",
                                     "INTERACTION_SUPPLIED"),
                             time.now()));
-            if (Duration.between(run.createdAt(), time.now()).toMillis()
-                    > run.limits().maxWallTimeMillis()) {
+            if (run.activeElapsedMillis(time.now()) > run.limits().maxWallTimeMillis()) {
                 transitions.timedOut(
                         run, new RunTerminationReason("WALL_TIME_EXCEEDED", "Run wall-time limit exceeded"));
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
@@ -969,7 +968,7 @@ public final class DefaultAgentLoop implements AgentLoop {
 
     private Duration modelRetryDelay(AgentRun run, int failedAttempt, RuntimeException failure) {
         Duration selected = modelRetryPolicy.delay(failedAttempt, failure);
-        long elapsed = Math.max(0, Duration.between(run.createdAt(), time.now()).toMillis());
+        long elapsed = run.activeElapsedMillis(time.now());
         long remaining = Math.max(0, run.limits().maxWallTimeMillis() - elapsed);
         Duration remainingWindow = Duration.ofMillis(remaining);
         return selected.compareTo(remainingWindow) <= 0 ? selected : remainingWindow;
@@ -977,7 +976,7 @@ public final class DefaultAgentLoop implements AgentLoop {
 
     private void checkModelRetryControl(AgentRun run) {
         if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
-        long elapsed = Math.max(0, Duration.between(run.createdAt(), time.now()).toMillis());
+        long elapsed = run.activeElapsedMillis(time.now());
         if (elapsed >= run.limits().maxWallTimeMillis()) {
             throw new RuntimeLimitExceededException(
                     "wallTimeMillis", run.limits().maxWallTimeMillis(), elapsed);
