@@ -36,7 +36,7 @@ class SqliteMigrationRunnerTest {
     }
 
     @Test
-    void upgradesAnExistingV3DatabaseToV9WithoutReapplyingHistory() throws Exception {
+    void upgradesAnExistingV3DatabaseToV10WithoutReapplyingHistory() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
 
@@ -80,6 +80,11 @@ class SqliteMigrationRunnerTest {
                             "SELECT \"notnull\" FROM pragma_table_info('interaction_request') "
                                     + "WHERE name = 'expires_at'"))
                     .isZero();
+            assertThat(queryLong(
+                            connection,
+                            "SELECT COUNT(*) FROM pragma_table_info('run') WHERE name IN "
+                                    + "('accumulated_human_wait_millis', 'human_wait_started_at')"))
+                    .isEqualTo(2);
         }
     }
 
@@ -125,6 +130,49 @@ class SqliteMigrationRunnerTest {
                             connection,
                             "SELECT \"notnull\" FROM pragma_table_info('interaction_request') "
                                     + "WHERE name = 'expires_at'"))
+                    .isZero();
+        }
+    }
+
+    @Test
+    void startsHumanWaitAccountingAtMigrationForAnExistingWaitingRun() throws Exception {
+        SqliteConnectionFactory connections = initializedConnections();
+        SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
+        runner.migrate(RuntimeStoreMigrations.all().subList(0, 9));
+        try (Connection connection = connections.openConnection();
+                Statement statement = connection.createStatement()) {
+            statement.execute("PRAGMA foreign_keys = OFF");
+            statement.executeUpdate(
+                    """
+                    INSERT INTO run (
+                        run_id, schema_version, root_run_id, session_id, tenant_id, principal_id,
+                        principal_type, agent_definition_id, agent_definition_version,
+                        product_profile_id, product_profile_version, run_type, invocation_mode,
+                        depth, objective, budget_max_input_tokens, budget_max_output_tokens,
+                        budget_max_cached_input_tokens, budget_max_tool_calls, budget_max_model_calls,
+                        budget_max_child_runs, budget_max_cost_currency, budget_max_cost_minor_units,
+                        limit_max_iterations, limit_max_depth, limit_max_parallel_children,
+                        limit_max_wall_time_millis, limit_max_idle_time_millis, configuration_ref,
+                        status, usage_input_tokens, usage_output_tokens, usage_cached_input_tokens,
+                        usage_model_calls, usage_tool_calls, usage_child_runs, usage_cost_minor_units,
+                        usage_wall_time_millis, waiting_request_id, waiting_request_type,
+                        created_at, started_at, updated_at, version
+                    ) VALUES (
+                        'run-1', '1', 'run-1', 'session-1', 'tenant', 'principal', 'user',
+                        'agent', '1.0.0', 'profile', '1', 'chat', 'ROOT', 0, 'objective',
+                        100, 100, 100, 10, 10, 1, 'USD', 100, 10, 1, 1, 60000, 10000,
+                        'config', 'WAITING_APPROVAL', 0, 0, 0, 0, 0, 0, 0, 0,
+                        'approval-1', 'tool-approval', 1000, 1500, 2000, 2
+                    )
+                    """);
+        }
+
+        runner.migrate(RuntimeStoreMigrations.all());
+
+        try (Connection connection = connections.openConnection()) {
+            assertThat(queryLong(connection, "SELECT human_wait_started_at FROM run WHERE run_id = 'run-1'"))
+                    .isEqualTo(2000);
+            assertThat(queryLong(connection, "SELECT accumulated_human_wait_millis FROM run WHERE run_id = 'run-1'"))
                     .isZero();
         }
     }

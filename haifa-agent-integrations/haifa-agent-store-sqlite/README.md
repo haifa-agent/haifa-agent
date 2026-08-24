@@ -35,6 +35,13 @@ working-directory digest) and the latest reconciliation status/reason. An outcom
 observed Tool Result payload. Resolved reconciliation returns through `PENDING_RESULT -> COMPLETED`; unresolved
 side-effecting work remains `OUTCOME_UNKNOWN`, so restart recovery does not infer or replay a mutation.
 
+## V10 Human wait timing
+
+Runtime migration V10 adds `run.accumulated_human_wait_millis` and
+`run.human_wait_started_at`. Human-in-the-loop waits therefore survive process restart and can be excluded from
+the active wall-time budget. Existing waiting runs begin accounting at migration time because older schemas did
+not retain a trustworthy wait start timestamp.
+
 ## V4 Interaction / Run Input / Runtime Journal
 
 Runtime Migration V4 在不修改 V1～V3 的前提下完成 11 号能力 Task 02：

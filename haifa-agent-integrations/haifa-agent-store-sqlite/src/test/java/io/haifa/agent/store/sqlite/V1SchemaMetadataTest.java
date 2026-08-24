@@ -213,6 +213,8 @@ class V1SchemaMetadataTest {
                             "waiting_request_type",
                             "termination_reason",
                             "termination_description",
+                            "accumulated_human_wait_millis",
+                            "human_wait_started_at",
                             "created_at",
                             "queued_at",
                             "started_at",

@@ -287,6 +287,8 @@ class DomainReconstitutionTest {
                 source.error(),
                 source.waitingFor(),
                 source.terminationReason(),
+                source.accumulatedHumanWaitMillis(),
+                source.humanWaitStartedAt(),
                 source.queuedAt(),
                 source.startedAt(),
                 source.suspendedAt(),

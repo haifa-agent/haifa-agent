@@ -54,6 +54,8 @@ public record RunRow(
         String waitingRequestType,
         String terminationReason,
         String terminationDescription,
+        long accumulatedHumanWaitMillis,
+        Instant humanWaitStartedAt,
         Instant createdAt,
         Instant queuedAt,
         Instant startedAt,

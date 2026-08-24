@@ -44,6 +44,8 @@ class SqliteAggregateRepositoriesTest {
 
         assertThat(foundation.runs().find(run.id()).orElseThrow().persistenceSnapshot())
                 .isEqualTo(run.persistenceSnapshot());
+        assertThat(foundation.runs().find(run.id()).orElseThrow().humanWaitStartedAt())
+                .contains(NOW.plusSeconds(2));
         assertThatThrownBy(() -> foundation.runs().save(run, 0)).isInstanceOf(OptimisticLockException.class);
 
         AgentRunExecutionAttempt attempt =
