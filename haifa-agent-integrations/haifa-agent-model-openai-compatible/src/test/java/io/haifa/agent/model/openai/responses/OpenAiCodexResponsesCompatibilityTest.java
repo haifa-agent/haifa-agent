@@ -3,6 +3,7 @@ package io.haifa.agent.model.openai.responses;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -18,6 +19,8 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelStreamControl;
+import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.io.IOException;
@@ -27,6 +30,7 @@ import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
@@ -40,6 +44,7 @@ class OpenAiCodexResponsesCompatibilityTest {
     private final ObjectMapper json = new ObjectMapper();
     private final AtomicReference<Response> response = new AtomicReference<>();
     private final AtomicReference<Map<String, java.util.List<String>>> headers = new AtomicReference<>();
+    private final AtomicReference<JsonNode> requestBody = new AtomicReference<>();
     private HttpServer server;
 
     @BeforeEach
@@ -73,6 +78,61 @@ class OpenAiCodexResponsesCompatibilityTest {
         assertThat(firstHeader("chatgpt-account-id")).isEqualTo(ACCOUNT_ID);
         assertThat(firstHeader("originator")).isEqualTo("haifa-local-test");
         assertThat(firstHeader("User-Agent")).isEqualTo("haifa-agent-test/1");
+        assertThat(requestBody.get().has("max_output_tokens")).isFalse();
+    }
+
+    @Test
+    void acceptsMissingContentTypeFromTheAllowlistedCodexStream() {
+        response.set(
+                new Response(
+                        200,
+                        null,
+                        """
+                data: {"type":"response.created","response":{"id":"resp-stream","status":"in_progress"}}
+
+                data: {"type":"response.output_text.delta","item_id":"msg-1","output_index":0,"content_index":0,"delta":"hello world"}
+
+                data: {"type":"response.output_text.done","item_id":"msg-1","output_index":0,"content_index":0,"text":"hello world"}
+
+                data: {"type":"response.completed","response":{"id":"resp-stream","status":"completed","model":"gpt-codex-test","output":[],"usage":{"input_tokens":2,"output_tokens":2}}}
+
+                """));
+
+        var actual = model(accessToken())
+                .invokeStreaming(request(snapshot(loopbackEndpoint(), true)), ignored -> ModelStreamControl.CONTINUE);
+
+        assertThat(actual.content()).isEqualTo("hello world");
+    }
+
+    @Test
+    void rebuildsToolCallsFromCodexDeltasWhenTerminalOutputIsEmpty() {
+        response.set(
+                new Response(
+                        200,
+                        null,
+                        """
+                data: {"type":"response.created","response":{"id":"resp-tool","status":"in_progress"}}
+
+                data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call-1","name":"lookup","arguments":""}}
+
+                data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\\\"value\\\":"}
+
+                data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\\\"value\\\":\\\"ready\\\"}"}
+
+                data: {"type":"response.completed","response":{"id":"resp-tool","status":"completed","model":"gpt-codex-test","output":[],"usage":{"input_tokens":2,"output_tokens":2}}}
+
+                """));
+        var tool = new ModelToolSpecification("lookup", "1", "Lookup", "schema", "1", Map.of("type", "object"), false);
+
+        var actual = model(accessToken())
+                .invokeStreaming(
+                        request(snapshot(loopbackEndpoint(), true), List.of(tool)),
+                        ignored -> ModelStreamControl.CONTINUE);
+
+        assertThat(actual.toolCalls()).singleElement().satisfies(call -> {
+            assertThat(call.name()).isEqualTo("lookup");
+            assertThat(call.arguments()).containsEntry("value", "ready");
+        });
     }
 
     @Test
@@ -119,12 +179,33 @@ class OpenAiCodexResponsesCompatibilityTest {
                 });
     }
 
+    @Test
+    void projectsOnlySafeCodexErrorCodeAndParameter() {
+        response.set(
+                Response.json(
+                        400,
+                        """
+                {"error":{"type":"invalid_request_error","param":"max_output_tokens",
+                  "message":"secret provider detail"}}
+                """));
+
+        assertThatThrownBy(() -> model(accessToken()).invoke(request(snapshot(loopbackEndpoint()))))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.providerCode()).isEqualTo("invalid_request_error:max_output_tokens");
+                    assertThat(failure.getMessage()).doesNotContain("secret provider detail");
+                });
+    }
+
     private OpenAiResponsesModel model(String accessToken) {
         return new OpenAiResponsesModel(
                 HttpClient.newHttpClient(), json, ignored -> new ResolvedCredential(accessToken), true, 1024 * 1024);
     }
 
     private AgentChatRequest request(ResolvedModelSnapshot snapshot) {
+        return request(snapshot, List.of());
+    }
+
+    private AgentChatRequest request(ResolvedModelSnapshot snapshot, List<ModelToolSpecification> tools) {
         return new AgentChatRequest(
                 new ModelCallId("call-codex"),
                 new AgentRunId("run-codex"),
@@ -132,13 +213,17 @@ class OpenAiCodexResponsesCompatibilityTest {
                 1,
                 snapshot,
                 java.util.List.of(ModelMessage.text(ModelMessageRole.USER, "hello")),
-                java.util.List.of(),
+                tools,
                 1024,
                 Duration.ofSeconds(5),
                 Map.of());
     }
 
     private ResolvedModelSnapshot snapshot(URI endpoint) {
+        return snapshot(endpoint, false);
+    }
+
+    private ResolvedModelSnapshot snapshot(URI endpoint, boolean nativeStreaming) {
         return ResolvedModelSnapshot.create(
                 new ModelProviderId("openai-codex"),
                 "provider-v1",
@@ -151,8 +236,8 @@ class OpenAiCodexResponsesCompatibilityTest {
                 OpenAiResponsesDialects.OPENAI_CODEX,
                 endpoint,
                 new CredentialRef("model-auth://openai-codex/default"),
-                false,
-                Set.of(ModelCapability.TEXT_CHAT),
+                nativeStreaming,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
                 128_000,
                 8_192,
                 Map.of(
@@ -194,9 +279,11 @@ class OpenAiCodexResponsesCompatibilityTest {
 
     private void handle(HttpExchange exchange) throws IOException {
         headers.set(exchange.getRequestHeaders());
-        exchange.getRequestBody().readAllBytes();
+        requestBody.set(json.readTree(exchange.getRequestBody().readAllBytes()));
         Response configured = response.get();
-        exchange.getResponseHeaders().set("Content-Type", configured.contentType());
+        if (configured.contentType() != null) {
+            exchange.getResponseHeaders().set("Content-Type", configured.contentType());
+        }
         byte[] body = configured.body().getBytes(StandardCharsets.UTF_8);
         exchange.sendResponseHeaders(configured.status(), body.length);
         exchange.getResponseBody().write(body);

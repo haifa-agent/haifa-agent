@@ -156,6 +156,8 @@ class CliConfigurationLoaderTest {
                                 "'" + transcriptRoot.toString().replace('\\', '/') + "'"));
 
         CliConfiguration result = new CliConfigurationLoader(name -> switch (name) {
+                    case "HAIFA_CODEX_ORIGINATOR" -> "pi";
+                    case "HAIFA_CODEX_USER_AGENT" -> "haifa-agent-local-compat/1";
                     case "OPENAI_BASE_URL" -> "http://127.0.0.1:30000/v1";
                     case "OPENAI_MODEL_ID" -> "gpt-5.6-luna";
                     default -> null;
@@ -168,11 +170,27 @@ class CliConfigurationLoaderTest {
         assertThat(result.availableModels())
                 .extracting(CliConfiguration.Model::id)
                 .containsExactly(
+                        "gpt-5.6-sol",
+                        "gpt-5.6-terra",
+                        "gpt-5.6-luna",
                         "deepseek-chat-flash",
                         "deepseek-chat-pro",
                         "deepseek-responses-flash",
                         "deepseek-anthropic-flash",
                         "local-openai-responses");
+        assertThat(result.availableModels())
+                .filteredOn(model -> model.id().equals("gpt-5.6-sol"))
+                .singleElement()
+                .satisfies(model -> {
+                    assertThat(model.providerId()).isEqualTo("openai-codex");
+                    assertThat(model.modelId()).isEqualTo("gpt-5.6-sol");
+                    assertThat(model.endpoint()).hasToString("https://chatgpt.com/backend-api/codex");
+                    assertThat(model.credentialRef()).isEqualTo("model-auth://openai-codex/default");
+                    assertThat(model.style()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
+                    assertThat(model.dialect()).isEqualTo("openai-codex-responses");
+                    assertThat(model.originator()).isEqualTo("pi");
+                    assertThat(model.userAgent()).isEqualTo("haifa-agent-local-compat/1");
+                });
         assertThat(result.availableModels())
                 .filteredOn(model -> model.id().equals("deepseek-anthropic-flash"))
                 .singleElement()
@@ -197,6 +215,7 @@ class CliConfigurationLoaderTest {
                                 new io.haifa.agent.core.reference.TenantRef("local"),
                                 new io.haifa.agent.core.reference.PrincipalRef("user", "user")))
                 .extracting(io.haifa.agent.application.project.product.coding.CodingModelOption::id)
+                .contains("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
                 .doesNotContain("local-openai-responses");
         assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
         assertThat(result.approvalThreshold()).isEqualTo(CodingApprovalThreshold.LOW);

@@ -52,30 +52,32 @@ action in the transcript, while safe application logs contain the Attempt ID, st
 
 ```yaml
 models:
-  default: codex
+  default: gpt-5.6-sol
   providers:
     - id: openai-codex
       displayName: ChatGPT Codex
       nativeStreaming: true
       endpoint: https://chatgpt.com/backend-api/codex
       credentialRef: model-auth://openai-codex/default
-      originator: haifa
-      userAgent: haifa-agent/1
+      originator: ${HAIFA_CODEX_ORIGINATOR:haifa}
+      userAgent: ${HAIFA_CODEX_USER_AGENT:haifa-agent/1}
       apiBindings:
         - style: openai-responses
           dialect: openai-codex-responses
       models:
-        - id: codex
-          displayName: Codex
-          providerModelId: <approved-codex-model>
+        - id: gpt-5.6-sol
+          displayName: GPT-5.6 Sol
+          providerModelId: gpt-5.6-sol
           style: openai-responses
-          capabilities: [TEXT_CHAT, TOOL_CALLING]
-          contextWindow: 200000
-          maxOutputTokens: 8192
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 272000
+          maxOutputTokens: 128000
 ```
 
-The model ID, originator, user agent, redirect registration, and Client ID remain deployment inputs governed by the
-OpenAI/Haifa contract; the example does not claim an approved production registration.
+The packaged trusted catalog also contains `gpt-5.6-terra` and `gpt-5.6-luna`. `/model` lists this safe static catalog;
+credential readiness remains a separate `/account` concern and does not remove models from the picker. The model IDs,
+originator, user agent, redirect registration, and Client ID remain deployment inputs governed by the OpenAI/Haifa
+contract; the example does not claim an approved production registration.
 
 生产 Coding Agent 使用 Coding 产品模块中的版本化短 Prompt；CLI 不再维护逐 Case 累积的长方法论
 字符串。基础 Prompt 要求读取适用仓库指令和契约、做最小完整修改、按风险验证并检查最终 Diff。

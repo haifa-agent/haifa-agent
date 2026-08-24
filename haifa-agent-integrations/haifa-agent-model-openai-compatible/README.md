@@ -301,6 +301,25 @@ DEEPSEEK_API_KEY=<secret>
 HAIFA_DEEPSEEK_ANTHROPIC_MODEL_ID=deepseek-v4-flash
 ```
 
+ChatGPT Codex 订阅凭据冒烟由 `OpenAiCodexLiveIT` 覆盖。它默认读取当前用户的
+`~/.haifa-agent/auth.json`（可用 `HAIFA_CODEX_AUTH_FILE` 覆盖），只解析
+`model-auth://openai-codex/default`，并要求显式启用后才进行一次真实调用：
+
+```powershell
+$env:HAIFA_CODEX_LIVE_TEST = 'true'
+$env:HAIFA_CODEX_ORIGINATOR = 'pi'
+$env:HAIFA_CODEX_MODEL_ID = 'gpt-5.6-sol' # optional
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L3 '--' `
+  -pl :haifa-agent-model-openai-compatible -am `
+  -Pci-integration-only `
+  '-Dit.test=OpenAiCodexLiveIT' `
+  '-Dfailsafe.failIfNoSpecifiedTests=false' verify
+```
+
+若还要允许测试在 Token 过期时刷新，需同时提供本地兼容登录的
+`HAIFA_CODEX_LOCAL_COMPAT_TEST`、`HAIFA_CODEX_OAUTH_CLIENT_ID` 和 `HAIFA_CODEX_REDIRECT_URI`。测试不会输出
+Token、账户 ID、完整请求或供应商原始响应。
+
 百炼 Live IT 还要求显式设置（会产生真实费用）：
 
 ```text
