@@ -41,6 +41,20 @@ def resolve_output_directory(repository_directory: Path, value: Optional[str]) -
     return output_directory
 
 
+def cli_build_command(maven_wrapper: Path) -> list[str]:
+    return [
+        str(maven_wrapper),
+        "--batch-mode",
+        "--no-transfer-progress",
+        "-pl",
+        ":haifa-agent-cli",
+        "-am",
+        "-DskipUnitTests=true",
+        "clean",
+        "package",
+    ]
+
+
 def build_cli(repository_directory: Path) -> Path:
     wrapper_name = "mvnw.cmd" if os.name == "nt" else "mvnw"
     maven_wrapper = repository_directory / wrapper_name
@@ -50,19 +64,7 @@ def build_cli(repository_directory: Path) -> Path:
     print("Building the Haifa Coding Agent shaded JAR...", flush=True)
     build_started_ns = time.time_ns()
     subprocess.run(
-        [
-            str(maven_wrapper),
-            "--batch-mode",
-            "--no-transfer-progress",
-            "-pl",
-            ":haifa-agent-cli",
-            "-am",
-            "-DskipTests",
-            "clean",
-            "package",
-        ],
-        cwd=repository_directory,
-        check=True,
+        cli_build_command(maven_wrapper), cwd=repository_directory, check=True
     )
 
     target_directory = (

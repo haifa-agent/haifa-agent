@@ -172,7 +172,7 @@ haifa-coding
 Workspace。默认 `protection=NONE` 不需要 continuation key；如改为 `AES_GCM`，则必须通过
 `protectorRef: env://HAIFA_CONTINUATION_KEY` 注入跨重启稳定的 Base64 32 字节 AES key。启动器会创建
 `data/transcripts` 并按发行目录设置 SQLite/JSONL 绝对路径，同时允许 `HAIFA_SQLITE_DATABASE_PATH` 和
-`HAIFA_TRANSCRIPT_ROOT` 显式覆盖。打包入口使用 `-DskipTests`；它只生成发行制品，不替代
+`HAIFA_TRANSCRIPT_ROOT` 显式覆盖。打包入口使用项目统一的 `-DskipUnitTests=true`；它只生成发行制品，不替代
 模块测试或 CI 验证。macOS/Linux 与 Windows 入口复用同一个 Python 3 打包核心；可通过
 `HAIFA_PYTHON_EXECUTABLE` 固定解释器路径。
 

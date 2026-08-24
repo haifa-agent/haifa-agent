@@ -12,6 +12,12 @@ SPEC.loader.exec_module(MODULE)
 
 
 class PackageLocalCodingAgentTest(unittest.TestCase):
+    def test_build_command_uses_the_project_unit_test_skip_property(self) -> None:
+        command = MODULE.cli_build_command(Path("mvnw.cmd"))
+
+        self.assertIn("-DskipUnitTests=true", command)
+        self.assertNotIn("-DskipTests", command)
+
     def test_renders_current_model_api_configuration_for_both_launchers(self) -> None:
         repository = Path(__file__).resolve().parent.parent
         template = (
