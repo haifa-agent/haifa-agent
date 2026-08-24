@@ -31,6 +31,8 @@ import io.haifa.agent.model.core.ModelAccessPolicy;
 import io.haifa.agent.model.core.ModelAvailabilityRequest;
 import io.haifa.agent.model.core.ModelSelectionRequest;
 import io.haifa.agent.model.core.StaticModelPlatform;
+import io.haifa.agent.model.gemini.GeminiGenerateContentModel;
+import io.haifa.agent.model.gemini.GeminiModelProfileFactory;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
@@ -144,7 +146,9 @@ public final class PersonalModelFactory {
         Map<String, ModelBindingProfile> profiles = snapshots.values().stream()
                 .collect(java.util.stream.Collectors.toUnmodifiableMap(
                         value -> value.modelId().value(),
-                        value -> OpenAiCompatibleModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 13))));
+                        value -> ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(value.apiStyle())
+                                ? GeminiModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 24))
+                                : OpenAiCompatibleModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 13))));
         if (!profiles.get(selected.model().id()).selectable()) {
             throw new IllegalArgumentException("default Personal model profile is not verified");
         }
@@ -549,6 +553,9 @@ public final class PersonalModelFactory {
                                     http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
                         case ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER ->
                             new AnthropicMessagesModel(
+                                    http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
+                        case ModelApiStyles.GOOGLE_GEMINI_ADAPTER ->
+                            new GeminiGenerateContentModel(
                                     http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
                         default ->
                             throw new IllegalArgumentException(

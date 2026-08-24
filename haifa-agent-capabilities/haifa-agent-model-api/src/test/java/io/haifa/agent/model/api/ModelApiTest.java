@@ -189,6 +189,8 @@ class ModelApiTest {
                 .isEqualTo(responsesEndpoint);
         assertThat(ModelApiStyles.adapterType(ModelApiStyles.ANTHROPIC_MESSAGES))
                 .isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER);
+        assertThat(ModelApiStyles.adapterType(ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT))
+                .isEqualTo(ModelApiStyles.GOOGLE_GEMINI_ADAPTER);
         assertThat(provider.models())
                 .extracting(ModelDefinition::providerModelId)
                 .containsExactly("same-provider-model", "same-provider-model", "same-provider-model");

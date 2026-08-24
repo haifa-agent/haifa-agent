@@ -63,6 +63,7 @@ import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.gemini.GeminiGenerateContentModel;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
@@ -283,6 +284,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var responses = new OpenAiResponsesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var anthropic = new AnthropicMessagesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
+        var gemini = new GeminiGenerateContentModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         return create(
                 workspaceRoot,
                 configuration,
@@ -290,7 +292,8 @@ final class LocalCodingAgent implements AutoCloseable {
                 Map.of(
                         new ModelAdapterKey(ModelApiStyles.OPENAI_CHAT_ADAPTER, "1.0.0"), chat,
                         new ModelAdapterKey(ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "1.0.0"), responses,
-                        new ModelAdapterKey(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER, "1.0.0"), anthropic),
+                        new ModelAdapterKey(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER, "1.0.0"), anthropic,
+                        new ModelAdapterKey(ModelApiStyles.GOOGLE_GEMINI_ADAPTER, "1.0.0"), gemini),
                 traceObserver,
                 resolveContinuationProtector(configuration, resolvedEnvironment),
                 resolvedEnvironment,

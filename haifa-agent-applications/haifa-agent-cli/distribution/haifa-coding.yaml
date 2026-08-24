@@ -93,6 +93,22 @@ models:
           capabilities: [TEXT_CHAT]
           contextWindow: 131072
           maxOutputTokens: 8192
+    - id: cliproxyapi-antigravity
+      displayName: Local CLIProxyAPI Antigravity Dialect
+      endpoint: ${HAIFA_CLIPROXYAPI_ENDPOINT:http://127.0.0.1:8317/v1beta}
+      credentialRef: env://HAIFA_CLIPROXYAPI_API_KEY
+      nativeStreaming: true
+      apiBindings:
+        - style: google-gemini-generate-content
+          dialect: cliproxyapi-antigravity
+      models:
+        - id: cliproxyapi-gemini
+          displayName: Gemini via Local CLIProxyAPI Antigravity Dialect
+          providerModelId: ${HAIFA_CLIPROXYAPI_MODEL:gemini-3-flash}
+          style: google-gemini-generate-content
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
 
 tools:
   enabled:

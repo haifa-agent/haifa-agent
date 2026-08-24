@@ -79,6 +79,26 @@ credential readiness remains a separate `/account` concern and does not remove m
 originator, user agent, redirect registration, and Client ID remain deployment inputs governed by the OpenAI/Haifa
 contract; the example does not claim an approved production registration.
 
+## Local CLIProxyAPI Antigravity Gemini dialect
+
+The packaged static catalog contains `cliproxyapi-gemini`, displayed as **Gemini via Local CLIProxyAPI Antigravity
+Dialect**. It uses the native Gemini `generateContent` protocol at
+`http://127.0.0.1:8317/v1beta`, not the gateway's OpenAI-compatible bridge. Running it requires all of:
+
+```powershell
+$env:HAIFA_MODEL_ID = 'cliproxyapi-gemini'
+$env:HAIFA_CLIPROXYAPI_API_KEY = '<local downstream key>'
+$env:HAIFA_CLIPROXYAPI_ENDPOINT = 'http://127.0.0.1:8317/v1beta'
+$env:HAIFA_CLIPROXYAPI_MODEL = 'gemini-3-flash'
+$env:HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL = 'true'
+```
+
+This is an unofficial personal-development connection. CLIProxyAPI owns Antigravity login and token refresh; Haifa
+does not read its OAuth files, keyring, cookies, or upstream tokens. Only a loopback endpoint and the fixed
+`env://HAIFA_CLIPROXYAPI_API_KEY` reference are accepted. Files, Cache, Batch, Embedding, Live API, Interactions,
+dynamic model discovery, account routing, and fallback remain disabled. The adapter independently enforces the exact
+Tool declaration set and rejects missing/corrupt Thought Signatures even when the gateway would repair them.
+
 生产 Coding Agent 使用 Coding 产品模块中的版本化短 Prompt；CLI 不再维护逐 Case 累积的长方法论
 字符串。基础 Prompt 要求读取适用仓库指令和契约、做最小完整修改、按风险验证并检查最终 Diff。
 Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核方法通过基础 Skill 按需加载。
