@@ -186,7 +186,8 @@ alternate screen 不提供可靠的终端原生历史回滚。生产配置不启
 Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、surrogate pair、emoji ZWJ
 序列和 combining mark 的左右移动、退格与删除不会拆分可见字符；多行上下移动按终端 cell width
 对齐。Transcript 和固定区域同样按 cell width 截断，并在渲染前移除 ESC、控制字符和 Tab 注入。
-颜色语义覆盖 TrueColor、ANSI256、ANSI16 和 NoColor；无色模式仍保留相同文字、状态和顺序。
+颜色语义覆盖 TrueColor、ANSI256、ANSI16 和 NoColor；Selector 使用高对比背景、粗体和 `>` 共同表达
+选中态，未选项降低视觉权重；无色模式仍保留相同文字、标记、状态和顺序。
 
 - 普通首条消息创建真实 Coding Session/Run；
 - Idle Enter 提交新 Turn，Active Enter 发送 Steer；

@@ -18,6 +18,8 @@ final class Tui4jTerminalTheme {
     private static final AdaptiveColor QUEUED_FOREGROUND = new AdaptiveColor("#315C80", "#A9C7DF");
     private static final AdaptiveColor QUEUED_BACKGROUND = new AdaptiveColor("#E8F0F7", "#29343F");
     private static final AdaptiveColor FOCUS = new AdaptiveColor("#87427F", "#B06AA6");
+    private static final AdaptiveColor SELECTION_FOREGROUND = new AdaptiveColor("#FFFFFF", "#FFFFFF");
+    private static final AdaptiveColor SELECTION_BACKGROUND = new AdaptiveColor("#6A2F63", "#6A2F63");
 
     String accent(String value) {
         return Style.newStyle().foreground(ACCENT).bold(true).render(value);
@@ -29,6 +31,18 @@ final class Tui4jTerminalTheme {
 
     String focus(String value) {
         return Style.newStyle().foreground(FOCUS).render(value);
+    }
+
+    String selected(String value) {
+        return Style.newStyle()
+                .foreground(SELECTION_FOREGROUND)
+                .background(SELECTION_BACKGROUND)
+                .bold(true)
+                .render(value);
+    }
+
+    String unselected(String value) {
+        return Style.newStyle().foreground(MUTED).render(value);
     }
 
     String heading(String value) {

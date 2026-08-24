@@ -30,11 +30,14 @@ class Tui4jTerminalThemeTest {
         String darkError = theme.error("error");
         String darkQueued = theme.queued("queued");
         String darkFocus = theme.focus("focus");
+        String darkSelected = theme.selected("selected");
+        String darkUnselected = theme.unselected("unselected");
 
         assertThat(darkSuccess).contains("\u001B[").isNotEqualTo(darkPending);
         assertThat(darkPending).contains("\u001B[").isNotEqualTo(darkError);
         assertThat(darkError).contains("\u001B[").isNotEqualTo(darkQueued);
         assertThat(darkQueued).contains("\u001B[").isNotEqualTo(darkFocus);
+        assertThat(darkSelected).contains("\u001B[").isNotEqualTo(darkFocus).isNotEqualTo(darkUnselected);
 
         renderer.setHasDarkBackground(false);
         assertThat(theme.success("success")).contains("\u001B[").isNotEqualTo(darkSuccess);
@@ -50,6 +53,8 @@ class Tui4jTerminalThemeTest {
         assertThat(theme.error("error")).isEqualTo(" error ");
         assertThat(theme.queued("queued")).isEqualTo(" queued ");
         assertThat(theme.focus("focus")).isEqualTo("focus");
+        assertThat(theme.selected("selected")).isEqualTo("selected");
+        assertThat(theme.unselected("unselected")).isEqualTo("unselected");
         assertThat(theme.heading("heading")).isEqualTo("heading");
         assertThat(theme.strong("strong")).isEqualTo("strong");
         assertThat(theme.emphasis("emphasis")).isEqualTo("emphasis");
