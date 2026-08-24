@@ -18,6 +18,8 @@ import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
+import io.haifa.agent.application.project.product.coding.client.CodingBrowserLoginView;
+import io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
@@ -42,6 +44,7 @@ import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
+import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -99,6 +102,117 @@ class CodingTerminalControllerTest {
             assertThat(selector.title()).isEqualTo("Connect a model to get started");
             assertThat(selector.options()).containsExactly("ChatGPT subscription", "Provider API key (secure input)");
         });
+    }
+
+    @Test
+    void deviceLoginPrintsTheBrowserUrlAndUserCodeAsPersistentTranscriptContent() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
+            @Override
+            public List<CodingAuthenticationView> connections() {
+                return List.of();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexDevice(
+                    java.util.function.Consumer<CodingDeviceLoginView> instructions) {
+                instructions.accept(new CodingDeviceLoginView(
+                        URI.create("https://auth.openai.com/codex/device"), "ABCD-1234", 1_000));
+                return authenticatedCodexConnection();
+            }
+
+            @Override
+            public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean logout(String connectionId) {
+                return false;
+            }
+        };
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                authentication,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/login codex device"));
+        controller.drainEvents();
+
+        assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("ChatGPT device login");
+            assertThat(item.body())
+                    .contains("Browser URL: https://auth.openai.com/codex/device", "Device code: ABCD-1234");
+            assertThat(item.status()).isEqualTo("WAITING");
+        });
+        assertThat(controller.state().status()).isEqualTo("Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)");
+    }
+
+    @Test
+    void browserLoginPrintsTheAuthorizationUrlWhenAutomaticLaunchFallsBack() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
+            @Override
+            public List<CodingAuthenticationView> connections() {
+                return List.of();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser(
+                    java.util.function.Consumer<CodingBrowserLoginView> instructions) {
+                instructions.accept(new CodingBrowserLoginView(
+                        URI.create("https://auth.openai.com/oauth/authorize?client_id=test&state=state"), 1_000));
+                return authenticatedCodexConnection();
+            }
+
+            @Override
+            public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean logout(String connectionId) {
+                return false;
+            }
+        };
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                authentication,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/login codex browser"));
+        controller.drainEvents();
+
+        assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("ChatGPT browser login");
+            assertThat(item.body())
+                    .contains(
+                            "A browser sign-in was requested.",
+                            "If it did not open, use this URL: "
+                                    + "https://auth.openai.com/oauth/authorize?client_id=test&state=state");
+        });
+        assertThat(controller.state().toString()).doesNotContain("client_id=test", "state=state");
+        assertThat(controller.state().status()).isEqualTo("Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)");
     }
 
     @Test
@@ -659,6 +773,18 @@ class CodingTerminalControllerTest {
                 new TerminalUiReducer(),
                 TerminalUiState.initial(120, 40),
                 Runnable::run);
+    }
+
+    private static CodingAuthenticationView authenticatedCodexConnection() {
+        return new CodingAuthenticationView(
+                "model-auth://openai-codex/default",
+                "openai-codex",
+                CodingAuthenticationView.Method.CHATGPT_SUBSCRIPTION,
+                CodingAuthenticationView.Status.AUTHENTICATED,
+                "ChatGPT account",
+                Optional.empty(),
+                OptionalLong.empty(),
+                true);
     }
 
     private static InteractionView approval() {

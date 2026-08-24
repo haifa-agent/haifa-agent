@@ -59,6 +59,7 @@ class CodexBrowserLoginOperationTest {
     @Test
     void browserPkceCallbackReturnsCredentialAndSafeProgress() {
         AtomicReference<URI> opened = new AtomicReference<>();
+        AtomicReference<URI> presented = new AtomicReference<>();
         AtomicReference<String> progress = new AtomicReference<>();
         CodexBrowserLoginOperation operation = operation(
                 uri -> {
@@ -70,6 +71,7 @@ class CodexBrowserLoginOperationTest {
                     return true;
                 },
                 Duration.ofSeconds(5),
+                presented::set,
                 snapshot -> progress.set(snapshot.toString()));
 
         StoredExternalCredential credential = operation.execute();
@@ -77,13 +79,14 @@ class CodexBrowserLoginOperationTest {
         assertThat(credential.accountId()).isEqualTo(ACCOUNT_ID);
         assertThat(credential.refreshToken()).isEqualTo("refresh-token");
         assertThat(tokenRequests).hasValue(1);
+        assertThat(presented.get()).isEqualTo(opened.get());
         assertThat(opened.get().toString()).doesNotContain("authorization-code", "access-token", "refresh-token");
         assertThat(progress.get()).doesNotContain("authorization-code", "access-token", "refresh-token", "stub-client");
         assertThat(operation.snapshot().state()).isEqualTo(ExternalLoginAttemptState.EXCHANGING);
     }
 
     @Test
-    void stateMismatchTimesOutAndBrowserFailureClosesCallbackPort() throws Exception {
+    void stateMismatchTimesOutAndClosesCallbackPort() throws Exception {
         CodexBrowserLoginOperation mismatch = operation(
                 uri -> {
                     callback("authorization-code", "wrong-state");
@@ -96,19 +99,45 @@ class CodexBrowserLoginOperationTest {
                 .hasMessage("AUTH_CALLBACK_TIMEOUT");
         assertThat(tokenRequests).hasValue(0);
 
-        CodexBrowserLoginOperation failure = operation(uri -> false, Duration.ofSeconds(1), snapshot -> {});
-        assertThatThrownBy(failure::execute)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("AUTH_BROWSER_OPEN_FAILED");
         try (ServerSocket rebound = new ServerSocket()) {
             rebound.bind(new InetSocketAddress("127.0.0.1", callbackPort));
             assertThat(rebound.isBound()).isTrue();
         }
     }
 
+    @Test
+    void browserOpenFailurePublishesCopyableAuthorizationUrlAndStillAcceptsCallback() {
+        AtomicReference<URI> fallback = new AtomicReference<>();
+        AtomicReference<String> progressText = new AtomicReference<>();
+        CodexBrowserLoginOperation operation = operation(
+                uri -> false,
+                Duration.ofSeconds(5),
+                uri -> {
+                    fallback.set(uri);
+                    callback("authorization-code", query(uri.getRawQuery()).get("state"));
+                },
+                snapshot -> progressText.set(snapshot.toString()));
+
+        StoredExternalCredential credential = operation.execute();
+
+        assertThat(credential.accountId()).isEqualTo(ACCOUNT_ID);
+        assertThat(fallback.get()).isNotNull();
+        assertThat(query(fallback.get().getRawQuery()))
+                .containsKeys("client_id", "code_challenge", "state", "redirect_uri");
+        assertThat(progressText.get()).doesNotContain("stub-client", "client_id=", "code_challenge=", "&state=");
+    }
+
     private CodexBrowserLoginOperation operation(
             ExternalLoginOperationContext.BrowserLauncher browser,
             Duration timeout,
+            java.util.function.Consumer<io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot> progress) {
+        return operation(browser, timeout, uri -> {}, progress);
+    }
+
+    private CodexBrowserLoginOperation operation(
+            ExternalLoginOperationContext.BrowserLauncher browser,
+            Duration timeout,
+            java.util.function.Consumer<URI> browserAuthorization,
             java.util.function.Consumer<io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot> progress) {
         CodexOAuthClientRegistration registration = registration();
         CodexTokenClient tokens = new CodexTokenClient(
@@ -118,7 +147,11 @@ class CodexBrowserLoginOperationTest {
                 Duration.ofSeconds(5),
                 registration);
         ExternalLoginOperationContext context = new ExternalLoginOperationContext(
-                new ExternalLoginAttemptId(ATTEMPT_ID), Clock.fixed(NOW, ZoneOffset.UTC), browser, progress);
+                new ExternalLoginAttemptId(ATTEMPT_ID),
+                Clock.fixed(NOW, ZoneOffset.UTC),
+                browser,
+                browserAuthorization,
+                progress);
         return new CodexBrowserLoginOperation(
                 registration, tokens, context, new CodexPkce(new SecureRandom()), timeout);
     }

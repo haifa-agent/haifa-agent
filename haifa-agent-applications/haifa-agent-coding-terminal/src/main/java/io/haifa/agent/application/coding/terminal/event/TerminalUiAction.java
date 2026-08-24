@@ -25,6 +25,15 @@ public sealed interface TerminalUiAction {
 
     record ExportCompleted(String logicalPath, int messageCount) implements TerminalUiAction {}
 
+    record DeviceLoginInstructionsPresented(String verificationUri, String userCode) implements TerminalUiAction {}
+
+    record BrowserLoginInstructionsPresented(String authorizationUri) implements TerminalUiAction {
+        @Override
+        public String toString() {
+            return "BrowserLoginInstructionsPresented[authorizationUri=[REDACTED_AUTH_URL]]";
+        }
+    }
+
     record RunEventReceived(AgentRunEvent event) implements TerminalUiAction {}
 
     record RunOutputReceived(AgentRunOutputEvent event) implements TerminalUiAction {}

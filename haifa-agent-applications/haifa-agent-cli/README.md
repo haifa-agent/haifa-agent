@@ -41,6 +41,11 @@ Pi/OpenCode Client ID. Until OpenAI provides a Haifa registration, personal comp
 `HAIFA_CODEX_LOCAL_COMPAT_TEST=true` and an externally supplied `HAIFA_CODEX_OAUTH_CLIENT_ID`; it is always projected
 as `UNOFFICIAL_LOCAL_COMPAT` and is not a release configuration.
 
+The Terminal displays the device verification URL and user code as persistent transcript content while authorization
+is pending. Browser callback attempts the system browser and always displays a copyable authorization URL in case no
+window appears. That URL is an ephemeral in-memory UI value: query parameters are redacted from diagnostic strings,
+never enter the general attempt snapshot, and are removed from the one-time channel as soon as the CLI consumes them.
+
 ```yaml
 models:
   default: codex

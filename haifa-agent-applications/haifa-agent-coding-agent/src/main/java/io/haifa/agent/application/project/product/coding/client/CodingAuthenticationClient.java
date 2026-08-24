@@ -21,6 +21,10 @@ public interface CodingAuthenticationClient {
 
     CodingAuthenticationView loginCodexBrowser();
 
+    default CodingAuthenticationView loginCodexBrowser(Consumer<CodingBrowserLoginView> instructions) {
+        return loginCodexBrowser();
+    }
+
     default CodingAuthenticationView loginCodexDevice(Consumer<CodingDeviceLoginView> instructions) {
         throw new IllegalStateException("AUTH_DEVICE_CODE_UNAVAILABLE");
     }

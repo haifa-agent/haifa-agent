@@ -86,7 +86,7 @@ class CodexDeviceLoginOperationTest {
             CodexDeviceLoginOperation.Sleeper sleeper,
             java.util.function.Consumer<ExternalLoginAttemptSnapshot> progress) {
         ExternalLoginOperationContext context = new ExternalLoginOperationContext(
-                new ExternalLoginAttemptId(ATTEMPT_ID), fixedClock(), uri -> true, progress);
+                new ExternalLoginAttemptId(ATTEMPT_ID), fixedClock(), uri -> true, uri -> {}, progress);
         return new CodexDeviceLoginOperation(
                 registration,
                 new CodexTokenClient(

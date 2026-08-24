@@ -3,6 +3,7 @@ package io.haifa.agent.auth.localmodel;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -90,6 +91,55 @@ class ExternalLoginCoordinatorTest {
                     .hasMessage("AUTH_CANCEL_FAILED");
             assertThat(coordinator.find(started.attemptId()).state()).isEqualTo(ExternalLoginAttemptState.CANCELLED);
             assertThat(method.closed).hasValue(1);
+        }
+    }
+
+    @Test
+    void browserAuthorizationUrlUsesAOneTimeChannelOutsideTheAttemptSnapshot() throws Exception {
+        InMemoryStore store = new InMemoryStore();
+        CountDownLatch published = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExternalLoginMethod method = new FakeMethod("future-login", false) {
+            @Override
+            StoredExternalCredential execute(ExternalLoginOperationContext context) {
+                context.progressSink()
+                        .accept(new ExternalLoginAttemptSnapshot(
+                                context.attemptId(),
+                                descriptor().methodId(),
+                                ExternalLoginMode.BROWSER,
+                                ExternalLoginAttemptState.WAITING_USER,
+                                Optional.empty(),
+                                Optional.empty(),
+                                5_000,
+                                Optional.empty()));
+                context.browserAuthorizationSink()
+                        .accept(URI.create("https://auth.example/oauth/authorize?client_id=test&state=state"));
+                published.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("AUTH_CANCELLED");
+                }
+                return super.execute(context);
+            }
+        };
+        try (ExternalLoginCoordinator coordinator = coordinator(method, store)) {
+            ExternalLoginAttemptSnapshot started =
+                    coordinator.start(method.descriptor().methodId(), ExternalLoginMode.BROWSER);
+            assertThat(published.await(2, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(coordinator.find(started.attemptId()).verificationUri()).isEmpty();
+            assertThat(coordinator.takeBrowserAuthorizationUri(started.attemptId()))
+                    .contains(URI.create("https://auth.example/oauth/authorize?client_id=test&state=state"));
+            assertThat(coordinator.takeBrowserAuthorizationUri(started.attemptId()))
+                    .isEmpty();
+
+            release.countDown();
+            assertThat(awaitTerminal(coordinator, started.attemptId()).state())
+                    .isEqualTo(ExternalLoginAttemptState.SUCCEEDED);
+        } finally {
+            release.countDown();
         }
     }
 

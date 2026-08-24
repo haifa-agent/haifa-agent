@@ -2,6 +2,7 @@ package io.haifa.agent.auth.localmodel;
 
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.CredentialResolver;
+import java.net.URI;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -76,6 +77,10 @@ public final class LocalModelAuthenticationService implements AutoCloseable {
 
     public Optional<LocalModelConnectionView> completedConnection(ExternalLoginAttemptId attemptId) {
         return requireCoordinator().completedConnection(attemptId);
+    }
+
+    public Optional<URI> takeBrowserAuthorizationUri(ExternalLoginAttemptId attemptId) {
+        return requireCoordinator().takeBrowserAuthorizationUri(attemptId);
     }
 
     public boolean cancel(ExternalLoginAttemptId attemptId) {

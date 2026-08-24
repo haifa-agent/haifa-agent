@@ -41,6 +41,13 @@ public record TranscriptItem(
         return new TranscriptItem(id, kind, title, body, status, !expanded, approvalDetails);
     }
 
+    @Override
+    public String toString() {
+        return "TranscriptItem[id=" + id + ", kind=" + kind + ", title=" + title
+                + ", body=[REDACTED], status=" + status + ", expanded=" + expanded
+                + ", approvalDetails=[REDACTED]]";
+    }
+
     public enum Kind {
         USER,
         ASSISTANT,

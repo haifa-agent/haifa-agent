@@ -13,6 +13,8 @@ Endpoint、Scope、Header 或实现类。
 
 `auth.json` 是当前用户专属的明文本机存储，不提供静态加密。权限或 ACL、文件锁、严格 Schema、原子替换
 任一检查失败时均拒绝使用。Secret 不得进入日志、异常、公共 View、Runtime SQLite、JSONL 或 Workspace。
+Browser 登录在 `WAITING_USER` 阶段通过一次性 `take` 通道向最高层 UI 提供完整授权 URL，供自动打开失败
+或窗口不可见时复制；该值不进入通用 Attempt Snapshot，读取后立即清除，禁止写入日志或任何持久化载荷。
 
 验证：
 

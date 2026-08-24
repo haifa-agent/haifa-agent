@@ -1,5 +1,6 @@
 package io.haifa.agent.auth.localmodel;
 
+import java.net.URI;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -72,8 +73,8 @@ public final class ExternalLoginCoordinator implements AutoCloseable {
             ExternalLoginAttemptId attemptId = Objects.requireNonNull(ids.get(), "attempt id must not be null");
             if (attempts.containsKey(attemptId)) throw new IllegalStateException("AUTH_ATTEMPT_ID_DUPLICATE");
             Attempt attempt = new Attempt(attemptId, methodId, mode, clock.millis());
-            ExternalLoginOperationContext context =
-                    new ExternalLoginOperationContext(attemptId, clock, browserLauncher, attempt::acceptProgress);
+            ExternalLoginOperationContext context = new ExternalLoginOperationContext(
+                    attemptId, clock, browserLauncher, attempt::acceptBrowserAuthorization, attempt::acceptProgress);
             ExternalLoginOperation operation =
                     Objects.requireNonNull(method.create(mode, context), "external login operation must not be null");
             try {
@@ -121,6 +122,10 @@ public final class ExternalLoginCoordinator implements AutoCloseable {
         Attempt attempt = requireAttempt(attemptId);
         expireIfNeeded(attempt);
         return Optional.ofNullable(attempt.completedConnection);
+    }
+
+    public Optional<URI> takeBrowserAuthorizationUri(ExternalLoginAttemptId attemptId) {
+        return requireAttempt(attemptId).takeBrowserAuthorizationUri();
     }
 
     @Override
@@ -246,6 +251,7 @@ public final class ExternalLoginCoordinator implements AutoCloseable {
         private volatile ExternalLoginOperation operation;
         private volatile Future<?> future;
         private volatile LocalModelConnectionView completedConnection;
+        private URI browserAuthorizationUri;
 
         private Attempt(
                 ExternalLoginAttemptId attemptId,
@@ -302,6 +308,35 @@ public final class ExternalLoginCoordinator implements AutoCloseable {
                 throw new IllegalStateException("AUTH_ATTEMPT_TRANSITION_INVALID");
             }
             snapshot = snapshot.withState(next, reason);
+            if (TERMINAL.contains(next)) browserAuthorizationUri = null;
+        }
+
+        private synchronized void acceptBrowserAuthorization(URI authorizationUri) {
+            if (TERMINAL.contains(snapshot.state())) return;
+            if (snapshot.state() != ExternalLoginAttemptState.WAITING_USER) {
+                throw new IllegalStateException("AUTH_BROWSER_AUTHORIZATION_STATE_INVALID");
+            }
+            URI value = Objects.requireNonNull(authorizationUri, "authorizationUri must not be null")
+                    .normalize();
+            String query = value.getRawQuery();
+            if (!value.isAbsolute()
+                    || value.getHost() == null
+                    || value.getRawUserInfo() != null
+                    || value.getRawFragment() != null
+                    || !("https".equalsIgnoreCase(value.getScheme()) || "http".equalsIgnoreCase(value.getScheme()))
+                    || query == null
+                    || query.isBlank()
+                    || query.length() > 8 * 1024
+                    || query.indexOf('\0') >= 0) {
+                throw new IllegalArgumentException("AUTH_BROWSER_AUTHORIZATION_URI_INVALID");
+            }
+            browserAuthorizationUri = value;
+        }
+
+        private synchronized Optional<URI> takeBrowserAuthorizationUri() {
+            URI value = browserAuthorizationUri;
+            browserAuthorizationUri = null;
+            return Optional.ofNullable(value);
         }
 
         private void requireIdentity(ExternalLoginAttemptSnapshot candidate) {

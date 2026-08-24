@@ -79,10 +79,10 @@ public final class CodexBrowserLoginOperation implements ExternalLoginOperation 
         String stateToken = pkce.state();
         try {
             startCallbackServer(stateToken);
+            URI authorizationUri = authorizationUri(verifier, stateToken);
+            context.browserLauncher().open(authorizationUri);
             progress(ExternalLoginAttemptState.WAITING_USER, Optional.empty());
-            if (!context.browserLauncher().open(authorizationUri(verifier, stateToken))) {
-                throw new IllegalStateException("AUTH_BROWSER_OPEN_FAILED");
-            }
+            context.browserAuthorizationSink().accept(authorizationUri);
             String code = authorizationCode.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
             checkCancelled();
             progress(ExternalLoginAttemptState.EXCHANGING, Optional.empty());

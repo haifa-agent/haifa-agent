@@ -2,6 +2,7 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
+import io.haifa.agent.application.project.product.coding.client.CodingBrowserLoginView;
 import io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
@@ -64,16 +65,21 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
 
     @Override
     public CodingAuthenticationView loginCodexBrowser() {
+        return loginCodexBrowser(instructions -> {});
+    }
+
+    @Override
+    public CodingAuthenticationView loginCodexBrowser(Consumer<CodingBrowserLoginView> instructions) {
         ExternalLoginAttemptSnapshot started =
                 authentication.startExternalLogin(ExternalLoginMethodId.OPENAI_CODEX, ExternalLoginMode.BROWSER);
-        return await(started.attemptId(), null);
+        return await(started.attemptId(), Objects.requireNonNull(instructions, "instructions must not be null"), null);
     }
 
     @Override
     public CodingAuthenticationView loginCodexDevice(Consumer<CodingDeviceLoginView> instructions) {
         ExternalLoginAttemptSnapshot started =
                 authentication.startExternalLogin(ExternalLoginMethodId.OPENAI_CODEX, ExternalLoginMode.DEVICE_CODE);
-        return await(started.attemptId(), Objects.requireNonNull(instructions, "instructions must not be null"));
+        return await(started.attemptId(), null, Objects.requireNonNull(instructions, "instructions must not be null"));
     }
 
     @Override
@@ -92,15 +98,28 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     }
 
     private CodingAuthenticationView await(
-            ExternalLoginAttemptId attemptId, Consumer<CodingDeviceLoginView> instructions) {
+            ExternalLoginAttemptId attemptId,
+            Consumer<CodingBrowserLoginView> browserInstructions,
+            Consumer<CodingDeviceLoginView> deviceInstructions) {
         AtomicBoolean instructionsSent = new AtomicBoolean();
         while (true) {
             ExternalLoginAttemptSnapshot snapshot = authentication.attempt(attemptId);
-            if (instructions != null
+            if (browserInstructions != null
+                    && snapshot.mode() == ExternalLoginMode.BROWSER
+                    && instructionsSent.compareAndSet(false, true)) {
+                var authorizationUri = authentication.takeBrowserAuthorizationUri(attemptId);
+                if (authorizationUri.isPresent()) {
+                    browserInstructions.accept(new CodingBrowserLoginView(
+                            authorizationUri.orElseThrow(), snapshot.expiresAtEpochMillis()));
+                } else {
+                    instructionsSent.set(false);
+                }
+            }
+            if (deviceInstructions != null
                     && snapshot.verificationUri().isPresent()
                     && snapshot.userCode().isPresent()
                     && instructionsSent.compareAndSet(false, true)) {
-                instructions.accept(new CodingDeviceLoginView(
+                deviceInstructions.accept(new CodingDeviceLoginView(
                         snapshot.verificationUri().orElseThrow(),
                         snapshot.userCode().orElseThrow(),
                         snapshot.expiresAtEpochMillis()));

@@ -224,8 +224,10 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 - `/model` 打开安全 Selector，也支持 `/model <internal-id>`；活动 Run 期间拒绝切换，成功后只影响
   下一新 Run；
 - `/login`、`/account` 和 `/logout` 通过 Coding 产品的安全认证客户端实现；首次启动且所选模型凭据缺失时
-  打开同一连接选择器。ChatGPT 登录可选 Browser Callback 或 Device Code；API Key 输入使用独立掩码
-  缓冲区，不进入 Reducer、Session、Transcript、History 或 Completion；
+  打开同一连接选择器。ChatGPT 登录可选 Browser Callback 或 Device Code；设备 URL/设备码作为持久可见的
+  Transcript 指引展示；Browser Callback 尝试自动打开浏览器，同时始终展示可复制授权 URL 并继续等待本机
+  回调，避免系统报告已启动但窗口不可见。API Key 输入使用
+  独立掩码缓冲区，不进入 Reducer、Session、Transcript、History 或 Completion；
 - `/settings`、`/trust`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
   `CAPABILITY_NOT_IMPLEMENTED`，不显示装饰性选择器；
 - `/quit` 退出；活动 Run 下 EOF 显示明确的退出选择。

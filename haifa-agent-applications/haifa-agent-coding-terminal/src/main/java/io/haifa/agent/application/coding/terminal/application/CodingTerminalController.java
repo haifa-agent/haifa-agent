@@ -1085,13 +1085,15 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.StatusChanged("Opening browser for ChatGPT sign-in"));
         submitEffect(
                 () -> {
-                    CodingAuthenticationView connected = authentication.loginCodexBrowser();
-                    return () -> apply(new TerminalUiAction.StatusChanged(
+                    CodingAuthenticationView connected = authentication.loginCodexBrowser(
+                            instructions -> pump.offer(new TerminalUiAction.BrowserLoginInstructionsPresented(
+                                    instructions.authorizationUri().toString())));
+                    return () -> pump.offer(new TerminalUiAction.StatusChanged(
                             connected.unofficialLocalCompatibility()
                                     ? "Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)"
                                     : "Connected to ChatGPT Codex"));
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> pump.offer(new TerminalUiAction.RecoverableFailure(code)));
     }
 
     private void openChatGptLoginSelector() {
@@ -1113,16 +1115,14 @@ public final class CodingTerminalController implements AutoCloseable {
         submitEffect(
                 () -> {
                     CodingAuthenticationView connected = authentication.loginCodexDevice(
-                            instruction -> pump.offer(new TerminalUiAction.StatusChanged("Open "
-                                    + instruction.verificationUri()
-                                    + " and enter code "
-                                    + instruction.userCode())));
-                    return () -> apply(new TerminalUiAction.StatusChanged(
+                            instruction -> pump.offer(new TerminalUiAction.DeviceLoginInstructionsPresented(
+                                    instruction.verificationUri().toString(), instruction.userCode())));
+                    return () -> pump.offer(new TerminalUiAction.StatusChanged(
                             connected.unofficialLocalCompatibility()
                                     ? "Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)"
                                     : "Connected to ChatGPT Codex"));
                 },
-                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+                code -> pump.offer(new TerminalUiAction.RecoverableFailure(code)));
     }
 
     private void beginApiKeyInput(String providerId) {

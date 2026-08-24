@@ -191,6 +191,29 @@ public final class TerminalUiReducer {
                     false));
             return copyWithTranscript(state, List.copyOf(items));
         }
+        if (action instanceof TerminalUiAction.DeviceLoginInstructionsPresented instructions) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            items.add(new TranscriptItem(
+                    "auth-device-code-" + items.size(),
+                    TranscriptItem.Kind.RESOURCE,
+                    "ChatGPT device login",
+                    "Browser URL: " + instructions.verificationUri() + "\nDevice code: " + instructions.userCode(),
+                    "WAITING",
+                    true));
+            return copyWithStatus(copyWithTranscript(state, List.copyOf(items)), "Waiting for ChatGPT authorization");
+        }
+        if (action instanceof TerminalUiAction.BrowserLoginInstructionsPresented instructions) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            items.add(new TranscriptItem(
+                    "auth-browser-instructions-" + items.size(),
+                    TranscriptItem.Kind.RESOURCE,
+                    "ChatGPT browser login",
+                    "A browser sign-in was requested.\nIf it did not open, use this URL: "
+                            + instructions.authorizationUri(),
+                    "WAITING",
+                    true));
+            return copyWithStatus(copyWithTranscript(state, List.copyOf(items)), "Waiting for ChatGPT authorization");
+        }
         if (action instanceof TerminalUiAction.InteractionPresented presented) {
             var interaction = presented.interaction();
             var details = ApprovalDetails.from(interaction);
