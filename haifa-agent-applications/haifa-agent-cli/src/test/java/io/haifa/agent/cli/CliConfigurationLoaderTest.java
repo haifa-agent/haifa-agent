@@ -21,6 +21,48 @@ import org.junit.jupiter.api.io.TempDir;
 
 class CliConfigurationLoaderTest {
     @Test
+    void loadsTheDedicatedCodexResponsesBindingWithoutEmbeddingAClientId() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-codex", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                models:
+                  default: codex
+                  providers:
+                    - id: openai-codex
+                      displayName: ChatGPT Codex
+                      nativeStreaming: true
+                      endpoint: https://chatgpt.com/backend-api/codex
+                      credentialRef: model-auth://openai-codex/default
+                      originator: haifa
+                      userAgent: haifa-agent/1
+                      apiBindings:
+                        - style: openai-responses
+                          dialect: openai-codex-responses
+                      models:
+                        - id: codex
+                          displayName: Codex
+                          providerModelId: codex-model
+                          style: openai-responses
+                          capabilities: [TEXT_CHAT, TOOL_CALLING]
+                          contextWindow: 200000
+                          maxOutputTokens: 8192
+                """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+        var snapshot = LocalCodingAgent.modelSnapshot(result);
+
+        assertThat(result.model().dialect()).isEqualTo("openai-codex-responses");
+        assertThat(result.model().credentialRef()).isEqualTo("model-auth://openai-codex/default");
+        assertThat(snapshot.endpoint()).hasToString("https://chatgpt.com/backend-api/codex");
+        assertThat(snapshot.providerOptions())
+                .containsEntry("codex_originator", "haifa")
+                .containsEntry("codex_user_agent", "haifa-agent/1")
+                .doesNotContainKeys("client_id", "access_token", "refresh_token");
+    }
+
+    @Test
     void loadsTrustedMultiModelConfigurationAndSelectsByInternalId() throws Exception {
         Path configuration = Files.createTempFile("haifa-cli-models", ".yaml");
         Files.writeString(
@@ -114,6 +156,8 @@ class CliConfigurationLoaderTest {
                                 "'" + transcriptRoot.toString().replace('\\', '/') + "'"));
 
         CliConfiguration result = new CliConfigurationLoader(name -> switch (name) {
+                    case "HAIFA_CODEX_ORIGINATOR" -> "pi";
+                    case "HAIFA_CODEX_USER_AGENT" -> "haifa-agent-local-compat/1";
                     case "OPENAI_BASE_URL" -> "http://127.0.0.1:30000/v1";
                     case "OPENAI_MODEL_ID" -> "gpt-5.6-luna";
                     default -> null;
@@ -122,15 +166,31 @@ class CliConfigurationLoaderTest {
 
         assertThat(result.model().providerId()).isEqualTo("deepseek");
         assertThat(result.model().id()).isEqualTo("deepseek-responses-flash");
-        assertThat(result.model().credentialRef()).isEqualTo("env://DEEPSEEK_API_KEY");
+        assertThat(result.model().credentialRef()).isEqualTo("model-auth://deepseek/default");
         assertThat(result.availableModels())
                 .extracting(CliConfiguration.Model::id)
                 .containsExactly(
+                        "gpt-5.6-sol",
+                        "gpt-5.6-terra",
+                        "gpt-5.6-luna",
                         "deepseek-chat-flash",
                         "deepseek-chat-pro",
                         "deepseek-responses-flash",
                         "deepseek-anthropic-flash",
                         "local-openai-responses");
+        assertThat(result.availableModels())
+                .filteredOn(model -> model.id().equals("gpt-5.6-sol"))
+                .singleElement()
+                .satisfies(model -> {
+                    assertThat(model.providerId()).isEqualTo("openai-codex");
+                    assertThat(model.modelId()).isEqualTo("gpt-5.6-sol");
+                    assertThat(model.endpoint()).hasToString("https://chatgpt.com/backend-api/codex");
+                    assertThat(model.credentialRef()).isEqualTo("model-auth://openai-codex/default");
+                    assertThat(model.style()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
+                    assertThat(model.dialect()).isEqualTo("openai-codex-responses");
+                    assertThat(model.originator()).isEqualTo("pi");
+                    assertThat(model.userAgent()).isEqualTo("haifa-agent-local-compat/1");
+                });
         assertThat(result.availableModels())
                 .filteredOn(model -> model.id().equals("deepseek-anthropic-flash"))
                 .singleElement()
@@ -155,6 +215,7 @@ class CliConfigurationLoaderTest {
                                 new io.haifa.agent.core.reference.TenantRef("local"),
                                 new io.haifa.agent.core.reference.PrincipalRef("user", "user")))
                 .extracting(io.haifa.agent.application.project.product.coding.CodingModelOption::id)
+                .contains("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
                 .doesNotContain("local-openai-responses");
         assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
         assertThat(result.approvalThreshold()).isEqualTo(CodingApprovalThreshold.LOW);

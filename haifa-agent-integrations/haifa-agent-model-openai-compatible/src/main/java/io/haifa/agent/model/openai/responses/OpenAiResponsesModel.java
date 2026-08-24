@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /** Bounded OpenAI Responses adapter with an Item-aware synchronous and SSE parser. */
 public final class OpenAiResponsesModel implements AgentChatModel {
@@ -101,9 +102,9 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                         exception);
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw httpFailure(request, response.statusCode(), response.headers());
+                throw httpFailure(request, profile, response.statusCode(), response.headers(), body);
             }
-            requireContentType(request, response, "application/json");
+            requireContentType(request, profile, response, "application/json");
             return parseResponse(request, parseJson(request, body));
         } catch (HttpTimeoutException exception) {
             throw failure(
@@ -143,12 +144,14 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                byte[] errorBody;
                 try (InputStream body = response.body()) {
-                    body.readNBytes(maxResponseBytes + 1);
+                    errorBody = body.readNBytes(maxResponseBytes + 1);
                 }
-                throw httpFailure(request, response.statusCode(), response.headers());
+                if (errorBody.length > maxResponseBytes) errorBody = new byte[0];
+                throw httpFailure(request, profile, response.statusCode(), response.headers(), errorBody);
             }
-            requireContentType(request, response, "text/event-stream");
+            requireContentType(request, profile, response, "text/event-stream");
             try (InputStream body = response.body()) {
                 return parseStream(request, profile, body, observation.observe(sink));
             }
@@ -248,13 +251,29 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                     "model request cannot be serialized",
                     exception);
         }
-        return HttpRequest.newBuilder(responsesUri(request.model().endpoint()))
+        HttpRequest.Builder builder = HttpRequest.newBuilder(
+                        responsesUri(request.model().endpoint()))
                 .timeout(request.timeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", stream ? "text/event-stream" : "application/json")
-                .header("Authorization", "Bearer " + credential.value())
-                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+        if (profile == OpenAiResponsesDialects.Profile.OPENAI_CODEX) {
+            try {
+                OpenAiCodexAuthentication.apply(builder, json, request.model(), credential.value());
+            } catch (IllegalArgumentException exception) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.AUTHENTICATION_FAILED,
+                        false,
+                        0,
+                        "codex_account_identity_invalid",
+                        "Codex account identity is unavailable",
+                        null);
+            }
+        } else {
+            builder.header("Authorization", "Bearer " + credential.value());
+        }
+        return builder.build();
     }
 
     private Map<String, Object> requestBody(
@@ -263,7 +282,9 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.model().providerModelId());
         body.put("input", inputItems(request, profile));
-        body.put("max_output_tokens", request.maxOutputTokens());
+        if (profile != OpenAiResponsesDialects.Profile.OPENAI_CODEX) {
+            body.put("max_output_tokens", request.maxOutputTokens());
+        }
         body.put("stream", stream);
         body.put("store", false);
         String instructions = instructions(request.messages());
@@ -430,8 +451,13 @@ public final class OpenAiResponsesModel implements AgentChatModel {
     }
 
     private AgentChatResponse parseResponse(AgentChatRequest request, JsonNode root) {
+        return parseResponse(request, root, "", List.of());
+    }
+
+    private AgentChatResponse parseResponse(
+            AgentChatRequest request, JsonNode root, String streamedContent, List<ModelToolCall> streamedCalls) {
         try {
-            return parseResponseValue(request, root);
+            return parseResponseValue(request, root, streamedContent, streamedCalls);
         } catch (ModelInvocationException exception) {
             throw exception;
         } catch (IllegalArgumentException exception) {
@@ -439,7 +465,8 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         }
     }
 
-    private AgentChatResponse parseResponseValue(AgentChatRequest request, JsonNode root) {
+    private AgentChatResponse parseResponseValue(
+            AgentChatRequest request, JsonNode root, String streamedContent, List<ModelToolCall> streamedCalls) {
         String status = text(root, "status", true);
         if ("failed".equals(status)) {
             throw failure(
@@ -460,6 +487,8 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         JsonNode output = root.path("output");
         if (!output.isArray()) throw malformed(request, "provider response output must be an array");
         for (JsonNode item : output) parseOutputItem(request, item, content, reasoning, calls);
+        if (content.isEmpty() && !streamedContent.isEmpty()) content.append(streamedContent);
+        if (calls.isEmpty() && !streamedCalls.isEmpty()) calls.addAll(streamedCalls);
         ModelFinishReason finish = !calls.isEmpty()
                 ? ModelFinishReason.TOOL_CALLS
                 : "incomplete".equals(status) ? incompleteReason(root) : ModelFinishReason.STOP;
@@ -594,6 +623,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         private boolean started;
         private boolean terminal;
         private AgentChatResponse completed;
+        private final StringBuilder content = new StringBuilder();
         private final Map<Integer, FunctionItem> functions = new LinkedHashMap<>();
 
         private StreamState(AgentChatRequest request, OpenAiResponsesDialects.Profile profile, ModelStreamSink sink) {
@@ -624,10 +654,13 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             start();
             switch (type) {
                 case "response.output_text.delta" -> emitContent(textDelta(event));
+                case "response.output_text.done" -> contentDone(event);
                 case "response.reasoning_summary_text.delta", "response.reasoning_text.delta" ->
                     emitReasoning(textDelta(event));
                 case "response.output_item.added" -> addItem(event);
                 case "response.function_call_arguments.delta" -> functionDelta(event);
+                case "response.function_call_arguments.done" -> functionDone(event);
+                case "response.output_item.done" -> itemDone(event);
                 case "response.completed", "response.incomplete" -> complete(event);
                 case "response.failed", "error" ->
                     throw failure(
@@ -665,11 +698,21 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         }
 
         private void emitContent(String delta) {
-            if (!delta.isEmpty()) emit(new ModelStreamEvent.ContentDelta(request.callId(), ++emittedIndex, delta));
+            if (delta.isEmpty()) return;
+            content.append(delta);
+            if (content.length() > maxResponseBytes) throw malformed(request, "Responses text output is too large");
+            emit(new ModelStreamEvent.ContentDelta(request.callId(), ++emittedIndex, delta));
         }
 
         private void emitReasoning(String delta) {
             if (!delta.isEmpty()) emit(new ModelStreamEvent.ReasoningDelta(request.callId(), ++emittedIndex, delta));
+        }
+
+        private void contentDone(JsonNode event) {
+            String value = text(event, "text", true);
+            content.setLength(0);
+            content.append(value);
+            if (content.length() > maxResponseBytes) throw malformed(request, "Responses text output is too large");
         }
 
         private void addItem(JsonNode event) {
@@ -677,6 +720,8 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             if (!"function_call".equals(item.path("type").asText())) return;
             int outputIndex = nonNegativeInt(request, event, "output_index");
             FunctionItem function = new FunctionItem(text(item, "call_id", true), text(item, "name", true));
+            String initialArguments = optionalText(item, "arguments", "");
+            if (!initialArguments.isEmpty()) function.arguments.append(initialArguments);
             if (functions.putIfAbsent(outputIndex, function) != null) {
                 throw malformed(request, "duplicate Responses function output index");
             }
@@ -696,12 +741,41 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                     request.callId(), ++emittedIndex, 0, outputIndex, item.callId, item.name, delta));
         }
 
+        private void functionDone(JsonNode event) {
+            replaceFunctionArguments(event, text(event, "arguments", true));
+        }
+
+        private void itemDone(JsonNode event) {
+            JsonNode item = event.path("item");
+            if (!"function_call".equals(item.path("type").asText())) return;
+            replaceFunctionArguments(event, text(item, "arguments", true));
+        }
+
+        private void replaceFunctionArguments(JsonNode event, String value) {
+            int outputIndex = nonNegativeInt(request, event, "output_index");
+            FunctionItem item = functions.get(outputIndex);
+            if (item == null) throw malformed(request, "function arguments completed before function item");
+            if (value.length() > maxResponseBytes) throw malformed(request, "function arguments are too large");
+            item.arguments.setLength(0);
+            item.arguments.append(value);
+        }
+
         private void complete(JsonNode event) {
             JsonNode response = event.path("response");
             if (!response.isObject()) throw malformed(request, "terminal Responses event is missing response");
-            completed = parseResponse(request, response);
+            completed = parseResponse(request, response, content.toString(), streamedCalls());
             terminal = true;
             emit(new ModelStreamEvent.UsageReported(request.callId(), ++emittedIndex, completed.usage()));
+        }
+
+        private List<ModelToolCall> streamedCalls() {
+            List<ModelToolCall> calls = new ArrayList<>();
+            for (FunctionItem function : functions.values()) {
+                String value = function.arguments.isEmpty() ? "{}" : function.arguments.toString();
+                calls.add(new ModelToolCall(
+                        new ProviderToolCallCorrelationId(function.callId), function.name, arguments(request, value)));
+            }
+            return List.copyOf(calls);
         }
 
         private void emit(ModelStreamEvent event) {
@@ -781,15 +855,26 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         return URI.create(value + "/responses");
     }
 
-    private static void requireContentType(AgentChatRequest request, HttpResponse<?> response, String expected) {
+    private static void requireContentType(
+            AgentChatRequest request,
+            OpenAiResponsesDialects.Profile profile,
+            HttpResponse<?> response,
+            String expected) {
         String contentType = response.headers().firstValue("Content-Type").orElse("");
+        if (contentType.isBlank() && profile == OpenAiResponsesDialects.Profile.OPENAI_CODEX) return;
         if (!contentType.toLowerCase(Locale.ROOT).contains(expected)) {
+            String mediaType = contentType.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
+            String code = mediaType.isEmpty()
+                    ? "unexpected_content_type:missing"
+                    : mediaType.matches("[a-z0-9.+-]{1,32}/[a-z0-9.+-]{1,64}")
+                            ? "unexpected_content_type:" + mediaType.replace('/', '_')
+                            : "unexpected_content_type:invalid";
             throw failure(
                     request,
                     ModelErrorCategory.MALFORMED_RESPONSE,
                     false,
                     response.statusCode(),
-                    "unexpected_content_type",
+                    code,
                     "provider returned an unexpected content type",
                     null);
         }
@@ -837,8 +922,12 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         return value.isEmpty() ? fallback : value;
     }
 
-    private static ModelInvocationException httpFailure(
-            AgentChatRequest request, int status, java.net.http.HttpHeaders headers) {
+    private ModelInvocationException httpFailure(
+            AgentChatRequest request,
+            OpenAiResponsesDialects.Profile profile,
+            int status,
+            java.net.http.HttpHeaders headers,
+            byte[] body) {
         ModelErrorCategory category =
                 switch (status) {
                     case 400, 422 -> ModelErrorCategory.INVALID_REQUEST;
@@ -850,19 +939,66 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                     case 500, 502, 503, 504 -> ModelErrorCategory.SERVER_ERROR;
                     default -> ModelErrorCategory.UNKNOWN_PROVIDER_ERROR;
                 };
+        String providerCode = "http_" + status;
+        String safeMessage = "model provider rejected the request";
         boolean retryable = status == 408 || status == 429 || status >= 500;
         Duration retryAfter = RetryAfterParser.parse(headers, Instant.now()).orElse(null);
-        return failure(
-                request,
-                category,
-                retryable,
-                status,
-                "http_" + status,
-                "model provider rejected the request",
-                null,
-                retryAfter,
-                false);
+        if (profile == OpenAiResponsesDialects.Profile.OPENAI_CODEX) {
+            String codexProviderCode = codexProviderCode(body);
+            if (codexProviderCode != null) providerCode = codexProviderCode;
+        }
+        if (profile == OpenAiResponsesDialects.Profile.OPENAI_CODEX && status == 429) {
+            CodexRateLimit rateLimit = codexRateLimit(body);
+            if (rateLimit != null) {
+                providerCode = rateLimit.code();
+                retryable = "rate_limit_exceeded".equals(providerCode);
+                if (retryAfter == null && rateLimit.resetsAtEpochSeconds() != null) {
+                    long seconds = Math.max(
+                            0, rateLimit.resetsAtEpochSeconds() - Instant.now().getEpochSecond());
+                    retryAfter = Duration.ofSeconds(seconds);
+                }
+                safeMessage = rateLimit.planType() == null
+                        ? "ChatGPT Codex usage limit reached"
+                        : "ChatGPT Codex usage limit reached for the " + rateLimit.planType() + " plan";
+            }
+        }
+        return failure(request, category, retryable, status, providerCode, safeMessage, null, retryAfter, false);
     }
+
+    private String codexProviderCode(byte[] body) {
+        if (body == null || body.length == 0) return null;
+        try {
+            JsonNode error = json.readTree(body).path("error");
+            String code = optionalText(error, "code", optionalText(error, "type", ""));
+            if (!code.matches("[A-Za-z0-9_.-]{1,64}")) return null;
+            String parameter = optionalText(error, "param", "");
+            return parameter.matches("[A-Za-z0-9_.-]{1,64}") ? code + ":" + parameter : code;
+        } catch (IOException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private CodexRateLimit codexRateLimit(byte[] body) {
+        if (body == null || body.length == 0) return null;
+        try {
+            JsonNode error = json.readTree(body).path("error");
+            String code = optionalText(error, "code", optionalText(error, "type", ""));
+            if (!Set.of("usage_limit_reached", "usage_not_included", "rate_limit_exceeded")
+                    .contains(code)) {
+                return null;
+            }
+            String plan = optionalText(error, "plan_type", "").toLowerCase(Locale.ROOT);
+            if (plan.isEmpty() || !plan.matches("[a-z0-9_-]{1,32}")) plan = null;
+            JsonNode reset = error.get("resets_at");
+            Long resetsAt =
+                    reset != null && reset.canConvertToLong() && reset.longValue() >= 0 ? reset.longValue() : null;
+            return new CodexRateLimit(code, plan, resetsAt);
+        } catch (IOException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private record CodexRateLimit(String code, String planType, Long resetsAtEpochSeconds) {}
 
     private static ModelInvocationException malformed(AgentChatRequest request, String message) {
         return failure(request, ModelErrorCategory.MALFORMED_RESPONSE, false, 0, "malformed_response", message, null);

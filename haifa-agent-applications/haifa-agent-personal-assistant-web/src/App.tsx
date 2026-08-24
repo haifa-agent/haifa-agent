@@ -12,6 +12,7 @@ import {
   Cpu,
   Database,
   Image as ImageIcon,
+  KeyRound,
   Menu,
   MessageSquarePlus,
   PauseCircle,
@@ -55,6 +56,7 @@ import type {
   MemoryCandidate,
   MissionSnapshot,
   Model,
+  ModelConnection,
   ModelPreferences,
   Run,
   Turn,
@@ -67,6 +69,7 @@ import {
   type PersonalAssistantClient,
 } from "./api/client";
 import { appReducer, initialState } from "./state/appReducer";
+import { ModelConnectionPanel } from "./components/ModelConnectionPanel";
 import type { ConnectionState, OutputPhase } from "./types";
 import {
   defaultMissionAcceptanceCriteria,
@@ -3043,6 +3046,8 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
   const [newModelId, setNewModelId] = useState("");
   const [newModelPreferences, setNewModelPreferences] = useState<ModelPreferences | null>(null);
+  const [modelConnections, setModelConnections] = useState<ModelConnection[] | null>(null);
+  const [modelConnectionsOpen, setModelConnectionsOpen] = useState(false);
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [slashFromPlus, setSlashFromPlus] = useState(false);
@@ -3073,6 +3078,19 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [researchReadingContext, setResearchReadingContext] = useState<
     (MarkdownResearchContext & { missionId: string }) | null
   >(null);
+
+  useEffect(() => {
+    if (!client.modelConnections) return;
+    const controller = new AbortController();
+    client.modelConnections(controller.signal)
+      .then((connections) => {
+        if (!controller.signal.aborted) setModelConnections(connections);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setModelConnections(null);
+      });
+    return () => controller.abort();
+  }, [client]);
 
   const handleMissionChanged = useCallback((mission: MissionSnapshot | null) => {
     if (!mission || mission.conversationId === state.selectedConversationId) {
@@ -3563,6 +3581,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const configuredModels = state.bootstrap?.models ?? [];
   const modelProviders = groupModelsByProvider(configuredModels);
   const selectedModelId = state.selectedConversation?.model.model.id ?? newModelId;
+  const selectedModel = state.selectedConversation?.model.model
+    ?? configuredModels.find((model) => model.id === (selectedModelId || state.bootstrap?.defaultModelId));
+  const selectedProviderConnected = modelConnections?.some(
+    (connection) => connection.providerId === selectedModel?.providerId && connection.status === "AUTHENTICATED",
+  );
   const selectedModelPreferences = state.selectedConversation?.model.preferences
     ?? newModelPreferences
     ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId))?.recommendedPreferences
@@ -3898,6 +3921,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               state.connection === "reconnecting" ? "正在重新连接" :
                 state.connection === "connecting" ? "正在连接" : "连接中断"
           }</span>
+          {client.modelConnections && (
+            <button className="button" onClick={() => setModelConnectionsOpen(true)}>
+              <KeyRound size={16} /> 模型连接{modelConnections?.length ? <b>{modelConnections.length}</b> : null}
+            </button>
+          )}
           <button className="button memory-button" onClick={() => {
             previousFocus.current = document.activeElement as HTMLElement;
             dispatch({ type: "toggleMemory", open: true });
@@ -3935,6 +3963,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         />
 
         <main className="conversation">
+          {modelConnections && selectedModel && !selectedProviderConnected && (
+            <button type="button" className="model-connection-notice" onClick={() => setModelConnectionsOpen(true)}>
+              <KeyRound size={16} /><span><strong>尚未连接模型</strong><small>模型目录仍可浏览；首次使用前登录 ChatGPT 或保存 API Key。</small></span>
+            </button>
+          )}
           <div className="conversation-heading">
             <div><span className="eyebrow">PERSONAL ASSISTANT</span><h1>{state.selectedConversation?.displayName ?? "新会话"}</h1></div>
             {state.run && <span className="run-state">{statusLabel(state.run.status)}</span>}
@@ -4521,6 +4554,13 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           }}
         />
       )}
+      <ModelConnectionPanel
+        client={client}
+        open={modelConnectionsOpen}
+        providerId={selectedModel?.providerId ?? "openai"}
+        onClose={() => setModelConnectionsOpen(false)}
+        onConnectionsChanged={setModelConnections}
+      />
       <div className="sr-only" aria-live="polite">{state.pending ? `${state.pending.label}进行中` : ""}</div>
     </div>
   );

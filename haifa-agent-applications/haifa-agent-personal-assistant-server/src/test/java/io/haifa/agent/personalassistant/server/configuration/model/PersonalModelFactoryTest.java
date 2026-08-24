@@ -4,8 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelMessage;
+import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
@@ -21,6 +26,7 @@ import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.net.URI;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,6 +41,77 @@ import org.springframework.core.env.MutablePropertySources;
 import org.springframework.core.io.ClassPathResource;
 
 class PersonalModelFactoryTest {
+    @Test
+    void modelCredentialsAcceptOnlyEnvironmentOrSharedLocalAuthReferences() {
+        assertThatThrownBy(() -> provider(
+                        "deepseek",
+                        "DeepSeek",
+                        false,
+                        URI.create("https://api.deepseek.com"),
+                        "vault://deepseek",
+                        List.of(new PersonalAssistantProperties.ApiBinding(
+                                "openai-chat-completions", "deepseek-openai-chat", null)),
+                        List.of(model(
+                                "deepseek-v4-flash",
+                                "DeepSeek V4 Flash",
+                                "deepseek-v4-flash",
+                                "openai-chat-completions"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("env:// or model-auth://");
+
+        assertThatThrownBy(() -> provider(
+                        "openai-codex",
+                        "OpenAI Codex",
+                        false,
+                        URI.create("https://chatgpt.com/backend-api/codex"),
+                        "model-auth://openai/default",
+                        List.of(new PersonalAssistantProperties.ApiBinding(
+                                "openai-responses", "openai-codex-responses", null)),
+                        List.of(textModel("codex", "Codex", "gpt-5.6-codex", "openai-responses"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("model-auth://openai-codex/");
+    }
+
+    @Test
+    void productionAdapterUsesTheInjectedCredentialResolver() {
+        var resolved = new java.util.concurrent.atomic.AtomicBoolean();
+        var provider = provider(
+                "deepseek",
+                "DeepSeek",
+                false,
+                URI.create("https://api.deepseek.com"),
+                "model-auth://deepseek/default",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", "deepseek-openai-chat", null)),
+                List.of(model(
+                        "deepseek-v4-flash", "DeepSeek V4 Flash", "deepseek-v4-flash", "openai-chat-completions")));
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(provider), "deepseek-v4-flash", false, new ObjectMapper(), shell(), reference -> {
+                    resolved.set(true);
+                    assertThat(reference.value()).isEqualTo("model-auth://deepseek/default");
+                    throw new IllegalStateException("INJECTED_RESOLVER_USED");
+                });
+        var snapshot = platform.contribution().snapshot();
+        var adapter = platform.contribution().adapters().values().iterator().next();
+        var request = new AgentChatRequest(
+                new ModelCallId("call-injected-resolver"),
+                new AgentRunId("run-injected-resolver"),
+                1,
+                1,
+                snapshot,
+                List.of(ModelMessage.text(ModelMessageRole.USER, "hello")),
+                List.of(),
+                32,
+                Duration.ofSeconds(1),
+                Map.of());
+
+        assertThatThrownBy(() -> adapter.invoke(request))
+                .isInstanceOf(io.haifa.agent.model.api.ModelInvocationException.class)
+                .hasMessage("model credential is unavailable");
+        assertThat(resolved).isTrue();
+        assertThat(platform.catalog().available()).hasSize(1);
+    }
+
     @Test
     void defaultApplicationConfigurationIsDeepSeekOnly() throws Exception {
         var sources = new MutablePropertySources();

@@ -1,5 +1,7 @@
 package io.haifa.agent.personalassistant.server.web.v1.mapper;
 
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
+import io.haifa.agent.auth.localmodel.LocalModelConnectionView;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
@@ -9,6 +11,35 @@ import org.springframework.stereotype.Component;
 
 @Component
 public final class PersonalApiMapper {
+    public PersonalApiDtos.ModelConnection modelConnection(LocalModelConnectionView value) {
+        return new PersonalApiDtos.ModelConnection(
+                value.connectionId().value(),
+                value.providerId(),
+                value.method().name(),
+                value.status().name(),
+                value.accountLabel(),
+                value.expiresAtEpochMillis().isPresent()
+                        ? value.expiresAtEpochMillis().getAsLong()
+                        : null,
+                value.reasonCode().orElse(null),
+                value.method() == LocalModelConnectionView.Method.API_KEY,
+                value.method() == LocalModelConnectionView.Method.EXTERNAL_LOGIN,
+                true,
+                value.unofficialLocalCompatibility());
+    }
+
+    public PersonalApiDtos.ExternalLoginAttempt externalLoginAttempt(ExternalLoginAttemptSnapshot value) {
+        return new PersonalApiDtos.ExternalLoginAttempt(
+                value.attemptId().value(),
+                value.methodId().value(),
+                value.mode().name(),
+                value.state().name(),
+                value.verificationUri().map(Object::toString).orElse(null),
+                value.userCode().orElse(null),
+                value.expiresAtEpochMillis(),
+                value.reasonCode().orElse(null));
+    }
+
     public PersonalApiDtos.MissionSnapshot mission(MissionSnapshot value) {
         var constraints = new PersonalApiDtos.MissionConstraints(
                 value.constraints().maxTasks(),

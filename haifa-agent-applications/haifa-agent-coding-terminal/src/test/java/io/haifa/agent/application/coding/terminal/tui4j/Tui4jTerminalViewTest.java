@@ -129,6 +129,34 @@ class Tui4jTerminalViewTest {
     }
 
     @Test
+    void keepsAVisibleSelectionMarkerWhenTerminalColorIsUnavailable() {
+        TerminalUiState initial = TerminalUiState.initial(60, 24);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                initial.transcript(),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                Optional.of(new TerminalSelector(
+                        "interaction:approval-1", "Approval · Approval required", List.of("approve", "reject"), 0)),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String rendered = view.render(state, transcript(state), editor(60), true, false);
+
+        assertThat(rendered).contains("│ > approve", "│   reject");
+    }
+
+    @Test
     void usesAStableDiagnosticBelowThePrototypeMinimumSize() {
         TerminalUiState state = TerminalUiState.initial(40, 10);
 

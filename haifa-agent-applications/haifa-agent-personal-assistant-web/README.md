@@ -12,6 +12,12 @@ reviewed defaults instead of carrying incompatible parameters across protocols.
 Bindings reported as unavailable remain visible for diagnostics but are disabled. The picker displays the Server's
 safe unavailable reason and never infers availability from Provider names or model IDs.
 
+The low-fidelity Model Connections panel reads credential readiness from the separate `model-connections` API. It can
+start browser-based ChatGPT/Codex login, accept a masked API Key, show safe account/status fields, cancel an active
+attempt, and log out. The Key exists only in component input state and is cleared after submit, cancel, or unmount; it
+is never placed in URL state, local storage, reducer snapshots, or telemetry. A missing connection produces a
+non-blocking startup notice—the model catalog remains independently visible.
+
 The live Run card shows an evidence-based phase summary. It displays observed activity counts
 without presenting them as a percentage; when the Server supplies an authoritative Plan, it shows
 real Todo completion and the current or blocked step. Activity lifecycle events are merged by the

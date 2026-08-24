@@ -12,6 +12,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionExportServ
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryService;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
@@ -32,6 +33,16 @@ import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile
 import io.haifa.agent.application.project.tool.ProjectPermissionRequestOperations;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
+import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
+import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
+import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
+import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
+import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
+import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
+import io.haifa.agent.auth.localmodel.codex.CodexLocalCompatibilityRegistrationFactory;
+import io.haifa.agent.auth.localmodel.codex.CodexTokenClient;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.SystemTimeProvider;
@@ -53,7 +64,6 @@ import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
-import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
@@ -115,6 +125,8 @@ import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
+import java.awt.Desktop;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -130,6 +142,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import javax.crypto.spec.SecretKeySpec;
@@ -157,6 +170,7 @@ final class LocalCodingAgent implements AutoCloseable {
     private final CodingSessionExportService exporter;
     private final CodingSessionVerificationConfiguration defaultVerification;
     private final CodingRunOutcomeProjectionService outcomes;
+    private final CodingAuthenticationClient authentication;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Set<AgentRunId> startedRuns = ConcurrentHashMap.newKeySet();
 
@@ -179,7 +193,8 @@ final class LocalCodingAgent implements AutoCloseable {
             Optional<CliExecutionPlatform> executionPlatform,
             CodingSessionExportService exporter,
             CodingSessionVerificationConfiguration defaultVerification,
-            CodingRunOutcomeProjectionService outcomes) {
+            CodingRunOutcomeProjectionService outcomes,
+            CodingAuthenticationClient authentication) {
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
@@ -199,6 +214,7 @@ final class LocalCodingAgent implements AutoCloseable {
         this.exporter = exporter;
         this.defaultVerification = Objects.requireNonNull(defaultVerification, "defaultVerification must not be null");
         this.outcomes = Objects.requireNonNull(outcomes, "outcomes must not be null");
+        this.authentication = Objects.requireNonNull(authentication, "authentication must not be null");
     }
 
     static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration, PrintStream output) {
@@ -227,7 +243,42 @@ final class LocalCodingAgent implements AutoCloseable {
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         var json = new ObjectMapper();
-        var credentials = new EnvironmentCredentialResolver(resolvedEnvironment::get);
+        Clock authClock = Clock.systemUTC();
+        var authStore = FileLocalModelAuthStore.defaultStore(json);
+        var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(resolvedEnvironment);
+        var codexMethod = codexRegistration.map(registration -> new CodexExternalLoginMethod(
+                registration,
+                new CodexTokenClient(http, json, authClock, Duration.ofSeconds(30), registration),
+                http,
+                json,
+                SecureRandom::new,
+                Duration.ofMinutes(5),
+                CodexDeviceLoginOperation.Sleeper.system()));
+        var authRegistry = new ExternalLoginRegistry(codexMethod.stream().toList());
+        var credentials = new LocalModelCredentialResolver(
+                resolvedEnvironment::get, authStore, authRegistry, authClock, Duration.ofMinutes(5));
+        var authIdentifiers = new UuidV7IdentifierGenerator();
+        var authCoordinator = codexMethod.map(ignored -> new ExternalLoginCoordinator(
+                authRegistry,
+                authStore,
+                () -> new ExternalLoginAttemptId(authIdentifiers.nextValue()),
+                authClock,
+                Executors.newFixedThreadPool(2, runnable -> {
+                    Thread thread = new Thread(runnable, "haifa-local-model-auth");
+                    thread.setDaemon(true);
+                    return thread;
+                }),
+                LocalCodingAgent::openBrowser,
+                8));
+        var authenticationService =
+                new LocalModelAuthenticationService(authStore, authCoordinator, credentials, resolvedEnvironment::get);
+        var authentication = new CliCodingAuthenticationClient(
+                authenticationService,
+                configuration.model().credentialRef(),
+                configuration.model().providerId(),
+                configuration.availableModels().stream()
+                        .map(CliConfiguration.Model::credentialRef)
+                        .toList());
         var chat = new OpenAiCompatibleChatModel(
                 "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var responses = new OpenAiResponsesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
@@ -242,7 +293,8 @@ final class LocalCodingAgent implements AutoCloseable {
                         new ModelAdapterKey(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER, "1.0.0"), anthropic),
                 traceObserver,
                 resolveContinuationProtector(configuration, resolvedEnvironment),
-                resolvedEnvironment);
+                resolvedEnvironment,
+                authentication);
     }
 
     static boolean allowInsecureLoopback(CliConfiguration configuration, String optIn) {
@@ -306,7 +358,8 @@ final class LocalCodingAgent implements AutoCloseable {
                 Map.of(new ModelAdapterKey(selected.adapterType(), selected.adapterVersion()), model),
                 traceObserver,
                 continuationProtector,
-                System.getenv());
+                System.getenv(),
+                CodingAuthenticationClient.unavailable());
     }
 
     private static LocalCodingAgent create(
@@ -316,7 +369,8 @@ final class LocalCodingAgent implements AutoCloseable {
             Map<ModelAdapterKey, AgentChatModel> modelAdapters,
             Consumer<RuntimeTraceEvent> traceObserver,
             ModelContinuationProtector continuationProtector,
-            Map<String, String> environment) {
+            Map<String, String> environment,
+            CodingAuthenticationClient authentication) {
         Map<String, String> resolvedEnvironment =
                 Map.copyOf(Objects.requireNonNull(environment, "environment must not be null"));
         LocalWorkspaceIdentity workspaceIdentity = LocalWorkspaceIdentity.resolve(workspaceRoot);
@@ -701,10 +755,18 @@ final class LocalCodingAgent implements AutoCloseable {
                             persistence.ports().state(),
                             webPlatform.credentialBroker().redactor()),
                     CodingSessionVerificationConfiguration.freeze(verificationProfile),
-                    outcomeProjection);
+                    outcomeProjection,
+                    authentication);
             runtime.addListener(snapshot -> agent.startedRuns.add(snapshot.runId()));
             return agent;
         } catch (RuntimeException | Error exception) {
+            try {
+                if (authentication instanceof AutoCloseable closeable) closeable.close();
+            } catch (RuntimeException closeFailure) {
+                exception.addSuppressed(closeFailure);
+            } catch (Exception closeFailure) {
+                exception.addSuppressed(new IllegalStateException("authentication close failed", closeFailure));
+            }
             executionResources.forEach(resource -> {
                 try {
                     resource.close();
@@ -798,6 +860,10 @@ final class LocalCodingAgent implements AutoCloseable {
 
     CodingRunOutcomeProjectionService outcomes() {
         return outcomes;
+    }
+
+    CodingAuthenticationClient authentication() {
+        return authentication;
     }
 
     CodingSessionHistoryService sessionHistory() {
@@ -933,10 +999,30 @@ final class LocalCodingAgent implements AutoCloseable {
         return safe.toString();
     }
 
+    private static boolean openBrowser(URI uri) {
+        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) return false;
+        try {
+            Desktop.getDesktop().browse(uri);
+            return true;
+        } catch (IOException | SecurityException exception) {
+            return false;
+        }
+    }
+
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
         RuntimeException failure = awaitTerminalAttempts();
+        try {
+            if (authentication instanceof AutoCloseable closeable) closeable.close();
+        } catch (RuntimeException exception) {
+            if (failure == null) failure = exception;
+            else failure.addSuppressed(exception);
+        } catch (Exception exception) {
+            RuntimeException closeFailure = new IllegalStateException("authentication close failed", exception);
+            if (failure == null) failure = closeFailure;
+            else failure.addSuppressed(closeFailure);
+        }
         try {
             mcpPlatform.close();
         } catch (RuntimeException exception) {
@@ -1029,6 +1115,10 @@ final class LocalCodingAgent implements AutoCloseable {
         if (OpenAiResponsesDialects.ALIYUN_BAILIAN.equals(model.dialect())
                 && model.reasoningMode() == ModelReasoningMode.ENABLED) {
             invocationOptions.put("reasoning_effort", "high");
+        }
+        if (OpenAiResponsesDialects.OPENAI_CODEX.equals(model.dialect())) {
+            providerOptions.put("codex_originator", model.originator());
+            providerOptions.put("codex_user_agent", model.userAgent());
         }
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),

@@ -10,6 +10,9 @@ class TerminalCompletionProviderTest {
     void listsFrequentWorkflowCommandsBeforeSessionMaintenanceCommands() {
         assertThat(TerminalCompletionProvider.COMMANDS)
                 .containsExactly(
+                        "/login",
+                        "/logout",
+                        "/account",
                         "/model",
                         "/new",
                         "/resume",

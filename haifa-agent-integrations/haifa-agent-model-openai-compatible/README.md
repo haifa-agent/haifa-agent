@@ -96,6 +96,11 @@ Parser 对累计响应、单事件、事件数、内容和 Tool 参数设限；�
 并以 Responses 终态收敛而不等待 `[DONE]`。本地 `chatgpt2api` 文本与 SSE 使用 `standard`，但普通
 function tool 当前不产生 `function_call`，所以对应模型能力只声明 `TEXT_CHAT`。
 
+`openai-codex-responses` 是 Coding Agent 的独立受控 Dialect。它复用 Responses 的 item/SSE 解析器，
+但独立约束精确的 Codex endpoint、ChatGPT account Bearer/header 组合、originator/user-agent 和安全错误映射；
+它不把 `https://chatgpt.com/backend-api/codex` 当作任意 OpenAI-compatible base URL。401 不会隐式刷新后重放，
+而是要求重新认证；Codex 429 只解析允许的 plan/reset 字段和稳定错误码，原始响应不会进入异常或日志。
+
 `aliyun-bailian-openai-responses` 只允许已经过 Contract 与真实调用验证的 Qwen Max/Plus 精确型号，
 要求 workspace-scoped `/compatible-mode/v1` Endpoint，并映射 `reasoning.effort`。兼容 SSE 允许空字符串
 delta，但仍要求 delta 字段为字符串；空 delta 不产生公共流事件。
@@ -304,6 +309,25 @@ HAIFA_DEEPSEEK_ANTHROPIC_LIVE_TEST=true
 DEEPSEEK_API_KEY=<secret>
 HAIFA_DEEPSEEK_ANTHROPIC_MODEL_ID=deepseek-v4-flash
 ```
+
+ChatGPT Codex 订阅凭据冒烟由 `OpenAiCodexLiveIT` 覆盖。它默认读取当前用户的
+`~/.haifa-agent/auth.json`（可用 `HAIFA_CODEX_AUTH_FILE` 覆盖），只解析
+`model-auth://openai-codex/default`，并要求显式启用后才进行一次真实调用：
+
+```powershell
+$env:HAIFA_CODEX_LIVE_TEST = 'true'
+$env:HAIFA_CODEX_ORIGINATOR = 'pi'
+$env:HAIFA_CODEX_MODEL_ID = 'gpt-5.6-sol' # optional
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L3 '--' `
+  -pl :haifa-agent-model-openai-compatible -am `
+  -Pci-integration-only `
+  '-Dit.test=OpenAiCodexLiveIT' `
+  '-Dfailsafe.failIfNoSpecifiedTests=false' verify
+```
+
+若还要允许测试在 Token 过期时刷新，需同时提供本地兼容登录的
+`HAIFA_CODEX_LOCAL_COMPAT_TEST`、`HAIFA_CODEX_OAUTH_CLIENT_ID` 和 `HAIFA_CODEX_REDIRECT_URI`。测试不会输出
+Token、账户 ID、完整请求或供应商原始响应。
 
 百炼 Live IT 还要求显式设置（会产生真实费用）：
 

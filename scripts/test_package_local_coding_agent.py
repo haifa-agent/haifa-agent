@@ -1,6 +1,7 @@
 import importlib.util
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -12,6 +13,12 @@ SPEC.loader.exec_module(MODULE)
 
 
 class PackageLocalCodingAgentTest(unittest.TestCase):
+    def test_build_command_uses_the_project_unit_test_skip_property(self) -> None:
+        command = MODULE.cli_build_command(Path("mvnw.cmd"))
+
+        self.assertIn("-DskipUnitTests=true", command)
+        self.assertNotIn("-DskipTests", command)
+
     def test_renders_current_model_api_configuration_for_both_launchers(self) -> None:
         repository = Path(__file__).resolve().parent.parent
         template = (
@@ -47,6 +54,34 @@ class PackageLocalCodingAgentTest(unittest.TestCase):
                 "providerModelId: ${OPENAI_MODEL_ID:test}\n"
                 "dialectVersion: '1.0'\n"
             )
+
+    def test_shaded_jar_validation_requires_tui4j_cleanup_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            jar_file = Path(temporary) / "haifa-agent.jar"
+            with zipfile.ZipFile(jar_file, "w") as archive:
+                archive.writestr(
+                    "META-INF/MANIFEST.MF",
+                    "Manifest-Version: 1.0\nMain-Class: io.haifa.agent.cli.HaifaCliMain\n",
+                )
+                for entry in MODULE.REQUIRED_SHADED_JAR_ENTRIES:
+                    archive.writestr(entry, b"class")
+
+            MODULE.validate_shaded_jar(jar_file)
+            with zipfile.ZipFile(jar_file, "w") as archive:
+                archive.writestr(
+                    "META-INF/MANIFEST.MF",
+                    "Manifest-Version: 1.0\nMain-Class: io.haifa.agent.cli.HaifaCliMain\n",
+                )
+                archive.writestr(
+                    "io/haifa/agent/cli/HaifaCliMain.class", b"class"
+                )
+                archive.writestr(
+                    "com/williamcallahan/tui4j/compat/bubbletea/ProgramCore.class",
+                    b"class",
+                )
+
+            with self.assertRaisesRegex(RuntimeError, "ProgramCleanup.class"):
+                MODULE.validate_shaded_jar(jar_file)
 
 
 if __name__ == "__main__":

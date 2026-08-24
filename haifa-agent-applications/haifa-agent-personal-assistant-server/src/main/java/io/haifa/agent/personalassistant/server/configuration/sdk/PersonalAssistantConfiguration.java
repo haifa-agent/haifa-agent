@@ -1,6 +1,16 @@
 package io.haifa.agent.personalassistant.server.configuration.sdk;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
+import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
+import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
+import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
+import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
+import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
+import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
+import io.haifa.agent.auth.localmodel.codex.CodexLocalCompatibilityRegistrationFactory;
+import io.haifa.agent.auth.localmodel.codex.CodexTokenClient;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -35,7 +45,10 @@ import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.store.sqlite.SqliteSdkProductContributions;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
+import java.awt.Desktop;
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
@@ -43,8 +56,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Executors;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -63,12 +78,47 @@ public class PersonalAssistantConfiguration {
     }
 
     @Bean(destroyMethod = "close")
+    LocalModelAuthenticationService personalModelAuthenticationService(ObjectMapper mapper, Clock personalClock) {
+        Map<String, String> environment = System.getenv();
+        var store = FileLocalModelAuthStore.defaultStore(mapper);
+        var registration = CodexLocalCompatibilityRegistrationFactory.create(environment);
+        HttpClient http =
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        var method = registration.map(value -> new CodexExternalLoginMethod(
+                value,
+                new CodexTokenClient(http, mapper, personalClock, Duration.ofSeconds(30), value),
+                http,
+                mapper,
+                SecureRandom::new,
+                Duration.ofMinutes(5),
+                CodexDeviceLoginOperation.Sleeper.system()));
+        var registry = new ExternalLoginRegistry(method.stream().toList());
+        var resolver = new LocalModelCredentialResolver(
+                environment::get, store, registry, personalClock, Duration.ofMinutes(5));
+        var identifiers = new UuidV7IdentifierGenerator();
+        var coordinator = method.map(ignored -> new ExternalLoginCoordinator(
+                registry,
+                store,
+                () -> new ExternalLoginAttemptId(identifiers.nextValue()),
+                personalClock,
+                Executors.newFixedThreadPool(2, runnable -> {
+                    Thread thread = new Thread(runnable, "haifa-personal-model-auth");
+                    thread.setDaemon(true);
+                    return thread;
+                }),
+                PersonalAssistantConfiguration::openBrowser,
+                8));
+        return new LocalModelAuthenticationService(store, coordinator, resolver, environment::get);
+    }
+
+    @Bean(destroyMethod = "close")
     PersonalAssistantApplication personalAssistantApplication(
             PersonalAssistantProperties properties,
             ObjectMapper mapper,
             Clock personalClock,
             PersonalMcpRuntime mcpRuntime,
-            PersonalImageStore imageStore) {
+            PersonalImageStore imageStore,
+            LocalModelAuthenticationService modelAuthentication) {
         Path dataDirectory = prepare(properties.dataDirectory());
         byte[] key = decodeKey(properties.continuationKeyBase64());
         ModelContinuationProtector protector =
@@ -114,7 +164,8 @@ public class PersonalAssistantConfiguration {
                     properties.defaultModelId(),
                     properties.allowInsecureLoopbackModel(),
                     mapper,
-                    execution.shell());
+                    execution.shell(),
+                    modelAuthentication.credentialResolver());
             var modelPreferences = new SqlitePersonalModelPreferenceStore(
                     dataDirectory.resolve("personal-assistant.sqlite"),
                     properties.caller().tenant(),
@@ -266,6 +317,16 @@ public class PersonalAssistantConfiguration {
                 resolveCredential(provider),
                 Duration.ofMillis(provider.timeoutMillis()),
                 provider.maximumResponseBytes());
+    }
+
+    private static boolean openBrowser(URI uri) {
+        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) return false;
+        try {
+            Desktop.getDesktop().browse(uri);
+            return true;
+        } catch (IOException | SecurityException exception) {
+            return false;
+        }
     }
 
     private static String resolveCredential(PersonalAssistantProperties.WebProvider provider) {

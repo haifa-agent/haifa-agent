@@ -2,6 +2,7 @@ package io.haifa.agent.application.coding.terminal.state;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
@@ -17,6 +18,8 @@ import java.util.Set;
 public final class TerminalUiReducer {
     private static final int MAX_TRANSCRIPT_TITLE_LENGTH = 256;
     private static final Set<String> TERMINAL_RUN_STATUSES = Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
+    private static final Set<String> AUTHENTICATION_PROGRESS_STATUSES =
+            Set.of("STARTING", "WAITING_USER", "EXCHANGING", "STORING");
 
     public TerminalUiState reduce(TerminalUiState state, TerminalUiAction action) {
         if (action instanceof TerminalUiAction.SessionLoaded loaded) {
@@ -190,6 +193,82 @@ public final class TerminalUiReducer {
                     "EXPORTED",
                     false));
             return copyWithTranscript(state, List.copyOf(items));
+        }
+        if (action instanceof TerminalUiAction.DeviceLoginInstructionsPresented instructions) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            items.add(new TranscriptItem(
+                    "auth-device-code-" + items.size(),
+                    TranscriptItem.Kind.RESOURCE,
+                    "ChatGPT device login",
+                    "Browser URL: " + instructions.verificationUri() + "\nDevice code: " + instructions.userCode(),
+                    "WAITING",
+                    true));
+            return copyWithStatus(copyWithTranscript(state, List.copyOf(items)), "Waiting for ChatGPT authorization");
+        }
+        if (action instanceof TerminalUiAction.BrowserLoginInstructionsPresented instructions) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            items.add(new TranscriptItem(
+                    "auth-browser-instructions-" + items.size(),
+                    TranscriptItem.Kind.RESOURCE,
+                    "ChatGPT browser login",
+                    "A browser sign-in was requested.\nIf it did not open, use this URL: "
+                            + instructions.authorizationUri(),
+                    "WAITING",
+                    true));
+            return copyWithStatus(copyWithTranscript(state, List.copyOf(items)), "Waiting for ChatGPT authorization");
+        }
+        if (action instanceof TerminalUiAction.AuthenticationProgressed progress) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            upsert(
+                    items,
+                    new TranscriptItem(
+                            "auth-chatgpt-progress",
+                            TranscriptItem.Kind.RESOURCE,
+                            "ChatGPT Codex connection",
+                            authenticationProgressBody(progress.phase()),
+                            progress.phase().name(),
+                            true));
+            return copyWithStatus(
+                    copyWithTranscript(state, List.copyOf(items)), authenticationProgressStatus(progress.phase()));
+        }
+        if (action instanceof TerminalUiAction.AuthenticationCompleted completed) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            String compatibility = completed.unofficialLocalCompatibility() ? "\nMode: UNOFFICIAL_LOCAL_COMPAT" : "";
+            upsert(
+                    items,
+                    new TranscriptItem(
+                            "auth-chatgpt-progress",
+                            TranscriptItem.Kind.RESOURCE,
+                            "ChatGPT Codex connection",
+                            "Connected. Credentials were saved to ~/.haifa-agent/auth.json." + compatibility,
+                            "CONNECTED",
+                            false));
+            return copyWithStatus(
+                    copyWithTranscript(state, List.copyOf(items)),
+                    completed.unofficialLocalCompatibility()
+                            ? "Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)"
+                            : "Connected to ChatGPT Codex");
+        }
+        if (action instanceof TerminalUiAction.AuthenticationFailed failure) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            String lastStage = items.stream()
+                    .filter(item -> item.id().equals("auth-chatgpt-progress"))
+                    .filter(item -> AUTHENTICATION_PROGRESS_STATUSES.contains(item.status()))
+                    .findFirst()
+                    .map(TranscriptItem::body)
+                    .orElse("");
+            upsert(
+                    items,
+                    new TranscriptItem(
+                            "auth-chatgpt-progress",
+                            TranscriptItem.Kind.ERROR,
+                            "ChatGPT Codex connection failed",
+                            authenticationFailureBody(failure.code(), lastStage),
+                            "FAILED",
+                            true));
+            return reduce(
+                    copyWithTranscript(state, List.copyOf(items)),
+                    new TerminalUiAction.RecoverableFailure(failure.code()));
         }
         if (action instanceof TerminalUiAction.InteractionPresented presented) {
             var interaction = presented.interaction();
@@ -747,6 +826,44 @@ public final class TerminalUiReducer {
                 "Inspect authoritative local or remote state before deciding whether another command is safe.";
             default -> "";
         };
+    }
+
+    private static String authenticationProgressBody(CodingAuthenticationProgressView.Phase phase) {
+        return switch (phase) {
+            case STARTING -> "Starting the local callback and browser sign-in flow.";
+            case WAITING_USER -> "Waiting for authorization in the browser.";
+            case EXCHANGING -> "Authorization received. Exchanging it for Codex credentials.";
+            case STORING -> "Codex credentials received. Saving them to ~/.haifa-agent/auth.json.";
+        };
+    }
+
+    private static String authenticationProgressStatus(CodingAuthenticationProgressView.Phase phase) {
+        return switch (phase) {
+            case STARTING -> "Starting ChatGPT sign-in";
+            case WAITING_USER -> "Waiting for ChatGPT authorization";
+            case EXCHANGING -> "Exchanging ChatGPT authorization";
+            case STORING -> "Saving ChatGPT credentials";
+        };
+    }
+
+    private static String authenticationFailureBody(String code, String lastStage) {
+        String next =
+                switch (code) {
+                    case "AUTH_REAUTH_REQUIRED" ->
+                        "The token exchange was rejected. Retry /login; if it repeats, verify the OAuth Client ID and redirect registration.";
+                    case "AUTH_LOGIN_SERVICE_UNAVAILABLE" ->
+                        "The token service was unavailable. Check the network and retry /login.";
+                    case "AUTH_TOKEN_RESPONSE_INVALID", "AUTH_TOKEN_ACCOUNT_INVALID" ->
+                        "The token response could not be accepted. Verify the client registration and retry /login.";
+                    case "AUTH_STORE_FAILED" ->
+                        "Token exchange completed, but ~/.haifa-agent/auth.json could not be written. Check its permissions and lock file.";
+                    case "AUTH_CALLBACK_TIMEOUT" ->
+                        "The local callback did not arrive before the login attempt expired. Retry /login.";
+                    default ->
+                        "The login did not complete. Retry /login and inspect the safe application log entry for this attempt.";
+                };
+        String stage = lastStage.isBlank() ? "" : "Last stage: " + lastStage + "\n";
+        return stage + "Reason: " + code + "\nNext: " + next;
     }
 
     private static String toolTitle(RunEventPayloads.ToolLifecycle payload) {

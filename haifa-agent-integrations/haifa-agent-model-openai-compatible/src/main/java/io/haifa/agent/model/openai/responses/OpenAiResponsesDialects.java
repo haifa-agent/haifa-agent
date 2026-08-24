@@ -13,6 +13,9 @@ public final class OpenAiResponsesDialects {
     public static final String STANDARD = ModelApiBindingDefinition.STANDARD_DIALECT;
     public static final String DEEPSEEK = "deepseek-openai-responses";
     public static final String ALIYUN_BAILIAN = "aliyun-bailian-openai-responses";
+    public static final String OPENAI_CODEX = "openai-codex-responses";
+    static final String CODEX_ORIGINATOR_OPTION = "codex_originator";
+    static final String CODEX_USER_AGENT_OPTION = "codex_user_agent";
 
     private OpenAiResponsesDialects() {}
 
@@ -27,6 +30,7 @@ public final class OpenAiResponsesDialects {
                     case STANDARD -> Profile.STANDARD;
                     case DEEPSEEK -> Profile.DEEPSEEK;
                     case ALIYUN_BAILIAN -> Profile.ALIYUN_BAILIAN;
+                    case OPENAI_CODEX -> Profile.OPENAI_CODEX;
                     default ->
                         throw new IllegalArgumentException(
                                 "unsupported OpenAI Responses dialect: " + snapshot.dialect());
@@ -41,6 +45,7 @@ public final class OpenAiResponsesDialects {
                         .contains(snapshot.providerModelId())) {
             throw new IllegalArgumentException("Bailian Responses model profile is not verified");
         }
+        if (profile == Profile.OPENAI_CODEX) validateCodexOptions(snapshot, isLoopback(snapshot.endpoint()));
         return profile;
     }
 
@@ -53,8 +58,7 @@ public final class OpenAiResponsesDialects {
                 || value.getRawFragment() != null) {
             throw new IllegalArgumentException("Responses endpoint must be a clean absolute network URI");
         }
-        boolean loopback =
-                Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1").contains(host.toLowerCase(Locale.ROOT));
+        boolean loopback = isLoopback(value);
         if ("http".equalsIgnoreCase(value.getScheme())) {
             if (!allowInsecureHttp || !loopback) {
                 throw new IllegalArgumentException("insecure Responses endpoint must be explicitly allowed loopback");
@@ -78,6 +82,52 @@ public final class OpenAiResponsesDialects {
                 throw new IllegalArgumentException("Bailian Responses endpoint must be workspace scoped");
             }
         }
+        if (profile == Profile.OPENAI_CODEX) {
+            String path = normalizedPath(value);
+            if (loopback) {
+                if (!"/backend-api/codex".equals(path)) {
+                    throw new IllegalArgumentException("Codex Responses loopback endpoint must use /backend-api/codex");
+                }
+            } else if (!"https".equalsIgnoreCase(value.getScheme())
+                    || !"chatgpt.com".equalsIgnoreCase(host)
+                    || value.getPort() != -1
+                    || !"/backend-api/codex".equals(path)) {
+                throw new IllegalArgumentException(
+                        "Codex Responses endpoint must be https://chatgpt.com/backend-api/codex");
+            }
+        }
+    }
+
+    private static void validateCodexOptions(ResolvedModelSnapshot snapshot, boolean loopback) {
+        String originator = option(snapshot, CODEX_ORIGINATOR_OPTION);
+        String userAgent = option(snapshot, CODEX_USER_AGENT_OPTION);
+        if (!originator.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")) {
+            throw new IllegalArgumentException("Codex originator is invalid");
+        }
+        if (userAgent.length() > 128 || containsHeaderSeparator(userAgent)) {
+            throw new IllegalArgumentException("Codex user agent is invalid");
+        }
+        if (!loopback && !snapshot.credentialRef().value().startsWith("model-auth://openai-codex/")) {
+            throw new IllegalArgumentException("Codex Responses requires a Coding Auth credential reference");
+        }
+    }
+
+    private static String option(ResolvedModelSnapshot snapshot, String name) {
+        Object value = snapshot.providerOptions().get(name);
+        if (!(value instanceof String text) || text.isBlank()) {
+            throw new IllegalArgumentException("Codex provider option is required: " + name);
+        }
+        return text.trim();
+    }
+
+    private static boolean containsHeaderSeparator(String value) {
+        return value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0;
+    }
+
+    private static boolean isLoopback(URI endpoint) {
+        String host = endpoint.getHost();
+        return host != null
+                && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1").contains(host.toLowerCase(Locale.ROOT));
     }
 
     private static String normalizedPath(URI endpoint) {
@@ -90,6 +140,7 @@ public final class OpenAiResponsesDialects {
     enum Profile {
         STANDARD,
         DEEPSEEK,
-        ALIYUN_BAILIAN
+        ALIYUN_BAILIAN,
+        OPENAI_CODEX
     }
 }

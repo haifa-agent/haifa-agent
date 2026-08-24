@@ -91,7 +91,7 @@ record CliConfiguration(
                 "deepseek-v4-flash",
                 URI.create("https://api.deepseek.com"),
                 URI.create("https://api.deepseek.com"),
-                "env://DEEPSEEK_API_KEY",
+                "model-auth://deepseek/default",
                 io.haifa.agent.model.api.ModelApiStyles.OPENAI_RESPONSES,
                 "deepseek-openai-responses",
                 true,
@@ -112,7 +112,7 @@ record CliConfiguration(
                 "deepseek-v4-pro",
                 URI.create("https://api.deepseek.com"),
                 URI.create("https://api.deepseek.com"),
-                "env://DEEPSEEK_API_KEY",
+                "model-auth://deepseek/default",
                 io.haifa.agent.model.api.ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
                 OpenAiCompatibleDialects.DEEPSEEK,
                 true,
@@ -133,7 +133,7 @@ record CliConfiguration(
                 "deepseek-v4-flash",
                 URI.create("https://api.deepseek.com"),
                 URI.create("https://api.deepseek.com/anthropic"),
-                "env://DEEPSEEK_API_KEY",
+                "model-auth://deepseek/default",
                 io.haifa.agent.model.api.ModelApiStyles.ANTHROPIC_MESSAGES,
                 AnthropicMessagesDialects.DEEPSEEK,
                 true,
@@ -320,7 +320,9 @@ record CliConfiguration(
             Set<ModelCapability> capabilities,
             int contextWindow,
             int maxOutputTokens,
-            ModelReasoningMode reasoningMode) {
+            ModelReasoningMode reasoningMode,
+            String originator,
+            String userAgent) {
         Model(
                 String providerId,
                 String providerDisplayName,
@@ -355,7 +357,49 @@ record CliConfiguration(
                     capabilities,
                     contextWindow,
                     maxOutputTokens,
-                    ModelReasoningMode.DISABLED);
+                    ModelReasoningMode.DISABLED,
+                    null,
+                    null);
+        }
+
+        Model(
+                String providerId,
+                String providerDisplayName,
+                String modelId,
+                URI providerEndpoint,
+                URI endpoint,
+                String credentialRef,
+                ApiStyleId style,
+                String dialect,
+                boolean nativeStreaming,
+                String workspaceId,
+                String region,
+                String id,
+                String displayName,
+                Set<ModelCapability> capabilities,
+                int contextWindow,
+                int maxOutputTokens,
+                ModelReasoningMode reasoningMode) {
+            this(
+                    providerId,
+                    providerDisplayName,
+                    modelId,
+                    providerEndpoint,
+                    endpoint,
+                    credentialRef,
+                    style,
+                    dialect,
+                    nativeStreaming,
+                    workspaceId,
+                    region,
+                    id,
+                    displayName,
+                    capabilities,
+                    contextWindow,
+                    maxOutputTokens,
+                    reasoningMode,
+                    null,
+                    null);
         }
 
         Model {
@@ -376,8 +420,8 @@ record CliConfiguration(
             if (contextWindow < 1 || maxOutputTokens < 1 || maxOutputTokens > contextWindow) {
                 throw new IllegalArgumentException("model token limits are invalid");
             }
-            if (!credentialRef.startsWith("env://")) {
-                throw new IllegalArgumentException("model.credentialRef must use env://");
+            if (!credentialRef.startsWith("env://") && !credentialRef.startsWith("model-auth://")) {
+                throw new IllegalArgumentException("model.credentialRef must use env:// or model-auth://");
             }
             providerEndpoint = normalizeEndpoint(
                     Objects.requireNonNull(providerEndpoint, "model.providerEndpoint must not be null"));
@@ -401,6 +445,17 @@ record CliConfiguration(
                 endpoint = normalizeEndpoint(Objects.requireNonNull(endpoint, "model.endpoint must not be null"));
                 workspaceId = optionalText(workspaceId);
                 region = optionalText(region);
+            }
+            originator = optionalText(originator);
+            userAgent = optionalText(userAgent);
+            if (dialect.equals(io.haifa.agent.model.openai.responses.OpenAiResponsesDialects.OPENAI_CODEX)) {
+                if (!style.equals(io.haifa.agent.model.api.ModelApiStyles.OPENAI_RESPONSES)
+                        || !credentialRef.startsWith("model-auth://openai-codex/")
+                        || originator == null
+                        || userAgent == null) {
+                    throw new IllegalArgumentException(
+                            "openai-codex-responses requires Responses, Coding Auth, originator, and userAgent");
+                }
             }
         }
 

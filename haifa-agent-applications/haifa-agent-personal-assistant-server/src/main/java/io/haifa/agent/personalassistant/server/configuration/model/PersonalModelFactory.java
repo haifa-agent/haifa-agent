@@ -8,6 +8,7 @@ import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.CredentialResolver;
 import io.haifa.agent.model.api.ModelAdapterCoordinate;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelApiStyles;
@@ -81,7 +82,24 @@ public final class PersonalModelFactory {
             boolean allowInsecureLoopbackModel,
             ObjectMapper mapper,
             ShellPlatformContribution shell) {
+        return createPlatform(
+                configured,
+                defaultModelId,
+                allowInsecureLoopbackModel,
+                mapper,
+                shell,
+                new EnvironmentCredentialResolver());
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            ShellPlatformContribution shell,
+            CredentialResolver credentials) {
         List<PersonalAssistantProperties.ModelProvider> providers = List.copyOf(configured);
+        java.util.Objects.requireNonNull(credentials, "credentials must not be null");
         if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
         validateEndpoints(providers, allowInsecureLoopbackModel);
         boolean deterministic = providers.stream().anyMatch(value -> "deterministic".equals(value.mode()));
@@ -108,7 +126,7 @@ public final class PersonalModelFactory {
                         java.util.LinkedHashMap::new));
         ResolvedModelSnapshot snapshot = snapshots.get(selected.model().id());
         Map<ModelAdapterCoordinate, AgentChatModel> adapters =
-                adapters(snapshots, selected, deterministic, mapper, shell, allowInsecureLoopbackModel);
+                adapters(snapshots, selected, deterministic, mapper, shell, allowInsecureLoopbackModel, credentials);
         ModelContribution contribution = new ModelContribution(
                 new SdkContributionMetadata(
                         new ProductContributionCoordinate("haifa-personal-model", "1.0.0"),
@@ -432,11 +450,26 @@ public final class PersonalModelFactory {
         if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.value().equals(binding.style())) {
             options.putAll(OpenAiCompatibleDialects.configuredOptions(binding.dialect(), endpoint));
         }
+        if (io.haifa.agent.model.openai.responses.OpenAiResponsesDialects.OPENAI_CODEX.equals(binding.dialect())) {
+            options.put("codex_originator", requiredEnvironment("HAIFA_CODEX_ORIGINATOR"));
+            options.put(
+                    "codex_user_agent",
+                    java.util.Optional.ofNullable(System.getenv("HAIFA_CODEX_USER_AGENT"))
+                            .map(String::trim)
+                            .filter(value -> !value.isEmpty())
+                            .orElse("haifa-agent-local-compat/1"));
+        }
         if (OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())
                 || AnthropicMessagesDialects.DEEPSEEK.equals(binding.dialect())) {
             options.put("thinking", "disabled");
         }
         return Map.copyOf(options);
+    }
+
+    private static String requiredEnvironment(String name) {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " is required");
+        return value.trim();
     }
 
     private static Map<String, Object> invocationOptions(
@@ -488,7 +521,8 @@ public final class PersonalModelFactory {
             boolean deterministic,
             ObjectMapper mapper,
             ShellPlatformContribution shell,
-            boolean allowInsecureLoopbackModel) {
+            boolean allowInsecureLoopbackModel,
+            CredentialResolver credentials) {
         if (deterministic) {
             AgentChatModel model = new LoggingAgentChatModel(
                     new DeterministicAcceptanceModel(selected.model().providerModelId(), shell));
@@ -497,7 +531,6 @@ public final class PersonalModelFactory {
         }
         HttpClient http =
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
-        EnvironmentCredentialResolver credentials = new EnvironmentCredentialResolver();
         Map<ModelAdapterCoordinate, AgentChatModel> result = new LinkedHashMap<>();
         snapshots.values().stream().map(ModelAdapterCoordinate::from).distinct().forEach(coordinate -> {
             AgentChatModel adapter =

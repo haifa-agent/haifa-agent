@@ -75,7 +75,7 @@ python3 scripts/test_analyze_coding_runtime.py
 ## Haifa Coding Agent 发行目录
 
 `package-local-coding-agent.sh`（macOS/Linux）和 `package-local-coding-agent.ps1`（Windows）构建
-`haifa-agent-cli` shaded JAR，并生成包含启动脚本、JAR、无密钥默认配置以及 `data/transcripts`
+`haifa-agent-cli` shaded JAR，并生成包含启动脚本、JAR、无密钥默认配置、`data/transcripts` 与 `logs`
 目录的可搬运目录。发行配置默认启用 `SQLITE_WITH_JSONL`：SQLite 保存可恢复状态，JSONL 仅作审计
 投影，payload protection 默认为适合可信本机目录的 `NONE`，无需 continuation key。默认输出为
 用户目录下的 `.haifa-agent/coding`。公共逻辑位于 `package-local-coding-agent.py`，两个平台入口只负责
@@ -104,8 +104,9 @@ $env:Path = 'D:\tools\haifa-coding-agent;' + $env:Path
 ```
 
 随后在任意已有项目目录执行 `haifa-coding`；启动脚本不会改变当前目录，CLI 会把它作为默认
-Workspace。启动器根据自身位置注入 SQLite/JSONL 的绝对路径，所以可整体移动发行目录；再次打包不会
-删除已有 `data/runtime.db` 或 transcript。详细配置与安全边界见
+Workspace。启动器根据自身位置注入 SQLite、JSONL 与轮转日志的绝对路径，所以可整体移动发行目录；
+再次打包不会删除已有 `data/runtime.db`、transcript 或日志。脚本在部署前后检查 Main-Class、
+`ProgramCore` 和 `ProgramCleanup`，并原子替换 JAR，避免发布缺类或不完整制品。详细配置与安全边界见
 `haifa-agent-applications/haifa-agent-cli/README.md`。
 
 Linux 的确定性发行/文件系统/Git/进程 Happy Path 可用

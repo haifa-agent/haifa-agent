@@ -53,6 +53,33 @@ public final class PersonalApiDtos {
             ModelControls controls,
             ModelPreferences recommendedPreferences) {}
 
+    /** Safe model credential projection. Secret and OAuth registration fields are intentionally absent. */
+    public record ModelConnection(
+            String connectionId,
+            String providerId,
+            String method,
+            String status,
+            String accountLabel,
+            Long expiresAtEpochMillis,
+            String reasonCode,
+            boolean apiKeySupported,
+            boolean externalLoginSupported,
+            boolean logoutSupported,
+            boolean unofficialLocalCompatibility) {}
+
+    /** One-shot mutable request buffer; the authentication service clears {@code apiKey} on every path. */
+    public record SaveModelApiKey(String providerId, char[] apiKey) {}
+
+    public record ExternalLoginAttempt(
+            String attemptId,
+            String methodId,
+            String mode,
+            String state,
+            String verificationUri,
+            String userCode,
+            long expiresAtEpochMillis,
+            String reasonCode) {}
+
     public record ModelControls(
             ResponseModeControl responseMode,
             ReasoningEffortControl reasoningEffort,

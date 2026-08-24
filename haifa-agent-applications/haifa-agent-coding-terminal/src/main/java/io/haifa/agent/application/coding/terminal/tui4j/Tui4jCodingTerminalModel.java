@@ -33,6 +33,7 @@ import java.util.function.LongSupplier;
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
     private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
+    private static final int MAX_SECRET_CHARACTERS = 65_536;
 
     private final CodingTerminalController controller;
     private final TerminalEventPump pump;
@@ -41,6 +42,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private final TerminalShortcutProfile shortcuts;
     private final Tui4jTerminalView view;
     private final List<String> history = new ArrayList<>();
+    private final StringBuilder secretBuffer = new StringBuilder();
     private final LongSupplier monotonicNanos;
 
     private String transcriptContent = "";
@@ -61,6 +63,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private PreparedMessageSubmission pendingSubmission;
     private long deferredEnterSequence;
     private DeferredEnter pendingEnter;
+    private boolean secretPresentation;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
         this(controller, pump, System::nanoTime, null);
@@ -120,6 +123,11 @@ final class Tui4jCodingTerminalModel implements Model {
         } else if (message instanceof WindowSizeMessage resized) {
             pump.offer(new TerminalUiAction.TerminalResized(resized.width(), resized.height()));
             controller.drainEvents();
+            syncComponents();
+        } else if (controller.secureInputRequested() && message instanceof KeyPressMessage key) {
+            command = secretKey(key);
+        } else if (controller.secureInputRequested() && message instanceof PasteMessage paste) {
+            appendSecret(paste.content());
             syncComponents();
         } else if (message instanceof EnterKeyModifierMessage modified
                 && (modified.modifier() == EnterKeyModifier.Shift
@@ -295,6 +303,67 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         return edit(key);
+    }
+
+    private Command secretKey(KeyPressMessage key) {
+        if (key.type() == KeyType.keyCR) {
+            char[] secret = new char[secretBuffer.length()];
+            secretBuffer.getChars(0, secretBuffer.length(), secret, 0);
+            clearSecretBuffer();
+            controller.submitApiKey(secret);
+            syncComponents();
+            return Command.none();
+        }
+        if (key.type() == KeyType.keyESC || key.type() == KeyType.keyETX || key.type() == KeyType.keyEOT) {
+            clearSecretBuffer();
+            controller.cancelSecureInput();
+            syncComponents();
+            return Command.none();
+        }
+        if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL || key.type() == KeyType.KeyDelete) {
+            if (!secretBuffer.isEmpty()) {
+                int previous = secretBuffer.offsetByCodePoints(secretBuffer.length(), -1);
+                for (int index = previous; index < secretBuffer.length(); index++) {
+                    secretBuffer.setCharAt(index, '\0');
+                }
+                secretBuffer.setLength(previous);
+            }
+            syncComponents();
+            return Command.none();
+        }
+        if (key.type() == KeyType.KeyRunes) {
+            appendSecret(key.runes());
+            syncComponents();
+        }
+        return Command.none();
+    }
+
+    private void appendSecret(CharSequence value) {
+        for (int index = 0; index < value.length() && secretBuffer.length() < MAX_SECRET_CHARACTERS; index++) {
+            appendSecretCharacter(value.charAt(index));
+        }
+    }
+
+    private void appendSecret(char[] value) {
+        for (char character : value) {
+            if (secretBuffer.length() >= MAX_SECRET_CHARACTERS) {
+                break;
+            }
+            appendSecretCharacter(character);
+        }
+    }
+
+    private void appendSecretCharacter(char character) {
+        if (!Character.isISOControl(character) && !Character.isWhitespace(character)) {
+            secretBuffer.append(character);
+        }
+    }
+
+    private void clearSecretBuffer() {
+        for (int index = 0; index < secretBuffer.length(); index++) {
+            secretBuffer.setCharAt(index, '\0');
+        }
+        secretBuffer.setLength(0);
     }
 
     private boolean isUnbracketedPasteContinuation(KeyPressMessage key) {
@@ -503,10 +572,27 @@ final class Tui4jCodingTerminalModel implements Model {
 
     private void syncComponents() {
         TerminalUiState state = controller.state();
-        if (!editor.value().equals(state.editorBuffer())) {
-            synchronizeEditor(state.editorBuffer(), state.editorCursor());
-        } else if (editorCursor != state.editorCursor()) {
-            synchronizeEditor(state.editorBuffer(), state.editorCursor());
+        boolean secureInput = controller.secureInputRequested();
+        if (secureInput) {
+            String mask = "•".repeat(secretBuffer.codePointCount(0, secretBuffer.length()));
+            if (!editor.value().equals(mask) || editorCursor != mask.length()) {
+                synchronizeEditor(mask, mask.length());
+            }
+            editor.setPrompt("API key ┃ ");
+            editor.setPlaceholder("Stored as plaintext in ~/.haifa-agent/auth.json");
+            secretPresentation = true;
+        } else {
+            if (secretPresentation) {
+                clearSecretBuffer();
+                editor.setPrompt("┃ ");
+                editor.setPlaceholder("Type a message, /command, @file, !command, or !!command");
+                secretPresentation = false;
+            }
+            if (!editor.value().equals(state.editorBuffer())) {
+                synchronizeEditor(state.editorBuffer(), state.editorCursor());
+            } else if (editorCursor != state.editorCursor()) {
+                synchronizeEditor(state.editorBuffer(), state.editorCursor());
+            }
         }
         editor.setWidth(state.columns());
         if (state.selector().isPresent()) {

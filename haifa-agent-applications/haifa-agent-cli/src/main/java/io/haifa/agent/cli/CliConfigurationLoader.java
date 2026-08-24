@@ -187,7 +187,9 @@ final class CliConfigurationLoader {
                         enumValue(
                                 ModelReasoningMode.class,
                                 text(model, "reasoningMode", ModelReasoningMode.DISABLED.name()),
-                                "model reasoning mode")));
+                                "model reasoning mode"),
+                        expandedNullable(provider, "originator"),
+                        expandedNullable(provider, "userAgent")));
             }
         }
         return List.copyOf(result);

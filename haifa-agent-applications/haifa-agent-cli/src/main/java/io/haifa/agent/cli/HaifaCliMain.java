@@ -8,6 +8,7 @@ import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.file.Path;
@@ -18,6 +19,8 @@ import java.util.function.Consumer;
 
 /** Unique executable entry for interactive Terminal and compatible one-shot Coding Agent modes. */
 public final class HaifaCliMain {
+    private static final java.util.logging.Logger LOGGER =
+            java.util.logging.Logger.getLogger(HaifaCliMain.class.getName());
     private final CliTerminalRunner terminalRunner;
 
     HaifaCliMain() {
@@ -29,7 +32,19 @@ public final class HaifaCliMain {
     }
 
     public static void main(String[] arguments) {
-        int exitCode = new HaifaCliMain().run(arguments, System.out, System.err);
+        int exitCode;
+        try (CliFileLogging logging = CliFileLogging.open(System.getenv())) {
+            try {
+                exitCode = new HaifaCliMain().run(arguments, System.out, System.err);
+                logging.completed(exitCode);
+            } catch (Error failure) {
+                logging.logUncaught(Thread.currentThread(), failure);
+                throw failure;
+            }
+        } catch (IOException | SecurityException exception) {
+            System.err.println("Unable to initialize Coding Agent logs.");
+            exitCode = 1;
+        }
         if (exitCode != 0) System.exit(exitCode);
     }
 
@@ -46,6 +61,7 @@ public final class HaifaCliMain {
             boolean terminal = parsed.resume().isPresent()
                     || parsed.terminal()
                     || parsed.message().isEmpty();
+            LOGGER.log(java.util.logging.Level.INFO, "CLI_MODE terminal={0}", terminal);
             try (CliTraceOutput trace = terminal
                     ? CliTraceOutput.openForTerminal(parsed.trace(), parsed.traceFile())
                     : CliTraceOutput.open(parsed.trace(), parsed.traceFile(), error)) {
@@ -96,6 +112,15 @@ public final class HaifaCliMain {
                         return 0;
                     }
                     completed.error().ifPresent(value -> {
+                        LOGGER.log(
+                                java.util.logging.Level.WARNING,
+                                "CLI_RUN_FAILED code={0} diagnosticId={1}",
+                                new Object[] {
+                                    value.code().wireCode(),
+                                    value.optionalDiagnosticId()
+                                            .map(Object::toString)
+                                            .orElse("NONE")
+                                });
                         error.println("[" + value.code().wireCode() + "] " + value.message());
                         value.optionalDiagnosticId()
                                 .ifPresent(diagnosticId -> error.println("Diagnostic ID: " + diagnosticId));
@@ -106,10 +131,12 @@ public final class HaifaCliMain {
                 }
             }
         } catch (IllegalArgumentException exception) {
+            logRejected("CLI_ARGUMENT_REJECTED", exception);
             error.println("Invalid command: " + exception.getMessage());
             error.println("Use --help for usage.");
             return 1;
         } catch (IllegalStateException exception) {
+            logRejected("CLI_STATE_REJECTED", exception);
             if (Tui4jCodingTerminal.TUI_UNAVAILABLE.equals(exception.getMessage())) {
                 error.println(Tui4jCodingTerminal.TUI_UNAVAILABLE + ": an interactive terminal is required.");
                 return 1;
@@ -117,9 +144,16 @@ public final class HaifaCliMain {
             error.println("Unable to run haifa-cli: " + exception.getClass().getSimpleName());
             return 1;
         } catch (Exception exception) {
+            logRejected("CLI_OPERATION_FAILED", exception);
             error.println("Unable to run haifa-cli: " + exception.getClass().getSimpleName());
             return 1;
         }
+    }
+
+    private static void logRejected(String code, Exception exception) {
+        LOGGER.log(java.util.logging.Level.WARNING, "{0} type={1}", new Object[] {
+            code, exception.getClass().getName()
+        });
     }
 
     static AtomicBoolean attachStreamingOutput(Consumer<AgentRunOutputListener> registrar, PrintStream output) {

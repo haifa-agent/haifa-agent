@@ -492,7 +492,7 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("status", "FAILED")
                 .containsEntry("semanticOutcome", "EXPECTED_VARIANT")
                 .containsEntry("semanticReasonCode", "DIFFERENCES_FOUND")
-                .containsEntry("semanticInterpreterVersion", "1")
+                .containsEntry("semanticInterpreterVersion", "2")
                 .containsEntry("commandOutcomeCode", "COMMAND_EXIT_EXPECTED_VARIANT")
                 .containsEntry("outputBudgetFamily", "DIFF")
                 .containsEntry("outputBudgetBytesPerChannel", 16_384)
@@ -508,6 +508,33 @@ class ProjectExecutionToolOperationsTest {
         assertThat(noMatches.structuredData())
                 .containsEntry("semanticOutcome", "EMPTY_RESULT")
                 .containsEntry("semanticReasonCode", "NO_MATCHES");
+    }
+
+    @Test
+    void treatsRipgrepNoMatchesAsASuccessfulEmptyToolResult() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                return result(request.id(), ExecutionStatus.FAILED, 1);
+            }
+        };
+
+        var noMatches = operations(broker, 4096, 100)
+                .execute(
+                        invocation(
+                                Map.of(
+                                        "command",
+                                        "rg needle . | Select-Object -First 20",
+                                        "operationFamily",
+                                        "INSPECT"),
+                                () -> false),
+                        access());
+
+        assertThat(noMatches.successful()).isTrue();
+        assertThat(noMatches.structuredData())
+                .containsEntry("semanticOutcome", "EMPTY_RESULT")
+                .containsEntry("semanticReasonCode", "NO_MATCHES")
+                .containsEntry("semanticInterpreterVersion", "2");
     }
 
     @Test

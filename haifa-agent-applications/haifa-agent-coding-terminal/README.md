@@ -2,7 +2,8 @@
 
 Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互以
 `docs/prd/pi-coding-agent-terminal-low-fi-prototype` 评审原型及
-`docs/prompts/19-coding-agent-terminal-ui-ux-refactor-prompt.md` 为准，不自行发明 Sidebar、
+`docs/prompts/19-coding-agent-terminal-ui-ux-refactor-prompt.md` 为准；模型连接流程同时遵守
+`docs/prd/28-coding-agent-model-authentication-and-codex-subscription-login-prd.md`，不自行发明 Sidebar、
 Dashboard、Scenario toolbar 或另一套产品 UI。
 
 ## 自主交付状态
@@ -185,7 +186,8 @@ alternate screen 不提供可靠的终端原生历史回滚。生产配置不启
 Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、surrogate pair、emoji ZWJ
 序列和 combining mark 的左右移动、退格与删除不会拆分可见字符；多行上下移动按终端 cell width
 对齐。Transcript 和固定区域同样按 cell width 截断，并在渲染前移除 ESC、控制字符和 Tab 注入。
-颜色语义覆盖 TrueColor、ANSI256、ANSI16 和 NoColor；无色模式仍保留相同文字、状态和顺序。
+颜色语义覆盖 TrueColor、ANSI256、ANSI16 和 NoColor；Selector 使用高对比背景、粗体和 `>` 共同表达
+选中态，未选项降低视觉权重；无色模式仍保留相同文字、标记、状态和顺序。
 
 - 普通首条消息创建真实 Coding Session/Run；
 - Idle Enter 提交新 Turn，Active Enter 发送 Steer；
@@ -220,9 +222,15 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 - `/command` 与 `/commands` 打开同一命令选择器；`@path` 候选来自受限 Workspace 文件和目录，
   目录以 `/` 结尾，不列出任意路径层级中点号开头的隐藏文件/目录、敏感路径、版本库元数据和常见生成目录；
 - pending Approval 在同一 tui4j Program input owner 中 approve/reject；
-- `/model` 打开安全 Selector，也支持 `/model <internal-id>`；活动 Run 期间拒绝切换，成功后只影响
+- `/model` 打开安全 Selector，也支持 `/model <internal-id>`；无 Session 或执行 `/new` 后的选择会冻结到
+  下一次 Session 创建，创建失败时保留以便重试；已有 Session 的选择在活动 Run 期间拒绝切换，成功后只影响
   下一新 Run；
-- `/settings`、`/trust`、`/login`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
+- `/login`、`/account` 和 `/logout` 通过 Coding 产品的安全认证客户端实现；首次启动且所选模型凭据缺失时
+  打开同一连接选择器。ChatGPT 登录可选 Browser Callback 或 Device Code；设备 URL/设备码作为持久可见的
+  Transcript 指引展示；Browser Callback 尝试自动打开浏览器，同时始终展示可复制授权 URL 并继续等待本机
+  回调，避免系统报告已启动但窗口不可见。API Key 输入使用
+  独立掩码缓冲区，不进入 Reducer、Session、Transcript、History 或 Completion；
+- `/settings`、`/trust`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
   `CAPABILITY_NOT_IMPLEMENTED`，不显示装饰性选择器；
 - `/quit` 退出；活动 Run 下 EOF 显示明确的退出选择。
 

@@ -14,6 +14,18 @@ data cleanup must target only the explicitly identified incompatible Conversatio
 An active Mission does not block this endpoint because the Mission already owns an immutable model binding. An active
 ordinary Conversation Run still blocks the change until that Run reaches a terminal state.
 
+## Local model connections
+
+`GET /api/v1/models` remains the model catalog and does not hide an otherwise valid binding merely because its local
+credential is missing. Credential readiness is exposed separately through `GET /api/v1/model-connections`; the adjacent
+mutation endpoints save a one-shot API Key, start/query/cancel a Codex browser attempt, and delete a Haifa-managed
+connection. All products use `~/.haifa-agent/auth.json` and the shared Local Model Auth Store/Resolver. A Codex binding
+must use `openai-codex-responses`, the approved endpoint, and `model-auth://openai-codex/...`.
+
+ChatGPT subscription login is disabled unless local compatibility testing explicitly supplies
+`HAIFA_CODEX_LOCAL_COMPAT_TEST=true`, `HAIFA_CODEX_OAUTH_CLIENT_ID`, and `HAIFA_CODEX_ORIGINATOR`. No Client ID is built
+into the Server, and default tests never contact OpenAI.
+
 The v1 Run response includes an optional authoritative Plan/Todo projection. Activity responses
 use stable operation IDs plus durable event IDs, parent correlation, event time, and optional
 requested/started/completed lifecycle timestamps. Existing Runs without a plan omit `plan` or return `null`.

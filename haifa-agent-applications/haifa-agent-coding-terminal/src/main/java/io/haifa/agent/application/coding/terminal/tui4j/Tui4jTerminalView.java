@@ -310,9 +310,10 @@ final class Tui4jTerminalView {
                         selector.options().size() - maximumVisibleOptions));
         int end = Math.min(selector.options().size(), start + maximumVisibleOptions);
         for (int index = start; index < end; index++) {
-            String option = "│ " + (index == selector.selected() ? "> " : "  ")
-                    + sanitize(selector.options().get(index));
-            lines.add(index == selector.selected() ? theme.focus(option) : option);
+            boolean selected = index == selector.selected();
+            String option =
+                    (selected ? "> " : "  ") + sanitize(selector.options().get(index));
+            lines.add("│ " + (selected ? theme.selected(option) : theme.unselected(option)));
         }
         if (selector.options().size() > maximumVisibleOptions) {
             lines.add(theme.muted(

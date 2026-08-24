@@ -6,8 +6,16 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 from typing import Optional
+
+
+REQUIRED_SHADED_JAR_ENTRIES = (
+    "io/haifa/agent/cli/HaifaCliMain.class",
+    "com/williamcallahan/tui4j/compat/bubbletea/ProgramCore.class",
+    "com/williamcallahan/tui4j/compat/bubbletea/ProgramCleanup.class",
+)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -41,6 +49,20 @@ def resolve_output_directory(repository_directory: Path, value: Optional[str]) -
     return output_directory
 
 
+def cli_build_command(maven_wrapper: Path) -> list[str]:
+    return [
+        str(maven_wrapper),
+        "--batch-mode",
+        "--no-transfer-progress",
+        "-pl",
+        ":haifa-agent-cli",
+        "-am",
+        "-DskipUnitTests=true",
+        "clean",
+        "package",
+    ]
+
+
 def build_cli(repository_directory: Path) -> Path:
     wrapper_name = "mvnw.cmd" if os.name == "nt" else "mvnw"
     maven_wrapper = repository_directory / wrapper_name
@@ -50,19 +72,7 @@ def build_cli(repository_directory: Path) -> Path:
     print("Building the Haifa Coding Agent shaded JAR...", flush=True)
     build_started_ns = time.time_ns()
     subprocess.run(
-        [
-            str(maven_wrapper),
-            "--batch-mode",
-            "--no-transfer-progress",
-            "-pl",
-            ":haifa-agent-cli",
-            "-am",
-            "-DskipTests",
-            "clean",
-            "package",
-        ],
-        cwd=repository_directory,
-        check=True,
+        cli_build_command(maven_wrapper), cwd=repository_directory, check=True
     )
 
     target_directory = (
@@ -89,7 +99,39 @@ def build_cli(repository_directory: Path) -> Path:
         raise RuntimeError(
             "The CLI build did not produce a fresh shaded JAR; refusing to deploy a stale artifact."
         )
+    validate_shaded_jar(jar_file)
     return jar_file
+
+
+def validate_shaded_jar(jar_file: Path) -> None:
+    try:
+        with zipfile.ZipFile(jar_file) as archive:
+            entries = set(archive.namelist())
+            manifest = archive.read("META-INF/MANIFEST.MF").decode(
+                "utf-8", errors="strict"
+            )
+    except (OSError, KeyError, UnicodeError, zipfile.BadZipFile) as error:
+        raise RuntimeError(f"The shaded CLI JAR is invalid: {jar_file}") from error
+    missing = [entry for entry in REQUIRED_SHADED_JAR_ENTRIES if entry not in entries]
+    if missing:
+        raise RuntimeError(
+            "The shaded CLI JAR is missing required runtime classes: "
+            + ", ".join(missing)
+        )
+    if "Main-Class: io.haifa.agent.cli.HaifaCliMain" not in manifest:
+        raise RuntimeError("The shaded CLI JAR has an invalid Main-Class manifest")
+
+
+def deploy_jar(jar_file: Path, output_directory: Path) -> None:
+    target = output_directory / "haifa-agent.jar"
+    temporary = output_directory / f".haifa-agent-{os.getpid()}.tmp"
+    try:
+        shutil.copy2(jar_file, temporary)
+        validate_shaded_jar(temporary)
+        os.replace(temporary, target)
+        validate_shaded_jar(target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def write_windows_launcher(output_directory: Path) -> None:
@@ -98,8 +140,11 @@ setlocal
 set "HAIFA_DISTRIBUTION_DIR=%~dp0"
 if not exist "%HAIFA_DISTRIBUTION_DIR%data\\transcripts" mkdir "%HAIFA_DISTRIBUTION_DIR%data\\transcripts"
 if errorlevel 1 exit /b %ERRORLEVEL%
+if not exist "%HAIFA_DISTRIBUTION_DIR%logs" mkdir "%HAIFA_DISTRIBUTION_DIR%logs"
+if errorlevel 1 exit /b %ERRORLEVEL%
 if not defined HAIFA_SQLITE_DATABASE_PATH set "HAIFA_SQLITE_DATABASE_PATH=%HAIFA_DISTRIBUTION_DIR%data\\runtime.db"
 if not defined HAIFA_TRANSCRIPT_ROOT set "HAIFA_TRANSCRIPT_ROOT=%HAIFA_DISTRIBUTION_DIR%data\\transcripts"
+if not defined HAIFA_LOG_DIR set "HAIFA_LOG_DIR=%HAIFA_DISTRIBUTION_DIR%logs"
 set "HAIFA_JAVA_EXE=java.exe"
 if defined JAVA_HOME if exist "%JAVA_HOME%\\bin\\java.exe" set "HAIFA_JAVA_EXE=%JAVA_HOME%\\bin\\java.exe"
 "%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" --config "%HAIFA_DISTRIBUTION_DIR%haifa-coding.yaml" %*
@@ -117,10 +162,12 @@ set -eu
 umask 077
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 data_dir="${script_dir}/data"
-mkdir -p "${data_dir}/transcripts"
+log_dir="${script_dir}/logs"
+mkdir -p "${data_dir}/transcripts" "${log_dir}"
 : "${HAIFA_SQLITE_DATABASE_PATH:=${data_dir}/runtime.db}"
 : "${HAIFA_TRANSCRIPT_ROOT:=${data_dir}/transcripts}"
-export HAIFA_SQLITE_DATABASE_PATH HAIFA_TRANSCRIPT_ROOT
+: "${HAIFA_LOG_DIR:=${log_dir}}"
+export HAIFA_SQLITE_DATABASE_PATH HAIFA_TRANSCRIPT_ROOT HAIFA_LOG_DIR
 if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
     java_executable="${JAVA_HOME}/bin/java"
 else
@@ -196,7 +243,8 @@ def assemble_distribution(
     output_directory.mkdir(parents=True, exist_ok=True)
     data_directory = output_directory / "data"
     (data_directory / "transcripts").mkdir(parents=True, exist_ok=True)
-    shutil.copy2(jar_file, output_directory / "haifa-agent.jar")
+    (output_directory / "logs").mkdir(parents=True, exist_ok=True)
+    deploy_jar(jar_file, output_directory)
     render_configuration(
         configuration_file, output_directory / "haifa-coding.yaml", data_directory
     )

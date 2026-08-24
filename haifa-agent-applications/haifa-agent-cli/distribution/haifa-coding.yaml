@@ -4,10 +4,42 @@
 models:
   default: deepseek-responses-flash
   providers:
+    - id: openai-codex
+      displayName: ChatGPT Codex
+      endpoint: https://chatgpt.com/backend-api/codex
+      credentialRef: model-auth://openai-codex/default
+      nativeStreaming: true
+      originator: ${HAIFA_CODEX_ORIGINATOR:haifa}
+      userAgent: ${HAIFA_CODEX_USER_AGENT:haifa-agent/1}
+      apiBindings:
+        - style: openai-responses
+          dialect: openai-codex-responses
+      models:
+        - id: gpt-5.6-sol
+          displayName: GPT-5.6 Sol
+          providerModelId: gpt-5.6-sol
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 272000
+          maxOutputTokens: 128000
+        - id: gpt-5.6-terra
+          displayName: GPT-5.6 Terra
+          providerModelId: gpt-5.6-terra
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 272000
+          maxOutputTokens: 128000
+        - id: gpt-5.6-luna
+          displayName: GPT-5.6 Luna
+          providerModelId: gpt-5.6-luna
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 272000
+          maxOutputTokens: 128000
     - id: deepseek
       displayName: DeepSeek
       endpoint: https://api.deepseek.com
-      credentialRef: env://DEEPSEEK_API_KEY
+      credentialRef: model-auth://deepseek/default
       nativeStreaming: true
       apiBindings:
         - style: openai-chat-completions
