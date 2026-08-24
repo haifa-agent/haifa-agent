@@ -17,6 +17,7 @@ import java.util.function.Supplier;
 
 /** Sole owner of bounded external-login attempt lifecycle and completion. */
 public final class ExternalLoginCoordinator implements AutoCloseable {
+    private static final System.Logger LOGGER = System.getLogger(ExternalLoginCoordinator.class.getName());
     private static final Set<ExternalLoginAttemptState> TERMINAL = Set.of(
             ExternalLoginAttemptState.SUCCEEDED,
             ExternalLoginAttemptState.FAILED,
@@ -160,7 +161,12 @@ public final class ExternalLoginCoordinator implements AutoCloseable {
                 if (!credential.methodId().equals(attempt.methodId)) {
                     throw new IllegalStateException("AUTH_LOGIN_METHOD_MISMATCH");
                 }
-                store.save(credential);
+                attempt.transition(ExternalLoginAttemptState.STORING, Optional.empty());
+                try {
+                    store.save(credential);
+                } catch (RuntimeException exception) {
+                    throw new IllegalStateException("AUTH_STORE_FAILED", exception);
+                }
                 boolean unofficial =
                         registry.require(attempt.methodId).descriptor().unofficial();
                 attempt.completedConnection = credential.safeView(unofficial);
@@ -170,7 +176,16 @@ public final class ExternalLoginCoordinator implements AutoCloseable {
             synchronized (attempt) {
                 if (attempt.snapshot.state() != ExternalLoginAttemptState.CANCELLED
                         && attempt.snapshot.state() != ExternalLoginAttemptState.EXPIRED) {
-                    attempt.transition(ExternalLoginAttemptState.FAILED, Optional.of(reasonCode(exception)));
+                    String reasonCode = reasonCode(exception);
+                    LOGGER.log(
+                            System.Logger.Level.WARNING,
+                            "External login attempt {0} failed at state={1}: method={2}, mode={3}, reason={4}",
+                            attempt.attemptId,
+                            attempt.snapshot.state(),
+                            attempt.methodId,
+                            attempt.mode,
+                            reasonCode);
+                    attempt.transition(ExternalLoginAttemptState.FAILED, Optional.of(reasonCode));
                 }
             }
         } finally {
@@ -300,6 +315,7 @@ public final class ExternalLoginCoordinator implements AutoCloseable {
                 throw new IllegalArgumentException("AUTH_ATTEMPT_TRANSITION_INVALID");
             }
             snapshot = progress;
+            logState(progress.state(), Optional.empty());
         }
 
         private synchronized void transition(ExternalLoginAttemptState next, Optional<String> reason) {
@@ -309,6 +325,7 @@ public final class ExternalLoginCoordinator implements AutoCloseable {
             }
             snapshot = snapshot.withState(next, reason);
             if (TERMINAL.contains(next)) browserAuthorizationUri = null;
+            logState(next, reason);
         }
 
         private synchronized void acceptBrowserAuthorization(URI authorizationUri) {
@@ -351,6 +368,17 @@ public final class ExternalLoginCoordinator implements AutoCloseable {
             ExternalLoginOperation current = operation;
             if (current != null && operationClosed.compareAndSet(false, true)) current.close();
         }
+
+        private void logState(ExternalLoginAttemptState state, Optional<String> reason) {
+            LOGGER.log(
+                    System.Logger.Level.INFO,
+                    "External login attempt {0} state={1}: method={2}, mode={3}, reason={4}",
+                    attemptId,
+                    state,
+                    methodId,
+                    mode,
+                    reason.orElse("NONE"));
+        }
     }
 
     private static boolean validProgressTransition(ExternalLoginAttemptState current, ExternalLoginAttemptState next) {
@@ -369,6 +397,11 @@ public final class ExternalLoginCoordinator implements AutoCloseable {
     private static boolean validCoordinatorTransition(
             ExternalLoginAttemptState current, ExternalLoginAttemptState next) {
         if (TERMINAL.contains(next)) return !TERMINAL.contains(current);
+        if (next == ExternalLoginAttemptState.STORING) {
+            return current == ExternalLoginAttemptState.AUTHORIZING
+                    || current == ExternalLoginAttemptState.WAITING_USER
+                    || current == ExternalLoginAttemptState.EXCHANGING;
+        }
         return current == ExternalLoginAttemptState.CREATED && next == ExternalLoginAttemptState.AUTHORIZING;
     }
 }

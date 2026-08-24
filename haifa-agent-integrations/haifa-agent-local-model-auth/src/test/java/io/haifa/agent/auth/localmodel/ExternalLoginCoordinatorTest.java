@@ -78,6 +78,40 @@ class ExternalLoginCoordinatorTest {
     }
 
     @Test
+    void exposesCredentialPersistenceAndProjectsStoreFailuresWithAStableReason() throws Exception {
+        CountDownLatch storeEntered = new CountDownLatch(1);
+        CountDownLatch releaseStore = new CountDownLatch(1);
+        InMemoryStore store = new InMemoryStore() {
+            @Override
+            public synchronized void save(StoredModelCredential credential) {
+                storeEntered.countDown();
+                try {
+                    releaseStore.await();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("interrupted secret detail", exception);
+                }
+                throw new IllegalStateException("filesystem secret detail");
+            }
+        };
+        FakeMethod method = new FakeMethod("future-login", false);
+        try (ExternalLoginCoordinator coordinator = coordinator(method, store)) {
+            ExternalLoginAttemptSnapshot started =
+                    coordinator.start(method.descriptor().methodId(), ExternalLoginMode.BROWSER);
+            assertThat(storeEntered.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(coordinator.find(started.attemptId()).state()).isEqualTo(ExternalLoginAttemptState.STORING);
+
+            releaseStore.countDown();
+            ExternalLoginAttemptSnapshot failed = awaitTerminal(coordinator, started.attemptId());
+            assertThat(failed.state()).isEqualTo(ExternalLoginAttemptState.FAILED);
+            assertThat(failed.reasonCode()).contains("AUTH_STORE_FAILED");
+            assertThat(failed.toString()).doesNotContain("filesystem secret detail");
+        } finally {
+            releaseStore.countDown();
+        }
+    }
+
+    @Test
     void cancelFailureStillPublishesTerminalStateAndClosesExactlyOnce() throws Exception {
         InMemoryStore store = new InMemoryStore();
         FakeMethod method = new FakeMethod("future-login", true, true);
@@ -263,7 +297,7 @@ class ExternalLoginCoordinatorTest {
         public void revoke(StoredExternalCredential credential) {}
     }
 
-    private static final class InMemoryStore implements LocalModelAuthStore {
+    private static class InMemoryStore implements LocalModelAuthStore {
         private final Map<LocalModelAuthReference, StoredModelCredential> values = new LinkedHashMap<>();
 
         @Override

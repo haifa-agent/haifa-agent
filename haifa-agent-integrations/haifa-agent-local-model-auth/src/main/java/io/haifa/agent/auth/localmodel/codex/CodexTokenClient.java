@@ -19,6 +19,7 @@ import java.util.Objects;
 
 /** Bounded OAuth token exchange/refresh client. Raw responses never enter exceptions. */
 public final class CodexTokenClient {
+    private static final System.Logger LOGGER = System.getLogger(CodexTokenClient.class.getName());
     private static final int MAX_RESPONSE_BYTES = 256 * 1024;
     private static final String AUTH_CLAIM = "https://api.openai.com/auth";
 
@@ -94,13 +95,32 @@ public final class CodexTokenClient {
             if (!contentType.toLowerCase(java.util.Locale.ROOT).contains("application/json")) {
                 throw new CodexTokenException("AUTH_TOKEN_RESPONSE_INVALID", false, 0);
             }
-            return parse(responseBody);
+            TokenSet tokens = parse(responseBody);
+            LOGGER.log(System.Logger.Level.INFO, "Codex OAuth token {0} succeeded", operation);
+            return tokens;
+        } catch (CodexTokenException exception) {
+            logFailure(operation, exception);
+            throw exception;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new CodexTokenException("AUTH_CANCELLED", false, 0, exception);
+            CodexTokenException failure = new CodexTokenException("AUTH_CANCELLED", false, 0, exception);
+            logFailure(operation, failure);
+            throw failure;
         } catch (IOException exception) {
-            throw new CodexTokenException("AUTH_LOGIN_SERVICE_UNAVAILABLE", true, 0, exception);
+            CodexTokenException failure = new CodexTokenException("AUTH_LOGIN_SERVICE_UNAVAILABLE", true, 0, exception);
+            logFailure(operation, failure);
+            throw failure;
         }
+    }
+
+    private static void logFailure(String operation, CodexTokenException failure) {
+        LOGGER.log(
+                System.Logger.Level.WARNING,
+                "Codex OAuth token {0} failed: reason={1}, httpStatus={2}, retryable={3}",
+                operation,
+                failure.getMessage(),
+                failure.status(),
+                failure.retryable());
     }
 
     private TokenSet parse(byte[] body) {

@@ -1,6 +1,7 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingBrowserLoginView;
 import io.haifa.agent.application.project.product.coding.client.CodingDeviceLoginView;
@@ -14,6 +15,7 @@ import io.haifa.agent.model.api.CredentialRef;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -70,16 +72,36 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
 
     @Override
     public CodingAuthenticationView loginCodexBrowser(Consumer<CodingBrowserLoginView> instructions) {
+        return loginCodexBrowser(instructions, progress -> {});
+    }
+
+    @Override
+    public CodingAuthenticationView loginCodexBrowser(
+            Consumer<CodingBrowserLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
         ExternalLoginAttemptSnapshot started =
                 authentication.startExternalLogin(ExternalLoginMethodId.OPENAI_CODEX, ExternalLoginMode.BROWSER);
-        return await(started.attemptId(), Objects.requireNonNull(instructions, "instructions must not be null"), null);
+        return await(
+                started.attemptId(),
+                Objects.requireNonNull(instructions, "instructions must not be null"),
+                null,
+                Objects.requireNonNull(progress, "progress must not be null"));
     }
 
     @Override
     public CodingAuthenticationView loginCodexDevice(Consumer<CodingDeviceLoginView> instructions) {
+        return loginCodexDevice(instructions, progress -> {});
+    }
+
+    @Override
+    public CodingAuthenticationView loginCodexDevice(
+            Consumer<CodingDeviceLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
         ExternalLoginAttemptSnapshot started =
                 authentication.startExternalLogin(ExternalLoginMethodId.OPENAI_CODEX, ExternalLoginMode.DEVICE_CODE);
-        return await(started.attemptId(), null, Objects.requireNonNull(instructions, "instructions must not be null"));
+        return await(
+                started.attemptId(),
+                null,
+                Objects.requireNonNull(instructions, "instructions must not be null"),
+                Objects.requireNonNull(progress, "progress must not be null"));
     }
 
     @Override
@@ -100,10 +122,17 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     private CodingAuthenticationView await(
             ExternalLoginAttemptId attemptId,
             Consumer<CodingBrowserLoginView> browserInstructions,
-            Consumer<CodingDeviceLoginView> deviceInstructions) {
+            Consumer<CodingDeviceLoginView> deviceInstructions,
+            Consumer<CodingAuthenticationProgressView> progress) {
         AtomicBoolean instructionsSent = new AtomicBoolean();
+        ExternalLoginAttemptState lastProgressState = null;
         while (true) {
             ExternalLoginAttemptSnapshot snapshot = authentication.attempt(attemptId);
+            if (lastProgressState != snapshot.state()) {
+                lastProgressState = snapshot.state();
+                progressPhase(snapshot.state())
+                        .ifPresent(phase -> progress.accept(new CodingAuthenticationProgressView(phase)));
+            }
             if (browserInstructions != null
                     && snapshot.mode() == ExternalLoginMode.BROWSER
                     && instructionsSent.compareAndSet(false, true)) {
@@ -142,5 +171,15 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
                 throw new IllegalStateException("AUTH_CANCELLED", exception);
             }
         }
+    }
+
+    static Optional<CodingAuthenticationProgressView.Phase> progressPhase(ExternalLoginAttemptState state) {
+        return switch (state) {
+            case CREATED, AUTHORIZING -> Optional.of(CodingAuthenticationProgressView.Phase.STARTING);
+            case WAITING_USER -> Optional.of(CodingAuthenticationProgressView.Phase.WAITING_USER);
+            case EXCHANGING -> Optional.of(CodingAuthenticationProgressView.Phase.EXCHANGING);
+            case STORING -> Optional.of(CodingAuthenticationProgressView.Phase.STORING);
+            case SUCCEEDED, FAILED, CANCELLED, EXPIRED -> Optional.empty();
+        };
     }
 }

@@ -9,6 +9,9 @@ Persistence 装配仍由最高层应用模块负责。`CodingSessionView.activeR
 核验终态的客户端必须保存 `runId`，并通过 `CodingSessionClient.findRun` 查询作用域内的权威 Snapshot。
 同一产品 API 包中的 `CodingAgentClient`、`CodingAgentClientFactory` 和 `CodingAgentClientMetadata`
 定义标准客户端与公开装配契约，不包含 Provider 分支；具体工厂实现继续位于最高层独立产品装配模块。
+`CodingAuthenticationClient` 还通过 `CodingAuthenticationProgressView` 向 UI 投影不含 Secret 的
+`STARTING / WAITING_USER / EXCHANGING / STORING` 登录阶段；具体 OAuth Attempt、Provider HTTP 和凭据存储
+仍留在最高层装配与共享 Local Model Auth Integration 中。
 
 ## Shared model profile readiness
 

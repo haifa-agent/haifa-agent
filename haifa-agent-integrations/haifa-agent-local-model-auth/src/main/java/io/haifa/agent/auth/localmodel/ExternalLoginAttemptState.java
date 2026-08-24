@@ -5,6 +5,7 @@ public enum ExternalLoginAttemptState {
     AUTHORIZING,
     WAITING_USER,
     EXCHANGING,
+    STORING,
     SUCCEEDED,
     FAILED,
     CANCELLED,

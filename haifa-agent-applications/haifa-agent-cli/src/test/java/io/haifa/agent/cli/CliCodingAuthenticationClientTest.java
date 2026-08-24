@@ -3,6 +3,8 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
+import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
 import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import java.nio.file.Path;
@@ -40,6 +42,20 @@ class CliCodingAuthenticationClientTest {
                 .isFalse();
         assertThat(client(store, "env://DEEPSEEK_API_KEY", "deepseek", Map.of()).connectionRequired())
                 .isTrue();
+    }
+
+    @Test
+    void mapsExternalLoginStagesToSecretFreeProductProgress() {
+        assertThat(CliCodingAuthenticationClient.progressPhase(ExternalLoginAttemptState.AUTHORIZING))
+                .contains(CodingAuthenticationProgressView.Phase.STARTING);
+        assertThat(CliCodingAuthenticationClient.progressPhase(ExternalLoginAttemptState.WAITING_USER))
+                .contains(CodingAuthenticationProgressView.Phase.WAITING_USER);
+        assertThat(CliCodingAuthenticationClient.progressPhase(ExternalLoginAttemptState.EXCHANGING))
+                .contains(CodingAuthenticationProgressView.Phase.EXCHANGING);
+        assertThat(CliCodingAuthenticationClient.progressPhase(ExternalLoginAttemptState.STORING))
+                .contains(CodingAuthenticationProgressView.Phase.STORING);
+        assertThat(CliCodingAuthenticationClient.progressPhase(ExternalLoginAttemptState.FAILED))
+                .isEmpty();
     }
 
     private CliCodingAuthenticationClient client(

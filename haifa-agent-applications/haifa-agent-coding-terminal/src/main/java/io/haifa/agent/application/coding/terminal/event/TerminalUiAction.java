@@ -4,6 +4,7 @@ import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
@@ -33,6 +34,12 @@ public sealed interface TerminalUiAction {
             return "BrowserLoginInstructionsPresented[authorizationUri=[REDACTED_AUTH_URL]]";
         }
     }
+
+    record AuthenticationProgressed(CodingAuthenticationProgressView.Phase phase) implements TerminalUiAction {}
+
+    record AuthenticationCompleted(boolean unofficialLocalCompatibility) implements TerminalUiAction {}
+
+    record AuthenticationFailed(String code) implements TerminalUiAction {}
 
     record RunEventReceived(AgentRunEvent event) implements TerminalUiAction {}
 

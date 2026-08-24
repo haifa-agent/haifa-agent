@@ -1,6 +1,7 @@
 package io.haifa.agent.application.project.product.coding.client;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 /** Product authentication use cases. Implementations live in the highest application assembly. */
@@ -25,8 +26,22 @@ public interface CodingAuthenticationClient {
         return loginCodexBrowser();
     }
 
+    default CodingAuthenticationView loginCodexBrowser(
+            Consumer<CodingBrowserLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
+        Objects.requireNonNull(instructions, "instructions must not be null");
+        Objects.requireNonNull(progress, "progress must not be null");
+        return loginCodexBrowser(instructions);
+    }
+
     default CodingAuthenticationView loginCodexDevice(Consumer<CodingDeviceLoginView> instructions) {
         throw new IllegalStateException("AUTH_DEVICE_CODE_UNAVAILABLE");
+    }
+
+    default CodingAuthenticationView loginCodexDevice(
+            Consumer<CodingDeviceLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
+        Objects.requireNonNull(instructions, "instructions must not be null");
+        Objects.requireNonNull(progress, "progress must not be null");
+        return loginCodexDevice(instructions);
     }
 
     CodingAuthenticationView saveApiKey(String providerId, char[] apiKey);

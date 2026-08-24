@@ -45,6 +45,10 @@ The Terminal displays the device verification URL and user code as persistent tr
 is pending. Browser callback attempts the system browser and always displays a copyable authorization URL in case no
 window appears. That URL is an ephemeral in-memory UI value: query parameters are redacted from diagnostic strings,
 never enter the general attempt snapshot, and are removed from the one-time channel as soon as the CLI consumes them.
+Both login modes keep a persistent transcript card for `STARTING`, `WAITING_USER`, `EXCHANGING`, `STORING`, and the
+final result. A browser callback page only confirms that authorization reached Haifa; it does not claim that token
+exchange or `~/.haifa-agent/auth.json` persistence succeeded. Failures retain a stable reason code and a specific next
+action in the transcript, while safe application logs contain the Attempt ID, stage, HTTP status, and retryable flag.
 
 ```yaml
 models:

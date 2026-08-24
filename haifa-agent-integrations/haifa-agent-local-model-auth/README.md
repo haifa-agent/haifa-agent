@@ -15,6 +15,11 @@ Endpoint、Scope、Header 或实现类。
 任一检查失败时均拒绝使用。Secret 不得进入日志、异常、公共 View、Runtime SQLite、JSONL 或 Workspace。
 Browser 登录在 `WAITING_USER` 阶段通过一次性 `take` 通道向最高层 UI 提供完整授权 URL，供自动打开失败
 或窗口不可见时复制；该值不进入通用 Attempt Snapshot，读取后立即清除，禁止写入日志或任何持久化载荷。
+回调页收到 authorization code 后只提示“授权已收到”，不会提前宣称登录完成；Attempt 随后进入
+`EXCHANGING`，换取并校验 Token 后由 Coordinator 进入 `STORING`，只有 `auth.json` 原子写入成功才进入
+`SUCCEEDED`。共享边界通过 JDK System Logger 记录 Attempt ID、Method、Mode、阶段和稳定 reason code；
+Codex Token 客户端额外记录安全的 HTTP 状态与 retryable 标记，但绝不记录授权 URL、code、Token、账户 ID
+或供应商响应正文。Store 写入失败统一投影为 `AUTH_STORE_FAILED`，避免被折叠成无法定位的通用失败。
 
 验证：
 

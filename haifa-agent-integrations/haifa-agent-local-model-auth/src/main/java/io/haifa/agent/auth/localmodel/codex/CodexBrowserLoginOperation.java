@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** One local browser OAuth operation with PKCE, state, exact loopback callback, and scoped cleanup. */
 public final class CodexBrowserLoginOperation implements ExternalLoginOperation {
+    private static final System.Logger LOGGER = System.getLogger(CodexBrowserLoginOperation.class.getName());
     public static final LocalModelAuthReference CREDENTIAL_REFERENCE =
             LocalModelAuthReference.parse("model-auth://openai-codex/default");
     private static final int MAX_QUERY_LENGTH = 8 * 1024;
@@ -190,7 +191,14 @@ public final class CodexBrowserLoginOperation implements ExternalLoginOperation 
                 respond(exchange, 409, "Authentication callback was already consumed.");
                 return;
             }
-            respond(exchange, 200, "Authentication completed. You can close this window.");
+            LOGGER.log(
+                    System.Logger.Level.INFO,
+                    "Codex browser authorization callback accepted for attempt {0}; token exchange is pending",
+                    context.attemptId());
+            respond(
+                    exchange,
+                    200,
+                    "Authorization received. Return to Haifa Agent while it exchanges and saves your credentials.");
         } catch (RuntimeException exception) {
             respond(exchange, 400, "Authentication callback could not be processed.");
         }

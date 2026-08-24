@@ -61,13 +61,14 @@ class CodexBrowserLoginOperationTest {
         AtomicReference<URI> opened = new AtomicReference<>();
         AtomicReference<URI> presented = new AtomicReference<>();
         AtomicReference<String> progress = new AtomicReference<>();
+        AtomicReference<String> callbackPage = new AtomicReference<>();
         CodexBrowserLoginOperation operation = operation(
                 uri -> {
                     opened.set(uri);
                     Map<String, String> query = query(uri.getRawQuery());
                     assertThat(query).containsEntry("code_challenge_method", "S256");
                     assertThat(query.get("code_challenge")).hasSize(43);
-                    callback("authorization-code", query.get("state"));
+                    callbackPage.set(callback("authorization-code", query.get("state")));
                     return true;
                 },
                 Duration.ofSeconds(5),
@@ -82,6 +83,9 @@ class CodexBrowserLoginOperationTest {
         assertThat(presented.get()).isEqualTo(opened.get());
         assertThat(opened.get().toString()).doesNotContain("authorization-code", "access-token", "refresh-token");
         assertThat(progress.get()).doesNotContain("authorization-code", "access-token", "refresh-token", "stub-client");
+        assertThat(callbackPage.get())
+                .contains("Authorization received", "exchanges and saves your credentials")
+                .doesNotContain("Authentication completed");
         assertThat(operation.snapshot().state()).isEqualTo(ExternalLoginAttemptState.EXCHANGING);
     }
 
@@ -171,14 +175,15 @@ class CodexBrowserLoginOperationTest {
                 true);
     }
 
-    private void callback(String code, String state) {
+    private String callback(String code, String state) {
         try {
             URI uri = URI.create("http://127.0.0.1:" + callbackPort + "/auth/callback?code="
                     + java.net.URLEncoder.encode(code, StandardCharsets.UTF_8)
                     + "&state="
                     + java.net.URLEncoder.encode(state, StandardCharsets.UTF_8));
-            HttpClient.newHttpClient()
-                    .send(HttpRequest.newBuilder(uri).GET().build(), HttpResponse.BodyHandlers.ofString());
+            return HttpClient.newHttpClient()
+                    .send(HttpRequest.newBuilder(uri).GET().build(), HttpResponse.BodyHandlers.ofString())
+                    .body();
         } catch (IOException | InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(exception);
