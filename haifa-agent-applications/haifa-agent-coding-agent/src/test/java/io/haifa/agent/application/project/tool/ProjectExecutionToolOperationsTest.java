@@ -959,6 +959,40 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void rejectsAWorkdirThatWouldStillBeRewrittenAfterPolicy() {
+        AtomicBoolean invoked = new AtomicBoolean();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                invoked.set(true);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+        var operations = new ProjectExecutionToolOperations(
+                broker,
+                () -> "execution-1",
+                () -> NOW,
+                new ExecutionEnvironmentRef(List.of("environment-1")),
+                new SandboxProfileRef("shell", "1"),
+                Duration.ofMinutes(2),
+                Duration.ofMinutes(30),
+                1024,
+                2000,
+                8,
+                ExecutionOutputObserver.noop(),
+                java.util.function.UnaryOperator.identity(),
+                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                value -> value.equals("/app") ? "." : value);
+
+        ToolResult result = operations.execute(
+                invocation(Map.of("command", "git status --short", "workdir", "/app"), () -> false), access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("stableFailureCode", "WORKDIR_NOT_CANONICAL");
+        assertThat(invoked).isFalse();
+    }
+
+    @Test
     void providerAdapterDoesNotAcknowledgeKnownRejectionBeforeDispatch() {
         AtomicInteger dispatches = new AtomicInteger();
         AtomicInteger acknowledgements = new AtomicInteger();

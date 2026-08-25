@@ -602,6 +602,9 @@ final class LocalCodingAgent implements AutoCloseable {
                     runtimeBuilder.registerChatModel(key.adapterType(), key.adapterVersion(), adapter));
             var runtime = runtimeBuilder
                     .credentialBroker(webPlatform.credentialBroker())
+                    .toolRequestCanonicalizer(
+                            new io.haifa.agent.application.project.tool.CodingExecutionToolRequestCanonicalizer(
+                                    CliExecutionPlatform.workspaceWorkdirNormalizer(workspaceRoot)))
                     .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
                     .skillPlatform(skillPlatform.catalog(), skillPlatform.contentLoader())
                     .toolApprovalPrompts((binding, call, reauthentication) -> {

@@ -848,6 +848,7 @@ public final class DecisionExecutor {
     }
 
     private PreparedTool prepareTool(AgentRun run, ToolRequest request) {
+        ToolRequest canonicalRequest = tools.canonicalize(run, request);
         AgentStep step = new AgentStep(
                 new AgentStepId(ids.nextValue()),
                 run.id(),
@@ -857,7 +858,7 @@ public final class DecisionExecutor {
                 state.steps(run.id()).size() + 1,
                 time.now());
         state.appendStep(step);
-        return new PreparedTool(request, tools.prepare(run, step.id(), request), step);
+        return new PreparedTool(canonicalRequest, tools.prepare(run, step.id(), canonicalRequest), step);
     }
 
     private void appendToolCalls(

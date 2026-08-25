@@ -74,6 +74,7 @@ public final class ToolPipeline {
     private final RunTransitionCoordinator transitions;
     private final ToolResultAssetStore resultAssets;
     private final LargeToolResultPolicy largeResultPolicy;
+    private final ToolRequestCanonicalizer requestCanonicalizer;
     private final FrozenToolBindingResolver bindings = new FrozenToolBindingResolver();
     private final java.util.concurrent.ConcurrentHashMap<io.haifa.agent.core.tool.ToolCallId, PolicyDecision>
             approvedDecisions = new java.util.concurrent.ConcurrentHashMap<>();
@@ -97,7 +98,8 @@ public final class ToolPipeline {
             TracePort trace,
             RunTransitionCoordinator transitions,
             ToolResultAssetStore resultAssets,
-            LargeToolResultPolicy largeResultPolicy) {
+            LargeToolResultPolicy largeResultPolicy,
+            ToolRequestCanonicalizer requestCanonicalizer) {
         this.invoker = Objects.requireNonNull(invoker);
         this.schemaValidator = Objects.requireNonNull(schemaValidator);
         this.capabilityAuthorizer = Objects.requireNonNull(capabilityAuthorizer);
@@ -117,36 +119,39 @@ public final class ToolPipeline {
         this.transitions = Objects.requireNonNull(transitions);
         this.resultAssets = Objects.requireNonNull(resultAssets);
         this.largeResultPolicy = Objects.requireNonNull(largeResultPolicy);
+        this.requestCanonicalizer = Objects.requireNonNull(requestCanonicalizer);
     }
 
     public ToolPipelineOutcome execute(AgentRun run, AgentStepId stepId, ToolRequest request, int iteration) {
-        ToolCall call = prepare(run, stepId, request);
-        return execute(run, call, request, iteration);
+        ToolRequest canonicalRequest = canonicalize(run, request);
+        ToolCall call = prepare(run, stepId, canonicalRequest);
+        return execute(run, call, canonicalRequest, iteration);
     }
 
     public ToolCall prepare(AgentRun run, AgentStepId stepId, ToolRequest request) {
+        ToolRequest canonicalRequest = canonicalize(run, request);
         ToolCall existing = state.toolCalls(run.id()).stream()
-                .filter(call -> call.idempotencyKey().equals(request.idempotencyKey()))
+                .filter(call -> call.idempotencyKey().equals(canonicalRequest.idempotencyKey()))
                 .findFirst()
                 .orElse(null);
         if (existing != null) {
-            if (!existing.providerCorrelationId().equals(request.providerCorrelationId())
-                    || !existing.toolName().equals(request.toolName())
-                    || !existing.toolVersion().equals(request.toolVersion())
-                    || !existing.arguments().equals(request.arguments())) {
+            if (!existing.providerCorrelationId().equals(canonicalRequest.providerCorrelationId())
+                    || !existing.toolName().equals(canonicalRequest.toolName())
+                    || !existing.toolVersion().equals(canonicalRequest.toolVersion())
+                    || !existing.arguments().equals(canonicalRequest.arguments())) {
                 throw new IllegalStateException("runtime idempotency key was reused for a different tool request");
             }
             return existing;
         }
         ToolCall call = new ToolCall(
-                request.toolCallId(),
+                canonicalRequest.toolCallId(),
                 run.id(),
                 stepId,
-                request.providerCorrelationId(),
-                request.idempotencyKey(),
-                request.toolName(),
-                request.toolVersion(),
-                request.arguments(),
+                canonicalRequest.providerCorrelationId(),
+                canonicalRequest.idempotencyKey(),
+                canonicalRequest.toolName(),
+                canonicalRequest.toolVersion(),
+                canonicalRequest.arguments(),
                 time.now());
         state.appendToolCall(call);
         appendToolEvent(run, call, "tool.requested", "REQUESTED", "NONE", "");
@@ -155,6 +160,7 @@ public final class ToolPipeline {
 
     public ToolPipelineOutcome execute(AgentRun run, ToolCall call, ToolRequest request, int iteration) {
         if (iteration < 1) throw new IllegalArgumentException("iteration must be positive");
+        request = canonicalize(run, request);
         if (call.result().isPresent())
             return new ToolPipelineOutcome.Completed(call.result().orElseThrow());
         var completed = journal.completed(run.id(), request.idempotencyKey());
@@ -245,7 +251,7 @@ public final class ToolPipeline {
                             run.id(),
                             run.tenant(),
                             run.principal(),
-                            call.arguments(),
+                            request.arguments(),
                             call.idempotencyKey().value(),
                             journal.dispatchEvidence(run.id(), call.idempotencyKey()),
                             journal.uncertainResult(run.id(), call.idempotencyKey()))),
@@ -711,6 +717,7 @@ public final class ToolPipeline {
     }
 
     public void validateApprovalTarget(AgentRun run, ToolCall call, ToolRequest request, ToolApprovalTarget target) {
+        request = canonicalize(run, request);
         FrozenToolBinding binding = binding(run, request);
         if (!call.id().equals(target.toolCallId())
                 || !binding.coordinate().externalForm().equals(target.coordinate())
@@ -1012,6 +1019,7 @@ public final class ToolPipeline {
     }
 
     public boolean mayModifyWorkspace(AgentRun run, ToolRequest request) {
+        request = canonicalize(run, request);
         var sideEffects = binding(run, request).definition().sideEffects();
         return sideEffects.contains(ToolSideEffect.FILE_WRITE)
                 || sideEffects.contains(ToolSideEffect.PROCESS_EXECUTION);
@@ -1021,6 +1029,27 @@ public final class ToolPipeline {
         var configuration = state.configuration(run.configurationSnapshot())
                 .orElseThrow(() -> new IllegalStateException("run configuration snapshot is unavailable"));
         return bindings.resolve(configuration.toolBindings(), request);
+    }
+
+    public ToolRequest canonicalize(AgentRun run, ToolRequest request) {
+        Objects.requireNonNull(run, "run must not be null");
+        Objects.requireNonNull(request, "request must not be null");
+        FrozenToolBinding binding = binding(run, request);
+        ToolRequest canonical = Objects.requireNonNull(
+                requestCanonicalizer.canonicalize(run, binding, request), "tool request canonicalizer returned null");
+        if (!canonical.toolCallId().equals(request.toolCallId())
+                || !canonical.providerCorrelationId().equals(request.providerCorrelationId())
+                || !canonical.idempotencyKey().equals(request.idempotencyKey())
+                || !canonical.toolName().equals(request.toolName())
+                || !canonical.toolVersion().equals(request.toolVersion())
+                || !canonical.arguments().schemaId().equals(request.arguments().schemaId())
+                || !canonical
+                        .arguments()
+                        .schemaVersion()
+                        .equals(request.arguments().schemaVersion())) {
+            throw new IllegalArgumentException("tool request canonicalizer may only change argument values");
+        }
+        return canonical;
     }
 
     private static ToolRequest request(ToolCall call) {

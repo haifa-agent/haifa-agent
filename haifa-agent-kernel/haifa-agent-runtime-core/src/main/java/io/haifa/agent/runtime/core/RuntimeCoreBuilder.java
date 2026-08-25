@@ -130,6 +130,7 @@ import io.haifa.agent.runtime.core.tool.ToolExecutionEnvironment;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPolicy;
 import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
+import io.haifa.agent.runtime.core.tool.ToolRequestCanonicalizer;
 import io.haifa.agent.runtime.core.tool.ToolResultNormalizer;
 import io.haifa.agent.runtime.core.tool.TrustedSkillScriptPublicToolPolicy;
 import io.haifa.agent.runtime.core.trace.FailureDiagnosticSink;
@@ -210,6 +211,7 @@ public final class RuntimeCoreBuilder {
     private FailureDiagnosticSink failureDiagnostics = FailureDiagnosticSink.noop();
     private RunInputPort runInputs;
     private ToolResultNormalizer toolResultNormalizer = new BoundedToolResultNormalizer(4_000, 100);
+    private ToolRequestCanonicalizer toolRequestCanonicalizer = ToolRequestCanonicalizer.identity();
     private OutputContractValidator outputContract =
             (run, decision) -> !decision.outputSchemaId().isBlank()
                     && !decision.outputSchemaVersion().isBlank();
@@ -338,6 +340,11 @@ public final class RuntimeCoreBuilder {
         toolInvoker = Objects.requireNonNull(invoker, "invoker");
         toolSchemaValidator = Objects.requireNonNull(schemaValidator, "schemaValidator");
         toolPlatformConfigured = true;
+        return this;
+    }
+
+    public RuntimeCoreBuilder toolRequestCanonicalizer(ToolRequestCanonicalizer value) {
+        toolRequestCanonicalizer = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
@@ -624,7 +631,8 @@ public final class RuntimeCoreBuilder {
                 trace,
                 transitions,
                 toolResultAssets,
-                LargeToolResultPolicy.defaults());
+                LargeToolResultPolicy.defaults(),
+                toolRequestCanonicalizer);
         List<AgentRuntimeMiddleware> configuredMiddleware = new ArrayList<>(List.of(
                 new RunMetadataMiddleware(),
                 new SafetyInstructionMiddleware(),

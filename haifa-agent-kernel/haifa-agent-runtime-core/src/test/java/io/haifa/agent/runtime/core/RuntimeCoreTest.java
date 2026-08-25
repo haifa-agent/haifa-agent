@@ -206,6 +206,40 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void canonicalToolRequestIsPersistedAndSharedWithTheProvider() {
+        ToolRequest original = toolRequest(
+                "canonical-tool", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of("workdir", "/app")));
+        AtomicReference<ToolArguments> invoked = new AtomicReference<>();
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(original)), finalDecision("done")),
+                builder -> TestToolPlatform.install(builder, "echo", "1.0.0", "echo.input", false, request -> {
+                            invoked.set(request.arguments());
+                            return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
+                        })
+                        .toolRequestCanonicalizer((run, binding, request) -> {
+                            ToolArguments arguments = new ToolArguments(
+                                    request.arguments().schemaId(),
+                                    request.arguments().schemaVersion(),
+                                    Map.of("workdir", "."));
+                            return new ToolRequest(
+                                    request.toolCallId(),
+                                    request.providerCorrelationId(),
+                                    request.idempotencyKey(),
+                                    request.toolName(),
+                                    request.toolVersion(),
+                                    arguments);
+                        }));
+
+        var accepted = fixture.runtime.start(request("canonical-tool-request"));
+        fixture.scheduler.runAll();
+
+        assertThat(invoked.get().values()).containsEntry("workdir", ".");
+        assertThat(fixture.store.toolCalls(accepted.runId()))
+                .singleElement()
+                .satisfies(call -> assertThat(call.arguments().values()).containsEntry("workdir", "."));
+    }
+
+    @Test
     void finalizeOnlyRemovesToolDefinitionsAfterTheFrozenCollectionThreshold() {
         ToolRequest first =
                 toolRequest("finalize-1", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of()));

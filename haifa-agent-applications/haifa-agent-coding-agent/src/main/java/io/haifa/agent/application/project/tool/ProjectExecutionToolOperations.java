@@ -340,8 +340,12 @@ public final class ProjectExecutionToolOperations {
             return withToolCallId(invocation, rejectedAbsoluteDirectoryChange(operationFamily));
         }
         String requestedWorkdir = optionalText(arguments, "workdir", ".");
-        String workdir = Objects.requireNonNull(
+        String canonicalWorkdir = Objects.requireNonNull(
                 workdirNormalizer.apply(requestedWorkdir), "workdirNormalizer must not return null");
+        if (!canonicalWorkdir.equals(requestedWorkdir)) {
+            return withToolCallId(invocation, rejectedWorkdir(operationFamily, "WORKDIR_NOT_CANONICAL"));
+        }
+        String workdir = requestedWorkdir;
         if (isAbsoluteDirectoryPath(workdir)) {
             return withToolCallId(invocation, rejectedWorkdir(operationFamily, "ABSOLUTE_WORKDIR_FORBIDDEN"));
         }
