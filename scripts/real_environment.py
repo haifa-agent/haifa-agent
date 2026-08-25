@@ -33,6 +33,7 @@ EXPECTED_SERVER_START_CLASS = (
 )
 BAILIAN_DEFAULT_MODEL_ID = "qwen3.7-max-2026-05-17"
 CLIPROXY_GEMINI_MODEL_ID = "gemini-cliproxy-flash"
+SILICONFLOW_MODEL_ID = "siliconflow-deepseek-v4-flash"
 CODEX_MODEL_IDS = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
 SUPPORTED_DEFAULT_MODEL_IDS = (
     "deepseek-chat-pro",
@@ -55,6 +56,7 @@ SUPPORTED_DEFAULT_MODEL_IDS = (
     "glm-5.1-chat",
     "glm-5-chat",
     *CODEX_MODEL_IDS,
+    SILICONFLOW_MODEL_ID,
     CLIPROXY_GEMINI_MODEL_ID,
 )
 ALLOWED_MCP_TOOLS = ",".join(
@@ -165,6 +167,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--bigmodel-key-file",
         default=os.getenv("HAIFA_BIGMODEL_KEY_FILE", str(workspace / "ss-bigmodel.txt")),
+    )
+    result.add_argument(
+        "--siliconflow-key-file",
+        default=os.getenv("HAIFA_SILICONFLOW_KEY_FILE", str(workspace / "ss-siliconflow.txt")),
     )
     result.add_argument(
         "--aliyun-iqs-key-file",
@@ -841,6 +847,7 @@ def backend_environment(
     web_search_provider: str = "tavily",
     web_fetch_provider: str = "tavily",
     cliproxy: tuple[str, str] | None = None,
+    siliconflow_key: str | None = None,
 ) -> dict[str, str]:
     environment = {
         "DEEPSEEK_API_KEY": deepseek_key,
@@ -1179,6 +1186,32 @@ def backend_environment(
                 }
             )
         next_provider_index += 1
+    if siliconflow_key is not None:
+        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
+        environment.update(
+            {
+                "SILICONFLOW_API_KEY": siliconflow_key,
+                f"{prefix}_ID": "siliconflow",
+                f"{prefix}_DISPLAYNAME": "硅基流动 SiliconFlow",
+                f"{prefix}_MODE": "remote",
+                f"{prefix}_ALLOWDETERMINISTIC": "false",
+                f"{prefix}_NATIVESTREAMING": "true",
+                f"{prefix}_ENDPOINT": "https://api.siliconflow.cn/v1",
+                f"{prefix}_CREDENTIALREFERENCE": "env://SILICONFLOW_API_KEY",
+                f"{prefix}_APIBINDINGS_0_STYLE": "openai-chat-completions",
+                f"{prefix}_APIBINDINGS_0_DIALECT": "siliconflow-openai-chat",
+                f"{prefix}_MODELS_0_ID": SILICONFLOW_MODEL_ID,
+                f"{prefix}_MODELS_0_DISPLAYNAME": "DeepSeek V4 Flash",
+                f"{prefix}_MODELS_0_MODELDISPLAYNAME": "DeepSeek V4 Flash",
+                f"{prefix}_MODELS_0_PROVIDERMODELID": "deepseek-ai/DeepSeek-V4-Flash",
+                f"{prefix}_MODELS_0_STYLE": "openai-chat-completions",
+                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
+                f"{prefix}_MODELS_0_CONTEXTWINDOW": "1000000",
+                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
+            }
+        )
+        next_provider_index += 1
     if openai is not None:
         openai_base_url, openai_key, openai_model_id = openai
         prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
@@ -1243,6 +1276,7 @@ def resolve_default_model_id(
     kimi_key: str | None = None,
     bigmodel_key: str | None = None,
     cliproxy: tuple[str, str] | None = None,
+    siliconflow_key: str | None = None,
 ) -> str:
     selected = requested or DEFAULT_MODEL_ID
     if selected.startswith("qwen") and bailian is None:
@@ -1253,6 +1287,8 @@ def resolve_default_model_id(
         fail("A GLM default model requires a BigModel API key.")
     if selected == CLIPROXY_GEMINI_MODEL_ID and cliproxy is None:
         fail("The CLIProxyAPI Gemini default model requires HAIFA_CLIPROXYAPI_API_KEY.")
+    if selected == SILICONFLOW_MODEL_ID and siliconflow_key is None:
+        fail("The SiliconFlow default model requires a SiliconFlow API key.")
     return selected
 
 
@@ -1351,8 +1387,18 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     bailian = optional_bailian_configuration(args.bailian_key_file, args.bailian_region)
     kimi_key = optional_secret_file(args.kimi_key_file, "Kimi", "KIMI_API_KEY")
     bigmodel_key = optional_secret_file(args.bigmodel_key_file, "BigModel", "BIGMODEL_API_KEY")
+    siliconflow_key = optional_secret_file(
+        args.siliconflow_key_file, "SiliconFlow", "SILICONFLOW_API_KEY"
+    )
     cliproxy = optional_cliproxy_environment()
-    default_model_id = resolve_default_model_id(args.default_model_id, bailian, kimi_key, bigmodel_key, cliproxy)
+    default_model_id = resolve_default_model_id(
+        args.default_model_id,
+        bailian,
+        kimi_key,
+        bigmodel_key,
+        cliproxy,
+        siliconflow_key,
+    )
     continuation = continuation_key(args.continuation_key_file)
     for directory in (value.runtime, value.data, value.logs):
         directory.mkdir(parents=True, exist_ok=True)
@@ -1426,6 +1472,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
             args.web_search_provider,
             args.web_fetch_provider,
             cliproxy=cliproxy,
+            siliconflow_key=siliconflow_key,
         ),
         args.startup_timeout_seconds,
         value,

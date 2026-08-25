@@ -25,6 +25,7 @@ loopback `20000` 的 Origin，方案中没有反向代理。
   `API_KEY`、`WORKSPACE_ID` 和可选 `REGION`；region 缺省为 `cn-beijing`；
 - 可选 Kimi Key 文件：`D:\workspace\ss-kimi.txt`，文件中只放 Key 本身；
 - 可选智谱 Key 文件：`D:\workspace\ss-bigmodel.txt`，文件中只放 Key 本身；
+- 可选硅基流动 Key 文件：`D:\workspace\ss-siliconflow.txt`，文件中只放 Key 本身；
 - 可选 CLIProxyAPI：本机 `127.0.0.1:8317` 服务和下游 API Key；只通过
   `HAIFA_CLIPROXYAPI_API_KEY` 传给 PA，不读取 Antigravity OAuth、Token 或系统 Keyring；
 - Tavily Key 文件：`D:\workspace\ss-tavily.txt`，文件中只放 Key 本身；默认 Search 与 Fetch 均读取此文件；
@@ -41,10 +42,12 @@ Provider。三项都配置时启用该 Provider；全部缺失或仅配置一部
 
 百炼只有 API Key、Workspace ID 和 region 全部有效时才启用。可分别用
 `DASHSCOPE_API_KEY`、`ALIYUN_BAILIAN_WORKSPACE_ID`、`ALIYUN_BAILIAN_REGION` 覆盖 Key 文件；后端配置
-只保存 `env://DASHSCOPE_API_KEY`。Kimi、智谱可分别用 `KIMI_API_KEY`、`BIGMODEL_API_KEY` 覆盖 Key 文件，
+只保存 `env://DASHSCOPE_API_KEY`。Kimi、智谱、硅基流动可分别用 `KIMI_API_KEY`、`BIGMODEL_API_KEY`、
+`SILICONFLOW_API_KEY` 覆盖 Key 文件，
 配置只保存对应 `env://...` 引用。可选 Provider 只扩展目录，未显式指定 `--default-model-id` 时继续使用
 `deepseek-chat-flash`。启动本身不会调用任何模型 API；百炼 Chat/Responses、Kimi Chat、智谱 Chat/
-Anthropic 的真实调用必须另行明确发起。
+Anthropic 和硅基流动 Chat 的真实调用必须另行明确发起。硅基流动只发布已验证的
+`deepseek-ai/DeepSeek-V4-Flash`，内部模型 ID 是 `siliconflow-deepseek-v4-flash`。
 
 CLIProxyAPI 只有设置 `HAIFA_CLIPROXYAPI_API_KEY` 时才装配，Provider model 可通过
 `HAIFA_CLIPROXYAPI_MODEL_ID` 覆盖，默认 `gemini-3-flash`。它同样只扩展模型目录；需要显式传入
@@ -144,6 +147,7 @@ Set-ExecutionPolicy -Scope Process Bypass
   --bailian-region cn-beijing `
   --kimi-key-file 'D:\secure\kimi.txt' `
   --bigmodel-key-file 'D:\secure\bigmodel.txt' `
+  --siliconflow-key-file 'D:\secure\siliconflow.txt' `
   --aliyun-iqs-key-file 'D:\secure\aliyun-iqs.txt' `
   --continuation-key-file 'D:\secure\personal-continuation.txt' `
   --personal-skill-root 'D:\agents\hermes-agent\optional-skills\finance' `

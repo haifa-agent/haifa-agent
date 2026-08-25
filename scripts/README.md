@@ -57,8 +57,9 @@ python3 scripts/test_analyze_coding_runtime.py
 `cn-beijing`，可用 `--bailian-region` 修改。只有 API Key、Workspace ID 与 region 完整时才启用，
 配置中只写 `env://DASHSCOPE_API_KEY`，启动脚本不会发起模型调用。
 
-`--kimi-key-file` 与 `--bigmodel-key-file` 可选装配 Kimi 和智谱，默认分别读取仓库同级的
-`ss-kimi.txt`、`ss-bigmodel.txt`；也可使用 `KIMI_API_KEY`、`BIGMODEL_API_KEY`。凭据只进入后端子进程
+`--kimi-key-file`、`--bigmodel-key-file` 与 `--siliconflow-key-file` 可选装配 Kimi、智谱和硅基流动，默认分别读取仓库同级的
+`ss-kimi.txt`、`ss-bigmodel.txt`、`ss-siliconflow.txt`；也可使用 `KIMI_API_KEY`、`BIGMODEL_API_KEY`、
+`SILICONFLOW_API_KEY`。硅基流动只发布已验证的 `deepseek-ai/DeepSeek-V4-Flash` Chat Binding。凭据只进入后端子进程
 环境，配置冻结为 `env://...` 引用。可选 Provider 只扩展模型目录，不自动替换 DeepSeek 默认 Binding。
 
 本机 CLIProxyAPI 已在 `127.0.0.1:8317` 运行时，可通过环境变量选择性装配 Gemini dialect；脚本只读取

@@ -406,6 +406,52 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertNotIn("kimi-secret", names)
         self.assertNotIn("bigmodel-secret", names)
 
+    def test_siliconflow_key_adds_only_the_reviewed_deepseek_v4_flash_binding(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            repository=root,
+            server=root / "server",
+            web=root / "web",
+            runtime=root / "runtime",
+            data=root / "runtime/data",
+            logs=root / "runtime/logs",
+            state=root / "runtime/last-start.json",
+            stop_state=root / "runtime/last-stop.json",
+            maven_wrapper=root / "mvnw",
+        )
+
+        environment = real_environment.backend_environment(
+            "deepseek-secret",
+            real_environment.SILICONFLOW_MODEL_ID,
+            None,
+            "aliyun-secret",
+            "continuation-secret",
+            paths,
+            root / "skills",
+            None,
+            siliconflow_key="siliconflow-secret",
+            tavily_key="tavily-secret",
+        )
+
+        prefix = "HAIFA_PERSONAL_MODELPROVIDERS_2"
+        self.assertEqual("siliconflow", environment[f"{prefix}_ID"])
+        self.assertEqual("硅基流动 SiliconFlow", environment[f"{prefix}_DISPLAYNAME"])
+        self.assertEqual("https://api.siliconflow.cn/v1", environment[f"{prefix}_ENDPOINT"])
+        self.assertEqual("env://SILICONFLOW_API_KEY", environment[f"{prefix}_CREDENTIALREFERENCE"])
+        self.assertEqual("siliconflow-openai-chat", environment[f"{prefix}_APIBINDINGS_0_DIALECT"])
+        self.assertEqual(real_environment.SILICONFLOW_MODEL_ID, environment[f"{prefix}_MODELS_0_ID"])
+        self.assertEqual(
+            "deepseek-ai/DeepSeek-V4-Flash",
+            environment[f"{prefix}_MODELS_0_PROVIDERMODELID"],
+        )
+        self.assertEqual("TEXT_CHAT", environment[f"{prefix}_MODELS_0_CAPABILITIES_0"])
+        self.assertEqual("TOOL_CALLING", environment[f"{prefix}_MODELS_0_CAPABILITIES_1"])
+        self.assertFalse(any(name.startswith(f"{prefix}_MODELS_1_") for name in environment))
+        self.assertNotIn("siliconflow-secret", json.dumps(list(environment)))
+
+        with self.assertRaisesRegex(RuntimeError, "requires a SiliconFlow API key"):
+            real_environment.resolve_default_model_id(real_environment.SILICONFLOW_MODEL_ID, None)
+
     def test_optional_openai_provider_requires_complete_environment_group(self) -> None:
         self.assertIsNone(real_environment.optional_openai_environment({}))
         self.assertIsNone(

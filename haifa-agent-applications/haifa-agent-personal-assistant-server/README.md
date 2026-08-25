@@ -156,8 +156,9 @@ Responses reasoning 控件当前保持只读。本地中转当前只声明 `TEXT
 真实环境启动脚本固定发布 `openai-codex` 模型目录，并通过共享的
 `model-auth://openai-codex/default` 读取 `~/.haifa-agent/auth.json`；模型目录与认证就绪状态保持分离。
 浏览器重新登录仍必须显式提供本地兼容测试所需的 OAuth Client 配置。脚本还可选装配
-`aliyun-bailian`、`kimi` 与 `zhipu` Provider。百炼完整配置要求 API Key、
-Workspace ID 和 region；Kimi 与智谱分别使用 `env://KIMI_API_KEY`、`env://BIGMODEL_API_KEY`。Endpoint、
+`aliyun-bailian`、`kimi`、`zhipu` 与 `siliconflow` Provider。百炼完整配置要求 API Key、
+Workspace ID 和 region；Kimi、智谱与硅基流动分别使用 `env://KIMI_API_KEY`、`env://BIGMODEL_API_KEY`、
+`env://SILICONFLOW_API_KEY`。硅基流动只发布已验证的 `deepseek-ai/DeepSeek-V4-Flash` Chat Binding；Endpoint、
 实际 Provider Model ID 与完整 Snapshot 不返回浏览器。检测到可选 Provider 时只扩展目录，默认仍是
 `deepseek-chat-flash`；只有显式传入 `--default-model-id` 才改变默认 Binding。
 
