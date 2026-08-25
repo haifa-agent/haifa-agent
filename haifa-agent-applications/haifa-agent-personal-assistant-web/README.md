@@ -44,15 +44,17 @@ The current Mission Task reuses the safe Run activity projection to show live Mo
 MCP calls plus authoritative token usage without exposing prompts or raw arguments.
 
 The ordinary Conversation composer defaults to chat with an 80-pixel outer control. Its leading `+`
-menu exposes Deep Research, model selection, and, for image-capable models, image upload and HTTPS
-image URL actions. Selecting Deep Research shows a removable one-shot mode chip instead of a
+menu exposes Deep Research, model selection, image upload and HTTPS image URL actions for image-capable models,
+and audio upload for audio-capable models. Selecting Deep Research shows a removable one-shot mode chip instead of a
 permanent mode switch.
 
-## Image composer behavior
+## Native media composer behavior
 
-For models that declare `IMAGE_INPUT`, the composer exposes one `+` menu for file upload,
-HTTPS image URLs, and drag-and-drop. Pending images render as compact thumbnails inside the
-composer with a quick `解释图片` action. The URL entry can be dismissed with its close button,
+For models that declare `IMAGE_UPLOAD_INPUT`, the composer exposes file upload and drag-and-drop. It exposes HTTPS
+image URLs independently for models that declare `IMAGE_URL_INPUT`. Pending images render as compact thumbnails inside the
+composer with a quick `分析媒体` action. Models that declare `AUDIO_INPUT` also accept WAV, MP3,
+AIFF, AAC, OGG Vorbis, and FLAC uploads through the same menu and drag-and-drop surface. Image and
+audio attachments share a maximum of four items per turn. The URL entry can be dismissed with its close button,
 `Escape`, or an outside pointer action. Attachments belong only to the turn being submitted and
 are cleared after a successful request, so a later turn never silently reuses them.
 
@@ -70,10 +72,10 @@ updated, the panel automatically scrolls to the latest event.
 消息输入框输入 `/` 会打开命令菜单；`/model`“选择模型”命令按 Provider、Model 两级展示 Bootstrap
 返回的可用模型，并复用同一模型切换 API；`/deep-research <目标>` 与显式 Deep Research 模式只打开
 复用的 Mission 创建草稿，不提交普通 Conversation Run。普通“调研一下”不会触发长任务路由。
-当选中模型声明 `IMAGE_INPUT` 时，输入区通过单一“添加图片”入口提供 HTTPS 图片 URL、文件选择和拖放；
-待发送附件按顺序显示且最多四张，上传成功后只把 Server 返回的 opaque image id 放入 Conversation 请求。
-已发送图片随用户 Turn 显示在主对话中：外部 URL 显示缩略图，本地上传显示不暴露 opaque id 的附件卡片。
-当前不提供本地图片二进制预览或下载端点。
+当选中模型声明 `IMAGE_UPLOAD_INPUT` 或 `AUDIO_INPUT` 时，输入区通过同一个附件入口提供对应媒体的文件选择和
+拖放；仅声明 `IMAGE_URL_INPUT` 的模型显示 HTTPS URL 入口。图片与音频合计最多四个，上传成功后只把 Server
+返回的 opaque id 放入 Conversation 请求。已发送的上传图片通过 Server 的本机只读端点重新校验后显示缩略图，
+界面不显示 opaque id；音频仍只显示安全文件摘要。
 
 Personal Assistant 的独立 React Web 部署单元。它只消费
 `haifa-agent-personal-assistant-server` 发布的 `/api/v1` HTTP/WebFlux SSE 契约，不参与 Server

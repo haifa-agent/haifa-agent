@@ -1,5 +1,6 @@
 import {
   Archive,
+  AudioLines,
   Bot,
   Brain,
   Check,
@@ -48,6 +49,7 @@ import {
 } from "react";
 import type {
   Activity,
+  AudioInput,
   Conversation,
   ExecutionError,
   Interaction,
@@ -60,12 +62,14 @@ import type {
   ModelPreferences,
   Run,
   Turn,
+  TurnAudio,
   TurnImage,
 } from "./api/generated";
 import {
   HttpPersonalAssistantClient,
   PersonalAssistantApiError,
   missionArtifactUrl,
+  uploadedImageUrl,
   type PersonalAssistantClient,
 } from "./api/client";
 import { appReducer, initialState } from "./state/appReducer";
@@ -144,6 +148,11 @@ type PendingImage = ImageInput & {
   previewUrl?: string;
 };
 
+type PendingAudio = AudioInput & {
+  key: string;
+  label: string;
+};
+
 const opaqueImageFilename = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 
 function imageHost(url: string): string {
@@ -157,6 +166,11 @@ function imageHost(url: string): string {
 function uploadedImageLabel(image: TurnImage, index: number): string {
   const filename = image.originalFilename?.trim();
   return filename && !opaqueImageFilename.test(filename) ? filename : `已上传图片 ${index + 1}`;
+}
+
+function uploadedAudioLabel(audio: TurnAudio, index: number): string {
+  const filename = audio.originalFilename?.trim();
+  return filename && !opaqueImageFilename.test(filename) ? filename : `已上传音频 ${index + 1}`;
 }
 
 function TurnImages({ images }: { images: TurnImage[] }) {
@@ -178,6 +192,21 @@ function TurnImages({ images }: { images: TurnImage[] }) {
             </a>
           );
         }
+        if (image.kind === "upload" && image.imageId) {
+          const source = uploadedImageUrl(image.imageId);
+          return (
+            <a
+              className="turn-image turn-image-preview"
+              href={source}
+              key={`${image.imageId}-${index}`}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`打开第 ${index + 1} 张已上传图片`}
+            >
+              <img src={source} alt={`第 ${index + 1} 张已上传图片`} />
+            </a>
+          );
+        }
         return (
           <div className="turn-image turn-image-file" key={`${image.imageId}-${index}`}>
             <div><ImageIcon size={22} aria-hidden="true" /></div>
@@ -185,6 +214,20 @@ function TurnImages({ images }: { images: TurnImage[] }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function TurnAudios({ audios }: { audios: TurnAudio[] }) {
+  return (
+    <div className="turn-audios" aria-label={`消息包含 ${audios.length} 个音频`}>
+      {audios.map((audio, index) => (
+        <div className="turn-audio-file" key={`${audio.audioId}-${index}`}>
+          <AudioLines size={22} aria-hidden="true" />
+          <span><b>{index + 1}</b>{uploadedAudioLabel(audio, index)}</span>
+          <small>{audio.mediaType}</small>
+        </div>
+      ))}
     </div>
   );
 }
@@ -3055,15 +3098,19 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [modelDraftPreferences, setModelDraftPreferences] = useState<ModelPreferences | null>(null);
   const [composerMode, setComposerMode] = useState<ComposerMode>("CHAT");
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [pendingAudios, setPendingAudios] = useState<PendingAudio[]>([]);
   const [imageUrl, setImageUrl] = useState("");
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
   const [imageToolsOpen, setImageToolsOpen] = useState(false);
   const [imageUrlInputOpen, setImageUrlInputOpen] = useState(false);
   const [draggingImages, setDraggingImages] = useState(false);
   const [activityFocusRequest, setActivityFocusRequest] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageToolsRef = useRef<HTMLDivElement>(null);
+  const slashMenuRef = useRef<HTMLElement>(null);
   const pendingImagePreviews = useRef(new Set<string>());
   const [reasonTarget, setReasonTarget] = useState<
     { kind: "reject"; candidate: MemoryCandidate } | { kind: "invalidate"; memory: Memory } | null
@@ -3204,6 +3251,13 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     setImageUrl("");
   }, []);
 
+  const closeSlashMenu = useCallback((restoreFocus = true) => {
+    setSlashMenu(null);
+    setSlashFromPlus(false);
+    setSlashActiveIndex(0);
+    if (restoreFocus) window.requestAnimationFrame(() => textareaRef.current?.focus());
+  }, []);
+
   const revokePreview = useCallback((previewUrl?: string) => {
     if (!previewUrl || !pendingImagePreviews.current.delete(previewUrl)) return;
     URL.revokeObjectURL(previewUrl);
@@ -3229,6 +3283,24 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [closeImageTools, imageToolsOpen]);
+
+  useEffect(() => {
+    if (!slashMenu) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!slashMenuRef.current?.contains(event.target as Node)) closeSlashMenu(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeSlashMenu();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [closeSlashMenu, slashMenu]);
 
   const loadMemories = useCallback(async (signal?: AbortSignal) => {
     const [candidates, memories] = await Promise.all([client.memoryCandidates(signal), client.memories(signal)]);
@@ -3500,16 +3572,25 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     }
   }, []);
 
-  const submitMessage = (value: string, retryImages?: TurnImage[]) => {
+  const submitMessage = (value: string, retryImages?: TurnImage[], retryAudios?: TurnAudio[]) => {
     const imageCount = retryImages?.length ?? pendingImages.length;
-    const message = value.trim() || (imageCount > 1
-      ? "请分别解释这些图片"
-      : imageCount === 1
-        ? "请解释这张图片"
-        : "");
+    const audioCount = retryAudios?.length ?? pendingAudios.length;
+    const mediaCount = imageCount + audioCount;
+    const message = value.trim() || (imageCount && audioCount
+      ? "请分析这些图片和音频"
+      : imageCount > 1
+        ? "请分别解释这些图片"
+        : imageCount === 1
+          ? "请解释这张图片"
+          : audioCount > 1
+            ? "请分别分析这些音频"
+            : audioCount === 1
+              ? "请转写并分析这段音频"
+              : "");
     if (!message || state.pending || state.selectedConversation?.activeRunId) return;
     const key = crypto.randomUUID();
     const sentImages = pendingImages.map((image) => ({ ...image }));
+    const sentAudios = pendingAudios.map((audio) => ({ ...audio }));
     recommendationRequestGeneration.current += 1;
     setRecommendedQuestions(null);
     void execute("提交消息", async () => {
@@ -3520,15 +3601,20 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           return [];
         })
         : sentImages.map(({ kind, url, imageId }) => ({ kind, url, imageId }));
+      const audios: AudioInput[] = retryAudios
+        ? retryAudios.map((audio) => ({ kind: "upload", audioId: audio.audioId }))
+        : sentAudios.map(({ kind, audioId }) => ({ kind, audioId }));
       const initialModel = state.bootstrap?.models.find((model) => model.id === newModelId);
       const initialModelSelection = initialModel && newModelPreferences
         ? { model: initialModel, preferences: newModelPreferences }
         : undefined;
       const conversation = state.selectedConversation
-        ? images.length
-          ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key }, images)
+        ? audios.length
+          ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key }, images, audios)
+          : images.length
+            ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key }, images)
           : await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key })
-        : images.length
+        : audios.length
           ? await client.createConversation(
               message.slice(0, 32),
               message,
@@ -3536,7 +3622,17 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               newModelId || state.bootstrap?.defaultModelId,
               images,
               initialModelSelection,
+              audios,
             )
+          : images.length
+            ? await client.createConversation(
+                message.slice(0, 32),
+                message,
+                { idempotencyKey: key },
+                newModelId || state.bootstrap?.defaultModelId,
+                images,
+                initialModelSelection,
+              )
           : await client.createConversation(
               message.slice(0, 32),
               message,
@@ -3545,10 +3641,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               [],
               initialModelSelection,
             );
-      if (!retryImages) {
+      if (!retryImages && !retryAudios) {
         dispatch({ type: "setComposer", value: "" });
         sentImages.forEach((image) => revokePreview(image.previewUrl));
         setPendingImages([]);
+        setPendingAudios([]);
         closeImageTools();
       }
       if (state.selectedConversationId !== conversation.id) {
@@ -3590,12 +3687,21 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     ?? newModelPreferences
     ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId))?.recommendedPreferences
     ?? null;
-  const imageCapable = (state.selectedConversation?.model.model
+  const selectedInputCapabilities = (state.selectedConversation?.model.model
     ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId)))
-    ?.capabilities.includes("IMAGE_INPUT") ?? false;
+    ?.capabilities ?? [];
+  const imageUploadCapable = selectedInputCapabilities.includes("IMAGE_UPLOAD_INPUT")
+    || selectedInputCapabilities.includes("IMAGE_INPUT");
+  const imageUrlCapable = selectedInputCapabilities.includes("IMAGE_URL_INPUT")
+    || selectedInputCapabilities.includes("IMAGE_INPUT");
+  const imageCapable = imageUploadCapable || imageUrlCapable;
+  const audioCapable = (state.selectedConversation?.model.model
+    ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId)))
+    ?.capabilities.includes("AUDIO_INPUT") ?? false;
+  const pendingMediaCount = pendingImages.length + pendingAudios.length;
 
   const addImageUrl = () => {
-    if (!imageCapable || pendingImages.length >= 4) return;
+    if (!imageUrlCapable || pendingMediaCount >= 4) return;
     try {
       const parsed = new URL(imageUrl.trim());
       if (parsed.protocol !== "https:") throw new Error("not HTTPS");
@@ -3612,8 +3718,8 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   };
 
   const uploadFiles = async (files: FileList | File[]) => {
-    if (!imageCapable || !client.uploadImage || uploadingImage) return;
-    const selected = Array.from(files).slice(0, Math.max(0, 4 - pendingImages.length));
+    if (!imageUploadCapable || !client.uploadImage || uploadingImage) return;
+    const selected = Array.from(files).slice(0, Math.max(0, 4 - pendingMediaCount));
     if (!selected.length) return;
     const allowed = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
     if (selected.some((file) => !allowed.has(file.type) || file.size < 1 || file.size > 10 * 1024 * 1024)) {
@@ -3646,12 +3752,55 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     }
   };
 
+  const uploadAudioFiles = async (files: FileList | File[]) => {
+    if (!audioCapable || !client.uploadAudio || uploadingAudio) return;
+    const selected = Array.from(files).slice(0, Math.max(0, 4 - pendingMediaCount));
+    if (!selected.length) return;
+    const allowed = new Set([
+      "audio/wav",
+      "audio/mpeg",
+      "audio/mp3",
+      "audio/aiff",
+      "audio/aac",
+      "audio/ogg",
+      "audio/flac",
+    ]);
+    if (selected.some((file) => !allowed.has(file.type) || file.size < 1 || file.size > 10 * 1024 * 1024)) {
+      dispatch({ type: "error", message: "仅支持不超过 10 MiB 的 WAV、MP3、AIFF、AAC、OGG Vorbis 或 FLAC。" });
+      return;
+    }
+    setUploadingAudio(true);
+    const uploaded: PendingAudio[] = [];
+    try {
+      for (const file of selected) {
+        const result = await client.uploadAudio(file, { idempotencyKey: crypto.randomUUID() });
+        uploaded.push({
+          kind: "upload",
+          audioId: result.audioId,
+          key: crypto.randomUUID(),
+          label: file.name,
+        });
+      }
+      setPendingAudios((current) => [...current, ...uploaded].slice(0, 4));
+      closeImageTools();
+    } catch (error) {
+      dispatch({ type: "error", message: safeError(error) || "音频上传失败。" });
+    } finally {
+      setUploadingAudio(false);
+      if (audioInputRef.current) audioInputRef.current.value = "";
+    }
+  };
+
   const removePendingImage = (key: string) => {
     setPendingImages((current) => {
       const removed = current.find((image) => image.key === key);
       revokePreview(removed?.previewUrl);
       return current.filter((image) => image.key !== key);
     });
+  };
+
+  const removePendingAudio = (key: string) => {
+    setPendingAudios((current) => current.filter((audio) => audio.key !== key));
   };
 
   const explainPendingImages = () => {
@@ -3791,7 +3940,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         dispatch({ type: "error", message: "当前 Server 未发布 Mission 能力。" });
         return;
       }
-      if (pendingImages.length > 0) {
+      if (pendingMediaCount > 0) {
         dispatch({ type: "error", message: "Deep Research Mission 暂不支持图片或附件引用。请移除附件后再继续，附件不会被静默丢弃。" });
         return;
       }
@@ -3901,10 +4050,17 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     dispatch({ type: "toggleActivity", open: true });
     setActivityFocusRequest((value) => value + 1);
   }, []);
-  const dropImages = (event: DragEvent<HTMLFormElement>) => {
+  const dropMedia = (event: DragEvent<HTMLFormElement>) => {
     event.preventDefault();
     setDraggingImages(false);
-    if (!composerDisabled) void uploadFiles(event.dataTransfer.files);
+    if (composerDisabled) return;
+    const files = Array.from(event.dataTransfer.files).slice(0, Math.max(0, 4 - pendingMediaCount));
+    const images = files.filter((file) => file.type.startsWith("image/"));
+    const audios = files.filter((file) => file.type.startsWith("audio/"));
+    void (async () => {
+      if (images.length) await uploadFiles(images);
+      if (audios.length) await uploadAudioFiles(audios);
+    })();
   };
 
   return (
@@ -4012,9 +4168,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     ? recommendedQuestions
                     : null;
                   return (
-                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length ? " has-images" : ""}${research || embeddedResearch ? " research-report-message" : ""}${deliveryMission ? " mission-delivery-message" : ""}`} key={turn.id}>
+                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length || turn.audios?.length ? " has-images" : ""}${research || embeddedResearch ? " research-report-message" : ""}${deliveryMission ? " mission-delivery-message" : ""}`} key={turn.id}>
                       <span className="message-role">{assistant ? "Haifa" : "你"}</span>
                       {turn.images?.length > 0 && <TurnImages images={turn.images} />}
+                      {turn.audios?.length > 0 && <TurnAudios audios={turn.audios} />}
                       {deliveryMission
                         ? <MissionDeliveryCard
                             mission={deliveryMission}
@@ -4089,24 +4246,25 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             </div>
           )}
           <form
-            className={`composer${composerMode === "DEEP_RESEARCH" ? " deep-research-mode" : ""}${imageCapable ? " image-capable" : ""}${pendingImages.length ? " has-pending-images" : ""}${draggingImages ? " image-dragging" : ""}`}
+            className={`composer${composerMode === "DEEP_RESEARCH" ? " deep-research-mode" : ""}${imageCapable || audioCapable ? " image-capable" : ""}${pendingMediaCount ? " has-pending-images" : ""}${draggingImages ? " image-dragging" : ""}`}
             onSubmit={submit}
             onDragEnter={(event) => {
               event.preventDefault();
-              if (imageCapable && !composerDisabled) setDraggingImages(true);
+              if ((imageUploadCapable || audioCapable) && !composerDisabled) setDraggingImages(true);
             }}
             onDragOver={(event) => {
               event.preventDefault();
-              if (imageCapable && !composerDisabled) setDraggingImages(true);
+              if ((imageUploadCapable || audioCapable) && !composerDisabled) setDraggingImages(true);
             }}
             onDragLeave={(event) => {
               if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingImages(false);
             }}
-            onDrop={dropImages}
+            onDrop={dropMedia}
           >
             {composerMode === "DEEP_RESEARCH" && <div className="composer-mode-chip"><Sparkles size={13} aria-hidden="true" /><span>Deep Research</span><button type="button" aria-label="退出 Deep Research 模式" title="退出 Deep Research 模式" onClick={() => setComposerMode("CHAT")}><X size={12} /></button></div>}
             {slashMenu && !composerDisabled && (
               <section
+                ref={slashMenuRef}
                 className="slash-command-menu"
                 role="dialog"
                 aria-label={
@@ -4145,7 +4303,16 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                             : "优先使用推荐设置，需要时再展开高级连接方式"}
                     </span>
                   </div>
-                  <kbd>Esc</kbd>
+                  <button
+                    type="button"
+                    className="slash-close"
+                    aria-label={slashMenu.stage === "commands" ? "关闭命令菜单" : "关闭模型选择"}
+                    title="关闭（Esc）"
+                    onClick={() => closeSlashMenu()}
+                  >
+                    <X size={13} aria-hidden="true" />
+                    <span>Esc</span>
+                  </button>
                 </header>
                 <div className="slash-command-options" role="listbox">
                   {slashMenu.stage === "commands" && visibleSlashCommands.map((command, index) => (
@@ -4300,8 +4467,16 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               multiple
               onChange={(event) => event.target.files && void uploadFiles(event.target.files)}
             />
-            {pendingImages.length > 0 && (
-              <section className="image-attachment-stage" aria-label="待发送图片">
+            <input
+              ref={audioInputRef}
+              className="sr-only"
+              type="file"
+              accept="audio/wav,audio/mpeg,audio/mp3,audio/aiff,audio/aac,audio/ogg,audio/flac"
+              multiple
+              onChange={(event) => event.target.files && void uploadAudioFiles(event.target.files)}
+            />
+            {pendingMediaCount > 0 && (
+              <section className="image-attachment-stage" aria-label={pendingAudios.length ? "待发送媒体" : "待发送图片"}>
                 <div className="image-attachment-row">
                   {pendingImages.map((image, index) => (
                     <figure key={image.key} className="image-attachment">
@@ -4316,11 +4491,31 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       ><X size={13} /></button>
                     </figure>
                   ))}
+                  {pendingAudios.map((audio, index) => (
+                    <div key={audio.key} className="audio-attachment">
+                      <AudioLines size={22} aria-hidden="true" />
+                      <span><b>{index + 1}</b>{audio.label}</span>
+                      <button
+                        type="button"
+                        aria-label={`移除音频 ${audio.label}`}
+                        onClick={() => removePendingAudio(audio.key)}
+                      ><X size={13} /></button>
+                    </div>
+                  ))}
                 </div>
-                <button className="explain-image-action" type="button" onClick={explainPendingImages}>
-                  <Sparkles size={14} />解释图片 <span>→</span>
+                <button className="explain-image-action" type="button" onClick={() => {
+                  if (pendingImages.length && !pendingAudios.length) explainPendingImages();
+                  else {
+                    dispatch({
+                      type: "setComposer",
+                      value: pendingImages.length ? "请分析这些图片和音频" : pendingAudios.length > 1 ? "请分别分析这些音频" : "请转写并分析这段音频",
+                    });
+                    window.requestAnimationFrame(() => textareaRef.current?.focus());
+                  }
+                }}>
+                  <Sparkles size={14} />分析媒体 <span>→</span>
                 </button>
-                <span className="image-attachment-count">{pendingImages.length}/4</span>
+                <span className="image-attachment-count">{pendingMediaCount}/4</span>
               </section>
             )}
             <div className="image-add-control" ref={imageToolsRef}>
@@ -4367,15 +4562,23 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       <Bot size={17} />
                       <span><strong>选择模型</strong><small>选择当前会话后续消息使用的模型</small></span>
                     </button>
-                    {imageCapable && <button
+                    {imageUploadCapable && <button
                       type="button"
-                      disabled={composerDisabled || uploadingImage || pendingImages.length >= 4}
+                      disabled={composerDisabled || uploadingImage || pendingMediaCount >= 4}
                       onClick={() => fileInputRef.current?.click()}
                     >
                       <Paperclip size={17} />
                       <span><strong>{uploadingImage ? "正在上传…" : "上传图片"}</strong><small>选择或拖放，最多 4 张</small></span>
                     </button>}
-                    {imageCapable && <button
+                    {audioCapable && <button
+                      type="button"
+                      disabled={composerDisabled || uploadingAudio || pendingMediaCount >= 4}
+                      onClick={() => audioInputRef.current?.click()}
+                    >
+                      <AudioLines size={17} />
+                      <span><strong>{uploadingAudio ? "正在上传…" : "上传音频"}</strong><small>WAV、MP3、AIFF、AAC、OGG 或 FLAC</small></span>
+                    </button>}
+                    {imageUrlCapable && <button
                       type="button"
                       aria-expanded={imageUrlInputOpen}
                       onClick={() => setImageUrlInputOpen((open) => !open)}
@@ -4383,7 +4586,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       <Link size={17} />
                       <span><strong>添加图片 URL</strong><small>仅支持 HTTPS 图片地址</small></span>
                     </button>}
-                    {imageCapable && imageUrlInputOpen && (
+                    {imageUrlCapable && imageUrlInputOpen && (
                       <div className="image-url-popover">
                         <header>
                           <label htmlFor="image-url-input">图片 URL</label>
@@ -4397,7 +4600,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                             id="image-url-input"
                             type="url"
                             value={imageUrl}
-                            disabled={composerDisabled || pendingImages.length >= 4}
+                            disabled={composerDisabled || pendingMediaCount >= 4}
                             placeholder="https://…"
                             aria-label="图片 URL"
                             autoFocus
@@ -4412,7 +4615,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                           <button
                             type="button"
                             aria-label="确认添加图片 URL"
-                            disabled={!imageUrl.trim() || composerDisabled || pendingImages.length >= 4}
+                            disabled={!imageUrl.trim() || composerDisabled || pendingMediaCount >= 4}
                             onClick={addImageUrl}
                           >添加</button>
                         </div>
@@ -4423,7 +4626,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             </div>
             {draggingImages && (
               <div className="image-drop-hint" aria-live="polite">
-                <ImageIcon size={19} /> 松开即可添加图片
+                {audioCapable ? <AudioLines size={19} /> : <ImageIcon size={19} />} 松开即可添加媒体
               </div>
             )}
             <label>
@@ -4436,11 +4639,6 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 aria-haspopup="dialog"
                 onChange={(event) => updateComposer(event.target.value)}
                 onKeyDown={(event) => {
-                  if (slashMenu && event.key === "Escape") {
-                    event.preventDefault();
-                    setSlashMenu(null);
-                    return;
-                  }
                   if (slashMenu && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
                     event.preventDefault();
                     if (slashItemCount > 0) {
@@ -4467,7 +4665,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 rows={4}
               />
             </label>
-            <span className="image-input-hint">{composerMode === "DEEP_RESEARCH" ? "将打开 Mission 确认页" : imageCapable ? "支持图片与 Deep Research" : "点击 + 使用 Deep Research"}</span>
+            <span className="image-input-hint">{composerMode === "DEEP_RESEARCH" ? "将打开 Mission 确认页" : audioCapable ? "支持原生图片、音频与 Deep Research" : imageCapable ? "支持图片与 Deep Research" : "点击 + 使用 Deep Research"}</span>
             {failedUserTurn && (
               <button
                 type="button"
@@ -4475,12 +4673,12 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 aria-label="重新发送上一条失败消息"
                 title="重新发送上一条失败消息"
                 disabled={composerDisabled}
-                onClick={() => submitMessage(failedUserTurn.text, failedUserTurn.images)}
+                onClick={() => submitMessage(failedUserTurn.text, failedUserTurn.images, failedUserTurn.audios)}
               >
                 <RefreshCw size={16} aria-hidden="true" />
               </button>
             )}
-            <Button type="submit" className="send-button" aria-label={composerMode === "DEEP_RESEARCH" ? "准备 Deep Research" : "发送消息"} busy={Boolean(state.pending)} disabled={composerDisabled || (!state.composer.trim() && !pendingImages.length)}>
+            <Button type="submit" className="send-button" aria-label={composerMode === "DEEP_RESEARCH" ? "准备 Deep Research" : "发送消息"} busy={Boolean(state.pending)} disabled={composerDisabled || (!state.composer.trim() && !pendingMediaCount)}>
               <Send size={18} />
             </Button>
           </form>

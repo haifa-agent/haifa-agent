@@ -192,6 +192,33 @@ class OpenAiCompatibleModelProfileFactoryTest {
                 .containsExactlyInAnyOrder(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
     }
 
+    @Test
+    void verifiesOnlyTheReviewedCodexResponsesModelsAsReadOnlyReasoningBindings() {
+        var reviewed = profile(snapshot(
+                "openai-codex",
+                "gpt-5-6-sol",
+                "gpt-5.6-sol",
+                ModelApiStyles.OPENAI_RESPONSES,
+                OpenAiResponsesDialects.OPENAI_CODEX,
+                "https://chatgpt.com/backend-api/codex"));
+        var unknown = profile(snapshot(
+                "openai-codex",
+                "future-codex",
+                "future-codex",
+                ModelApiStyles.OPENAI_RESPONSES,
+                OpenAiResponsesDialects.OPENAI_CODEX,
+                "https://chatgpt.com/backend-api/codex"));
+
+        assertThat(reviewed.status()).isEqualTo(ModelProfileStatus.VERIFIED);
+        assertThat(reviewed.selectable()).isTrue();
+        assertThat(reviewed.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.ALWAYS);
+        assertThat(reviewed.allowedReasoningModes()).containsExactly(ModelReasoningMode.ENABLED);
+        assertThat(reviewed.allowedReasoningEfforts()).containsExactly(ModelReasoningEffort.HIGH);
+        assertThat(reviewed.toolReasoningContinuationRequired()).isFalse();
+        assertThat(unknown.status()).isEqualTo(ModelProfileStatus.UNVERIFIED);
+        assertThat(unknown.selectable()).isFalse();
+    }
+
     private static io.haifa.agent.model.api.ModelBindingProfile profile(ResolvedModelSnapshot snapshot) {
         return OpenAiCompatibleModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 13));
     }

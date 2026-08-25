@@ -5,6 +5,7 @@ import io.haifa.agent.core.content.ArtifactRefPart;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredAudioContentPart;
 import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.runtime.api.AgentRunRequest;
@@ -93,6 +94,13 @@ public final class CanonicalRequestDigest {
                 digest.add(Long.toString(image.sizeBytes()));
                 digest.add(image.sha256());
                 digest.add(image.originalFilename());
+            } else if (content instanceof StoredAudioContentPart audio) {
+                digest.add(audio.storeId());
+                digest.add(audio.audioId());
+                digest.add(audio.mediaType());
+                digest.add(Long.toString(audio.sizeBytes()));
+                digest.add(audio.sha256());
+                digest.add(audio.originalFilename());
             } else {
                 throw new IllegalArgumentException("tool protocol content is not valid public input");
             }

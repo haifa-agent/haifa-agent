@@ -3,6 +3,7 @@ package io.haifa.agent.model.api;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import java.net.URI;
 import java.time.Duration;
@@ -120,6 +121,44 @@ class ModelApiTest {
     }
 
     @Test
+    void imageCapabilitiesDistinguishUploadedBytesFromProviderFetchedUrls() {
+        ModelMessage uploaded = ModelMessage.user(
+                "describe upload", List.of(new ImageDataPart("image/png", new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47})));
+        ModelMessage remote = ModelMessage.user(
+                "describe URL", List.of(new ImageUrlPart(URI.create("https://images.example.com/cat.png"))));
+
+        assertThat(chatRequest(imageSnapshot(ModelCapability.IMAGE_UPLOAD_INPUT), uploaded)
+                        .messages())
+                .containsExactly(uploaded);
+        assertThatThrownBy(() -> chatRequest(imageSnapshot(ModelCapability.IMAGE_UPLOAD_INPUT), remote))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("image URL input capability");
+        assertThat(chatRequest(imageSnapshot(ModelCapability.IMAGE_URL_INPUT), remote)
+                        .messages())
+                .containsExactly(remote);
+        assertThatThrownBy(() -> chatRequest(imageSnapshot(ModelCapability.IMAGE_URL_INPUT), uploaded))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("uploaded image input capability");
+    }
+
+    @Test
+    void audioPartsAreBoundedTypedNormalizedAndRedacted() {
+        byte[] source = {(byte) 'I', (byte) 'D', (byte) '3', 1};
+        AudioDataPart audio = new AudioDataPart("audio/mpeg", source);
+        ModelMessage message = ModelMessage.user("transcribe", List.of(), List.of(audio));
+
+        source[0] = 0;
+
+        assertThat(message.audios()).containsExactly(audio);
+        assertThat(audio.mediaType()).isEqualTo("audio/mp3");
+        assertThat(audio.bytes()).containsExactly((byte) 'I', (byte) 'D', (byte) '3', (byte) 1);
+        assertThat(audio.toString()).doesNotContain("SUQz");
+        assertThatThrownBy(() -> new AudioDataPart("video/mp4", new byte[] {1}))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("audio media type");
+    }
+
+    @Test
     void providerOptionsAreDeeplyImmutable() {
         List<Object> nested = new ArrayList<>(List.of("disabled"));
         Map<String, Object> options = new LinkedHashMap<>();
@@ -189,6 +228,8 @@ class ModelApiTest {
                 .isEqualTo(responsesEndpoint);
         assertThat(ModelApiStyles.adapterType(ModelApiStyles.ANTHROPIC_MESSAGES))
                 .isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER);
+        assertThat(ModelApiStyles.adapterType(ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT))
+                .isEqualTo(ModelApiStyles.GOOGLE_GEMINI_ADAPTER);
         assertThat(provider.models())
                 .extracting(ModelDefinition::providerModelId)
                 .containsExactly("same-provider-model", "same-provider-model", "same-provider-model");
@@ -293,6 +334,41 @@ class ModelApiTest {
                 List.of(new ModelApiBindingDefinition(ModelApiStyles.OPENAI_CHAT_COMPLETIONS, "deepseek-openai-chat")),
                 models,
                 Map.of("thinking", "disabled"),
+                Map.of());
+    }
+
+    private static AgentChatRequest chatRequest(ResolvedModelSnapshot snapshot, ModelMessage message) {
+        return new AgentChatRequest(
+                new ModelCallId("call-image"),
+                new AgentRunId("run-image"),
+                1,
+                1,
+                snapshot,
+                List.of(message),
+                List.of(),
+                1024,
+                Duration.ofSeconds(30),
+                Map.of());
+    }
+
+    private static ResolvedModelSnapshot imageSnapshot(ModelCapability capability) {
+        return ResolvedModelSnapshot.create(
+                new ModelProviderId("image-provider"),
+                "provider-v1",
+                new ModelDefinitionId("image-model"),
+                "model-v1",
+                "image-model",
+                "openai-compatible",
+                "adapter-v1",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "standard",
+                URI.create("https://models.example.com/v1"),
+                new CredentialRef("env://MODEL_API_KEY"),
+                true,
+                EnumSet.of(ModelCapability.TEXT_CHAT, capability),
+                8192,
+                1024,
+                Map.of(),
                 Map.of());
     }
 

@@ -42,6 +42,7 @@ for (const required of [
   "updateConversation",
   "selectConversationModel",
   "listTurns",
+  "getUploadedImageContent",
   "submitMessage",
   "recommendQuestions",
   "getRun",

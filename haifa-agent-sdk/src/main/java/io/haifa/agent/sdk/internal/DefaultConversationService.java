@@ -189,7 +189,8 @@ public final class DefaultConversationService implements ConversationService {
                                 || content instanceof io.haifa.agent.core.content.AssetRefPart
                                 || content instanceof io.haifa.agent.core.content.ArtifactRefPart
                                 || content instanceof io.haifa.agent.core.content.ImageUrlContentPart
-                                || content instanceof io.haifa.agent.core.content.StoredImageContentPart)
+                                || content instanceof io.haifa.agent.core.content.StoredImageContentPart
+                                || content instanceof io.haifa.agent.core.content.StoredAudioContentPart)
                         .toList();
                 if (!safeContents.isEmpty()) {
                     result.add(new ConversationTurn(
@@ -434,6 +435,15 @@ public final class DefaultConversationService implements ConversationService {
                                 image.mediaType(),
                                 Long.toString(image.sizeBytes()),
                                 image.sha256());
+                    case io.haifa.agent.core.content.StoredAudioContentPart audio ->
+                        String.join(
+                                ":",
+                                "stored-audio",
+                                audio.storeId(),
+                                audio.audioId(),
+                                audio.mediaType(),
+                                Long.toString(audio.sizeBytes()),
+                                audio.sha256());
                     default -> throw new IllegalArgumentException("unsupported conversation input");
                 })
                 .collect(java.util.stream.Collectors.joining("\u0000"));

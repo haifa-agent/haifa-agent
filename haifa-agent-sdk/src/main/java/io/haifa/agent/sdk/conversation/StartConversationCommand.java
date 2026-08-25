@@ -2,6 +2,7 @@ package io.haifa.agent.sdk.conversation;
 
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredAudioContentPart;
 import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.run.StructuredOutputRequirement;
 import java.util.List;
@@ -38,7 +39,7 @@ public record StartConversationCommand(
         message = requireText(message, "message", 32_000);
         runProfileId = Objects.requireNonNull(runProfileId, "runProfileId must not be null")
                 .map(value -> requireText(value, "runProfileId", 256));
-        inputs = imageInputs(inputs);
+        inputs = mediaInputs(inputs);
         structuredOutput = Objects.requireNonNullElse(structuredOutput, java.util.Optional.empty());
     }
 
@@ -50,13 +51,15 @@ public record StartConversationCommand(
         return normalized;
     }
 
-    private static List<ContentPart> imageInputs(List<ContentPart> values) {
+    private static List<ContentPart> mediaInputs(List<ContentPart> values) {
         List<ContentPart> copied = List.copyOf(Objects.requireNonNull(values, "inputs must not be null"));
-        if (copied.size() > 4) throw new IllegalArgumentException("a conversation turn may contain at most 4 images");
+        if (copied.size() > 4)
+            throw new IllegalArgumentException("a conversation turn may contain at most 4 media inputs");
         if (copied.stream()
-                .anyMatch(value ->
-                        !(value instanceof ImageUrlContentPart) && !(value instanceof StoredImageContentPart))) {
-            throw new IllegalArgumentException("conversation inputs may contain image references only");
+                .anyMatch(value -> !(value instanceof ImageUrlContentPart)
+                        && !(value instanceof StoredImageContentPart)
+                        && !(value instanceof StoredAudioContentPart))) {
+            throw new IllegalArgumentException("conversation inputs may contain image or audio references only");
         }
         return copied;
     }

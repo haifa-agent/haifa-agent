@@ -175,7 +175,8 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 | Ark | 是 | 是 | profile-gated | profile-gated | opt-in |
 | SiliconFlow DeepSeek V4 Flash | 是 | 是 | 不声明 | 否 | opt-in |
 
-图片输入不是 dialect 推断结果。冻结模型只有声明 `IMAGE_INPUT` 时才可发送图片；纯文本消息继续使用
+图片输入不是 dialect 推断结果。冻结模型分别声明 `IMAGE_UPLOAD_INPUT` 与 `IMAGE_URL_INPUT`；前者允许
+宿主解析后的临时图片字节，后者允许由 Provider 获取的外部 HTTPS 图片 URL。纯文本消息继续使用
 字符串 `content`，包含 `ImageUrlPart` 或临时 `ImageDataPart` 的 USER 消息映射为标准 Chat Completions
 `text` / `image_url` 数组。Adapter 不抓取 URL；临时字节仅在请求组装时转换为 data URL，不进入持久化。
 

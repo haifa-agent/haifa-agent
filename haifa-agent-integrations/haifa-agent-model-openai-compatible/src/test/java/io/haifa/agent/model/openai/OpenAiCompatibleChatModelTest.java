@@ -953,7 +953,8 @@ class OpenAiCompatibleChatModelTest {
                 provider.nativeStreaming(),
                 EnumSet.of(
                         ModelCapability.TEXT_CHAT,
-                        ModelCapability.IMAGE_INPUT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT,
                         ModelCapability.TOOL_CALLING,
                         ModelCapability.STRUCTURED_OUTPUT),
                 128_000,

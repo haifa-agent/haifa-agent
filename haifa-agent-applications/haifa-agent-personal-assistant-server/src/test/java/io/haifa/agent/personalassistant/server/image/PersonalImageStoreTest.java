@@ -3,6 +3,7 @@ package io.haifa.agent.personalassistant.server.image;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,7 @@ class PersonalImageStoreTest {
         assertThat(saved.originalFilename()).isEqualTo("cat.png");
         assertThat(reloaded.sha256()).isEqualTo(saved.sha256());
         assertThat(store.resolve(saved).bytes()).containsExactly(png);
+        assertThat(store.read(saved.imageId()).bytes()).containsExactly(png);
         assertThat(saved.toString())
                 .doesNotContain(temporaryDirectory.toString())
                 .doesNotContain(saved.sha256());
@@ -36,6 +38,19 @@ class PersonalImageStoreTest {
 
         assertThatThrownBy(() -> store.save(png, "image/jpeg", "cat.jpg")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> store.reference("../../secret")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectsBytesThatNoLongerMatchThePersistedReference() throws Exception {
+        var store = new PersonalImageStore(temporaryDirectory);
+        byte[] png = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1};
+        var saved = store.save(png, "image/png", "cat.png");
+        Path stored = temporaryDirectory.resolve("images").resolve(saved.imageId() + ".png");
+        Files.write(stored, new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 2});
+
+        assertThatThrownBy(() -> store.resolve(saved))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("stored image no longer matches its persisted reference");
     }
 
     @Test

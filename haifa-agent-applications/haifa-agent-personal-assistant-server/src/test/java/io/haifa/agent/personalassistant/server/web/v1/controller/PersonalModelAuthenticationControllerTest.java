@@ -45,7 +45,8 @@ class PersonalModelAuthenticationControllerTest {
                         java.util.Set.of(ModelCapability.TEXT_CHAT),
                         ModelReasoningMode.DISABLED,
                         131_072,
-                        8_192)));
+                        8_192)),
+                null);
         try (var service = new LocalModelAuthenticationService(
                 store,
                 Optional.empty(),

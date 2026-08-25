@@ -145,6 +145,10 @@ Requester、Challenge 与精确 Target 的既有 Runtime Interaction；可信 Ca
 重新检查 Capability、Schema、Policy 与 Tool Binding，然后才进入原 Journal、Credential 与 Provider
 链路。Runtime Core 只依赖 Policy API。
 
+产品可通过 `toolRequestCanonicalizer(...)` 在 ToolCall 首次持久化前生成唯一的 canonical request；
+该请求随后统一用于 Schema、Policy resource digest、Approval target、Journal reconcile 与 Provider invocation。
+规范化器只能修改 arguments，必须确定且幂等；默认实现保持原请求不变。
+
 `ToolPolicy`、`ToolPolicyDecision` 与 `DefaultToolPolicy` 是待删除的单向源码兼容层；Pipeline
 不会并行执行旧、新两套判断。新产品装配应使用 `publicToolPolicy(...)`。
 

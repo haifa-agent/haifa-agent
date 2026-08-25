@@ -3,6 +3,7 @@ package io.haifa.agent.personalassistant.server.web.v1.controller;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
+import io.haifa.agent.personalassistant.server.audio.PersonalAudioStore;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.image.PersonalImageStore;
 import io.haifa.agent.personalassistant.server.observability.PersonalRunLoggingService;
@@ -16,6 +17,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -37,18 +39,21 @@ public final class PersonalAssistantController {
     private final PersonalAssistantProperties properties;
     private final PersonalRunLoggingService runLogging;
     private final PersonalImageStore imageStore;
+    private final PersonalAudioStore audioStore;
 
     public PersonalAssistantController(
             PersonalAssistantApplication application,
             PersonalApiMapper mapper,
             PersonalAssistantProperties properties,
             PersonalRunLoggingService runLogging,
-            PersonalImageStore imageStore) {
+            PersonalImageStore imageStore,
+            PersonalAudioStore audioStore) {
         this.application = application;
         this.mapper = mapper;
         this.properties = properties;
         this.runLogging = runLogging;
         this.imageStore = imageStore;
+        this.audioStore = audioStore;
     }
 
     @GetMapping("/bootstrap")
@@ -116,13 +121,13 @@ public final class PersonalAssistantController {
                                 text(request.displayName(), "displayName"),
                                 text(request.message(), "message"),
                                 modelId,
-                                imageInputs(request.images()))
+                                mediaInputs(request.images(), request.audios()))
                         : application.start(
                                 key(idempotencyKey),
                                 text(request.displayName(), "displayName"),
                                 text(request.message(), "message"),
                                 modelSelection(request.modelSelection()),
-                                imageInputs(request.images())));
+                                mediaInputs(request.images(), request.audios())));
         value.activeRunId().ifPresent(runId -> runLogging.observe(value.id(), runId, "conversation-created"));
         return ResponseEntity.created(URI.create("/api/v1/conversations/" + value.id()))
                 .eTag(Long.toString(value.revision()))
@@ -207,7 +212,7 @@ public final class PersonalAssistantController {
                 revision(ifMatch),
                 key(idempotencyKey),
                 text(request.message(), "message"),
-                imageInputs(request.images())));
+                mediaInputs(request.images(), request.audios())));
         body.activeRunId().ifPresent(runId -> runLogging.observe(body.id(), runId, "message-submitted"));
         return ResponseEntity.accepted().eTag(Long.toString(body.revision())).body(body);
     }
@@ -231,10 +236,45 @@ public final class PersonalAssistantController {
                         image.sha256()));
     }
 
-    private List<ContentPart> imageInputs(List<PersonalApiDtos.ImageInput> values) {
+    @GetMapping(
+            value = "/images/{imageId}",
+            produces = {"image/png", "image/jpeg", "image/webp", "image/gif"})
+    ResponseEntity<byte[]> image(@PathVariable String imageId) {
+        var image = imageStore.read(imageId);
+        byte[] bytes = image.bytes();
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(image.mediaType()))
+                .contentLength(bytes.length)
+                .body(bytes);
+    }
+
+    @PostMapping(
+            value = "/audios",
+            consumes = {"audio/wav", "audio/mpeg", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac"})
+    ResponseEntity<PersonalApiDtos.UploadedAudio> uploadAudio(
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestHeader(HttpHeaders.CONTENT_TYPE) String mediaType,
+            @RequestHeader(value = "X-Audio-Filename", required = false) String filename,
+            @RequestBody byte[] bytes) {
+        key(idempotencyKey);
+        var audio = audioStore.save(bytes, mediaType, filename);
+        return ResponseEntity.created(URI.create("/api/v1/audios/" + audio.audioId()))
+                .body(new PersonalApiDtos.UploadedAudio(
+                        audio.audioId(),
+                        audio.mediaType(),
+                        audio.sizeBytes(),
+                        audio.originalFilename(),
+                        audio.sha256()));
+    }
+
+    private List<ContentPart> mediaInputs(
+            List<PersonalApiDtos.ImageInput> values, List<PersonalApiDtos.AudioInput> audioValues) {
         List<PersonalApiDtos.ImageInput> inputs = values == null ? List.of() : List.copyOf(values);
-        if (inputs.size() > 4) throw new IllegalArgumentException("a message may contain at most 4 images");
-        List<ContentPart> result = new ArrayList<>(inputs.size());
+        List<PersonalApiDtos.AudioInput> audios = audioValues == null ? List.of() : List.copyOf(audioValues);
+        if (inputs.size() + audios.size() > 4) {
+            throw new IllegalArgumentException("a message may contain at most 4 media inputs");
+        }
+        List<ContentPart> result = new ArrayList<>(inputs.size() + audios.size());
         for (PersonalApiDtos.ImageInput input : inputs) {
             String kind = text(input.kind(), "image.kind").toLowerCase(Locale.ROOT);
             switch (kind) {
@@ -242,6 +282,11 @@ public final class PersonalAssistantController {
                 case "upload" -> result.add(imageStore.reference(text(input.imageId(), "image.imageId")));
                 default -> throw new IllegalArgumentException("image.kind must be url or upload");
             }
+        }
+        for (PersonalApiDtos.AudioInput input : audios) {
+            String kind = text(input.kind(), "audio.kind").toLowerCase(Locale.ROOT);
+            if (!"upload".equals(kind)) throw new IllegalArgumentException("audio.kind must be upload");
+            result.add(audioStore.reference(text(input.audioId(), "audio.audioId")));
         }
         return List.copyOf(result);
     }

@@ -586,6 +586,18 @@ class PersonalAssistantWebFluxTest {
                 .isEqualTo(imageId)
                 .jsonPath("$[0].images[0].url")
                 .doesNotExist();
+
+        web.get()
+                .uri("/api/v1/images/{imageId}", imageId)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .contentType(MediaType.IMAGE_PNG)
+                .expectHeader()
+                .contentLength(png.length)
+                .expectBody(byte[].class)
+                .isEqualTo(png);
     }
 
     @Test
@@ -607,6 +619,47 @@ class PersonalAssistantWebFluxTest {
                 .expectBody()
                 .jsonPath("$.sizeBytes")
                 .isEqualTo(png.length);
+    }
+
+    @Test
+    void uploadedAudioFlowsThroughTheConversationAndRemainsAnOpaqueTurnReference() throws Exception {
+        byte[] wav = "RIFF\u0004\u0000\u0000\u0000WAVEfmt ".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+        String uploadBody = web.post()
+                .uri("/api/v1/audios")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "audio-" + IDS.incrementAndGet())
+                .header("X-Audio-Filename", "verification.wav")
+                .contentType(MediaType.parseMediaType("audio/wav"))
+                .bodyValue(wav)
+                .exchange()
+                .expectStatus()
+                .isCreated()
+                .expectBody(String.class)
+                .returnResult()
+                .getResponseBody();
+        String audioId = mapper.readTree(uploadBody).path("audioId").asText();
+
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Audio","message":"Transcribe this audio","audios":[{"kind":"upload","audioId":%s}]}
+                """
+                        .formatted(mapper.writeValueAsString(audioId)));
+        assertThat(awaitTerminal(conversation.path("activeRunId").asText())
+                        .path("status")
+                        .asText())
+                .isEqualTo("COMPLETED");
+
+        web.get()
+                .uri("/api/v1/conversations/{id}/turns", conversation.path("id").asText())
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].audios[0].audioId")
+                .isEqualTo(audioId)
+                .jsonPath("$[0].audios[0].mediaType")
+                .isEqualTo("audio/wav");
     }
 
     @Test

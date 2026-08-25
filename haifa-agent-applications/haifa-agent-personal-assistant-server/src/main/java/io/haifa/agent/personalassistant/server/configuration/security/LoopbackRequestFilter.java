@@ -1,5 +1,6 @@
 package io.haifa.agent.personalassistant.server.configuration.security;
 
+import io.haifa.agent.personalassistant.server.audio.PersonalAudioStore;
 import io.haifa.agent.personalassistant.server.image.PersonalImageStore;
 import java.net.URI;
 import java.util.Locale;
@@ -32,9 +33,12 @@ public final class LoopbackRequestFilter implements WebFilter {
         String host = request.getHeaders().getHost() == null
                 ? request.getURI().getHost()
                 : request.getHeaders().getHost().getHostString();
-        long maximumBodyBytes = request.getPath().value().equals("/api/v1/images")
-                ? PersonalImageStore.MAXIMUM_IMAGE_BYTES
-                : MAX_BODY_BYTES;
+        long maximumBodyBytes =
+                switch (request.getPath().value()) {
+                    case "/api/v1/images" -> PersonalImageStore.MAXIMUM_IMAGE_BYTES;
+                    case "/api/v1/audios" -> PersonalAudioStore.MAXIMUM_AUDIO_BYTES;
+                    default -> MAX_BODY_BYTES;
+                };
         if (!loopbackHost(host)
                 || !originAllowed(request.getHeaders().getOrigin())
                 || contentLength > maximumBodyBytes) {

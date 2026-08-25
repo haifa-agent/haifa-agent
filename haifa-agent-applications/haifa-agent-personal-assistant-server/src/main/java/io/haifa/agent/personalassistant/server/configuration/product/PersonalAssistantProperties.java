@@ -243,7 +243,8 @@ public record PersonalAssistantProperties(
             URI endpoint,
             String credentialReference,
             List<ApiBinding> apiBindings,
-            List<ProviderModel> models) {
+            List<ProviderModel> models,
+            URI proxy) {
         @ConstructorBinding
         public ModelProvider {
             id = text(id, "modelProvider.id");
@@ -260,6 +261,7 @@ public record PersonalAssistantProperties(
             if (endpoint == null || !endpoint.isAbsolute()) {
                 throw new IllegalArgumentException("modelProvider.endpoint must be absolute");
             }
+            validateModelProxy(proxy);
             credentialReference = text(credentialReference, "modelProvider.credentialReference");
             if ((!credentialReference.startsWith("env://") || credentialReference.length() == "env://".length())
                     && (!credentialReference.startsWith("model-auth://")
@@ -293,6 +295,36 @@ public record PersonalAssistantProperties(
             }
             if (codex && !"openai-codex".equals(id)) {
                 throw new IllegalArgumentException("Codex Responses provider id must be openai-codex");
+            }
+            boolean cliproxy =
+                    apiBindings.stream().anyMatch(binding -> "cliproxyapi-antigravity".equals(binding.dialect()));
+            if (cliproxy && !"cliproxyapi-antigravity".equals(id)) {
+                throw new IllegalArgumentException("CLIProxyAPI Antigravity dialect provider id is fixed");
+            }
+            if (cliproxy && !"env://HAIFA_CLIPROXYAPI_API_KEY".equals(credentialReference)) {
+                throw new IllegalArgumentException("CLIProxyAPI Antigravity dialect credential reference is fixed");
+            }
+            if (cliproxy
+                    && apiBindings.stream()
+                            .anyMatch(binding -> !"google-gemini-generate-content".equals(binding.style()))) {
+                throw new IllegalArgumentException("CLIProxyAPI Antigravity dialect only supports native Gemini style");
+            }
+        }
+
+        private static void validateModelProxy(URI proxy) {
+            if (proxy == null) return;
+            String path = proxy.getRawPath();
+            if (!proxy.isAbsolute()
+                    || !"http".equalsIgnoreCase(proxy.getScheme())
+                    || proxy.getHost() == null
+                    || proxy.getPort() < 1
+                    || proxy.getPort() > 65_535
+                    || proxy.getRawUserInfo() != null
+                    || proxy.getRawQuery() != null
+                    || proxy.getRawFragment() != null
+                    || (path != null && !path.isBlank() && !"/".equals(path))) {
+                throw new IllegalArgumentException(
+                        "modelProvider.proxy must be an HTTP proxy origin with an explicit port");
             }
         }
     }

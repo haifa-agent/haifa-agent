@@ -1,5 +1,8 @@
 # Changelog
 
+- 新增原生 Google Gemini `generateContent` Integration，并严格区分官方 Standard 与个人本机
+  CLIProxyAPI Antigravity 方言；Coding/Personal composition root 使用静态模型目录、精确 loopback/Bearer
+  门禁、Tool allowlist 和 fail-closed Thought Signature continuation，不读取 Antigravity OAuth 或网关 Auth 文件。
 - Coding Agent 完成门禁改用 terminal ChangeSet、Workspace Digest、内容寻址 Change Review 和结构化
   Validation Attempt；DIFF 命令和诊断事实继续保留，但不再作为修改任务的完成 fallback。轻量
   Verification Profile 在 Coding Session metadata 冻结有界验证阶梯，runner 输出不参与数量或 scope

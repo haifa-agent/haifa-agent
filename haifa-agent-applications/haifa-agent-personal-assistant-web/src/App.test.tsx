@@ -115,6 +115,7 @@ const turns: Turn[] = [
     sequence: 1,
     text: "请整理今天的待办",
     images: [],
+    audios: [],
     createdAt: "2026-07-28T01:00:00Z",
   },
   {
@@ -124,6 +125,7 @@ const turns: Turn[] = [
     sequence: 2,
     text: "已经按优先级整理完成。",
     images: [],
+    audios: [],
     createdAt: "2026-07-28T01:00:01Z",
   },
 ];
@@ -583,7 +585,7 @@ describe("Personal Assistant application", () => {
   });
 
   it("does not silently discard attachments when Deep Research routing is requested", async () => {
-    const imageModel = { ...model, capabilities: [...model.capabilities, "IMAGE_INPUT"] };
+    const imageModel = { ...model, capabilities: [...model.capabilities, "IMAGE_URL_INPUT"] };
     const imageConversation = { ...conversation, model: { ...conversation.model, model: imageModel } };
     const api = {
       ...client(),
@@ -977,6 +979,7 @@ describe("Personal Assistant application", () => {
       sequence: 3,
       text: "<!-- haifa-mission-delivery:mission-1 -->\nDeep Research Mission 已完成。完整报告与证据已保存在 Mission 中。",
       images: [],
+      audios: [],
       createdAt: "2026-08-12T02:15:00Z",
     };
     const delivered: MissionSnapshot = {
@@ -1070,6 +1073,7 @@ describe("Personal Assistant application", () => {
       sequence: 3,
       text: report,
       images: [],
+      audios: [],
       createdAt: "2026-08-11T06:00:00Z",
     };
     const delivered: MissionSnapshot = {
@@ -1478,7 +1482,11 @@ describe("Personal Assistant application", () => {
   });
 
   it("adds an HTTPS image URL and an uploaded image to one message", async () => {
-    const imageModel = { ...model, id: "openai-image", capabilities: ["TEXT_CHAT", "IMAGE_INPUT"] };
+    const imageModel = {
+      ...model,
+      id: "openai-image",
+      capabilities: ["TEXT_CHAT", "IMAGE_UPLOAD_INPUT", "IMAGE_URL_INPUT"],
+    };
     const imageConversation = {
       ...conversation,
       model: { ...conversation.model, model: imageModel },
@@ -1534,7 +1542,7 @@ describe("Personal Assistant application", () => {
       target: { value: "https://images.example.test/architecture.png" },
     });
     fireEvent.click(within(secondDialog).getByRole("button", { name: "确认添加图片 URL" }));
-    fireEvent.click(screen.getByRole("button", { name: /^解释图片/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^分析媒体/ }));
     expect((screen.getByRole("textbox", { name: "给个人助理发送消息" }) as HTMLTextAreaElement).value)
       .toBe("请解释这张图片");
     fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
@@ -1549,7 +1557,7 @@ describe("Personal Assistant application", () => {
   });
 
   it("closes the image URL input with its close control and closes the menu with Escape", async () => {
-    const imageModel = { ...model, id: "openai-image", capabilities: ["TEXT_CHAT", "IMAGE_INPUT"] };
+    const imageModel = { ...model, id: "openai-image", capabilities: ["TEXT_CHAT", "IMAGE_URL_INPUT"] };
     const imageConversation = {
       ...conversation,
       model: { ...conversation.model, model: imageModel },
@@ -1569,6 +1577,58 @@ describe("Personal Assistant application", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "更多功能" })).toBeNull();
+  });
+
+  it("uploads native audio for an audio-capable model and submits its opaque reference", async () => {
+    const audioModel = {
+      ...model,
+      id: "gemini-audio",
+      capabilities: ["TEXT_CHAT", "IMAGE_UPLOAD_INPUT", "AUDIO_INPUT"],
+    };
+    const audioConversation = {
+      ...conversation,
+      model: { ...conversation.model, model: audioModel },
+    };
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({ ...bootstrap, defaultModelId: audioModel.id, models: [audioModel] });
+    vi.mocked(api.conversations).mockResolvedValue([audioConversation]);
+    vi.mocked(api.conversation).mockResolvedValue(audioConversation);
+    vi.mocked(api.submitMessage).mockResolvedValue(audioConversation);
+    api.uploadAudio = vi.fn(async () => ({
+      audioId: "22222222-2222-4222-8222-222222222222",
+      mediaType: "audio/wav",
+      sizeBytes: 16,
+      originalFilename: "verification.wav",
+      sha256: `sha256:${"b".repeat(64)}`,
+    }));
+    const { container } = render(<App client={api} />);
+    const wav = new File([new TextEncoder().encode("RIFF....WAVEfmt ")], "verification.wav", {
+      type: "audio/wav",
+    });
+
+    await screen.findByRole("button", { name: "更多功能" });
+    fireEvent.click(screen.getByRole("button", { name: "更多功能" }));
+    const mediaDialog = screen.getByRole("dialog", { name: "更多功能" });
+    expect(within(mediaDialog).getByRole("button", { name: /^上传图片/ })).toBeTruthy();
+    expect(within(mediaDialog).queryByRole("button", { name: /^添加图片 URL/ })).toBeNull();
+    fireEvent.click(within(mediaDialog).getByRole("button", { name: "关闭更多功能" }));
+    const inputs = container.querySelectorAll('input[type="file"]');
+    fireEvent.change(inputs[1], { target: { files: [wav] } });
+
+    expect(await screen.findByText("verification.wav")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "待发送媒体" })).getByText("1/4")).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "给个人助理发送消息" }), {
+      target: { value: "转写音频" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+
+    await waitFor(() => expect(api.submitMessage).toHaveBeenCalledWith(
+      audioConversation,
+      "转写音频",
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+      [],
+      [{ kind: "upload", audioId: "22222222-2222-4222-8222-222222222222" }],
+    ));
   });
 
   it("renders sent images inside the user message without exposing opaque ids", async () => {
@@ -1605,7 +1665,11 @@ describe("Personal Assistant application", () => {
     const message = container.querySelector(".messages > .message.user")!;
     expect(message.querySelector('.turn-images[aria-label="消息包含 2 张图片"]')).toBeTruthy();
     expect(within(message as HTMLElement).getByRole("img", { name: "第 1 张图片" })).toBeTruthy();
-    expect(within(message as HTMLElement).getByText("已上传图片 2")).toBeTruthy();
+    const uploaded = within(message as HTMLElement).getByRole("img", { name: "第 2 张已上传图片" });
+    expect(uploaded.getAttribute("src")).toBe(
+      `http://127.0.0.1:20001/api/v1/images/${opaqueId}`,
+    );
+    expect(within(message as HTMLElement).queryByText("已上传图片 2")).toBeNull();
     expect(screen.queryByText(`${opaqueId}.png`)).toBeNull();
     expect(container.querySelector(".activity-panel .turn-images")).toBeNull();
   });
@@ -1687,6 +1751,39 @@ describe("Personal Assistant application", () => {
       proModel.recommendedPreferences,
     ));
     expect((composer as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("closes model selection with Escape, the close button, and an outside pointer", async () => {
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: flashModel.id,
+      models: [proModel, flashModel, bailianModel],
+    });
+
+    render(<App client={api} />);
+
+    const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
+    const openProviderDialog = async () => {
+      fireEvent.change(composer, { target: { value: "/" } });
+      fireEvent.click(await screen.findByRole("option", { name: /选择模型/ }));
+      return screen.findByRole("dialog", { name: "选择模型厂商" });
+    };
+
+    let providerDialog = await openProviderDialog();
+    fireEvent.pointerDown(within(providerDialog).getByRole("option", { name: /DeepSeek/ }));
+    expect(screen.getByRole("dialog", { name: "选择模型厂商" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "选择模型厂商" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(composer));
+
+    providerDialog = await openProviderDialog();
+    fireEvent.click(within(providerDialog).getByRole("button", { name: "关闭模型选择" }));
+    expect(screen.queryByRole("dialog", { name: "选择模型厂商" })).toBeNull();
+
+    await openProviderDialog();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("dialog", { name: "选择模型厂商" })).toBeNull();
   });
 
   it("keeps unavailable models visible with the backend reason but prevents selection", async () => {
@@ -1907,6 +2004,7 @@ describe("Personal Assistant application", () => {
       sequence: 1,
       text: "请重新处理这条消息",
       images: [],
+      audios: [],
       createdAt: "2026-07-28T01:00:00Z",
     };
     const api = client();

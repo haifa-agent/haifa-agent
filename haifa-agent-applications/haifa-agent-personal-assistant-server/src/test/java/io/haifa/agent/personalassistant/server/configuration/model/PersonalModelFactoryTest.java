@@ -391,6 +391,37 @@ class PersonalModelFactoryTest {
     }
 
     @Test
+    void exposesReviewedSiliconFlowBindingToThePersonalModelCatalog() {
+        var siliconFlow = provider(
+                "siliconflow",
+                "硅基流动 SiliconFlow",
+                true,
+                URI.create("https://api.siliconflow.cn/v1"),
+                "env://SILICONFLOW_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", OpenAiCompatibleDialects.SILICONFLOW, null)),
+                List.of(model(
+                        "siliconflow-deepseek-v4-flash",
+                        "DeepSeek V4 Flash",
+                        "deepseek-ai/DeepSeek-V4-Flash",
+                        "openai-chat-completions")));
+
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(siliconFlow), "siliconflow-deepseek-v4-flash", new ObjectMapper(), shell());
+        var snapshot = platform.contribution().snapshot();
+        var option = platform.catalog().find("siliconflow-deepseek-v4-flash").orElseThrow();
+
+        assertThat(snapshot.providerId().value()).isEqualTo("siliconflow");
+        assertThat(snapshot.dialect()).isEqualTo(OpenAiCompatibleDialects.SILICONFLOW);
+        assertThat(snapshot.endpoint()).hasToString("https://api.siliconflow.cn/v1");
+        assertThat(snapshot.providerOptions()).containsEntry("endpoint_host", "api.siliconflow.cn");
+        assertThat(option.providerDisplayName()).isEqualTo("硅基流动 SiliconFlow");
+        assertThat(option.availability()).isEqualTo("AVAILABLE");
+        assertThat(platform.catalog().profile(option.id()))
+                .hasValueSatisfying(profile -> assertThat(profile.selectable()).isTrue());
+    }
+
+    @Test
     void freezesStandardChatCompletionsDialectForAnArbitraryProviderId() {
         var provider = provider(
                 "third-party-openai",
@@ -620,7 +651,16 @@ class PersonalModelFactoryTest {
             List<PersonalAssistantProperties.ApiBinding> bindings,
             List<PersonalAssistantProperties.ProviderModel> models) {
         return new PersonalAssistantProperties.ModelProvider(
-                id, displayName, "remote", false, nativeStreaming, endpoint, credentialReference, bindings, models);
+                id,
+                displayName,
+                "remote",
+                false,
+                nativeStreaming,
+                endpoint,
+                credentialReference,
+                bindings,
+                models,
+                null);
     }
 
     private static PersonalAssistantProperties.ProviderModel model(

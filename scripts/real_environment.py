@@ -32,6 +32,9 @@ EXPECTED_SERVER_START_CLASS = (
     "io.haifa.agent.personalassistant.server.PersonalAssistantServerApplication"
 )
 BAILIAN_DEFAULT_MODEL_ID = "qwen3.7-max-2026-05-17"
+CLIPROXY_GEMINI_MODEL_ID = "gemini-cliproxy-flash"
+SILICONFLOW_MODEL_ID = "siliconflow-deepseek-v4-flash"
+CODEX_MODEL_IDS = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
 SUPPORTED_DEFAULT_MODEL_IDS = (
     "deepseek-chat-pro",
     "deepseek-chat-flash",
@@ -52,6 +55,9 @@ SUPPORTED_DEFAULT_MODEL_IDS = (
     "glm-5.2-anthropic",
     "glm-5.1-chat",
     "glm-5-chat",
+    *CODEX_MODEL_IDS,
+    SILICONFLOW_MODEL_ID,
+    CLIPROXY_GEMINI_MODEL_ID,
 )
 ALLOWED_MCP_TOOLS = ",".join(
     (
@@ -134,6 +140,7 @@ def parser() -> argparse.ArgumentParser:
     home = Path.home()
     workspace = Path("D:/workspace") if windows else home / "workspace"
     agents = Path("D:/agents") if windows else home / "agents"
+    software = Path("D:/dev/software") if windows else home / "dev/software"
     result = argparse.ArgumentParser(
         description="Start, reuse, validate, or stop the real Personal Assistant environment."
     )
@@ -161,6 +168,17 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--bigmodel-key-file",
         default=os.getenv("HAIFA_BIGMODEL_KEY_FILE", str(workspace / "ss-bigmodel.txt")),
+    )
+    result.add_argument(
+        "--siliconflow-key-file",
+        default=os.getenv("HAIFA_SILICONFLOW_KEY_FILE", str(workspace / "ss-siliconflow.txt")),
+    )
+    result.add_argument(
+        "--cliproxy-config-file",
+        default=os.getenv(
+            "HAIFA_CLIPROXYAPI_CONFIG_FILE",
+            str(software / "CLIProxyAPI-runtime/config.yaml"),
+        ),
     )
     result.add_argument(
         "--aliyun-iqs-key-file",
@@ -445,6 +463,46 @@ def optional_openai_environment(environment: Mapping[str, str] | None = None) ->
             )
         return None
     return values["OPENAI_BASE_URL"], values["OPENAI_API_KEY"], values["OPENAI_MODEL_ID"]
+
+
+def optional_cliproxy_environment(
+    environment: Mapping[str, str] | None = None,
+    config_file: str | None = None,
+) -> tuple[str, str] | None:
+    api_key = environment_value("HAIFA_CLIPROXYAPI_API_KEY") if environment is None else environment.get(
+        "HAIFA_CLIPROXYAPI_API_KEY", ""
+    ).strip()
+    if not api_key and config_file:
+        api_key = optional_cliproxy_downstream_key(config_file)
+    if not api_key:
+        return None
+    provider_model_id = (
+        environment_value("HAIFA_CLIPROXYAPI_MODEL_ID")
+        if environment is None
+        else environment.get("HAIFA_CLIPROXYAPI_MODEL_ID", "").strip()
+    ) or "gemini-3-flash"
+    return api_key, provider_model_id
+
+
+def optional_cliproxy_downstream_key(value: str) -> str:
+    path = Path(value).expanduser()
+    if not path.exists():
+        return ""
+    if not path.is_file():
+        fail(f"CLIProxyAPI config is not a file: {path}")
+    in_api_keys = False
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        if re.match(r"^api-keys\s*:\s*(?:#.*)?$", raw_line):
+            in_api_keys = True
+            continue
+        if in_api_keys and raw_line and not raw_line[0].isspace():
+            break
+        if not in_api_keys:
+            continue
+        match = re.match(r'^\s*-\s*["\']?(haifa-local-[a-f0-9]+)["\']?\s*(?:#.*)?$', raw_line)
+        if match:
+            return match.group(1)
+    fail(f"CLIProxyAPI config does not contain a supported local downstream API key: {path}")
 
 
 def optional_bailian_configuration(
@@ -820,6 +878,8 @@ def backend_environment(
     tavily_key: str | None = None,
     web_search_provider: str = "tavily",
     web_fetch_provider: str = "tavily",
+    cliproxy: tuple[str, str] | None = None,
+    siliconflow_key: str | None = None,
 ) -> dict[str, str]:
     environment = {
         "DEEPSEEK_API_KEY": deepseek_key,
@@ -954,6 +1014,41 @@ def backend_environment(
             }
         )
     next_provider_index = 1
+    prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
+    environment.update(
+        {
+            "HAIFA_CODEX_ORIGINATOR": environment_value("HAIFA_CODEX_ORIGINATOR") or "haifa",
+            "HAIFA_CODEX_USER_AGENT": environment_value("HAIFA_CODEX_USER_AGENT") or "haifa-agent/1",
+            f"{prefix}_ID": "openai-codex",
+            f"{prefix}_DISPLAYNAME": "ChatGPT Codex",
+            f"{prefix}_MODE": "remote",
+            f"{prefix}_ALLOWDETERMINISTIC": "false",
+            f"{prefix}_NATIVESTREAMING": "true",
+            f"{prefix}_ENDPOINT": "https://chatgpt.com/backend-api/codex",
+            f"{prefix}_CREDENTIALREFERENCE": "model-auth://openai-codex/default",
+            f"{prefix}_PROXY": "http://127.0.0.1:2081",
+            f"{prefix}_APIBINDINGS_0_STYLE": "openai-responses",
+            f"{prefix}_APIBINDINGS_0_DIALECT": "openai-codex-responses",
+        }
+    )
+    for model_index, model_id in enumerate(CODEX_MODEL_IDS):
+        model_prefix = f"{prefix}_MODELS_{model_index}"
+        display_name = model_id.removeprefix("gpt-").replace("-", " ").title()
+        environment.update(
+            {
+                f"{model_prefix}_ID": model_id,
+                f"{model_prefix}_DISPLAYNAME": display_name,
+                f"{model_prefix}_MODELDISPLAYNAME": display_name,
+                f"{model_prefix}_PROVIDERMODELID": model_id,
+                f"{model_prefix}_STYLE": "openai-responses",
+                f"{model_prefix}_CAPABILITIES_0": "TEXT_CHAT",
+                f"{model_prefix}_CAPABILITIES_1": "TOOL_CALLING",
+                f"{model_prefix}_CAPABILITIES_2": "REASONING",
+                f"{model_prefix}_CONTEXTWINDOW": "272000",
+                f"{model_prefix}_MAXOUTPUTTOKENS": "128000",
+            }
+        )
+    next_provider_index += 1
     if bailian is not None:
         bailian_key, workspace_id, region = bailian
         prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
@@ -1010,7 +1105,8 @@ def backend_environment(
                 f"{prefix}_MODELS_3_STYLE": "openai-chat-completions",
                 f"{prefix}_MODELS_3_CAPABILITIES_0": "TEXT_CHAT",
                 f"{prefix}_MODELS_3_CAPABILITIES_1": "TOOL_CALLING",
-                f"{prefix}_MODELS_3_CAPABILITIES_2": "IMAGE_INPUT",
+                f"{prefix}_MODELS_3_CAPABILITIES_2": "IMAGE_UPLOAD_INPUT",
+                f"{prefix}_MODELS_3_CAPABILITIES_3": "IMAGE_URL_INPUT",
                 f"{prefix}_MODELS_3_CONTEXTWINDOW": "131072",
                 f"{prefix}_MODELS_3_MAXOUTPUTTOKENS": "8192",
                 f"{prefix}_MODELS_4_ID": "qwen3.7-max-responses",
@@ -1122,6 +1218,32 @@ def backend_environment(
                 }
             )
         next_provider_index += 1
+    if siliconflow_key is not None:
+        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
+        environment.update(
+            {
+                "SILICONFLOW_API_KEY": siliconflow_key,
+                f"{prefix}_ID": "siliconflow",
+                f"{prefix}_DISPLAYNAME": "硅基流动 SiliconFlow",
+                f"{prefix}_MODE": "remote",
+                f"{prefix}_ALLOWDETERMINISTIC": "false",
+                f"{prefix}_NATIVESTREAMING": "true",
+                f"{prefix}_ENDPOINT": "https://api.siliconflow.cn/v1",
+                f"{prefix}_CREDENTIALREFERENCE": "env://SILICONFLOW_API_KEY",
+                f"{prefix}_APIBINDINGS_0_STYLE": "openai-chat-completions",
+                f"{prefix}_APIBINDINGS_0_DIALECT": "siliconflow-openai-chat",
+                f"{prefix}_MODELS_0_ID": SILICONFLOW_MODEL_ID,
+                f"{prefix}_MODELS_0_DISPLAYNAME": "DeepSeek V4 Flash",
+                f"{prefix}_MODELS_0_MODELDISPLAYNAME": "DeepSeek V4 Flash",
+                f"{prefix}_MODELS_0_PROVIDERMODELID": "deepseek-ai/DeepSeek-V4-Flash",
+                f"{prefix}_MODELS_0_STYLE": "openai-chat-completions",
+                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
+                f"{prefix}_MODELS_0_CONTEXTWINDOW": "1000000",
+                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
+            }
+        )
+        next_provider_index += 1
     if openai is not None:
         openai_base_url, openai_key, openai_model_id = openai
         prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
@@ -1147,6 +1269,36 @@ def backend_environment(
                 f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
             }
         )
+        next_provider_index += 1
+    if cliproxy is not None:
+        cliproxy_key, provider_model_id = cliproxy
+        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
+        environment.update(
+            {
+                "HAIFA_CLIPROXYAPI_API_KEY": cliproxy_key,
+                f"{prefix}_ID": "cliproxyapi-antigravity",
+                f"{prefix}_DISPLAYNAME": "Gemini via CLIProxyAPI",
+                f"{prefix}_MODE": "remote",
+                f"{prefix}_ALLOWDETERMINISTIC": "false",
+                f"{prefix}_NATIVESTREAMING": "true",
+                f"{prefix}_ENDPOINT": "http://127.0.0.1:8317/v1beta",
+                f"{prefix}_CREDENTIALREFERENCE": "env://HAIFA_CLIPROXYAPI_API_KEY",
+                f"{prefix}_APIBINDINGS_0_STYLE": "google-gemini-generate-content",
+                f"{prefix}_APIBINDINGS_0_DIALECT": "cliproxyapi-antigravity",
+                f"{prefix}_MODELS_0_ID": CLIPROXY_GEMINI_MODEL_ID,
+                f"{prefix}_MODELS_0_DISPLAYNAME": "Gemini Flash · CLIProxyAPI Antigravity",
+                f"{prefix}_MODELS_0_MODELDISPLAYNAME": "Gemini Flash",
+                f"{prefix}_MODELS_0_PROVIDERMODELID": provider_model_id,
+                f"{prefix}_MODELS_0_STYLE": "google-gemini-generate-content",
+                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
+                f"{prefix}_MODELS_0_CAPABILITIES_2": "STRUCTURED_OUTPUT",
+                f"{prefix}_MODELS_0_CAPABILITIES_3": "IMAGE_UPLOAD_INPUT",
+                f"{prefix}_MODELS_0_CAPABILITIES_4": "AUDIO_INPUT",
+                f"{prefix}_MODELS_0_CONTEXTWINDOW": "1048576",
+                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "65536",
+            }
+        )
     return environment
 
 
@@ -1155,6 +1307,8 @@ def resolve_default_model_id(
     bailian: tuple[str, str, str] | None,
     kimi_key: str | None = None,
     bigmodel_key: str | None = None,
+    cliproxy: tuple[str, str] | None = None,
+    siliconflow_key: str | None = None,
 ) -> str:
     selected = requested or DEFAULT_MODEL_ID
     if selected.startswith("qwen") and bailian is None:
@@ -1163,6 +1317,10 @@ def resolve_default_model_id(
         fail("A Kimi default model requires a Kimi API key.")
     if selected.startswith("glm") and bigmodel_key is None:
         fail("A GLM default model requires a BigModel API key.")
+    if selected == CLIPROXY_GEMINI_MODEL_ID and cliproxy is None:
+        fail("The CLIProxyAPI Gemini default model requires HAIFA_CLIPROXYAPI_API_KEY.")
+    if selected == SILICONFLOW_MODEL_ID and siliconflow_key is None:
+        fail("The SiliconFlow default model requires a SiliconFlow API key.")
     return selected
 
 
@@ -1261,7 +1419,18 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     bailian = optional_bailian_configuration(args.bailian_key_file, args.bailian_region)
     kimi_key = optional_secret_file(args.kimi_key_file, "Kimi", "KIMI_API_KEY")
     bigmodel_key = optional_secret_file(args.bigmodel_key_file, "BigModel", "BIGMODEL_API_KEY")
-    default_model_id = resolve_default_model_id(args.default_model_id, bailian, kimi_key, bigmodel_key)
+    siliconflow_key = optional_secret_file(
+        args.siliconflow_key_file, "SiliconFlow", "SILICONFLOW_API_KEY"
+    )
+    cliproxy = optional_cliproxy_environment(config_file=args.cliproxy_config_file)
+    default_model_id = resolve_default_model_id(
+        args.default_model_id,
+        bailian,
+        kimi_key,
+        bigmodel_key,
+        cliproxy,
+        siliconflow_key,
+    )
     continuation = continuation_key(args.continuation_key_file)
     for directory in (value.runtime, value.data, value.logs):
         directory.mkdir(parents=True, exist_ok=True)
@@ -1334,6 +1503,8 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
             tavily_key,
             args.web_search_provider,
             args.web_fetch_provider,
+            cliproxy=cliproxy,
+            siliconflow_key=siliconflow_key,
         ),
         args.startup_timeout_seconds,
         value,

@@ -4,6 +4,7 @@ import io.haifa.agent.core.content.ArtifactRefPart;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredAudioContentPart;
 import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolCallPart;
@@ -24,19 +25,33 @@ public record ContentPartPayload(
         String toolName,
         String toolVersion,
         ImageUrlPayload imageUrl,
-        StoredImagePayload storedImage) {
+        StoredImagePayload storedImage,
+        StoredAudioPayload storedAudio) {
 
     public static ContentPartPayload from(ContentPart part) {
         return switch (part) {
             case TextPart value ->
                 new ContentPartPayload(
-                        "text", value.text(), value.format(), null, null, null, null, null, null, null, null, null);
+                        "text",
+                        value.text(),
+                        value.format(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
             case AssetRefPart value ->
                 new ContentPartPayload(
                         "asset-ref",
                         null,
                         null,
                         AssetPayload.from(value.asset()),
+                        null,
                         null,
                         null,
                         null,
@@ -58,6 +73,7 @@ public record ContentPartPayload(
                         null,
                         null,
                         null,
+                        null,
                         null);
             case ImageUrlContentPart value ->
                 new ContentPartPayload(
@@ -72,6 +88,7 @@ public record ContentPartPayload(
                         null,
                         null,
                         ImageUrlPayload.from(value),
+                        null,
                         null);
             case StoredImageContentPart value ->
                 new ContentPartPayload(
@@ -86,7 +103,23 @@ public record ContentPartPayload(
                         null,
                         null,
                         null,
-                        StoredImagePayload.from(value));
+                        StoredImagePayload.from(value),
+                        null);
+            case StoredAudioContentPart value ->
+                new ContentPartPayload(
+                        "stored-audio",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        StoredAudioPayload.from(value));
             case ToolCallPart value ->
                 new ContentPartPayload(
                         "tool-call-ref",
@@ -99,6 +132,7 @@ public record ContentPartPayload(
                         value.providerCorrelationId().value(),
                         value.toolName(),
                         value.toolVersion(),
+                        null,
                         null,
                         null);
             case ToolResultPart value ->
@@ -114,6 +148,7 @@ public record ContentPartPayload(
                         null,
                         null,
                         null,
+                        null,
                         null);
         };
     }
@@ -125,6 +160,7 @@ public record ContentPartPayload(
             case "artifact-ref" -> new ArtifactRefPart(artifact.toDomain(), summary);
             case "image-url" -> imageUrl.toDomain();
             case "stored-image" -> storedImage.toDomain();
+            case "stored-audio" -> storedAudio.toDomain();
             case "tool-call-ref" ->
                 new ToolCallPart(
                         new ToolCallId(toolCallId),

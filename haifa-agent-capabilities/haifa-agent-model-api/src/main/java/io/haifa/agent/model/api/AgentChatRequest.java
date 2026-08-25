@@ -83,9 +83,17 @@ public record AgentChatRequest(
         model = Objects.requireNonNull(model, "model must not be null");
         messages = List.copyOf(Objects.requireNonNull(messages, "messages must not be null"));
         if (messages.isEmpty()) throw new IllegalArgumentException("messages must not be empty");
-        if (messages.stream().anyMatch(message -> !message.images().isEmpty())
-                && !model.capabilities().contains(ModelCapability.IMAGE_INPUT)) {
-            throw new IllegalArgumentException("selected model does not declare image input capability");
+        if (messages.stream().flatMap(message -> message.images().stream()).anyMatch(ImageUrlPart.class::isInstance)
+                && !supports(ModelCapability.IMAGE_URL_INPUT, model)) {
+            throw new IllegalArgumentException("selected model does not declare image URL input capability");
+        }
+        if (messages.stream().flatMap(message -> message.images().stream()).anyMatch(ImageDataPart.class::isInstance)
+                && !supports(ModelCapability.IMAGE_UPLOAD_INPUT, model)) {
+            throw new IllegalArgumentException("selected model does not declare uploaded image input capability");
+        }
+        if (messages.stream().anyMatch(message -> !message.audios().isEmpty())
+                && !model.capabilities().contains(ModelCapability.AUDIO_INPUT)) {
+            throw new IllegalArgumentException("selected model does not declare audio input capability");
         }
         tools = List.copyOf(Objects.requireNonNull(tools, "tools must not be null"));
         if (maxOutputTokens < 1) throw new IllegalArgumentException("maxOutputTokens must be positive");
@@ -93,5 +101,10 @@ public record AgentChatRequest(
         if (timeout.isZero() || timeout.isNegative()) throw new IllegalArgumentException("timeout must be positive");
         options = ModelValues.map(options, "options");
         structuredOutput = Objects.requireNonNullElse(structuredOutput, java.util.Optional.empty());
+    }
+
+    @SuppressWarnings("deprecation")
+    private static boolean supports(ModelCapability capability, ResolvedModelSnapshot model) {
+        return model.capabilities().contains(capability) || model.capabilities().contains(ModelCapability.IMAGE_INPUT);
     }
 }

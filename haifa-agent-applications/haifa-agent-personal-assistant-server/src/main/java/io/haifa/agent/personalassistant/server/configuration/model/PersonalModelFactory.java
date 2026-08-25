@@ -31,6 +31,8 @@ import io.haifa.agent.model.core.ModelAccessPolicy;
 import io.haifa.agent.model.core.ModelAvailabilityRequest;
 import io.haifa.agent.model.core.ModelSelectionRequest;
 import io.haifa.agent.model.core.StaticModelPlatform;
+import io.haifa.agent.model.gemini.GeminiGenerateContentModel;
+import io.haifa.agent.model.gemini.GeminiModelProfileFactory;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
@@ -125,8 +127,8 @@ public final class PersonalModelFactory {
                         },
                         java.util.LinkedHashMap::new));
         ResolvedModelSnapshot snapshot = snapshots.get(selected.model().id());
-        Map<ModelAdapterCoordinate, AgentChatModel> adapters =
-                adapters(snapshots, selected, deterministic, mapper, shell, allowInsecureLoopbackModel, credentials);
+        Map<ModelAdapterCoordinate, AgentChatModel> adapters = adapters(
+                providers, snapshots, selected, deterministic, mapper, shell, allowInsecureLoopbackModel, credentials);
         ModelContribution contribution = new ModelContribution(
                 new SdkContributionMetadata(
                         new ProductContributionCoordinate("haifa-personal-model", "1.0.0"),
@@ -144,7 +146,9 @@ public final class PersonalModelFactory {
         Map<String, ModelBindingProfile> profiles = snapshots.values().stream()
                 .collect(java.util.stream.Collectors.toUnmodifiableMap(
                         value -> value.modelId().value(),
-                        value -> OpenAiCompatibleModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 13))));
+                        value -> ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(value.apiStyle())
+                                ? GeminiModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 24))
+                                : OpenAiCompatibleModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 13))));
         if (!profiles.get(selected.model().id()).selectable()) {
             throw new IllegalArgumentException("default Personal model profile is not verified");
         }
@@ -516,6 +520,7 @@ public final class PersonalModelFactory {
     }
 
     private static Map<ModelAdapterCoordinate, AgentChatModel> adapters(
+            List<PersonalAssistantProperties.ModelProvider> providers,
             Map<String, ResolvedModelSnapshot> snapshots,
             ConfiguredModel selected,
             boolean deterministic,
@@ -529,8 +534,10 @@ public final class PersonalModelFactory {
             return Map.of(
                     ModelAdapterCoordinate.from(snapshots.get(selected.model().id())), model);
         }
-        HttpClient http =
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        HttpClient http = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .proxy(PersonalModelProxySelector.from(providers))
+                .build();
         Map<ModelAdapterCoordinate, AgentChatModel> result = new LinkedHashMap<>();
         snapshots.values().stream().map(ModelAdapterCoordinate::from).distinct().forEach(coordinate -> {
             AgentChatModel adapter =
@@ -549,6 +556,9 @@ public final class PersonalModelFactory {
                                     http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
                         case ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER ->
                             new AnthropicMessagesModel(
+                                    http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
+                        case ModelApiStyles.GOOGLE_GEMINI_ADAPTER ->
+                            new GeminiGenerateContentModel(
                                     http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
                         default ->
                             throw new IllegalArgumentException(

@@ -249,6 +249,10 @@ public final class PersonalApiMapper {
                                 image.sizeBytes(),
                                 image.originalFilename()))
                         .toList(),
+                value.audios().stream()
+                        .map(audio -> new PersonalApiDtos.TurnAudio(
+                                audio.audioId(), audio.mediaType(), audio.sizeBytes(), audio.originalFilename()))
+                        .toList(),
                 value.createdAt());
     }
 

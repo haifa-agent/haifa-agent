@@ -29,8 +29,10 @@ export function ModelConnectionPanel({
   const operationGeneration = useRef(0);
   const mounted = useRef(true);
   const providerConnection = connections.find((connection) => connection.providerId === providerId);
+  const codexConnection = connections.find((connection) => connection.providerId === "openai-codex");
   const apiKeySupported = providerConnection?.apiKeySupported ?? false;
-  const externalLoginSupported = providerConnection?.externalLoginSupported ?? false;
+  const externalLoginSupported = codexConnection?.externalLoginSupported ?? false;
+  const codexAuthenticated = codexConnection?.status === "AUTHENTICATED";
 
   const refresh = useCallback(async () => {
     if (!client.modelConnections) return;
@@ -146,14 +148,14 @@ export function ModelConnectionPanel({
         <div className="model-connection-options">
           <section>
             <LogIn size={20} aria-hidden="true" />
-            <div><h3>使用 ChatGPT 登录</h3><p>{externalLoginSupported ? "使用 ChatGPT 订阅中的 Codex 额度。登录在浏览器完成。" : "当前模型没有配置 ChatGPT/Codex 登录。"}</p></div>
-            <button type="button" className="button primary" disabled={busy || !client.startCodexBrowserLogin || !externalLoginSupported} onClick={() => void login()}>登录</button>
+            <div><h3>使用 ChatGPT 登录</h3><p>{codexAuthenticated ? "已连接共享的 ChatGPT/Codex 本机账户。" : externalLoginSupported ? "使用 ChatGPT 订阅中的 Codex 额度。登录在浏览器完成。" : "当前运行环境没有配置 ChatGPT/Codex 登录。"}</p></div>
+            <button type="button" className="button primary" aria-busy={busy} disabled={busy || codexAuthenticated || !client.startCodexBrowserLogin || !externalLoginSupported} onClick={() => void login()}>{codexAuthenticated ? "已登录" : "登录"}</button>
           </section>
           <section>
             <KeyRound size={20} aria-hidden="true" />
-            <div><h3>使用 API Key</h3><p>{apiKeySupported ? "Key 只写入本机认证文件，不会回显或用于保存前验证。" : "当前 Codex 连接只接受 ChatGPT 登录。"}</p></div>
+            <div><h3>使用 API Key</h3><p>{apiKeySupported ? "Key 只写入本机认证文件，不会回显或用于保存前验证。" : "当前模型连接由运行环境或外部登录管理，不能在此保存 API Key。"}</p></div>
             <label><span className="sr-only">API Key</span><input type="password" autoComplete="off" value={apiKey} disabled={busy || !apiKeySupported} placeholder="输入 API Key" onChange={(event) => setApiKey(event.target.value)} /></label>
-            <button type="button" className="button" disabled={busy || !apiKey || !client.saveModelApiKey || !apiKeySupported} onClick={() => void save()}>保存</button>
+            <button type="button" className="button" aria-busy={busy} disabled={busy || !apiKey || !client.saveModelApiKey || !apiKeySupported} onClick={() => void save()}>保存</button>
           </section>
         </div>
 

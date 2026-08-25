@@ -4,6 +4,7 @@ import io.haifa.agent.core.content.ArtifactRefPart;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredAudioContentPart;
 import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.MessageRole;
@@ -35,7 +36,8 @@ public record ConversationTurn(
                         || content instanceof AssetRefPart
                         || content instanceof ArtifactRefPart
                         || content instanceof ImageUrlContentPart
-                        || content instanceof StoredImageContentPart))) {
+                        || content instanceof StoredImageContentPart
+                        || content instanceof StoredAudioContentPart))) {
             throw new IllegalArgumentException("tool protocol content is not user-visible");
         }
         long textLength = contents.stream()

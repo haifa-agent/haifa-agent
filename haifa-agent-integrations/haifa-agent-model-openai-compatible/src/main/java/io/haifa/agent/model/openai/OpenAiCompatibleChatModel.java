@@ -301,6 +301,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     null);
         }
         dialect(request).validateSnapshot(request.model(), allowInsecureHttp);
+        if (request.messages().stream().anyMatch(message -> !message.audios().isEmpty())) {
+            throw new IllegalArgumentException("audio input is not supported by this OpenAI-compatible adapter");
+        }
         if (request.structuredOutput().isPresent()
                 && !request.model()
                         .capabilities()

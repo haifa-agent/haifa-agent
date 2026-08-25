@@ -42,6 +42,11 @@ SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 pr
 Bootstrap 仅在 `web_search` 与 `web_fetch` 均完成受信注册时发布 `web-research` 能力，供 Web 在创建
 Deep Research 计划前做确定性可用性检查；该标记不包含 Provider、Endpoint 或凭据细节。
 
+Personal 的受信 `model-providers` 也可显式装配 `google-gemini-generate-content`。本机方言的 Provider ID
+必须是 `cliproxyapi-antigravity`，Dialect 必须是 `cliproxyapi-antigravity`，CredentialRef 必须是
+`env://HAIFA_CLIPROXYAPI_API_KEY`，HTTP Endpoint 必须在启用 `allow-insecure-loopback-model` 后仍通过
+loopback 校验。该连接只复用 CLIProxyAPI 的下游 Key，不提供或包装 Antigravity OAuth 登录。
+
 Server 在应用就绪时扫描 ACTIVE Conversation：旧实例遗留的 `RUNNING/SUSPENDING` Run 通过公共
 `AgentRuns.recover` 接管并继续执行；`WAITING_APPROVAL/WAITING_INTERACTION` 只恢复事件观察，不会
 越过用户门禁。恢复仍服从冻结 Binding、Checkpoint、Tool Journal 和不确定结果 fail-closed 规则。
@@ -135,6 +140,12 @@ Provider 只需新增配置并省略 dialect；旧单模型、旧 dialect/versio
 DeepSeek Anthropic Messages 因 Base URL 与其余 Style 不同，在 Binding 上覆盖完整 `/anthropic` Endpoint；
 Credential 与 `native-streaming` 仍只配置在 Provider。
 
+远端模型 Provider 可选配置 `proxy`。当前只接受不含凭据、路径、查询或片段且显式声明端口的
+`http://host:port` HTTP Proxy origin。代理按 Provider Endpoint 及其 Binding Endpoint 的 origin 精确
+路由；没有配置的 Provider 保持 JVM 既有直连/系统代理行为。共享同一 Endpoint origin 的 Provider
+必须使用相同代理配置，否则 Server 启动时 fail closed。真实环境中的 `openai-codex` 显式通过
+`http://127.0.0.1:2081` 连接 ChatGPT Codex Endpoint。
+
 `allow-insecure-loopback-model` 只允许显式的 `http` loopback 模型端点；任何外部 HTTP 地址仍会在
 Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型是
 `deepseek-chat-flash`，PA 的推荐偏好解析为 thinking/high；用户可以选择快速模式显式关闭 Thinking，或在
@@ -142,20 +153,35 @@ Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写�
 Responses reasoning 控件当前保持只读。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
 `TEXT_CHAT + TOOL_CALLING` 的可选列表中；Snapshot 仍按 `standard` Responses 冻结真实能力边界。
 
-真实环境启动脚本可选装配 `aliyun-bailian`、`kimi` 与 `zhipu` Provider。百炼完整配置要求 API Key、
-Workspace ID 和 region；Kimi 与智谱分别使用 `env://KIMI_API_KEY`、`env://BIGMODEL_API_KEY`。Endpoint、
+真实环境启动脚本固定发布 `openai-codex` 模型目录，并通过共享的
+`model-auth://openai-codex/default` 读取 `~/.haifa-agent/auth.json`；模型目录与认证就绪状态保持分离。
+浏览器重新登录仍必须显式提供本地兼容测试所需的 OAuth Client 配置。脚本还可选装配
+`aliyun-bailian`、`kimi`、`zhipu` 与 `siliconflow` Provider。百炼完整配置要求 API Key、
+Workspace ID 和 region；Kimi、智谱与硅基流动分别使用 `env://KIMI_API_KEY`、`env://BIGMODEL_API_KEY`、
+`env://SILICONFLOW_API_KEY`。硅基流动只发布已验证的 `deepseek-ai/DeepSeek-V4-Flash` Chat Binding；Endpoint、
 实际 Provider Model ID 与完整 Snapshot 不返回浏览器。检测到可选 Provider 时只扩展目录，默认仍是
 `deepseek-chat-flash`；只有显式传入 `--default-model-id` 才改变默认 Binding。
+
+真实环境优先读取 `HAIFA_CLIPROXYAPI_API_KEY`，未设置时只从 `--cliproxy-config-file` 指向的
+CLIProxyAPI `config.yaml` 提取首个 `haifa-local-*` 下游 Key，然后装配 loopback
+`cliproxyapi-antigravity` Provider；它不读取 `auths/`、OAuth Token 或系统 Keyring。
+`HAIFA_CLIPROXYAPI_MODEL_ID` 默认是 `gemini-3-flash`。显式选择
+`--default-model-id gemini-cliproxy-flash` 才将它设为默认模型。该 Binding 声明文本、Tool、结构化输出、
+图片和音频输入能力，且只把下游 Key 传入 PA 子进程，不读取 CLIProxyAPI 的 OAuth、Token 或 Keyring。
 
 百炼目录提供 Qwen Chat 与已验证的 Max/Plus Responses；Kimi 只提供官方 API Key Chat；智谱提供通用
 OpenAI Chat，并仅为 GLM-5.2 提供通过 Contract 的 Anthropic Messages 高级连接方式。所有可见状态、
 推荐值、允许值和只读状态由后端精确 Binding Profile 驱动；UI 不包含 Provider/Model 条件分支。
 
-`IMAGE_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。启用后，Conversation 请求可带
-最多四个 `{kind: url|upload}` 图片输入。外部 URL 只接受受限 HTTPS；上传通过 `POST /api/v1/images`
+`IMAGE_UPLOAD_INPUT`、`IMAGE_URL_INPUT` 与 `AUDIO_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。
+Gemini CLIProxyAPI Binding 只声明图片上传能力；不会因此扫描既有会话或为历史 URL 添加兼容性提示。
+Conversation 每条消息合计最多携带四个媒体输入；图片使用 `{kind: url|upload}`，外部 URL 只接受受限 HTTPS，上传通过 `POST /api/v1/images`
 写入 `<data-directory>/images`，单文件上限 10 MiB、目录上限 1 GiB，类型限 PNG/JPEG/WEBP/非动画
-GIF。SQLite 与 Turn 只保存 opaque 引用、MIME、长度和摘要，不保存图片 Base64 或绝对路径。本阶段
-没有下载、缩略图、OCR、单附件删除或自动过期任务。
+GIF。音频只接受上传，通过 `POST /api/v1/audios` 写入独立的 `<data-directory>/audio` Store，采用同样的
+文件和目录上限，类型限 WAV、MP3、AIFF、AAC、OGG Vorbis、FLAC。SQLite 与 Turn 只保存 opaque 引用、
+MIME、长度和摘要，不保存媒体 Base64 或绝对路径；调用模型前会重新校验摘要。`GET /api/v1/images/{imageId}`
+按 opaque id 读取并重新校验 magic bytes 与 MIME，供本机 PA 显示已发送图片缩略图；仍没有音频下载、
+OCR、单附件删除或自动过期任务。
 
 Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。

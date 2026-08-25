@@ -15,7 +15,8 @@ public record ModelMessage(
         Map<String, Object> toolResultData,
         boolean toolResultTruncated,
         Optional<SensitiveModelReasoning> reasoning,
-        List<ModelImagePart> images) {
+        List<ModelImagePart> images,
+        List<ModelAudioPart> audios) {
     public ModelMessage {
         role = Objects.requireNonNull(role, "role must not be null");
         content = Objects.requireNonNull(content, "content must not be null");
@@ -24,11 +25,21 @@ public record ModelMessage(
         toolResultData = ModelValues.map(toolResultData, "toolResultData");
         reasoning = Objects.requireNonNull(reasoning, "reasoning must not be null");
         images = List.copyOf(Objects.requireNonNull(images, "images must not be null"));
+        audios = List.copyOf(Objects.requireNonNull(audios, "audios must not be null"));
         if (images.size() > 4) {
             throw new IllegalArgumentException("model message may contain at most 4 images");
         }
         if (!images.isEmpty() && role != ModelMessageRole.USER) {
             throw new IllegalArgumentException("image inputs are only allowed on user messages");
+        }
+        if (audios.size() > 4) {
+            throw new IllegalArgumentException("model message may contain at most 4 audio inputs");
+        }
+        if (!audios.isEmpty() && role != ModelMessageRole.USER) {
+            throw new IllegalArgumentException("audio inputs are only allowed on user messages");
+        }
+        if (images.size() + audios.size() > 4) {
+            throw new IllegalArgumentException("model message may contain at most 4 media inputs");
         }
         if (role == ModelMessageRole.ASSISTANT && content.isBlank() && toolCalls.isEmpty()) {
             throw new IllegalArgumentException("assistant message must contain content or tool calls");
@@ -66,6 +77,28 @@ public record ModelMessage(
                 toolResultData,
                 toolResultTruncated,
                 reasoning,
+                List.of(),
+                List.of());
+    }
+
+    public ModelMessage(
+            ModelMessageRole role,
+            String content,
+            List<ModelToolCall> toolCalls,
+            Optional<ProviderToolCallCorrelationId> providerCorrelationId,
+            Map<String, Object> toolResultData,
+            boolean toolResultTruncated,
+            Optional<SensitiveModelReasoning> reasoning,
+            List<ModelImagePart> images) {
+        this(
+                role,
+                content,
+                toolCalls,
+                providerCorrelationId,
+                toolResultData,
+                toolResultTruncated,
+                reasoning,
+                images,
                 List.of());
     }
 
@@ -100,7 +133,22 @@ public record ModelMessage(
                 Map.of(),
                 false,
                 Optional.empty(),
-                List.copyOf(images));
+                List.copyOf(images),
+                List.of());
+    }
+
+    public static ModelMessage user(
+            String content, List<? extends ModelImagePart> images, List<? extends ModelAudioPart> audios) {
+        return new ModelMessage(
+                ModelMessageRole.USER,
+                content,
+                List.of(),
+                Optional.empty(),
+                Map.of(),
+                false,
+                Optional.empty(),
+                List.copyOf(images),
+                List.copyOf(audios));
     }
 
     public static ModelMessage tool(ProviderToolCallCorrelationId correlationId, String content) {

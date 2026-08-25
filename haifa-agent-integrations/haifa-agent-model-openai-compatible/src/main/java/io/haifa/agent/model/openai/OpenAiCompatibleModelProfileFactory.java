@@ -159,12 +159,22 @@ public final class OpenAiCompatibleModelProfileFactory {
                 || verifiedZhipuDynamic52(snapshot)
                 || verifiedZhipuDynamicLegacy(snapshot)
                 || verifiedZhipuForced(snapshot)
+                || verifiedCodexBinding(snapshot)
                 || verifiedSiliconFlowBinding(snapshot);
     }
 
     private static boolean verifiedReadOnlyResponsesBinding(ResolvedModelSnapshot snapshot) {
         return ModelApiStyles.OPENAI_RESPONSES.equals(snapshot.apiStyle())
-                && (verifiedDeepSeekBinding(snapshot) || verifiedBailianBinding(snapshot));
+                && (verifiedDeepSeekBinding(snapshot)
+                        || verifiedBailianBinding(snapshot)
+                        || verifiedCodexBinding(snapshot));
+    }
+
+    private static boolean verifiedCodexBinding(ResolvedModelSnapshot snapshot) {
+        return "openai-codex".equals(snapshot.providerId().value())
+                && ModelApiStyles.OPENAI_RESPONSES.equals(snapshot.apiStyle())
+                && OpenAiResponsesDialects.OPENAI_CODEX.equals(snapshot.dialect())
+                && Set.of("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna").contains(snapshot.providerModelId());
     }
 
     private static boolean verifiedBailianBinding(ResolvedModelSnapshot snapshot) {

@@ -256,8 +256,9 @@ reconcile 路径使用同一份冻结定义校验。
 Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版本：Git Diff 的退出 1 可作为
 `EXPECTED_VARIANT/DIFFERENCES_FOUND` 形成 Diff 证据，Git Grep 的退出 1 是 `EMPTY_RESULT/NO_MATCHES`；
 无效 revision 的 128 和 Build/Test 非零退出仍是失败，Timeout/Cancel/未知终止不得自动重放。
-执行命令已经从受控 Workspace 启动。最高层受信本地装配可将等于当前 Workspace 或位于其下的绝对
-`workdir` 规范化为逻辑相对路径；Workspace 外绝对目录、绝对路径 `cd ...` 仍在进入 Broker 前以
+执行命令已经从受控 Workspace 启动。最高层受信本地装配在 ToolCall 持久化和 Policy 之前，将等于当前
+Workspace 或位于其下的绝对 `workdir` 生成唯一逻辑相对路径；Policy、Approval、Broker 与 Provider
+共用该 canonical target，Provider 只验证 canonical 约束而不再二次改写。Workspace 外绝对目录、绝对路径 `cd ...` 仍在进入 Broker 前以
 `ABSOLUTE_WORKDIR_FORBIDDEN` 结构化拒绝，非法相对路径以 `WORKDIR_INVALID` 拒绝。dispatch 前的确定性
 拒绝直接保存失败 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
 

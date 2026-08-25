@@ -391,7 +391,7 @@ class LocalCodingAgentTest {
     }
 
     @Test
-    void stubModelRunsGeneralShellThroughTheCliAssembly() throws Exception {
+    void canonicalizesAbsoluteWorkspaceRootBeforePolicyAndRunsThroughTheCliAssembly() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         String command =
                 isWindows() ? "Set-Content -NoNewline -Path shell-e2e.txt -Value stub" : "printf stub > shell-e2e.txt";
@@ -409,7 +409,7 @@ class LocalCodingAgentTest {
                                 "command",
                                 command,
                                 "workdir",
-                                ".",
+                                workspace.toAbsolutePath().normalize().toString(),
                                 "timeoutMillis",
                                 5000,
                                 "description",
