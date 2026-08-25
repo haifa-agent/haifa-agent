@@ -3,27 +3,39 @@ name: result-verification
 description: Verify a claimed result against observable evidence and explicit completion criteria.
 license: Apache-2.0
 metadata:
-  haifa.version: 1.1.0
+  haifa.version: 1.2.0
 ---
 
 # Result verification
 
 Use this Skill before claiming that a non-trivial task is complete.
 
-1. Restate the requested outcome and its acceptance criteria.
-2. Inspect the final artifact or state, not only the command that attempted to produce it.
-3. Run the narrowest relevant checks first, then the broader regression checks required by risk.
-4. Separate confirmed facts, inferred conclusions, skipped checks, and blocked checks.
-5. Check that unrelated state was preserved and sensitive content was not exposed.
-6. Report remaining risk precisely. A partial or blocked result must not be described as complete.
+1. Re-read the original request and authoritative repository contracts; do not verify only against a plan, summary,
+   TODO, or memory.
+2. Enumerate the complete contract proportionately: behavior, public API/data, errors,
+   state/side effects/order, boundaries, compatibility, mutation scope, and non-functional constraints.
+3. Map each item to final implementation/evidence or mark it inferred, missing, conflicting, or blocked. Core logic or
+   a happy path cannot cover an omitted contract.
+4. Compare exact contracts literally. Strings, identifiers, types, representations, formats, ordering,
+   and required dynamic values are not satisfied by semantic equivalents.
+5. Inspect the final artifact or state, not only the command that attempted to produce it.
+6. Run narrow checks first, then risk-required regressions. Algorithm tests do not replace API, error, state, or
+   protocol verification.
+7. When authoritative evidence provides expected and actual behavior, classify logic, boundary, environment/oracle,
+   or contract-conformance before changing the solution.
+8. Separate facts, inferences, skipped checks, and blockers; preserve unrelated state and sensitive content.
+9. Report risk precisely. Unmet, partial, missing, conflicting, blocked, or exact-contract-mismatched work is not complete.
 
-Before implementation and again after validation, check the generic contract:
+Before implementation and after validation, check without inventing requirements:
 
 - public signatures, visibility, and types;
-- input and output units and numeric boundaries;
-- null, invalid-input, error-type, and exact-text requirements;
-- state changes, side effects, and ordering;
+- input/output units, grammar, encoding, boundaries, shape, serialization, and framing;
+- null, invalid-input, error type/code/text, and required dynamic values;
+- state, side effects, ordering, compatibility, mutation scope, and non-functional constraints;
 - explicit examples that visible tests do not cover.
+
+Retain each authoritative source. Self-invented APIs/tests remain inference. Keep the checklist compact for simple,
+low-risk tasks.
 
 Retain every validation attempt. Report selected, ignored, and discovered test counts only when the tool provides
 reliable structured evidence; one selected test is not a complete test-suite claim. A later passing attempt does not
