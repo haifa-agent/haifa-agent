@@ -174,8 +174,7 @@ public final class OpenAiCompatibleModelProfileFactory {
         return "openai-codex".equals(snapshot.providerId().value())
                 && ModelApiStyles.OPENAI_RESPONSES.equals(snapshot.apiStyle())
                 && OpenAiResponsesDialects.OPENAI_CODEX.equals(snapshot.dialect())
-                && Set.of("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
-                        .contains(snapshot.providerModelId());
+                && Set.of("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna").contains(snapshot.providerModelId());
     }
 
     private static boolean verifiedBailianBinding(ResolvedModelSnapshot snapshot) {
