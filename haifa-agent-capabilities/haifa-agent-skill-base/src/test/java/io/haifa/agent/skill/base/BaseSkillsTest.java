@@ -27,6 +27,12 @@ class BaseSkillsTest {
         assertThat(result.registrations())
                 .extracting(registration -> registration.metadata().name().value())
                 .containsExactly("result-verification", "task-planning");
+        var resultVerification = result.registrations().stream()
+                .filter(registration -> registration.metadata().name().value().equals("result-verification"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(resultVerification.metadata().declaredVersion())
+                .hasValueSatisfying(version -> assertThat(version.value()).isEqualTo("1.2.0"));
         assertThat(result.registrations()).allSatisfy(registration -> {
             assertThat(registration.metadata().toolHints()).isEmpty();
             assertThat(registration.packageIndex().resources()).hasSize(1);
@@ -41,10 +47,26 @@ class BaseSkillsTest {
             String skill = new String(input.readAllBytes(), StandardCharsets.UTF_8);
             assertThat(skill)
                     .contains(
+                            "haifa.version: 1.2.0",
+                            "Re-read the original request",
+                            "complete contract proportionately",
+                            "public API/data",
+                            "state/side effects/order",
+                            "compatibility, mutation scope",
+                            "Map each item to final implementation/evidence",
+                            "Core logic or",
+                            "happy path cannot cover an omitted contract",
+                            "Compare exact contracts literally",
+                            "required dynamic values",
+                            "expected and actual behavior",
+                            "contract-conformance",
+                            "Unmet, partial, missing, conflicting, blocked",
+                            "is not complete",
                             "public signatures, visibility, and types",
-                            "input and output units and numeric boundaries",
-                            "null, invalid-input, error-type, and exact-text requirements",
-                            "state changes, side effects, and ordering",
+                            "input/output units, grammar, encoding, boundaries, shape, serialization, and framing",
+                            "null, invalid-input, error type/code/text",
+                            "state, side effects, ordering, compatibility, mutation scope",
+                            "Self-invented APIs/tests remain inference",
                             "selected, ignored, and discovered test counts",
                             "one selected test is not a complete test-suite claim");
         }

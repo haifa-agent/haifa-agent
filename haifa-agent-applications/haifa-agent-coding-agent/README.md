@@ -29,6 +29,10 @@ Coding Agent 的基础工作方法由产品拥有的版本化资源
 `operationFamily` 和验证/Diff 用法由对应 Tool Definition 描述；`task-planning` 与
 `result-verification` 继续通过 Skill 渐进披露。
 
+基础 Prompt 把完整任务契约作为实现与完成的事实边界：核心逻辑通过不能替代 public API、输入输出、错误、
+状态、副作用、顺序、兼容性或修改范围等明确契约。Agent 在修改前建立与风险匹配的简短契约清单，完成前
+回读原始请求和权威仓库契约；精确类型、文本、格式和动态值只在公开来源明确要求时按字面核对。
+
 交付约束位于版本化基础 Prompt。精确剩余预算和完整交付状态留在权威控制面与 Trace，不再通过每轮
 重建的尾部 `[CODING_RUN_STATE]` 改写模型请求。预算阈值、恢复策略和完成门禁纠偏只在状态转换时作为
 Agent-visible、用户不可见的 Session 消息追加；旧请求因此保持为新请求的完整历史前缀。追加消息不包含
