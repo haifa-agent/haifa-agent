@@ -1235,17 +1235,30 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-bottom: 1px solid #e7eaf1;
   background: #f8f9fc;
 }
-.slash-command-menu header > div { display: flex; flex-direction: column; gap: 2px; }
+.slash-command-menu header > div { grid-column: 2; display: flex; flex-direction: column; gap: 2px; }
 .slash-command-menu header strong { font-size: 12px; }
 .slash-command-menu header span { color: #7b8496; font-size: 10px; }
-.slash-command-menu kbd {
-  padding: 3px 6px;
+.slash-close {
+  grid-column: 3;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 7px;
   color: #747e91;
-  font-size: 9px;
+  font: inherit;
   border: 1px solid #d8deea;
-  border-radius: 5px;
+  border-radius: 7px;
   background: white;
   box-shadow: 0 1px 0 #ccd3df;
+  cursor: pointer;
+}
+.slash-close span { color: inherit !important; font-size: 9px !important; }
+.slash-close:hover { color: #294eb4; border-color: #bfcdf5; background: #f2f5ff; }
+.slash-close:focus-visible { outline: 2px solid #4f6ed8; outline-offset: 2px; }
+.slash-command-menu header > .slash-back {
+  grid-column: 1;
 }
 .slash-back {
   padding: 5px 7px;

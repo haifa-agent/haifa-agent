@@ -1753,6 +1753,39 @@ describe("Personal Assistant application", () => {
     expect((composer as HTMLTextAreaElement).value).toBe("");
   });
 
+  it("closes model selection with Escape, the close button, and an outside pointer", async () => {
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: flashModel.id,
+      models: [proModel, flashModel, bailianModel],
+    });
+
+    render(<App client={api} />);
+
+    const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
+    const openProviderDialog = async () => {
+      fireEvent.change(composer, { target: { value: "/" } });
+      fireEvent.click(await screen.findByRole("option", { name: /选择模型/ }));
+      return screen.findByRole("dialog", { name: "选择模型厂商" });
+    };
+
+    let providerDialog = await openProviderDialog();
+    fireEvent.pointerDown(within(providerDialog).getByRole("option", { name: /DeepSeek/ }));
+    expect(screen.getByRole("dialog", { name: "选择模型厂商" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "选择模型厂商" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(composer));
+
+    providerDialog = await openProviderDialog();
+    fireEvent.click(within(providerDialog).getByRole("button", { name: "关闭模型选择" }));
+    expect(screen.queryByRole("dialog", { name: "选择模型厂商" })).toBeNull();
+
+    await openProviderDialog();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("dialog", { name: "选择模型厂商" })).toBeNull();
+  });
+
   it("keeps unavailable models visible with the backend reason but prevents selection", async () => {
     const api = client();
     vi.mocked(api.bootstrap).mockResolvedValue({

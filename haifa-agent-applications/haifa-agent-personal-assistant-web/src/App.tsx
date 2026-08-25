@@ -3110,6 +3110,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const audioInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageToolsRef = useRef<HTMLDivElement>(null);
+  const slashMenuRef = useRef<HTMLElement>(null);
   const pendingImagePreviews = useRef(new Set<string>());
   const [reasonTarget, setReasonTarget] = useState<
     { kind: "reject"; candidate: MemoryCandidate } | { kind: "invalidate"; memory: Memory } | null
@@ -3250,6 +3251,13 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     setImageUrl("");
   }, []);
 
+  const closeSlashMenu = useCallback((restoreFocus = true) => {
+    setSlashMenu(null);
+    setSlashFromPlus(false);
+    setSlashActiveIndex(0);
+    if (restoreFocus) window.requestAnimationFrame(() => textareaRef.current?.focus());
+  }, []);
+
   const revokePreview = useCallback((previewUrl?: string) => {
     if (!previewUrl || !pendingImagePreviews.current.delete(previewUrl)) return;
     URL.revokeObjectURL(previewUrl);
@@ -3275,6 +3283,24 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [closeImageTools, imageToolsOpen]);
+
+  useEffect(() => {
+    if (!slashMenu) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!slashMenuRef.current?.contains(event.target as Node)) closeSlashMenu(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeSlashMenu();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [closeSlashMenu, slashMenu]);
 
   const loadMemories = useCallback(async (signal?: AbortSignal) => {
     const [candidates, memories] = await Promise.all([client.memoryCandidates(signal), client.memories(signal)]);
@@ -4238,6 +4264,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             {composerMode === "DEEP_RESEARCH" && <div className="composer-mode-chip"><Sparkles size={13} aria-hidden="true" /><span>Deep Research</span><button type="button" aria-label="退出 Deep Research 模式" title="退出 Deep Research 模式" onClick={() => setComposerMode("CHAT")}><X size={12} /></button></div>}
             {slashMenu && !composerDisabled && (
               <section
+                ref={slashMenuRef}
                 className="slash-command-menu"
                 role="dialog"
                 aria-label={
@@ -4276,7 +4303,16 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                             : "优先使用推荐设置，需要时再展开高级连接方式"}
                     </span>
                   </div>
-                  <kbd>Esc</kbd>
+                  <button
+                    type="button"
+                    className="slash-close"
+                    aria-label={slashMenu.stage === "commands" ? "关闭命令菜单" : "关闭模型选择"}
+                    title="关闭（Esc）"
+                    onClick={() => closeSlashMenu()}
+                  >
+                    <X size={13} aria-hidden="true" />
+                    <span>Esc</span>
+                  </button>
                 </header>
                 <div className="slash-command-options" role="listbox">
                   {slashMenu.stage === "commands" && visibleSlashCommands.map((command, index) => (
@@ -4603,11 +4639,6 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 aria-haspopup="dialog"
                 onChange={(event) => updateComposer(event.target.value)}
                 onKeyDown={(event) => {
-                  if (slashMenu && event.key === "Escape") {
-                    event.preventDefault();
-                    setSlashMenu(null);
-                    return;
-                  }
                   if (slashMenu && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
                     event.preventDefault();
                     if (slashItemCount > 0) {
