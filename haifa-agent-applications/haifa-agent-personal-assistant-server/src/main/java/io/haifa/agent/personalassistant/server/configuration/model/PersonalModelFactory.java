@@ -127,8 +127,8 @@ public final class PersonalModelFactory {
                         },
                         java.util.LinkedHashMap::new));
         ResolvedModelSnapshot snapshot = snapshots.get(selected.model().id());
-        Map<ModelAdapterCoordinate, AgentChatModel> adapters =
-                adapters(snapshots, selected, deterministic, mapper, shell, allowInsecureLoopbackModel, credentials);
+        Map<ModelAdapterCoordinate, AgentChatModel> adapters = adapters(
+                providers, snapshots, selected, deterministic, mapper, shell, allowInsecureLoopbackModel, credentials);
         ModelContribution contribution = new ModelContribution(
                 new SdkContributionMetadata(
                         new ProductContributionCoordinate("haifa-personal-model", "1.0.0"),
@@ -520,6 +520,7 @@ public final class PersonalModelFactory {
     }
 
     private static Map<ModelAdapterCoordinate, AgentChatModel> adapters(
+            List<PersonalAssistantProperties.ModelProvider> providers,
             Map<String, ResolvedModelSnapshot> snapshots,
             ConfiguredModel selected,
             boolean deterministic,
@@ -533,8 +534,10 @@ public final class PersonalModelFactory {
             return Map.of(
                     ModelAdapterCoordinate.from(snapshots.get(selected.model().id())), model);
         }
-        HttpClient http =
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        HttpClient http = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .proxy(PersonalModelProxySelector.from(providers))
+                .build();
         Map<ModelAdapterCoordinate, AgentChatModel> result = new LinkedHashMap<>();
         snapshots.values().stream().map(ModelAdapterCoordinate::from).distinct().forEach(coordinate -> {
             AgentChatModel adapter =

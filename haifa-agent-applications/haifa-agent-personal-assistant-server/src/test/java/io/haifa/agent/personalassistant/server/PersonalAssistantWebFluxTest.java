@@ -586,6 +586,18 @@ class PersonalAssistantWebFluxTest {
                 .isEqualTo(imageId)
                 .jsonPath("$[0].images[0].url")
                 .doesNotExist();
+
+        web.get()
+                .uri("/api/v1/images/{imageId}", imageId)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .contentType(MediaType.IMAGE_PNG)
+                .expectHeader()
+                .contentLength(png.length)
+                .expectBody(byte[].class)
+                .isEqualTo(png);
     }
 
     @Test

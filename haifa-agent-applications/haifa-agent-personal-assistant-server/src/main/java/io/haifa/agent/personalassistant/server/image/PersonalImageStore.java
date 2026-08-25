@@ -88,19 +88,25 @@ public final class PersonalImageStore implements ModelImageResolver {
         throw new IllegalArgumentException("uploaded image is unavailable");
     }
 
+    /** Reads an opaque local image reference and revalidates its media type before returning bytes. */
+    public ImageDataPart read(String imageId) {
+        return resolve(reference(imageId));
+    }
+
     @Override
     public ImageDataPart resolve(StoredImageContentPart image) {
         Objects.requireNonNull(image, "image must not be null");
         if (!STORE_ID.equals(image.storeId())) throw new IllegalArgumentException("unsupported image store");
-        StoredImageContentPart current = reference(image.imageId());
-        if (!current.mediaType().equals(image.mediaType())
-                || current.sizeBytes() != image.sizeBytes()
-                || !current.sha256().equals(image.sha256())) {
-            throw new IllegalStateException("stored image no longer matches its persisted reference");
-        }
         try {
-            return new ImageDataPart(
-                    image.mediaType(), Files.readAllBytes(resolve(image.imageId(), extension(image.mediaType()))));
+            byte[] bytes = Files.readAllBytes(resolve(image.imageId(), extension(image.mediaType())));
+            String mediaType = detect(bytes);
+            StoredImageContentPart current = reference(image.imageId(), mediaType, bytes, image.originalFilename());
+            if (!current.mediaType().equals(image.mediaType())
+                    || current.sizeBytes() != image.sizeBytes()
+                    || !current.sha256().equals(image.sha256())) {
+                throw new IllegalStateException("stored image no longer matches its persisted reference");
+            }
+            return new ImageDataPart(mediaType, bytes);
         } catch (IOException exception) {
             throw new IllegalStateException("stored image is unavailable", exception);
         }

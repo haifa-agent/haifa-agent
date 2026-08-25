@@ -17,6 +17,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -233,6 +234,18 @@ public final class PersonalAssistantController {
                         image.sizeBytes(),
                         image.originalFilename(),
                         image.sha256()));
+    }
+
+    @GetMapping(
+            value = "/images/{imageId}",
+            produces = {"image/png", "image/jpeg", "image/webp", "image/gif"})
+    ResponseEntity<byte[]> image(@PathVariable String imageId) {
+        var image = imageStore.read(imageId);
+        byte[] bytes = image.bytes();
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(image.mediaType()))
+                .contentLength(bytes.length)
+                .body(bytes);
     }
 
     @PostMapping(

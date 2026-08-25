@@ -620,7 +620,16 @@ class PersonalModelFactoryTest {
             List<PersonalAssistantProperties.ApiBinding> bindings,
             List<PersonalAssistantProperties.ProviderModel> models) {
         return new PersonalAssistantProperties.ModelProvider(
-                id, displayName, "remote", false, nativeStreaming, endpoint, credentialReference, bindings, models);
+                id,
+                displayName,
+                "remote",
+                false,
+                nativeStreaming,
+                endpoint,
+                credentialReference,
+                bindings,
+                models,
+                null);
     }
 
     private static PersonalAssistantProperties.ProviderModel model(

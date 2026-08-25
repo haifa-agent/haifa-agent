@@ -193,17 +193,17 @@ class RealEnvironmentTest(unittest.TestCase):
         )
         self.assertEqual(
             "openai-responses",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_1_APIBINDINGS_0_STYLE"],
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_APIBINDINGS_0_STYLE"],
         )
-        self.assertEqual("gpt-test", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID"])
-        self.assertEqual("TEXT_CHAT", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_CAPABILITIES_0"])
-        self.assertEqual("env://OPENAI_API_KEY", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE"])
-        self.assertNotIn("HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTID", environment)
-        self.assertNotIn("HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_IMAGEINPUT", environment)
+        self.assertEqual("gpt-test", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_0_PROVIDERMODELID"])
+        self.assertEqual("TEXT_CHAT", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_0_CAPABILITIES_0"])
+        self.assertEqual("env://OPENAI_API_KEY", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_CREDENTIALREFERENCE"])
+        self.assertNotIn("HAIFA_PERSONAL_MODELPROVIDERS_2_DIALECTID", environment)
+        self.assertNotIn("HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_0_IMAGEINPUT", environment)
         self.assertFalse(any(name.startswith("CHATGPT2API_") for name in environment))
         self.assertNotIn("openai-secret", json.dumps(list(environment)))
 
-    def test_deepseek_only_configuration_omits_optional_openai_provider(self) -> None:
+    def test_base_configuration_adds_codex_catalog_but_omits_optional_openai_api_provider(self) -> None:
         root = Path("repository")
         paths = real_environment.Paths(
             repository=root,
@@ -232,7 +232,15 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertEqual("deepseek", environment["HAIFA_PERSONAL_MODELPROVIDERS_0_ID"])
         self.assertEqual("deepseek-chat-flash", environment["HAIFA_PERSONAL_DEFAULT_MODEL_ID"])
         self.assertFalse(any(name.startswith("OPENAI_") for name in environment))
-        self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_1_") for name in environment))
+        prefix = "HAIFA_PERSONAL_MODELPROVIDERS_1"
+        self.assertEqual("openai-codex", environment[f"{prefix}_ID"])
+        self.assertEqual("model-auth://openai-codex/default", environment[f"{prefix}_CREDENTIALREFERENCE"])
+        self.assertEqual("http://127.0.0.1:2081", environment[f"{prefix}_PROXY"])
+        self.assertEqual("openai-codex-responses", environment[f"{prefix}_APIBINDINGS_0_DIALECT"])
+        self.assertEqual("gpt-5.6-sol", environment[f"{prefix}_MODELS_0_ID"])
+        self.assertEqual("gpt-5.6-terra", environment[f"{prefix}_MODELS_1_ID"])
+        self.assertEqual("gpt-5.6-luna", environment[f"{prefix}_MODELS_2_ID"])
+        self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_2_") for name in environment))
 
     def test_cliproxy_configuration_adds_gemini_native_media_capabilities(self) -> None:
         root = Path("repository")
@@ -261,14 +269,22 @@ class RealEnvironmentTest(unittest.TestCase):
             cliproxy=("cliproxy-secret", "gemini-3-flash"),
         )
 
-        prefix = "HAIFA_PERSONAL_MODELPROVIDERS_1"
+        prefix = "HAIFA_PERSONAL_MODELPROVIDERS_2"
         self.assertEqual("cliproxyapi-antigravity", environment[f"{prefix}_ID"])
         self.assertEqual("http://127.0.0.1:8317/v1beta", environment[f"{prefix}_ENDPOINT"])
         self.assertEqual("google-gemini-generate-content", environment[f"{prefix}_APIBINDINGS_0_STYLE"])
         self.assertEqual("cliproxyapi-antigravity", environment[f"{prefix}_APIBINDINGS_0_DIALECT"])
         self.assertEqual("gemini-3-flash", environment[f"{prefix}_MODELS_0_PROVIDERMODELID"])
-        self.assertEqual("IMAGE_INPUT", environment[f"{prefix}_MODELS_0_CAPABILITIES_3"])
+        self.assertEqual("IMAGE_UPLOAD_INPUT", environment[f"{prefix}_MODELS_0_CAPABILITIES_3"])
         self.assertEqual("AUDIO_INPUT", environment[f"{prefix}_MODELS_0_CAPABILITIES_4"])
+        self.assertNotIn(
+            "IMAGE_URL_INPUT",
+            [
+                value
+                for name, value in environment.items()
+                if name.startswith(f"{prefix}_MODELS_0_CAPABILITIES_")
+            ],
+        )
         self.assertEqual("env://HAIFA_CLIPROXYAPI_API_KEY", environment[f"{prefix}_CREDENTIALREFERENCE"])
         self.assertNotIn("cliproxy-secret", json.dumps(list(environment)))
 
@@ -313,24 +329,28 @@ class RealEnvironmentTest(unittest.TestCase):
             tavily_key="tavily-secret",
         )
 
-        self.assertEqual("aliyun-bailian", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_ID"])
+        self.assertEqual("aliyun-bailian", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_ID"])
         self.assertEqual(
             "https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_1_ENDPOINT"],
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_ENDPOINT"],
         )
         self.assertEqual(
             real_environment.BAILIAN_DEFAULT_MODEL_ID,
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID"],
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_0_PROVIDERMODELID"],
         )
         self.assertEqual(
             "ADAPTIVE",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_REASONINGMODE"],
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_0_REASONINGMODE"],
         )
         self.assertEqual(
-            "IMAGE_INPUT",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_3_CAPABILITIES_2"],
+            "IMAGE_UPLOAD_INPUT",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_3_CAPABILITIES_2"],
         )
-        self.assertEqual("env://DASHSCOPE_API_KEY", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE"])
+        self.assertEqual(
+            "IMAGE_URL_INPUT",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_3_CAPABILITIES_3"],
+        )
+        self.assertEqual("env://DASHSCOPE_API_KEY", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_CREDENTIALREFERENCE"])
         self.assertNotIn("bailian-secret", json.dumps(list(environment)))
 
     def test_bailian_configuration_reads_key_value_file_and_defaults_region(self) -> None:
@@ -372,16 +392,16 @@ class RealEnvironmentTest(unittest.TestCase):
             tavily_key="tavily-secret",
         )
 
-        self.assertEqual("kimi", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_ID"])
-        self.assertEqual("kimi-openai-chat", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_APIBINDINGS_0_DIALECT"])
-        self.assertEqual("kimi-k3", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID"])
-        self.assertEqual("zhipu", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_ID"])
-        self.assertEqual("zhipu-openai-chat", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_APIBINDINGS_0_DIALECT"])
+        self.assertEqual("kimi", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_ID"])
+        self.assertEqual("kimi-openai-chat", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_APIBINDINGS_0_DIALECT"])
+        self.assertEqual("kimi-k3", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_0_PROVIDERMODELID"])
+        self.assertEqual("zhipu", environment["HAIFA_PERSONAL_MODELPROVIDERS_3_ID"])
+        self.assertEqual("zhipu-openai-chat", environment["HAIFA_PERSONAL_MODELPROVIDERS_3_APIBINDINGS_0_DIALECT"])
         self.assertEqual(
             "zhipu-anthropic-messages",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_APIBINDINGS_1_DIALECT"],
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_3_APIBINDINGS_1_DIALECT"],
         )
-        self.assertFalse(any("responses" in key.lower() for key in environment if key.startswith("HAIFA_PERSONAL_MODELPROVIDERS_2_")))
+        self.assertFalse(any("responses" in key.lower() for key in environment if key.startswith("HAIFA_PERSONAL_MODELPROVIDERS_3_")))
         names = json.dumps(list(environment))
         self.assertNotIn("kimi-secret", names)
         self.assertNotIn("bigmodel-secret", names)

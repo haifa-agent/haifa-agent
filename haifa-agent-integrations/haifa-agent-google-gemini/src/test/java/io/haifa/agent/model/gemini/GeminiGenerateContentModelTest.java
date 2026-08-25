@@ -298,7 +298,7 @@ class GeminiGenerateContentModelTest {
                         ModelCapability.TEXT_CHAT,
                         ModelCapability.TOOL_CALLING,
                         ModelCapability.STRUCTURED_OUTPUT,
-                        ModelCapability.IMAGE_INPUT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
                         ModelCapability.AUDIO_INPUT,
                         ModelCapability.REASONING),
                 8192,

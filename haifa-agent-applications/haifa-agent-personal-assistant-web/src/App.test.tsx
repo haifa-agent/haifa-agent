@@ -585,7 +585,7 @@ describe("Personal Assistant application", () => {
   });
 
   it("does not silently discard attachments when Deep Research routing is requested", async () => {
-    const imageModel = { ...model, capabilities: [...model.capabilities, "IMAGE_INPUT"] };
+    const imageModel = { ...model, capabilities: [...model.capabilities, "IMAGE_URL_INPUT"] };
     const imageConversation = { ...conversation, model: { ...conversation.model, model: imageModel } };
     const api = {
       ...client(),
@@ -1482,7 +1482,11 @@ describe("Personal Assistant application", () => {
   });
 
   it("adds an HTTPS image URL and an uploaded image to one message", async () => {
-    const imageModel = { ...model, id: "openai-image", capabilities: ["TEXT_CHAT", "IMAGE_INPUT"] };
+    const imageModel = {
+      ...model,
+      id: "openai-image",
+      capabilities: ["TEXT_CHAT", "IMAGE_UPLOAD_INPUT", "IMAGE_URL_INPUT"],
+    };
     const imageConversation = {
       ...conversation,
       model: { ...conversation.model, model: imageModel },
@@ -1553,7 +1557,7 @@ describe("Personal Assistant application", () => {
   });
 
   it("closes the image URL input with its close control and closes the menu with Escape", async () => {
-    const imageModel = { ...model, id: "openai-image", capabilities: ["TEXT_CHAT", "IMAGE_INPUT"] };
+    const imageModel = { ...model, id: "openai-image", capabilities: ["TEXT_CHAT", "IMAGE_URL_INPUT"] };
     const imageConversation = {
       ...conversation,
       model: { ...conversation.model, model: imageModel },
@@ -1579,7 +1583,7 @@ describe("Personal Assistant application", () => {
     const audioModel = {
       ...model,
       id: "gemini-audio",
-      capabilities: ["TEXT_CHAT", "IMAGE_INPUT", "AUDIO_INPUT"],
+      capabilities: ["TEXT_CHAT", "IMAGE_UPLOAD_INPUT", "AUDIO_INPUT"],
     };
     const audioConversation = {
       ...conversation,
@@ -1603,6 +1607,11 @@ describe("Personal Assistant application", () => {
     });
 
     await screen.findByRole("button", { name: "更多功能" });
+    fireEvent.click(screen.getByRole("button", { name: "更多功能" }));
+    const mediaDialog = screen.getByRole("dialog", { name: "更多功能" });
+    expect(within(mediaDialog).getByRole("button", { name: /^上传图片/ })).toBeTruthy();
+    expect(within(mediaDialog).queryByRole("button", { name: /^添加图片 URL/ })).toBeNull();
+    fireEvent.click(within(mediaDialog).getByRole("button", { name: "关闭更多功能" }));
     const inputs = container.querySelectorAll('input[type="file"]');
     fireEvent.change(inputs[1], { target: { files: [wav] } });
 
@@ -1656,7 +1665,11 @@ describe("Personal Assistant application", () => {
     const message = container.querySelector(".messages > .message.user")!;
     expect(message.querySelector('.turn-images[aria-label="消息包含 2 张图片"]')).toBeTruthy();
     expect(within(message as HTMLElement).getByRole("img", { name: "第 1 张图片" })).toBeTruthy();
-    expect(within(message as HTMLElement).getByText("已上传图片 2")).toBeTruthy();
+    const uploaded = within(message as HTMLElement).getByRole("img", { name: "第 2 张已上传图片" });
+    expect(uploaded.getAttribute("src")).toBe(
+      `http://127.0.0.1:20001/api/v1/images/${opaqueId}`,
+    );
+    expect(within(message as HTMLElement).queryByText("已上传图片 2")).toBeNull();
     expect(screen.queryByText(`${opaqueId}.png`)).toBeNull();
     expect(container.querySelector(".activity-panel .turn-images")).toBeNull();
   });

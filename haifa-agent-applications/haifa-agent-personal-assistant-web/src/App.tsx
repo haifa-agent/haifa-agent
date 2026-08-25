@@ -69,6 +69,7 @@ import {
   HttpPersonalAssistantClient,
   PersonalAssistantApiError,
   missionArtifactUrl,
+  uploadedImageUrl,
   type PersonalAssistantClient,
 } from "./api/client";
 import { appReducer, initialState } from "./state/appReducer";
@@ -188,6 +189,21 @@ function TurnImages({ images }: { images: TurnImage[] }) {
             >
               <img src={image.url} alt={`第 ${index + 1} 张图片`} />
               <span><b>{index + 1}</b>{imageHost(image.url)}</span>
+            </a>
+          );
+        }
+        if (image.kind === "upload" && image.imageId) {
+          const source = uploadedImageUrl(image.imageId);
+          return (
+            <a
+              className="turn-image turn-image-preview"
+              href={source}
+              key={`${image.imageId}-${index}`}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`打开第 ${index + 1} 张已上传图片`}
+            >
+              <img src={source} alt={`第 ${index + 1} 张已上传图片`} />
             </a>
           );
         }
@@ -3645,16 +3661,21 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     ?? newModelPreferences
     ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId))?.recommendedPreferences
     ?? null;
-  const imageCapable = (state.selectedConversation?.model.model
+  const selectedInputCapabilities = (state.selectedConversation?.model.model
     ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId)))
-    ?.capabilities.includes("IMAGE_INPUT") ?? false;
+    ?.capabilities ?? [];
+  const imageUploadCapable = selectedInputCapabilities.includes("IMAGE_UPLOAD_INPUT")
+    || selectedInputCapabilities.includes("IMAGE_INPUT");
+  const imageUrlCapable = selectedInputCapabilities.includes("IMAGE_URL_INPUT")
+    || selectedInputCapabilities.includes("IMAGE_INPUT");
+  const imageCapable = imageUploadCapable || imageUrlCapable;
   const audioCapable = (state.selectedConversation?.model.model
     ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId)))
     ?.capabilities.includes("AUDIO_INPUT") ?? false;
   const pendingMediaCount = pendingImages.length + pendingAudios.length;
 
   const addImageUrl = () => {
-    if (!imageCapable || pendingMediaCount >= 4) return;
+    if (!imageUrlCapable || pendingMediaCount >= 4) return;
     try {
       const parsed = new URL(imageUrl.trim());
       if (parsed.protocol !== "https:") throw new Error("not HTTPS");
@@ -3671,7 +3692,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   };
 
   const uploadFiles = async (files: FileList | File[]) => {
-    if (!imageCapable || !client.uploadImage || uploadingImage) return;
+    if (!imageUploadCapable || !client.uploadImage || uploadingImage) return;
     const selected = Array.from(files).slice(0, Math.max(0, 4 - pendingMediaCount));
     if (!selected.length) return;
     const allowed = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -4203,11 +4224,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             onSubmit={submit}
             onDragEnter={(event) => {
               event.preventDefault();
-              if ((imageCapable || audioCapable) && !composerDisabled) setDraggingImages(true);
+              if ((imageUploadCapable || audioCapable) && !composerDisabled) setDraggingImages(true);
             }}
             onDragOver={(event) => {
               event.preventDefault();
-              if ((imageCapable || audioCapable) && !composerDisabled) setDraggingImages(true);
+              if ((imageUploadCapable || audioCapable) && !composerDisabled) setDraggingImages(true);
             }}
             onDragLeave={(event) => {
               if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingImages(false);
@@ -4505,7 +4526,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       <Bot size={17} />
                       <span><strong>选择模型</strong><small>选择当前会话后续消息使用的模型</small></span>
                     </button>
-                    {imageCapable && <button
+                    {imageUploadCapable && <button
                       type="button"
                       disabled={composerDisabled || uploadingImage || pendingMediaCount >= 4}
                       onClick={() => fileInputRef.current?.click()}
@@ -4521,7 +4542,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       <AudioLines size={17} />
                       <span><strong>{uploadingAudio ? "正在上传…" : "上传音频"}</strong><small>WAV、MP3、AIFF、AAC、OGG 或 FLAC</small></span>
                     </button>}
-                    {imageCapable && <button
+                    {imageUrlCapable && <button
                       type="button"
                       aria-expanded={imageUrlInputOpen}
                       onClick={() => setImageUrlInputOpen((open) => !open)}
@@ -4529,7 +4550,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       <Link size={17} />
                       <span><strong>添加图片 URL</strong><small>仅支持 HTTPS 图片地址</small></span>
                     </button>}
-                    {imageCapable && imageUrlInputOpen && (
+                    {imageUrlCapable && imageUrlInputOpen && (
                       <div className="image-url-popover">
                         <header>
                           <label htmlFor="image-url-input">图片 URL</label>

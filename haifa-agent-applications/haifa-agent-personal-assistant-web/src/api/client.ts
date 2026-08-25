@@ -37,6 +37,10 @@ export function missionArtifactUrl(missionId: string, artifactId: string): strin
   return `${API_ROOT}/missions/${encoded(missionId)}/artifacts/${encoded(artifactId)}`;
 }
 
+export function uploadedImageUrl(imageId: string): string {
+  return `${API_ROOT}/images/${encoded(imageId)}`;
+}
+
 export class PersonalAssistantApiError extends Error {
   constructor(
     readonly status: number,

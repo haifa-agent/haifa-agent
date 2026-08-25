@@ -45,7 +45,8 @@ describe("ModelConnectionPanel", () => {
     const client = {
       modelConnections: vi.fn(async () => [{
         ...connection,
-        providerId: "openai",
+        providerId: "openai-codex",
+        status: "REAUTH_REQUIRED",
         apiKeySupported: false,
         externalLoginSupported: true,
         logoutSupported: false,
@@ -62,7 +63,7 @@ describe("ModelConnectionPanel", () => {
     } as unknown as PersonalAssistantClient;
     const user = userEvent.setup();
 
-    render(<ModelConnectionPanel client={client} open providerId="openai" onClose={() => undefined} />);
+    render(<ModelConnectionPanel client={client} open providerId="deepseek" onClose={() => undefined} />);
     const login = screen.getByRole("button", { name: "登录" });
     await waitFor(() => expect((login as HTMLButtonElement).disabled).toBe(false));
     await user.click(login);
@@ -70,5 +71,27 @@ describe("ModelConnectionPanel", () => {
     await user.click(screen.getByRole("button", { name: "关闭模型连接" }));
 
     expect(cancelModelLogin).toHaveBeenCalledWith("01890f6c-7b2a-7cc0-8000-000000000001");
+  });
+
+  it("shows the shared Codex account as signed in regardless of the selected model provider", async () => {
+    const startCodexBrowserLogin = vi.fn();
+    const client = {
+      modelConnections: vi.fn(async () => [{
+        ...connection,
+        providerId: "openai-codex",
+        method: "EXTERNAL_LOGIN",
+        apiKeySupported: false,
+        externalLoginSupported: true,
+        accountLabel: "Account 173fb463",
+      }]),
+      startCodexBrowserLogin,
+    } as unknown as PersonalAssistantClient;
+
+    render(<ModelConnectionPanel client={client} open providerId="cliproxyapi-antigravity" onClose={() => undefined} />);
+
+    const signedIn = await screen.findByRole("button", { name: "已登录" });
+    expect((signedIn as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("已连接共享的 ChatGPT/Codex 本机账户。")).toBeTruthy();
+    expect(startCodexBrowserLogin).not.toHaveBeenCalled();
   });
 });

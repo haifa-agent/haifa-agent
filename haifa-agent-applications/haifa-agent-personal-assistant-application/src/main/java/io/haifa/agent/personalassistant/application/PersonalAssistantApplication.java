@@ -632,16 +632,22 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private static void requireMediaInput(PersonalModelOption model, List<ContentPart> inputs) {
-        if (inputs.stream()
-                        .anyMatch(value ->
-                                value instanceof ImageUrlContentPart || value instanceof StoredImageContentPart)
-                && !model.capabilities().contains("IMAGE_INPUT")) {
-            throw new IllegalArgumentException("selected model does not support image input");
+        if (inputs.stream().anyMatch(ImageUrlContentPart.class::isInstance)
+                && !supportsImageInput(model, "IMAGE_URL_INPUT")) {
+            throw new IllegalArgumentException("selected model does not support image URL input");
+        }
+        if (inputs.stream().anyMatch(StoredImageContentPart.class::isInstance)
+                && !supportsImageInput(model, "IMAGE_UPLOAD_INPUT")) {
+            throw new IllegalArgumentException("selected model does not support uploaded image input");
         }
         if (inputs.stream().anyMatch(StoredAudioContentPart.class::isInstance)
                 && !model.capabilities().contains("AUDIO_INPUT")) {
             throw new IllegalArgumentException("selected model does not support audio input");
         }
+    }
+
+    private static boolean supportsImageInput(PersonalModelOption model, String capability) {
+        return model.capabilities().contains(capability) || model.capabilities().contains("IMAGE_INPUT");
     }
 
     private static InteractionViewValue interaction(InteractionView value) {

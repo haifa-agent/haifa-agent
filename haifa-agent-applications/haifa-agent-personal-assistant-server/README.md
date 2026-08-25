@@ -140,6 +140,12 @@ Provider 只需新增配置并省略 dialect；旧单模型、旧 dialect/versio
 DeepSeek Anthropic Messages 因 Base URL 与其余 Style 不同，在 Binding 上覆盖完整 `/anthropic` Endpoint；
 Credential 与 `native-streaming` 仍只配置在 Provider。
 
+远端模型 Provider 可选配置 `proxy`。当前只接受不含凭据、路径、查询或片段且显式声明端口的
+`http://host:port` HTTP Proxy origin。代理按 Provider Endpoint 及其 Binding Endpoint 的 origin 精确
+路由；没有配置的 Provider 保持 JVM 既有直连/系统代理行为。共享同一 Endpoint origin 的 Provider
+必须使用相同代理配置，否则 Server 启动时 fail closed。真实环境中的 `openai-codex` 显式通过
+`http://127.0.0.1:2081` 连接 ChatGPT Codex Endpoint。
+
 `allow-insecure-loopback-model` 只允许显式的 `http` loopback 模型端点；任何外部 HTTP 地址仍会在
 Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型是
 `deepseek-chat-flash`，PA 的推荐偏好解析为 thinking/high；用户可以选择快速模式显式关闭 Thinking，或在
@@ -147,7 +153,10 @@ Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写�
 Responses reasoning 控件当前保持只读。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
 `TEXT_CHAT + TOOL_CALLING` 的可选列表中；Snapshot 仍按 `standard` Responses 冻结真实能力边界。
 
-真实环境启动脚本可选装配 `aliyun-bailian`、`kimi` 与 `zhipu` Provider。百炼完整配置要求 API Key、
+真实环境启动脚本固定发布 `openai-codex` 模型目录，并通过共享的
+`model-auth://openai-codex/default` 读取 `~/.haifa-agent/auth.json`；模型目录与认证就绪状态保持分离。
+浏览器重新登录仍必须显式提供本地兼容测试所需的 OAuth Client 配置。脚本还可选装配
+`aliyun-bailian`、`kimi` 与 `zhipu` Provider。百炼完整配置要求 API Key、
 Workspace ID 和 region；Kimi 与智谱分别使用 `env://KIMI_API_KEY`、`env://BIGMODEL_API_KEY`。Endpoint、
 实际 Provider Model ID 与完整 Snapshot 不返回浏览器。检测到可选 Provider 时只扩展目录，默认仍是
 `deepseek-chat-flash`；只有显式传入 `--default-model-id` 才改变默认 Binding。
@@ -161,12 +170,14 @@ Workspace ID 和 region；Kimi 与智谱分别使用 `env://KIMI_API_KEY`、`env
 OpenAI Chat，并仅为 GLM-5.2 提供通过 Contract 的 Anthropic Messages 高级连接方式。所有可见状态、
 推荐值、允许值和只读状态由后端精确 Binding Profile 驱动；UI 不包含 Provider/Model 条件分支。
 
-`IMAGE_INPUT` 与 `AUDIO_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。Conversation 每条
-消息合计最多携带四个媒体输入；图片使用 `{kind: url|upload}`，外部 URL 只接受受限 HTTPS，上传通过 `POST /api/v1/images`
+`IMAGE_UPLOAD_INPUT`、`IMAGE_URL_INPUT` 与 `AUDIO_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。
+Gemini CLIProxyAPI Binding 只声明图片上传能力；不会因此扫描既有会话或为历史 URL 添加兼容性提示。
+Conversation 每条消息合计最多携带四个媒体输入；图片使用 `{kind: url|upload}`，外部 URL 只接受受限 HTTPS，上传通过 `POST /api/v1/images`
 写入 `<data-directory>/images`，单文件上限 10 MiB、目录上限 1 GiB，类型限 PNG/JPEG/WEBP/非动画
 GIF。音频只接受上传，通过 `POST /api/v1/audios` 写入独立的 `<data-directory>/audio` Store，采用同样的
 文件和目录上限，类型限 WAV、MP3、AIFF、AAC、OGG Vorbis、FLAC。SQLite 与 Turn 只保存 opaque 引用、
-MIME、长度和摘要，不保存媒体 Base64 或绝对路径；调用模型前会重新校验摘要。本阶段没有下载、缩略图、
+MIME、长度和摘要，不保存媒体 Base64 或绝对路径；调用模型前会重新校验摘要。`GET /api/v1/images/{imageId}`
+按 opaque id 读取并重新校验 magic bytes 与 MIME，供本机 PA 显示已发送图片缩略图；仍没有音频下载、
 OCR、单附件删除或自动过期任务。
 
 Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听

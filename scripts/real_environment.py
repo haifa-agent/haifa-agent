@@ -33,6 +33,7 @@ EXPECTED_SERVER_START_CLASS = (
 )
 BAILIAN_DEFAULT_MODEL_ID = "qwen3.7-max-2026-05-17"
 CLIPROXY_GEMINI_MODEL_ID = "gemini-cliproxy-flash"
+CODEX_MODEL_IDS = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
 SUPPORTED_DEFAULT_MODEL_IDS = (
     "deepseek-chat-pro",
     "deepseek-chat-flash",
@@ -53,6 +54,7 @@ SUPPORTED_DEFAULT_MODEL_IDS = (
     "glm-5.2-anthropic",
     "glm-5.1-chat",
     "glm-5-chat",
+    *CODEX_MODEL_IDS,
     CLIPROXY_GEMINI_MODEL_ID,
 )
 ALLOWED_MCP_TOOLS = ",".join(
@@ -973,6 +975,41 @@ def backend_environment(
             }
         )
     next_provider_index = 1
+    prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
+    environment.update(
+        {
+            "HAIFA_CODEX_ORIGINATOR": environment_value("HAIFA_CODEX_ORIGINATOR") or "haifa",
+            "HAIFA_CODEX_USER_AGENT": environment_value("HAIFA_CODEX_USER_AGENT") or "haifa-agent/1",
+            f"{prefix}_ID": "openai-codex",
+            f"{prefix}_DISPLAYNAME": "ChatGPT Codex",
+            f"{prefix}_MODE": "remote",
+            f"{prefix}_ALLOWDETERMINISTIC": "false",
+            f"{prefix}_NATIVESTREAMING": "true",
+            f"{prefix}_ENDPOINT": "https://chatgpt.com/backend-api/codex",
+            f"{prefix}_CREDENTIALREFERENCE": "model-auth://openai-codex/default",
+            f"{prefix}_PROXY": "http://127.0.0.1:2081",
+            f"{prefix}_APIBINDINGS_0_STYLE": "openai-responses",
+            f"{prefix}_APIBINDINGS_0_DIALECT": "openai-codex-responses",
+        }
+    )
+    for model_index, model_id in enumerate(CODEX_MODEL_IDS):
+        model_prefix = f"{prefix}_MODELS_{model_index}"
+        display_name = model_id.removeprefix("gpt-").replace("-", " ").title()
+        environment.update(
+            {
+                f"{model_prefix}_ID": model_id,
+                f"{model_prefix}_DISPLAYNAME": display_name,
+                f"{model_prefix}_MODELDISPLAYNAME": display_name,
+                f"{model_prefix}_PROVIDERMODELID": model_id,
+                f"{model_prefix}_STYLE": "openai-responses",
+                f"{model_prefix}_CAPABILITIES_0": "TEXT_CHAT",
+                f"{model_prefix}_CAPABILITIES_1": "TOOL_CALLING",
+                f"{model_prefix}_CAPABILITIES_2": "REASONING",
+                f"{model_prefix}_CONTEXTWINDOW": "272000",
+                f"{model_prefix}_MAXOUTPUTTOKENS": "128000",
+            }
+        )
+    next_provider_index += 1
     if bailian is not None:
         bailian_key, workspace_id, region = bailian
         prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
@@ -1029,7 +1066,8 @@ def backend_environment(
                 f"{prefix}_MODELS_3_STYLE": "openai-chat-completions",
                 f"{prefix}_MODELS_3_CAPABILITIES_0": "TEXT_CHAT",
                 f"{prefix}_MODELS_3_CAPABILITIES_1": "TOOL_CALLING",
-                f"{prefix}_MODELS_3_CAPABILITIES_2": "IMAGE_INPUT",
+                f"{prefix}_MODELS_3_CAPABILITIES_2": "IMAGE_UPLOAD_INPUT",
+                f"{prefix}_MODELS_3_CAPABILITIES_3": "IMAGE_URL_INPUT",
                 f"{prefix}_MODELS_3_CONTEXTWINDOW": "131072",
                 f"{prefix}_MODELS_3_MAXOUTPUTTOKENS": "8192",
                 f"{prefix}_MODELS_4_ID": "qwen3.7-max-responses",
@@ -1190,7 +1228,7 @@ def backend_environment(
                 f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
                 f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
                 f"{prefix}_MODELS_0_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-                f"{prefix}_MODELS_0_CAPABILITIES_3": "IMAGE_INPUT",
+                f"{prefix}_MODELS_0_CAPABILITIES_3": "IMAGE_UPLOAD_INPUT",
                 f"{prefix}_MODELS_0_CAPABILITIES_4": "AUDIO_INPUT",
                 f"{prefix}_MODELS_0_CONTEXTWINDOW": "1048576",
                 f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "65536",
