@@ -140,6 +140,7 @@ def parser() -> argparse.ArgumentParser:
     home = Path.home()
     workspace = Path("D:/workspace") if windows else home / "workspace"
     agents = Path("D:/agents") if windows else home / "agents"
+    software = Path("D:/dev/software") if windows else home / "dev/software"
     result = argparse.ArgumentParser(
         description="Start, reuse, validate, or stop the real Personal Assistant environment."
     )
@@ -171,6 +172,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--siliconflow-key-file",
         default=os.getenv("HAIFA_SILICONFLOW_KEY_FILE", str(workspace / "ss-siliconflow.txt")),
+    )
+    result.add_argument(
+        "--cliproxy-config-file",
+        default=os.getenv(
+            "HAIFA_CLIPROXYAPI_CONFIG_FILE",
+            str(software / "CLIProxyAPI-runtime/config.yaml"),
+        ),
     )
     result.add_argument(
         "--aliyun-iqs-key-file",
@@ -459,10 +467,13 @@ def optional_openai_environment(environment: Mapping[str, str] | None = None) ->
 
 def optional_cliproxy_environment(
     environment: Mapping[str, str] | None = None,
+    config_file: str | None = None,
 ) -> tuple[str, str] | None:
     api_key = environment_value("HAIFA_CLIPROXYAPI_API_KEY") if environment is None else environment.get(
         "HAIFA_CLIPROXYAPI_API_KEY", ""
     ).strip()
+    if not api_key and config_file:
+        api_key = optional_cliproxy_downstream_key(config_file)
     if not api_key:
         return None
     provider_model_id = (
@@ -471,6 +482,27 @@ def optional_cliproxy_environment(
         else environment.get("HAIFA_CLIPROXYAPI_MODEL_ID", "").strip()
     ) or "gemini-3-flash"
     return api_key, provider_model_id
+
+
+def optional_cliproxy_downstream_key(value: str) -> str:
+    path = Path(value).expanduser()
+    if not path.exists():
+        return ""
+    if not path.is_file():
+        fail(f"CLIProxyAPI config is not a file: {path}")
+    in_api_keys = False
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        if re.match(r"^api-keys\s*:\s*(?:#.*)?$", raw_line):
+            in_api_keys = True
+            continue
+        if in_api_keys and raw_line and not raw_line[0].isspace():
+            break
+        if not in_api_keys:
+            continue
+        match = re.match(r'^\s*-\s*["\']?(haifa-local-[a-f0-9]+)["\']?\s*(?:#.*)?$', raw_line)
+        if match:
+            return match.group(1)
+    fail(f"CLIProxyAPI config does not contain a supported local downstream API key: {path}")
 
 
 def optional_bailian_configuration(
@@ -1390,7 +1422,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     siliconflow_key = optional_secret_file(
         args.siliconflow_key_file, "SiliconFlow", "SILICONFLOW_API_KEY"
     )
-    cliproxy = optional_cliproxy_environment()
+    cliproxy = optional_cliproxy_environment(config_file=args.cliproxy_config_file)
     default_model_id = resolve_default_model_id(
         args.default_model_id,
         bailian,

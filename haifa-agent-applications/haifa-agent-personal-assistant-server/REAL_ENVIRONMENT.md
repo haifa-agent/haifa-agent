@@ -26,8 +26,9 @@ loopback `20000` 的 Origin，方案中没有反向代理。
 - 可选 Kimi Key 文件：`D:\workspace\ss-kimi.txt`，文件中只放 Key 本身；
 - 可选智谱 Key 文件：`D:\workspace\ss-bigmodel.txt`，文件中只放 Key 本身；
 - 可选硅基流动 Key 文件：`D:\workspace\ss-siliconflow.txt`，文件中只放 Key 本身；
-- 可选 CLIProxyAPI：本机 `127.0.0.1:8317` 服务和下游 API Key；只通过
-  `HAIFA_CLIPROXYAPI_API_KEY` 传给 PA，不读取 Antigravity OAuth、Token 或系统 Keyring；
+- 可选 CLIProxyAPI：本机 `127.0.0.1:8317` 服务和
+  `D:\dev\software\CLIProxyAPI-runtime\config.yaml` 中的 `haifa-local-*` 下游 API Key；可用
+  `HAIFA_CLIPROXYAPI_API_KEY` 或 `--cliproxy-config-file` 覆盖，不读取 Antigravity OAuth、Token 或系统 Keyring；
 - Tavily Key 文件：`D:\workspace\ss-tavily.txt`，文件中只放 Key 本身；默认 Search 与 Fetch 均读取此文件；
 - 可选 Aliyun IQS Key 文件：`D:\workspace\ss-aliyun-iqs.txt`，仅在 Search 或 Fetch 选择 Aliyun 时读取；
 - 可选 Browserless Token 文件：`D:\workspace\ss-browserless.txt`，仅在 Fetch 选择 Browserless 时读取；
@@ -49,7 +50,8 @@ Provider。三项都配置时启用该 Provider；全部缺失或仅配置一部
 Anthropic 和硅基流动 Chat 的真实调用必须另行明确发起。硅基流动只发布已验证的
 `deepseek-ai/DeepSeek-V4-Flash`，内部模型 ID 是 `siliconflow-deepseek-v4-flash`。
 
-CLIProxyAPI 只有设置 `HAIFA_CLIPROXYAPI_API_KEY` 时才装配，Provider model 可通过
+CLIProxyAPI 优先使用 `HAIFA_CLIPROXYAPI_API_KEY`；未设置时只读取 `--cliproxy-config-file` 对应 YAML 的
+`api-keys` 首个 `haifa-local-*` 下游 Key，不读取 `auths/`。Provider model 可通过
 `HAIFA_CLIPROXYAPI_MODEL_ID` 覆盖，默认 `gemini-3-flash`。它同样只扩展模型目录；需要显式传入
 `--default-model-id gemini-cliproxy-flash` 才成为 PA 默认模型。启动健康检查不会调用 Gemini。
 
@@ -148,6 +150,7 @@ Set-ExecutionPolicy -Scope Process Bypass
   --kimi-key-file 'D:\secure\kimi.txt' `
   --bigmodel-key-file 'D:\secure\bigmodel.txt' `
   --siliconflow-key-file 'D:\secure\siliconflow.txt' `
+  --cliproxy-config-file 'D:\dev\software\CLIProxyAPI-runtime\config.yaml' `
   --aliyun-iqs-key-file 'D:\secure\aliyun-iqs.txt' `
   --continuation-key-file 'D:\secure\personal-continuation.txt' `
   --personal-skill-root 'D:\agents\hermes-agent\optional-skills\finance' `

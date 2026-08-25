@@ -297,6 +297,19 @@ class RealEnvironmentTest(unittest.TestCase):
                 }
             ),
         )
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.yaml"
+            config.write_text(
+                "host: 127.0.0.1\n"
+                "api-keys:\n"
+                '  - "haifa-local-abc123"\n'
+                "proxy-url: http://127.0.0.1:2081\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                ("haifa-local-abc123", "gemini-3-flash"),
+                real_environment.optional_cliproxy_environment({}, str(config)),
+            )
         with self.assertRaisesRegex(RuntimeError, "requires HAIFA_CLIPROXYAPI_API_KEY"):
             real_environment.resolve_default_model_id(
                 real_environment.CLIPROXY_GEMINI_MODEL_ID,

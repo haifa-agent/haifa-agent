@@ -162,8 +162,10 @@ Workspace ID 和 region；Kimi、智谱与硅基流动分别使用 `env://KIMI_A
 实际 Provider Model ID 与完整 Snapshot 不返回浏览器。检测到可选 Provider 时只扩展目录，默认仍是
 `deepseek-chat-flash`；只有显式传入 `--default-model-id` 才改变默认 Binding。
 
-设置 `HAIFA_CLIPROXYAPI_API_KEY` 后，真实环境还会装配 loopback
-`cliproxyapi-antigravity` Provider；`HAIFA_CLIPROXYAPI_MODEL_ID` 默认是 `gemini-3-flash`。显式选择
+真实环境优先读取 `HAIFA_CLIPROXYAPI_API_KEY`，未设置时只从 `--cliproxy-config-file` 指向的
+CLIProxyAPI `config.yaml` 提取首个 `haifa-local-*` 下游 Key，然后装配 loopback
+`cliproxyapi-antigravity` Provider；它不读取 `auths/`、OAuth Token 或系统 Keyring。
+`HAIFA_CLIPROXYAPI_MODEL_ID` 默认是 `gemini-3-flash`。显式选择
 `--default-model-id gemini-cliproxy-flash` 才将它设为默认模型。该 Binding 声明文本、Tool、结构化输出、
 图片和音频输入能力，且只把下游 Key 传入 PA 子进程，不读取 CLIProxyAPI 的 OAuth、Token 或 Keyring。
 

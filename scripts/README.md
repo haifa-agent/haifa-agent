@@ -62,8 +62,9 @@ python3 scripts/test_analyze_coding_runtime.py
 `SILICONFLOW_API_KEY`。硅基流动只发布已验证的 `deepseek-ai/DeepSeek-V4-Flash` Chat Binding。凭据只进入后端子进程
 环境，配置冻结为 `env://...` 引用。可选 Provider 只扩展模型目录，不自动替换 DeepSeek 默认 Binding。
 
-本机 CLIProxyAPI 已在 `127.0.0.1:8317` 运行时，可通过环境变量选择性装配 Gemini dialect；脚本只读取
-下游 API Key，不读取 Antigravity OAuth 文件或系统 Keyring：
+本机 CLIProxyAPI 已在 `127.0.0.1:8317` 运行时，脚本优先读取 `HAIFA_CLIPROXYAPI_API_KEY`；未设置时从
+`--cliproxy-config-file`（Windows 默认 `D:\dev\software\CLIProxyAPI-runtime\config.yaml`）的 `api-keys`
+提取首个 `haifa-local-*` 下游 Key。它不读取 Antigravity OAuth 文件、`auths/` 或系统 Keyring：
 
 ```powershell
 $env:HAIFA_CLIPROXYAPI_API_KEY = '<CLIProxyAPI downstream key>'
