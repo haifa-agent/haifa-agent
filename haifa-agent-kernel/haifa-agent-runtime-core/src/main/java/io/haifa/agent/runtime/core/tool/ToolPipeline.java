@@ -31,7 +31,11 @@ import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.retry.ToolRetryPolicy;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceContext;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceScope;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceStatus;
+import io.haifa.agent.runtime.core.trace.TraceIdentifierGenerator;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.ToolCancellation;
@@ -49,6 +53,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalInt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,6 +76,7 @@ public final class ToolPipeline {
     private final RetryExecutor retries;
     private final ToolRetryPolicy retryPolicy;
     private final TracePort trace;
+    private final TraceIdentifierGenerator traceIds;
     private final RunTransitionCoordinator transitions;
     private final ToolResultAssetStore resultAssets;
     private final LargeToolResultPolicy largeResultPolicy;
@@ -96,6 +102,7 @@ public final class ToolPipeline {
             RetryExecutor retries,
             ToolRetryPolicy retryPolicy,
             TracePort trace,
+            TraceIdentifierGenerator traceIds,
             RunTransitionCoordinator transitions,
             ToolResultAssetStore resultAssets,
             LargeToolResultPolicy largeResultPolicy,
@@ -116,6 +123,7 @@ public final class ToolPipeline {
         this.retries = Objects.requireNonNull(retries);
         this.retryPolicy = Objects.requireNonNull(retryPolicy);
         this.trace = Objects.requireNonNull(trace);
+        this.traceIds = Objects.requireNonNull(traceIds);
         this.transitions = Objects.requireNonNull(transitions);
         this.resultAssets = Objects.requireNonNull(resultAssets);
         this.largeResultPolicy = Objects.requireNonNull(largeResultPolicy);
@@ -123,9 +131,14 @@ public final class ToolPipeline {
     }
 
     public ToolPipelineOutcome execute(AgentRun run, AgentStepId stepId, ToolRequest request, int iteration) {
+        return execute(run, stepId, request, iteration, RuntimeTraceContext.detached(traceIds.nextTraceId()));
+    }
+
+    public ToolPipelineOutcome execute(
+            AgentRun run, AgentStepId stepId, ToolRequest request, int iteration, RuntimeTraceContext traceContext) {
         ToolRequest canonicalRequest = canonicalize(run, request);
         ToolCall call = prepare(run, stepId, canonicalRequest);
-        return execute(run, call, canonicalRequest, iteration);
+        return execute(run, call, canonicalRequest, iteration, traceContext);
     }
 
     public ToolCall prepare(AgentRun run, AgentStepId stepId, ToolRequest request) {
@@ -159,6 +172,12 @@ public final class ToolPipeline {
     }
 
     public ToolPipelineOutcome execute(AgentRun run, ToolCall call, ToolRequest request, int iteration) {
+        return execute(run, call, request, iteration, RuntimeTraceContext.detached(traceIds.nextTraceId()));
+    }
+
+    public ToolPipelineOutcome execute(
+            AgentRun run, ToolCall call, ToolRequest request, int iteration, RuntimeTraceContext traceContext) {
+        Objects.requireNonNull(traceContext, "traceContext must not be null");
         if (iteration < 1) throw new IllegalArgumentException("iteration must be positive");
         request = canonicalize(run, request);
         if (call.result().isPresent())
@@ -166,25 +185,25 @@ public final class ToolPipeline {
         var completed = journal.completed(run.id(), request.idempotencyKey());
         if (completed.isPresent()) {
             return new ToolPipelineOutcome.Completed(
-                    persistResult(run, call, request, completed.orElseThrow(), iteration));
+                    persistResult(run, call, request, completed.orElseThrow(), iteration, traceContext));
         }
         var pending = journal.pendingResult(run.id(), request.idempotencyKey());
         if (pending.isPresent()) {
             return new ToolPipelineOutcome.Completed(
-                    persistResult(run, call, request, pending.orElseThrow(), iteration));
+                    persistResult(run, call, request, pending.orElseThrow(), iteration, traceContext));
         }
         var journalState = journal.state(run.id(), request.idempotencyKey());
         if (journalState
                 .filter(value -> value == ToolJournalState.DISPATCHED || value == ToolJournalState.ACKNOWLEDGED)
                 .isPresent()) {
-            return reconcileUnknown(run, call, request, iteration, journalState.orElseThrow());
+            return reconcileUnknown(run, call, request, iteration, journalState.orElseThrow(), traceContext);
         }
         if (journalState
                 .filter(value -> value == ToolJournalState.OUTCOME_UNKNOWN)
                 .isPresent()) {
-            return reconcileUnknown(run, call, request, iteration, ToolJournalState.OUTCOME_UNKNOWN);
+            return reconcileUnknown(run, call, request, iteration, ToolJournalState.OUTCOME_UNKNOWN, traceContext);
         }
-        return executeNew(run, call, request, iteration);
+        return executeNew(run, call, request, iteration, traceContext);
     }
 
     public ToolPipelineOutcome recover(AgentRun run, ToolCall call, int iteration) {
@@ -228,8 +247,13 @@ public final class ToolPipeline {
     }
 
     private ToolPipelineOutcome reconcileUnknown(
-            AgentRun run, ToolCall call, ToolRequest request, int iteration, ToolJournalState journalState) {
-        return reconcileUnknown(run, call, request, iteration, journalState, "", "");
+            AgentRun run,
+            ToolCall call,
+            ToolRequest request,
+            int iteration,
+            ToolJournalState journalState,
+            RuntimeTraceContext traceContext) {
+        return reconcileUnknown(run, call, request, iteration, journalState, "", "", traceContext);
     }
 
     private ToolPipelineOutcome reconcileUnknown(
@@ -239,7 +263,8 @@ public final class ToolPipeline {
             int iteration,
             ToolJournalState journalState,
             String sourceFailureCode,
-            String sourceDispatchState) {
+            String sourceDispatchState,
+            RuntimeTraceContext traceContext) {
         FrozenToolBinding binding = binding(run, request);
         appendToolEvent(run, call, "tool.reconcile-started", "RECONCILING", "READ_ONLY_RECONCILE", "");
         ToolReconciliation reconciliation;
@@ -281,7 +306,8 @@ public final class ToolPipeline {
             ToolResult result = reconciliation.result().orElseThrow();
             journal.recordPendingResult(run.id(), call.idempotencyKey(), result);
             appendToolEvent(run, call, "tool.reconciled", "RESOLVED", reconciliation.reasonCode(), "");
-            return new ToolPipelineOutcome.Completed(persistResult(run, call, request, result, iteration));
+            return new ToolPipelineOutcome.Completed(
+                    persistResult(run, call, request, result, iteration, traceContext));
         }
         if (journalState != ToolJournalState.OUTCOME_UNKNOWN) {
             journal.recordUncertain(run.id(), call.idempotencyKey());
@@ -326,7 +352,8 @@ public final class ToolPipeline {
                 error, new IllegalStateException("tool outcome is unknown; automatic replay is forbidden"));
     }
 
-    private ToolPipelineOutcome executeNew(AgentRun run, ToolCall call, ToolRequest request, int iteration) {
+    private ToolPipelineOutcome executeNew(
+            AgentRun run, ToolCall call, ToolRequest request, int iteration, RuntimeTraceContext traceContext) {
         checkCancellation(run);
         FrozenToolBinding binding = binding(run, request);
         var definition = binding.definition();
@@ -389,16 +416,18 @@ public final class ToolPipeline {
         appendToolEvent(run, call, "tool.started", "STARTED", "NONE", "");
         PolicyDecision dispatchDecision = effectiveDecision;
         recordTrace(new RuntimeTraceEvent(
-                ids.nextValue(),
+                traceContext.traceId(),
                 run.id(),
-                java.util.Optional.empty(),
+                traceContext.attemptId(),
                 run.sessionId(),
                 java.util.Optional.of(call.stepId()),
                 java.util.Optional.of(call.id()),
-                java.util.Optional.empty(),
-                iteration,
+                traceContext.workerId(),
+                OptionalInt.of(iteration),
                 RuntimePhase.BEFORE_DECISION_EXECUTION,
                 "tool.execute",
+                RuntimeTraceScope.TOOL_CALL,
+                RuntimeTraceStatus.STARTED,
                 java.util.Map.of(
                         "toolName", definition.name().value(),
                         "toolVersion", definition.version().value(),
@@ -436,7 +465,7 @@ public final class ToolPipeline {
             }
             if ("OUTCOME_UNKNOWN".equals(rawResult.structuredData().get("runtimeOutcome"))) {
                 journal.recordUncertain(run.id(), request.idempotencyKey(), rawResult);
-                return reconcileUnknown(run, call, request, iteration, ToolJournalState.OUTCOME_UNKNOWN);
+                return reconcileUnknown(run, call, request, iteration, ToolJournalState.OUTCOME_UNKNOWN, traceContext);
             }
             try {
                 journal.recordPendingResult(run.id(), request.idempotencyKey(), rawResult);
@@ -453,7 +482,8 @@ public final class ToolPipeline {
                         location == null ? "" : location.getClassName() + "." + location.getMethodName());
                 throw new ToolResultPersistenceException(persistenceFailure);
             }
-            return new ToolPipelineOutcome.Completed(persistResult(run, call, request, rawResult, iteration));
+            return new ToolPipelineOutcome.Completed(
+                    persistResult(run, call, request, rawResult, iteration, traceContext));
         } catch (CancellationObservedException cancelled) {
             appendToolEvent(run, call, "tool.cancelled", "CANCELLED", "RUN_CANCELLED", "");
             throw cancelled;
@@ -492,7 +522,8 @@ public final class ToolPipeline {
                         iteration,
                         ToolJournalState.OUTCOME_UNKNOWN,
                         invocationFailureCode == null ? "" : invocationFailureCode,
-                        dispatchState);
+                        dispatchState,
+                        traceContext);
             }
             AgentErrorCode failureCode;
             if (resultPersistenceFailed) {
@@ -742,7 +773,12 @@ public final class ToolPipeline {
     }
 
     private ToolResult persistResult(
-            AgentRun run, ToolCall call, ToolRequest request, ToolResult rawResult, int iteration) {
+            AgentRun run,
+            ToolCall call,
+            ToolRequest request,
+            ToolResult rawResult,
+            int iteration,
+            RuntimeTraceContext traceContext) {
         FrozenToolBinding binding = binding(run, request);
         var definition = binding.definition();
         ToolResult result = resultNormalizer.normalize(binding, rawResult);
@@ -787,25 +823,30 @@ public final class ToolPipeline {
             throw new ToolResultPersistenceException(persistenceFailure);
         }
         recordTrace(new RuntimeTraceEvent(
-                ids.nextValue(),
+                traceContext.traceId(),
                 run.id(),
-                java.util.Optional.empty(),
+                traceContext.attemptId(),
                 run.sessionId(),
                 java.util.Optional.of(call.stepId()),
                 java.util.Optional.of(call.id()),
-                java.util.Optional.empty(),
-                iteration,
+                traceContext.workerId(),
+                OptionalInt.of(iteration),
                 RuntimePhase.AFTER_DECISION_EXECUTION,
                 "tool.persisted",
-                java.util.Map.of(
-                        "successful",
-                        result.successful(),
-                        "truncated",
-                        result.truncated(),
-                        "externalizationRequired",
-                        externalizationRequired,
-                        "externalized",
-                        externalized),
+                RuntimeTraceScope.TOOL_CALL,
+                result.successful() ? RuntimeTraceStatus.SUCCESS : RuntimeTraceStatus.FAILURE,
+                java.util.Map.ofEntries(
+                        java.util.Map.entry("toolName", definition.name().value()),
+                        java.util.Map.entry("toolVersion", definition.version().value()),
+                        java.util.Map.entry(
+                                "providerId", definition.providerId().value()),
+                        java.util.Map.entry("successful", result.successful()),
+                        java.util.Map.entry(
+                                "failureCode", result.successful() ? "NONE" : stableResultFailureCode(result)),
+                        java.util.Map.entry("retryable", false),
+                        java.util.Map.entry("truncated", result.truncated()),
+                        java.util.Map.entry("externalizationRequired", externalizationRequired),
+                        java.util.Map.entry("externalized", externalized)),
                 time.now()));
         return result;
     }

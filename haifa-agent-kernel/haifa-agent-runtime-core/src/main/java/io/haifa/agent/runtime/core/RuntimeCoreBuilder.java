@@ -135,6 +135,7 @@ import io.haifa.agent.runtime.core.tool.ToolResultNormalizer;
 import io.haifa.agent.runtime.core.tool.TrustedSkillScriptPublicToolPolicy;
 import io.haifa.agent.runtime.core.trace.FailureDiagnosticSink;
 import io.haifa.agent.runtime.core.trace.PromptDiagnosticsSink;
+import io.haifa.agent.runtime.core.trace.TraceIdentifierGenerator;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import io.haifa.agent.skill.api.SkillCatalog;
 import io.haifa.agent.skill.api.SkillContentLoader;
@@ -207,6 +208,7 @@ public final class RuntimeCoreBuilder {
     private PersistenceRetryPolicy persistenceRetry = PersistenceRetryPolicy.none();
     private RepairRetryPolicy repairRetry = new RepairRetryPolicy(3);
     private TracePort trace = TracePort.noop();
+    private final TraceIdentifierGenerator traceIds = new TraceIdentifierGenerator();
     private PromptDiagnosticsSink promptDiagnostics = PromptDiagnosticsSink.noop();
     private FailureDiagnosticSink failureDiagnostics = FailureDiagnosticSink.noop();
     private RunInputPort runInputs;
@@ -629,6 +631,7 @@ public final class RuntimeCoreBuilder {
                 new RetryExecutor(Sleeper.threadSleep()),
                 toolRetry,
                 trace,
+                traceIds,
                 transitions,
                 toolResultAssets,
                 LargeToolResultPolicy.defaults(),
@@ -748,6 +751,7 @@ public final class RuntimeCoreBuilder {
                 new RetryExecutor(Sleeper.threadSleep()),
                 persistenceRetry,
                 trace,
+                traceIds,
                 ids,
                 failureDiagnostics);
         ConfigurationSnapshotFactory configuredSnapshots = snapshots != null

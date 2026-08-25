@@ -9,6 +9,7 @@ import io.haifa.agent.runtime.core.recovery.RecoveryController;
 import io.haifa.agent.runtime.core.recovery.RecoveryDirective;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.recovery.ToolOutcomeClassifier;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceContext;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,12 +33,21 @@ public final class AgentLoopContext {
     private StallRecoverySignal activeStallRecovery;
     private boolean stallRecoveryAnnouncementPending;
     private boolean workspaceBaselineCheckpointCaptured;
+    private final Optional<RuntimeTraceContext> traceContext;
 
     public AgentLoopContext(int iteration, List<String> fingerprints) {
-        this(iteration, fingerprints, 0);
+        this(iteration, fingerprints, 0, null);
     }
 
     public AgentLoopContext(int iteration, List<String> fingerprints, int forcedContextRebuildAttempts) {
+        this(iteration, fingerprints, forcedContextRebuildAttempts, null);
+    }
+
+    public AgentLoopContext(
+            int iteration,
+            List<String> fingerprints,
+            int forcedContextRebuildAttempts,
+            RuntimeTraceContext traceContext) {
         if (iteration < 1) throw new IllegalArgumentException("iteration must be positive");
         if (forcedContextRebuildAttempts < 0 || forcedContextRebuildAttempts > 1) {
             throw new IllegalArgumentException("forced context rebuild attempts must be zero or one");
@@ -45,10 +55,15 @@ public final class AgentLoopContext {
         this.iteration = iteration;
         this.fingerprints = new ArrayList<>(fingerprints);
         this.forcedContextRebuildAttempts = forcedContextRebuildAttempts;
+        this.traceContext = Optional.ofNullable(traceContext);
     }
 
     public int iteration() {
         return iteration;
+    }
+
+    public RuntimeTraceContext traceContext() {
+        return traceContext.orElseThrow(() -> new IllegalStateException("runtime trace context is unavailable"));
     }
 
     public void next() {

@@ -428,10 +428,15 @@ java -jar $jar --config D:\haifa-agent-config\haifa-skill-live.yaml `
 
 - `--trace summary`：只输出模型完成/失败、Context 强制重建以及 Tool、MCP、Skill 开始/完成事件；
 - `--trace detail`：输出每个 Runtime Trace envelope 和全部安全属性；
-- `--trace jsonl`：每个安全事件输出为一行独立 JSON，适合脚本、日志采集和 E2E 证据；
+- `--trace jsonl`：输出最新版 `haifa-runtime-trace` V1；每行都携带完整的 schema、producer、streamId、sequence、scope 和 status，不依赖首行 Header；
 - `--trace-file <path>`：将所选格式写入文件，必须与 `--trace` 一起使用；父目录必须已存在，目标不能是目录或符号链接，已有普通文件会被覆盖；
 - one-shot 模式未指定 `--trace-file` 时 Trace 写入 stderr，模型的流式回答继续写入 stdout；
 - Terminal 模式禁止 Trace 直接写入全屏 UI；需要诊断时必须同时指定 `--trace-file`，Trace 只进入该文件。
+
+同一物理 Attempt 的事件共享一个 128-bit Base64URL `traceId`，恢复后的新 Attempt 使用新的 `traceId`，而
+`runId` 保持不变以关联恢复链。JSONL Writer 正常关闭时追加独立的 `stream.completed`，其中
+`writtenEvents/droppedEvents/cleanClose` 只描述输出流完整性，不代表 Run 成功。事件属性按 operation 白名单投影，
+未知 operation 仍保留事件 envelope，但不会透传未经治理的属性。
 
 三个模式都只消费 Runtime 的 `safeAttributes`，并在 CLI 边界再次移除敏感键、ANSI/控制字符，限制字符串、集合和嵌套深度。不会输出 Prompt、Tool 原始参数/完整结果、Credential、reasoning 原文或供应商原始响应。`summary` 根据冻结 Tool Provider 区分普通 Tool、`mcp.<serverId>` MCP Tool 和 `haifa-runtime-skill` Skill Tool；它不会建立第二套调用链。
 

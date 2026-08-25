@@ -73,6 +73,7 @@ import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolReconciliation;
 import io.haifa.agent.tool.api.ToolSchema;
@@ -1023,6 +1024,7 @@ class RuntimeCoreTest {
     void recoversFromAnAbandonedAttemptAtTheLatestCheckpoint() {
         AtomicInteger calls = new AtomicInteger();
         AtomicBoolean owned = new AtomicBoolean(true);
+        List<RuntimeTraceEvent> traces = new ArrayList<>();
         ToolRequest progress =
                 toolRequest("progress", "read", "1.0.0", new ToolArguments("read.input", "1.0", Map.of()));
         AgentChatModel model = request -> {
@@ -1038,7 +1040,8 @@ class RuntimeCoreTest {
                         "read.input",
                         false,
                         request -> new ToolResult(true, "progress", Map.of(), List.of(), List.of(), false))
-                .executionOwnership(attempt -> owned.get() || attempt.attemptNumber() > 1));
+                .executionOwnership(attempt -> owned.get() || attempt.attemptNumber() > 1)
+                .trace(traces::add));
         var accepted = fixture.runtime.start(request("recover"));
 
         assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
@@ -1057,6 +1060,16 @@ class RuntimeCoreTest {
                         .status()
                         .name())
                 .isEqualTo("ABANDONED");
+        assertThat(traces).allSatisfy(trace -> assertThat(trace.runId()).isEqualTo(accepted.runId()));
+        assertThat(traces.stream().map(RuntimeTraceEvent::traceId).distinct()).hasSize(2);
+        assertThat(traces.stream()
+                        .collect(java.util.stream.Collectors.groupingBy(
+                                trace -> trace.attemptId().orElseThrow(),
+                                java.util.stream.Collectors.mapping(
+                                        RuntimeTraceEvent::traceId, java.util.stream.Collectors.toSet())))
+                        .values())
+                .hasSize(2)
+                .allSatisfy(traceIds -> assertThat(traceIds).hasSize(1));
     }
 
     @Test

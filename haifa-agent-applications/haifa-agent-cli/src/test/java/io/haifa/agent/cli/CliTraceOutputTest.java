@@ -11,6 +11,8 @@ import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceScope;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceStatus;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -19,6 +21,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -78,10 +81,10 @@ class CliTraceOutputTest {
                     "context.built",
                     Optional.empty(),
                     Map.of(
-                            "label",
-                            "line one\nline two\u001B[31m red",
-                            "nested",
-                            Map.of("credentialValue", "must-not-appear", "count", 2))));
+                            "sourceIds",
+                            java.util.List.of(
+                                    "line one\nline two\u001B[31m red",
+                                    Map.of("credentialValue", "must-not-appear", "count", 2)))));
         }
 
         String output = bytes.toString(StandardCharsets.UTF_8);
@@ -109,12 +112,24 @@ class CliTraceOutputTest {
         }
 
         String output = bytes.toString(StandardCharsets.UTF_8).trim();
-        assertThat(output.lines()).hasSize(1);
-        var json = new ObjectMapper().readTree(output);
+        assertThat(output.lines()).hasSize(2);
+        var json = new ObjectMapper().readTree(output.lines().findFirst().orElseThrow());
+        assertThat(json.path("recordType").asText()).isEqualTo("trace.event");
+        assertThat(json.path("schema").asText()).isEqualTo("haifa-runtime-trace");
+        assertThat(json.path("schemaVersion").asInt()).isEqualTo(1);
+        assertThat(json.path("producer").asText()).isEqualTo("haifa-agent-cli");
+        assertThat(json.path("streamId").asText()).matches("ts_[A-Za-z0-9_-]{22}");
+        assertThat(json.path("sequence").asLong()).isEqualTo(1);
         assertThat(json.path("operation").asText()).isEqualTo("model.invoke");
         assertThat(json.path("runId").asText()).isEqualTo("run-1");
         assertThat(json.path("attributes").path("providerId").asText()).isEqualTo("deepseek");
         assertThat(json.path("attributes").path("inputTokens").asInt()).isEqualTo(12);
+        var completed =
+                new ObjectMapper().readTree(output.lines().skip(1).findFirst().orElseThrow());
+        assertThat(completed.path("operation").asText()).isEqualTo("stream.completed");
+        assertThat(completed.path("sequence").asLong()).isEqualTo(2);
+        assertThat(completed.path("attributes").path("writtenEvents").asLong()).isEqualTo(2);
+        assertThat(completed.path("attributes").path("cleanClose").asBoolean()).isTrue();
     }
 
     @Test
@@ -129,8 +144,39 @@ class CliTraceOutputTest {
 
         String output = Files.readString(target, StandardCharsets.UTF_8);
         assertThat(output).doesNotContain("stale");
-        assertThat(new ObjectMapper().readTree(output).path("operation").asText())
+        assertThat(new ObjectMapper()
+                        .readTree(output.lines().findFirst().orElseThrow())
+                        .path("operation")
+                        .asText())
                 .isEqualTo("loop.iteration");
+        assertThat(new ObjectMapper()
+                        .readTree(output.lines().skip(1).findFirst().orElseThrow())
+                        .path("operation")
+                        .asText())
+                .isEqualTo("stream.completed");
+    }
+
+    @Test
+    void jsonlUsesAnOperationAllowlistAndKeepsUnknownOperationsVisible() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (var trace = CliTraceOutput.open(
+                Optional.of(CliTraceMode.JSONL),
+                Optional.empty(),
+                new PrintStream(bytes, true, StandardCharsets.UTF_8))) {
+            trace.accept(event(
+                    "model.invoke",
+                    Optional.empty(),
+                    Map.of("providerId", "deepseek", "providerMessage", "must-not-appear", "unexpected", "drop-me")));
+            trace.accept(event("future.operation", Optional.empty(), Map.of("providerId", "drop-me")));
+        }
+
+        var lines = bytes.toString(StandardCharsets.UTF_8).lines().toList();
+        var known = new ObjectMapper().readTree(lines.get(0));
+        var unknown = new ObjectMapper().readTree(lines.get(1));
+        assertThat(known.path("attributes").toString()).isEqualTo("{\"providerId\":\"deepseek\"}");
+        assertThat(unknown.path("operation").asText()).isEqualTo("future.operation");
+        assertThat(unknown.path("attributes").isEmpty()).isTrue();
+        assertThat(bytes.toString(StandardCharsets.UTF_8)).doesNotContain("must-not-appear", "drop-me");
     }
 
     @Test
@@ -176,9 +222,11 @@ class CliTraceOutputTest {
                 Optional.of(new AgentStepId("step-1")),
                 toolCallId,
                 Optional.of("worker-1"),
-                1,
+                OptionalInt.of(1),
                 RuntimePhase.AFTER_MODEL_CALL,
                 operation,
+                toolCallId.isPresent() ? RuntimeTraceScope.TOOL_CALL : RuntimeTraceScope.STEP,
+                RuntimeTraceStatus.SUCCESS,
                 attributes,
                 Instant.parse("2026-07-24T00:00:00Z"));
     }
