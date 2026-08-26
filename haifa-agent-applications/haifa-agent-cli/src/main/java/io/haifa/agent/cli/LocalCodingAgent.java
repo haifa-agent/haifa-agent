@@ -15,7 +15,6 @@ import io.haifa.agent.application.project.product.coding.CodingShellService;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntentResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
@@ -504,8 +503,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     new LocalFileToolOperations(workspaces, files, mutations, identifiers, changeSets, changeReviews);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
-            var deliveryGuard =
-                    new CodingDeliveryCommandGuard(persistence.ports().state(), deliveryIntents);
             CliExecutionPlatform executionPlatform = executionEnabled
                     ? CliExecutionPlatform.create(
                             configuration.execution(),
@@ -523,7 +520,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             workspaceRoot,
                             output,
                             resolvedEnvironment,
-                            deliveryGuard,
                             verificationProfiles)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
