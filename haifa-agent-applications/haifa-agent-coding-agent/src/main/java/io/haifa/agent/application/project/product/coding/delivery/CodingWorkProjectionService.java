@@ -24,6 +24,7 @@ import java.util.Set;
 /** Deterministically rebuilds one bounded Coding work projection from the existing Runtime fact stores. */
 public final class CodingWorkProjectionService {
     public static final String SCHEMA_VERSION = "coding-work-projection/1";
+    private static final String TASK_CONTRACT_DIGEST_VERSION = "coding-task-contract-v2";
     private static final Set<String> READ_TOOLS = Set.of(
             "file.list",
             "file.stat",
@@ -330,9 +331,10 @@ public final class CodingWorkProjectionService {
                 .min(Comparator.comparingLong(AgentMessage::sequence))
                 .orElse(null);
         return firstUser == null
-                ? PolicyDigest.sha256Fields(List.of("coding-task-contract-v1", intent.name(), "missing-user-message"))
+                ? PolicyDigest.sha256Fields(
+                        List.of(TASK_CONTRACT_DIGEST_VERSION, intent.name(), "missing-user-message"))
                 : PolicyDigest.sha256Fields(List.of(
-                        "coding-task-contract-v1",
+                        TASK_CONTRACT_DIGEST_VERSION,
                         intent.name(),
                         firstUser.id().value(),
                         contentDigest(firstUser.contents().toString())));
