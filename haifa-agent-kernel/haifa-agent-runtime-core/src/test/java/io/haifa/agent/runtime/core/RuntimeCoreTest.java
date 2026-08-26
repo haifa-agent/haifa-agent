@@ -241,6 +241,148 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void canonicalRequestsRemainIsolatedAcrossSixteenSequentialSiblings() {
+        List<ToolRequest> requests = java.util.stream.IntStream.rangeClosed(1, 16)
+                .mapToObj(index -> toolRequest(
+                        "canonical-sibling-" + index,
+                        "echo",
+                        "1.0.0",
+                        new ToolArguments(
+                                "echo.input", "1.0", Map.of("marker", index, "workdir", "/app/work-" + index))))
+                .toList();
+        List<String> invoked = new ArrayList<>();
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(requests), finalDecision("siblings done")),
+                builder -> TestToolPlatform.install(builder, "echo", "1.0.0", "echo.input", false, request -> {
+                            invoked.add(request.toolCallId().value() + "|"
+                                    + request.idempotencyKey().orElseThrow() + "|"
+                                    + request.arguments().values().get("marker") + "|"
+                                    + request.arguments().values().get("workdir"));
+                            return new ToolResult(
+                                    true, "ok", request.arguments().values(), List.of(), List.of(), false);
+                        })
+                        .toolRequestCanonicalizer((run, binding, request) -> {
+                            String workdir =
+                                    (String) request.arguments().values().get("workdir");
+                            return withWorkdir(request, workdir.replaceFirst("^/app/", ""));
+                        }));
+
+        var accepted = fixture.runtime.start(request("canonical-sibling-scale"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        var persisted = fixture.store.toolCalls(accepted.runId());
+        assertThat(persisted).hasSize(16);
+        assertThat(invoked)
+                .containsExactlyElementsOf(persisted.stream()
+                        .map(call ->
+                                call.id().value() + "|" + call.idempotencyKey().value() + "|"
+                                        + call.arguments().values().get("marker") + "|"
+                                        + call.arguments().values().get("workdir"))
+                        .toList());
+        for (int index = 1; index <= 16; index++) {
+            var call = persisted.get(index - 1);
+            assertThat(call.providerCorrelationId().value()).isEqualTo("provider-canonical-sibling-" + index);
+            assertThat(call.arguments().values())
+                    .containsEntry("marker", index)
+                    .containsEntry("workdir", "work-" + index);
+            assertThat(fixture.journal.state(accepted.runId(), call.idempotencyKey()))
+                    .contains(ToolJournalState.COMPLETED);
+        }
+    }
+
+    @Test
+    void canonicalSiblingFailuresKeepDispatchAndOutcomeFactsIsolated() {
+        Map<String, Object> inputSchema = Map.of(
+                "$schema",
+                ToolSchema.DRAFT_2020_12,
+                "type",
+                "object",
+                "required",
+                List.of("marker", "workdir"),
+                "properties",
+                Map.of(
+                        "marker", Map.of("type", "integer"),
+                        "workdir", Map.of("type", "string")),
+                "additionalProperties",
+                false);
+        List<ToolRequest> requests = List.of(
+                toolRequest(
+                        "mixed-success",
+                        "mixed",
+                        "1.0.0",
+                        new ToolArguments("mixed.input", "1.0", Map.of("marker", 1, "workdir", "/app/success"))),
+                toolRequest(
+                        "mixed-failure",
+                        "mixed",
+                        "1.0.0",
+                        new ToolArguments("mixed.input", "1.0", Map.of("marker", 2, "workdir", "/app/failure"))),
+                toolRequest(
+                        "mixed-invalid",
+                        "mixed",
+                        "1.0.0",
+                        new ToolArguments(
+                                "mixed.input", "1.0", Map.of("marker", "invalid", "workdir", "/app/invalid"))),
+                toolRequest(
+                        "mixed-unknown",
+                        "mixed",
+                        "1.0.0",
+                        new ToolArguments("mixed.input", "1.0", Map.of("marker", 4, "workdir", "/app/unknown"))));
+        List<Integer> invoked = new ArrayList<>();
+        Fixture fixture =
+                fixture(model(new ToolCallDecision(requests)), builder -> TestToolPlatform.installWithInputSchema(
+                                builder, "mixed", "1.0.0", "mixed.input", inputSchema, request -> {
+                                    int marker = (Integer)
+                                            request.arguments().values().get("marker");
+                                    invoked.add(marker);
+                                    if (marker == 2) {
+                                        return new ToolResult(
+                                                false,
+                                                "deterministic failure",
+                                                Map.of("errorCode", "EXPECTED_FAILURE"),
+                                                List.of(),
+                                                List.of(),
+                                                false);
+                                    }
+                                    if (marker == 4) {
+                                        request.observer().dispatched();
+                                        throw new IllegalStateException("provider failed after dispatch");
+                                    }
+                                    return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
+                                })
+                        .toolRequestCanonicalizer((run, binding, request) -> {
+                            String workdir =
+                                    (String) request.arguments().values().get("workdir");
+                            return withWorkdir(request, workdir.replaceFirst("^/app/", ""));
+                        }));
+
+        var accepted = fixture.runtime.start(request("canonical-mixed-siblings"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
+        });
+        assertThat(invoked).containsExactly(1, 2, 4);
+        var persisted = fixture.store.toolCalls(accepted.runId());
+        assertThat(persisted)
+                .extracting(call -> call.status().name())
+                .containsExactly("COMPLETED", "FAILED", "CANCELLED", "FAILED");
+        assertThat(persisted)
+                .extracting(call -> call.arguments().values().get("workdir"))
+                .containsExactly("success", "failure", "invalid", "unknown");
+        assertThat(fixture.journal.state(accepted.runId(), persisted.get(0).idempotencyKey()))
+                .contains(ToolJournalState.COMPLETED);
+        assertThat(fixture.journal.state(accepted.runId(), persisted.get(1).idempotencyKey()))
+                .contains(ToolJournalState.COMPLETED);
+        assertThat(fixture.journal.state(accepted.runId(), persisted.get(2).idempotencyKey()))
+                .isEmpty();
+        assertThat(fixture.journal.state(accepted.runId(), persisted.get(3).idempotencyKey()))
+                .contains(ToolJournalState.OUTCOME_UNKNOWN);
+    }
+
+    @Test
     void finalizeOnlyRemovesToolDefinitionsAfterTheFrozenCollectionThreshold() {
         ToolRequest first =
                 toolRequest("finalize-1", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of()));
@@ -1324,6 +1466,106 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void canonicalizedSiblingApprovalsRemainBoundWhenOneIsRejectedAndOneIsApproved() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        List<String> invoked = new ArrayList<>();
+        ToolRequest first = toolRequest(
+                "canonical-rejected",
+                "write",
+                "1.0.0",
+                new ToolArguments("write.input", "1.0", Map.of("v", 1, "workdir", "/app/first")));
+        ToolRequest second = toolRequest(
+                "canonical-approved",
+                "write",
+                "1.0.0",
+                new ToolArguments("write.input", "1.0", Map.of("v", 2, "workdir", "/app/second")));
+        AgentChatModel model = ignored -> response(
+                modelCalls.incrementAndGet() == 1
+                        ? new ToolCallDecision(List.of(first, second))
+                        : finalDecision("approval siblings handled"));
+        Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        request -> {
+                            invoked.add(request.toolCallId().value() + "|"
+                                    + request.arguments().values().get("workdir") + "|"
+                                    + request.arguments().values().get("v"));
+                            return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                        })
+                .toolRequestCanonicalizer((run, binding, request) -> {
+                    String workdir = (String) request.arguments().values().get("workdir");
+                    return withWorkdir(request, workdir.replaceFirst("^/app/", ""));
+                }));
+
+        var accepted = fixture.runtime.start(request("canonical-approval-siblings"));
+        fixture.scheduler.runAll();
+        var rejectedApproval = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        var persistedAfterFirstPause = fixture.store.toolCalls(accepted.runId());
+        var rejectedCall = persistedAfterFirstPause.stream()
+                .filter(call -> call.providerCorrelationId().value().equals("provider-canonical-rejected"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(((ToolApprovalTarget) rejectedApproval.target()).toolCallId().value())
+                .isEqualTo(rejectedCall.id().value());
+        assertThat(rejectedCall.arguments().values()).containsEntry("workdir", "first");
+
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("canonical-rejected-response"),
+                rejectedApproval.id(),
+                accepted.runId(),
+                InteractionResponseType.REJECT,
+                List.of(),
+                "canonical-rejected-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+        var approvedInteraction = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        var persistedAfterSecondPause = fixture.store.toolCalls(accepted.runId());
+        var approvedCall = persistedAfterSecondPause.stream()
+                .filter(call -> call.providerCorrelationId().value().equals("provider-canonical-approved"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(((ToolApprovalTarget) approvedInteraction.target())
+                        .toolCallId()
+                        .value())
+                .isEqualTo(approvedCall.id().value());
+        assertThat(approvedCall.arguments().values()).containsEntry("workdir", "second");
+
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("canonical-approved-response"),
+                approvedInteraction.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "canonical-approved-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        var persisted = fixture.store.toolCalls(accepted.runId());
+        assertThat(invoked).containsExactly(approvedCall.id().value() + "|second|2");
+        assertThat(persisted.stream()
+                        .filter(call -> call.providerCorrelationId().value().equals("provider-canonical-rejected"))
+                        .findFirst()
+                        .orElseThrow()
+                        .status()
+                        .name())
+                .isEqualTo("DENIED");
+        assertThat(persisted.stream()
+                        .filter(call -> call.providerCorrelationId().value().equals("provider-canonical-approved"))
+                        .findFirst()
+                        .orElseThrow()
+                        .status()
+                        .name())
+                .isEqualTo("COMPLETED");
+        assertThat(modelCalls).hasValue(2);
+    }
+
+    @Test
     void failedApprovedToolPreservesSpecificErrorAndCancelsUnstartedSibling() {
         AtomicInteger invocations = new AtomicInteger();
         ToolRequest first =
@@ -1560,6 +1802,20 @@ class RuntimeCoreTest {
                 name,
                 version,
                 arguments);
+    }
+
+    private static ToolRequest withWorkdir(ToolRequest request, String workdir) {
+        var values =
+                new java.util.LinkedHashMap<String, Object>(request.arguments().values());
+        values.put("workdir", workdir);
+        return new ToolRequest(
+                request.toolCallId(),
+                request.providerCorrelationId(),
+                request.idempotencyKey(),
+                request.toolName(),
+                request.toolVersion(),
+                new ToolArguments(
+                        request.arguments().schemaId(), request.arguments().schemaVersion(), Map.copyOf(values)));
     }
 
     private static ModelToolSpecification toolSpecification(String name, String version, String schemaId) {
