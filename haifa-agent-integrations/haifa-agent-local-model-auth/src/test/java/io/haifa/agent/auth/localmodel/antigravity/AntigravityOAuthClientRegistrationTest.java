@@ -5,19 +5,25 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class AntigravityOAuthClientRegistrationTest {
     @Test
-    void officialEndpointsAndDefaultsPassValidation() {
-        AntigravityOAuthClientRegistration registration =
-                AntigravityLocalCompatibilityRegistrationFactory.createDefault();
+    void officialEndpointsAndInjectedRegistrationPassValidation() {
+        AntigravityOAuthClientRegistration registration = AntigravityLocalCompatibilityRegistrationFactory.create(
+                        Map.of(
+                                "HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST",
+                                "true",
+                                "HAIFA_ANTIGRAVITY_OAUTH_CLIENT_ID",
+                                "injected-client",
+                                "HAIFA_ANTIGRAVITY_OAUTH_CLIENT_SECRET",
+                                "injected-secret"))
+                .orElseThrow();
 
-        assertThat(registration.clientId())
-                .isEqualTo(AntigravityLocalCompatibilityRegistrationFactory.DEFAULT_CLIENT_ID);
+        assertThat(registration.clientId()).isEqualTo("injected-client");
         assertThat(registration.scopes()).containsAll(AntigravityOAuthClientRegistration.DEFAULT_SCOPES);
-        assertThat(registration.toString())
-                .doesNotContain(AntigravityLocalCompatibilityRegistrationFactory.DEFAULT_CLIENT_SECRET);
+        assertThat(registration.toString()).doesNotContain("injected-secret");
         assertThat(registration.toString()).contains("<redacted>");
     }
 
@@ -36,6 +42,7 @@ class AntigravityOAuthClientRegistrationTest {
                         List.of("scope1"),
                         "Antigravity",
                         true,
+                        false,
                         false))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Antigravity OAuth endpoints are not approved");
@@ -55,6 +62,7 @@ class AntigravityOAuthClientRegistrationTest {
                 URI.create("http://127.0.0.1:51121/oauth-callback"),
                 List.of("scope1"),
                 "Antigravity",
+                true,
                 true,
                 true);
 

@@ -123,6 +123,7 @@ class AntigravityTokenClientTest {
                 List.of("scope1"),
                 "Antigravity",
                 true,
+                true,
                 true);
         return new AntigravityTokenClient(
                 HttpClient.newHttpClient(),

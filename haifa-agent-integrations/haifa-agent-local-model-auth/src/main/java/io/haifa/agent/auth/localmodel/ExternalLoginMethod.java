@@ -8,6 +8,8 @@ public interface ExternalLoginMethod {
 
     ExternalLoginOperation create(ExternalLoginMode mode, ExternalLoginOperationContext context);
 
+    default void prepare(StoredExternalCredential credential) {}
+
     StoredExternalCredential refresh(StoredExternalCredential credential, Instant refreshBefore);
 
     void revoke(StoredExternalCredential credential);

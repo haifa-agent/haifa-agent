@@ -1,50 +1,27 @@
 package io.haifa.agent.auth.localmodel.antigravity;
 
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
 /** Registration factory for Google Antigravity local compatibility OAuth credentials. */
 public final class AntigravityLocalCompatibilityRegistrationFactory {
-    private static final byte MASK_KEY = 0x5A;
-    private static final byte[] MASKED_ID = {
-        107, 106, 109, 107, 106, 106, 108, 106, 108, 106, 111, 99, 107, 119, 46, 55, 50, 41, 41, 51, 52, 104, 50, 104,
-        107, 54, 57, 40, 63, 104, 105, 111, 44, 46, 53, 54, 53, 48, 50, 110, 61, 110, 106, 105, 63, 42, 116, 59, 42, 42,
-        41, 116, 61, 53, 53, 61, 54, 63, 47, 41, 63, 40, 57, 53, 52, 46, 63, 52, 46, 116, 57, 53, 55
-    };
-    private static final byte[] MASKED_SECRET = {
-        29, 21, 25, 9, 10, 2, 119, 17, 111, 98, 28, 13, 8, 110, 98, 108, 22, 62, 22, 16, 107, 55, 22, 24, 98, 41, 2, 25,
-        110, 32, 108, 43, 30, 27, 60
-    };
-
-    public static final String DEFAULT_CLIENT_ID = unmask(MASKED_ID);
-    public static final String DEFAULT_CLIENT_SECRET = unmask(MASKED_SECRET);
-
-    public static final String OFFICIAL_CLIENT_ID = DEFAULT_CLIENT_ID;
-    public static final String OFFICIAL_CLIENT_SECRET = DEFAULT_CLIENT_SECRET;
-
     private AntigravityLocalCompatibilityRegistrationFactory() {}
 
     public static Optional<AntigravityOAuthClientRegistration> create(Map<String, String> environment) {
         Objects.requireNonNull(environment, "environment must not be null");
+        if (!"true".equalsIgnoreCase(trim(environment.get("HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST")))) {
+            return Optional.empty();
+        }
         return Optional.of(createWithEnvironment(environment));
     }
 
-    public static AntigravityOAuthClientRegistration createDefault() {
-        return createWithEnvironment(Map.of());
-    }
-
-    public static AntigravityOAuthClientRegistration createWithEnvironment(Map<String, String> environment) {
+    private static AntigravityOAuthClientRegistration createWithEnvironment(Map<String, String> environment) {
         Objects.requireNonNull(environment, "environment must not be null");
         String reference = environment.getOrDefault("HAIFA_ANTIGRAVITY_REFERENCE", "google-antigravity-local-compat");
-        String clientId = environment.getOrDefault(
-                "HAIFA_ANTIGRAVITY_OAUTH_CLIENT_ID",
-                environment.getOrDefault("HAIFA_ANTIGRAVITY_CLIENT_ID", DEFAULT_CLIENT_ID));
-        String clientSecret = environment.getOrDefault(
-                "HAIFA_ANTIGRAVITY_OAUTH_CLIENT_SECRET",
-                environment.getOrDefault("HAIFA_ANTIGRAVITY_CLIENT_SECRET", DEFAULT_CLIENT_SECRET));
+        String clientId = required(environment, "HAIFA_ANTIGRAVITY_OAUTH_CLIENT_ID");
+        String clientSecret = required(environment, "HAIFA_ANTIGRAVITY_OAUTH_CLIENT_SECRET");
         String authEndpoint = environment.getOrDefault(
                 "HAIFA_ANTIGRAVITY_AUTH_ENDPOINT",
                 AntigravityOAuthClientRegistration.OFFICIAL_AUTHORIZATION_ENDPOINT.toString());
@@ -81,14 +58,19 @@ public final class AntigravityLocalCompatibilityRegistrationFactory {
                 AntigravityOAuthClientRegistration.DEFAULT_SCOPES,
                 userAgent,
                 true,
-                allowLoopback);
+                allowLoopback,
+                "true".equalsIgnoreCase(trim(environment.get("HAIFA_ANTIGRAVITY_ALLOW_ONBOARDING"))));
     }
 
-    private static String unmask(byte[] masked) {
-        byte[] raw = new byte[masked.length];
-        for (int i = 0; i < masked.length; i++) {
-            raw[i] = (byte) (masked[i] ^ MASK_KEY);
+    private static String required(Map<String, String> environment, String name) {
+        String value = trim(environment.get(name));
+        if (value == null || value.isEmpty()) {
+            throw new IllegalArgumentException(name + " is required for local compatibility testing");
         }
-        return new String(raw, StandardCharsets.UTF_8);
+        return value;
+    }
+
+    private static String trim(String value) {
+        return value == null ? null : value.trim();
     }
 }

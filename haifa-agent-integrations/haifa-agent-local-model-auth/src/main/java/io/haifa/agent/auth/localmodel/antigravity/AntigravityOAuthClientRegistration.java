@@ -20,7 +20,8 @@ public record AntigravityOAuthClientRegistration(
         List<String> scopes,
         String userAgent,
         boolean unofficialLocalCompatibility,
-        boolean allowLoopbackStub) {
+        boolean allowLoopbackStub,
+        boolean allowOnboarding) {
 
     public static final URI OFFICIAL_AUTHORIZATION_ENDPOINT =
             URI.create("https://accounts.google.com/o/oauth2/v2/auth");

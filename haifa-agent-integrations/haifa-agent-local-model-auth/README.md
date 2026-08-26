@@ -5,7 +5,12 @@
 
 本模块只依赖 Common、Model API、Jackson 与 JDK。它不依赖 Coding Agent、Personal Assistant、Spring、Runtime、
 SQLite 或任何 UI。产品只在最高层装配受信的登录方法与 Client Registration；普通配置不能注入任意 OAuth
-Endpoint、Scope、Header 或实现类。支持 OpenAI Codex 设备码/浏览器登录以及 Google Antigravity 本地浏览器 OAuth 登录。
+Endpoint、Scope、Header 或实现类。支持 OpenAI Codex 设备码/浏览器登录；Google Antigravity 本地浏览器 OAuth
+仅在 `HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true` 且 Client ID/Secret 由运行环境显式注入时注册。账号已有
+CloudCode Project 时登录只读取该 Project；缺失 Project 时默认返回 `AUTH_ONBOARDING_CONFIRMATION_REQUIRED`，
+只有额外设置 `HAIFA_ANTIGRAVITY_ALLOW_ONBOARDING=true` 才允许执行账号初始化。
+Project ID 不进入 `auth.json`；产品重启后首次解析已保存的 Antigravity 凭据时，登录方法通过受信
+`loadCodeAssist` 恢复进程内 Project 投影，同一 Token 签发版本只恢复一次。
 
 产品通过 `LocalModelAuthenticationService` 执行列出连接、保存 API Key、启动/查询/取消外部登录和退出登录；
 该 Service 是唯一公开写入口，并向模型 Adapter 暴露同一 `CredentialResolver`。接入未来外部登录时，

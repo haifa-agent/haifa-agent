@@ -213,6 +213,9 @@ public final class AntigravityTokenClient {
             CreditsBalance credits = extractCredits(root);
 
             if (projectId.isEmpty()) {
+                if (!registration.allowOnboarding()) {
+                    throw new AntigravityTokenException("AUTH_ONBOARDING_CONFIRMATION_REQUIRED", false, 0);
+                }
                 projectId = onboardUser(accessToken, tierId);
             }
             if (projectId.isEmpty()) {

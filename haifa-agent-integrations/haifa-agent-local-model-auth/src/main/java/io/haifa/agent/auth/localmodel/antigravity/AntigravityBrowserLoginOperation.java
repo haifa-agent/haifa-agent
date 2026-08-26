@@ -27,6 +27,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /** Local browser OAuth operation for Google Antigravity with PKCE, state check, and loopback callback on 51121. */
 public final class AntigravityBrowserLoginOperation implements ExternalLoginOperation {
@@ -41,6 +42,7 @@ public final class AntigravityBrowserLoginOperation implements ExternalLoginOper
     private final AntigravityPkce pkce;
     private final Duration timeout;
     private final long expiresAtEpochMillis;
+    private final Consumer<AntigravityProjectAndQuota> projectSink;
     private final AtomicBoolean started = new AtomicBoolean();
     private final AtomicBoolean cancelled = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -54,17 +56,28 @@ public final class AntigravityBrowserLoginOperation implements ExternalLoginOper
             AntigravityTokenClient tokens,
             ExternalLoginOperationContext context,
             AntigravityPkce pkce,
-            Duration timeout) {
+            Duration timeout,
+            Consumer<AntigravityProjectAndQuota> projectSink) {
         this.registration = Objects.requireNonNull(registration, "registration must not be null");
         this.tokens = Objects.requireNonNull(tokens, "tokens must not be null");
         this.context = Objects.requireNonNull(context, "context must not be null");
         this.pkce = Objects.requireNonNull(pkce, "pkce must not be null");
         this.timeout = Objects.requireNonNull(timeout, "timeout must not be null");
+        this.projectSink = Objects.requireNonNull(projectSink, "projectSink must not be null");
         if (timeout.isZero() || timeout.isNegative() || timeout.compareTo(Duration.ofMinutes(15)) > 0) {
             throw new IllegalArgumentException("Antigravity login timeout is invalid");
         }
         this.expiresAtEpochMillis = Math.addExact(context.clock().millis(), timeout.toMillis());
         this.snapshot = snapshot(ExternalLoginAttemptState.CREATED, Optional.empty());
+    }
+
+    public AntigravityBrowserLoginOperation(
+            AntigravityOAuthClientRegistration registration,
+            AntigravityTokenClient tokens,
+            ExternalLoginOperationContext context,
+            AntigravityPkce pkce,
+            Duration timeout) {
+        this(registration, tokens, context, pkce, timeout, ignored -> {});
     }
 
     @Override
@@ -87,6 +100,7 @@ public final class AntigravityBrowserLoginOperation implements ExternalLoginOper
             checkCancelled();
             progress(ExternalLoginAttemptState.EXCHANGING, Optional.empty());
             AntigravityTokenClient.TokenSet tokenSet = tokens.exchange(code, verifier, registration.redirectUri());
+            projectSink.accept(tokenSet.projectAndQuota());
             return credential(tokenSet);
         } catch (TimeoutException exception) {
             throw new IllegalStateException("AUTH_CALLBACK_TIMEOUT", exception);

@@ -173,6 +173,7 @@ class AntigravityBrowserLoginOperationTest {
                 List.of("https://www.googleapis.com/auth/cloud-platform"),
                 "Antigravity",
                 true,
+                true,
                 true);
     }
 
