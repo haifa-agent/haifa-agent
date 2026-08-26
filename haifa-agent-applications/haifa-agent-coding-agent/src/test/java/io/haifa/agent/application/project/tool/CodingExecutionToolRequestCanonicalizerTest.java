@@ -31,4 +31,22 @@ class CodingExecutionToolRequestCanonicalizerTest {
         assertThat(CodingExecutionToolRequestCanonicalizer.canonicalizeWorkdir("../outside", workspace))
                 .isEqualTo("../outside");
     }
+
+    @Test
+    void canonicalizationIsIdempotentAcrossWorkspaceAndLogicalNormalization() {
+        UnaryOperator<String> workspace = value -> switch (value) {
+            case "/app" -> ".";
+            case "/app/src\\main" -> "src\\main";
+            default -> value;
+        };
+
+        String root = CodingExecutionToolRequestCanonicalizer.canonicalizeWorkdir("/app", workspace);
+        String child = CodingExecutionToolRequestCanonicalizer.canonicalizeWorkdir("/app/src\\main", workspace);
+
+        assertThat(CodingExecutionToolRequestCanonicalizer.canonicalizeWorkdir(root, workspace))
+                .isEqualTo(root);
+        assertThat(CodingExecutionToolRequestCanonicalizer.canonicalizeWorkdir(child, workspace))
+                .isEqualTo(child)
+                .isEqualTo("src/main");
+    }
 }
