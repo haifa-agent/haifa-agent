@@ -5,10 +5,10 @@
 
 本模块只依赖 Common、Model API、Jackson 与 JDK。它不依赖 Coding Agent、Personal Assistant、Spring、Runtime、
 SQLite 或任何 UI。产品只在最高层装配受信的登录方法与 Client Registration；普通配置不能注入任意 OAuth
-Endpoint、Scope、Header 或实现类。
+Endpoint、Scope、Header 或实现类。支持 OpenAI Codex 设备码/浏览器登录以及 Google Antigravity 本地浏览器 OAuth 登录。
 
 产品通过 `LocalModelAuthenticationService` 执行列出连接、保存 API Key、启动/查询/取消外部登录和退出登录；
-该 Service 是唯一公开写入口，并向模型 Adapter 暴露同一 `CredentialResolver`。接入未来第二个外部登录时，
+该 Service 是唯一公开写入口，并向模型 Adapter 暴露同一 `CredentialResolver`。接入未来外部登录时，
 新增 `ExternalLoginMethod` 并在产品 Composition Root 注册，不修改 Store、Coordinator 或产品 UI 状态机。
 
 `auth.json` 是当前用户专属的明文本机存储，不提供静态加密。权限或 ACL、文件锁、严格 Schema、原子替换
@@ -18,7 +18,7 @@ Browser 登录在 `WAITING_USER` 阶段通过一次性 `take` 通道向最高层
 回调页收到 authorization code 后只提示“授权已收到”，不会提前宣称登录完成；Attempt 随后进入
 `EXCHANGING`，换取并校验 Token 后由 Coordinator 进入 `STORING`，只有 `auth.json` 原子写入成功才进入
 `SUCCEEDED`。共享边界通过 JDK System Logger 记录 Attempt ID、Method、Mode、阶段和稳定 reason code；
-Codex Token 客户端额外记录安全的 HTTP 状态与 retryable 标记，但绝不记录授权 URL、code、Token、账户 ID
+Token 客户端额外记录安全的 HTTP 状态与 retryable 标记，但绝不记录授权 URL、code、Token、账户 ID
 或供应商响应正文。Store 写入失败统一投影为 `AUTH_STORE_FAILED`，避免被折叠成无法定位的通用失败。
 
 验证：

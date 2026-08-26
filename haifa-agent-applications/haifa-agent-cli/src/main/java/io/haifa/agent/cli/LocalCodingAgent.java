@@ -35,10 +35,14 @@ import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
+import io.haifa.agent.auth.localmodel.ExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
 import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityLocalCompatibilityRegistrationFactory;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityTokenClient;
 import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.codex.CodexLocalCompatibilityRegistrationFactory;
@@ -135,6 +139,7 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -247,30 +252,41 @@ final class LocalCodingAgent implements AutoCloseable {
         Clock authClock = Clock.systemUTC();
         var authStore = FileLocalModelAuthStore.defaultStore(json);
         var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(resolvedEnvironment);
-        var codexMethod = codexRegistration.map(registration -> new CodexExternalLoginMethod(
+        var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(resolvedEnvironment);
+        List<ExternalLoginMethod> authMethods = new ArrayList<>();
+        codexRegistration.ifPresent(registration -> authMethods.add(new CodexExternalLoginMethod(
                 registration,
                 new CodexTokenClient(http, json, authClock, Duration.ofSeconds(30), registration),
                 http,
                 json,
                 SecureRandom::new,
                 Duration.ofMinutes(5),
-                CodexDeviceLoginOperation.Sleeper.system()));
-        var authRegistry = new ExternalLoginRegistry(codexMethod.stream().toList());
+                CodexDeviceLoginOperation.Sleeper.system())));
+        antigravityRegistration.ifPresent(registration -> authMethods.add(new AntigravityExternalLoginMethod(
+                registration,
+                new AntigravityTokenClient(http, json, authClock, Duration.ofSeconds(30), registration),
+                http,
+                json,
+                SecureRandom::new,
+                Duration.ofMinutes(5))));
+        var authRegistry = new ExternalLoginRegistry(authMethods);
         var credentials = new LocalModelCredentialResolver(
                 resolvedEnvironment::get, authStore, authRegistry, authClock, Duration.ofMinutes(5));
         var authIdentifiers = new UuidV7IdentifierGenerator();
-        var authCoordinator = codexMethod.map(ignored -> new ExternalLoginCoordinator(
-                authRegistry,
-                authStore,
-                () -> new ExternalLoginAttemptId(authIdentifiers.nextValue()),
-                authClock,
-                Executors.newFixedThreadPool(2, runnable -> {
-                    Thread thread = new Thread(runnable, "haifa-local-model-auth");
-                    thread.setDaemon(true);
-                    return thread;
-                }),
-                LocalCodingAgent::openBrowser,
-                8));
+        var authCoordinator = authMethods.isEmpty()
+                ? Optional.<ExternalLoginCoordinator>empty()
+                : Optional.of(new ExternalLoginCoordinator(
+                        authRegistry,
+                        authStore,
+                        () -> new ExternalLoginAttemptId(authIdentifiers.nextValue()),
+                        authClock,
+                        Executors.newFixedThreadPool(2, runnable -> {
+                            Thread thread = new Thread(runnable, "haifa-local-model-auth");
+                            thread.setDaemon(true);
+                            return thread;
+                        }),
+                        LocalCodingAgent::openBrowser,
+                        8));
         var authenticationService =
                 new LocalModelAuthenticationService(authStore, authCoordinator, credentials, resolvedEnvironment::get);
         var authentication = new CliCodingAuthenticationClient(

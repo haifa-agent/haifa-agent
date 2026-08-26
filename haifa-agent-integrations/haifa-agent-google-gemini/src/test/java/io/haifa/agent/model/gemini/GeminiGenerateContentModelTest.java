@@ -113,6 +113,107 @@ class GeminiGenerateContentModelTest {
     }
 
     @Test
+    void antigravityDirectWrapsPayloadAndExtractsProject() throws Exception {
+        AtomicReference<HttpExchange> exchange = new AtomicReference<>();
+        AtomicReference<JsonNode> requestBody = new AtomicReference<>();
+        start(exchange, requestBody, List.of(Response.json(200, textResponse("direct-ok"))));
+
+        var response = standardStubModel()
+                .invoke(request(
+                        antigravityDirectSnapshot("my-custom-project"),
+                        List.of(ModelMessage.text(ModelMessageRole.USER, "hello direct")),
+                        List.of()));
+
+        assertThat(response.content()).isEqualTo("direct-ok");
+        assertThat(exchange.get().getRequestURI().toString()).isEqualTo("/v1internal:generateContent");
+        assertThat(exchange.get().getRequestHeaders().getFirst("Authorization")).isEqualTo("Bearer secret-value");
+        assertThat(exchange.get().getRequestHeaders().getFirst("User-Agent")).isEqualTo("Antigravity");
+
+        JsonNode root = requestBody.get();
+        assertThat(root.path("project").asText()).isEqualTo("my-custom-project");
+        assertThat(root.path("model").asText()).isEqualTo("gemini-test");
+        assertThat(root.path("userAgent").asText()).isEqualTo("antigravity");
+        assertThat(root.path("requestType").asText()).isEqualTo("agent");
+        assertThat(root.path("requestId").asText()).startsWith("agent-");
+        assertThat(root.path("metadata").path("ideType").asText()).isEqualTo("ANTIGRAVITY");
+
+        JsonNode inner = root.path("request");
+        assertThat(inner.path("contents")
+                        .get(0)
+                        .path("parts")
+                        .get(0)
+                        .path("text")
+                        .asText())
+                .isEqualTo("hello direct");
+    }
+
+    @Test
+    void antigravityDirect429QuotaExhaustedFailsClosedAsNonRetryable() throws Exception {
+        String quotaError =
+                """
+                {
+                    "error": {
+                        "code": 429,
+                        "message": "Resource has been exhausted",
+                        "status": "RESOURCE_EXHAUSTED",
+                        "details": [
+                            {
+                                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                                "reason": "QUOTA_EXHAUSTED",
+                                "domain": "googleapis.com"
+                            }
+                        ]
+                    }
+                }
+                """;
+        start(new AtomicReference<>(), new AtomicReference<>(), List.of(Response.json(429, quotaError)));
+
+        assertThatThrownBy(() -> standardStubModel()
+                        .invoke(request(
+                                antigravityDirectSnapshot("project-1"),
+                                List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                                List.of())))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.RATE_LIMITED);
+                    assertThat(failure.retryable()).isFalse();
+                    assertThat(failure.providerCode()).isEqualTo("quota_exhausted");
+                });
+    }
+
+    @Test
+    void antigravityDirect429InsufficientCreditsFailsClosedAsNonRetryable() throws Exception {
+        String creditError =
+                """
+                {
+                    "error": {
+                        "code": 429,
+                        "message": "Insufficient G1 credits",
+                        "status": "RESOURCE_EXHAUSTED",
+                        "details": [
+                            {
+                                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                                "reason": "INSUFFICIENT_G1_CREDITS_BALANCE",
+                                "domain": "googleapis.com"
+                            }
+                        ]
+                    }
+                }
+                """;
+        start(new AtomicReference<>(), new AtomicReference<>(), List.of(Response.json(429, creditError)));
+
+        assertThatThrownBy(() -> standardStubModel()
+                        .invoke(request(
+                                antigravityDirectSnapshot("project-1"),
+                                List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                                List.of())))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.RATE_LIMITED);
+                    assertThat(failure.retryable()).isFalse();
+                    assertThat(failure.providerCode()).isEqualTo("insufficient_g1_credits_balance");
+                });
+    }
+
+    @Test
     void mapsUploadedImageAndAudioAsNativeGeminiInlineData() throws Exception {
         AtomicReference<JsonNode> requestBody = new AtomicReference<>();
         start(new AtomicReference<>(), requestBody, List.of(Response.json(200, textResponse("media-ok"))));
@@ -278,6 +379,33 @@ class GeminiGenerateContentModelTest {
                 GeminiDialects.CLIPROXYAPI_ANTIGRAVITY,
                 URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1beta"),
                 GeminiGenerateContentModel.CLIPROXY_CREDENTIAL_REF);
+    }
+
+    private ResolvedModelSnapshot antigravityDirectSnapshot(String project) {
+        return ResolvedModelSnapshot.create(
+                new ModelProviderId("google-antigravity"),
+                "1",
+                new ModelDefinitionId("gemini-2.5-flash"),
+                "1",
+                "gemini-test",
+                ModelApiStyles.GOOGLE_GEMINI_ADAPTER,
+                GeminiGenerateContentModel.ADAPTER_VERSION,
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                GeminiDialects.ANTIGRAVITY_DIRECT,
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1internal"),
+                new CredentialRef("model-auth://google-antigravity/default"),
+                true,
+                EnumSet.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.AUDIO_INPUT,
+                        ModelCapability.REASONING),
+                8192,
+                1024,
+                project.isEmpty() ? Map.of() : Map.of("project", project),
+                Map.of());
     }
 
     private ResolvedModelSnapshot snapshot(String dialect, URI endpoint, String credential) {

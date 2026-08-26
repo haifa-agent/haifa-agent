@@ -3,10 +3,14 @@ package io.haifa.agent.personalassistant.server.configuration.sdk;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
+import io.haifa.agent.auth.localmodel.ExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
 import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityLocalCompatibilityRegistrationFactory;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityTokenClient;
 import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.codex.CodexLocalCompatibilityRegistrationFactory;
@@ -82,33 +86,44 @@ public class PersonalAssistantConfiguration {
     LocalModelAuthenticationService personalModelAuthenticationService(ObjectMapper mapper, Clock personalClock) {
         Map<String, String> environment = System.getenv();
         var store = FileLocalModelAuthStore.defaultStore(mapper);
-        var registration = CodexLocalCompatibilityRegistrationFactory.create(environment);
+        var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(environment);
+        var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(environment);
         HttpClient http =
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
-        var method = registration.map(value -> new CodexExternalLoginMethod(
+        List<ExternalLoginMethod> methods = new java.util.ArrayList<>();
+        codexRegistration.ifPresent(value -> methods.add(new CodexExternalLoginMethod(
                 value,
                 new CodexTokenClient(http, mapper, personalClock, Duration.ofSeconds(30), value),
                 http,
                 mapper,
                 SecureRandom::new,
                 Duration.ofMinutes(5),
-                CodexDeviceLoginOperation.Sleeper.system()));
-        var registry = new ExternalLoginRegistry(method.stream().toList());
+                CodexDeviceLoginOperation.Sleeper.system())));
+        antigravityRegistration.ifPresent(value -> methods.add(new AntigravityExternalLoginMethod(
+                value,
+                new AntigravityTokenClient(http, mapper, personalClock, Duration.ofSeconds(30), value),
+                http,
+                mapper,
+                SecureRandom::new,
+                Duration.ofMinutes(5))));
+        var registry = new ExternalLoginRegistry(methods);
         var resolver = new LocalModelCredentialResolver(
                 environment::get, store, registry, personalClock, Duration.ofMinutes(5));
         var identifiers = new UuidV7IdentifierGenerator();
-        var coordinator = method.map(ignored -> new ExternalLoginCoordinator(
-                registry,
-                store,
-                () -> new ExternalLoginAttemptId(identifiers.nextValue()),
-                personalClock,
-                Executors.newFixedThreadPool(2, runnable -> {
-                    Thread thread = new Thread(runnable, "haifa-personal-model-auth");
-                    thread.setDaemon(true);
-                    return thread;
-                }),
-                PersonalAssistantConfiguration::openBrowser,
-                8));
+        var coordinator = methods.isEmpty()
+                ? Optional.<ExternalLoginCoordinator>empty()
+                : Optional.of(new ExternalLoginCoordinator(
+                        registry,
+                        store,
+                        () -> new ExternalLoginAttemptId(identifiers.nextValue()),
+                        personalClock,
+                        Executors.newFixedThreadPool(2, runnable -> {
+                            Thread thread = new Thread(runnable, "haifa-personal-model-auth");
+                            thread.setDaemon(true);
+                            return thread;
+                        }),
+                        PersonalAssistantConfiguration::openBrowser,
+                        8));
         return new LocalModelAuthenticationService(store, coordinator, resolver, environment::get);
     }
 
