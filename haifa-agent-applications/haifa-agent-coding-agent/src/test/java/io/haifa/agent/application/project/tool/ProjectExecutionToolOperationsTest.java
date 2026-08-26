@@ -993,6 +993,28 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void dispatchesGitDeliveryCommandsWithoutAProductSpecificGuard() {
+        AtomicBoolean invoked = new AtomicBoolean();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                invoked.set(true);
+                observer.onStarted();
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        ToolResult result = operations(broker, 1024, 2000)
+                .execute(
+                        invocation(Map.of("command", "git push origin feat-delivery", "workdir", "."), () -> false),
+                        access());
+
+        assertThat(invoked).isTrue();
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData()).containsEntry("deliveryAction", "PUSH");
+    }
+
+    @Test
     void providerAdapterDoesNotAcknowledgeKnownRejectionBeforeDispatch() {
         AtomicInteger dispatches = new AtomicInteger();
         AtomicInteger acknowledgements = new AtomicInteger();
@@ -1373,7 +1395,6 @@ class ProjectExecutionToolOperationsTest {
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 java.util.function.UnaryOperator.identity(),
-                null,
                 changeReviews,
                 verificationProfiles);
     }

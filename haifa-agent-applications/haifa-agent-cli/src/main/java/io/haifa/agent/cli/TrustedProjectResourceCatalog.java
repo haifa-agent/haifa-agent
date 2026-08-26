@@ -55,6 +55,7 @@ final class TrustedProjectResourceCatalog {
                     nextGeneration,
                     "sha256:none",
                     Optional.empty(),
+                    InstructionStatus.NOT_PRESENT,
                     List.of("Project · AGENTS.md · not loaded · file absent"));
         }
         if (Files.isSymbolicLink(candidate) || !Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)) {
@@ -77,6 +78,7 @@ final class TrustedProjectResourceCatalog {
                     nextGeneration,
                     digest,
                     Optional.of(content),
+                    InstructionStatus.PRESENT,
                     List.of("Project · AGENTS.md · loaded · fixed root rule · " + digest.substring(0, 19)));
         } catch (IOException | SecurityException exception) {
             return invalid(nextGeneration, "invalid · unreadable");
@@ -85,7 +87,11 @@ final class TrustedProjectResourceCatalog {
 
     private Snapshot invalid(long nextGeneration, String diagnostic) {
         return new Snapshot(
-                nextGeneration, "sha256:none", Optional.empty(), List.of("Project · AGENTS.md · " + diagnostic));
+                nextGeneration,
+                "sha256:none",
+                Optional.empty(),
+                InstructionStatus.INVALID,
+                List.of("Project · AGENTS.md · " + diagnostic));
     }
 
     private static String digest(String value) {
@@ -97,10 +103,22 @@ final class TrustedProjectResourceCatalog {
         }
     }
 
-    record Snapshot(long generation, String digest, Optional<String> instructions, List<String> diagnostics) {
+    enum InstructionStatus {
+        PRESENT,
+        NOT_PRESENT,
+        INVALID
+    }
+
+    record Snapshot(
+            long generation,
+            String digest,
+            Optional<String> instructions,
+            InstructionStatus status,
+            List<String> diagnostics) {
         Snapshot {
             digest = Objects.requireNonNull(digest, "digest must not be null");
             instructions = Objects.requireNonNull(instructions, "instructions must not be null");
+            status = Objects.requireNonNull(status, "status must not be null");
             diagnostics = List.copyOf(diagnostics);
         }
 

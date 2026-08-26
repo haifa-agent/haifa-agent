@@ -343,12 +343,10 @@ public final class ProjectToolCatalog {
                     + "wrappers. Output is always bounded by operation family; use paging or returned artifact refs "
                     + "instead of repeating broad commands, and adapt when a command is unavailable. operationFamily is an "
                     + "optional declared hint: use BUILD or TEST for validation intent and DIFF only for read-only "
-                    + "final diff inspection; trusted risk and authorization never depend on the hint."
-                    + " Git delivery defaults to WORKTREE_ONLY. A trusted host may freeze LOCAL_COMMIT, REMOTE_PUSH, "
-                    + "or PULL_REQUEST; delivery must then proceed through status/root/branch inspection, diff and "
-                    + "validation, exact-path staging, staged-diff review, commit/HEAD verification, exact-branch "
-                    + "push/remote-ref verification, and optional gh pr create/view. Do not use broad staging, blind "
-                    + "replay after an unknown outcome, or gh pr merge.";
+                    + "final diff inspection; trusted risk and authorization never depend on the hint. System git "
+                    + "and gh commands use the same risk classification, approval, workspace, sandbox, network, and "
+                    + "audit controls as other execution commands; delivery intent is completion metadata, not "
+                    + "command authorization.";
         }
         if (name.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
             return "Request user approval to rerun one exact execution.run command that failed in this Run because "

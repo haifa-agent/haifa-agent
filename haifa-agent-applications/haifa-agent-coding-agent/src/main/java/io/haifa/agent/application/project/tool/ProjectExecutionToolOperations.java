@@ -2,7 +2,6 @@ package io.haifa.agent.application.project.tool;
 
 import io.haifa.agent.application.project.policy.CodingExecutionRiskResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandSemantics;
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationAttemptFactory;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
@@ -73,7 +72,6 @@ public final class ProjectExecutionToolOperations {
     private final UnaryOperator<String> outputSanitizer;
     private final ExecutionScratchSpaceSpec scratchSpace;
     private final UnaryOperator<String> workdirNormalizer;
-    private final CodingDeliveryCommandGuard deliveryGuard;
     private final CodingChangeReviewArtifactFactory changeReviews;
     private final CodingVerificationProfileProvider verificationProfiles;
 
@@ -197,7 +195,6 @@ public final class ProjectExecutionToolOperations {
                 outputSanitizer,
                 scratchSpace,
                 workdirNormalizer,
-                null,
                 null);
     }
 
@@ -216,42 +213,6 @@ public final class ProjectExecutionToolOperations {
             UnaryOperator<String> outputSanitizer,
             ExecutionScratchSpaceSpec scratchSpace,
             UnaryOperator<String> workdirNormalizer,
-            CodingDeliveryCommandGuard deliveryGuard) {
-        this(
-                broker,
-                identifiers,
-                time,
-                environmentRef,
-                sandboxProfileRef,
-                defaultTimeout,
-                maximumTimeout,
-                maximumModelOutputBytes,
-                maximumModelOutputLines,
-                maximumProcesses,
-                outputObserver,
-                outputSanitizer,
-                scratchSpace,
-                workdirNormalizer,
-                deliveryGuard,
-                null);
-    }
-
-    public ProjectExecutionToolOperations(
-            ExecutionBroker broker,
-            IdentifierGenerator identifiers,
-            TimeProvider time,
-            ExecutionEnvironmentRef environmentRef,
-            SandboxProfileRef sandboxProfileRef,
-            Duration defaultTimeout,
-            Duration maximumTimeout,
-            int maximumModelOutputBytes,
-            int maximumModelOutputLines,
-            int maximumProcesses,
-            ExecutionOutputObserver outputObserver,
-            UnaryOperator<String> outputSanitizer,
-            ExecutionScratchSpaceSpec scratchSpace,
-            UnaryOperator<String> workdirNormalizer,
-            CodingDeliveryCommandGuard deliveryGuard,
             CodingChangeReviewArtifactFactory changeReviews) {
         this(
                 broker,
@@ -268,7 +229,6 @@ public final class ProjectExecutionToolOperations {
                 outputSanitizer,
                 scratchSpace,
                 workdirNormalizer,
-                deliveryGuard,
                 changeReviews,
                 CodingVerificationProfileProvider.empty());
     }
@@ -288,7 +248,6 @@ public final class ProjectExecutionToolOperations {
             UnaryOperator<String> outputSanitizer,
             ExecutionScratchSpaceSpec scratchSpace,
             UnaryOperator<String> workdirNormalizer,
-            CodingDeliveryCommandGuard deliveryGuard,
             CodingChangeReviewArtifactFactory changeReviews,
             CodingVerificationProfileProvider verificationProfiles) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
@@ -320,7 +279,6 @@ public final class ProjectExecutionToolOperations {
         this.outputSanitizer = Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
         this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
         this.workdirNormalizer = Objects.requireNonNull(workdirNormalizer, "workdirNormalizer must not be null");
-        this.deliveryGuard = deliveryGuard;
         this.changeReviews = changeReviews;
         this.verificationProfiles =
                 Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
@@ -350,13 +308,6 @@ public final class ProjectExecutionToolOperations {
             return withToolCallId(invocation, rejectedWorkdir(operationFamily, "ABSOLUTE_WORKDIR_FORBIDDEN"));
         }
         String repositoryScopeDigest = repositoryScopeDigest(workdir);
-        if (deliveryGuard != null) {
-            var delivery =
-                    deliveryGuard.evaluate(invocation.runId(), command, commandClassification, repositoryScopeDigest);
-            if (!delivery.allowed()) {
-                return withToolCallId(invocation, rejectedDeliveryCommand(operationFamily, delivery));
-            }
-        }
         Duration requestedTimeout = Duration.ofMillis(
                 optionalLong(arguments, "timeoutMillis", defaultTimeout.toMillis(), 1, maximumTimeout.toMillis()));
         Duration remaining = Duration.between(time.now(), invocation.deadline());
@@ -864,33 +815,6 @@ public final class ProjectExecutionToolOperations {
                         "USE_WORKSPACE_RELATIVE_WORKDIR",
                         "failureAction",
                         "Remove the absolute cd and use the workspace-relative workdir field."),
-                List.of(),
-                List.of(),
-                false);
-    }
-
-    private static ToolResult rejectedDeliveryCommand(
-            String operationFamily, CodingDeliveryCommandGuard.Decision decision) {
-        return new ToolResult(
-                false,
-                "Delivery command rejected before execution: " + decision.safeMessage(),
-                Map.of(
-                        "status",
-                        "FAILED",
-                        "operationFamily",
-                        operationFamily,
-                        "deliveryAction",
-                        decision.action().name(),
-                        "failureCategory",
-                        "POLICY_DENIED",
-                        "stableFailureCode",
-                        decision.code(),
-                        "resourceClass",
-                        "DELIVERY_TRANSACTION",
-                        "failureActionCode",
-                        "REVIEW_DELIVERY_TRANSACTION",
-                        "failureAction",
-                        decision.safeMessage()),
                 List.of(),
                 List.of(),
                 false);

@@ -15,7 +15,6 @@ import io.haifa.agent.application.project.product.coding.CodingShellService;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntentResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
@@ -410,8 +409,9 @@ final class LocalCodingAgent implements AutoCloseable {
             var bindings = new InMemoryWorkspaceBindingStore();
             var locations = new LocalWorkspaceLocationStore();
             WorkspaceId workspaceId = workspaceIdentity.workspaceId();
-            var verificationProfile =
-                    CliVerificationProfileDiscovery.discover(workspaceRoot, System.getProperty("os.name", ""));
+            var verificationDiscovery = CliVerificationProfileDiscovery.discoverWithSignals(
+                    workspaceRoot, System.getProperty("os.name", ""));
+            var verificationProfile = verificationDiscovery.profile();
             var verificationProfiles = new PersistedCodingVerificationProfileProvider(
                     persistence.ports().runs(), persistence.ports().sessions());
             WorkspaceBindingId bindingId = workspaceIdentity.bindingId();
@@ -503,8 +503,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     new LocalFileToolOperations(workspaces, files, mutations, identifiers, changeSets, changeReviews);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
-            var deliveryGuard =
-                    new CodingDeliveryCommandGuard(persistence.ports().state(), deliveryIntents);
             CliExecutionPlatform executionPlatform = executionEnabled
                     ? CliExecutionPlatform.create(
                             configuration.execution(),
@@ -522,10 +520,24 @@ final class LocalCodingAgent implements AutoCloseable {
                             workspaceRoot,
                             output,
                             resolvedEnvironment,
-                            deliveryGuard,
                             verificationProfiles)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
+            TrustedWorkspaceEnvironmentCatalog workspaceEnvironment = new TrustedWorkspaceEnvironmentCatalog(
+                    workspaceRoot,
+                    verificationDiscovery,
+                    resources.snapshot(),
+                    TrustedWorkspaceEnvironmentCatalog.EnvironmentFacts.capture(
+                            executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName(),
+                            executionPlatform != null,
+                            executionPlatform == null
+                                    ? "UNAVAILABLE"
+                                    : executionPlatform
+                                            .profile()
+                                            .networkPolicy()
+                                            .name(),
+                            configuration.execution().defaultTimeout(),
+                            configuration.execution().maximumTimeout()));
             var permissionRequests = executionPlatform == null
                     ? null
                     : new ProjectPermissionRequestOperations(
@@ -665,6 +677,9 @@ final class LocalCodingAgent implements AutoCloseable {
                             CodingAgentPrompt.current().text()
                                     + executionEnvironmentPrompt(
                                             executionPlatform == null ? "" : executionPlatform.shellDisplayName())
+                                    + workspaceEnvironment
+                                            .snapshot(resources.snapshot())
+                                            .promptBlock()
                                     + resources.snapshot().instructionBlock(),
                             List.of()))
                     .profiles((profileId, overrides) -> new ResolvedProfile(
@@ -790,27 +805,8 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     static String executionEnvironmentPrompt(String shellDisplayName) {
-        return executionEnvironmentPrompt(
-                shellDisplayName,
-                System.getProperty("os.name", "unknown"),
-                System.getProperty("os.version", "unknown"),
-                System.getProperty("os.arch", "unknown"),
-                System.getProperty("java.version", "unknown"));
-    }
-
-    static String executionEnvironmentPrompt(
-            String shellDisplayName, String osName, String osVersion, String architecture, String javaVersion) {
         if (shellDisplayName == null || shellDisplayName.isBlank()) return "";
-        return "\n\nRuntime execution environment:\n"
-                + "- Host OS: "
-                + hostFact(osName)
-                + " "
-                + hostFact(osVersion)
-                + " ("
-                + hostFact(architecture)
-                + "); Java "
-                + hostFact(javaVersion)
-                + ".\n"
+        return "\n\nRuntime execution guidance:\n"
                 + "- execution_run uses "
                 + shellDisplayName.strip()
                 + " command syntax on this host.\n"
@@ -826,12 +822,6 @@ final class LocalCodingAgent implements AutoCloseable {
                 + "stable remote-access or host-authentication code for a direct system git or gh command, and repeat the exact command, "
                 + "workdir, timeout, and prior Tool Call ID. operationFamily is only an optional diagnostic hint. Compound commands, wrappers, path "
                 + "escape, credential override, destructive commands, and unknown outcomes cannot be elevated.";
-    }
-
-    private static String hostFact(String value) {
-        if (value == null) return "unknown";
-        String safe = value.replaceAll("[\\p{Cntrl}]", " ").strip();
-        return safe.isEmpty() ? "unknown" : safe;
     }
 
     AgentRunSnapshot start(String message) {

@@ -16,6 +16,7 @@ class TrustedProjectResourceCatalogTest {
         var catalog = new TrustedProjectResourceCatalog(root);
         TrustedProjectResourceCatalog.Snapshot first = catalog.snapshot();
         assertThat(first.instructions()).isEmpty();
+        assertThat(first.status()).isEqualTo(TrustedProjectResourceCatalog.InstructionStatus.NOT_PRESENT);
         assertThat(first.diagnostics()).singleElement().asString().contains("not loaded");
 
         Files.writeString(root.resolve("AGENTS.md"), "Use MyBatis and preserve unrelated changes.");
@@ -24,6 +25,7 @@ class TrustedProjectResourceCatalogTest {
         assertThat(first.instructions()).isEmpty();
         assertThat(loaded.generation()).isGreaterThan(first.generation());
         assertThat(loaded.instructions()).contains("Use MyBatis and preserve unrelated changes.");
+        assertThat(loaded.status()).isEqualTo(TrustedProjectResourceCatalog.InstructionStatus.PRESENT);
         assertThat(loaded.instructionBlock())
                 .contains("lowest-precedence", "BEGIN PROJECT AGENTS.md")
                 .doesNotContain(root.toString());
@@ -37,6 +39,7 @@ class TrustedProjectResourceCatalogTest {
         TrustedProjectResourceCatalog.Snapshot snapshot = new TrustedProjectResourceCatalog(root).snapshot();
 
         assertThat(snapshot.instructions()).isEmpty();
+        assertThat(snapshot.status()).isEqualTo(TrustedProjectResourceCatalog.InstructionStatus.INVALID);
         assertThat(snapshot.diagnostics())
                 .singleElement()
                 .asString()

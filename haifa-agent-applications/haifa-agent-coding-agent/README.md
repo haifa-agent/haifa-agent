@@ -75,6 +75,11 @@ Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影�
 重启后按摘要与精确命令匹配恢复来源和 scope。runner stdout/stderr 不作为数量或 scope 的可信来源，当前
 统一报告 `COUNTS_UNAVAILABLE`，也不会扩展 runner 专用解析器来制造虚假的完整覆盖。
 
+可信本机产品宿主可以在 Definition instructions 中冻结一个产品私有、Agent-visible 的 L0-L2 Workspace
+环境块，用于表达已经由宿主掌握的安全边界、根仓库/instructions 状态、根静态项目标记和 frozen validation
+candidate。该投影不是公共 `WorkspaceSnapshot`、Capability Detector 或恢复事实源；Coding Agent 模块不新增
+对应公共 DTO、持久化 Schema 或动态 executable/version 探测，具体静态发现和路径脱敏仍由 CLI 宿主负责。
+
 `CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别投影为
 `SATISFIED/INCOMPLETE` 和 `CLEAN/UNCLEAN/IN_PROGRESS`，并通过 `coding-run-outcome/2` 的幂等
 `coding.task-outcome` 安全事件记录。Coding CLI、Coding Web 与受信 Coding Host 可通过
@@ -82,14 +87,12 @@ Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影�
 `outcome/1` 与当前 `outcome/2` 文件事件。它不是 Benchmark Verifier 结果，也不增加新的 Core Run 状态。
 
 可信宿主还可在创建 Session 或提交新 Turn 时冻结 `WORKTREE_ONLY/LOCAL_COMMIT/REMOTE_PUSH/PULL_REQUEST`
-交付意图；默认是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。Commit、Push、PR 仍通过唯一的
-`execution.run` 调用系统 `git`/`gh`，但在 Broker Dispatch 前受产品交付事务门禁约束：先确认仓库根、
-分支、Upstream、状态、HEAD、Diff 和验证，再精确路径 Stage、检查 staged diff、Commit 后重查 HEAD、精确分支
-Push 后读取 remote ref，最后可创建并查看以 `dev` 为 Base 的 PR。权威 Tool 结果按顺序记录证据；旧
-HEAD/remote ref 不能满足新动作后的确认，Outcome Unknown 必须先只读核验再决定是否重放。宽泛
-`git add .`、意图越级、复合交付动作和 `gh pr merge` 在任何普通审批阈值下都不会 Dispatch。交付证据
-同时绑定脱敏的 workspace-relative Repository Scope Digest；根仓、`docs/`、`test-config/` 等独立仓库
-不能互相复用拓扑、Diff、验证或结果确认事实。
+交付意图；默认仍是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。交付意图只表达完成目标和投影
+元数据，不授权或拦截 Git 命令。Commit、Push、PR 与其他命令一样通过唯一的 `execution.run` 进入通用
+风险分类、Policy/Approval、Workspace、Sandbox、网络权限和审计边界，不再经过 Coding 产品专用的
+Broker 前置交付门禁。系统仍从 Tool 结果投影有界交付证据；显式选择更高交付目标时，完成策略仍按顺序
+检查相应结果。证据绑定脱敏的 workspace-relative Repository Scope Digest，因此根仓、`docs/`、
+`test-config/` 等独立仓库不能互相复用拓扑、Diff、验证或结果确认事实。
 
 默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为控制面事实，
 其中 Wall Time 与 Runtime 一致地排除人工交互/审批等待；预留不增加 Runtime 的总预算或时限，也不逐轮进入模型 Prompt。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后

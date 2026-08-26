@@ -643,11 +643,11 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、逻辑 workdir、timeout、Shell 类型及 Host 非强隔离提示。CLI 接受指向当前 Workspace 本身或其子目录的绝对 `workdir`，并在受信装配边界将其规范化为逻辑相对路径；Workspace 外绝对路径仍拒绝。网络或系统 `git` / `gh` 登录环境被 Sandbox 隔离时，模型只能用失败结果中的 `toolCallId` 请求对同一条直接、非破坏性的系统 `git` / `gh` 命令做一次 `HOST_NETWORK_ACCESS` 重试；不能修改命令意图、生成权限或批准自己的请求。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、一次性 Host 权限升级和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution.run` 与 `execution.request_permissions`，模型不可见，底层授权仍 fail closed。
 
 系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。Tool Result 保留原始退出码，并单独投影命令语义：
-当前本地 Terminal 的 Coding Session 未显式传入交付意图，因此冻结为 `WORKTREE_ONLY`；`--approval auto`
-只放宽普通命令审批，不会自动升级为 Commit、Push 或 PR。可信宿主通过 Coding Session Client 显式传入
-`LOCAL_COMMIT`、`REMOTE_PUSH` 或 `PULL_REQUEST` 后，仍需按顺序生成 Stage、staged diff、Commit、HEAD、
-Push、remote ref 与 PR 权威证据；`auto` 允许其中非硬拒绝的 HIGH 动作自动执行，但不允许越过意图、
-宽泛 Stage、盲目重放未知结果或自动 Merge。
+当前本地 Terminal 的 Coding Session 仍默认冻结 `WORKTREE_ONLY`，但该值只作为完成目标和投影元数据，
+不再构成 Commit、Push 或 PR 的命令权限上限。系统 `git`/`gh` 与其他命令一样统一经过风险分类、
+Policy/Approval、Workspace、Sandbox、网络权限和审计；`--approval auto` 只改变普通审批阈值，不绕过这些
+通用边界。可信宿主显式传入 `LOCAL_COMMIT`、`REMOTE_PUSH` 或 `PULL_REQUEST` 时，完成策略仍要求相应的
+Stage、Commit、Push 或 PR 权威结果证据，但不在 Broker Dispatch 前增加 Coding 产品专用交付拦截。
 
 `git diff --exit-code` / `--no-index` 的退出 1 是 `EXPECTED_VARIANT/DIFFERENCES_FOUND`，`git grep` 的退出 1
 是 `EMPTY_RESULT/NO_MATCHES`；无效 revision、构建或测试的非零退出仍是失败。复合命令风险提升返回
@@ -663,6 +663,13 @@ Shell 支持的命令语法，避免在 Windows PowerShell 中混入 POSIX 命�
 Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。Terminal 和 one-shot CLI 在人工交互/审批期间
 暂停整体活动时间预算；等待没有自动截止时间，批准后从剩余预算继续。该环境指令同时说明 `PATH` 中任意非交互 CLI
 均可使用，并要求模型在命令缺失时探测和切换替代方案、收窄过宽查询、保持输出有界。
+
+CLI 启动时还会生成一个最多 8 KiB、路径脱敏的 `<workspace_environment>` 块，并在每个新 Run 的
+Definition instructions 中冻结使用。L0 只投影可信装配已经知道的 Host/Shell、执行开关、网络策略、
+Workspace 读写范围、超时和临时空间；L1 只静态检查根 `.git` 与根 `AGENTS.md` 状态；L2 只检查 Workspace
+根固定 allowlist 中的 manifest、Wrapper、lockfile 和测试目录，并复用同一次发现生成的验证候选。该块不运行
+Git、构建、测试或 `--version` 命令，不递归解析 Monorepo，不披露真实 Workspace/Scratch 路径，也不把
+静态标记表述为 executable 已安装。同一 Run 内不会重新扫描或改写；新进程重新生成的结果只影响未来 Run。
 
 CLI 还会从 Workspace 根的 `pom.xml`、Gradle 文件、`pyproject.toml`/`pytest.ini`、`package.json`、
 `Cargo.toml`、`go.mod`、`.sln`/`.csproj` 生成有界的最终门禁候选，并优先选择仓库 Wrapper。它只识别
