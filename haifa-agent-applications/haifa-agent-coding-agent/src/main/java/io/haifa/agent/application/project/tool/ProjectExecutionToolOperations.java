@@ -778,6 +778,12 @@ public final class ProjectExecutionToolOperations {
                         };
                 };
         if (result.exitCode() != null) headline += " (exit " + result.exitCode() + ")";
+        String outputReferenceSummary = java.util.stream.Stream.of(result.stdout(), result.stderr())
+                .flatMap(value -> value.optionalAssetRef().stream()
+                        .map(reference ->
+                                "capturedOutputRef=" + reference.assetId() + " captureTruncated=" + value.truncated()))
+                .collect(java.util.stream.Collectors.joining("\n"));
+        if (!outputReferenceSummary.isEmpty()) headline += "\n" + outputReferenceSummary;
         String summary;
         if (outputBudgetFamily.equals("DIFF")) {
             summary = headline + "\n" + data.get("diffSummary");

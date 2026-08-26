@@ -2,6 +2,7 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
+import io.haifa.agent.application.project.product.coding.execution.CodingExecutionOutputAccess;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
@@ -53,6 +54,7 @@ import java.util.Set;
 final class CliExecutionPlatform implements AutoCloseable {
     private final ProjectExecutionToolOperations operations;
     private final ProjectExecutionToolOperations permissionOperations;
+    private final CodingExecutionOutputAccess outputAccess;
     private final SandboxProfile profile;
     private final SandboxProfile permissionProfile;
     private final String shellDisplayName;
@@ -62,6 +64,7 @@ final class CliExecutionPlatform implements AutoCloseable {
     private CliExecutionPlatform(
             ProjectExecutionToolOperations operations,
             ProjectExecutionToolOperations permissionOperations,
+            CodingExecutionOutputAccess outputAccess,
             SandboxProfile profile,
             SandboxProfile permissionProfile,
             String shellDisplayName,
@@ -69,6 +72,7 @@ final class CliExecutionPlatform implements AutoCloseable {
             LocalIncrementalWorkspaceChangeObserver workspaceChanges) {
         this.operations = operations;
         this.permissionOperations = permissionOperations;
+        this.outputAccess = outputAccess;
         this.profile = profile;
         this.permissionProfile = permissionProfile;
         this.shellDisplayName = shellDisplayName;
@@ -226,9 +230,11 @@ final class CliExecutionPlatform implements AutoCloseable {
                 List.of("cli-execution-" + permissionProfile.contentDigest().value()));
         var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(workspaceId, workspaceRoot, ignorePolicy);
         var observedChanges = new ObservedFileChangeService(workspaces, changeSets, changeSetService, time);
+        var executionStore = new InMemoryExecutionStore();
+        var executionOutputStore = new InMemoryExecutionOutputStore();
         var broker = new DefaultExecutionBroker(
-                new InMemoryExecutionStore(),
-                new InMemoryExecutionOutputStore(),
+                executionStore,
+                executionOutputStore,
                 requestedEnvironment ->
                         requestedEnvironment.equals(permissionEnvironmentRef) ? permissionEnvironment : environment,
                 new PolicyDecisionExecutionPolicy(
@@ -281,6 +287,7 @@ final class CliExecutionPlatform implements AutoCloseable {
         return new CliExecutionPlatform(
                 operations,
                 permissionOperations,
+                new CliExecutionOutputAccess(executionStore, executionOutputStore),
                 profile,
                 permissionProfile,
                 shell.displayName(),
@@ -290,6 +297,10 @@ final class CliExecutionPlatform implements AutoCloseable {
 
     ProjectExecutionToolOperations operations() {
         return operations;
+    }
+
+    CodingExecutionOutputAccess outputAccess() {
+        return outputAccess;
     }
 
     static java.util.function.UnaryOperator<String> workspaceWorkdirNormalizer(Path workspaceRoot) {

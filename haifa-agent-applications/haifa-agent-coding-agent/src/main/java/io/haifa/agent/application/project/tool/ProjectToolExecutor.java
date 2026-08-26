@@ -14,17 +14,18 @@ public final class ProjectToolExecutor implements ToolProvider {
     private final RunWorkspaceAccessResolver access;
     private final ProjectToolOperations operations;
     private final ProjectExecutionToolOperations executionOperations;
+    private final ProjectExecutionOutputOperations executionOutputOperations;
     private final ProjectPermissionRequestOperations permissionRequestOperations;
 
     public ProjectToolExecutor(RunWorkspaceAccessResolver access, ProjectToolOperations operations) {
-        this(access, operations, null, null);
+        this(access, operations, null, null, null);
     }
 
     public ProjectToolExecutor(
             RunWorkspaceAccessResolver access,
             ProjectToolOperations operations,
             ProjectExecutionToolOperations executionOperations) {
-        this(access, operations, executionOperations, null);
+        this(access, operations, executionOperations, null, null);
     }
 
     public ProjectToolExecutor(
@@ -32,9 +33,19 @@ public final class ProjectToolExecutor implements ToolProvider {
             ProjectToolOperations operations,
             ProjectExecutionToolOperations executionOperations,
             ProjectPermissionRequestOperations permissionRequestOperations) {
+        this(access, operations, executionOperations, null, permissionRequestOperations);
+    }
+
+    public ProjectToolExecutor(
+            RunWorkspaceAccessResolver access,
+            ProjectToolOperations operations,
+            ProjectExecutionToolOperations executionOperations,
+            ProjectExecutionOutputOperations executionOutputOperations,
+            ProjectPermissionRequestOperations permissionRequestOperations) {
         this.access = Objects.requireNonNull(access, "access must not be null");
         this.operations = Objects.requireNonNull(operations, "operations must not be null");
         this.executionOperations = executionOperations;
+        this.executionOutputOperations = executionOutputOperations;
         this.permissionRequestOperations = permissionRequestOperations;
     }
 
@@ -57,6 +68,11 @@ public final class ProjectToolExecutor implements ToolProvider {
                 throw new IllegalStateException("execution.run is not configured for this application");
             }
             return executionOperations.execute(request, binding);
+        } else if (toolName.equals(ProjectExecutionOutputOperations.TOOL_NAME)) {
+            if (executionOutputOperations == null) {
+                throw new IllegalStateException("execution.output.read is not configured for this application");
+            }
+            return executionOutputOperations.execute(request);
         } else if (toolName.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
             if (permissionRequestOperations == null) {
                 throw new IllegalStateException("request_permissions is not configured for this application");
@@ -91,6 +107,7 @@ public final class ProjectToolExecutor implements ToolProvider {
         if (toolName.equals("execution.run") && executionOperations != null) {
             return executionOperations.reconcile(request, binding);
         }
+        if (toolName.equals(ProjectExecutionOutputOperations.TOOL_NAME)) return ToolReconciliation.unsupported();
         return operations.reconcile(
                 toolName,
                 binding.workspaceId(),

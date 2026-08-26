@@ -550,6 +550,10 @@ final class LocalCodingAgent implements AutoCloseable {
                             workspaceId, effectiveCapabilities),
                     operations,
                     executionPlatform == null ? null : executionPlatform.operations(),
+                    executionPlatform == null
+                            ? null
+                            : new io.haifa.agent.application.project.tool.ProjectExecutionOutputOperations(
+                                    executionPlatform.outputAccess()),
                     permissionRequests);
             var skillService = new DefaultSkillActivationService(
                     persistence.ports().runs(), persistence.ports().state(), skillPlatform.contentLoader(), time);
@@ -818,6 +822,9 @@ final class LocalCodingAgent implements AutoCloseable {
                 + "alternative for the configured shell. Choose the exact command and options for the task rather than "
                 + "expecting a dedicated search wrapper.\n"
                 + "- Keep command output bounded and relevant. Narrow an overly broad query before repeating it.\n"
+                + "- When execution_run returns capturedOutputRef, use execution_output_read for a bounded WINDOW or "
+                + "literal SEARCH instead of rerunning a broad command. Continue WINDOW only with nextOffsetBytes; "
+                + "if captureTruncated is true, a missing search match does not prove absence.\n"
                 + "- request_permissions is not a general sandbox bypass. Use it only after execution_run returns an eligible "
                 + "stable remote-access or host-authentication code for a direct system git or gh command, and repeat the exact command, "
                 + "workdir, timeout, and prior Tool Call ID. operationFamily is only an optional diagnostic hint. Compound commands, wrappers, path "

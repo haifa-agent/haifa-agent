@@ -124,7 +124,12 @@ class ProjectExecutionToolOperationsTest {
                 });
         assertThat(result.successful()).isFalse();
         assertThat(result.summary())
-                .contains("Command failed (exit 7)", "first", "1 lines omitted", "third")
+                .contains(
+                        "Command failed (exit 7)",
+                        "capturedOutputRef=stdout-asset captureTruncated=false",
+                        "first",
+                        "1 lines omitted",
+                        "third")
                 .doesNotContain("second");
         assertThat(result.structuredData())
                 .containsEntry("toolCallId", "tool-call-1")
@@ -1409,10 +1414,13 @@ class ProjectExecutionToolOperationsTest {
             io.haifa.agent.tool.api.ToolCancellation cancellation,
             ToolInvocationObserver observer) {
         var binding = new ProjectToolCatalog()
-                .freeze(Set.of("execution.run"), Set.of("execution.run"), true, provider(), executionProfile())
-                .snapshot()
-                .bindings()
-                .getFirst();
+                        .freeze(Set.of("execution.run"), Set.of("execution.run"), true, provider(), executionProfile())
+                        .snapshot()
+                        .bindings()
+                        .stream()
+                        .filter(value -> value.definition().name().value().equals("execution.run"))
+                        .findFirst()
+                        .orElseThrow();
         return new ToolInvocationRequest(
                 binding,
                 new ToolCallId("tool-call-1"),

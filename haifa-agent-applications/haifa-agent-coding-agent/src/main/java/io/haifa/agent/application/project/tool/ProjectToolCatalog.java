@@ -41,6 +41,7 @@ public final class ProjectToolCatalog {
             Map.entry("file.diff", "file.read"),
             Map.entry("file.patch", "file.write"),
             Map.entry("execution.run", "execution.run"),
+            Map.entry(ProjectExecutionOutputOperations.TOOL_NAME, "execution.run"),
             Map.entry(ProjectPermissionRequestOperations.TOOL_NAME, "execution.run"));
     private static final Set<String> WRITES =
             Set.of("file.create", "file.write", "file.delete", "file.move", "file.patch");
@@ -202,6 +203,7 @@ public final class ProjectToolCatalog {
         if (!modelSupportsTools) return builder.freeze();
         REQUIRED_CAPABILITY.keySet().stream()
                 .sorted()
+                .filter(name -> !name.equals(ProjectExecutionOutputOperations.TOOL_NAME))
                 .filter(configuredTools::contains)
                 .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
                 .forEach(name -> builder.register(
@@ -214,6 +216,11 @@ public final class ProjectToolCatalog {
                                 scratchSpace),
                         "project-workspace",
                         provider));
+        if (configuredTools.contains("execution.run") && effectiveCapabilities.contains("execution.run")) {
+            String name = ProjectExecutionOutputOperations.TOOL_NAME;
+            builder.register(
+                    modelAlias(name), definition(name, executionProfile, scratchSpace), "project-workspace", provider);
+        }
         mcpTools.stream()
                 .sorted(java.util.Comparator.comparing(McpToolCatalogContribution::alias))
                 .forEach(contribution -> builder.register(
@@ -246,6 +253,9 @@ public final class ProjectToolCatalog {
         if (name.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
             return new ToolAlias(ProjectPermissionRequestOperations.MODEL_ALIAS);
         }
+        if (name.equals(ProjectExecutionOutputOperations.TOOL_NAME)) {
+            return new ToolAlias(ProjectExecutionOutputOperations.MODEL_ALIAS);
+        }
         return new ToolAlias(name.replace('.', '_'));
     }
 
@@ -271,6 +281,7 @@ public final class ProjectToolCatalog {
         String version =
                 switch (name) {
                     case "execution.run" -> "1.7.2";
+                    case ProjectExecutionOutputOperations.TOOL_NAME -> "1.0.0";
                     case ProjectPermissionRequestOperations.TOOL_NAME -> "1.6.0";
                     case "file.read" -> "1.2.0";
                     case "file.create", "file.write", "file.patch" -> "1.2.0";
@@ -327,6 +338,7 @@ public final class ProjectToolCatalog {
             case "file.diff" -> "Preview file diff";
             case "file.patch" -> "Apply workspace patch";
             case "execution.run" -> "Run a local shell command";
+            case ProjectExecutionOutputOperations.TOOL_NAME -> "Read retained execution output";
             case ProjectPermissionRequestOperations.TOOL_NAME -> "Request permission for one failed command";
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         };
@@ -356,6 +368,12 @@ public final class ProjectToolCatalog {
                     + "compound, wrapped, path-escaping, credential-overriding, destructive, or outcome-unknown "
                     + "requests remain denied. Approval applies once to this Tool Call and does not create a reusable "
                     + "grant.";
+        }
+        if (name.equals(ProjectExecutionOutputOperations.TOOL_NAME)) {
+            return "Read a bounded UTF-8 window from, or run a bounded literal search over, retained stdout or "
+                    + "stderr referenced by execution.run in the same trusted Run. Use WINDOW with nextOffsetBytes "
+                    + "for paging and SEARCH to locate a small number of exact terms. A missing match is inconclusive "
+                    + "when captureTruncated is true.";
         }
         if (name.equals("file.read")) {
             return "Read one bounded text window from a workspace file. Continue with nextCursor only when hasMore "
@@ -486,6 +504,32 @@ public final class ProjectToolCatalog {
                     required.add("justification");
                 }
             }
+            case ProjectExecutionOutputOperations.TOOL_NAME -> {
+                properties.put("outputRef", Map.of("type", "string", "minLength", 1, "maxLength", 512));
+                properties.put("mode", Map.of("type", "string", "enum", List.of("WINDOW", "SEARCH")));
+                properties.put("offsetBytes", Map.of("type", "integer", "minimum", 0));
+                properties.put(
+                        "maximumBytes",
+                        Map.of(
+                                "type",
+                                "integer",
+                                "minimum",
+                                1,
+                                "maximum",
+                                ProjectExecutionOutputOperations.MAXIMUM_WINDOW_BYTES));
+                properties.put("query", Map.of("type", "string", "minLength", 1, "maxLength", 256));
+                properties.put(
+                        "maximumMatches",
+                        Map.of(
+                                "type",
+                                "integer",
+                                "minimum",
+                                1,
+                                "maximum",
+                                ProjectExecutionOutputOperations.MAXIMUM_MATCHES));
+                required.add("outputRef");
+                required.add("mode");
+            }
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         }
         var schema = new LinkedHashMap<String, Object>();
@@ -614,6 +658,30 @@ public final class ProjectToolCatalog {
                     Map.copyOf(properties),
                     "required",
                     List.of("executionId", "status", "output", "truncated", "durationMillis"),
+                    "additionalProperties",
+                    false);
+        }
+        if (name.equals(ProjectExecutionOutputOperations.TOOL_NAME)) {
+            return Map.of(
+                    "$schema",
+                    ToolSchema.DRAFT_2020_12,
+                    "type",
+                    "object",
+                    "properties",
+                    Map.ofEntries(
+                            Map.entry("outputRef", Map.of("type", "string")),
+                            Map.entry("mode", Map.of("type", "string", "enum", List.of("WINDOW", "SEARCH"))),
+                            Map.entry("text", Map.of("type", "string")),
+                            Map.entry("startOffsetBytes", Map.of("type", "integer", "minimum", 0)),
+                            Map.entry("endOffsetBytes", Map.of("type", "integer", "minimum", 0)),
+                            Map.entry("nextOffsetBytes", Map.of("type", "integer", "minimum", 0)),
+                            Map.entry("hasMore", Map.of("type", "boolean")),
+                            Map.entry("retainedBytes", Map.of("type", "integer", "minimum", 0)),
+                            Map.entry("captureTruncated", Map.of("type", "boolean")),
+                            Map.entry("matches", Map.of("type", "array", "items", Map.of("type", "object"))),
+                            Map.entry("matchesReturned", Map.of("type", "integer", "minimum", 0))),
+                    "required",
+                    List.of("outputRef", "mode", "hasMore", "retainedBytes", "captureTruncated"),
                     "additionalProperties",
                     false);
         }

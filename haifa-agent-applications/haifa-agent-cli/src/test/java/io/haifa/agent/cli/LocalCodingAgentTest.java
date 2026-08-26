@@ -140,7 +140,10 @@ class LocalCodingAgentTest {
                         "rg for text search",
                         "dedicated search wrapper",
                         "request_permissions is not a general sandbox bypass",
-                        "Keep command output bounded")
+                        "Keep command output bounded",
+                        "execution_output_read",
+                        "capturedOutputRef",
+                        "nextOffsetBytes")
                 .doesNotContain("Host OS:");
         assertThat(LocalCodingAgent.executionEnvironmentPrompt(" ")).isEmpty();
     }
@@ -524,6 +527,82 @@ class LocalCodingAgentTest {
         }
         assertThat(Files.readString(workspace.resolve("shell-e2e.txt"))).isEqualTo("stub");
         assertThat(calls).hasValue(4);
+    }
+
+    @Test
+    void fakeModelReadsRetainedExecutionOutputFromTheNextToolTurn() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        String command = isWindows()
+                ? "1..3000 | ForEach-Object { if ($_ -eq 1500) { 'HIDDEN-FAILURE-MARKER' } else { 'line-' + $_ } }"
+                : "i=1; while [ \"$i\" -le 3000 ]; do if [ \"$i\" -eq 1500 ]; then printf '%s\\n' "
+                        + "'HIDDEN-FAILURE-MARKER'; else printf 'line-%s\\n' \"$i\"; fi; i=$((i+1)); done";
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            int call = calls.incrementAndGet();
+            if (call == 1) {
+                assertThat(request.tools())
+                        .extracting(io.haifa.agent.model.api.ModelToolSpecification::name)
+                        .contains("execution_run", "execution_output_read");
+                return toolResponse(
+                        "large-output",
+                        "execution_run",
+                        Map.of(
+                                "command",
+                                command,
+                                "workdir",
+                                ".",
+                                "timeoutMillis",
+                                10_000,
+                                "description",
+                                "Produce a deterministic bounded output fixture",
+                                "operationFamily",
+                                "TEST"));
+            }
+            if (call == 2) {
+                String executionMessage = request.messages().stream()
+                        .filter(message -> message.role() == ModelMessageRole.TOOL)
+                        .filter(message -> message.providerCorrelationId()
+                                .map(value -> value.value().equals("large-output-call"))
+                                .orElse(false))
+                        .map(message -> message.content())
+                        .findFirst()
+                        .orElseThrow();
+                assertThat(executionMessage)
+                        .contains("capturedOutputRef=execution:", "captureTruncated=false")
+                        .doesNotContain("HIDDEN-FAILURE-MARKER");
+                var matcher = java.util.regex.Pattern.compile("capturedOutputRef=([^\\s]+)")
+                        .matcher(executionMessage);
+                assertThat(matcher.find()).isTrue();
+                return toolResponse(
+                        "output-read",
+                        "execution_output_read",
+                        Map.of("outputRef", matcher.group(1), "mode", "SEARCH", "query", "HIDDEN-FAILURE-MARKER"));
+            }
+            assertThat(request.messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && message.providerCorrelationId()
+                                    .map(value -> value.value().equals("output-read-call"))
+                                    .orElse(false)
+                            && message.content().contains("HIDDEN-FAILURE-MARKER")
+                            && message.content().contains("byteOffset="));
+            return answer("output-read-complete", "bounded execution output inspected");
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                automaticHostConfiguration(),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            var completed = awaitTerminal(
+                    agent,
+                    agent.start("Inspect the hidden marker in bounded command output.")
+                            .runId(),
+                    Duration.ofSeconds(30));
+            assertThat(completed.status())
+                    .withFailMessage("run failed: %s", completed.error())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(completed.output()).contains("bounded execution output inspected");
+        }
+        assertThat(calls).hasValue(3);
     }
 
     @Test

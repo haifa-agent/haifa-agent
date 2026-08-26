@@ -100,9 +100,15 @@ class ProjectApplicationTest {
                 executionProfile("local-native", NetworkPolicy.DENY, "one"));
         assertThat(disclosed.snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
-                .containsExactly("execution_run", "file_read");
-        var execution = disclosed.snapshot().bindings().getFirst();
-        var fileRead = disclosed.snapshot().bindings().get(1);
+                .containsExactly("execution_output_read", "execution_run", "file_read");
+        var execution = disclosed.snapshot().bindings().stream()
+                .filter(binding -> binding.alias().value().equals("execution_run"))
+                .findFirst()
+                .orElseThrow();
+        var fileRead = disclosed.snapshot().bindings().stream()
+                .filter(binding -> binding.alias().value().equals("file_read"))
+                .findFirst()
+                .orElseThrow();
         assertThat(execution.definition().version().value()).isEqualTo("1.7.2");
         assertThat(fileRead.definition().version().value()).isEqualTo("1.2.0");
         @SuppressWarnings("unchecked")
@@ -219,9 +225,10 @@ class ProjectApplicationTest {
                 executionProfile("host-guarded", NetworkPolicy.ALLOW, "two"));
 
         assertThat(frozen.snapshot().bindings())
-                .hasSize(12)
+                .hasSize(13)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
+                        "execution_output_read",
                         "execution_run",
                         "file_create",
                         "file_delete",
@@ -234,6 +241,20 @@ class ProjectApplicationTest {
                         "file_stat",
                         "file_write",
                         "request_permissions");
+        assertThat(frozen.snapshot().bindings())
+                .filteredOn(binding -> binding.alias().value().equals("execution_output_read"))
+                .singleElement()
+                .satisfies(binding -> {
+                    assertThat(binding.definition().approvalRequirement())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.NEVER);
+                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.LOW);
+                    assertThat(binding.definition().idempotency())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolIdempotency.PURE);
+                    assertThat(binding.definition().executionMode())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolExecutionMode.IN_PROCESS);
+                    assertThat(binding.definition().resources().filesystemCapabilities())
+                            .containsExactly("execution.run");
+                });
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
             assertThat(binding.definition().inputSchema().document()).containsKey("$schema");
             assertThat(binding.definition().outputSchema().document()).containsKey("$schema");
@@ -263,7 +284,8 @@ class ProjectApplicationTest {
     @Test
     void executionProfileAndNetworkChangeFrozenToolIdentity() {
         var catalog = new ProjectToolCatalog();
-        var denied = catalog.freeze(
+        var denied = catalog
+                .freeze(
                         Set.of("execution.run"),
                         Set.of("execution.run"),
                         true,
@@ -271,8 +293,12 @@ class ProjectApplicationTest {
                         executionProfile("local-native", NetworkPolicy.DENY, "deny"))
                 .snapshot()
                 .bindings()
-                .getFirst();
-        var allowed = catalog.freeze(
+                .stream()
+                .filter(binding -> binding.alias().value().equals("execution_run"))
+                .findFirst()
+                .orElseThrow();
+        var allowed = catalog
+                .freeze(
                         Set.of("execution.run"),
                         Set.of("execution.run"),
                         true,
@@ -280,7 +306,10 @@ class ProjectApplicationTest {
                         executionProfile("local-native", NetworkPolicy.ALLOW, "allow"))
                 .snapshot()
                 .bindings()
-                .getFirst();
+                .stream()
+                .filter(binding -> binding.alias().value().equals("execution_run"))
+                .findFirst()
+                .orElseThrow();
 
         assertThat(denied.coordinate().definitionHash())
                 .isNotEqualTo(allowed.coordinate().definitionHash());

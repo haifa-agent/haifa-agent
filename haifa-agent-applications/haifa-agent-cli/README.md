@@ -656,13 +656,14 @@ Stage、Commit、Push 或 PR 权威结果证据，但不在 Broker Dispatch 前�
 `AUTHENTICATION_OVERRIDE_DENIED`，受限网络失败使用 `NETWORK_PERMISSION_REQUIRED`，二者分别引导移除
 覆盖或通过托管的一次性权限请求处理，而不是重复执行原命令。
 
-`execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
+`execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大或截断的分通道输出会在摘要中返回 Output Ref。启用 `execution.run` 时自动披露只读的 `execution_output_read`，可在同一可信 Run 内按最多 3072 bytes 的 UTF-8 WINDOW 分页，或对保留内容执行最多 20 项的字面 SEARCH；它复用 Broker 已有的有界内存输出存储，不建立无界日志文件，且 `captureTruncated=true` 时无匹配结论不完整。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 
 CLI 在冻结 Definition 时把可信配置解析后的 Shell 显示名加入模型指令，要求 `execution_run` 只生成该
 Shell 支持的命令语法，避免在 Windows PowerShell 中混入 POSIX 命令；Shell 的实际路径、审批、能力与
 Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。Terminal 和 one-shot CLI 在人工交互/审批期间
 暂停整体活动时间预算；等待没有自动截止时间，批准后从剩余预算继续。该环境指令同时说明 `PATH` 中任意非交互 CLI
-均可使用，并要求模型在命令缺失时探测和切换替代方案、收窄过宽查询、保持输出有界。
+均可使用，并要求模型在命令缺失时探测和切换替代方案、收窄过宽查询、保持输出有界；收到
+`capturedOutputRef` 后优先使用 `execution_output_read` 的受控 WINDOW/SEARCH，而不是重复运行宽命令。
 
 CLI 启动时还会生成一个最多 8 KiB、路径脱敏的 `<workspace_environment>` 块，并在每个新 Run 的
 Definition instructions 中冻结使用。L0 只投影可信装配已经知道的 Host/Shell、执行开关、网络策略、

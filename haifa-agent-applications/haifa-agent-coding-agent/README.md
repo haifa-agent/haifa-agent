@@ -48,7 +48,10 @@ ANALYZE/REVIEW 不会被强制进入 CHANGE；仅修改工作区也
 
 `execution.run` 1.7.2 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
-可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
+可选 Artifact Ref；较大或截断的 stdout/stderr 引用会前置写入模型可见摘要。伴随注册的
+`execution.output.read` 1.0.0 只允许同一 tenant、principal 和 Run 对权威引用执行最多 3072 bytes 的
+UTF-8 WINDOW 或最多 20 项的字面 SEARCH；它复用现有有界捕获，不创建无界日志。捕获本身截断时，搜索
+无匹配不能证明原始进程输出中不存在目标内容。
 
 ## 自主交付模式与完成证据
 
@@ -175,8 +178,8 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 实现：偏好保存内部 Model ID 和独立 revision，只允许在无活动 Run/dispatch 时切换，下一新 Run
 冻结对应快照；配置中已删除的模型要求重选，不静默回退。
 
-`ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`execution.run` 与
-`execution.request_permissions` 共 12 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
+`ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`execution.run`、
+自动伴随的 `execution.output.read` 与 `execution.request_permissions` 共 13 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
 `github.*` Tool；Git/GitHub 操作由
 `execution.run` 直接调用系统 `git` / `gh`。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、
 幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
@@ -237,7 +240,7 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 进入冻结 binding；Provider 不读取环境变量、不保存 Credential、不执行 fallback。
 
 配置、权限和精确 Tool 身份继续使用点号命名；模型披露使用 Provider-safe Alias，例如
-`file.read -> file_read`、`execution.run -> execution_run` 和
+`file.read -> file_read`、`execution.run -> execution_run`、`execution.output.read -> execution_output_read` 和
 `execution.request_permissions -> request_permissions`。Alias 只影响模型协议，不改变 Provider
 执行时收到的精确 Tool 名称。历史 frozen Run 中旧 `git.*` identity 仅用于读取持久化交付证据，不能进入
 新 Run 的 Tool Catalog。
@@ -254,6 +257,10 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 引用。普通命令在固定内存中持续排空输出；`INSPECT` 在通道输出预算耗尽时终止进程树并返回
 `OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
 不包装或解释普通命令语义。
+`ProjectExecutionOutputOperations` 是无审批、低风险、只读的 IN_PROCESS 伴随工具；CLI 适配器从与 Broker
+共享的 `InMemoryExecutionStore` 和 `InMemoryExecutionOutputStore` 读取，并以权威 ExecutionResult 中的
+AssetRef 反校验模型提交的字符串。不存在、格式错误、跨 tenant/principal/Run、伪造通道或引用不一致统一
+返回 `EXECUTION_OUTPUT_NOT_FOUND`，有效引用缺少保留字节与二进制输出分别返回稳定的不可用错误。
 进程数预算触发且进程树已收敛时返回 `PROCESS_LIMIT_EXCEEDED`，不会伪装成 `OUTCOME_UNKNOWN`。已持久化的
 ExecutionResult 是权威执行事实；Change Review 等派生投影失败只返回安全的不可用原因码，不得吞掉执行结果。
 Change Review 成功结果中的 `artifactRef` 与 `changeReviewArtifactRef` 均由严格输出 Schema 声明，避免
