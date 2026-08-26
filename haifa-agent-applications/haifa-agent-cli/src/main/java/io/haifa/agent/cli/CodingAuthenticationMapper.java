@@ -12,7 +12,9 @@ final class CodingAuthenticationMapper {
                 connection.providerId(),
                 connection.method() == LocalModelConnectionView.Method.API_KEY
                         ? CodingAuthenticationView.Method.API_KEY
-                        : CodingAuthenticationView.Method.CHATGPT_SUBSCRIPTION,
+                        : "google-antigravity".equals(connection.providerId())
+                                ? CodingAuthenticationView.Method.ANTIGRAVITY_SUBSCRIPTION
+                                : CodingAuthenticationView.Method.CHATGPT_SUBSCRIPTION,
                 switch (connection.status()) {
                     case AUTHENTICATED -> CodingAuthenticationView.Status.AUTHENTICATED;
                     case REAUTH_REQUIRED -> CodingAuthenticationView.Status.REAUTH_REQUIRED;

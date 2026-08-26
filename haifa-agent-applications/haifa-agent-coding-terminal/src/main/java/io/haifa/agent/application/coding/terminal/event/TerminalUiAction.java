@@ -28,18 +28,38 @@ public sealed interface TerminalUiAction {
 
     record DeviceLoginInstructionsPresented(String verificationUri, String userCode) implements TerminalUiAction {}
 
-    record BrowserLoginInstructionsPresented(String authorizationUri) implements TerminalUiAction {
+    record BrowserLoginInstructionsPresented(String connectionName, String authorizationUri)
+            implements TerminalUiAction {
+        public BrowserLoginInstructionsPresented(String authorizationUri) {
+            this("ChatGPT", authorizationUri);
+        }
+
         @Override
         public String toString() {
-            return "BrowserLoginInstructionsPresented[authorizationUri=[REDACTED_AUTH_URL]]";
+            return "BrowserLoginInstructionsPresented[connectionName=" + connectionName
+                    + ", authorizationUri=[REDACTED_AUTH_URL]]";
         }
     }
 
-    record AuthenticationProgressed(CodingAuthenticationProgressView.Phase phase) implements TerminalUiAction {}
+    record AuthenticationProgressed(String connectionName, CodingAuthenticationProgressView.Phase phase)
+            implements TerminalUiAction {
+        public AuthenticationProgressed(CodingAuthenticationProgressView.Phase phase) {
+            this("ChatGPT Codex", phase);
+        }
+    }
 
-    record AuthenticationCompleted(boolean unofficialLocalCompatibility) implements TerminalUiAction {}
+    record AuthenticationCompleted(String connectionName, boolean unofficialLocalCompatibility)
+            implements TerminalUiAction {
+        public AuthenticationCompleted(boolean unofficialLocalCompatibility) {
+            this("ChatGPT Codex", unofficialLocalCompatibility);
+        }
+    }
 
-    record AuthenticationFailed(String code) implements TerminalUiAction {}
+    record AuthenticationFailed(String connectionName, String code) implements TerminalUiAction {
+        public AuthenticationFailed(String code) {
+            this("ChatGPT Codex", code);
+        }
+    }
 
     record RunEventReceived(AgentRunEvent event) implements TerminalUiAction {}
 

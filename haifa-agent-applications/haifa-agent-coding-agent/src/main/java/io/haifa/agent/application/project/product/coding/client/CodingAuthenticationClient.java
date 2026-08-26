@@ -18,6 +18,10 @@ public interface CodingAuthenticationClient {
         return true;
     }
 
+    default boolean antigravityConnectionSupported() {
+        return false;
+    }
+
     List<CodingAuthenticationView> connections();
 
     CodingAuthenticationView loginCodexBrowser();
@@ -42,6 +46,13 @@ public interface CodingAuthenticationClient {
         Objects.requireNonNull(instructions, "instructions must not be null");
         Objects.requireNonNull(progress, "progress must not be null");
         return loginCodexDevice(instructions);
+    }
+
+    default CodingAuthenticationView loginAntigravityBrowser(
+            Consumer<CodingBrowserLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
+        Objects.requireNonNull(instructions, "instructions must not be null");
+        Objects.requireNonNull(progress, "progress must not be null");
+        throw new IllegalStateException("AUTH_LOGIN_METHOD_UNAVAILABLE");
     }
 
     CodingAuthenticationView saveApiKey(String providerId, char[] apiKey);

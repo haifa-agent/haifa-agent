@@ -42,6 +42,7 @@ import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityLocalCompatibilityRegistrationFactory;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityProjectRegistry;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityTokenClient;
 import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
@@ -253,6 +254,7 @@ final class LocalCodingAgent implements AutoCloseable {
         var authStore = FileLocalModelAuthStore.defaultStore(json);
         var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(resolvedEnvironment);
         var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(resolvedEnvironment);
+        var antigravityProjects = new AntigravityProjectRegistry();
         List<ExternalLoginMethod> authMethods = new ArrayList<>();
         codexRegistration.ifPresent(registration -> authMethods.add(new CodexExternalLoginMethod(
                 registration,
@@ -268,7 +270,9 @@ final class LocalCodingAgent implements AutoCloseable {
                 http,
                 json,
                 SecureRandom::new,
-                Duration.ofMinutes(5))));
+                Duration.ofMinutes(5),
+                projection -> antigravityProjects.record(
+                        new CredentialRef("model-auth://google-antigravity/default"), projection))));
         var authRegistry = new ExternalLoginRegistry(authMethods);
         var credentials = new LocalModelCredentialResolver(
                 resolvedEnvironment::get, authStore, authRegistry, authClock, Duration.ofMinutes(5));
@@ -295,12 +299,14 @@ final class LocalCodingAgent implements AutoCloseable {
                 configuration.model().providerId(),
                 configuration.availableModels().stream()
                         .map(CliConfiguration.Model::credentialRef)
-                        .toList());
+                        .toList(),
+                antigravityRegistration.isPresent());
         var chat = new OpenAiCompatibleChatModel(
                 "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var responses = new OpenAiResponsesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var anthropic = new AnthropicMessagesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
-        var gemini = new GeminiGenerateContentModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
+        var gemini = new GeminiGenerateContentModel(
+                http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024, false, antigravityProjects::resolve);
         return create(
                 workspaceRoot,
                 configuration,

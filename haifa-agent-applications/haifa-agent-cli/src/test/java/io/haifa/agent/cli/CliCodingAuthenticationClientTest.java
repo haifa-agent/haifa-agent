@@ -78,6 +78,35 @@ class CliCodingAuthenticationClientTest {
                 .isEmpty();
     }
 
+    @Test
+    void exposesAntigravityOnlyWhenTheTrustedAssemblyRegisteredIt() {
+        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var service = new LocalModelAuthenticationService(
+                store,
+                java.util.Optional.empty(),
+                reference -> {
+                    throw new AssertionError("credential resolution is not expected");
+                },
+                ignored -> null);
+
+        assertThat(new CliCodingAuthenticationClient(
+                                service,
+                                "model-auth://deepseek/default",
+                                "deepseek",
+                                java.util.List.of("model-auth://deepseek/default"),
+                                true)
+                        .antigravityConnectionSupported())
+                .isTrue();
+        assertThat(new CliCodingAuthenticationClient(
+                                service,
+                                "model-auth://deepseek/default",
+                                "deepseek",
+                                java.util.List.of("model-auth://deepseek/default"),
+                                false)
+                        .antigravityConnectionSupported())
+                .isFalse();
+    }
+
     private CliCodingAuthenticationClient client(
             FileLocalModelAuthStore store,
             String credentialReference,
