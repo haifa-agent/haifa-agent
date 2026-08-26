@@ -8,6 +8,9 @@ import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -21,6 +24,7 @@ import java.util.Set;
 /** Deterministically rebuilds one bounded Coding work projection from the existing Runtime fact stores. */
 public final class CodingWorkProjectionService {
     public static final String SCHEMA_VERSION = "coding-work-projection/1";
+    private static final String TASK_CONTRACT_DIGEST_VERSION = "coding-task-contract-v2";
     private static final Set<String> READ_TOOLS = Set.of(
             "file.list",
             "file.stat",
@@ -327,12 +331,22 @@ public final class CodingWorkProjectionService {
                 .min(Comparator.comparingLong(AgentMessage::sequence))
                 .orElse(null);
         return firstUser == null
-                ? PolicyDigest.sha256Fields(List.of("coding-task-contract-v1", intent.name(), "missing-user-message"))
+                ? PolicyDigest.sha256Fields(
+                        List.of(TASK_CONTRACT_DIGEST_VERSION, intent.name(), "missing-user-message"))
                 : PolicyDigest.sha256Fields(List.of(
-                        "coding-task-contract-v1",
+                        TASK_CONTRACT_DIGEST_VERSION,
                         intent.name(),
                         firstUser.id().value(),
-                        firstUser.contents().toString()));
+                        contentDigest(firstUser.contents().toString())));
+    }
+
+    private static String contentDigest(String content) {
+        try {
+            return java.util.HexFormat.of()
+                    .formatHex(MessageDigest.getInstance("SHA-256").digest(content.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
     }
 
     private static String evidenceFamily(Map<String, Object> data) {

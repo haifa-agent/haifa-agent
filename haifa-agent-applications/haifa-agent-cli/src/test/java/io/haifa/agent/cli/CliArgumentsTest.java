@@ -3,12 +3,33 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class CliArgumentsTest {
+    @Test
+    void preservesHistoricalLongObjectiveThroughMessageParsing() {
+        String objective = HistoricalLongObjectiveFixture.create();
+
+        String parsed = CliArguments.parse(new String[] {"--message", objective})
+                .message()
+                .orElseThrow();
+
+        assertThat(parsed)
+                .hasSize(HistoricalLongObjectiveFixture.TARGET_LENGTH)
+                .contains(
+                        HistoricalLongObjectiveFixture.BEGIN_MARKER,
+                        HistoricalLongObjectiveFixture.MIDDLE_MARKER,
+                        HistoricalLongObjectiveFixture.END_MARKER);
+        assertThat(HistoricalLongObjectiveFixture.sha256(parsed))
+                .isEqualTo(HistoricalLongObjectiveFixture.sha256(objective));
+        assertThat(parsed.codePointCount(0, parsed.length())).isLessThanOrEqualTo(parsed.length());
+        assertThat(parsed.getBytes(StandardCharsets.UTF_8).length).isGreaterThan(parsed.length());
+    }
+
     @Test
     void parsesOneShotCommand() {
         CliArguments values = CliArguments.parse(new String[] {
