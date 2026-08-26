@@ -70,6 +70,22 @@ class PersonalModelFactoryTest {
                         List.of(textModel("codex", "Codex", "gpt-5.6-codex", "openai-responses"))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("model-auth://openai-codex/");
+
+        assertThatThrownBy(() -> provider(
+                        "google-antigravity",
+                        "Google Antigravity Direct",
+                        true,
+                        URI.create("https://daily-cloudcode-pa.googleapis.com/v1internal"),
+                        "env://GOOGLE_TOKEN",
+                        List.of(new PersonalAssistantProperties.ApiBinding(
+                                "google-gemini-generate-content", "antigravity-direct", null)),
+                        List.of(model(
+                                "antigravity-gemini",
+                                "Gemini via Antigravity Direct",
+                                "gemini-3-flash",
+                                "google-gemini-generate-content"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("model-auth://google-antigravity/default");
     }
 
     @Test
