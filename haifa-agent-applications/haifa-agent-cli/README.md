@@ -664,6 +664,13 @@ Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。Termina
 暂停整体活动时间预算；等待没有自动截止时间，批准后从剩余预算继续。该环境指令同时说明 `PATH` 中任意非交互 CLI
 均可使用，并要求模型在命令缺失时探测和切换替代方案、收窄过宽查询、保持输出有界。
 
+CLI 启动时还会生成一个最多 8 KiB、路径脱敏的 `<workspace_environment>` 块，并在每个新 Run 的
+Definition instructions 中冻结使用。L0 只投影可信装配已经知道的 Host/Shell、执行开关、网络策略、
+Workspace 读写范围、超时和临时空间；L1 只静态检查根 `.git` 与根 `AGENTS.md` 状态；L2 只检查 Workspace
+根固定 allowlist 中的 manifest、Wrapper、lockfile 和测试目录，并复用同一次发现生成的验证候选。该块不运行
+Git、构建、测试或 `--version` 命令，不递归解析 Monorepo，不披露真实 Workspace/Scratch 路径，也不把
+静态标记表述为 executable 已安装。同一 Run 内不会重新扫描或改写；新进程重新生成的结果只影响未来 Run。
+
 CLI 还会从 Workspace 根的 `pom.xml`、Gradle 文件、`pyproject.toml`/`pytest.ini`、`package.json`、
 `Cargo.toml`、`go.mod`、`.sln`/`.csproj` 生成有界的最终门禁候选，并优先选择仓库 Wrapper。它只识别
 构建入口，不解析自然语言 README、猜测用户意图或建立语言插件注册表。候选在 Coding Session 创建时

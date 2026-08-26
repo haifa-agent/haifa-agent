@@ -140,10 +140,55 @@ class LocalCodingAgentTest {
                         "rg for text search",
                         "dedicated search wrapper",
                         "request_permissions is not a general sandbox bypass",
-                        "Keep command output bounded");
-        assertThat(LocalCodingAgent.executionEnvironmentPrompt("zsh", "Mac OS X", "15.6.1", "aarch64", "21.0.3"))
-                .contains("Host OS: Mac OS X 15.6.1 (aarch64); Java 21.0.3.", "execution_run uses zsh");
+                        "Keep command output bounded")
+                .doesNotContain("Host OS:");
         assertThat(LocalCodingAgent.executionEnvironmentPrompt(" ")).isEmpty();
+    }
+
+    @Test
+    void freezesOneWorkspaceEnvironmentBlockBeforeRootProjectInstructions() throws Exception {
+        Files.writeString(workspace.resolve("pom.xml"), "<project/>");
+        Files.writeString(workspace.resolve("AGENTS.md"), "Use the root project instruction once.");
+        AtomicReference<String> systemPrompt = new AtomicReference<>();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            systemPrompt.set(request.messages().stream()
+                    .filter(message -> message.role() == ModelMessageRole.SYSTEM)
+                    .map(message -> message.content())
+                    .collect(java.util.stream.Collectors.joining("\n")));
+            return answer("workspace-environment", "done");
+        };
+        CliConfiguration defaults = CliConfiguration.defaults();
+        var denied = new CliConfiguration(
+                defaults.model(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                hostExecution(defaults.execution()),
+                ApprovalMode.DENY,
+                defaults.timeout(),
+                defaults.maxIterations(),
+                defaults.maxToolCalls());
+
+        try (var agent = LocalCodingAgent.create(
+                workspace, denied, new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8), model)) {
+            assertThat(awaitTerminal(agent, agent.start("inspect the workspace").runId())
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+        }
+
+        String prompt = systemPrompt.get();
+        assertThat(prompt)
+                .contains(
+                        "<workspace_environment",
+                        "enabled=\"false\"",
+                        "network=\"UNAVAILABLE\"",
+                        "<project_signals>pom.xml</project_signals>",
+                        "root_agents=\"PRESENT\"",
+                        "Use the root project instruction once.")
+                .doesNotContain(workspace.toString(), "Runtime execution guidance:");
+        assertThat(prompt.split("<workspace_environment", -1)).hasSize(2);
+        assertThat(prompt.split("Use the root project instruction once\\.", -1)).hasSize(2);
+        assertThat(prompt.indexOf("<workspace_environment"))
+                .isLessThan(prompt.indexOf("Use the root project instruction once."));
     }
 
     @Test

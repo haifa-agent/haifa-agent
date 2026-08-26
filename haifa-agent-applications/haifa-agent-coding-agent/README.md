@@ -75,6 +75,11 @@ Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影�
 重启后按摘要与精确命令匹配恢复来源和 scope。runner stdout/stderr 不作为数量或 scope 的可信来源，当前
 统一报告 `COUNTS_UNAVAILABLE`，也不会扩展 runner 专用解析器来制造虚假的完整覆盖。
 
+可信本机产品宿主可以在 Definition instructions 中冻结一个产品私有、Agent-visible 的 L0-L2 Workspace
+环境块，用于表达已经由宿主掌握的安全边界、根仓库/instructions 状态、根静态项目标记和 frozen validation
+candidate。该投影不是公共 `WorkspaceSnapshot`、Capability Detector 或恢复事实源；Coding Agent 模块不新增
+对应公共 DTO、持久化 Schema 或动态 executable/version 探测，具体静态发现和路径脱敏仍由 CLI 宿主负责。
+
 `CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别投影为
 `SATISFIED/INCOMPLETE` 和 `CLEAN/UNCLEAN/IN_PROGRESS`，并通过 `coding-run-outcome/2` 的幂等
 `coding.task-outcome` 安全事件记录。Coding CLI、Coding Web 与受信 Coding Host 可通过
