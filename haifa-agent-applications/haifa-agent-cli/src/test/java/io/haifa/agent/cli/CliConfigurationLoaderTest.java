@@ -203,6 +203,24 @@ class CliConfigurationLoaderTest {
                     assertThat(model.style()).isEqualTo(ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT);
                     assertThat(model.dialect()).isEqualTo("cliproxyapi-antigravity");
                 });
+        CliConfiguration antigravityEnabled = new CliConfigurationLoader(name -> switch (name) {
+                    case "HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST" -> "true";
+                    case "HAIFA_CODEX_ORIGINATOR" -> "pi";
+                    case "HAIFA_CODEX_USER_AGENT" -> "haifa-agent-local-compat/1";
+                    case "OPENAI_BASE_URL" -> "http://127.0.0.1:30000/v1";
+                    case "OPENAI_MODEL_ID" -> "gpt-5.6-luna";
+                    default -> null;
+                })
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+        assertThat(antigravityEnabled.availableModels())
+                .filteredOn(model -> model.id().equals("antigravity-gemini"))
+                .singleElement()
+                .satisfies(model -> {
+                    assertThat(model.providerId()).isEqualTo("google-antigravity");
+                    assertThat(model.endpoint()).hasToString("https://daily-cloudcode-pa.googleapis.com/v1internal");
+                    assertThat(model.credentialRef()).isEqualTo("model-auth://google-antigravity/default");
+                    assertThat(model.dialect()).isEqualTo("antigravity-direct");
+                });
         assertThat(result.availableModels())
                 .filteredOn(model -> model.id().equals("deepseek-anthropic-flash"))
                 .singleElement()
