@@ -3,7 +3,13 @@
 Pure Java adapter for the official Gemini `generateContent` protocol. The `standard` binding accepts only Google's
 official HTTPS endpoint and `x-goog-api-key`; the `cliproxyapi-antigravity` dialect accepts only explicitly enabled
 loopback HTTP and a Bearer downstream credential; the `antigravity-direct` dialect accepts the governed CloudCode PA API
-endpoint (`https://cloudcode-pa.googleapis.com/v1internal`) using direct Google OAuth Bearer credentials and Antigravity headers.
+Prod or Daily endpoint (`https://cloudcode-pa.googleapis.com/v1internal` or
+`https://daily-cloudcode-pa.googleapis.com/v1internal`) using direct Google OAuth Bearer credentials and Antigravity
+headers. The Coding Agent local-compatibility catalog defaults to Daily; endpoint choice is frozen per Run and never
+falls back implicitly.
+Its private generate envelope supplies a stable numeric `request.sessionId`, omits control-plane `metadata`, and removes
+the public Gemini `maxOutputTokens` field that the Antigravity generate endpoint does not accept. Direct responses also
+require the CloudCode PA `response` envelope; the adapter unwraps that envelope for both JSON and SSE responses.
 
 The dialects are for personal local development. Haifa never reads external OAuth files, OS keyrings, or cookies directly from disk.
 429 quota exhaustion (`QUOTA_EXHAUSTED` / `INSUFFICIENT_G1_CREDITS_BALANCE`) triggers non-retryable fail-closed errors.

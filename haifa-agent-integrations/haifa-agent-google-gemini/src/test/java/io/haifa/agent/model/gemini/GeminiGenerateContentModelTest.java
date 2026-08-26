@@ -23,6 +23,7 @@ import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
+import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
@@ -116,7 +117,7 @@ class GeminiGenerateContentModelTest {
     void antigravityDirectWrapsPayloadAndExtractsProject() throws Exception {
         AtomicReference<HttpExchange> exchange = new AtomicReference<>();
         AtomicReference<JsonNode> requestBody = new AtomicReference<>();
-        start(exchange, requestBody, List.of(Response.json(200, textResponse("direct-ok"))));
+        start(exchange, requestBody, List.of(Response.json(200, directResponse(textResponse("direct-ok")))));
 
         var response = standardStubModel()
                 .invoke(request(
@@ -135,9 +136,11 @@ class GeminiGenerateContentModelTest {
         assertThat(root.path("userAgent").asText()).isEqualTo("antigravity");
         assertThat(root.path("requestType").asText()).isEqualTo("agent");
         assertThat(root.path("requestId").asText()).startsWith("agent-");
-        assertThat(root.path("metadata").path("ideType").asText()).isEqualTo("ANTIGRAVITY");
+        assertThat(root.has("metadata")).isFalse();
 
         JsonNode inner = root.path("request");
+        assertThat(inner.path("sessionId").asText()).matches("-[0-9]+");
+        assertThat(inner.path("generationConfig").has("maxOutputTokens")).isFalse();
         assertThat(inner.path("contents")
                         .get(0)
                         .path("parts")
@@ -256,8 +259,11 @@ class GeminiGenerateContentModelTest {
                 dialectSnapshot(),
                 List.of(ModelMessage.text(ModelMessageRole.USER, "use tool")),
                 List.of(tool("get_alpha"))));
+        var firstCall = first.toolCalls().getFirst();
+        var normalizedCall =
+                new ModelToolCall(firstCall.providerCorrelationId(), firstCall.name(), Map.of("value", 1L));
         var assistant = ModelMessage.assistant(
-                first.content(), first.toolCalls(), first.reasoning().orElseThrow());
+                first.content(), List.of(normalizedCall), first.reasoning().orElseThrow());
         var toolResult = ModelMessage.tool(
                 first.toolCalls().getFirst().providerCorrelationId(), "ok", Map.of("value", 7), false);
 
@@ -333,6 +339,37 @@ class GeminiGenerateContentModelTest {
                 .hasSize(2);
     }
 
+    @Test
+    void antigravityDirectUnwrapsCloudCodeSseResponseFrames() throws Exception {
+        String sse = "data: "
+                + directResponse(
+                        "{\"responseId\":\"direct-response-1\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hel\"}]}}]}")
+                + "\n\n"
+                + "data: "
+                + directResponse(
+                        "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"lo\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":3}}")
+                + "\n\n";
+        start(new AtomicReference<>(), new AtomicReference<>(), List.of(Response.sse(sse)));
+        List<ModelStreamEvent> events = new ArrayList<>();
+
+        var response = standardStubModel()
+                .invokeStreaming(
+                        request(
+                                antigravityDirectSnapshot("project-1"),
+                                List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                                List.of()),
+                        event -> {
+                            events.add(event);
+                            return ModelStreamControl.CONTINUE;
+                        });
+
+        assertThat(response.responseId()).isEqualTo("direct-response-1");
+        assertThat(response.content()).isEqualTo("hello");
+        assertThat(response.usage().inputTokens()).isEqualTo(2);
+        assertThat(events.stream().filter(ModelStreamEvent.ContentDelta.class::isInstance))
+                .hasSize(2);
+    }
+
     private GeminiGenerateContentModel model(boolean allowLoopback) {
         return new GeminiGenerateContentModel(
                 HttpClient.newHttpClient(),
@@ -340,6 +377,55 @@ class GeminiGenerateContentModelTest {
                 ignored -> new ResolvedCredential("secret-value"),
                 allowLoopback,
                 1024 * 1024);
+    }
+
+    @Test
+    void directDialectRejectsRequestProjectAndRequiresTrustedCredentialReference() throws Exception {
+        start(
+                new AtomicReference<>(),
+                new AtomicReference<>(),
+                List.of(new Response(200, "application/json", textResponse("unused"))));
+        var model = new GeminiGenerateContentModel(
+                HttpClient.newHttpClient(),
+                json,
+                ignored -> new ResolvedCredential("secret-value"),
+                false,
+                1024 * 1024,
+                true);
+        AgentChatRequest injected = new AgentChatRequest(
+                new ModelCallId("call-project"),
+                new AgentRunId("run-project"),
+                1,
+                1,
+                antigravityDirectSnapshot(""),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                List.of(),
+                256,
+                Duration.ofSeconds(5),
+                Map.of("project", "request-project"));
+
+        assertThatThrownBy(() -> model.invoke(injected)).hasRootCauseMessage("request project injection is forbidden");
+
+        AgentChatRequest missingTrustedProject = request(
+                antigravityDirectSnapshot(""), List.of(ModelMessage.text(ModelMessageRole.USER, "hi")), List.of());
+        assertThatThrownBy(() -> model.invoke(missingTrustedProject))
+                .hasRootCauseMessage("trusted Antigravity project is unavailable");
+    }
+
+    @Test
+    void directDialectAllowsOnlyGovernedProdAndDailyEndpoints() {
+        assertThat(GeminiGenerateContentModel.isGovernedAntigravityDirectEndpoint(
+                        URI.create("https://cloudcode-pa.googleapis.com/v1internal")))
+                .isTrue();
+        assertThat(GeminiGenerateContentModel.isGovernedAntigravityDirectEndpoint(
+                        URI.create("https://daily-cloudcode-pa.googleapis.com/v1internal")))
+                .isTrue();
+        assertThat(GeminiGenerateContentModel.isGovernedAntigravityDirectEndpoint(
+                        URI.create("https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal")))
+                .isFalse();
+        assertThat(GeminiGenerateContentModel.isGovernedAntigravityDirectEndpoint(
+                        URI.create("https://example.com/v1internal")))
+                .isFalse();
     }
 
     private GeminiGenerateContentModel standardStubModel() {
@@ -476,6 +562,10 @@ class GeminiGenerateContentModelTest {
         return "{\"responseId\":\"response-1\",\"modelVersion\":\"gemini-test\",\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\""
                 + text
                 + "\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":1}}";
+    }
+
+    private static String directResponse(String response) {
+        return "{\"response\":" + response + ",\"traceId\":\"trace-ignored\"}";
     }
 
     private static String toolResponse(boolean signature) {

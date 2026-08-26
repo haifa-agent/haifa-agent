@@ -24,7 +24,9 @@ public final class GeminiModelProfileFactory {
                                 && "google-gemini".equals(snapshot.providerId().value()))
                         || (GeminiDialects.CLIPROXYAPI_ANTIGRAVITY.equals(snapshot.dialect())
                                 && "cliproxyapi-antigravity"
-                                        .equals(snapshot.providerId().value())));
+                                        .equals(snapshot.providerId().value()))
+                        || (GeminiDialects.ANTIGRAVITY_DIRECT.equals(snapshot.dialect())
+                                && "google-antigravity".equals(snapshot.providerId().value())));
         boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
         return ModelBindingProfile.create(
                 snapshot.modelId(),

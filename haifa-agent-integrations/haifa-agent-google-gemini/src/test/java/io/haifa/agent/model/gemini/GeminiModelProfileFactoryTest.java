@@ -26,6 +26,16 @@ class GeminiModelProfileFactoryTest {
     }
 
     @Test
+    void verifiesGovernedAntigravityDirectDialect() {
+        var profile = GeminiModelProfileFactory.fromSnapshot(
+                snapshot("google-antigravity", GeminiDialects.ANTIGRAVITY_DIRECT), LocalDate.of(2026, 8, 27));
+
+        assertThat(profile.status()).isEqualTo(ModelProfileStatus.VERIFIED);
+        assertThat(profile.toolReasoningContinuationRequired()).isTrue();
+        assertThat(profile.selectable()).isTrue();
+    }
+
+    @Test
     void doesNotVerifyLookalikeProviderIdentity() {
         var profile = GeminiModelProfileFactory.fromSnapshot(
                 snapshot("untrusted-gateway", GeminiDialects.CLIPROXYAPI_ANTIGRAVITY), LocalDate.of(2026, 8, 24));
