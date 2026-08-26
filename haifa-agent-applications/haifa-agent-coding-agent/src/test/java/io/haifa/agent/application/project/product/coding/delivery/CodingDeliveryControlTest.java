@@ -512,6 +512,21 @@ class CodingDeliveryControlTest {
     }
 
     @Test
+    void workProjectionUsesStableBoundedDigestForLongTaskContent() {
+        String prefix = "long-task-contract:";
+        Fixture first = fixture(prefix + "a".repeat(24_512 - prefix.length()), trusted("CHANGE"));
+        Fixture same = fixture(prefix + "a".repeat(24_512 - prefix.length()), trusted("CHANGE"));
+        Fixture different = fixture(prefix + "a".repeat(24_511 - prefix.length()) + "b", trusted("CHANGE"));
+
+        String firstDigest = projection(first.store()).project(first.run()).taskContractDigest();
+        String sameDigest = projection(same.store()).project(same.run()).taskContractDigest();
+        String differentDigest =
+                projection(different.store()).project(different.run()).taskContractDigest();
+
+        assertThat(firstDigest).matches("[0-9a-f]{64}").isEqualTo(sameDigest).isNotEqualTo(differentDigest);
+    }
+
+    @Test
     void workProjectionDoesNotForceReadOnlyTasksIntoChangeAndReportsStructuredBlockers() {
         Fixture review = fixture("review only", trusted("REVIEW"));
         tool(review, "file.read", Map.of("path", "README.md"), Map.of("path", "README.md"));

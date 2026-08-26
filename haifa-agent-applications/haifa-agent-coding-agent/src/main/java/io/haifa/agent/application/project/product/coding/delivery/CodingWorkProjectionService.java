@@ -8,6 +8,9 @@ import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -332,7 +335,16 @@ public final class CodingWorkProjectionService {
                         "coding-task-contract-v1",
                         intent.name(),
                         firstUser.id().value(),
-                        firstUser.contents().toString()));
+                        contentDigest(firstUser.contents().toString())));
+    }
+
+    private static String contentDigest(String content) {
+        try {
+            return java.util.HexFormat.of()
+                    .formatHex(MessageDigest.getInstance("SHA-256").digest(content.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
     }
 
     private static String evidenceFamily(Map<String, Object> data) {

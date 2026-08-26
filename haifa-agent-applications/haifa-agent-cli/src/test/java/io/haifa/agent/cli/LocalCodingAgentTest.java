@@ -218,6 +218,70 @@ class LocalCodingAgentTest {
     }
 
     @Test
+    void historicalLongObjectiveReachesModelIntactWhenWindowIsSufficient() throws Exception {
+        String objective = HistoricalLongObjectiveFixture.create();
+        AtomicInteger calls = new AtomicInteger();
+        AtomicReference<String> capturedObjective = new AtomicReference<>();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            calls.incrementAndGet();
+            capturedObjective.set(request.messages().stream()
+                    .filter(message -> message.role() == ModelMessageRole.USER)
+                    .map(message -> message.content())
+                    .filter(content -> content.contains(HistoricalLongObjectiveFixture.BEGIN_MARKER))
+                    .findFirst()
+                    .orElseThrow());
+            return answer("historical-long-objective", "accepted");
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                withModelWindow(trustedHostConfiguration(CliConfiguration.defaults()), 131_072, 8_192),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            var completed = awaitTerminal(agent, agent.start(objective).runId());
+
+            assertThat(completed.status())
+                    .as("snapshot=%s modelCalls=%s", completed, calls.get())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+        }
+        assertThat(calls).hasValue(1);
+        assertThat(capturedObjective.get())
+                .hasSize(HistoricalLongObjectiveFixture.TARGET_LENGTH)
+                .contains(
+                        HistoricalLongObjectiveFixture.BEGIN_MARKER,
+                        HistoricalLongObjectiveFixture.MIDDLE_MARKER,
+                        HistoricalLongObjectiveFixture.END_MARKER);
+        assertThat(HistoricalLongObjectiveFixture.sha256(capturedObjective.get()))
+                .isEqualTo(HistoricalLongObjectiveFixture.sha256(objective));
+    }
+
+    @Test
+    void historicalLongObjectiveFailsAsContextTooLongBeforeModelWhenWindowIsSmall() throws Exception {
+        String objective = HistoricalLongObjectiveFixture.create();
+        AtomicInteger calls = new AtomicInteger();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            calls.incrementAndGet();
+            return answer("unexpected-model-call", "unexpected");
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                withModelWindow(trustedHostConfiguration(CliConfiguration.defaults()), 4_096, 512),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            var failed = awaitTerminal(agent, agent.start(objective).runId());
+
+            assertThat(failed.status())
+                    .as("snapshot=%s modelCalls=%s", failed, calls.get())
+                    .isEqualTo(AgentRunStatus.FAILED);
+            assertThat(failed.error().orElseThrow().code())
+                    .as("snapshot=%s modelCalls=%s", failed, calls.get())
+                    .isEqualTo(AgentErrorCode.MODEL_CONTEXT_TOO_LONG);
+        }
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test
     void providerUnavailableStillFailsWithoutCompletionRepair() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
@@ -1201,6 +1265,43 @@ class LocalCodingAgentTest {
                         model.capabilities(),
                         model.contextWindow(),
                         model.maxOutputTokens()),
+                configuration.enabledTools(),
+                configuration.mcpServers(),
+                configuration.web(),
+                configuration.skills(),
+                configuration.execution(),
+                configuration.approval(),
+                configuration.timeout(),
+                configuration.maxIterations(),
+                configuration.maxToolCalls(),
+                configuration.persistence());
+    }
+
+    private static CliConfiguration withModelWindow(
+            CliConfiguration configuration, int contextWindow, int maxOutputTokens) {
+        CliConfiguration.Model selected = configuration.model();
+        CliConfiguration.Model modified = new CliConfiguration.Model(
+                selected.providerId(),
+                selected.providerDisplayName(),
+                selected.modelId(),
+                selected.providerEndpoint(),
+                selected.endpoint(),
+                selected.credentialRef(),
+                selected.style(),
+                selected.dialect(),
+                selected.nativeStreaming(),
+                selected.workspaceId(),
+                selected.region(),
+                selected.id(),
+                selected.displayName(),
+                selected.capabilities(),
+                contextWindow,
+                maxOutputTokens,
+                selected.reasoningMode(),
+                selected.originator(),
+                selected.userAgent());
+        return new CliConfiguration(
+                modified,
                 configuration.enabledTools(),
                 configuration.mcpServers(),
                 configuration.web(),
