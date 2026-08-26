@@ -419,6 +419,8 @@ class RuntimeCoreHardeningTest {
                 .workerId("worker-a"));
         var accepted = fixture.runtime.start(request("trace"));
         fixture.scheduler.runAll();
+        assertThat(traces.stream().map(RuntimeTraceEvent::traceId).distinct()).hasSize(1);
+        assertThat(traces.getFirst().traceId()).matches("tr_[A-Za-z0-9_-]{22}");
         assertThat(traces).isNotEmpty().allSatisfy(trace -> {
             assertThat(trace.runId()).isEqualTo(accepted.runId());
             assertThat(trace.attemptId()).isPresent();

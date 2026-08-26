@@ -57,7 +57,10 @@ import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.trace.PromptDiagnosticsSink;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceContext;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceScope;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceStatus;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -65,6 +68,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 
 /** Persisted, guarded and resumable observe-decide-act Agent loop. */
@@ -131,13 +135,16 @@ public final class DefaultAgentLoop implements AgentLoop {
     }
 
     @Override
-    public AgentLoopResult run(AgentRun run, AgentRunExecutionAttempt attempt) {
+    public AgentLoopResult run(AgentRun run, AgentRunExecutionAttempt attempt, RuntimeTraceContext traceContext) {
         decisionExecutor.applyPendingToolApproval(run);
         reconciler.reconcileRecoveryFacts(run, attempt);
         var restored = checkpoints.restoreLatest(run);
         AgentLoopContext progress = restored.map(value -> new AgentLoopContext(
-                        value.nextIteration(), value.decisionFingerprints(), value.forcedContextRebuildAttempts()))
-                .orElseGet(() -> new AgentLoopContext(1, List.of()));
+                        value.nextIteration(),
+                        value.decisionFingerprints(),
+                        value.forcedContextRebuildAttempts(),
+                        traceContext))
+                .orElseGet(() -> new AgentLoopContext(1, List.of(), 0, traceContext));
         if (restored.isPresent()) progress.markWorkspaceBaselineCheckpointCaptured();
         progress.restoreRepairAttempts((int) state.messages(run.id()).stream()
                 .filter(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
@@ -156,7 +163,6 @@ public final class DefaultAgentLoop implements AgentLoop {
                 restored.isPresent(),
                 initialBudget);
         middleware.apply(RuntimePhase.BEFORE_RUN, new RuntimeMiddlewareContext(run, state));
-        String traceId = ids.nextValue();
         while (run.status() == AgentRunStatus.RUNNING || run.status() == AgentRunStatus.SUSPENDING) {
             AgentLoopIteration iteration = new AgentLoopIteration(progress.iteration(), time.now());
             if (applyControl(run, progress, SafePoint.BEFORE_ITERATION, progress.iteration() - 1)) {
@@ -314,16 +320,18 @@ public final class DefaultAgentLoop implements AgentLoop {
             }
             reconciler.reconcile(run, attempt);
             recordTrace(new RuntimeTraceEvent(
-                    traceId,
+                    traceContext.traceId(),
                     run.id(),
                     java.util.Optional.of(attempt.attemptId()),
                     run.sessionId(),
                     java.util.Optional.empty(),
                     java.util.Optional.empty(),
                     attempt.workerId(),
-                    progress.iteration(),
+                    OptionalInt.of(progress.iteration()),
                     RuntimePhase.BEFORE_CONTEXT_BUILD,
                     "loop.iteration",
+                    RuntimeTraceScope.ITERATION,
+                    RuntimeTraceStatus.ACTIVE,
                     Map.of("iteration", progress.iteration()),
                     time.now()));
 
@@ -331,16 +339,18 @@ public final class DefaultAgentLoop implements AgentLoop {
             RuntimeContextBuildResult built = contextBuilder.build(run, progress, model);
             recordPromptDiagnostics(built);
             recordTrace(new RuntimeTraceEvent(
-                    traceId,
+                    traceContext.traceId(),
                     run.id(),
                     java.util.Optional.of(attempt.attemptId()),
                     run.sessionId(),
                     java.util.Optional.empty(),
                     java.util.Optional.empty(),
                     attempt.workerId(),
-                    progress.iteration(),
+                    OptionalInt.of(progress.iteration()),
                     RuntimePhase.AFTER_CONTEXT_BUILD,
                     "context.built",
+                    RuntimeTraceScope.ITERATION,
+                    RuntimeTraceStatus.SUCCESS,
                     Map.<String, Object>ofEntries(
                             Map.entry(
                                     "modelConfigDigest", built.context().trace().modelConfigurationDigest()),
@@ -458,16 +468,18 @@ public final class DefaultAgentLoop implements AgentLoop {
                                     throw contextTooLong;
                                 }
                                 recordTrace(new RuntimeTraceEvent(
-                                        traceId,
+                                        traceContext.traceId(),
                                         run.id(),
                                         java.util.Optional.of(attempt.attemptId()),
                                         run.sessionId(),
                                         java.util.Optional.of(modelStepRef[0].id()),
                                         java.util.Optional.empty(),
                                         attempt.workerId(),
-                                        progress.iteration(),
+                                        OptionalInt.of(progress.iteration()),
                                         RuntimePhase.ON_ERROR,
                                         "model.context-too-long",
+                                        RuntimeTraceScope.STEP,
+                                        RuntimeTraceStatus.FAILURE,
                                         modelErrorAttributes(run, contextTooLong),
                                         time.now()));
                                 failModelStep(modelStepRef[0], contextTooLong);
@@ -481,16 +493,18 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 builtRef[0] = contextBuilder.build(run, progress, model);
                                 middlewareContextRef[0] = builtRef[0].middlewareContext();
                                 recordTrace(new RuntimeTraceEvent(
-                                        traceId,
+                                        traceContext.traceId(),
                                         run.id(),
                                         java.util.Optional.of(attempt.attemptId()),
                                         run.sessionId(),
                                         java.util.Optional.empty(),
                                         java.util.Optional.empty(),
                                         attempt.workerId(),
-                                        progress.iteration(),
+                                        OptionalInt.of(progress.iteration()),
                                         RuntimePhase.AFTER_CONTEXT_BUILD,
                                         "context.forced-rebuild",
+                                        RuntimeTraceScope.ITERATION,
+                                        RuntimeTraceStatus.SUCCESS,
                                         Map.of(
                                                 "modelConfigDigest",
                                                 builtRef[0].context().trace().modelConfigurationDigest(),
@@ -536,7 +550,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                         modelRetryPolicy.policy(),
                         (failedAttempt, failure) -> modelRetryDelay(run, failedAttempt, failure),
                         () -> checkModelRetryControl(run),
-                        modelRetryListener(run, modelRequestIdRef, requestAttemptOffset),
+                        modelRetryListener(run, progress, modelRequestIdRef, requestAttemptOffset),
                         modelRetryPolicy::maxAttempts);
                 invocationRef.set(response);
                 transitions.usage(
@@ -551,16 +565,18 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 response.costMinorUnits(),
                                 0));
                 recordTrace(new RuntimeTraceEvent(
-                        traceId,
+                        traceContext.traceId(),
                         run.id(),
                         java.util.Optional.of(attempt.attemptId()),
                         run.sessionId(),
                         java.util.Optional.of(modelStepRef[0].id()),
                         java.util.Optional.empty(),
                         attempt.workerId(),
-                        progress.iteration(),
+                        OptionalInt.of(progress.iteration()),
                         RuntimePhase.AFTER_MODEL_CALL,
                         "model.invoke",
+                        RuntimeTraceScope.STEP,
+                        RuntimeTraceStatus.SUCCESS,
                         modelTraceAttributes(run, response),
                         time.now()));
                 middleware.apply(RuntimePhase.AFTER_MODEL_CALL, middlewareContextRef[0]);
@@ -584,16 +600,18 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 "model context remained too long after the single forced rebuild")
                         : error;
                 recordTrace(new RuntimeTraceEvent(
-                        traceId,
+                        traceContext.traceId(),
                         run.id(),
                         java.util.Optional.of(attempt.attemptId()),
                         run.sessionId(),
                         java.util.Optional.of(modelStepRef[0].id()),
                         java.util.Optional.empty(),
                         attempt.workerId(),
-                        progress.iteration(),
+                        OptionalInt.of(progress.iteration()),
                         RuntimePhase.ON_ERROR,
                         "model.error",
+                        RuntimeTraceScope.STEP,
+                        RuntimeTraceStatus.FAILURE,
                         modelErrorAttributes(run, error),
                         time.now()));
                 AgentError classified = failModelStep(modelStepRef[0], terminal);
@@ -983,16 +1001,17 @@ public final class DefaultAgentLoop implements AgentLoop {
         }
     }
 
-    private RetryListener modelRetryListener(AgentRun run, ModelRequestId[] requestIds, int[] requestAttemptOffsets) {
+    private RetryListener modelRetryListener(
+            AgentRun run, AgentLoopContext progress, ModelRequestId[] requestIds, int[] requestAttemptOffsets) {
         return new RetryListener() {
             @Override
             public void retryScheduled(int failedAttempt, RuntimeException failure, Duration delay) {
-                append("model.attempt.retry-scheduled", "RETRY_SCHEDULED", failedAttempt, failure, delay);
+                append("model.attempt.retry-scheduled", "RETRY_SCHEDULED", failedAttempt, failure, delay, false);
             }
 
             @Override
             public void exhausted(int finalAttempt, RuntimeException failure) {
-                append("model.attempt.exhausted", "EXHAUSTED", finalAttempt, failure, Duration.ZERO);
+                append("model.attempt.exhausted", "EXHAUSTED", finalAttempt, failure, Duration.ZERO, true);
             }
 
             private void append(
@@ -1000,22 +1019,54 @@ public final class DefaultAgentLoop implements AgentLoop {
                     String status,
                     int retryExecutorAttempt,
                     RuntimeException failure,
-                    Duration delay) {
+                    Duration delay,
+                    boolean exhausted) {
                 Map<String, Object> data = new LinkedHashMap<>();
                 data.put("modelRequestId", requestIds[0].value());
                 data.put("status", status);
-                data.put("attempt", Math.max(1, retryExecutorAttempt - requestAttemptOffsets[0]));
+                int attemptNumber = Math.max(1, retryExecutorAttempt - requestAttemptOffsets[0]);
+                data.put("attempt", attemptNumber);
                 data.put("delayMillis", safeDurationMillis(delay));
+                String failureCategory;
+                boolean retryable = false;
                 if (failure instanceof ModelInvocationException modelFailure) {
                     data.put("modelCallId", modelFailure.callId().value());
                     data.put("category", modelFailure.category().name());
                     data.put("providerCode", modelFailure.providerCode());
                     data.put("retryable", modelFailure.retryable());
                     data.put("outputObserved", modelFailure.outputObserved());
+                    failureCategory = modelFailure.category().name();
+                    retryable = modelFailure.retryable();
                 } else {
                     data.put("category", failure.getClass().getSimpleName());
+                    failureCategory = failure.getClass().getSimpleName();
                 }
                 events.append(run.id(), eventType, data, time.now());
+                recordTrace(new RuntimeTraceEvent(
+                        progress.traceContext().traceId(),
+                        run.id(),
+                        progress.traceContext().attemptId(),
+                        run.sessionId(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        progress.traceContext().workerId(),
+                        OptionalInt.of(progress.iteration()),
+                        RuntimePhase.ON_ERROR,
+                        eventType,
+                        RuntimeTraceScope.ITERATION,
+                        exhausted ? RuntimeTraceStatus.FAILURE : RuntimeTraceStatus.ACTIVE,
+                        Map.of(
+                                "attemptNumber",
+                                attemptNumber,
+                                "failureCategory",
+                                failureCategory,
+                                "retryable",
+                                retryable,
+                                "delayMillis",
+                                safeDurationMillis(delay),
+                                "exhausted",
+                                exhausted),
+                        time.now()));
             }
         };
     }

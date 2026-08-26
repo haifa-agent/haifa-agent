@@ -7,11 +7,14 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceScope;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceStatus;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -35,9 +38,11 @@ class CliFailureDiagnosticSinkTest {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.of("worker-1"),
-                0,
+                OptionalInt.empty(),
                 RuntimePhase.ON_ERROR,
                 "runtime.error",
+                RuntimeTraceScope.ATTEMPT,
+                RuntimeTraceStatus.FAILURE,
                 Map.of("diagnosticId", "diagnostic-1", "errorCode", "TOOL_OUTCOME_UNKNOWN"),
                 Instant.parse("2026-08-05T00:00:00Z"));
 

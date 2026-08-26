@@ -19,13 +19,18 @@ import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.trace.FailureDiagnosticSink;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceContext;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceScope;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceStatus;
+import io.haifa.agent.runtime.core.trace.TraceIdentifierGenerator;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,6 +44,7 @@ public final class AttemptExecutor {
     private final RetryExecutor persistenceRetries;
     private final PersistenceRetryPolicy persistenceRetry;
     private final TracePort trace;
+    private final TraceIdentifierGenerator traceIds;
     private final IdentifierGenerator ids;
     private final FailureDiagnosticSink diagnostics;
 
@@ -51,6 +57,7 @@ public final class AttemptExecutor {
             RetryExecutor persistenceRetries,
             PersistenceRetryPolicy persistenceRetry,
             TracePort trace,
+            TraceIdentifierGenerator traceIds,
             IdentifierGenerator ids,
             FailureDiagnosticSink diagnostics) {
         this.attempts = Objects.requireNonNull(attempts);
@@ -61,21 +68,29 @@ public final class AttemptExecutor {
         this.persistenceRetries = Objects.requireNonNull(persistenceRetries);
         this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
         this.trace = Objects.requireNonNull(trace);
+        this.traceIds = Objects.requireNonNull(traceIds);
         this.ids = Objects.requireNonNull(ids);
         this.diagnostics = Objects.requireNonNull(diagnostics);
     }
 
     public void execute(AgentRun run, AgentRunExecutionAttempt attempt) {
+        RuntimeTraceContext traceContext = RuntimeTraceContext.forAttempt(
+                traceIds.nextTraceId(), attempt.attemptId(), attempt.workerId().or(() -> Optional.of(owner)));
         try {
             long expected = attempt.version();
             attempt.start(owner, time.now());
             persist(() -> attempts.save(attempt, expected));
-            if (run.status() == AgentRunStatus.QUEUED || run.status() == AgentRunStatus.PENDING)
+            recordAttemptStarted(run, traceContext);
+            boolean startsRun = run.status() == AgentRunStatus.QUEUED || run.status() == AgentRunStatus.PENDING;
+            if (startsRun) {
                 transitions.started(run);
-            loop.run(run, attempt);
+                recordRunStarted(run, traceContext);
+            }
+            loop.run(run, attempt, traceContext);
             AgentError terminalError =
                     run.status() == AgentRunStatus.FAILED ? run.error().orElse(null) : null;
-            if (terminalError != null) recordTerminalFailure(run, attempt, terminalError);
+            if (terminalError != null) recordTerminalFailure(run, attempt, traceContext, terminalError);
+            recordRunTerminal(run, traceContext);
             finish(attempt, statusFor(run.status()), terminalError);
         } catch (CancellationObservedException cancelled) {
             if (!run.status().isTerminal()) {
@@ -84,13 +99,97 @@ public final class AttemptExecutor {
                         new io.haifa.agent.core.run.RunTerminationReason(
                                 "USER_CANCELLED", "Cancellation observed at tool safe point"));
             }
+            recordRunTerminal(run, traceContext);
             finish(attempt, ExecutionAttemptStatus.CANCELLED, null);
         } catch (RuntimeException error) {
             AgentError attemptError = safeError(error);
-            recordFailure(run, attempt, attemptError, error);
+            recordFailure(run, attempt, traceContext, attemptError, error);
             if (!run.status().isTerminal()) transitions.failed(run, attemptError);
+            recordRunTerminal(run, traceContext);
             finish(attempt, ExecutionAttemptStatus.FAILED, attemptError);
         }
+    }
+
+    private void recordAttemptStarted(AgentRun run, RuntimeTraceContext context) {
+        recordTrace(new RuntimeTraceEvent(
+                context.traceId(),
+                run.id(),
+                context.attemptId(),
+                run.sessionId(),
+                Optional.empty(),
+                Optional.empty(),
+                context.workerId(),
+                OptionalInt.empty(),
+                RuntimePhase.BEFORE_RUN,
+                "attempt.started",
+                RuntimeTraceScope.ATTEMPT,
+                RuntimeTraceStatus.STARTED,
+                Map.of(),
+                time.now()));
+    }
+
+    private void recordRunStarted(AgentRun run, RuntimeTraceContext context) {
+        recordTrace(new RuntimeTraceEvent(
+                context.traceId(),
+                run.id(),
+                context.attemptId(),
+                run.sessionId(),
+                Optional.empty(),
+                Optional.empty(),
+                context.workerId(),
+                OptionalInt.empty(),
+                RuntimePhase.BEFORE_RUN,
+                "run.started",
+                RuntimeTraceScope.RUN,
+                RuntimeTraceStatus.STARTED,
+                Map.of("runStatus", run.status().name()),
+                time.now()));
+    }
+
+    private void recordRunTerminal(AgentRun run, RuntimeTraceContext context) {
+        String operation;
+        RuntimeTraceStatus status;
+        RuntimePhase phase;
+        switch (run.status()) {
+            case COMPLETED -> {
+                operation = "run.completed";
+                status = RuntimeTraceStatus.SUCCESS;
+                phase = RuntimePhase.AFTER_COMPLETION;
+            }
+            case FAILED -> {
+                operation = "run.failed";
+                status = RuntimeTraceStatus.FAILURE;
+                phase = RuntimePhase.ON_ERROR;
+            }
+            case CANCELLED -> {
+                operation = "run.cancelled";
+                status = RuntimeTraceStatus.UNKNOWN;
+                phase = RuntimePhase.ON_ERROR;
+            }
+            case TIMEOUT -> {
+                operation = "run.timeout";
+                status = RuntimeTraceStatus.FAILURE;
+                phase = RuntimePhase.ON_ERROR;
+            }
+            default -> {
+                return;
+            }
+        }
+        recordTrace(new RuntimeTraceEvent(
+                context.traceId(),
+                run.id(),
+                context.attemptId(),
+                run.sessionId(),
+                Optional.empty(),
+                Optional.empty(),
+                context.workerId(),
+                OptionalInt.empty(),
+                phase,
+                operation,
+                RuntimeTraceScope.RUN,
+                status,
+                Map.of("runStatus", run.status().name()),
+                time.now()));
     }
 
     private void finish(AgentRunExecutionAttempt attempt, ExecutionAttemptStatus status, AgentError error) {
@@ -170,7 +269,11 @@ public final class AttemptExecutor {
     }
 
     private void recordFailure(
-            AgentRun run, AgentRunExecutionAttempt attempt, AgentError attemptError, RuntimeException error) {
+            AgentRun run,
+            AgentRunExecutionAttempt attempt,
+            RuntimeTraceContext traceContext,
+            AgentError attemptError,
+            RuntimeException error) {
         List<String> failureTypes = failureTypes(error);
         ContextBuildException contextBuild = findFailure(error, ContextBuildException.class);
         LOGGER.warn(
@@ -182,16 +285,18 @@ public final class AttemptExecutor {
                 failureTypes,
                 contextBuild == null ? "" : contextBuild.failure().name());
         RuntimeTraceEvent context = new RuntimeTraceEvent(
-                attempt.attemptId().value(),
+                traceContext.traceId(),
                 run.id(),
                 Optional.of(attempt.attemptId()),
                 run.sessionId(),
                 Optional.empty(),
                 Optional.empty(),
                 attempt.workerId(),
-                0,
+                OptionalInt.empty(),
                 RuntimePhase.ON_ERROR,
                 "runtime.error",
+                RuntimeTraceScope.ATTEMPT,
+                RuntimeTraceStatus.FAILURE,
                 Map.of(
                         "errorCode", attemptError.code().wireCode(),
                         "diagnosticId", attemptError.diagnosticId() == null ? "" : attemptError.diagnosticId(),
@@ -207,18 +312,21 @@ public final class AttemptExecutor {
         }
     }
 
-    private void recordTerminalFailure(AgentRun run, AgentRunExecutionAttempt attempt, AgentError error) {
+    private void recordTerminalFailure(
+            AgentRun run, AgentRunExecutionAttempt attempt, RuntimeTraceContext traceContext, AgentError error) {
         recordTrace(new RuntimeTraceEvent(
-                attempt.attemptId().value(),
+                traceContext.traceId(),
                 run.id(),
                 Optional.of(attempt.attemptId()),
                 run.sessionId(),
                 Optional.empty(),
                 Optional.empty(),
                 attempt.workerId(),
-                0,
+                OptionalInt.empty(),
                 RuntimePhase.ON_ERROR,
                 "runtime.terminal-error",
+                RuntimeTraceScope.ATTEMPT,
+                RuntimeTraceStatus.FAILURE,
                 Map.of(
                         "errorCode",
                         error.code().wireCode(),

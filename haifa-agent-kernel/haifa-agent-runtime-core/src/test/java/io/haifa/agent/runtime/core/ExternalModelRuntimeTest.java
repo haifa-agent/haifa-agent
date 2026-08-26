@@ -48,6 +48,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -212,7 +213,7 @@ class ExternalModelRuntimeTest {
                 .filteredOn(trace -> trace.operation().equals("tool.execute")
                         || trace.operation().equals("tool.persisted"))
                 .extracting(RuntimeTraceEvent::iteration)
-                .containsExactly(1, 1);
+                .containsExactly(OptionalInt.of(1), OptionalInt.of(1));
         assertThat(modelRequests).hasSize(2);
         List<ModelMessage> firstRequest = modelRequests.getFirst();
         List<ModelMessage> secondRequest = modelRequests.getLast();
