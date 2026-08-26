@@ -32,7 +32,7 @@ class BaseSkillsTest {
                 .findFirst()
                 .orElseThrow();
         assertThat(resultVerification.metadata().declaredVersion())
-                .hasValueSatisfying(version -> assertThat(version.value()).isEqualTo("1.2.0"));
+                .hasValueSatisfying(version -> assertThat(version.value()).isEqualTo("1.3.0"));
         assertThat(result.registrations()).allSatisfy(registration -> {
             assertThat(registration.metadata().toolHints()).isEmpty();
             assertThat(registration.packageIndex().resources()).hasSize(1);
@@ -47,7 +47,7 @@ class BaseSkillsTest {
             String skill = new String(input.readAllBytes(), StandardCharsets.UTF_8);
             assertThat(skill)
                     .contains(
-                            "haifa.version: 1.2.0",
+                            "haifa.version: 1.3.0",
                             "Re-read the original request",
                             "complete contract proportionately",
                             "public API/data",
@@ -68,7 +68,18 @@ class BaseSkillsTest {
                             "state, side effects, ordering, compatibility, mutation scope",
                             "Self-invented APIs/tests remain inference",
                             "selected, ignored, and discovered test counts",
-                            "one selected test is not a complete test-suite claim");
+                            "one selected test is not a complete test-suite claim",
+                            "Recovering actionable evidence from noisy failed checks",
+                            "rerun the same",
+                            "at most once",
+                            "redirect both stdout and stderr",
+                            "Save the check's exit code",
+                            "at most 20 matches with 3-5 surrounding lines",
+                            "Do not `cat` the full log",
+                            "Delete the temporary log",
+                            "exit with the original check status",
+                            "possible flakiness or environment change")
+                    .doesNotContain("execution.output.read", "execution_output_read", "capturedOutputRef");
         }
     }
 

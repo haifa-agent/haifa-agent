@@ -3,7 +3,7 @@ name: result-verification
 description: Verify a claimed result against observable evidence and explicit completion criteria.
 license: Apache-2.0
 metadata:
-  haifa.version: 1.2.0
+  haifa.version: 1.3.0
 ---
 
 # Result verification
@@ -42,3 +42,22 @@ reliable structured evidence; one selected test is not a complete test-suite cla
 erase the earlier failure, and a later failure is not covered by an earlier pass.
 
 Prefer reproducible evidence such as test output, structured state, or a rendered artifact.
+
+## Recovering actionable evidence from noisy failed checks
+
+If a failed build or test already exposes an actionable error, use that evidence or run a smaller targeted check; do
+not mechanically rerun it. If its bounded result is truncated or lacks an actionable failure location, rerun the same
+or a smaller check at most once using the current shell:
+
+1. In one `execution_run` command, create a unique temporary log and redirect both stdout and stderr to it.
+2. Save the check's exit code before any search or cleanup command can replace it.
+3. Search exact anchors from existing evidence first, such as a failed test, exception, source file, `Caused by:`, or
+   `COMPILATION ERROR`. If none is known, use only a small set of framework failure markers.
+4. Return at most 20 matches with 3-5 surrounding lines and a bounded total result. Do not `cat` the full log or use
+   `tee` to echo it into model context. If needed, try at most one more specific query or a bounded tail.
+5. Delete the temporary log and exit with the original check status. Do not rely on a shell variable surviving into a
+   later Tool Call.
+
+Select redirection and search syntax for the disclosed shell: for example, `rg`/`grep` on POSIX or `Select-String` on
+PowerShell. If the rerun passes, retain both facts and treat the difference as possible flakiness or environment change;
+the later pass does not erase the earlier failure.

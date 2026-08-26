@@ -11,9 +11,9 @@ class CodingAgentPromptTest {
         CodingAgentPrompt.Snapshot second = CodingAgentPrompt.current();
 
         assertThat(second).isEqualTo(first);
-        assertThat(first.version()).isEqualTo("1.2.0");
+        assertThat(first.version()).isEqualTo("1.3.0");
         assertThat(first.digest()).matches("sha256:[0-9a-f]{64}");
-        assertThat(first.identity()).startsWith("coding-agent-prompt@1.2.0#sha256:");
+        assertThat(first.identity()).startsWith("coding-agent-prompt@1.3.0#sha256:");
         assertThat(first.text())
                 .contains(
                         "You are Haifa Coding Agent",
@@ -39,6 +39,12 @@ class CodingAgentPromptTest {
                         "explicit non-functional constraints",
                         "authoritative evidence provides expected and actual behavior",
                         "contract-conformance",
+                        "failed build or test does not expose actionable evidence",
+                        "do not repeat the same noisy command unchanged",
+                        "stdout and stderr redirected to a temporary log",
+                        "bounded exact-match context",
+                        "preserve the test exit code",
+                        "clean up the log",
                         "selected test count",
                         "later runtime control updates",
                         "report it as blocked or not run",
@@ -54,6 +60,9 @@ class CodingAgentPromptTest {
                         "rejected-record",
                         "accepted-record",
                         "performance contract",
+                        "execution.output.read",
+                        "execution_output_read",
+                        "capturedOutputRef",
                         "Case 14",
                         "/Users/");
     }
