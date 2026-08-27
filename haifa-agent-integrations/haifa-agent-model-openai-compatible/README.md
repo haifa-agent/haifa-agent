@@ -75,6 +75,7 @@ Chat Completions 当前支持：
 | 智谱 GLM | `zhipu-openai-chat` | 是 | 是 | 是 | 动态/强制 thinking、有效 effort 与采样限制由精确 profile 决定 |
 | 火山方舟 | `volcengine-ark-openai-chat` | 是 | 是 | 是 | 由受治理豆包/Endpoint profile 决定 |
 | SiliconFlow | `siliconflow-openai-chat` | 是 | 是 | 是 | 不发送厂商推理控制扩展 |
+| TokenRhythm | `tokenrhythm-openai-chat` | 是 | 是 | 是 | 不发送厂商推理控制扩展 |
 
 配置通过 Provider 下的 `apiBindings` 声明 Style。省略 dialect 即 `standard`；只有存在已验证协议差异
 时才声明非标准 dialect。当前未发布旧配置或快照，不保留旧 options、Provider-ID 猜测或双轨入口。
@@ -174,6 +175,7 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 | Zhipu | 是 | 是 | dynamic/forced profile | 必须 | opt-in |
 | Ark | 是 | 是 | profile-gated | profile-gated | opt-in |
 | SiliconFlow DeepSeek V4 Flash | 是 | 是 | 不声明 | 否 | opt-in |
+| TokenRhythm DeepSeek V4 Flash | 是 | 是 | 不声明 | 否 | opt-in |
 
 图片输入不是 dialect 推断结果。冻结模型分别声明 `IMAGE_UPLOAD_INPUT` 与 `IMAGE_URL_INPUT`；前者允许
 宿主解析后的临时图片字节，后者允许由 Provider 获取的外部 HTTPS 图片 URL。纯文本消息继续使用
@@ -189,6 +191,7 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 | Zhipu | `https://open.bigmodel.cn/api/paas/v4` | `env://BIGMODEL_API_KEY` | reviewed GLM model id | thinking/reasoning_effort/do_sample |
 | Ark | `https://ark.cn-beijing.volces.com/api/v3` | `env://ARK_API_KEY` | typed Model ID/Endpoint ID | thinking/service_tier/token parameter |
 | SiliconFlow | `https://api.siliconflow.cn/v1` | `env://SILICONFLOW_API_KEY` | reviewed model id | cumulative stream usage |
+| TokenRhythm | `https://api.tokenrhythm.com/v1` | `env://TR_API_KEY` | reviewed model id | cumulative stream usage |
 
 标准 OpenAI dialect 可冻结 `native_streaming=false`。此时 Adapter 使用同步 Chat Completions 获取权威
 `usage`，再通过 provider-neutral 默认桥接发出有界 Content/Usage 事件，适用于不实现 SSE usage 的本机中转。
@@ -351,6 +354,9 @@ HAIFA_ARK_MODEL_REFERENCE_KIND=MODEL_ID|ENDPOINT_ID
 
 HAIFA_SILICONFLOW_LIVE_TEST=true
 SILICONFLOW_API_KEY=<secret>
+
+HAIFA_TOKENRHYTHM_LIVE_TEST=true
+TR_API_KEY=<secret>
 
 # Explicit paid 2x2 comparison: SiliconFlow/DeepSeek x native streaming true/false
 HAIFA_STREAMING_MODE_COMPARISON_LIVE_TEST=true

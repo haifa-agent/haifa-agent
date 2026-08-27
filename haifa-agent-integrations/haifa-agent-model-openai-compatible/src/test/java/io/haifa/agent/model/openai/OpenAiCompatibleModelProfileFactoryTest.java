@@ -45,6 +45,29 @@ class OpenAiCompatibleModelProfileFactoryTest {
     }
 
     @Test
+    void verifiesOnlyTheReviewedTokenRhythmV4FlashChatBinding() {
+        ResolvedModelSnapshot reviewed = snapshot(
+                "tokenrhythm",
+                "tokenrhythm-v4-flash",
+                "deepseek-ai/DeepSeek-V4-Flash",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.TOKENRHYTHM,
+                "https://api.tokenrhythm.com/v1");
+        ResolvedModelSnapshot differentModel = snapshot(
+                "tokenrhythm",
+                "tokenrhythm-other",
+                "deepseek-ai/DeepSeek-V4-Pro",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.TOKENRHYTHM,
+                "https://api.tokenrhythm.com/v1");
+
+        assertThat(profile(reviewed).status()).isEqualTo(ModelProfileStatus.VERIFIED);
+        assertThat(profile(reviewed).selectable()).isTrue();
+        assertThat(profile(differentModel).status()).isEqualTo(ModelProfileStatus.UNVERIFIED);
+        assertThat(profile(differentModel).selectable()).isFalse();
+    }
+
+    @Test
     void describesOnlyCapabilitiesVerifiedByCurrentDeepSeekDialect() {
         ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
                 new ModelProviderId("deepseek"),

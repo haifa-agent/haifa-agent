@@ -160,7 +160,8 @@ public final class OpenAiCompatibleModelProfileFactory {
                 || verifiedZhipuDynamicLegacy(snapshot)
                 || verifiedZhipuForced(snapshot)
                 || verifiedCodexBinding(snapshot)
-                || verifiedSiliconFlowBinding(snapshot);
+                || verifiedSiliconFlowBinding(snapshot)
+                || verifiedTokenRhythmBinding(snapshot);
     }
 
     private static boolean verifiedReadOnlyResponsesBinding(ResolvedModelSnapshot snapshot) {
@@ -224,6 +225,12 @@ public final class OpenAiCompatibleModelProfileFactory {
     private static boolean verifiedSiliconFlowBinding(ResolvedModelSnapshot snapshot) {
         return verifiedChat(
                 snapshot, "siliconflow", OpenAiCompatibleDialects.SILICONFLOW, Set.of("deepseek-ai/DeepSeek-V4-Flash"));
+    }
+
+    private static boolean verifiedTokenRhythmBinding(ResolvedModelSnapshot snapshot) {
+        // TODO(tokenrhythm): confirm the official TokenRhythm model ids before relying on VERIFIED status.
+        return verifiedChat(
+                snapshot, "tokenrhythm", OpenAiCompatibleDialects.TOKENRHYTHM, Set.of("deepseek-ai/DeepSeek-V4-Flash"));
     }
 
     private static boolean verifiedChat(
