@@ -181,11 +181,13 @@ public final class PersonalModelAuthenticationController {
 
     private boolean apiKeySupported(String providerId) {
         List<PersonalAssistantProperties.ModelProvider> configured = providers.get();
-        if (configured.isEmpty()) return !"openai-codex".equalsIgnoreCase(providerId);
+        if (configured.isEmpty()) {
+            return !"openai-codex".equalsIgnoreCase(providerId) && !"google-antigravity".equalsIgnoreCase(providerId);
+        }
         return configured.stream()
                 .anyMatch(provider -> provider.id().equalsIgnoreCase(providerId)
                         && provider.credentialReference().startsWith("model-auth://")
-                        && !"openai-codex".equals(provider.id()));
+                        && externalLoginMethod(provider).isEmpty());
     }
 
     private boolean externalLoginSupported(ExternalLoginMethodId methodId) {

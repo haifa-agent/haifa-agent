@@ -112,7 +112,7 @@ class PersonalModelAuthenticationControllerTest {
     }
 
     @Test
-    void rejectsApiKeyForCodexAndClearsTheRequestBuffer() {
+    void rejectsApiKeyForExternalLoginProvidersAndClearsTheRequestBuffers() {
         var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
         try (var service = new LocalModelAuthenticationService(
                 store,
@@ -122,17 +122,27 @@ class PersonalModelAuthenticationControllerTest {
                 },
                 ignored -> null)) {
             var controller = new PersonalModelAuthenticationController(service, new PersonalApiMapper());
-            char[] secret = "secret-canary".toCharArray();
+            char[] codexSecret = "codex-secret-canary".toCharArray();
+            char[] antigravitySecret = "antigravity-secret-canary".toCharArray();
 
             assertThatThrownBy(() -> controller
                             .saveApiKey(
                                     "codex-key-1",
                                     new io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos
-                                            .SaveModelApiKey("openai-codex", secret))
+                                            .SaveModelApiKey("openai-codex", codexSecret))
                             .block())
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("AUTH_API_KEY_UNAVAILABLE");
-            assertThat(secret).containsOnly('\0');
+            assertThatThrownBy(() -> controller
+                            .saveApiKey(
+                                    "antigravity-key-1",
+                                    new io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos
+                                            .SaveModelApiKey("google-antigravity", antigravitySecret))
+                            .block())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("AUTH_API_KEY_UNAVAILABLE");
+            assertThat(codexSecret).containsOnly('\0');
+            assertThat(antigravitySecret).containsOnly('\0');
         }
     }
 

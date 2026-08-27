@@ -114,8 +114,7 @@ public class PersonalAssistantConfiguration {
                 CodexDeviceLoginOperation.Sleeper.system())));
         antigravityRegistration.ifPresent(value -> methods.add(new AntigravityExternalLoginMethod(
                 value,
-                new AntigravityTokenClient(
-                        antigravityHttp, mapper, personalClock, Duration.ofSeconds(30), value),
+                new AntigravityTokenClient(antigravityHttp, mapper, personalClock, Duration.ofSeconds(30), value),
                 antigravityHttp,
                 mapper,
                 SecureRandom::new,

@@ -37,8 +37,7 @@ class PersonalAssistantConfigurationTest {
                         8_192)),
                 URI.create("http://127.0.0.1:2081"));
 
-        var client = PersonalAssistantConfiguration.authenticationHttpClient(
-                List.of(provider), "google-antigravity");
+        var client = PersonalAssistantConfiguration.authenticationHttpClient(List.of(provider), "google-antigravity");
         Proxy selected = client.proxy()
                 .orElseThrow()
                 .select(URI.create("https://oauth2.googleapis.com/token"))
