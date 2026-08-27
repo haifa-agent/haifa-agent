@@ -33,6 +33,7 @@ EXPECTED_SERVER_START_CLASS = (
 )
 BAILIAN_DEFAULT_MODEL_ID = "qwen3.7-max-2026-05-17"
 CLIPROXY_GEMINI_MODEL_ID = "gemini-cliproxy-flash"
+ANTIGRAVITY_DIRECT_MODEL_ID = "antigravity-gemini"
 SILICONFLOW_MODEL_ID = "siliconflow-deepseek-v4-flash"
 CODEX_MODEL_IDS = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
 SUPPORTED_DEFAULT_MODEL_IDS = (
@@ -58,6 +59,7 @@ SUPPORTED_DEFAULT_MODEL_IDS = (
     *CODEX_MODEL_IDS,
     SILICONFLOW_MODEL_ID,
     CLIPROXY_GEMINI_MODEL_ID,
+    ANTIGRAVITY_DIRECT_MODEL_ID,
 )
 ALLOWED_MCP_TOOLS = ",".join(
     (
@@ -114,6 +116,13 @@ class ServiceRecord:
     WorkDirectory: str
     Stdout: str | None
     Stderr: str | None
+
+
+@dataclass(frozen=True)
+class AntigravityConfiguration:
+    endpoint: str
+    provider_model_id: str
+    proxy: str
 
 
 def warn(message: str) -> None:
@@ -482,6 +491,22 @@ def optional_cliproxy_environment(
         else environment.get("HAIFA_CLIPROXYAPI_MODEL_ID", "").strip()
     ) or "gemini-3-flash"
     return api_key, provider_model_id
+
+
+def antigravity_configuration(
+    environment: Mapping[str, str] | None = None,
+) -> AntigravityConfiguration:
+    source = os.environ if environment is None else environment
+    return AntigravityConfiguration(
+        source.get(
+            "HAIFA_ANTIGRAVITY_MODEL_ENDPOINT",
+            "https://daily-cloudcode-pa.googleapis.com/v1internal",
+        ).strip()
+        or "https://daily-cloudcode-pa.googleapis.com/v1internal",
+        source.get("HAIFA_ANTIGRAVITY_MODEL", "gemini-3-flash").strip() or "gemini-3-flash",
+        source.get("HAIFA_ANTIGRAVITY_PROXY_URL", "http://127.0.0.1:2081").strip()
+        or "http://127.0.0.1:2081",
+    )
 
 
 def optional_cliproxy_downstream_key(value: str) -> str:
@@ -880,6 +905,7 @@ def backend_environment(
     web_fetch_provider: str = "tavily",
     cliproxy: tuple[str, str] | None = None,
     siliconflow_key: str | None = None,
+    antigravity: AntigravityConfiguration | None = None,
 ) -> dict[str, str]:
     environment = {
         "DEEPSEEK_API_KEY": deepseek_key,
@@ -1299,6 +1325,34 @@ def backend_environment(
                 f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "65536",
             }
         )
+        next_provider_index += 1
+    if antigravity is not None:
+        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
+        environment.update(
+            {
+                f"{prefix}_ID": "google-antigravity",
+                f"{prefix}_DISPLAYNAME": "Google Antigravity Direct (Local Compatibility)",
+                f"{prefix}_MODE": "remote",
+                f"{prefix}_ALLOWDETERMINISTIC": "false",
+                f"{prefix}_NATIVESTREAMING": "true",
+                f"{prefix}_ENDPOINT": antigravity.endpoint,
+                f"{prefix}_PROXY": antigravity.proxy,
+                f"{prefix}_CREDENTIALREFERENCE": "model-auth://google-antigravity/default",
+                f"{prefix}_APIBINDINGS_0_STYLE": "google-gemini-generate-content",
+                f"{prefix}_APIBINDINGS_0_DIALECT": "antigravity-direct",
+                f"{prefix}_MODELS_0_ID": ANTIGRAVITY_DIRECT_MODEL_ID,
+                f"{prefix}_MODELS_0_DISPLAYNAME": "Gemini via Antigravity Direct (UNOFFICIAL_LOCAL_COMPAT)",
+                f"{prefix}_MODELS_0_MODELDISPLAYNAME": "Gemini Flash",
+                f"{prefix}_MODELS_0_PROVIDERMODELID": antigravity.provider_model_id,
+                f"{prefix}_MODELS_0_STYLE": "google-gemini-generate-content",
+                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
+                f"{prefix}_MODELS_0_CAPABILITIES_2": "STRUCTURED_OUTPUT",
+                f"{prefix}_MODELS_0_CAPABILITIES_3": "REASONING",
+                f"{prefix}_MODELS_0_CONTEXTWINDOW": "131072",
+                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
+            }
+        )
     return environment
 
 
@@ -1309,6 +1363,7 @@ def resolve_default_model_id(
     bigmodel_key: str | None = None,
     cliproxy: tuple[str, str] | None = None,
     siliconflow_key: str | None = None,
+    antigravity: AntigravityConfiguration | None = None,
 ) -> str:
     selected = requested or DEFAULT_MODEL_ID
     if selected.startswith("qwen") and bailian is None:
@@ -1321,6 +1376,8 @@ def resolve_default_model_id(
         fail("The CLIProxyAPI Gemini default model requires HAIFA_CLIPROXYAPI_API_KEY.")
     if selected == SILICONFLOW_MODEL_ID and siliconflow_key is None:
         fail("The SiliconFlow default model requires a SiliconFlow API key.")
+    if selected == ANTIGRAVITY_DIRECT_MODEL_ID and antigravity is None:
+        fail("The Antigravity Direct default model requires local compatibility testing to be enabled.")
     return selected
 
 
@@ -1423,6 +1480,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         args.siliconflow_key_file, "SiliconFlow", "SILICONFLOW_API_KEY"
     )
     cliproxy = optional_cliproxy_environment(config_file=args.cliproxy_config_file)
+    antigravity = antigravity_configuration()
     default_model_id = resolve_default_model_id(
         args.default_model_id,
         bailian,
@@ -1430,6 +1488,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         bigmodel_key,
         cliproxy,
         siliconflow_key,
+        antigravity,
     )
     continuation = continuation_key(args.continuation_key_file)
     for directory in (value.runtime, value.data, value.logs):
@@ -1505,6 +1564,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
             args.web_fetch_provider,
             cliproxy=cliproxy,
             siliconflow_key=siliconflow_key,
+            antigravity=antigravity,
         ),
         args.startup_timeout_seconds,
         value,

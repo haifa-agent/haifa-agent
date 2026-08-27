@@ -316,6 +316,79 @@ class RealEnvironmentTest(unittest.TestCase):
                 None,
             )
 
+    def test_antigravity_local_compatibility_adds_a_distinct_direct_model(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            repository=root,
+            server=root / "server",
+            web=root / "web",
+            runtime=root / "runtime",
+            data=root / "runtime/data",
+            logs=root / "runtime/logs",
+            state=root / "runtime/last-start.json",
+            stop_state=root / "runtime/last-stop.json",
+            maven_wrapper=root / "mvnw",
+        )
+        configuration = real_environment.antigravity_configuration({})
+
+        environment = real_environment.backend_environment(
+            "deepseek-secret",
+            real_environment.ANTIGRAVITY_DIRECT_MODEL_ID,
+            None,
+            "aliyun-secret",
+            "continuation-secret",
+            paths,
+            root / "skills",
+            None,
+            tavily_key="tavily-secret",
+            antigravity=configuration,
+        )
+
+        self.assertEqual(
+            real_environment.AntigravityConfiguration(
+                "https://daily-cloudcode-pa.googleapis.com/v1internal",
+                "gemini-3-flash",
+                "http://127.0.0.1:2081",
+            ),
+            configuration,
+        )
+        prefix = "HAIFA_PERSONAL_MODELPROVIDERS_2"
+        self.assertEqual("google-antigravity", environment[f"{prefix}_ID"])
+        self.assertEqual(
+            "Google Antigravity Direct (Local Compatibility)",
+            environment[f"{prefix}_DISPLAYNAME"],
+        )
+        self.assertEqual(
+            "https://daily-cloudcode-pa.googleapis.com/v1internal",
+            environment[f"{prefix}_ENDPOINT"],
+        )
+        self.assertEqual("http://127.0.0.1:2081", environment[f"{prefix}_PROXY"])
+        self.assertEqual(
+            "model-auth://google-antigravity/default",
+            environment[f"{prefix}_CREDENTIALREFERENCE"],
+        )
+        self.assertEqual(
+            "google-gemini-generate-content",
+            environment[f"{prefix}_APIBINDINGS_0_STYLE"],
+        )
+        self.assertEqual("antigravity-direct", environment[f"{prefix}_APIBINDINGS_0_DIALECT"])
+        self.assertEqual(
+            real_environment.ANTIGRAVITY_DIRECT_MODEL_ID,
+            environment[f"{prefix}_MODELS_0_ID"],
+        )
+        self.assertEqual("gemini-3-flash", environment[f"{prefix}_MODELS_0_PROVIDERMODELID"])
+        self.assertEqual("REASONING", environment[f"{prefix}_MODELS_0_CAPABILITIES_3"])
+        self.assertFalse(any(name.startswith(f"{prefix}_MODELS_1_") for name in environment))
+
+        self.assertEqual(
+            real_environment.ANTIGRAVITY_DIRECT_MODEL_ID,
+            real_environment.resolve_default_model_id(
+                real_environment.ANTIGRAVITY_DIRECT_MODEL_ID,
+                None,
+                antigravity=configuration,
+            ),
+        )
+
     def test_bailian_key_value_file_adds_qwen_models_without_exposing_secret_in_names(self) -> None:
         root = Path("repository")
         paths = real_environment.Paths(
