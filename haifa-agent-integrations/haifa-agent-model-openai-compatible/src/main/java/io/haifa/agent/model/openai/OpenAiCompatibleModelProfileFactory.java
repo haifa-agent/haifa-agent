@@ -229,8 +229,7 @@ public final class OpenAiCompatibleModelProfileFactory {
 
     private static boolean verifiedTokenRhythmBinding(ResolvedModelSnapshot snapshot) {
         // TODO(tokenrhythm): extend with the full reviewed TokenRhythm model id list as needed.
-        return verifiedChat(
-                snapshot, "tokenrhythm", OpenAiCompatibleDialects.TOKENRHYTHM, Set.of("deepseek-v4-flash"));
+        return verifiedChat(snapshot, "tokenrhythm", OpenAiCompatibleDialects.TOKENRHYTHM, Set.of("deepseek-v4-flash"));
     }
 
     private static boolean verifiedChat(
