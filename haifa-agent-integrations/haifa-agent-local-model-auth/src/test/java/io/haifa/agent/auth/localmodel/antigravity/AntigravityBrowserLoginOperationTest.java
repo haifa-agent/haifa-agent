@@ -76,15 +76,26 @@ class AntigravityBrowserLoginOperationTest {
             String state = extractQueryParam(authUri.getQuery(), "state");
             assertThat(state).isNotBlank();
 
-            // Simulate browser redirect to callback server
+            // A forged error callback must not terminate the active login attempt.
             HttpClient http = HttpClient.newHttpClient();
+            HttpRequest forgedErrorReq = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + callbackPort
+                            + "/oauth-callback?error=access_denied&state=wrong-tampered-state"))
+                    .GET()
+                    .build();
+            HttpResponse<String> forgedErrorResp = http.send(forgedErrorReq, HttpResponse.BodyHandlers.ofString());
+            assertThat(forgedErrorResp.statusCode()).isEqualTo(400);
+            assertThat(future).isNotCompleted();
+
+            // Simulate browser redirect to callback server
             HttpRequest callbackReq = HttpRequest.newBuilder(URI.create(
                             "http://127.0.0.1:" + callbackPort + "/oauth-callback?code=test-auth-code&state=" + state))
                     .GET()
                     .build();
             HttpResponse<String> callbackResp = http.send(callbackReq, HttpResponse.BodyHandlers.ofString());
             assertThat(callbackResp.statusCode()).isEqualTo(200);
-            assertThat(callbackResp.body()).contains("Google Antigravity authentication successful");
+            assertThat(callbackResp.body())
+                    .contains("Google Antigravity authorization received")
+                    .doesNotContain("authentication successful");
 
             StoredExternalCredential credential = future.get(5, TimeUnit.SECONDS);
             assertThat(credential.reference()).isEqualTo(AntigravityBrowserLoginOperation.CREDENTIAL_REFERENCE);

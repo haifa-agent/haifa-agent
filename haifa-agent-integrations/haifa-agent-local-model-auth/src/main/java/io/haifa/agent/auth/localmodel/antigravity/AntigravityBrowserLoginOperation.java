@@ -182,6 +182,11 @@ public final class AntigravityBrowserLoginOperation implements ExternalLoginOper
                 return;
             }
             Map<String, String> query = parseQuery(rawQuery);
+            String state = query.get("state");
+            if (state == null || !state.equals(expectedState)) {
+                sendResponse(exchange, 400, "Invalid State");
+                return;
+            }
             String error = query.get("error");
             if (error != null && !error.isBlank()) {
                 authorizationCode.completeExceptionally(
@@ -189,14 +194,16 @@ public final class AntigravityBrowserLoginOperation implements ExternalLoginOper
                 sendResponse(exchange, 200, "Authorization declined or failed. You may close this window.");
                 return;
             }
-            String state = query.get("state");
             String code = query.get("code");
-            if (state == null || !state.equals(expectedState) || code == null || code.isBlank()) {
-                sendResponse(exchange, 400, "Invalid State or Code");
+            if (code == null || code.isBlank()) {
+                sendResponse(exchange, 400, "Invalid Code");
                 return;
             }
             authorizationCode.complete(code.trim());
-            sendResponse(exchange, 200, "Google Antigravity authentication successful. You may close this window.");
+            sendResponse(
+                    exchange,
+                    200,
+                    "Google Antigravity authorization received. Completing sign-in; you may close this window.");
         } catch (Exception exception) {
             LOGGER.log(System.Logger.Level.WARNING, "Error handling OAuth callback", exception);
             sendResponse(exchange, 500, "Internal Server Error");

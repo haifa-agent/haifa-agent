@@ -94,7 +94,8 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
 
     @Override
     public boolean apiKeyConnectionSupported() {
-        return !selectedCredentialReference.startsWith("model-auth://openai-codex/");
+        return !selectedCredentialReference.startsWith("model-auth://openai-codex/")
+                && !selectedCredentialReference.startsWith("model-auth://google-antigravity/");
     }
 
     @Override

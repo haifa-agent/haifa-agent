@@ -107,6 +107,21 @@ class CliCodingAuthenticationClientTest {
                 .isFalse();
     }
 
+    @Test
+    void apiKeyConnectionIsUnavailableForExternalLoginCredentials() {
+        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+
+        assertThat(client(store, "model-auth://deepseek/default", "deepseek", Map.of())
+                        .apiKeyConnectionSupported())
+                .isTrue();
+        assertThat(client(store, "model-auth://openai-codex/default", "openai-codex", Map.of())
+                        .apiKeyConnectionSupported())
+                .isFalse();
+        assertThat(client(store, "model-auth://google-antigravity/default", "google-antigravity", Map.of())
+                        .apiKeyConnectionSupported())
+                .isFalse();
+    }
+
     private CliCodingAuthenticationClient client(
             FileLocalModelAuthStore store,
             String credentialReference,
