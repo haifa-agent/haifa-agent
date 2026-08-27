@@ -497,9 +497,7 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                 ModelToolCall actual = message.toolCalls().get(index);
                 CallIdentity frozen = expected.get(index);
                 if (!actual.providerCorrelationId().value().equals(frozen.id())
-                        || !actual.name().equals(frozen.name())
-                        || !sameJsonDocument(actual.arguments(), frozen.arguments()))
-                    throw new InvalidContinuationException(null);
+                        || !actual.name().equals(frozen.name())) throw new InvalidContinuationException(null);
             }
             return parts;
         } catch (InvalidContinuationException | IllegalArgumentException exception) {
@@ -511,16 +509,6 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                     "invalid_gemini_continuation",
                     "protected Gemini continuation is missing or invalid",
                     null);
-        }
-    }
-
-    private boolean sameJsonDocument(Object first, Object second) {
-        try {
-            JsonNode firstNode = json.readTree(json.writeValueAsBytes(first));
-            JsonNode secondNode = json.readTree(json.writeValueAsBytes(second));
-            return firstNode.equals(secondNode);
-        } catch (IOException exception) {
-            throw new InvalidContinuationException(exception);
         }
     }
 
