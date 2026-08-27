@@ -72,13 +72,13 @@ class TokenRhythmOpenAiChatTest {
     void mergesCumulativeUsageAndPublishesOnlyTheFinalSnapshot() throws Exception {
         responseBody.set(
                 """
-                data: {"id":"tr-stream","model":"deepseek-ai/DeepSeek-V4-Flash","choices":[{"index":0,"delta":{"reasoning_content":"private thought","content":"hel"},"finish_reason":null}],"usage":{"prompt_tokens":0,"completion_tokens":0}}
+                data: {"id":"tr-stream","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"reasoning_content":"private thought","content":"hel"},"finish_reason":null}],"usage":{"prompt_tokens":0,"completion_tokens":0}}
 
-                data: {"id":"tr-stream","model":"deepseek-ai/DeepSeek-V4-Flash","choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0}}
+                data: {"id":"tr-stream","model":"deepseek-v4-flash","choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0}}
 
-                data: {"id":"tr-stream","model":"deepseek-ai/DeepSeek-V4-Flash","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":2}}
+                data: {"id":"tr-stream","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":2}}
 
-                data: {"id":"tr-stream","model":"deepseek-ai/DeepSeek-V4-Flash","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":5}}
+                data: {"id":"tr-stream","model":"deepseek-v4-flash","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":5}}
 
                 data: [DONE]
 
@@ -109,9 +109,9 @@ class TokenRhythmOpenAiChatTest {
     void assemblesToolArgumentsWhileKeepingFinalUsageSingle() {
         responseBody.set(
                 """
-                data: {"id":"tr-tool","model":"deepseek-ai/DeepSeek-V4-Flash","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-weather","type":"function","function":{"name":"weather","arguments":"{\\"city\\":"}}]},"finish_reason":null}],"usage":{"prompt_tokens":0,"completion_tokens":0}}
+                data: {"id":"tr-tool","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-weather","type":"function","function":{"name":"weather","arguments":"{\\"city\\":"}}]},"finish_reason":null}],"usage":{"prompt_tokens":0,"completion_tokens":0}}
 
-                data: {"id":"tr-tool","model":"deepseek-ai/DeepSeek-V4-Flash","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"Paris\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":4,"completion_tokens":1}}
+                data: {"id":"tr-tool","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"Paris\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":4,"completion_tokens":1}}
 
                 data: [DONE]
 
@@ -141,9 +141,9 @@ class TokenRhythmOpenAiChatTest {
     void rejectsDecreasingUsageAndMissingUsage() {
         responseBody.set(
                 """
-                data: {"id":"tr-bad","model":"deepseek-ai/DeepSeek-V4-Flash","choices":[{"index":0,"delta":{"content":"x"},"finish_reason":null}],"usage":{"prompt_tokens":4,"completion_tokens":2}}
+                data: {"id":"tr-bad","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"x"},"finish_reason":null}],"usage":{"prompt_tokens":4,"completion_tokens":2}}
 
-                data: {"id":"tr-bad","model":"deepseek-ai/DeepSeek-V4-Flash","choices":[{"index":0,"delta":{"content":"y"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1}}
+                data: {"id":"tr-bad","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"y"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1}}
 
                 data: [DONE]
 
@@ -152,7 +152,7 @@ class TokenRhythmOpenAiChatTest {
 
         responseBody.set(
                 """
-                data: {"id":"tr-missing","model":"deepseek-ai/DeepSeek-V4-Flash","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}
+                data: {"id":"tr-missing","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}
 
                 data: [DONE]
 
@@ -172,9 +172,9 @@ class TokenRhythmOpenAiChatTest {
         for (String current : decreasingUsages) {
             responseBody.set(
                     """
-                    data: {"id":"tr-fields","model":"deepseek-ai/DeepSeek-V4-Flash","choices":[{"index":0,"delta":{"content":"x"},"finish_reason":null}],"usage":{"prompt_tokens":5,"completion_tokens":5,"prompt_cache_hit_tokens":5,"prompt_cache_miss_tokens":5,"completion_tokens_details":{"reasoning_tokens":5}}}
+                    data: {"id":"tr-fields","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"x"},"finish_reason":null}],"usage":{"prompt_tokens":5,"completion_tokens":5,"prompt_cache_hit_tokens":5,"prompt_cache_miss_tokens":5,"completion_tokens_details":{"reasoning_tokens":5}}}
 
-                    data: {"id":"tr-fields","model":"deepseek-ai/DeepSeek-V4-Flash","choices":[{"index":0,"delta":{"content":"y"},"finish_reason":"stop"}],"usage":%s}
+                    data: {"id":"tr-fields","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"y"},"finish_reason":"stop"}],"usage":%s}
 
                     data: [DONE]
 
@@ -188,8 +188,8 @@ class TokenRhythmOpenAiChatTest {
     @Test
     void freezesOfficialEndpointAndRejectsUnsafeEndpointsBeforeHttp() {
         assertThat(OpenAiCompatibleDialects.configuredOptions(
-                        OpenAiCompatibleDialects.TOKENRHYTHM, URI.create("https://api.tokenrhythm.com/v1")))
-                .containsEntry("endpoint_host", "api.tokenrhythm.com");
+                        OpenAiCompatibleDialects.TOKENRHYTHM, URI.create("https://tokenrhythm.studio/v1")))
+                .containsEntry("endpoint_host", "tokenrhythm.studio");
         assertThat(OpenAiCompatibleDialects.resolve(snapshot(provider)).streamUsageMode())
                 .isEqualTo(StreamUsageMode.MONOTONIC_CUMULATIVE);
 
@@ -197,10 +197,10 @@ class TokenRhythmOpenAiChatTest {
                         OpenAiCompatibleDialects.TOKENRHYTHM, URI.create("https://example.com/v1")))
                 .hasMessageContaining("host is not allowed");
         assertThatThrownBy(() -> OpenAiCompatibleDialects.configuredOptions(
-                        OpenAiCompatibleDialects.TOKENRHYTHM, URI.create("https://api.tokenrhythm.com/api/v1")))
+                        OpenAiCompatibleDialects.TOKENRHYTHM, URI.create("https://tokenrhythm.studio/api/v1")))
                 .hasMessageContaining("/v1");
         assertThatThrownBy(() -> model(provider(
-                        URI.create("http://api.tokenrhythm.com/v1"), Map.of("endpoint_host", "api.tokenrhythm.com"))))
+                        URI.create("http://tokenrhythm.studio/v1"), Map.of("endpoint_host", "tokenrhythm.studio"))))
                 .hasMessageContaining("loopback host");
         assertThat(requests).hasValue(0);
     }
@@ -236,7 +236,7 @@ class TokenRhythmOpenAiChatTest {
                 new ModelDefinitionId("tokenrhythm-deepseek-v4-flash"),
                 "model-v1",
                 providerId,
-                "deepseek-ai/DeepSeek-V4-Flash",
+                "deepseek-v4-flash",
                 "TokenRhythm DeepSeek V4 Flash",
                 ModelStatus.ACTIVE,
                 EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),

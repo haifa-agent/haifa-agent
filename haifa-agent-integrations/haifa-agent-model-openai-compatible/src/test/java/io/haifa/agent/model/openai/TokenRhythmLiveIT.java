@@ -38,7 +38,8 @@ import org.junit.jupiter.api.Test;
 
 @Tag("live")
 class TokenRhythmLiveIT {
-    private static final String PROVIDER_MODEL = "deepseek-ai/DeepSeek-V4-Flash";
+    private static final String PROVIDER_MODEL =
+            System.getenv().getOrDefault("HAIFA_TOKENRHYTHM_MODEL_ID", "deepseek-v4-flash");
     private static final String TOOL_RESULT_MARKER = "TOKENRHYTHM_TOOL_OK_8421";
 
     @Test
@@ -138,7 +139,7 @@ class TokenRhythmLiveIT {
     }
 
     private static ModelProviderDefinition provider() {
-        URI endpoint = URI.create("https://api.tokenrhythm.com/v1");
+        URI endpoint = URI.create("https://tokenrhythm.studio/v1");
         ModelProviderId providerId = new ModelProviderId("tokenrhythm");
         ModelDefinition model = new ModelDefinition(
                 new ModelDefinitionId("tokenrhythm-deepseek-v4-flash"),

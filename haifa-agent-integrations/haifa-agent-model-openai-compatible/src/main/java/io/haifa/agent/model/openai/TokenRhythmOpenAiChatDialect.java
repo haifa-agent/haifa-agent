@@ -14,7 +14,7 @@ import java.util.Set;
  */
 final class TokenRhythmOpenAiChatDialect implements OpenAiCompatibleDialect {
     static final TokenRhythmOpenAiChatDialect INSTANCE = new TokenRhythmOpenAiChatDialect();
-    private static final Set<String> OFFICIAL_HOSTS = Set.of("api.tokenrhythm.studio");
+    private static final Set<String> OFFICIAL_HOSTS = Set.of("tokenrhythm.studio");
 
     private TokenRhythmOpenAiChatDialect() {}
 

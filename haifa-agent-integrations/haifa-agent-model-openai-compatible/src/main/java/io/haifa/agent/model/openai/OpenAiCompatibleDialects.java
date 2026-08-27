@@ -137,7 +137,7 @@ public final class OpenAiCompatibleDialects {
         String normalizedHost = host.toLowerCase(Locale.ROOT);
         boolean officialHttps = "https".equalsIgnoreCase(endpoint.getScheme())
                 && endpoint.getPort() == -1
-                && "api.tokenrhythm.com".equals(normalizedHost);
+                && "tokenrhythm.studio".equals(normalizedHost);
         boolean loopbackHttp = "http".equalsIgnoreCase(endpoint.getScheme())
                 && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1").contains(normalizedHost);
         if (!officialHttps && !loopbackHttp) {

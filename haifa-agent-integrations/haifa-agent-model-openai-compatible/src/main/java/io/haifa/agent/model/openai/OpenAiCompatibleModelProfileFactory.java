@@ -228,9 +228,9 @@ public final class OpenAiCompatibleModelProfileFactory {
     }
 
     private static boolean verifiedTokenRhythmBinding(ResolvedModelSnapshot snapshot) {
-        // TODO(tokenrhythm): confirm the official TokenRhythm model ids before relying on VERIFIED status.
+        // TODO(tokenrhythm): extend with the full reviewed TokenRhythm model id list as needed.
         return verifiedChat(
-                snapshot, "tokenrhythm", OpenAiCompatibleDialects.TOKENRHYTHM, Set.of("deepseek-ai/DeepSeek-V4-Flash"));
+                snapshot, "tokenrhythm", OpenAiCompatibleDialects.TOKENRHYTHM, Set.of("deepseek-v4-flash"));
     }
 
     private static boolean verifiedChat(

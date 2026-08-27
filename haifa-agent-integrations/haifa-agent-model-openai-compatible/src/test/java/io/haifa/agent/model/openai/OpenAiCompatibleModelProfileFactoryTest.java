@@ -49,17 +49,17 @@ class OpenAiCompatibleModelProfileFactoryTest {
         ResolvedModelSnapshot reviewed = snapshot(
                 "tokenrhythm",
                 "tokenrhythm-v4-flash",
-                "deepseek-ai/DeepSeek-V4-Flash",
+                "deepseek-v4-flash",
                 ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
                 OpenAiCompatibleDialects.TOKENRHYTHM,
-                "https://api.tokenrhythm.com/v1");
+                "https://tokenrhythm.studio/v1");
         ResolvedModelSnapshot differentModel = snapshot(
                 "tokenrhythm",
                 "tokenrhythm-other",
-                "deepseek-ai/DeepSeek-V4-Pro",
+                "deepseek-v4-pro",
                 ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
                 OpenAiCompatibleDialects.TOKENRHYTHM,
-                "https://api.tokenrhythm.com/v1");
+                "https://tokenrhythm.studio/v1");
 
         assertThat(profile(reviewed).status()).isEqualTo(ModelProfileStatus.VERIFIED);
         assertThat(profile(reviewed).selectable()).isTrue();
