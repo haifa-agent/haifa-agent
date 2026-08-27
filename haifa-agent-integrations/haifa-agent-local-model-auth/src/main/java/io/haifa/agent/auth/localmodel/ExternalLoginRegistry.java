@@ -32,4 +32,10 @@ public final class ExternalLoginRegistry {
     public List<ExternalLoginMethodDescriptor> descriptors() {
         return methods.values().stream().map(ExternalLoginMethod::descriptor).toList();
     }
+
+    public void prepareIfRegistered(StoredExternalCredential credential) {
+        StoredExternalCredential current = Objects.requireNonNull(credential, "credential must not be null");
+        ExternalLoginMethod method = methods.get(current.methodId());
+        if (method != null) method.prepare(current);
+    }
 }

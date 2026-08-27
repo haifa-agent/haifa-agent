@@ -23,6 +23,7 @@ import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
+import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
@@ -113,6 +114,109 @@ class GeminiGenerateContentModelTest {
     }
 
     @Test
+    void antigravityDirectWrapsPayloadAndExtractsProject() throws Exception {
+        AtomicReference<HttpExchange> exchange = new AtomicReference<>();
+        AtomicReference<JsonNode> requestBody = new AtomicReference<>();
+        start(exchange, requestBody, List.of(Response.json(200, directResponse(textResponse("direct-ok")))));
+
+        var response = standardStubModel()
+                .invoke(request(
+                        antigravityDirectSnapshot("my-custom-project"),
+                        List.of(ModelMessage.text(ModelMessageRole.USER, "hello direct")),
+                        List.of()));
+
+        assertThat(response.content()).isEqualTo("direct-ok");
+        assertThat(exchange.get().getRequestURI().toString()).isEqualTo("/v1internal:generateContent");
+        assertThat(exchange.get().getRequestHeaders().getFirst("Authorization")).isEqualTo("Bearer secret-value");
+        assertThat(exchange.get().getRequestHeaders().getFirst("User-Agent")).isEqualTo("Antigravity");
+
+        JsonNode root = requestBody.get();
+        assertThat(root.path("project").asText()).isEqualTo("my-custom-project");
+        assertThat(root.path("model").asText()).isEqualTo("gemini-test");
+        assertThat(root.path("userAgent").asText()).isEqualTo("antigravity");
+        assertThat(root.path("requestType").asText()).isEqualTo("agent");
+        assertThat(root.path("requestId").asText()).startsWith("agent-");
+        assertThat(root.has("metadata")).isFalse();
+
+        JsonNode inner = root.path("request");
+        assertThat(inner.path("sessionId").asText()).matches("-[0-9]+");
+        assertThat(inner.path("generationConfig").has("maxOutputTokens")).isFalse();
+        assertThat(inner.path("contents")
+                        .get(0)
+                        .path("parts")
+                        .get(0)
+                        .path("text")
+                        .asText())
+                .isEqualTo("hello direct");
+    }
+
+    @Test
+    void antigravityDirect429QuotaExhaustedFailsClosedAsNonRetryable() throws Exception {
+        String quotaError =
+                """
+                {
+                    "error": {
+                        "code": 429,
+                        "message": "Resource has been exhausted",
+                        "status": "RESOURCE_EXHAUSTED",
+                        "details": [
+                            {
+                                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                                "reason": "QUOTA_EXHAUSTED",
+                                "domain": "googleapis.com"
+                            }
+                        ]
+                    }
+                }
+                """;
+        start(new AtomicReference<>(), new AtomicReference<>(), List.of(Response.json(429, quotaError)));
+
+        assertThatThrownBy(() -> standardStubModel()
+                        .invoke(request(
+                                antigravityDirectSnapshot("project-1"),
+                                List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                                List.of())))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.RATE_LIMITED);
+                    assertThat(failure.retryable()).isFalse();
+                    assertThat(failure.providerCode()).isEqualTo("quota_exhausted");
+                });
+    }
+
+    @Test
+    void antigravityDirect429InsufficientCreditsFailsClosedAsNonRetryable() throws Exception {
+        String creditError =
+                """
+                {
+                    "error": {
+                        "code": 429,
+                        "message": "Insufficient G1 credits",
+                        "status": "RESOURCE_EXHAUSTED",
+                        "details": [
+                            {
+                                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                                "reason": "INSUFFICIENT_G1_CREDITS_BALANCE",
+                                "domain": "googleapis.com"
+                            }
+                        ]
+                    }
+                }
+                """;
+        start(new AtomicReference<>(), new AtomicReference<>(), List.of(Response.json(429, creditError)));
+
+        assertThatThrownBy(() -> standardStubModel()
+                        .invoke(request(
+                                antigravityDirectSnapshot("project-1"),
+                                List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                                List.of())))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.RATE_LIMITED);
+                    assertThat(failure.retryable()).isFalse();
+                    assertThat(failure.providerCode()).isEqualTo("insufficient_g1_credits_balance");
+                });
+    }
+
+    @Test
     void mapsUploadedImageAndAudioAsNativeGeminiInlineData() throws Exception {
         AtomicReference<JsonNode> requestBody = new AtomicReference<>();
         start(new AtomicReference<>(), requestBody, List.of(Response.json(200, textResponse("media-ok"))));
@@ -155,8 +259,11 @@ class GeminiGenerateContentModelTest {
                 dialectSnapshot(),
                 List.of(ModelMessage.text(ModelMessageRole.USER, "use tool")),
                 List.of(tool("get_alpha"))));
+        var firstCall = first.toolCalls().getFirst();
+        var normalizedCall =
+                new ModelToolCall(firstCall.providerCorrelationId(), firstCall.name(), Map.of("value", 1L));
         var assistant = ModelMessage.assistant(
-                first.content(), first.toolCalls(), first.reasoning().orElseThrow());
+                first.content(), List.of(normalizedCall), first.reasoning().orElseThrow());
         var toolResult = ModelMessage.tool(
                 first.toolCalls().getFirst().providerCorrelationId(), "ok", Map.of("value", 7), false);
 
@@ -232,6 +339,37 @@ class GeminiGenerateContentModelTest {
                 .hasSize(2);
     }
 
+    @Test
+    void antigravityDirectUnwrapsCloudCodeSseResponseFrames() throws Exception {
+        String sse = "data: "
+                + directResponse(
+                        "{\"responseId\":\"direct-response-1\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hel\"}]}}]}")
+                + "\n\n"
+                + "data: "
+                + directResponse(
+                        "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"lo\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":3}}")
+                + "\n\n";
+        start(new AtomicReference<>(), new AtomicReference<>(), List.of(Response.sse(sse)));
+        List<ModelStreamEvent> events = new ArrayList<>();
+
+        var response = standardStubModel()
+                .invokeStreaming(
+                        request(
+                                antigravityDirectSnapshot("project-1"),
+                                List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                                List.of()),
+                        event -> {
+                            events.add(event);
+                            return ModelStreamControl.CONTINUE;
+                        });
+
+        assertThat(response.responseId()).isEqualTo("direct-response-1");
+        assertThat(response.content()).isEqualTo("hello");
+        assertThat(response.usage().inputTokens()).isEqualTo(2);
+        assertThat(events.stream().filter(ModelStreamEvent.ContentDelta.class::isInstance))
+                .hasSize(2);
+    }
+
     private GeminiGenerateContentModel model(boolean allowLoopback) {
         return new GeminiGenerateContentModel(
                 HttpClient.newHttpClient(),
@@ -239,6 +377,55 @@ class GeminiGenerateContentModelTest {
                 ignored -> new ResolvedCredential("secret-value"),
                 allowLoopback,
                 1024 * 1024);
+    }
+
+    @Test
+    void directDialectRejectsRequestProjectAndRequiresTrustedCredentialReference() throws Exception {
+        start(
+                new AtomicReference<>(),
+                new AtomicReference<>(),
+                List.of(new Response(200, "application/json", textResponse("unused"))));
+        var model = new GeminiGenerateContentModel(
+                HttpClient.newHttpClient(),
+                json,
+                ignored -> new ResolvedCredential("secret-value"),
+                false,
+                1024 * 1024,
+                true);
+        AgentChatRequest injected = new AgentChatRequest(
+                new ModelCallId("call-project"),
+                new AgentRunId("run-project"),
+                1,
+                1,
+                antigravityDirectSnapshot(""),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                List.of(),
+                256,
+                Duration.ofSeconds(5),
+                Map.of("project", "request-project"));
+
+        assertThatThrownBy(() -> model.invoke(injected)).hasRootCauseMessage("request project injection is forbidden");
+
+        AgentChatRequest missingTrustedProject = request(
+                antigravityDirectSnapshot(""), List.of(ModelMessage.text(ModelMessageRole.USER, "hi")), List.of());
+        assertThatThrownBy(() -> model.invoke(missingTrustedProject))
+                .hasRootCauseMessage("trusted Antigravity project is unavailable");
+    }
+
+    @Test
+    void directDialectAllowsOnlyGovernedProdAndDailyEndpoints() {
+        assertThat(GeminiGenerateContentModel.isGovernedAntigravityDirectEndpoint(
+                        URI.create("https://cloudcode-pa.googleapis.com/v1internal")))
+                .isTrue();
+        assertThat(GeminiGenerateContentModel.isGovernedAntigravityDirectEndpoint(
+                        URI.create("https://daily-cloudcode-pa.googleapis.com/v1internal")))
+                .isTrue();
+        assertThat(GeminiGenerateContentModel.isGovernedAntigravityDirectEndpoint(
+                        URI.create("https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal")))
+                .isFalse();
+        assertThat(GeminiGenerateContentModel.isGovernedAntigravityDirectEndpoint(
+                        URI.create("https://example.com/v1internal")))
+                .isFalse();
     }
 
     private GeminiGenerateContentModel standardStubModel() {
@@ -278,6 +465,33 @@ class GeminiGenerateContentModelTest {
                 GeminiDialects.CLIPROXYAPI_ANTIGRAVITY,
                 URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1beta"),
                 GeminiGenerateContentModel.CLIPROXY_CREDENTIAL_REF);
+    }
+
+    private ResolvedModelSnapshot antigravityDirectSnapshot(String project) {
+        return ResolvedModelSnapshot.create(
+                new ModelProviderId("google-antigravity"),
+                "1",
+                new ModelDefinitionId("gemini-2.5-flash"),
+                "1",
+                "gemini-test",
+                ModelApiStyles.GOOGLE_GEMINI_ADAPTER,
+                GeminiGenerateContentModel.ADAPTER_VERSION,
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                GeminiDialects.ANTIGRAVITY_DIRECT,
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1internal"),
+                new CredentialRef("model-auth://google-antigravity/default"),
+                true,
+                EnumSet.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.AUDIO_INPUT,
+                        ModelCapability.REASONING),
+                8192,
+                1024,
+                project.isEmpty() ? Map.of() : Map.of("project", project),
+                Map.of());
     }
 
     private ResolvedModelSnapshot snapshot(String dialect, URI endpoint, String credential) {
@@ -348,6 +562,10 @@ class GeminiGenerateContentModelTest {
         return "{\"responseId\":\"response-1\",\"modelVersion\":\"gemini-test\",\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\""
                 + text
                 + "\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":1}}";
+    }
+
+    private static String directResponse(String response) {
+        return "{\"response\":" + response + ",\"traceId\":\"trace-ignored\"}";
     }
 
     private static String toolResponse(boolean signature) {

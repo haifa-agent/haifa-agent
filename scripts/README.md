@@ -72,6 +72,15 @@ $env:HAIFA_CLIPROXYAPI_MODEL_ID = 'gemini-3-flash' # optional
 & .\scripts\start-real-environment.ps1 --default-model-id gemini-cliproxy-flash
 ```
 
+真实环境脚本固定把独立的 `google-antigravity` Provider 和 `antigravity-gemini` Binding 装配进 PA
+模型目录；`HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true` 只控制能否发起新的本地兼容 OAuth 登录，不控制
+模型是否可见。该 Binding 使用
+`model-auth://google-antigravity/default`，默认访问 Daily Endpoint
+`https://daily-cloudcode-pa.googleapis.com/v1internal`，并仅为该 Provider 使用
+`HAIFA_ANTIGRAVITY_PROXY_URL`（默认 `http://127.0.0.1:2081`）。可分别通过
+`HAIFA_ANTIGRAVITY_MODEL_ENDPOINT` 和 `HAIFA_ANTIGRAVITY_MODEL` 覆盖 Endpoint 与实际模型；它与
+`gemini-cliproxy-flash` 是两个不同的连接，不共享 CLIProxyAPI 下游 Key。
+
 ```powershell
 .\scripts\start-real-environment.ps1
 .\scripts\start-real-environment.ps1 --stop --dry-run

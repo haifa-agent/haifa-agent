@@ -55,6 +55,14 @@ CLIProxyAPI 优先使用 `HAIFA_CLIPROXYAPI_API_KEY`；未设置时只读取 `--
 `HAIFA_CLIPROXYAPI_MODEL_ID` 覆盖，默认 `gemini-3-flash`。它同样只扩展模型目录；需要显式传入
 `--default-model-id gemini-cliproxy-flash` 才成为 PA 默认模型。启动健康检查不会调用 Gemini。
 
+启动脚本固定发布 Direct Binding `antigravity-gemini`；`HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true` 只控制
+能否发起新的本地兼容 OAuth 登录，不控制模型目录。该 Binding 从
+`model-auth://google-antigravity/default` 获取当前登录凭据，默认使用
+Daily Endpoint `https://daily-cloudcode-pa.googleapis.com/v1internal`，并通过
+`HAIFA_ANTIGRAVITY_PROXY_URL`（默认 `http://127.0.0.1:2081`）访问。可用
+`HAIFA_ANTIGRAVITY_MODEL_ENDPOINT`、`HAIFA_ANTIGRAVITY_MODEL` 覆盖模型调用配置；该 Binding 与
+CLIProxyAPI Gemini 相互独立。
+
 ## 2. 一键启动
 
 在普通 PowerShell 中执行：

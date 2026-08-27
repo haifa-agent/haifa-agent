@@ -11,6 +11,7 @@ import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelReasoningMode;
+import io.haifa.agent.model.gemini.GeminiDialects;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
 import java.io.IOException;
@@ -65,6 +66,11 @@ final class CliConfigurationLoader {
         } else {
             configuredModels = defaults.availableModels();
             defaultModelId = defaults.model().id();
+        }
+        if (!"true".equalsIgnoreCase(modelEnvironment.apply("HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST"))) {
+            configuredModels = configuredModels.stream()
+                    .filter(model -> !GeminiDialects.ANTIGRAVITY_DIRECT.equals(model.dialect()))
+                    .toList();
         }
         String selectedModelId =
                 arguments.model().orElseGet(() -> environment("HAIFA_MODEL_ID").orElse(defaultModelId));

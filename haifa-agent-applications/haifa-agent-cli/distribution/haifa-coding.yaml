@@ -109,6 +109,22 @@ models:
           capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
           contextWindow: 131072
           maxOutputTokens: 8192
+    - id: google-antigravity
+      displayName: Google Antigravity Direct (Local Compatibility)
+      endpoint: ${HAIFA_ANTIGRAVITY_MODEL_ENDPOINT:https://daily-cloudcode-pa.googleapis.com/v1internal}
+      credentialRef: model-auth://google-antigravity/default
+      nativeStreaming: true
+      apiBindings:
+        - style: google-gemini-generate-content
+          dialect: antigravity-direct
+      models:
+        - id: antigravity-gemini
+          displayName: Gemini via Antigravity Direct (UNOFFICIAL_LOCAL_COMPAT)
+          providerModelId: ${HAIFA_ANTIGRAVITY_MODEL:gemini-3-flash}
+          style: google-gemini-generate-content
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
 
 tools:
   enabled:

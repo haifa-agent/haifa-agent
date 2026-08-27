@@ -99,6 +99,17 @@ does not read its OAuth files, keyring, cookies, or upstream tokens. Only a loop
 dynamic model discovery, account routing, and fallback remain disabled. The adapter independently enforces the exact
 Tool declaration set and rejects missing/corrupt Thought Signatures even when the gateway would repair them.
 
+The packaged catalog also contains `antigravity-gemini`, but the loader hides it unless
+`HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true`. Direct login additionally requires externally injected
+`HAIFA_ANTIGRAVITY_OAUTH_CLIENT_ID` and `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_SECRET`; no registration is compiled into the
+distribution. With that registration enabled, the Terminal's `Connect a model` selector includes
+`Antigravity subscription` and starts the dedicated Google browser callback. `HAIFA_ANTIGRAVITY_ALLOW_ONBOARDING=true`
+is a separate opt-in used only when the account has no existing
+CloudCode Project. The discovered Project is associated with the fixed `model-auth://google-antigravity/default`
+credential and request-level Project overrides are rejected. Direct generation defaults to the governed Daily endpoint.
+Set `HAIFA_ANTIGRAVITY_MODEL_ENDPOINT=https://cloudcode-pa.googleapis.com/v1internal` to select Prod explicitly; only
+the exact Prod and Daily HTTPS endpoints are accepted, and a failed request never switches endpoint automatically.
+
 生产 Coding Agent 使用 Coding 产品模块中的版本化短 Prompt；CLI 不再维护逐 Case 累积的长方法论
 字符串。基础 Prompt 要求读取适用仓库指令和契约、做最小完整修改、按风险验证并检查最终 Diff。
 Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核方法通过基础 Skill 按需加载。

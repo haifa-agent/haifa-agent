@@ -109,6 +109,86 @@ class CodingTerminalControllerTest {
     }
 
     @Test
+    void enabledAntigravityLoginAppearsInOnboardingAndStartsItsBrowserFlow() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        java.util.concurrent.atomic.AtomicBoolean started = new java.util.concurrent.atomic.AtomicBoolean();
+        CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
+            @Override
+            public boolean connectionRequired() {
+                return true;
+            }
+
+            @Override
+            public boolean antigravityConnectionSupported() {
+                return true;
+            }
+
+            @Override
+            public List<CodingAuthenticationView> connections() {
+                return List.of();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CodingAuthenticationView loginAntigravityBrowser(
+                    java.util.function.Consumer<CodingBrowserLoginView> instructions,
+                    java.util.function.Consumer<CodingAuthenticationProgressView> progress) {
+                started.set(true);
+                progress.accept(
+                        new CodingAuthenticationProgressView(CodingAuthenticationProgressView.Phase.WAITING_USER));
+                instructions.accept(new CodingBrowserLoginView(
+                        URI.create("https://accounts.google.com/o/oauth2/v2/auth?state=test"), 1_000));
+                return new CodingAuthenticationView(
+                        "model-auth://google-antigravity/default",
+                        "google-antigravity",
+                        CodingAuthenticationView.Method.ANTIGRAVITY_SUBSCRIPTION,
+                        CodingAuthenticationView.Status.AUTHENTICATED,
+                        "Google account",
+                        Optional.empty(),
+                        OptionalLong.empty(),
+                        true);
+            }
+
+            @Override
+            public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean logout(String connectionId) {
+                return false;
+            }
+        };
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                authentication,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run);
+
+        controller.start(CodingTerminalStartup.empty());
+
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly("ChatGPT subscription", "Antigravity subscription", "Provider API key (secure input)");
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.drainEvents();
+
+        assertThat(started).isTrue();
+        assertThat(controller.state().transcript()).anySatisfy(item -> {
+            assertThat(item.title()).isEqualTo("Antigravity connection");
+            assertThat(item.status()).isEqualTo("CONNECTED");
+        });
+        assertThat(controller.state().status()).isEqualTo("Connected to Antigravity (UNOFFICIAL_LOCAL_COMPAT)");
+    }
+
+    @Test
     void deviceLoginPrintsTheBrowserUrlAndUserCodeAsPersistentTranscriptContent() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         CodingAuthenticationClient authentication = new CodingAuthenticationClient() {

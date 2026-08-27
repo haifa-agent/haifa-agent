@@ -210,21 +210,23 @@ public final class TerminalUiReducer {
             items.add(new TranscriptItem(
                     "auth-browser-instructions-" + items.size(),
                     TranscriptItem.Kind.RESOURCE,
-                    "ChatGPT browser login",
+                    instructions.connectionName() + " browser login",
                     "A browser sign-in was requested.\nIf it did not open, use this URL: "
                             + instructions.authorizationUri(),
                     "WAITING",
                     true));
-            return copyWithStatus(copyWithTranscript(state, List.copyOf(items)), "Waiting for ChatGPT authorization");
+            return copyWithStatus(
+                    copyWithTranscript(state, List.copyOf(items)),
+                    "Waiting for " + instructions.connectionName() + " authorization");
         }
         if (action instanceof TerminalUiAction.AuthenticationProgressed progress) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
             upsert(
                     items,
                     new TranscriptItem(
-                            "auth-chatgpt-progress",
+                            "auth-external-progress",
                             TranscriptItem.Kind.RESOURCE,
-                            "ChatGPT Codex connection",
+                            progress.connectionName() + " connection",
                             authenticationProgressBody(progress.phase()),
                             progress.phase().name(),
                             true));
@@ -237,22 +239,22 @@ public final class TerminalUiReducer {
             upsert(
                     items,
                     new TranscriptItem(
-                            "auth-chatgpt-progress",
+                            "auth-external-progress",
                             TranscriptItem.Kind.RESOURCE,
-                            "ChatGPT Codex connection",
+                            completed.connectionName() + " connection",
                             "Connected. Credentials were saved to ~/.haifa-agent/auth.json." + compatibility,
                             "CONNECTED",
                             false));
             return copyWithStatus(
                     copyWithTranscript(state, List.copyOf(items)),
                     completed.unofficialLocalCompatibility()
-                            ? "Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)"
-                            : "Connected to ChatGPT Codex");
+                            ? "Connected to " + completed.connectionName() + " (UNOFFICIAL_LOCAL_COMPAT)"
+                            : "Connected to " + completed.connectionName());
         }
         if (action instanceof TerminalUiAction.AuthenticationFailed failure) {
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
             String lastStage = items.stream()
-                    .filter(item -> item.id().equals("auth-chatgpt-progress"))
+                    .filter(item -> item.id().equals("auth-external-progress"))
                     .filter(item -> AUTHENTICATION_PROGRESS_STATUSES.contains(item.status()))
                     .findFirst()
                     .map(TranscriptItem::body)
@@ -260,9 +262,9 @@ public final class TerminalUiReducer {
             upsert(
                     items,
                     new TranscriptItem(
-                            "auth-chatgpt-progress",
+                            "auth-external-progress",
                             TranscriptItem.Kind.ERROR,
-                            "ChatGPT Codex connection failed",
+                            failure.connectionName() + " connection failed",
                             authenticationFailureBody(failure.code(), lastStage),
                             "FAILED",
                             true));

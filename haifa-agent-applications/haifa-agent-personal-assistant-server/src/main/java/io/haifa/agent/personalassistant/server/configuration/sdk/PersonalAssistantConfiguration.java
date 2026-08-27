@@ -3,10 +3,15 @@ package io.haifa.agent.personalassistant.server.configuration.sdk;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
+import io.haifa.agent.auth.localmodel.ExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
 import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityLocalCompatibilityRegistrationFactory;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityProjectRegistry;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityTokenClient;
 import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.codex.CodexLocalCompatibilityRegistrationFactory;
@@ -14,6 +19,7 @@ import io.haifa.agent.auth.localmodel.codex.CodexTokenClient;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.PersonalAssistantAssembler;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
@@ -48,6 +54,8 @@ import io.haifa.agent.store.sqlite.SqliteSdkProductContributions;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
 import java.awt.Desktop;
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
@@ -73,43 +81,78 @@ public class PersonalAssistantConfiguration {
         return Clock.systemUTC();
     }
 
+    @Bean
+    AntigravityProjectRegistry antigravityProjectRegistry() {
+        return new AntigravityProjectRegistry();
+    }
+
     @Bean(destroyMethod = "close")
     PersonalMcpRuntime personalMcpRuntime(PersonalAssistantProperties properties, ObjectMapper mapper) {
         return new PersonalMcpRuntime(properties.mcp(), mapper);
     }
 
     @Bean(destroyMethod = "close")
-    LocalModelAuthenticationService personalModelAuthenticationService(ObjectMapper mapper, Clock personalClock) {
+    LocalModelAuthenticationService personalModelAuthenticationService(
+            PersonalAssistantProperties properties,
+            ObjectMapper mapper,
+            Clock personalClock,
+            AntigravityProjectRegistry antigravityProjects) {
         Map<String, String> environment = System.getenv();
         var store = FileLocalModelAuthStore.defaultStore(mapper);
-        var registration = CodexLocalCompatibilityRegistrationFactory.create(environment);
-        HttpClient http =
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
-        var method = registration.map(value -> new CodexExternalLoginMethod(
+        var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(environment);
+        var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(environment);
+        HttpClient codexHttp = authenticationHttpClient(properties.modelProviders(), "openai-codex");
+        HttpClient antigravityHttp = authenticationHttpClient(properties.modelProviders(), "google-antigravity");
+        List<ExternalLoginMethod> methods = new java.util.ArrayList<>();
+        codexRegistration.ifPresent(value -> methods.add(new CodexExternalLoginMethod(
                 value,
-                new CodexTokenClient(http, mapper, personalClock, Duration.ofSeconds(30), value),
-                http,
+                new CodexTokenClient(codexHttp, mapper, personalClock, Duration.ofSeconds(30), value),
+                codexHttp,
                 mapper,
                 SecureRandom::new,
                 Duration.ofMinutes(5),
-                CodexDeviceLoginOperation.Sleeper.system()));
-        var registry = new ExternalLoginRegistry(method.stream().toList());
+                CodexDeviceLoginOperation.Sleeper.system())));
+        antigravityRegistration.ifPresent(value -> methods.add(new AntigravityExternalLoginMethod(
+                value,
+                new AntigravityTokenClient(antigravityHttp, mapper, personalClock, Duration.ofSeconds(30), value),
+                antigravityHttp,
+                mapper,
+                SecureRandom::new,
+                Duration.ofMinutes(5),
+                projection -> antigravityProjects.record(
+                        new CredentialRef("model-auth://google-antigravity/default"), projection))));
+        var registry = new ExternalLoginRegistry(methods);
         var resolver = new LocalModelCredentialResolver(
                 environment::get, store, registry, personalClock, Duration.ofMinutes(5));
         var identifiers = new UuidV7IdentifierGenerator();
-        var coordinator = method.map(ignored -> new ExternalLoginCoordinator(
-                registry,
-                store,
-                () -> new ExternalLoginAttemptId(identifiers.nextValue()),
-                personalClock,
-                Executors.newFixedThreadPool(2, runnable -> {
-                    Thread thread = new Thread(runnable, "haifa-personal-model-auth");
-                    thread.setDaemon(true);
-                    return thread;
-                }),
-                PersonalAssistantConfiguration::openBrowser,
-                8));
+        var coordinator = methods.isEmpty()
+                ? Optional.<ExternalLoginCoordinator>empty()
+                : Optional.of(new ExternalLoginCoordinator(
+                        registry,
+                        store,
+                        () -> new ExternalLoginAttemptId(identifiers.nextValue()),
+                        personalClock,
+                        Executors.newFixedThreadPool(2, runnable -> {
+                            Thread thread = new Thread(runnable, "haifa-personal-model-auth");
+                            thread.setDaemon(true);
+                            return thread;
+                        }),
+                        PersonalAssistantConfiguration::openBrowser,
+                        8));
         return new LocalModelAuthenticationService(store, coordinator, resolver, environment::get);
+    }
+
+    static HttpClient authenticationHttpClient(
+            List<PersonalAssistantProperties.ModelProvider> providers, String providerId) {
+        var builder = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10));
+        providers.stream()
+                .filter(provider -> provider.id().equals(providerId))
+                .map(PersonalAssistantProperties.ModelProvider::proxy)
+                .filter(java.util.Objects::nonNull)
+                .findFirst()
+                .ifPresent(proxy -> builder.proxy(
+                        ProxySelector.of(InetSocketAddress.createUnresolved(proxy.getHost(), proxy.getPort()))));
+        return builder.build();
     }
 
     @Bean(destroyMethod = "close")
@@ -120,7 +163,8 @@ public class PersonalAssistantConfiguration {
             PersonalMcpRuntime mcpRuntime,
             PersonalImageStore imageStore,
             PersonalAudioStore audioStore,
-            LocalModelAuthenticationService modelAuthentication) {
+            LocalModelAuthenticationService modelAuthentication,
+            AntigravityProjectRegistry antigravityProjects) {
         Path dataDirectory = prepare(properties.dataDirectory());
         byte[] key = decodeKey(properties.continuationKeyBase64());
         ModelContinuationProtector protector =
@@ -167,7 +211,8 @@ public class PersonalAssistantConfiguration {
                     properties.allowInsecureLoopbackModel(),
                     mapper,
                     execution.shell(),
-                    modelAuthentication.credentialResolver());
+                    modelAuthentication.credentialResolver(),
+                    antigravityProjects::resolve);
             var modelPreferences = new SqlitePersonalModelPreferenceStore(
                     dataDirectory.resolve("personal-assistant.sqlite"),
                     properties.caller().tenant(),

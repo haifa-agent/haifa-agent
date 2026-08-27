@@ -77,9 +77,9 @@ export interface PersonalAssistantClient {
   bootstrap(signal?: AbortSignal): Promise<Bootstrap>;
   modelConnections?(signal?: AbortSignal): Promise<ModelConnection[]>;
   saveModelApiKey?(providerId: string, apiKey: string, options?: CommandOptions): Promise<ModelConnection>;
-  startCodexBrowserLogin?(options?: CommandOptions): Promise<ExternalLoginAttempt>;
-  modelLoginAttempt?(attemptId: string, signal?: AbortSignal): Promise<ExternalLoginAttempt>;
-  cancelModelLogin?(attemptId: string, options?: CommandOptions): Promise<void>;
+  startModelBrowserLogin?(methodId: "codex" | "antigravity", options?: CommandOptions): Promise<ExternalLoginAttempt>;
+  modelLoginAttempt?(methodId: "codex" | "antigravity", attemptId: string, signal?: AbortSignal): Promise<ExternalLoginAttempt>;
+  cancelModelLogin?(methodId: "codex" | "antigravity", attemptId: string, options?: CommandOptions): Promise<void>;
   logoutModelConnection?(connectionId: string, options?: CommandOptions): Promise<void>;
   conversations(query?: string, signal?: AbortSignal): Promise<Conversation[]>;
   createConversation(
@@ -256,25 +256,29 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     );
   }
 
-  startCodexBrowserLogin(options: CommandOptions = {}) {
+  startModelBrowserLogin(methodId: "codex" | "antigravity", options: CommandOptions = {}) {
     return this.request<ExternalLoginAttempt>(
-      "/model-connections/codex/browser-attempts",
+      `/model-connections/${methodId}/browser-attempts`,
       { method: "POST", headers: commandHeaders(undefined, options.idempotencyKey), body: "{}" },
       options.signal,
     );
   }
 
-  modelLoginAttempt(attemptId: string, signal?: AbortSignal) {
+  modelLoginAttempt(methodId: "codex" | "antigravity", attemptId: string, signal?: AbortSignal) {
     return this.request<ExternalLoginAttempt>(
-      `/model-connections/codex/browser-attempts/${encoded(attemptId)}`,
+      `/model-connections/${methodId}/browser-attempts/${encoded(attemptId)}`,
       {},
       signal,
     );
   }
 
-  cancelModelLogin(attemptId: string, options: CommandOptions = {}) {
+  cancelModelLogin(
+    methodId: "codex" | "antigravity",
+    attemptId: string,
+    options: CommandOptions = {},
+  ) {
     return this.request<void>(
-      `/model-connections/codex/browser-attempts/${encoded(attemptId)}`,
+      `/model-connections/${methodId}/browser-attempts/${encoded(attemptId)}`,
       { method: "DELETE", headers: commandHeaders(undefined, options.idempotencyKey) },
       options.signal,
     );

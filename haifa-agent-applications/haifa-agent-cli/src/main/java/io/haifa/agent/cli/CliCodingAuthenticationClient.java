@@ -29,13 +29,19 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     private final String selectedCredentialReference;
     private final String selectedProviderId;
     private final List<CredentialRef> availableCredentialReferences;
+    private final boolean antigravityConnectionSupported;
     private final CodingAuthenticationMapper mapper;
 
     CliCodingAuthenticationClient(
             LocalModelAuthenticationService authentication,
             String selectedCredentialReference,
             String selectedProviderId) {
-        this(authentication, selectedCredentialReference, selectedProviderId, List.of(selectedCredentialReference));
+        this(
+                authentication,
+                selectedCredentialReference,
+                selectedProviderId,
+                List.of(selectedCredentialReference),
+                false);
     }
 
     CliCodingAuthenticationClient(
@@ -43,6 +49,15 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
             String selectedCredentialReference,
             String selectedProviderId,
             Collection<String> availableCredentialReferences) {
+        this(authentication, selectedCredentialReference, selectedProviderId, availableCredentialReferences, false);
+    }
+
+    CliCodingAuthenticationClient(
+            LocalModelAuthenticationService authentication,
+            String selectedCredentialReference,
+            String selectedProviderId,
+            Collection<String> availableCredentialReferences,
+            boolean antigravityConnectionSupported) {
         this.authentication = Objects.requireNonNull(authentication, "authentication must not be null");
         this.selectedCredentialReference = Objects.requireNonNull(
                         selectedCredentialReference, "selectedCredentialReference must not be null")
@@ -63,6 +78,7 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
             throw new IllegalArgumentException("availableCredentialReferences must contain the selected credential");
         }
         this.availableCredentialReferences = List.copyOf(references);
+        this.antigravityConnectionSupported = antigravityConnectionSupported;
         this.mapper = new CodingAuthenticationMapper();
     }
 
@@ -78,7 +94,13 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
 
     @Override
     public boolean apiKeyConnectionSupported() {
-        return !selectedCredentialReference.startsWith("model-auth://openai-codex/");
+        return !selectedCredentialReference.startsWith("model-auth://openai-codex/")
+                && !selectedCredentialReference.startsWith("model-auth://google-antigravity/");
+    }
+
+    @Override
+    public boolean antigravityConnectionSupported() {
+        return antigravityConnectionSupported;
     }
 
     @Override
@@ -122,6 +144,18 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
                 started.attemptId(),
                 null,
                 Objects.requireNonNull(instructions, "instructions must not be null"),
+                Objects.requireNonNull(progress, "progress must not be null"));
+    }
+
+    @Override
+    public CodingAuthenticationView loginAntigravityBrowser(
+            Consumer<CodingBrowserLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
+        ExternalLoginAttemptSnapshot started =
+                authentication.startExternalLogin(ExternalLoginMethodId.GOOGLE_ANTIGRAVITY, ExternalLoginMode.BROWSER);
+        return await(
+                started.attemptId(),
+                Objects.requireNonNull(instructions, "instructions must not be null"),
+                null,
                 Objects.requireNonNull(progress, "progress must not be null"));
     }
 

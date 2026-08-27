@@ -63,8 +63,10 @@ import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
 /** Creates either the production remote adapter or an explicitly enabled deterministic acceptance model. */
 public final class PersonalModelFactory {
@@ -100,6 +102,24 @@ public final class PersonalModelFactory {
             ObjectMapper mapper,
             ShellPlatformContribution shell,
             CredentialResolver credentials) {
+        return createPlatform(
+                configured,
+                defaultModelId,
+                allowInsecureLoopbackModel,
+                mapper,
+                shell,
+                credentials,
+                ignored -> Optional.empty());
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            ShellPlatformContribution shell,
+            CredentialResolver credentials,
+            Function<CredentialRef, Optional<String>> trustedProjectResolver) {
         List<PersonalAssistantProperties.ModelProvider> providers = List.copyOf(configured);
         java.util.Objects.requireNonNull(credentials, "credentials must not be null");
         if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
@@ -128,7 +148,15 @@ public final class PersonalModelFactory {
                         java.util.LinkedHashMap::new));
         ResolvedModelSnapshot snapshot = snapshots.get(selected.model().id());
         Map<ModelAdapterCoordinate, AgentChatModel> adapters = adapters(
-                providers, snapshots, selected, deterministic, mapper, shell, allowInsecureLoopbackModel, credentials);
+                providers,
+                snapshots,
+                selected,
+                deterministic,
+                mapper,
+                shell,
+                allowInsecureLoopbackModel,
+                credentials,
+                trustedProjectResolver);
         ModelContribution contribution = new ModelContribution(
                 new SdkContributionMetadata(
                         new ProductContributionCoordinate("haifa-personal-model", "1.0.0"),
@@ -527,7 +555,8 @@ public final class PersonalModelFactory {
             ObjectMapper mapper,
             ShellPlatformContribution shell,
             boolean allowInsecureLoopbackModel,
-            CredentialResolver credentials) {
+            CredentialResolver credentials,
+            Function<CredentialRef, Optional<String>> trustedProjectResolver) {
         if (deterministic) {
             AgentChatModel model = new LoggingAgentChatModel(
                     new DeterministicAcceptanceModel(selected.model().providerModelId(), shell));
@@ -559,7 +588,13 @@ public final class PersonalModelFactory {
                                     http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
                         case ModelApiStyles.GOOGLE_GEMINI_ADAPTER ->
                             new GeminiGenerateContentModel(
-                                    http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
+                                    http,
+                                    mapper,
+                                    credentials,
+                                    allowInsecureLoopbackModel,
+                                    4 * 1024 * 1024,
+                                    false,
+                                    trustedProjectResolver);
                         default ->
                             throw new IllegalArgumentException(
                                     "unsupported Personal model adapter: " + coordinate.type());

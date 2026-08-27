@@ -29,7 +29,8 @@ public record CodingAuthenticationView(
 
     public enum Method {
         API_KEY,
-        CHATGPT_SUBSCRIPTION
+        CHATGPT_SUBSCRIPTION,
+        ANTIGRAVITY_SUBSCRIPTION
     }
 
     public enum Status {

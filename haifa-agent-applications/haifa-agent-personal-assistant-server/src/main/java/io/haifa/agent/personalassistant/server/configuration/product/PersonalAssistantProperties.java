@@ -309,6 +309,20 @@ public record PersonalAssistantProperties(
                             .anyMatch(binding -> !"google-gemini-generate-content".equals(binding.style()))) {
                 throw new IllegalArgumentException("CLIProxyAPI Antigravity dialect only supports native Gemini style");
             }
+            boolean antigravityDirect =
+                    apiBindings.stream().anyMatch(binding -> "antigravity-direct".equals(binding.dialect()));
+            if (antigravityDirect && !"google-antigravity".equals(id)) {
+                throw new IllegalArgumentException("Antigravity Direct dialect provider id is fixed");
+            }
+            if (antigravityDirect && !"model-auth://google-antigravity/default".equals(credentialReference)) {
+                throw new IllegalArgumentException(
+                        "Antigravity Direct dialect requires model-auth://google-antigravity/default");
+            }
+            if (antigravityDirect
+                    && apiBindings.stream()
+                            .anyMatch(binding -> !"google-gemini-generate-content".equals(binding.style()))) {
+                throw new IllegalArgumentException("Antigravity Direct dialect only supports native Gemini style");
+            }
         }
 
         private static void validateModelProxy(URI proxy) {

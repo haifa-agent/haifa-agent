@@ -56,9 +56,13 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
         if (credential instanceof StoredApiKeyCredential apiKey) return new ResolvedCredential(apiKey.apiKey());
         StoredExternalCredential external = (StoredExternalCredential) credential;
         Instant refreshBefore = clock.instant().plus(refreshSafetyWindow);
-        if (external.validBeyond(refreshBefore)) return new ResolvedCredential(external.accessToken());
-        return new ResolvedCredential(
-                refreshSingleFlight(external, refreshBefore).accessToken());
+        if (external.validBeyond(refreshBefore)) {
+            registry.prepareIfRegistered(external);
+            return new ResolvedCredential(external.accessToken());
+        }
+        StoredExternalCredential refreshed = refreshSingleFlight(external, refreshBefore);
+        registry.prepareIfRegistered(refreshed);
+        return new ResolvedCredential(refreshed.accessToken());
     }
 
     private ResolvedCredential resolveEnvironment(String name) {

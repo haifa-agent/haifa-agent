@@ -55,6 +55,9 @@ public final class CodingTerminalController implements AutoCloseable {
     private static final int COMPLETION_QUEUE_CAPACITY = 256;
     private static final Set<String> RETRYABLE_SESSION_RACES =
             Set.of("ACTIVE_RUN_SETTLED", "ACTIVE_RUN_MISMATCH", "CODING_SESSION_ACTIVE");
+    private static final String CHATGPT_CONNECTION = "ChatGPT subscription";
+    private static final String ANTIGRAVITY_CONNECTION = "Antigravity subscription";
+    private static final String API_KEY_CONNECTION = "Provider API key (secure input)";
 
     private final ProjectId projectId;
     private final CodingSessionClient client;
@@ -1114,6 +1117,22 @@ public final class CodingTerminalController implements AutoCloseable {
                 code -> pump.offer(new TerminalUiAction.AuthenticationFailed(code)));
     }
 
+    private void startAntigravityLogin() {
+        apply(new TerminalUiAction.StatusChanged("Opening browser for Antigravity sign-in"));
+        submitEffect(
+                () -> {
+                    CodingAuthenticationView connected = authentication.loginAntigravityBrowser(
+                            instructions -> pump.offer(new TerminalUiAction.BrowserLoginInstructionsPresented(
+                                    "Antigravity",
+                                    instructions.authorizationUri().toString())),
+                            progress -> pump.offer(
+                                    new TerminalUiAction.AuthenticationProgressed("Antigravity", progress.phase())));
+                    return () -> pump.offer(new TerminalUiAction.AuthenticationCompleted(
+                            "Antigravity", connected.unofficialLocalCompatibility()));
+                },
+                code -> pump.offer(new TerminalUiAction.AuthenticationFailed("Antigravity", code)));
+    }
+
     private void openChatGptLoginSelector() {
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                 "auth-chatgpt",
@@ -1123,9 +1142,11 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private List<String> connectionOptions() {
-        return authentication.apiKeyConnectionSupported()
-                ? List.of("ChatGPT subscription", "Provider API key (secure input)")
-                : List.of("ChatGPT subscription");
+        List<String> options = new java.util.ArrayList<>();
+        options.add(CHATGPT_CONNECTION);
+        if (authentication.antigravityConnectionSupported()) options.add(ANTIGRAVITY_CONNECTION);
+        if (authentication.apiKeyConnectionSupported()) options.add(API_KEY_CONNECTION);
+        return List.copyOf(options);
     }
 
     private void startCodexDeviceLogin() {
@@ -1384,9 +1405,12 @@ public final class CodingTerminalController implements AutoCloseable {
                 }
             }
             case "auth-login" -> {
+                String option = connectionOptions().get(selected);
                 apply(new TerminalUiAction.SelectorClosed());
-                if (selected == 0) {
+                if (CHATGPT_CONNECTION.equals(option)) {
                     openChatGptLoginSelector();
+                } else if (ANTIGRAVITY_CONNECTION.equals(option)) {
+                    startAntigravityLogin();
                 } else {
                     beginApiKeyInput(authentication.apiKeyProviderId());
                 }

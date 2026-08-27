@@ -89,6 +89,22 @@ class LocalModelCredentialResolverTest {
                 .hasMessage("AUTH_LOGIN_METHOD_UNAVAILABLE");
     }
 
+    @Test
+    void preparesAValidPersistedExternalCredentialBeforeReturningItsToken() {
+        InMemoryStore store = new InMemoryStore();
+        LocalModelAuthReference reference = LocalModelAuthReference.parse("model-auth://future/default");
+        ExternalLoginMethodId methodId = new ExternalLoginMethodId("future-login");
+        store.save(new StoredExternalCredential(
+                reference, methodId, "registration", "old-access", "old-refresh", 10_000, 500, "account"));
+        RefreshMethod method = new RefreshMethod(methodId, "registration");
+        LocalModelCredentialResolver resolver = resolver(store, new ExternalLoginRegistry(List.of(method)), Map.of());
+
+        assertThat(resolver.resolve(new CredentialRef(reference.value())).value())
+                .isEqualTo("old-access");
+        assertThat(method.preparations).hasValue(1);
+        assertThat(method.refreshes).hasValue(0);
+    }
+
     private static LocalModelCredentialResolver resolver(
             InMemoryStore store, ExternalLoginRegistry registry, Map<String, String> environment) {
         return new LocalModelCredentialResolver(environment::get, store, registry, CLOCK, Duration.ofSeconds(5));
@@ -98,6 +114,7 @@ class LocalModelCredentialResolverTest {
         private final ExternalLoginMethodDescriptor descriptor;
         private final String registration;
         private final AtomicInteger refreshes = new AtomicInteger();
+        private final AtomicInteger preparations = new AtomicInteger();
 
         private RefreshMethod(ExternalLoginMethodId id, String registration) {
             this.descriptor = new ExternalLoginMethodDescriptor(
@@ -113,6 +130,11 @@ class LocalModelCredentialResolverTest {
         @Override
         public ExternalLoginOperation create(ExternalLoginMode mode, ExternalLoginOperationContext context) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void prepare(StoredExternalCredential credential) {
+            preparations.incrementAndGet();
         }
 
         @Override
