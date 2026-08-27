@@ -23,6 +23,7 @@ public final class OpenAiCompatibleDialects {
     public static final String ZHIPU = "zhipu-openai-chat";
     public static final String VOLCENGINE_ARK = "volcengine-ark-openai-chat";
     public static final String SILICONFLOW = "siliconflow-openai-chat";
+    public static final String TOKENRHYTHM = "tokenrhythm-openai-chat";
     public static final String VERSION_1 = "1.0";
     private static final String BAILIAN_PATH = "/compatible-mode/v1";
     private static final Pattern BAILIAN_HOST = Pattern.compile("^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\\."
@@ -47,6 +48,9 @@ public final class OpenAiCompatibleDialects {
         }
         if (SILICONFLOW.equals(normalizedId)) {
             freezeSiliconFlowEndpoint(configuredEndpoint, options);
+        }
+        if (TOKENRHYTHM.equals(normalizedId)) {
+            freezeTokenRhythmEndpoint(configuredEndpoint, options);
         }
         return Map.copyOf(options);
     }
@@ -121,6 +125,27 @@ public final class OpenAiCompatibleDialects {
         options.put(ENDPOINT_HOST, normalizedHost);
     }
 
+    private static void freezeTokenRhythmEndpoint(URI endpoint, Map<String, Object> options) {
+        String host = endpoint.getHost();
+        if (host == null
+                || endpoint.getUserInfo() != null
+                || endpoint.getQuery() != null
+                || endpoint.getFragment() != null
+                || !"/v1".equals(endpoint.getPath())) {
+            throw new IllegalArgumentException("TokenRhythm endpoint must be a clean /v1 network endpoint");
+        }
+        String normalizedHost = host.toLowerCase(Locale.ROOT);
+        boolean officialHttps = "https".equalsIgnoreCase(endpoint.getScheme())
+                && endpoint.getPort() == -1
+                && "tokenrhythm.studio".equals(normalizedHost);
+        boolean loopbackHttp = "http".equalsIgnoreCase(endpoint.getScheme())
+                && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1").contains(normalizedHost);
+        if (!officialHttps && !loopbackHttp) {
+            throw new IllegalArgumentException("TokenRhythm endpoint host is not allowed");
+        }
+        options.put(ENDPOINT_HOST, normalizedHost);
+    }
+
     public static OpenAiCompatibleDialect resolve(ModelProviderDefinition provider) {
         return resolve(provider.binding(ModelApiStyles.OPENAI_CHAT_COMPLETIONS).dialect());
     }
@@ -139,6 +164,7 @@ public final class OpenAiCompatibleDialects {
             case ZHIPU -> ZhipuOpenAiChatDialect.INSTANCE;
             case VOLCENGINE_ARK -> VolcengineArkOpenAiChatDialect.INSTANCE;
             case SILICONFLOW -> SiliconFlowOpenAiChatDialect.INSTANCE;
+            case TOKENRHYTHM -> TokenRhythmOpenAiChatDialect.INSTANCE;
             default -> throw new IllegalArgumentException("unsupported OpenAI-compatible dialect: " + dialectId);
         };
     }
