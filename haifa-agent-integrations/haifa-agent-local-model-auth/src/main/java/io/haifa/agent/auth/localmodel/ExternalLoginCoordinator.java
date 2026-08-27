@@ -4,6 +4,7 @@ import java.net.URI;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -99,6 +100,10 @@ public final class ExternalLoginCoordinator implements AutoCloseable {
             }
             return attempt.snapshot;
         }
+    }
+
+    public List<ExternalLoginMethodDescriptor> descriptors() {
+        return registry.descriptors();
     }
 
     public ExternalLoginAttemptSnapshot find(ExternalLoginAttemptId attemptId) {

@@ -89,6 +89,32 @@ describe("HttpPersonalAssistantClient deployment boundary", () => {
     expect(url).not.toContain("secret-canary");
   });
 
+  it("starts Antigravity login through the explicit local browser-attempt route", async () => {
+    const fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => ({
+        text: async () => JSON.stringify({
+          attemptId: "01890f6c-7b2a-7cc0-8000-000000000002",
+          methodId: "google-antigravity",
+          mode: "BROWSER",
+          state: "CREATED",
+          expiresAtEpochMillis: 10_000,
+        }),
+        ok: true,
+        status: 202,
+      }) as Response,
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    await new HttpPersonalAssistantClient().startModelBrowserLogin("antigravity", {
+      idempotencyKey: "antigravity-login-1",
+    });
+
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe("http://127.0.0.1:20001/api/v1/model-connections/antigravity/browser-attempts");
+    expect(init?.method).toBe("POST");
+    expect(init?.headers).toMatchObject({ "Idempotency-Key": "antigravity-login-1" });
+  });
+
   it("sends Mission commands with the frozen idempotency and revision headers", async () => {
     const mission = {
       missionId: "mission/1",

@@ -4,6 +4,7 @@ import type { ExternalLoginAttempt, ModelConnection } from "../api/generated";
 import type { PersonalAssistantClient } from "../api/client";
 
 const terminalStates = new Set(["SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"]);
+type ExternalMethodId = "codex" | "antigravity";
 
 export interface ModelConnectionPanelProps {
   client: PersonalAssistantClient;
@@ -25,14 +26,12 @@ export function ModelConnectionPanel({
   const [attempt, setAttempt] = useState<ExternalLoginAttempt | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const attemptRef = useRef<string | null>(null);
+  const attemptRef = useRef<{ methodId: ExternalMethodId; attemptId: string } | null>(null);
   const operationGeneration = useRef(0);
   const mounted = useRef(true);
   const providerConnection = connections.find((connection) => connection.providerId === providerId);
-  const codexConnection = connections.find((connection) => connection.providerId === "openai-codex");
+  const externalConnections = connections.filter((connection) => connection.externalLoginSupported);
   const apiKeySupported = providerConnection?.apiKeySupported ?? false;
-  const externalLoginSupported = codexConnection?.externalLoginSupported ?? false;
-  const codexAuthenticated = codexConnection?.status === "AUTHENTICATED";
 
   const refresh = useCallback(async () => {
     if (!client.modelConnections) return;
@@ -54,7 +53,9 @@ export function ModelConnectionPanel({
       mounted.current = false;
       operationGeneration.current += 1;
       const active = attemptRef.current;
-      if (active && client.cancelModelLogin) void client.cancelModelLogin(active).catch(() => undefined);
+      if (active && client.cancelModelLogin) {
+        void client.cancelModelLogin(active.methodId, active.attemptId).catch(() => undefined);
+      }
     };
   }, [client]);
 
@@ -65,7 +66,9 @@ export function ModelConnectionPanel({
     operationGeneration.current += 1;
     const active = attemptRef.current;
     attemptRef.current = null;
-    if (active && client.cancelModelLogin) void client.cancelModelLogin(active).catch(() => undefined);
+    if (active && client.cancelModelLogin) {
+      void client.cancelModelLogin(active.methodId, active.attemptId).catch(() => undefined);
+    }
     onClose();
   };
 
@@ -89,19 +92,21 @@ export function ModelConnectionPanel({
     }
   };
 
-  const login = async () => {
-    if (!client.startCodexBrowserLogin || !client.modelLoginAttempt) return;
+  const login = async (connection: ModelConnection) => {
+    if (!client.startModelBrowserLogin || !client.modelLoginAttempt) return;
+    const methodId: ExternalMethodId = connection.providerId === "google-antigravity" ? "antigravity" : "codex";
+    const displayName = methodId === "antigravity" ? "Antigravity" : "ChatGPT";
     const generation = ++operationGeneration.current;
     setBusy(true);
     setError(null);
     try {
-      let current = await client.startCodexBrowserLogin();
+      let current = await client.startModelBrowserLogin(methodId);
       if (generation !== operationGeneration.current) return;
-      attemptRef.current = current.attemptId;
+      attemptRef.current = { methodId, attemptId: current.attemptId };
       setAttempt(current);
       while (!terminalStates.has(current.state)) {
         await new Promise((resolve) => window.setTimeout(resolve, 500));
-        current = await client.modelLoginAttempt(current.attemptId);
+        current = await client.modelLoginAttempt(methodId, current.attemptId);
         if (generation !== operationGeneration.current) return;
         setAttempt(current);
       }
@@ -110,7 +115,7 @@ export function ModelConnectionPanel({
       else setError(`登录未完成：${current.reasonCode ?? current.state}`);
     } catch {
       if (generation === operationGeneration.current) {
-        setError("ChatGPT 登录暂时不可用；正式 Client ID 未配置时会保持关闭。");
+        setError(`${displayName} 登录暂时不可用；本地兼容开关或 Client 注册未配置时会保持关闭。`);
       }
     } finally {
       if (generation === operationGeneration.current) {
@@ -146,11 +151,18 @@ export function ModelConnectionPanel({
         {error && <p className="model-connection-error" role="alert"><CircleAlert size={15} />{error}</p>}
 
         <div className="model-connection-options">
-          <section>
-            <LogIn size={20} aria-hidden="true" />
-            <div><h3>使用 ChatGPT 登录</h3><p>{codexAuthenticated ? "已连接共享的 ChatGPT/Codex 本机账户。" : externalLoginSupported ? "使用 ChatGPT 订阅中的 Codex 额度。登录在浏览器完成。" : "当前运行环境没有配置 ChatGPT/Codex 登录。"}</p></div>
-            <button type="button" className="button primary" aria-busy={busy} disabled={busy || codexAuthenticated || !client.startCodexBrowserLogin || !externalLoginSupported} onClick={() => void login()}>{codexAuthenticated ? "已登录" : "登录"}</button>
-          </section>
+          {externalConnections.map((connection) => {
+            const antigravity = connection.providerId === "google-antigravity";
+            const authenticated = connection.status === "AUTHENTICATED";
+            const displayName = antigravity ? "Antigravity" : "ChatGPT";
+            return (
+              <section key={`external-${connection.providerId}`}>
+                <LogIn size={20} aria-hidden="true" />
+                <div><h3>使用 {displayName} 登录</h3><p>{authenticated ? `已连接共享的 ${displayName} 本机账户。` : antigravity ? "使用 Google Antigravity 订阅。登录在浏览器完成。" : "使用 ChatGPT 订阅中的 Codex 额度。登录在浏览器完成。"}</p></div>
+                <button type="button" className="button primary" aria-busy={busy} disabled={busy || authenticated || !client.startModelBrowserLogin} onClick={() => void login(connection)}>{authenticated ? "已登录" : "登录"}</button>
+              </section>
+            );
+          })}
           <section>
             <KeyRound size={20} aria-hidden="true" />
             <div><h3>使用 API Key</h3><p>{apiKeySupported ? "Key 只写入本机认证文件，不会回显或用于保存前验证。" : "当前模型连接由运行环境或外部登录管理，不能在此保存 API Key。"}</p></div>

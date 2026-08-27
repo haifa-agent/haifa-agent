@@ -34,6 +34,10 @@ public final class LocalModelAuthenticationService implements AutoCloseable {
         return store.listSafe();
     }
 
+    public List<ExternalLoginMethodDescriptor> externalLoginMethods() {
+        return coordinator.map(ExternalLoginCoordinator::descriptors).orElseGet(List::of);
+    }
+
     public boolean connectionRequired(CredentialRef reference) {
         String value =
                 Objects.requireNonNull(reference, "reference must not be null").value();

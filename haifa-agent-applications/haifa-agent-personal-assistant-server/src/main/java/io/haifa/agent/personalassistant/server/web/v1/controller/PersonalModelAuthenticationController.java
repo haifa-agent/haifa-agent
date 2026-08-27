@@ -77,28 +77,30 @@ public final class PersonalModelAuthenticationController {
                         .body(connection));
     }
 
-    @PostMapping("/codex/browser-attempts")
-    Mono<ResponseEntity<PersonalApiDtos.ExternalLoginAttempt>> startCodexBrowserAttempt(
-            @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    @PostMapping("/{methodId}/browser-attempts")
+    Mono<ResponseEntity<PersonalApiDtos.ExternalLoginAttempt>> startBrowserAttempt(
+            @PathVariable String methodId, @RequestHeader("Idempotency-Key") String idempotencyKey) {
         return Mono.fromCallable(() -> {
-                    if (!externalLoginSupported()) {
-                        throw new IllegalStateException("AUTH_EXTERNAL_LOGIN_UNAVAILABLE");
-                    }
-                    return mapper.externalLoginAttempt(authentication.startExternalLogin(
-                            ExternalLoginMethodId.OPENAI_CODEX, ExternalLoginMode.BROWSER));
+                    ExternalLoginMethodId method = externalLoginMethod(methodId);
+                    return mapper.externalLoginAttempt(
+                            authentication.startExternalLogin(method, ExternalLoginMode.BROWSER));
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(attempt -> ResponseEntity.accepted().body(attempt));
     }
 
-    @GetMapping("/codex/browser-attempts/{attemptId}")
-    PersonalApiDtos.ExternalLoginAttempt attempt(@PathVariable String attemptId) {
+    @GetMapping("/{methodId}/browser-attempts/{attemptId}")
+    PersonalApiDtos.ExternalLoginAttempt attempt(@PathVariable String methodId, @PathVariable String attemptId) {
+        externalLoginMethod(methodId);
         return mapper.externalLoginAttempt(authentication.attempt(new ExternalLoginAttemptId(attemptId)));
     }
 
-    @DeleteMapping("/codex/browser-attempts/{attemptId}")
+    @DeleteMapping("/{methodId}/browser-attempts/{attemptId}")
     ResponseEntity<Void> cancel(
-            @PathVariable String attemptId, @RequestHeader("Idempotency-Key") String idempotencyKey) {
+            @PathVariable String methodId,
+            @PathVariable String attemptId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        externalLoginMethod(methodId);
         return authentication.cancel(new ExternalLoginAttemptId(attemptId))
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();
@@ -131,7 +133,8 @@ public final class PersonalModelAuthenticationController {
             }
             boolean ready = !authentication.connectionRequired(new CredentialRef(reference));
             boolean environment = reference.startsWith("env://");
-            boolean externalLogin = "openai-codex".equals(provider.id());
+            ExternalLoginMethodId externalMethod = externalLoginMethod(provider).orElse(null);
+            boolean externalLogin = externalMethod != null;
             result.add(new PersonalApiDtos.ModelConnection(
                     "configured://" + provider.id() + "/default",
                     provider.id(),
@@ -143,10 +146,32 @@ public final class PersonalModelAuthenticationController {
                     null,
                     ready ? null : "AUTH_CREDENTIAL_REQUIRED",
                     !environment && !externalLogin,
-                    externalLogin,
+                    externalLogin && externalLoginSupported(externalMethod),
                     false,
                     false));
         }
+        authentication.externalLoginMethods().forEach(method -> {
+            String reference = externalCredentialReference(method.methodId());
+            if (!projected.add(reference)) return;
+            stored.stream()
+                    .filter(connection -> connection.connectionId().value().equals(reference))
+                    .findFirst()
+                    .map(mapper::modelConnection)
+                    .ifPresentOrElse(
+                            result::add,
+                            () -> result.add(new PersonalApiDtos.ModelConnection(
+                                    "configured://" + method.methodId().value() + "/default",
+                                    method.methodId().value(),
+                                    "EXTERNAL_LOGIN",
+                                    "REAUTH_REQUIRED",
+                                    "Not connected",
+                                    null,
+                                    "AUTH_CREDENTIAL_REQUIRED",
+                                    false,
+                                    true,
+                                    false,
+                                    method.unofficial())));
+        });
         stored.stream()
                 .filter(connection -> projected.add(connection.connectionId().value()))
                 .map(mapper::modelConnection)
@@ -163,8 +188,33 @@ public final class PersonalModelAuthenticationController {
                         && !"openai-codex".equals(provider.id()));
     }
 
-    private boolean externalLoginSupported() {
-        List<PersonalAssistantProperties.ModelProvider> configured = providers.get();
-        return configured.isEmpty() || configured.stream().anyMatch(provider -> "openai-codex".equals(provider.id()));
+    private boolean externalLoginSupported(ExternalLoginMethodId methodId) {
+        return authentication.externalLoginMethods().stream()
+                .anyMatch(value -> value.methodId().equals(methodId));
+    }
+
+    private static ExternalLoginMethodId externalLoginMethod(String methodId) {
+        return switch (Objects.requireNonNull(methodId, "methodId must not be null")) {
+            case "codex" -> ExternalLoginMethodId.OPENAI_CODEX;
+            case "antigravity" -> ExternalLoginMethodId.GOOGLE_ANTIGRAVITY;
+            default -> throw new IllegalArgumentException("AUTH_LOGIN_METHOD_UNAVAILABLE");
+        };
+    }
+
+    private static java.util.Optional<ExternalLoginMethodId> externalLoginMethod(
+            PersonalAssistantProperties.ModelProvider provider) {
+        if ("openai-codex".equals(provider.id())) return java.util.Optional.of(ExternalLoginMethodId.OPENAI_CODEX);
+        if ("model-auth://google-antigravity/default".equals(provider.credentialReference())) {
+            return java.util.Optional.of(ExternalLoginMethodId.GOOGLE_ANTIGRAVITY);
+        }
+        return java.util.Optional.empty();
+    }
+
+    private static String externalCredentialReference(ExternalLoginMethodId methodId) {
+        if (ExternalLoginMethodId.OPENAI_CODEX.equals(methodId)) return "model-auth://openai-codex/default";
+        if (ExternalLoginMethodId.GOOGLE_ANTIGRAVITY.equals(methodId)) {
+            return "model-auth://google-antigravity/default";
+        }
+        throw new IllegalArgumentException("AUTH_LOGIN_METHOD_UNAVAILABLE");
     }
 }

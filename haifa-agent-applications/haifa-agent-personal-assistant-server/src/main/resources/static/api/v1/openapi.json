@@ -36,9 +36,10 @@
         }
       }
     },
-    "/api/v1/model-connections/codex/browser-attempts": {
+    "/api/v1/model-connections/{methodId}/browser-attempts": {
+      "parameters": [{"name": "methodId", "in": "path", "required": true, "schema": {"type": "string", "enum": ["codex", "antigravity"]}}],
       "post": {
-        "operationId": "startCodexBrowserAttempt",
+        "operationId": "startModelBrowserAttempt",
         "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
         "responses": {
           "202": {"description": "OAuth attempt started", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalLoginAttempt"}}}},
@@ -46,14 +47,17 @@
         }
       }
     },
-    "/api/v1/model-connections/codex/browser-attempts/{attemptId}": {
-      "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
+    "/api/v1/model-connections/{methodId}/browser-attempts/{attemptId}": {
+      "parameters": [
+        {"name": "methodId", "in": "path", "required": true, "schema": {"type": "string", "enum": ["codex", "antigravity"]}},
+        {"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}
+      ],
       "get": {
-        "operationId": "getCodexBrowserAttempt",
+        "operationId": "getModelBrowserAttempt",
         "responses": {"200": {"description": "Safe OAuth attempt state", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalLoginAttempt"}}}}}
       },
       "delete": {
-        "operationId": "cancelCodexBrowserAttempt",
+        "operationId": "cancelModelBrowserAttempt",
         "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
         "responses": {"204": {"description": "OAuth attempt cancelled"}, "404": {"$ref": "#/components/responses/Error"}}
       }

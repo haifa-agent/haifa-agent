@@ -18,13 +18,21 @@ ordinary Conversation Run still blocks the change until that Run reaches a termi
 
 `GET /api/v1/models` remains the model catalog and does not hide an otherwise valid binding merely because its local
 credential is missing. Credential readiness is exposed separately through `GET /api/v1/model-connections`; the adjacent
-mutation endpoints save a one-shot API Key, start/query/cancel a Codex browser attempt, and delete a Haifa-managed
+mutation endpoints save a one-shot API Key, start/query/cancel an allowlisted Codex or Antigravity browser attempt,
+and delete a Haifa-managed
 connection. All products use `~/.haifa-agent/auth.json` and the shared Local Model Auth Store/Resolver. A Codex binding
 must use `openai-codex-responses`, the approved endpoint, and `model-auth://openai-codex/...`.
 
 ChatGPT subscription login is disabled unless local compatibility testing explicitly supplies
 `HAIFA_CODEX_LOCAL_COMPAT_TEST=true`, `HAIFA_CODEX_OAUTH_CLIENT_ID`, and `HAIFA_CODEX_ORIGINATOR`. No Client ID is built
 into the Server, and default tests never contact OpenAI.
+
+Google Antigravity direct login follows the same local-development boundary. It is absent unless
+`HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true` and both `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_ID` and
+`HAIFA_ANTIGRAVITY_OAUTH_CLIENT_SECRET` are injected. Account onboarding is independently disabled unless
+`HAIFA_ANTIGRAVITY_ALLOW_ONBOARDING=true`; an existing CloudCode Project does not require that second gate.
+When enabled, its safe pre-login projection is returned even before an account is stored, allowing the Web model
+connection panel to present the Antigravity login action without exposing OAuth registration values.
 
 The v1 Run response includes an optional authoritative Plan/Todo projection. Activity responses
 use stable operation IDs plus durable event IDs, parent correlation, event time, and optional
@@ -46,6 +54,9 @@ Personal 的受信 `model-providers` 也可显式装配 `google-gemini-generate-
 必须是 `cliproxyapi-antigravity`，Dialect 必须是 `cliproxyapi-antigravity`，CredentialRef 必须是
 `env://HAIFA_CLIPROXYAPI_API_KEY`，HTTP Endpoint 必须在启用 `allow-insecure-loopback-model` 后仍通过
 loopback 校验。该连接只复用 CLIProxyAPI 的下游 Key，不提供或包装 Antigravity OAuth 登录。
+Direct 方言必须使用固定 Provider ID `google-antigravity`、Dialect `antigravity-direct` 和
+`model-auth://google-antigravity/default`；它只支持原生 Gemini API Style，与 CLIProxyAPI Binding
+保持独立。
 
 Server 在应用就绪时扫描 ACTIVE Conversation：旧实例遗留的 `RUNNING/SUSPENDING` Run 通过公共
 `AgentRuns.recover` 接管并继续执行；`WAITING_APPROVAL/WAITING_INTERACTION` 只恢复事件观察，不会
@@ -168,6 +179,12 @@ CLIProxyAPI `config.yaml` 提取首个 `haifa-local-*` 下游 Key，然后装配
 `HAIFA_CLIPROXYAPI_MODEL_ID` 默认是 `gemini-3-flash`。显式选择
 `--default-model-id gemini-cliproxy-flash` 才将它设为默认模型。该 Binding 声明文本、Tool、结构化输出、
 图片和音频输入能力，且只把下游 Key 传入 PA 子进程，不读取 CLIProxyAPI 的 OAuth、Token 或 Keyring。
+
+真实环境脚本固定装配独立的 `google-antigravity` Provider 与 `antigravity-gemini` Binding；
+`HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true` 只控制能否发起新的本地兼容 OAuth 登录。该 Binding 使用
+已登录的共享本地认证引用，默认
+访问 Daily Endpoint，并通过 `HAIFA_ANTIGRAVITY_PROXY_URL`（默认 `http://127.0.0.1:2081`）连接；
+`--default-model-id antigravity-gemini` 可将其设为默认模型。登录状态不会再只显示在连接面板而缺少对应模型。
 
 百炼目录提供 Qwen Chat 与已验证的 Max/Plus Responses；Kimi 只提供官方 API Key Chat；智谱提供通用
 OpenAI Chat，并仅为 GLM-5.2 提供通过 Contract 的 Anthropic Messages 高级连接方式。所有可见状态、
