@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceStatus;
 import io.haifa.agent.runtime.core.trace.TraceIdentifierGenerator;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -32,7 +33,7 @@ import java.util.regex.Pattern;
 final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable {
     private static final String RECORD_TYPE = "trace.event";
     private static final String SCHEMA = "haifa-runtime-trace";
-    private static final int SCHEMA_VERSION = 1;
+    private static final int SCHEMA_VERSION = 2;
     private static final String PRODUCER = "haifa-agent-cli";
     private static final String PRODUCER_VERSION = producerVersion();
     private static final Set<String> SUMMARY_OPERATIONS = Set.of(
@@ -148,6 +149,20 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
             Map.entry(
                     "runtime.terminal-error",
                     Set.of("errorCode", "diagnosticId", "exceptionType", "rootExceptionType", "failureTypes")));
+    /** V2 projection renames applied after the allowlist/passthrough selection. */
+    private static final Map<String, String> V2_ATTRIBUTE_RENAMES = Map.ofEntries(
+            Map.entry("definitionHash", "toolDefinitionDigest"),
+            Map.entry("summarySourceHash", "summarySourceDigest"),
+            Map.entry("selectedItems", "selectedItemCount"),
+            Map.entry("traceItems", "traceItemCount"),
+            Map.entry("writtenEvents", "writtenEventCount"),
+            Map.entry("droppedEvents", "droppedEventCount"),
+            Map.entry("forcedRebuildAttempt", "forcedRebuildCount"),
+            Map.entry("compactionElapsedMillis", "compactionElapsedMs"),
+            Map.entry("delayMillis", "delayMs"),
+            Map.entry("truncated", "outputTruncated"),
+            Map.entry("externalized", "payloadExternalized"),
+            Map.entry("externalizationRequired", "payloadExternalizationRequired"));
 
     private final Optional<CliTraceMode> mode;
     private final PrintStream terminal;
@@ -328,7 +343,8 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
         rememberTool(event);
         Map<String, Object> value = new LinkedHashMap<>();
         addContractMetadata(value, nextSequence);
-        value.put("timestamp", TimePrecision.toMilliseconds(event.occurredAt()).toString());
+        value.put(
+                "timestampMs", TimePrecision.toMilliseconds(event.occurredAt()).toEpochMilli());
         value.put("traceId", safeText(event.traceId()));
         value.put("runId", safeText(event.runId().value()));
         event.attemptId().ifPresent(id -> value.put("attemptId", safeText(id.value())));
@@ -340,8 +356,8 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
         value.put("scope", event.scope().name());
         value.put("phase", event.phase().name());
         value.put("operation", safeText(event.operation()));
-        value.put("status", event.status().name());
-        value.put("attributes", allowedAttributes(event.operation(), event.safeAttributes()));
+        addStatusFields(value, event.status());
+        value.put("attributes", v2Attributes(event.operation(), event.safeAttributes()));
         try {
             return json.writeValueAsString(value);
         } catch (JsonProcessingException exception) {
@@ -352,16 +368,17 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
     private String streamCompleted(long nextSequence, boolean cleanClose) {
         Map<String, Object> value = new LinkedHashMap<>();
         addContractMetadata(value, nextSequence);
-        value.put("timestamp", TimePrecision.toMilliseconds(Instant.now(clock)).toString());
+        value.put(
+                "timestampMs", TimePrecision.toMilliseconds(Instant.now(clock)).toEpochMilli());
         value.put("scope", "STREAM");
         value.put("phase", "NONE");
         value.put("operation", "stream.completed");
-        value.put("status", cleanClose ? "SUCCESS" : "UNKNOWN");
+        addStatusFields(value, cleanClose ? RuntimeTraceStatus.SUCCESS : RuntimeTraceStatus.UNKNOWN);
         value.put(
                 "attributes",
                 Map.of(
-                        "writtenEvents", writtenEvents + 1,
-                        "droppedEvents", droppedEvents,
+                        "writtenEventCount", writtenEvents + 1,
+                        "droppedEventCount", droppedEvents,
                         "cleanClose", cleanClose));
         try {
             return json.writeValueAsString(value);
@@ -447,6 +464,40 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
             if (allowed.contains(key) && !blockedKey(key)) selected.put(key, sanitize(value, 0));
         });
         return selected;
+    }
+
+    /**
+     * V2 contract attributes. Known operations keep the explicit allowlist; unknown operations conservatively
+     * pass every sanitized, redaction-filtered attribute through so new Runtime operations stay diagnosable.
+     */
+    private static Map<String, Object> v2Attributes(String operation, Map<String, Object> source) {
+        Map<String, Object> selected;
+        if (ALLOWED_ATTRIBUTES.containsKey(operation)) {
+            selected = allowedAttributes(operation, source);
+        } else {
+            selected = new LinkedHashMap<>();
+            source.forEach((key, value) -> {
+                if (!blockedKey(key)) selected.put(key, sanitize(value, 0));
+            });
+        }
+        // `successful` duplicates the V2 outcome field, and an unknown cost is expressed by omitting the value.
+        selected.remove("successful");
+        if (!Boolean.TRUE.equals(selected.get("costKnown"))) selected.remove("costMinorUnits");
+        selected.remove("costKnown");
+        Map<String, Object> renamed = new LinkedHashMap<>();
+        selected.forEach((key, value) -> renamed.put(V2_ATTRIBUTE_RENAMES.getOrDefault(key, key), value));
+        return renamed;
+    }
+
+    private static void addStatusFields(Map<String, Object> value, RuntimeTraceStatus status) {
+        switch (status) {
+            case STARTED -> value.put("lifecycle", "STARTED");
+            case ACTIVE -> value.put("lifecycle", "ACTIVE");
+            default -> {
+                value.put("lifecycle", "COMPLETED");
+                value.put("outcome", status.name());
+            }
+        }
     }
 
     private static Object sanitize(Object value, int depth) {
