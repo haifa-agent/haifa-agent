@@ -116,10 +116,15 @@ class CliTraceOutputTest {
         var json = new ObjectMapper().readTree(output.lines().findFirst().orElseThrow());
         assertThat(json.path("recordType").asText()).isEqualTo("trace.event");
         assertThat(json.path("schema").asText()).isEqualTo("haifa-runtime-trace");
-        assertThat(json.path("schemaVersion").asInt()).isEqualTo(1);
+        assertThat(json.path("schemaVersion").asInt()).isEqualTo(2);
         assertThat(json.path("producer").asText()).isEqualTo("haifa-agent-cli");
         assertThat(json.path("streamId").asText()).matches("ts_[A-Za-z0-9_-]{22}");
         assertThat(json.path("sequence").asLong()).isEqualTo(1);
+        assertThat(json.path("timestampMs").isNumber()).isTrue();
+        assertThat(json.has("timestamp")).isFalse();
+        assertThat(json.path("lifecycle").asText()).isEqualTo("COMPLETED");
+        assertThat(json.path("outcome").asText()).isEqualTo("SUCCESS");
+        assertThat(json.has("status")).isFalse();
         assertThat(json.path("operation").asText()).isEqualTo("model.invoke");
         assertThat(json.path("runId").asText()).isEqualTo("run-1");
         assertThat(json.path("attributes").path("providerId").asText()).isEqualTo("deepseek");
@@ -128,7 +133,8 @@ class CliTraceOutputTest {
                 new ObjectMapper().readTree(output.lines().skip(1).findFirst().orElseThrow());
         assertThat(completed.path("operation").asText()).isEqualTo("stream.completed");
         assertThat(completed.path("sequence").asLong()).isEqualTo(2);
-        assertThat(completed.path("attributes").path("writtenEvents").asLong()).isEqualTo(2);
+        assertThat(completed.path("attributes").path("writtenEventCount").asLong())
+                .isEqualTo(2);
         assertThat(completed.path("attributes").path("cleanClose").asBoolean()).isTrue();
     }
 
@@ -157,7 +163,7 @@ class CliTraceOutputTest {
     }
 
     @Test
-    void jsonlUsesAnOperationAllowlistAndKeepsUnknownOperationsVisible() throws Exception {
+    void jsonlKeepsAllowlistForKnownOperationsAndPassesUnknownAttributesThroughSafely() throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (var trace = CliTraceOutput.open(
                 Optional.of(CliTraceMode.JSONL),
@@ -167,7 +173,10 @@ class CliTraceOutputTest {
                     "model.invoke",
                     Optional.empty(),
                     Map.of("providerId", "deepseek", "providerMessage", "must-not-appear", "unexpected", "drop-me")));
-            trace.accept(event("future.operation", Optional.empty(), Map.of("providerId", "drop-me")));
+            trace.accept(event(
+                    "future.operation",
+                    Optional.empty(),
+                    Map.of("providerId", "deepseek", "detail", "kept", "credentialValue", "must-not-appear")));
         }
 
         var lines = bytes.toString(StandardCharsets.UTF_8).lines().toList();
@@ -175,8 +184,54 @@ class CliTraceOutputTest {
         var unknown = new ObjectMapper().readTree(lines.get(1));
         assertThat(known.path("attributes").toString()).isEqualTo("{\"providerId\":\"deepseek\"}");
         assertThat(unknown.path("operation").asText()).isEqualTo("future.operation");
-        assertThat(unknown.path("attributes").isEmpty()).isTrue();
+        assertThat(unknown.path("attributes").path("providerId").asText()).isEqualTo("deepseek");
+        assertThat(unknown.path("attributes").path("detail").asText()).isEqualTo("kept");
+        assertThat(unknown.path("attributes").has("credentialValue")).isFalse();
         assertThat(bytes.toString(StandardCharsets.UTF_8)).doesNotContain("must-not-appear", "drop-me");
+    }
+
+    @Test
+    void jsonlProjectsV2AttributeNamesAndDropsRedundantFields() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (var trace = CliTraceOutput.open(
+                Optional.of(CliTraceMode.JSONL),
+                Optional.empty(),
+                new PrintStream(bytes, true, StandardCharsets.UTF_8))) {
+            trace.accept(event(
+                    "tool.execute",
+                    Optional.of(new ToolCallId("tool-call-1")),
+                    Map.of("toolName", "file.read", "definitionHash", "abc123")));
+            trace.accept(event(
+                    "tool.persisted",
+                    Optional.of(new ToolCallId("tool-call-1")),
+                    Map.of(
+                            "toolName", "file.read",
+                            "successful", true,
+                            "truncated", true,
+                            "externalizationRequired", false,
+                            "externalized", false)));
+            trace.accept(event(
+                    "model.invoke",
+                    Optional.empty(),
+                    Map.of("providerId", "deepseek", "costKnown", false, "costMinorUnits", 0)));
+        }
+
+        var lines = bytes.toString(StandardCharsets.UTF_8).lines().toList();
+        var execute = new ObjectMapper().readTree(lines.get(0));
+        var persisted = new ObjectMapper().readTree(lines.get(1));
+        var invoke = new ObjectMapper().readTree(lines.get(2));
+        assertThat(execute.path("attributes").path("toolDefinitionDigest").asText())
+                .isEqualTo("abc123");
+        assertThat(execute.path("attributes").has("definitionHash")).isFalse();
+        assertThat(persisted.path("attributes").path("outputTruncated").asBoolean())
+                .isTrue();
+        assertThat(persisted.path("attributes").has("payloadExternalizationRequired"))
+                .isTrue();
+        assertThat(persisted.path("attributes").has("payloadExternalized")).isTrue();
+        assertThat(persisted.path("attributes").has("successful")).isFalse();
+        assertThat(persisted.path("attributes").has("truncated")).isFalse();
+        assertThat(invoke.path("attributes").has("costKnown")).isFalse();
+        assertThat(invoke.path("attributes").has("costMinorUnits")).isFalse();
     }
 
     @Test
