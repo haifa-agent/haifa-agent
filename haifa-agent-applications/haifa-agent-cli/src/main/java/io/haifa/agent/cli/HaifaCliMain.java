@@ -59,6 +59,34 @@ public final class HaifaCliMain {
             Path workspace = parsed.workspace().orElseGet(() -> Path.of("."));
             if (!workspace.isAbsolute()) workspace = workspace.toAbsolutePath().normalize();
             CliConfiguration configuration = new CliConfigurationLoader().load(parsed, workspace);
+            return run(parsed, workspace, configuration, output, error);
+        } catch (IllegalArgumentException exception) {
+            logRejected("CLI_ARGUMENT_REJECTED", exception);
+            error.println("Invalid command: " + exception.getMessage());
+            error.println("Use --help for usage.");
+            return 1;
+        } catch (IllegalStateException exception) {
+            logRejected("CLI_STATE_REJECTED", exception);
+            if (Tui4jCodingTerminal.TUI_UNAVAILABLE.equals(exception.getMessage())) {
+                error.println(Tui4jCodingTerminal.TUI_UNAVAILABLE + ": an interactive terminal is required.");
+                return 1;
+            }
+            error.println("Unable to run haifa-cli: " + exception.getClass().getSimpleName());
+            return 1;
+        } catch (Exception exception) {
+            logRejected("CLI_OPERATION_FAILED", exception);
+            error.println("Unable to run haifa-cli: " + exception.getClass().getSimpleName());
+            return 1;
+        }
+    }
+
+    int run(
+            CliArguments parsed,
+            Path workspace,
+            CliConfiguration configuration,
+            PrintStream output,
+            PrintStream error) {
+        try {
             boolean terminal = parsed.resume().isPresent()
                     || parsed.terminal()
                     || parsed.message().isEmpty();

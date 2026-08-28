@@ -26,6 +26,33 @@ Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-term
 `close()` 统一释放资源。需要为每次隔离运行注入不同 SQLite/Transcript 路径时，可使用接收显式环境
 Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case。
 
+## IDE 单步调试入口
+
+`IdeCodingAgentMain`（`io.haifa.agent.cli.IdeCodingAgentMain`）是面向 Coding Agent 开发的 IDE 装配
+入口：直接在 IDE 中运行其 `main` 方法即可单步调试完整装配。与 `haifa-coding` 不同，它从不调用
+`System.exit`，非零结果不会强制终止调试会话。它是刻意的一次性入口：必须显式传入
+`-m/--message` 任务文本，拒绝 Terminal/resume 模式。
+
+配置按三层管理：
+
+1. **FROZEN（代码内固定）**：`CliConfiguration.defaults()` 的装配与安全默认——工具目录绑定、Skill
+   平台、host-guarded 执行沙箱、DeepSeek thinking 关闭、审批 `ask`、内存持久化、无 Secret 输出策略。
+2. **YAML（中频）**：自动发现时先读 `~/.haifa-agent/config.yaml`，再用
+   `<workspace>/.haifa-agent/config.yaml` 覆盖同级配置；显式 `--config <path>` 会替代自动发现，而不是与
+   用户/Workspace 配置合并。配置覆盖 `models.providers`、`tools.enabled`、`web`、`mcp`、`skills`、
+   `execution`、`approval`、`runtime`、`persistence`。
+3. **RUNTIME（每次运行传入）**：`--workspace`、`-m/--message`、`--model`（或 `HAIFA_MODEL_ID`）、
+   `--approval`、`--timeout`、`--trace`/`--trace-file`、`--verbose`。
+
+示例：
+
+```text
+IdeCodingAgentMain --workspace D:\repos\my-project -m "Fix the failing module test" --approval auto
+```
+
+入口只负责 IDE 专属校验与脱敏摘要；解析后的同一份配置直接交给 `HaifaCliMain` 的内部执行路径，装配、
+退出码、流式输出、Trace 与审批处理都只有一个实现。
+
 ## Model connection and Codex subscription login
 
 Interactive startup checks only the selected model's credential reference. If an `env://...` value is absent or a
