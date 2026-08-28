@@ -37,10 +37,10 @@ Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case
 
 1. **FROZEN（代码内固定）**：`CliConfiguration.defaults()` 的装配与安全默认——工具目录绑定、Skill
    平台、host-guarded 执行沙箱、DeepSeek thinking 关闭、审批 `ask`、内存持久化、无 Secret 输出策略。
-2. **YAML（中频）**：自动发现时先读 `~/.haifa-agent/config.yaml`，再用
-   `<workspace>/.haifa-agent/config.yaml` 覆盖同级配置；显式 `--config <path>` 会替代自动发现，而不是与
-   用户/Workspace 配置合并。配置覆盖 `models.providers`、`tools.enabled`、`web`、`mcp`、`skills`、
-   `execution`、`approval`、`runtime`、`persistence`。
+2. **YAML（中频）**：自动发现时先读 `~/.haifa-agent/coding/ide-config.yaml`，再用
+   `<workspace>/.haifa-agent/coding/ide-config.yaml` 覆盖同级配置；显式 `--config <path>` 会替代自动发现，
+   而不是与用户/Workspace 配置合并。配置覆盖 `models.providers`、`tools.enabled`、`web`、`mcp`、
+   `skills`、`execution`、`approval`、`runtime`、`persistence`。
 3. **RUNTIME（每次运行传入）**：`--workspace`、`-m/--message`、`--model`（或 `HAIFA_MODEL_ID`）、
    `--approval`、`--timeout`、`--trace`/`--trace-file`、`--verbose`。
 

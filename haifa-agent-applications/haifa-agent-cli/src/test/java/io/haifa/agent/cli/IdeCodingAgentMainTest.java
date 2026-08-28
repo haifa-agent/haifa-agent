@@ -5,10 +5,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class IdeCodingAgentMainTest {
     @Test
@@ -23,12 +25,32 @@ class IdeCodingAgentMainTest {
         assertThat(text)
                 .contains("Usage: IdeCodingAgentMain")
                 .contains("FROZEN")
-                .contains(".haifa-agent/config.yaml")
+                .contains(".haifa-agent/coding/ide-config.yaml")
                 .contains("--config <path>")
                 .contains("replaces automatic user/workspace discovery")
                 .contains("--trace <mode>")
                 .contains("--trace-file <path>")
                 .contains("RUNTIME");
+    }
+
+    @Test
+    void loadsUserIdeConfigurationBeforeWorkspaceIdeConfiguration(@TempDir Path temporaryDirectory) throws Exception {
+        Path userConfiguration = temporaryDirectory.resolve("user-ide-config.yaml");
+        Files.writeString(userConfiguration, "approval:\n  mode: auto\n", StandardCharsets.UTF_8);
+        Path workspace = Files.createDirectory(temporaryDirectory.resolve("workspace"));
+        Path workspaceConfiguration = workspace.resolve(".haifa-agent/coding/ide-config.yaml");
+        Files.createDirectories(workspaceConfiguration.getParent());
+        Files.writeString(workspaceConfiguration, "runtime:\n  maxIterations: 7\n", StandardCharsets.UTF_8);
+
+        CliConfiguration configuration = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(new String[] {"-m", "inspect"}),
+                        workspace,
+                        java.util.Optional.of(userConfiguration),
+                        Path.of(".haifa-agent/coding/ide-config.yaml"));
+
+        assertThat(configuration.approval()).isEqualTo(ApprovalMode.AUTO);
+        assertThat(configuration.maxIterations()).isEqualTo(7);
     }
 
     @Test

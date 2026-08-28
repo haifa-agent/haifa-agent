@@ -39,13 +39,28 @@ final class CliConfigurationLoader {
     }
 
     CliConfiguration load(CliArguments arguments, Path workspace) {
+        return load(
+                arguments,
+                workspace,
+                userConfiguration(),
+                Path.of(".haifa-agent").resolve("config.yaml"));
+    }
+
+    CliConfiguration load(
+            CliArguments arguments, Path workspace, Optional<Path> userConfiguration, Path workspaceConfiguration) {
         Objects.requireNonNull(arguments, "arguments must not be null");
+        Objects.requireNonNull(workspace, "workspace must not be null");
+        Objects.requireNonNull(userConfiguration, "userConfiguration must not be null");
+        Objects.requireNonNull(workspaceConfiguration, "workspaceConfiguration must not be null");
+        if (workspaceConfiguration.isAbsolute()) {
+            throw new IllegalArgumentException("workspace configuration path must be relative");
+        }
         Map<String, Object> values = new LinkedHashMap<>();
         if (arguments.config().isPresent()) {
             values.putAll(read(arguments.config().orElseThrow()));
         } else {
-            userConfiguration().filter(Files::isRegularFile).map(this::read).ifPresent(values::putAll);
-            Path local = workspace.resolve(".haifa-agent").resolve("config.yaml");
+            userConfiguration.filter(Files::isRegularFile).map(this::read).ifPresent(values::putAll);
+            Path local = workspace.resolve(workspaceConfiguration);
             if (Files.isRegularFile(local)) values.putAll(read(local));
         }
         return resolve(values, arguments);

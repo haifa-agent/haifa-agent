@@ -2,6 +2,7 @@ package io.haifa.agent.cli;
 
 import java.io.PrintStream;
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -21,8 +22,8 @@ import java.util.stream.Collectors;
  *       host-guarded execution sandbox, DeepSeek thinking disabled, approval {@code ask},
  *       in-memory persistence, and the no-secret output policy. Not user-configurable.</li>
  *   <li><b>YAML (medium frequency)</b> — automatic discovery loads
- *       {@code ~/.haifa-agent/config.yaml} (user level), then overlays
- *       {@code <workspace>/.haifa-agent/config.yaml} (workspace level). An explicit
+ *       {@code ~/.haifa-agent/coding/ide-config.yaml} (user level), then overlays
+ *       {@code <workspace>/.haifa-agent/coding/ide-config.yaml} (workspace level). An explicit
  *       {@code --config <path>} replaces automatic discovery. Covers {@code models.providers}
  *       (endpoint, credentialRef, API style bindings), {@code tools.enabled}, {@code web},
  *       {@code mcp}, {@code skills}, {@code execution}, {@code approval}, {@code runtime},
@@ -45,7 +46,16 @@ public final class IdeCodingAgentMain {
     }
 
     static int run(String[] arguments, PrintStream output, PrintStream error) {
-        return run(arguments, output, error, new CliConfigurationLoader()::load, new HaifaCliMain()::run);
+        return run(arguments, output, error, IdeCodingAgentMain::loadConfiguration, new HaifaCliMain()::run);
+    }
+
+    static CliConfiguration loadConfiguration(CliArguments arguments, Path workspace) {
+        String userHome = System.getProperty("user.home");
+        Optional<Path> userConfiguration = userHome == null || userHome.isBlank()
+                ? Optional.empty()
+                : Optional.of(Path.of(userHome, ".haifa-agent", "coding", "ide-config.yaml"));
+        return new CliConfigurationLoader()
+                .load(arguments, workspace, userConfiguration, Path.of(".haifa-agent", "coding", "ide-config.yaml"));
     }
 
     static int run(
@@ -107,8 +117,8 @@ public final class IdeCodingAgentMain {
                   approval    : %s (threshold=%s)
                   persistence : %s
                   runtime     : timeout=%s, maxIterations=%d, maxToolCalls=%d
-                  config tiers: FROZEN assembly defaults < user ~/.haifa-agent/config.yaml
-                                 < workspace .haifa-agent/config.yaml < --config <path>;
+                  config tiers: FROZEN assembly defaults < user ~/.haifa-agent/coding/ide-config.yaml
+                                 < workspace .haifa-agent/coding/ide-config.yaml < --config <path>;
                                  per-run flags override (--model/--approval/--timeout).
                 """
                 .formatted(
@@ -155,8 +165,9 @@ public final class IdeCodingAgentMain {
                   1. FROZEN (code)         Assembly & safety defaults: tool catalog, skills,
                                            host-guarded sandbox, DeepSeek thinking disabled,
                                            approval=ask, memory persistence.
-                  2. YAML (medium-freq.)   Auto-discovery overlays <workspace>/.haifa-agent/config.yaml
-                                           on ~/.haifa-agent/config.yaml;
+                  2. YAML (medium-freq.)   Auto-discovery overlays
+                                           <workspace>/.haifa-agent/coding/ide-config.yaml on
+                                           ~/.haifa-agent/coding/ide-config.yaml;
                                            --config <path> replaces automatic user/workspace discovery.
                                            Covers models.providers, tools.enabled, web, mcp, skills,
                                            execution, approval, runtime, persistence.
