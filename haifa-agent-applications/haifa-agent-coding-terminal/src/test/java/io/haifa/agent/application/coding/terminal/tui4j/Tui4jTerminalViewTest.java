@@ -449,8 +449,8 @@ class Tui4jTerminalViewTest {
                 .containsSubsequence(
                         "You",
                         "Assistant",
-                        "Tool · workspace.read [succeeded]",
-                        "Execution · mvn test [started]",
+                        "✓ workspace.read",
+                        "● mvn test",
                         "Approval · SHELL [pending]",
                         "Resource · Test report [exported]",
                         "Error · Tool failed [failed]")
@@ -495,8 +495,8 @@ class Tui4jTerminalViewTest {
         assertThat(withoutBlockPadding)
                 .isEqualTo(
                         """
-                        Tool · file_stat [succeeded] · ctrl+o expand
-                        Tool · file_read · README.md [succeeded] · ctrl+o expand""")
+                        ✓ file_stat · ctrl+o expand
+                        ✓ file_read · README.md · ctrl+o expand""")
                 .doesNotContain("Target:");
     }
 
@@ -531,11 +531,57 @@ class Tui4jTerminalViewTest {
         String content = view.transcriptContent(state);
 
         assertThat(content)
-                .contains(
-                        "Tool · workspace.read · missing.txt [failed] · ctrl+o expand",
-                        "Reason: NOT_FOUND",
-                        "Result: safe-ref")
+                .contains("✗ workspace.read · missing.txt · ctrl+o expand", "Reason: NOT_FOUND", "Result: safe-ref")
                 .doesNotContain("Hidden detail");
+    }
+
+    @Test
+    void rendersDurationsRunSummaryChipsAndExpandedToolMetadata() {
+        TerminalUiState initial = TerminalUiState.initial(100, 30);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                List.of(
+                        new TranscriptItem(
+                                "tool-1",
+                                TranscriptItem.Kind.TOOL,
+                                "file_read · README.md",
+                                "Target: README.md\nResult: artifact:tool-1",
+                                "SUCCEEDED",
+                                true,
+                                Optional.empty(),
+                                Optional.of(1_000L),
+                                Optional.of(300L)),
+                        item(
+                                "run-summary-run-1",
+                                TranscriptItem.Kind.SUMMARY,
+                                "Run completed · 4s · 2 tools",
+                                "Status: COMPLETED\nTools: 2 succeeded",
+                                "COMPLETED",
+                                false)),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String content = view.transcriptContent(state);
+
+        assertThat(content)
+                .contains(
+                        "✓ file_read · README.md · 300 ms",
+                        "Duration 300 ms · 2 lines",
+                        "✓ Run completed · 4s · 2 tools · ctrl+o expand")
+                .doesNotContain("Status: COMPLETED");
     }
 
     @Test
