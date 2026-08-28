@@ -99,10 +99,16 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - User 使用低对比消息块，便于定位用户意图；
 - Assistant 正文直接进入对话流，不使用厚卡片；高频 Markdown 子集只在 View 层转换为终端样式，
   `TranscriptItem`、Session 与持久化继续保留原始 Markdown；
-- Tool/Execution 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。成功或进行中的折叠项
-  只占一行并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。失败项在折叠状态额外保留
-  最多两行安全原因，展开后才显示既有有界详情；
-- Approval 使用 Pending 语义，Error 使用 Error 语义，Resource 保持中性；
+- Tool/Execution 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项只占一行：
+  以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标` 与完成耗时（如 `✓ file_read · README.md · 0.3s`），
+  并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。失败项在折叠状态额外保留
+  最多两行安全原因，展开后才显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
+  Execution 标题在拿到退出码后追加 ` · exit N`；
+- Run 进入终态（completed/failed/cancelled/timeout）时追加一张可折叠的 Run Summary 卡片，
+  标题聚合耗时、工具数、命令数与 Workspace Change Set 数（如
+  `Run completed · 24s · 8 tools · 3 commands · 2 change sets`），展开后给出分类计数；
+- Approval 使用 Pending 语义，Error 使用 Error 语义；Recovery/Work-phase 等 `delivery-*` 与
+  `resource-*` Resource 项默认可折叠为一行，认证、历史等关键 Resource 项保持展开可见；
 - Editor/Selector 的当前操作提示使用 Focus 语义。
 
 ### Assistant Markdown
@@ -281,7 +287,8 @@ key，并在所有重启间保持不变。
 10. Terminal 模式使用 `--trace detail` 但不提供 `--trace-file`，确认 Trace 不写入 TUI；提供
     `--trace-file` 后确认诊断仅进入文件。
 11. 用 Stub/Fake Tool 走通 requested → started → succeeded/failed/cancelled，确认同一 Tool/Execution
-    只更新一张卡片，Ctrl+O 可折叠/展开最近项。
+    只更新一张卡片，折叠行带 `✓`/`✗`/`●` 状态符号与耗时，Ctrl+O 可折叠/展开最近项（含 Run Summary
+    与可折叠 Resource 项）；Run 终态确认追加 Run Summary 卡片。
 12. 用 Stub/Fake Approval 检查结构化字段、approve/reject 回执与 editor 草稿恢复；审批期间输入只由
     Selector 消费。
 13. Active Enter 后观察 Steer 从 accepted 保持到 applied；Alt+Enter 后观察持久 Follow-up Queue，

@@ -236,6 +236,39 @@ class ExecutionCoreTest {
     }
 
     @Test
+    void keepsBaselineEnvironmentValuesVisibleWhileRedactingSecretLikeValues() {
+        Fixture fixture = fixture();
+        Map<String, String> environment = Map.of(
+                "PATH", "C:\\Windows\\System32",
+                "USERPROFILE", "C:\\Users\\dev",
+                "GIT_PAGER", "cat",
+                "GIT_TERMINAL_PROMPT", "0",
+                "CUSTOM_SHORT", "abc123",
+                "CUSTOM_TOKENISH", "supersecret1");
+        byte[] stdout = ("line 10: cat found in C:\\Users\\dev and C:\\Windows\\System32; abc123 supersecret1\n")
+                .getBytes(StandardCharsets.UTF_8);
+        DefaultExecutionBroker broker = fixture.broker(fakeProvider(() -> {}, stdout), request -> {}, environment);
+
+        var result = broker.execute(
+                fixture.request("redaction-policy", "redaction-policy-key", Set.of("execution.run"), List.of("fake")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
+        assertThat(result.stdout().summary())
+                .contains("line 10: cat found in C:\\Users\\dev and C:\\Windows\\System32; abc123 ")
+                .doesNotContain("supersecret1")
+                .contains("***");
+
+        var streamed = new java.io.ByteArrayOutputStream();
+        var observer = new RedactingExecutionOutputObserver(chunk -> streamed.writeBytes(chunk.bytes()), environment);
+        observer.onOutput(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                ExecutionOutputChannel.STDOUT, stdout, true, false));
+        assertThat(new String(streamed.toByteArray(), StandardCharsets.UTF_8))
+                .contains("line 10: cat found in C:\\Users\\dev and C:\\Windows\\System32; abc123 ")
+                .doesNotContain("supersecret1")
+                .contains("***");
+    }
+
+    @Test
     void rejectsUnavailablePreExecutionObserverBeforeOpeningTheProcess() {
         Fixture fixture = fixture();
         AtomicInteger processStarts = new AtomicInteger();
@@ -574,11 +607,30 @@ class ExecutionCoreTest {
         }
 
         DefaultExecutionBroker broker(SandboxProvider provider, ExecutionPolicy policy, SandboxProfile profile) {
-            return broker(
-                    provider,
+            return broker(provider, policy, profile, Map.of("SECRET", "secret-token"));
+        }
+
+        DefaultExecutionBroker broker(
+                SandboxProvider provider, ExecutionPolicy policy, Map<String, String> environment) {
+            return broker(provider, policy, profile(provider), environment);
+        }
+
+        DefaultExecutionBroker broker(
+                SandboxProvider provider,
+                ExecutionPolicy policy,
+                SandboxProfile profile,
+                Map<String, String> environment) {
+            return new DefaultExecutionBroker(
+                    new InMemoryExecutionStore(),
+                    outputs,
+                    ignored -> environment,
                     policy,
-                    profile,
-                    new LocalIncrementalWorkspaceChangeObserver(workspaceId, root, WorkspaceChangeIgnorePolicy.none()));
+                    ignored -> profile,
+                    ignored -> provider,
+                    workspaces,
+                    bindings,
+                    new LocalIncrementalWorkspaceChangeObserver(workspaceId, root, WorkspaceChangeIgnorePolicy.none()),
+                    observed);
         }
 
         DefaultExecutionBroker broker(

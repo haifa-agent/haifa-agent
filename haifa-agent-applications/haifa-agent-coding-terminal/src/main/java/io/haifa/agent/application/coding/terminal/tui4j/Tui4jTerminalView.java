@@ -4,6 +4,7 @@ import com.williamcallahan.tui4j.ansi.Truncate;
 import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
+import io.haifa.agent.application.coding.terminal.state.TerminalDurations;
 import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
@@ -244,8 +245,7 @@ final class Tui4jTerminalView {
                 switch (item.kind()) {
                     case USER -> "You";
                     case ASSISTANT -> item.title();
-                    case TOOL -> "Tool · " + item.title() + " [" + status + "]";
-                    case EXECUTION -> "Execution · " + item.title() + " [" + status + "]";
+                    case TOOL, EXECUTION, SUMMARY -> glyph(item.status()) + " " + item.title() + durationSuffix(item);
                     case APPROVAL -> item.title() + " [" + status + "]";
                     case RESOURCE -> "Resource · " + item.title() + " [" + status + "]";
                     case ERROR -> "Error · " + item.title() + " [" + status + "]";
@@ -255,7 +255,7 @@ final class Tui4jTerminalView {
             String content = rendered.isEmpty() ? title : title + "\n" + indent(rendered);
             return style(item, content);
         }
-        if (isCollapsedTool(item)) {
+        if (item.collapsible()) {
             String content = title + theme.muted(" · " + shortcuts.toggleExpansion() + " expand");
             if (isErrorStatus(item.status())) {
                 String details = item.body()
@@ -271,16 +271,39 @@ final class Tui4jTerminalView {
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
         String content =
                 title + "\n" + body.lines().map(value -> "  " + sanitize(value)).collect(Collectors.joining("\n"));
+        if (item.expanded()
+                && (item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION)) {
+            String metadata = metadata(item);
+            if (!metadata.isBlank()) content = content + "\n" + theme.muted("  " + metadata);
+        }
         return style(item, content);
     }
 
-    private boolean isCompactTool(TranscriptItem item) {
-        return isCollapsedTool(item) && !isErrorStatus(item.status());
+    private static String glyph(String status) {
+        String normalized = status.strip().toUpperCase(Locale.ROOT);
+        if (SUCCESS_STATUSES.contains(normalized)) return "✓";
+        if (ERROR_STATUSES.contains(normalized)) return "✗";
+        return "●";
     }
 
-    private boolean isCollapsedTool(TranscriptItem item) {
-        return !item.expanded()
-                && (item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION);
+    private static String durationSuffix(TranscriptItem item) {
+        return item.durationMillis()
+                .map(value -> " · " + TerminalDurations.human(value))
+                .orElse("");
+    }
+
+    private static String metadata(TranscriptItem item) {
+        List<String> parts = new ArrayList<>();
+        item.durationMillis().ifPresent(value -> parts.add("Duration " + TerminalDurations.human(value)));
+        long lines = item.body().lines().filter(line -> !line.isBlank()).count();
+        if (lines > 0) parts.add(lines + (lines == 1 ? " line" : " lines"));
+        int bytes = item.body().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        if (bytes > 0) parts.add(bytes < 1024 ? bytes + " B" : String.format(Locale.ROOT, "%.1f KB", bytes / 1024.0));
+        return String.join(" · ", parts);
+    }
+
+    private boolean isCompactTool(TranscriptItem item) {
+        return item.collapsible() && !isErrorStatus(item.status());
     }
 
     private boolean isErrorStatus(String status) {

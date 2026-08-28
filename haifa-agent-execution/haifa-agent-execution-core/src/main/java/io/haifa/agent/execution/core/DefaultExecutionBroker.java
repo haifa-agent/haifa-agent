@@ -476,11 +476,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
 
     private static byte[] redact(byte[] source, Map<String, String> environment) {
         byte[] redacted = source.clone();
-        for (String secret : environment.values()) {
-            if (secret != null && !secret.isEmpty()) {
-                redacted = replace(
-                        redacted, secret.getBytes(java.nio.charset.StandardCharsets.UTF_8), new byte[] {'*', '*', '*'});
-            }
+        for (byte[] secret : ExecutionOutputRedactionPolicy.redactionValues(environment)) {
+            redacted = replace(redacted, secret, new byte[] {'*', '*', '*'});
         }
         return redactUriUserInfo(redacted);
     }

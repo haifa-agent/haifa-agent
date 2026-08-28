@@ -4,10 +4,7 @@ import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
 import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -24,13 +21,7 @@ final class RedactingExecutionOutputObserver implements ExecutionOutputObserver 
 
     RedactingExecutionOutputObserver(ExecutionOutputObserver delegate, Map<String, String> environment) {
         this.delegate = Objects.requireNonNull(delegate, "delegate must not be null");
-        var values = new ArrayList<byte[]>();
-        environment.values().stream()
-                .filter(value -> value != null && !value.isEmpty())
-                .map(value -> value.getBytes(StandardCharsets.UTF_8))
-                .sorted(Comparator.comparingInt((byte[] value) -> value.length).reversed())
-                .forEach(values::add);
-        secrets = List.copyOf(values);
+        secrets = ExecutionOutputRedactionPolicy.redactionValues(environment);
         maximumSecretLength =
                 secrets.stream().mapToInt(value -> value.length).max().orElse(1);
         for (ExecutionOutputChannel channel : ExecutionOutputChannel.values()) pending.put(channel, new byte[0]);

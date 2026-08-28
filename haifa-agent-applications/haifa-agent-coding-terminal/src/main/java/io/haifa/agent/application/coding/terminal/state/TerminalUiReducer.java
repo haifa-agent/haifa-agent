@@ -11,6 +11,7 @@ import io.haifa.agent.runtime.api.RunEventPayloads;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 
@@ -535,25 +536,50 @@ public final class TerminalUiReducer {
                 items.set(index, items.get(index).append(payload.textDelta()));
             }
         } else if (event.payload() instanceof RunEventPayloads.ToolLifecycle payload) {
+            String id = "tool-" + payload.toolCallId();
+            int existing = index(items, id);
+            Optional<Long> startedAt = existing >= 0 ? items.get(existing).startedAtEpochMillis() : Optional.empty();
+            if (startedAt.isEmpty()) startedAt = Optional.of(event.occurredAt().toEpochMilli());
+            Optional<Long> duration = existing >= 0 ? items.get(existing).durationMillis() : Optional.empty();
+            if (terminalToolStatus(payload.status())) {
+                duration = Optional.of(Math.max(0, event.occurredAt().toEpochMilli() - startedAt.orElseThrow()));
+            }
             upsert(
                     items,
                     new TranscriptItem(
-                            "tool-" + payload.toolCallId(),
+                            id,
                             TranscriptItem.Kind.TOOL,
                             toolTitle(payload),
                             toolBody(payload),
                             payload.status(),
-                            false));
+                            false,
+                            Optional.empty(),
+                            startedAt,
+                            duration));
         } else if (event.payload() instanceof RunEventPayloads.ExecutionLifecycle payload) {
+            String id = "execution-" + payload.executionId();
+            int existing = index(items, id);
+            Optional<Long> startedAt = existing >= 0 ? items.get(existing).startedAtEpochMillis() : Optional.empty();
+            if (startedAt.isEmpty()) {
+                int toolIndex = index(items, "tool-" + payload.toolCallId());
+                startedAt = toolIndex >= 0
+                        ? items.get(toolIndex).startedAtEpochMillis()
+                        : Optional.of(event.occurredAt().toEpochMilli());
+            }
+            Optional<Long> duration =
+                    startedAt.map(start -> Math.max(0, event.occurredAt().toEpochMilli() - start));
             upsert(
                     items,
                     new TranscriptItem(
-                            "execution-" + payload.executionId(),
+                            id,
                             TranscriptItem.Kind.EXECUTION,
-                            payload.commandSummary(),
+                            executionTitle(payload),
                             executionBody(payload),
                             payload.status(),
-                            false));
+                            false,
+                            Optional.empty(),
+                            startedAt,
+                            duration));
         } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload
                 && !isInternalCheckpoint(payload)) {
             upsert(
@@ -606,6 +632,10 @@ public final class TerminalUiReducer {
                             deliveryBody(payload),
                             payload.status(),
                             false));
+        }
+        if (event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle
+                && TERMINAL_RUN_STATUSES.contains(lifecycle.status())) {
+            items.add(runSummaryItem(items, lifecycle, event));
         }
         return List.copyOf(items);
     }
@@ -884,6 +914,95 @@ public final class TerminalUiReducer {
             end--;
         }
         return prefix + target.substring(0, end) + "…";
+    }
+
+    private static String executionTitle(RunEventPayloads.ExecutionLifecycle payload) {
+        String summary = payload.commandSummary();
+        if (payload.exitCode() == null) return summary;
+        String suffix = " · exit " + payload.exitCode();
+        int available = MAX_TRANSCRIPT_TITLE_LENGTH - suffix.length();
+        String clipped =
+                summary.length() <= available ? summary : summary.substring(0, Math.max(0, available - 1)) + "…";
+        return clipped + suffix;
+    }
+
+    private static final Set<String> TOOL_SUCCESS_STATUSES = Set.of("SUCCEEDED", "COMPLETED");
+    private static final Set<String> TOOL_FAILURE_STATUSES = Set.of("FAILED", "DENIED", "CANCELLED", "TIMEOUT");
+
+    private static TranscriptItem runSummaryItem(
+            List<TranscriptItem> items, RunEventPayloads.RunLifecycle payload, AgentRunEvent event) {
+        int segmentStart = 0;
+        for (int position = items.size() - 1; position >= 0; position--) {
+            if (items.get(position).kind() == TranscriptItem.Kind.SUMMARY) {
+                segmentStart = position + 1;
+                break;
+            }
+        }
+        int toolsSucceeded = 0;
+        int toolsFailed = 0;
+        int executions = 0;
+        int executionsFailed = 0;
+        int changeSets = 0;
+        long earliestStart = Long.MAX_VALUE;
+        for (int position = segmentStart; position < items.size(); position++) {
+            TranscriptItem item = items.get(position);
+            if (item.kind() == TranscriptItem.Kind.TOOL) {
+                if (TOOL_SUCCESS_STATUSES.contains(item.status())) toolsSucceeded++;
+                else if (TOOL_FAILURE_STATUSES.contains(item.status())) toolsFailed++;
+            } else if (item.kind() == TranscriptItem.Kind.EXECUTION) {
+                executions++;
+                if (TOOL_FAILURE_STATUSES.contains(item.status())) executionsFailed++;
+            } else if (item.kind() == TranscriptItem.Kind.RESOURCE
+                    && item.body().startsWith("workspace-change-set")) {
+                changeSets++;
+            } else {
+                continue;
+            }
+            if (item.startedAtEpochMillis().isPresent()) {
+                earliestStart =
+                        Math.min(earliestStart, item.startedAtEpochMillis().orElseThrow());
+            }
+        }
+        Optional<Long> duration = earliestStart == Long.MAX_VALUE
+                ? Optional.empty()
+                : Optional.of(Math.max(0, event.occurredAt().toEpochMilli() - earliestStart));
+        String title =
+                switch (payload.status()) {
+                    case "COMPLETED" -> "Run completed";
+                    case "FAILED" -> "Run failed · " + payload.reasonCode();
+                    case "CANCELLED" -> "Run cancelled";
+                    case "TIMEOUT" -> "Run timed out";
+                    default -> "Run " + payload.status().toLowerCase(Locale.ROOT);
+                };
+        List<String> chips = new ArrayList<>();
+        duration.ifPresent(value -> chips.add(TerminalDurations.human(value)));
+        int tools = toolsSucceeded + toolsFailed;
+        if (tools > 0) chips.add(tools + (tools == 1 ? " tool" : " tools"));
+        if (executions > 0) chips.add(executions + (executions == 1 ? " command" : " commands"));
+        if (changeSets > 0) chips.add(changeSets + (changeSets == 1 ? " change set" : " change sets"));
+        String chipLine = chips.isEmpty() ? "" : " · " + String.join(" · ", chips);
+        List<String> body = new ArrayList<>();
+        body.add("Status: " + payload.status()
+                + ("NONE".equals(payload.reasonCode()) ? "" : " · " + payload.reasonCode()));
+        if (tools > 0) {
+            body.add("Tools: " + toolsSucceeded + " succeeded"
+                    + (toolsFailed > 0 ? " · " + toolsFailed + " failed" : ""));
+        }
+        if (executions > 0) {
+            body.add("Commands: " + executions + (executionsFailed > 0 ? " · " + executionsFailed + " failed" : ""));
+        }
+        if (changeSets > 0) body.add("Workspace changes: " + changeSets + " change set" + (changeSets == 1 ? "" : "s"));
+        duration.ifPresent(value -> body.add("Duration: " + TerminalDurations.human(value)));
+        return new TranscriptItem(
+                "run-summary-" + event.runId().value(),
+                TranscriptItem.Kind.SUMMARY,
+                title + chipLine,
+                String.join("\n", body),
+                payload.status(),
+                false,
+                Optional.empty(),
+                Optional.empty(),
+                duration);
     }
 
     private static String executionBody(RunEventPayloads.ExecutionLifecycle payload) {
