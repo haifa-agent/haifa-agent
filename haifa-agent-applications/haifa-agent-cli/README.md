@@ -199,7 +199,7 @@ JSONL 只用于审计投影，不参与恢复。启动器按自身目录设置�
 只读 `execution.extraPathPolicies` 写入可信的自定义配置。不要把 API Key 写进 YAML。Java 21
 必须能从 `JAVA_HOME/bin/java` 或 `PATH` 找到。
 
-该发行入口用于日常本地项目。仓库根目录的 `scripts/run-haifa-coding-terminal.command` 继续保留，
+该发行入口用于日常本地项目。`haifa-agent-testing/scripts/run-haifa-coding-terminal.command` 继续保留，
 作为会创建隔离 Fixture、Trace、SQLite 和人工验收证据的 macOS 测试入口；两者用途不同。
 
 ### 本地发行目录（Windows）
@@ -242,7 +242,7 @@ Workspace。默认 `protection=NONE` 不需要 continuation key；如改为 `AES
 
 ### macOS 全工具人工测试入口
 
-仓库根目录的 `scripts/run-haifa-coding-terminal.command` 是可版本控制的 macOS 人工测试启动器。
+测试基础设施下的 `haifa-agent-testing/scripts/run-haifa-coding-terminal.command` 是可版本控制的 macOS 人工测试启动器。
 它默认启用 CLI 当前全部可执行的内置文件/命令工具、两个基础 Skill 工具、命令网络和
 `approval=auto`。本地 Utility MCP 健康检查失败时，脚本会从
 `HAIFA_UTILITY_MCP_SERVICE_DIR` 指定的源码目录后台启动服务；服务可达后导入 Coding Agent
@@ -250,9 +250,9 @@ Workspace。默认 `protection=NONE` 不需要 continuation key；如改为 `AES
 `web.search` 与 `web.fetch`。
 
 ```bash
-./scripts/run-haifa-coding-terminal.command --check
-./scripts/run-haifa-coding-terminal.command --build
-./scripts/run-haifa-coding-terminal.command --approval=ask
+./haifa-agent-testing/scripts/run-haifa-coding-terminal.command --check
+./haifa-agent-testing/scripts/run-haifa-coding-terminal.command --build
+./haifa-agent-testing/scripts/run-haifa-coding-terminal.command --approval=ask
 ```
 
 启动器会禁用退出后离线验收命令的交互分页器；`/quit` 恢复 TUI 进入前的主屏后，验收摘要直接续写，

@@ -2,10 +2,13 @@
 
 import json
 import sqlite3
+import sys
 import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from analyze_coding_runtime import analyze, connect_read_only, resolve_paths, validate_schema, write_report
 
@@ -258,7 +261,7 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
 
     def test_replay_fixture_is_synthetic_and_privacy_bounded(self):
         fixture = (
-            Path(__file__).resolve().parent.parent
+            Path(__file__).resolve().parents[2]
             / "haifa-agent-testing"
             / "haifa-agent-test-fixtures"
             / "src"
@@ -280,7 +283,7 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
 
     def test_evaluation_baseline_freezes_required_metrics_without_raw_evidence(self):
         fixture = (
-            Path(__file__).resolve().parent.parent
+            Path(__file__).resolve().parents[2]
             / "haifa-agent-testing"
             / "haifa-agent-test-fixtures"
             / "src"
@@ -335,7 +338,7 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
 
     def test_evaluation_contract_fixture_covers_reliability_boundaries(self):
         fixture = (
-            Path(__file__).resolve().parent.parent
+            Path(__file__).resolve().parents[2]
             / "haifa-agent-testing"
             / "haifa-agent-test-fixtures"
             / "src"

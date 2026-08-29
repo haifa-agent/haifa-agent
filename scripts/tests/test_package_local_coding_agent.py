@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 
 
-SCRIPT = Path(__file__).with_name("package-local-coding-agent.py")
+SCRIPT = Path(__file__).resolve().parents[1] / "package-local-coding-agent.py"
 SPEC = importlib.util.spec_from_file_location("package_local_coding_agent", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -20,7 +20,7 @@ class PackageLocalCodingAgentTest(unittest.TestCase):
         self.assertNotIn("-DskipTests", command)
 
     def test_renders_current_model_api_configuration_for_both_launchers(self) -> None:
-        repository = Path(__file__).resolve().parent.parent
+        repository = Path(__file__).resolve().parents[2]
         template = (
             repository
             / "haifa-agent-applications"
