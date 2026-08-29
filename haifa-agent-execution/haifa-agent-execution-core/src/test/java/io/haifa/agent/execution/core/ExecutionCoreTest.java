@@ -16,6 +16,7 @@ import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ManagedProcessRequest;
 import io.haifa.agent.execution.api.ProcessInputChunk;
+import io.haifa.agent.execution.api.ResolvedExecutionEnvironment;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.execution.core.change.LocalIncrementalWorkspaceChangeObserver;
@@ -71,6 +72,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -205,7 +207,9 @@ class ExecutionCoreTest {
                 };
             }
         };
-        DefaultExecutionBroker broker = fixture.broker(provider, request -> {});
+        ResolvedExecutionEnvironment resolvedEnv =
+                ResolvedExecutionEnvironment.of(Map.of("SECRET", "secret-token"), Set.of("SECRET"));
+        DefaultExecutionBroker broker = fixture.broker(provider, request -> {}, resolvedEnv);
         var streamed = new java.io.ByteArrayOutputStream();
         AtomicInteger starts = new AtomicInteger();
 
@@ -233,6 +237,50 @@ class ExecutionCoreTest {
                     throw new IllegalStateException("presentation failed");
                 });
         assertThat(observerFailureResult.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
+    }
+
+    @Test
+    void keepsBaselineEnvironmentValuesVisibleWhileRedactingSecretLikeValues() {
+        Fixture fixture = fixture();
+        Map<String, String> environment = Map.of(
+                "PATH", "C:\\Windows\\System32",
+                "USERPROFILE", "C:\\Users\\dev",
+                "GIT_PAGER", "cat",
+                "GIT_TERMINAL_PROMPT", "0",
+                "PORT", "8080",
+                "BUILD_ID", "1234",
+                "COLORTERM", "truecolor",
+                "SHORT_SECRET", "k9x",
+                "CUSTOM_TOKENISH", "supersecret1");
+        ResolvedExecutionEnvironment resolvedEnv =
+                ResolvedExecutionEnvironment.of(environment, Set.of("SHORT_SECRET", "CUSTOM_TOKENISH"));
+        byte[] stdout =
+                ("port 8080 build 1234 color truecolor; cat in C:\\Users\\dev and C:\\Windows\\System32; key: k9x; token: supersecret1\n"
+                                + "clone url: https://user:secret-pass@github.example/repo.git\n")
+                        .getBytes(StandardCharsets.UTF_8);
+        DefaultExecutionBroker broker = fixture.broker(fakeProvider(() -> {}, stdout), request -> {}, resolvedEnv);
+
+        var result = broker.execute(
+                fixture.request("redaction-policy", "redaction-policy-key", Set.of("execution.run"), List.of("fake")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
+        assertThat(result.stdout().summary())
+                .contains(
+                        "port 8080 build 1234 color truecolor; cat in C:\\Users\\dev and C:\\Windows\\System32; key: ***; token: ***\n")
+                .doesNotContain("supersecret1", "secret-pass")
+                .contains("https://***@github.example/repo.git");
+
+        var streamed = new java.io.ByteArrayOutputStream();
+        var observer = new RedactingExecutionOutputObserver(
+                chunk -> streamed.writeBytes(chunk.bytes()),
+                RedactingExecutionOutputObserver.extractSecrets(resolvedEnv));
+        observer.onOutput(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                ExecutionOutputChannel.STDOUT, stdout, true, false));
+        assertThat(new String(streamed.toByteArray(), StandardCharsets.UTF_8))
+                .contains(
+                        "port 8080 build 1234 color truecolor; cat in C:\\Users\\dev and C:\\Windows\\System32; key: ***; token: ***\n")
+                .doesNotContain("supersecret1", "secret-pass")
+                .contains("https://***@github.example/repo.git");
     }
 
     @Test
@@ -297,8 +345,13 @@ class ExecutionCoreTest {
 
         try (var session = broker.openManagedSession(new ManagedProcessRequest(request))) {
             session.write(new ProcessInputChunk("request\n".getBytes(StandardCharsets.UTF_8)));
-            var output = session.read(Duration.ofSeconds(1)).orElseThrow();
-            assertThat(new String(output.bytes(), StandardCharsets.UTF_8)).isEqualTo("***\n");
+            var output1 = session.read(Duration.ofSeconds(1));
+            var output2 = session.read(Duration.ofSeconds(1));
+            String accumulated = (output1.map(chunk -> new String(chunk.bytes(), StandardCharsets.UTF_8))
+                            .orElse("")
+                    + output2.map(chunk -> new String(chunk.bytes(), StandardCharsets.UTF_8))
+                            .orElse(""));
+            assertThat(accumulated).doesNotContain("remote-secret").contains("https://***@github.example/repo.git");
             assertThat(session.exit()
                             .get(2, java.util.concurrent.TimeUnit.SECONDS)
                             .status())
@@ -307,7 +360,85 @@ class ExecutionCoreTest {
 
         var result = broker.find(request.id()).orElseThrow();
         assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
-        assertThat(result.stdout().summary()).doesNotContain("secret-token");
+        assertThat(result.stdout().summary()).doesNotContain("remote-secret");
+    }
+
+    @Test
+    void managedSessionFlushesTrailingCarryoverOnProcessExitWithoutDataLoss() throws Exception {
+        Fixture fixture = fixture();
+        var provider = managedProvider((exit, ignored) -> new SandboxManagedProcess() {
+            private boolean readOnce = false;
+
+            @Override
+            public Instant startedAt() {
+                return NOW;
+            }
+
+            @Override
+            public void write(ProcessInputChunk input) {}
+
+            @Override
+            public Optional<io.haifa.agent.execution.api.ProcessOutputChunk> read(Duration timeout) {
+                if (!readOnce) {
+                    readOnce = true;
+                    java.util.concurrent.CompletableFuture.delayedExecutor(
+                                    20, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            .execute(() -> exit.complete(new io.haifa.agent.execution.api.ProcessExit(
+                                    ExecutionStatus.SUCCEEDED, 0, true, NOW.plusSeconds(1))));
+                    return Optional.of(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                            ExecutionOutputChannel.STDOUT,
+                            "{\"result\":\"partial-sec".getBytes(StandardCharsets.UTF_8),
+                            false,
+                            false));
+                }
+                return Optional.empty();
+            }
+
+            @Override
+            public java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit> exit() {
+                return exit;
+            }
+
+            @Override
+            public int observedProcessCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean cancel() {
+                return true;
+            }
+
+            @Override
+            public void close() {}
+        });
+
+        ResolvedExecutionEnvironment env =
+                ResolvedExecutionEnvironment.of(Map.of("LEAS_KEY", "secret-token"), Set.of("LEAS_KEY"));
+        DefaultExecutionBroker broker = fixture.broker(provider, request -> {}, env);
+        ExecutionRequest request =
+                fixture.request("flush-exit", "flush-exit-key", Set.of("execution.run"), List.of("fake"));
+
+        try (var session = broker.openManagedSession(new ManagedProcessRequest(request))) {
+            var accumulated = new StringBuilder();
+            while (!session.exit().isDone()) {
+                session.read(Duration.ofMillis(50))
+                        .ifPresent(chunk -> accumulated.append(new String(chunk.bytes(), StandardCharsets.UTF_8)));
+            }
+            while (true) {
+                var chunk = session.read(Duration.ofMillis(10));
+                if (chunk.isEmpty()) break;
+                accumulated.append(new String(chunk.get().bytes(), StandardCharsets.UTF_8));
+            }
+            assertThat(accumulated.toString()).isEqualTo("{\"result\":\"partial-sec");
+            assertThat(session.exit()
+                            .get(2, java.util.concurrent.TimeUnit.SECONDS)
+                            .status())
+                    .isEqualTo(ExecutionStatus.SUCCEEDED);
+        }
+
+        var result = broker.find(request.id()).orElseThrow();
+        assertThat(result.stdout().summary()).isEqualTo("{\"result\":\"partial-sec");
     }
 
     @Test
@@ -450,6 +581,71 @@ class ExecutionCoreTest {
     }
 
     private static SandboxProvider managedProvider() {
+        return managedProvider((exit, ignored) -> {
+            int[] emitCount = new int[] {0};
+            return new SandboxManagedProcess() {
+                @Override
+                public Instant startedAt() {
+                    return NOW;
+                }
+
+                @Override
+                public void write(ProcessInputChunk input) {
+                    assertThat(new String(input.bytes(), StandardCharsets.UTF_8))
+                            .isEqualTo("request\n");
+                }
+
+                @Override
+                public java.util.Optional<io.haifa.agent.execution.api.ProcessOutputChunk> read(Duration timeout) {
+                    if (emitCount[0] == 0) {
+                        emitCount[0]++;
+                        return java.util.Optional.of(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                                io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                                "https://user:remote-".getBytes(StandardCharsets.UTF_8),
+                                false,
+                                false));
+                    } else if (emitCount[0] == 1) {
+                        emitCount[0]++;
+                        java.util.concurrent.CompletableFuture.delayedExecutor(
+                                        20, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                .execute(() -> exit.complete(new io.haifa.agent.execution.api.ProcessExit(
+                                        ExecutionStatus.SUCCEEDED, 0, true, NOW.plusSeconds(1))));
+                        return java.util.Optional.of(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                                io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                                "secret@github.example/repo.git\n".getBytes(StandardCharsets.UTF_8),
+                                true,
+                                false));
+                    }
+                    return java.util.Optional.empty();
+                }
+
+                @Override
+                public java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit> exit() {
+                    return exit;
+                }
+
+                @Override
+                public int observedProcessCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean cancel() {
+                    return true;
+                }
+
+                @Override
+                public void close() {}
+            };
+        });
+    }
+
+    private static SandboxProvider managedProvider(
+            java.util.function.BiFunction<
+                            java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit>,
+                            Runnable,
+                            SandboxManagedProcess>
+                    factory) {
         return new SandboxProvider() {
             @Override
             public String providerId() {
@@ -471,7 +667,6 @@ class ExecutionCoreTest {
                 return new SandboxSession() {
                     private final java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit>
                             exit = new java.util.concurrent.CompletableFuture<>();
-                    private boolean emitted;
 
                     @Override
                     public SandboxSessionId id() {
@@ -485,54 +680,7 @@ class ExecutionCoreTest {
 
                     @Override
                     public SandboxManagedProcess openManagedProcess(SandboxExecution execution) {
-                        return new SandboxManagedProcess() {
-                            @Override
-                            public Instant startedAt() {
-                                return NOW;
-                            }
-
-                            @Override
-                            public void write(ProcessInputChunk input) {
-                                assertThat(new String(input.bytes(), StandardCharsets.UTF_8))
-                                        .isEqualTo("request\n");
-                            }
-
-                            @Override
-                            public java.util.Optional<io.haifa.agent.execution.api.ProcessOutputChunk> read(
-                                    Duration timeout) {
-                                if (emitted) return java.util.Optional.empty();
-                                emitted = true;
-                                var output = new io.haifa.agent.execution.api.ProcessOutputChunk(
-                                        io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
-                                        "secret-token\n".getBytes(StandardCharsets.UTF_8),
-                                        false,
-                                        false);
-                                java.util.concurrent.CompletableFuture.delayedExecutor(
-                                                20, java.util.concurrent.TimeUnit.MILLISECONDS)
-                                        .execute(() -> exit.complete(new io.haifa.agent.execution.api.ProcessExit(
-                                                ExecutionStatus.SUCCEEDED, 0, true, NOW.plusSeconds(1))));
-                                return java.util.Optional.of(output);
-                            }
-
-                            @Override
-                            public java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit>
-                                    exit() {
-                                return exit;
-                            }
-
-                            @Override
-                            public int observedProcessCount() {
-                                return 1;
-                            }
-
-                            @Override
-                            public boolean cancel() {
-                                return true;
-                            }
-
-                            @Override
-                            public void close() {}
-                        };
+                        return factory.apply(exit, () -> {});
                     }
 
                     @Override
@@ -578,7 +726,35 @@ class ExecutionCoreTest {
                     provider,
                     policy,
                     profile,
-                    new LocalIncrementalWorkspaceChangeObserver(workspaceId, root, WorkspaceChangeIgnorePolicy.none()));
+                    ResolvedExecutionEnvironment.of(Map.of("SECRET", "secret-token"), Set.of("SECRET")));
+        }
+
+        DefaultExecutionBroker broker(
+                SandboxProvider provider, ExecutionPolicy policy, Map<String, String> environment) {
+            return broker(provider, policy, profile(provider), ResolvedExecutionEnvironment.of(environment));
+        }
+
+        DefaultExecutionBroker broker(
+                SandboxProvider provider, ExecutionPolicy policy, ResolvedExecutionEnvironment environment) {
+            return broker(provider, policy, profile(provider), environment);
+        }
+
+        DefaultExecutionBroker broker(
+                SandboxProvider provider,
+                ExecutionPolicy policy,
+                SandboxProfile profile,
+                ResolvedExecutionEnvironment environment) {
+            return new DefaultExecutionBroker(
+                    new InMemoryExecutionStore(),
+                    outputs,
+                    ignored -> environment,
+                    policy,
+                    ignored -> profile,
+                    ignored -> provider,
+                    workspaces,
+                    bindings,
+                    new LocalIncrementalWorkspaceChangeObserver(workspaceId, root, WorkspaceChangeIgnorePolicy.none()),
+                    observed);
         }
 
         DefaultExecutionBroker broker(
@@ -589,7 +765,7 @@ class ExecutionCoreTest {
             return new DefaultExecutionBroker(
                     new InMemoryExecutionStore(),
                     outputs,
-                    ignored -> Map.of("SECRET", "secret-token"),
+                    ignored -> ResolvedExecutionEnvironment.of(Map.of("SECRET", "secret-token"), Set.of("SECRET")),
                     policy,
                     ignored -> profile,
                     ignored -> provider,

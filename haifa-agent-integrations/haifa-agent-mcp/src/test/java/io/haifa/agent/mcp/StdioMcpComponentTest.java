@@ -103,7 +103,9 @@ class StdioMcpComponentTest {
         var lease = McpTestFixtures.lease("credential-binding", "secret-value");
         var binding = registry.bind(List.of(injection), List.of(lease), Set.of("UTILITY_TOKEN"));
 
-        assertThat(registry.resolve(binding.reference())).containsEntry("UTILITY_TOKEN", "Bearer secret-value");
+        var resolved = registry.resolve(binding.reference());
+        assertThat(resolved.values()).containsEntry("UTILITY_TOKEN", "Bearer secret-value");
+        assertThat(resolved.sensitiveNames()).containsExactly("UTILITY_TOKEN");
         binding.close();
         assertThatThrownBy(() -> registry.resolve(binding.reference())).isInstanceOf(SecurityException.class);
         assertThatThrownBy(() -> registry.bind(List.of(injection), List.of(lease), Set.of("OTHER")))
