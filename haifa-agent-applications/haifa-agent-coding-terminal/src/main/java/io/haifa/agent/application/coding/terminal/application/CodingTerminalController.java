@@ -603,10 +603,7 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
             state.transcript().stream()
-                    .filter(value -> value.kind()
-                                    == io.haifa.agent.application.coding.terminal.state.TranscriptItem.Kind.TOOL
-                            || value.kind()
-                                    == io.haifa.agent.application.coding.terminal.state.TranscriptItem.Kind.EXECUTION)
+                    .filter(io.haifa.agent.application.coding.terminal.state.TranscriptItem::toggleable)
                     .reduce((first, second) -> second)
                     .ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
             return;

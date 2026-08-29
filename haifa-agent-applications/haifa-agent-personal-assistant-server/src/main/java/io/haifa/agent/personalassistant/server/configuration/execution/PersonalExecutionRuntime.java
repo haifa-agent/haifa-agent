@@ -136,7 +136,7 @@ public final class PersonalExecutionRuntime {
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
-                ignored -> environment,
+                ignored -> io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
                 new PolicyDecisionExecutionPolicy(
                         policy.decisions(), policy.snapshots(), policy.authorizationEvidence(), clock),
                 new ImmutableSandboxProfileRegistry(List.of(profile)),

@@ -229,8 +229,9 @@ final class CliExecutionPlatform implements AutoCloseable {
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
-                requestedEnvironment ->
-                        requestedEnvironment.equals(permissionEnvironmentRef) ? permissionEnvironment : environment,
+                requestedEnvironment -> requestedEnvironment.equals(permissionEnvironmentRef)
+                        ? io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(permissionEnvironment)
+                        : io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
                 new PolicyDecisionExecutionPolicy(
                         policy.decisionsStore(), policy.snapshots(), policy.evidence(), clock),
                 profileRegistry,

@@ -111,7 +111,10 @@ class TerminalUiReducerTest {
         assertThat(completed.footer().runStatus()).isEqualTo("COMPLETED");
         assertThat(completed.currentRunId()).isEmpty();
         assertThat(postCompletionResource.currentRunId()).isEmpty();
-        assertThat(postCompletionResource.transcript()).isEmpty();
+        assertThat(postCompletionResource.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.SUMMARY);
+            assertThat(item.title()).isEqualTo("Run completed");
+        });
         assertThat(postCompletionResource.appliedCursor()).contains(checkpointEvent.cursor());
         assertThat(postCompletionResource.seenEventIds()).contains("event-2");
     }
@@ -160,10 +163,16 @@ class TerminalUiReducerTest {
                                 Optional.of("diag-budget")))));
 
         assertThat(failed.recoverableError()).contains("RUN_BUDGET_EXCEEDED");
-        assertThat(failed.transcript()).singleElement().satisfies(item -> {
+        assertThat(failed.transcript()).hasSize(2);
+        assertThat(failed.transcript().get(0)).satisfies(item -> {
             assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.ERROR);
             assertThat(item.title()).isEqualTo("[RUN_BUDGET_EXCEEDED] Run budget exceeded");
             assertThat(item.body()).isEqualTo("Diagnostic ID: diag-budget");
+        });
+        assertThat(failed.transcript().get(1)).satisfies(item -> {
+            assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.SUMMARY);
+            assertThat(item.title()).isEqualTo("Run failed · RUN_BUDGET_EXCEEDED");
+            assertThat(item.status()).isEqualTo("FAILED");
         });
         assertThat(TerminalRecovery.fromCode("RUN_BUDGET_EXCEEDED").action())
                 .contains("smaller request", "larger budget");
@@ -224,6 +233,97 @@ class TerminalUiReducerTest {
                                 "Exit: 1",
                                 "Changes: changes:1"));
         assertThat(execution.status()).isEqualTo("THINKING");
+    }
+
+    @Test
+    void recordsToolAndExecutionDurationsFromEventTimestamps() {
+        TerminalUiState requested = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "STARTED", "NONE", "rg search", ""),
+                        Instant.parse("2026-07-27T00:00:01Z"))));
+        TerminalUiState succeeded = reducer.reduce(
+                requested,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution_run", "SUCCEEDED", "NONE", "rg search", ""),
+                        Instant.parse("2026-07-27T00:00:02.500Z"))));
+        TerminalUiState executed = reducer.reduce(
+                succeeded,
+                new TerminalUiAction.RunEventReceived(event(
+                        3,
+                        "event-3",
+                        new RunEventPayloads.ExecutionLifecycle(
+                                "execution-1",
+                                "tool-1",
+                                "SUCCEEDED",
+                                "rg search",
+                                ".",
+                                "MERGED",
+                                "3 hits",
+                                0,
+                                false,
+                                ""),
+                        Instant.parse("2026-07-27T00:00:02.700Z"))));
+
+        assertThat(executed.transcript()).hasSize(2);
+        assertThat(executed.transcript().get(0).durationMillis()).contains(1500L);
+        assertThat(executed.transcript().get(1).durationMillis()).contains(1700L);
+        assertThat(executed.transcript().get(1).title()).isEqualTo("rg search · exit 0");
+    }
+
+    @Test
+    void appendsRunSummaryWithAggregatedCountsAtTerminalRunLifecycle() {
+        TerminalUiState state = TerminalUiState.initial(120, 40);
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle("tool-1", "file_read", "STARTED", "NONE", "a.txt", ""),
+                        Instant.parse("2026-07-27T00:00:01Z"))));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "file_read", "SUCCEEDED", "NONE", "a.txt", "artifact:1"),
+                        Instant.parse("2026-07-27T00:00:02Z"))));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(event(
+                        3,
+                        "event-3",
+                        new RunEventPayloads.ToolLifecycle("tool-2", "file_write", "FAILED", "IO", "b.txt", ""),
+                        Instant.parse("2026-07-27T00:00:03Z"))));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(event(
+                        4,
+                        "event-4",
+                        new RunEventPayloads.ResourceAvailable(
+                                "changes:1", "workspace-change-set", "Workspace changes", "AVAILABLE", "inspect"),
+                        Instant.parse("2026-07-27T00:00:04Z"))));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(event(
+                        5,
+                        "event-5",
+                        new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"),
+                        Instant.parse("2026-07-27T00:00:05Z"))));
+
+        TranscriptItem summary = state.transcript().getLast();
+        assertThat(summary.kind()).isEqualTo(TranscriptItem.Kind.SUMMARY);
+        assertThat(summary.title()).isEqualTo("Run completed · 4s · 2 tools · 1 change set");
+        assertThat(summary.body())
+                .contains("Tools: 1 succeeded · 1 failed", "Workspace changes: 1 change set", "Duration: 4s");
+        assertThat(summary.collapsible()).isTrue();
     }
 
     @Test
@@ -574,6 +674,10 @@ class TerminalUiReducerTest {
     }
 
     private static AgentRunEvent event(long sequence, String id, AgentRunEvent.Payload payload) {
+        return event(sequence, id, payload, Instant.parse("2026-07-27T00:00:00Z"));
+    }
+
+    private static AgentRunEvent event(long sequence, String id, AgentRunEvent.Payload payload, Instant occurredAt) {
         AgentRunId runId = new AgentRunId("run-1");
         return new AgentRunEvent(
                 id,
@@ -583,7 +687,7 @@ class TerminalUiReducerTest {
                 new AgentSessionId("session-1"),
                 sequence,
                 new RunEventCursor(runId, "1", OptionalLong.of(sequence)),
-                Instant.parse("2026-07-27T00:00:00Z"),
+                occurredAt,
                 Optional.empty(),
                 Optional.empty(),
                 payload);

@@ -34,6 +34,7 @@ class ExternalLoginCoordinatorTest {
             assertThat(completed.state()).isEqualTo(ExternalLoginAttemptState.SUCCEEDED);
             assertThat(coordinator.completedConnection(started.attemptId())).isPresent();
             assertThat(store.values).hasSize(1);
+            assertThat(method.closedLatch.await(2, TimeUnit.SECONDS)).isTrue();
             assertThat(method.closed).hasValue(1);
         }
         assertThat(method.closed).hasValue(1);
@@ -214,6 +215,7 @@ class ExternalLoginCoordinatorTest {
         private final boolean cancelFails;
         private final CountDownLatch entered = new CountDownLatch(1);
         private final CountDownLatch released = new CountDownLatch(1);
+        private final CountDownLatch closedLatch = new CountDownLatch(1);
         private final AtomicInteger closed = new AtomicInteger();
 
         private FakeMethod(String id, boolean block) {
@@ -262,6 +264,7 @@ class ExternalLoginCoordinatorTest {
                 @Override
                 public void close() {
                     closed.incrementAndGet();
+                    closedLatch.countDown();
                     released.countDown();
                 }
             };
