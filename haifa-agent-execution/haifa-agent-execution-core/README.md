@@ -17,7 +17,7 @@ deadline、输出和审计硬边界。
 `WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` 明确拒绝，不产生 Execution 记录，也不进入结果未知状态；进程启动后
 观察收敛失败映射为 `WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED`。
 
-Broker 负责 capability、policy、profile、环境租约、Sandbox 生命周期、输出脱敏与审计编排，但不复制 Agent Run 状态机，也不依赖具体 Sandbox Provider。一次性执行的展示 observer 经过有界异步分发，不阻塞进程管道；环境值脱敏支持 secret 跨 chunk，observer 异常不影响进程收尾和 Execution Journal。环境值脱敏只针对"可能像凭据"的值：宿主环境解析已经按变量名排除了敏感项，因此平台基线变量（`PATH`、`USERPROFILE`、`GIT_PAGER` 等公共路径/控制值）的值不再从输出中抹除，只有非基线变量且长度至少 8、含字母的值才被替换为 `***`，避免把普通命令输出里的数字、路径和常见单词误打成脱敏标记；URI userinfo 脱敏保持不变。Provider 只在 `ProcessBuilder.start()` 成功后发出 `onStarted`，上层据此记录真实 DISPATCHED 边界。
+Broker 负责 capability、policy、profile、环境租约、Sandbox 生命周期、输出脱敏与审计编排，但不复制 Agent Run 状态机，也不依赖具体 Sandbox Provider。一次性执行与托管会话的展示 observer 经过有界异步分发与流式脱敏，不阻塞进程管道，observer 异常不影响进程收尾和 Execution Journal。流式脱敏（`RedactingExecutionOutputObserver`）对 URL Userinfo（`https://user:pass@host` → `https://***@host`）及环境租约注入的非基线凭据值进行跨 chunk 安全脱敏，Live 终端与 OutputStore 落盘结果保持完全一致的脱敏视图，平台基线变量（`PATH`、`USERPROFILE`、`GIT_PAGER` 等公共路径/控制值）保持保真，不破坏行号与代码事实。Provider 只在 `ProcessBuilder.start()` 成功后发出 `onStarted`，上层据此记录真实 DISPATCHED 边界。
 
 Broker 将请求的逻辑 Scratch Spec 原样传给选定 Provider，并把一次性与 Managed Process 的创建、清理
 状态带回结果。`execution.run` 的冻结配置摘要和幂等身份包含 Scratch Spec digest；Tool 结构化结果与

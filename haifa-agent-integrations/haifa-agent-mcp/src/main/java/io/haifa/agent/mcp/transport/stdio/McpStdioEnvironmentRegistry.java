@@ -4,11 +4,12 @@ import io.haifa.agent.credential.api.CredentialExposureMode;
 import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.execution.api.EnvironmentLeaseResolver;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
+import io.haifa.agent.execution.api.ResolvedExecutionEnvironment;
 import io.haifa.agent.mcp.config.McpCredentialInjection;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -53,20 +54,23 @@ public final class McpStdioEnvironmentRegistry implements EnvironmentLeaseResolv
     }
 
     @Override
-    public Map<String, String> resolve(ExecutionEnvironmentRef reference) {
+    public ResolvedExecutionEnvironment resolve(ExecutionEnvironmentRef reference) {
         var resolved = new LinkedHashMap<String, String>();
+        var sensitiveNames = new LinkedHashSet<String>();
         for (String leaseReference : reference.leaseRefs()) {
             List<Entry> entries = bindings.get(leaseReference);
             if (entries == null) throw new SecurityException("MCP stdio environment binding is unavailable");
             for (Entry entry : entries) {
                 String value = entry.lease()
                         .use(secret -> entry.injection().valuePrefix() + new String(secret, StandardCharsets.UTF_8));
-                if (resolved.putIfAbsent(entry.injection().targetName(), value) != null) {
+                String targetName = entry.injection().targetName();
+                if (resolved.putIfAbsent(targetName, value) != null) {
                     throw new SecurityException("duplicate MCP stdio environment target");
                 }
+                sensitiveNames.add(targetName);
             }
         }
-        return Map.copyOf(resolved);
+        return new ResolvedExecutionEnvironment(resolved, sensitiveNames);
     }
 
     public record Binding(ExecutionEnvironmentRef reference, AutoCloseable owner) implements AutoCloseable {

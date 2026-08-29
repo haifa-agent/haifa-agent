@@ -11,6 +11,7 @@ import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ManagedProcessRequest;
+import io.haifa.agent.execution.api.ResolvedExecutionEnvironment;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
@@ -145,11 +146,11 @@ class HostStdioMcpComponentTest {
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
-                ignored -> Map.of(
+                ignored -> ResolvedExecutionEnvironment.of(Map.of(
                         "JAVA_HOME",
                         System.getProperty("java.home"),
                         "PATH",
-                        Path.of(System.getProperty("java.home"), "bin").toString()),
+                        Path.of(System.getProperty("java.home"), "bin").toString())),
                 ignored -> {},
                 ignored -> profile,
                 ignored -> host,
