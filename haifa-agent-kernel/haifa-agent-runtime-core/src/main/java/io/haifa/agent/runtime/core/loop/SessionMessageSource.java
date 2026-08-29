@@ -25,6 +25,7 @@ import io.haifa.agent.core.content.ToolCallPart;
 import io.haifa.agent.core.content.ToolResultPart;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.MessageCursor;
+import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
@@ -138,8 +139,8 @@ public final class SessionMessageSource {
         }
         List<List<AgentMessage>> groups = atomicGroups(visible);
         Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
-        Optional<ConversationSummary> checkpoint = compatibleCheckpoint(sessionId);
-        List<List<AgentMessage>> activeGroups = groupsAfterCheckpoint(groups, checkpoint);
+        Optional<ConversationSummary> checkpoint = compatibleCheckpoint(sessionId, visible);
+        List<List<AgentMessage>> activeGroups = groupsAfterCheckpoint(visible, checkpoint);
         long activeTokens = checkpoint.map(ConversationSummary::estimatedTokens).orElse(0)
                 + estimateGroups(activeGroups, toolCallsByRun);
         long sessionTokenBudget = requestedSessionTokenBudget == Long.MAX_VALUE
@@ -190,12 +191,10 @@ public final class SessionMessageSource {
         List<AgentMessage> older =
                 groups.subList(0, split).stream().flatMap(List::stream).toList();
         long compactionStarted = System.nanoTime();
-        ConversationSummary summary = summaryFor(sessionId, older);
+        ConversationSummary summary = summaryFor(sessionId, older, visible);
         long compactionElapsedMillis =
                 java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(Math.max(0L, System.nanoTime() - compactionStarted));
-        List<List<AgentMessage>> tail = groups.stream()
-                .filter(group -> group.getFirst().cursor().compareTo(summary.coveredThrough()) > 0)
-                .toList();
+        List<List<AgentMessage>> tail = groupsAfterCheckpoint(visible, Optional.of(summary));
         long compactedTokens = summary.estimatedTokens() + estimateGroups(tail, toolCallsByRun);
         MessageCursor selectedThrough =
                 summary.coveredThrough().compareTo(visible.getLast().cursor()) > 0
@@ -245,21 +244,25 @@ public final class SessionMessageSource {
                 sessionTokenBudget);
     }
 
-    private Optional<ConversationSummary> compatibleCheckpoint(AgentSessionId sessionId) {
+    private Optional<ConversationSummary> compatibleCheckpoint(AgentSessionId sessionId, List<AgentMessage> visible) {
         return summaries
                 .latestValid(sessionId)
                 .filter(summary -> summary.policyVersion().equals(policy.version()))
                 .filter(summary -> summary.compressorVersion().equals(compressor.version()))
-                .filter(summary -> summaries.coversValidSource(summary, summary.coveredThrough()));
+                .filter(summary -> summaries.coversValidSource(summary, summary.coveredThrough()))
+                .filter(summary -> {
+                    List<List<AgentMessage>> after = groupsAfterCheckpoint(visible, Optional.of(summary));
+                    return after.isEmpty() || isTurnAnchor(after.getFirst());
+                });
     }
 
     private List<List<AgentMessage>> groupsAfterCheckpoint(
-            List<List<AgentMessage>> groups, Optional<ConversationSummary> checkpoint) {
+            List<AgentMessage> visible, Optional<ConversationSummary> checkpoint) {
         return checkpoint
-                .map(summary -> groups.stream()
-                        .filter(group -> group.getFirst().cursor().compareTo(summary.coveredThrough()) > 0)
-                        .toList())
-                .orElse(groups);
+                .map(summary -> atomicGroups(visible.stream()
+                        .filter(message -> message.cursor().compareTo(summary.coveredThrough()) > 0)
+                        .toList()))
+                .orElseGet(() -> atomicGroups(visible));
     }
 
     private int tailSplit(
@@ -269,22 +272,38 @@ public final class SessionMessageSource {
             Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun) {
         long retained = 0L;
         int retainedGroups = 0;
-        int split = groups.size();
+        int candidateSplit = groups.size();
         for (int index = groups.size() - 1; index >= 0; index--) {
             long groupTokens = estimate(groups.get(index), toolCallsByRun);
             if (retainedGroups > 0 && (retainedGroups >= groupLimit || retained + groupTokens > retainedTailBudget))
                 break;
             retained = saturatedAdd(retained, groupTokens);
             retainedGroups++;
-            split = index;
+            candidateSplit = index;
+        }
+        if (candidateSplit == 0 || candidateSplit >= groups.size()) {
+            return candidateSplit;
+        }
+        int split = candidateSplit;
+        while (split > 0 && !isTurnAnchor(groups.get(split))) {
+            split--;
         }
         return split;
     }
 
-    private ConversationSummary summaryFor(AgentSessionId sessionId, List<AgentMessage> source) {
+    private boolean isTurnAnchor(List<AgentMessage> group) {
+        if (group.isEmpty()) {
+            return false;
+        }
+        AgentMessage first = group.getFirst();
+        return first.role() == MessageRole.USER;
+    }
+
+    private ConversationSummary summaryFor(
+            AgentSessionId sessionId, List<AgentMessage> source, List<AgentMessage> visible) {
         List<io.haifa.agent.core.message.AgentMessageId> sourceIds =
                 source.stream().map(AgentMessage::id).toList();
-        Optional<ConversationSummary> reusable = compatibleCheckpoint(sessionId)
+        Optional<ConversationSummary> reusable = compatibleCheckpoint(sessionId, visible)
                 .filter(summary -> summary.sourceMessageIds().equals(sourceIds))
                 .filter(summary ->
                         summaries.coversValidSource(summary, source.getLast().cursor()));
@@ -312,7 +331,7 @@ public final class SessionMessageSource {
         try {
             return summaries.compareAndSet(summary, previous);
         } catch (OptimisticLockException conflict) {
-            return compatibleCheckpoint(sessionId)
+            return compatibleCheckpoint(sessionId, visible)
                     .filter(winner -> winner.sourceMessageIds().size() >= sourceIds.size())
                     .filter(winner -> winner.sourceMessageIds()
                             .subList(0, sourceIds.size())

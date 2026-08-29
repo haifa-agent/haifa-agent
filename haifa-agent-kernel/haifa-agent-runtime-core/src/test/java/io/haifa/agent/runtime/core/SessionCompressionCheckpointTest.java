@@ -57,6 +57,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -703,6 +704,240 @@ class SessionCompressionCheckpointTest {
         assertThat(failed.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_RESULT_PERSISTENCE_FAILED);
         assertThat(modelCalls).hasValue(1);
         assertThat(executions).hasValue(1);
+    }
+
+    @Test
+    void compactionSummarizesCompletedPreviousTurnWhileRetainingActiveTurnWithUserAnchor() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId session = new AgentSessionId("multi-turn-session");
+        AgentRunId run0 = new AgentRunId("run-0");
+        AgentRunId run1 = new AgentRunId("run-1");
+
+        // Turn 0: Completed turn
+        store.appendSessionMessage(draft("turn0-user", session, run0.value(), MessageRole.USER, "turn 0 objective"));
+        ToolCallId call0 = new ToolCallId("call-0");
+        ProviderToolCallCorrelationId corr0 = new ProviderToolCallCorrelationId("provider-call-0");
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("turn0-assistant-tool"),
+                session,
+                Optional.of(run0),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(call0, corr0, "echo", "1.0")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("turn0-tool-result"),
+                session,
+                Optional.of(run0),
+                Optional.empty(),
+                MessageRole.TOOL,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolResultPart(call0, corr0, "echo result 0")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(
+                draft("turn0-assistant-done", session, run0.value(), MessageRole.ASSISTANT, "turn 0 complete"));
+
+        // Turn 1: Active sequential function calling turn with 16 steps
+        store.appendSessionMessage(draft("turn1-user", session, run1.value(), MessageRole.USER, "turn 1 objective"));
+        for (int step = 1; step <= 16; step++) {
+            ToolCallId callId = new ToolCallId("call-1-" + step);
+            ProviderToolCallCorrelationId correlation = new ProviderToolCallCorrelationId("provider-call-1-" + step);
+            store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("turn1-call-" + step),
+                    session,
+                    Optional.of(run1),
+                    Optional.empty(),
+                    MessageRole.ASSISTANT,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.AGENT_VISIBLE,
+                    List.of(new ToolCallPart(callId, correlation, "execution_run", "1.0")),
+                    Map.of(),
+                    NOW.plusSeconds(step)));
+            store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("turn1-result-" + step),
+                    session,
+                    Optional.of(run1),
+                    Optional.empty(),
+                    MessageRole.TOOL,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.AGENT_VISIBLE,
+                    List.of(new ToolResultPart(callId, correlation, "execution result " + step)),
+                    Map.of(),
+                    NOW.plusSeconds(step)));
+        }
+
+        SessionMessageSource source = new SessionMessageSource(
+                store,
+                store,
+                new DeterministicContextCompressor(),
+                new CompressionPolicy(4, 10, 1),
+                () -> "turn-summary-1",
+                () -> NOW);
+
+        var selection = source.compact(session);
+        assertThat(selection.summary()).isPresent();
+        var summary = selection.summary().orElseThrow();
+
+        // Summary covers ONLY Turn 0
+        assertThat(summary.sourceMessageIds())
+                .containsExactly(
+                        new AgentMessageId("turn0-user"),
+                        new AgentMessageId("turn0-assistant-tool"),
+                        new AgentMessageId("turn0-tool-result"),
+                        new AgentMessageId("turn0-assistant-done"));
+
+        // Tail contains ALL of Turn 1, beginning with the Turn 1 User anchor
+        List<AgentMessage> tailMessages = selection.items().stream()
+                .filter(item -> item.content() instanceof MessageGroupContextContent)
+                .flatMap(item -> ((MessageGroupContextContent) item.content()).messages().stream())
+                .toList();
+
+        assertThat(tailMessages.getFirst().id()).isEqualTo(new AgentMessageId("turn1-user"));
+        assertThat(tailMessages.getFirst().role()).isEqualTo(MessageRole.USER);
+        assertThat(tailMessages).hasSize(33); // 1 user + 16 * (1 assistant + 1 tool)
+    }
+
+    @Test
+    void singleActiveSequentialFunctionCallingTurnCannotBeTruncatedIntraTurn() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId session = new AgentSessionId("single-turn-session");
+        AgentRunId run = new AgentRunId("run-single");
+
+        store.appendSessionMessage(draft("user-objective", session, run.value(), MessageRole.USER, "long task"));
+        for (int step = 1; step <= 16; step++) {
+            ToolCallId callId = new ToolCallId("call-" + step);
+            ProviderToolCallCorrelationId correlation = new ProviderToolCallCorrelationId("provider-call-" + step);
+            store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("call-" + step),
+                    session,
+                    Optional.of(run),
+                    Optional.empty(),
+                    MessageRole.ASSISTANT,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.AGENT_VISIBLE,
+                    List.of(new ToolCallPart(callId, correlation, "execution_run", "1.0")),
+                    Map.of(),
+                    NOW.plusSeconds(step)));
+            store.appendSessionMessage(new SessionMessageDraft(
+                    new AgentMessageId("result-" + step),
+                    session,
+                    Optional.of(run),
+                    Optional.empty(),
+                    MessageRole.TOOL,
+                    MessageStatus.COMPLETED,
+                    MessageVisibility.AGENT_VISIBLE,
+                    List.of(new ToolResultPart(callId, correlation, "output " + step)),
+                    Map.of(),
+                    NOW.plusSeconds(step)));
+        }
+
+        SessionMessageSource source = new SessionMessageSource(
+                store,
+                store,
+                new DeterministicContextCompressor(),
+                new CompressionPolicy(4, 10, 1),
+                () -> "unused-summary",
+                () -> NOW);
+
+        // Compacting a single turn where tailSplit cannot cut between turns results in no compaction (split = 0)
+        var selection = source.compact(session);
+        assertThat(selection.summary()).isEmpty();
+        assertThat(selection.compacted()).isFalse();
+
+        List<AgentMessage> items = selection.items().stream()
+                .filter(item -> item.content() instanceof MessageGroupContextContent)
+                .flatMap(item -> ((MessageGroupContextContent) item.content()).messages().stream())
+                .toList();
+        assertThat(items.getFirst().id()).isEqualTo(new AgentMessageId("user-objective"));
+        assertThat(items).hasSize(33);
+    }
+
+    @Test
+    void incompatibleCheckpointTruncatingTurnIsNotReused() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId session = new AgentSessionId("corrupted-checkpoint-session");
+        AgentRunId run = new AgentRunId("run-corrupted");
+
+        store.appendSessionMessage(draft("turn0-user", session, run.value(), MessageRole.USER, "turn 0"));
+        ToolCallId call0 = new ToolCallId("call-0");
+        ProviderToolCallCorrelationId corr0 = new ProviderToolCallCorrelationId("provider-call-0");
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("turn0-call-0"),
+                session,
+                Optional.of(run),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(call0, corr0, "echo", "1.0")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("turn0-result-0"),
+                session,
+                Optional.of(run),
+                Optional.empty(),
+                MessageRole.TOOL,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolResultPart(call0, corr0, "result 0")),
+                Map.of(),
+                NOW));
+
+        // Create a synthetic buggy summary that truncated after turn0-call-0 (so coveredThrough is turn0-call-0)
+        // leaving turn0-result-0 as the first message in tail
+        var invalidSummary = new io.haifa.agent.context.compression.ConversationSummary(
+                new io.haifa.agent.context.compression.SummaryId("invalid-summary-1"),
+                new io.haifa.agent.context.compression.SummaryVersion(1),
+                session,
+                new MessageCursor(1),
+                new MessageCursor(2),
+                List.of(new AgentMessageId("turn0-user"), new AgentMessageId("turn0-call-0")),
+                "sha256:fakehash",
+                List.of("fact 1"),
+                List.of(),
+                List.of(),
+                List.of(),
+                50,
+                NOW,
+                "session-window-v2",
+                "deterministic-session-v1",
+                Set.of("internal"),
+                true);
+        store.compareAndSet(invalidSummary, 0);
+
+        SessionMessageSource source = new SessionMessageSource(
+                store,
+                store,
+                new DeterministicContextCompressor(),
+                new CompressionPolicy(4, 10, 1),
+                () -> "new-valid-summary",
+                () -> NOW);
+
+        // Selection should reject the invalid summary and not reuse it
+        var spec = new io.haifa.agent.core.run.AgentRunSpec(
+                session,
+                new io.haifa.agent.core.reference.ProjectRef("project-1"),
+                new io.haifa.agent.core.reference.TenantRef("tenant-1"),
+                new io.haifa.agent.core.reference.PrincipalRef("user-1", "user"),
+                new AgentDefinitionId("agent"),
+                new io.haifa.agent.core.agent.AgentDefinitionVersion(1, 0, 0),
+                "default",
+                "1.0.0",
+                io.haifa.agent.core.run.AgentRunType.CODING,
+                "test",
+                new io.haifa.agent.core.run.AgentRunBudget(1000, 1000, 1000, 10, 10, 2, "USD", 1000),
+                new io.haifa.agent.core.run.AgentRunLimits(10, 2, 1, 60_000, 30_000),
+                new io.haifa.agent.core.reference.RunConfigurationSnapshotRef("cfg-1", "hash"));
+        var runObj = io.haifa.agent.core.run.AgentRun.createRoot(run, spec, NOW);
+
+        var selection = source.select(runObj, 0);
+        assertThat(selection.summary()).isEmpty();
     }
 
     private static DefaultAgentRuntime runtime(

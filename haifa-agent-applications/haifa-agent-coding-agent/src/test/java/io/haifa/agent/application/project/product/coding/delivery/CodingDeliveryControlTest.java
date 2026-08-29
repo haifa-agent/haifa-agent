@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.product.coding.CodingCommandBinding;
 import io.haifa.agent.application.project.product.coding.InMemoryCodingSessionStore;
+import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.content.TextPart;
@@ -421,10 +422,11 @@ class CodingDeliveryControlTest {
         assertThat(outcome.protocolStatus()).isEqualTo(CodingRunProtocolStatus.UNCLEAN);
         assertThat(outcome.diagnosticCodes()).contains("COMPLETION_REPAIR_EXHAUSTED", "OUTPUT_CONTRACT_INVALID");
 
+        TimeProvider time = () -> NOW.plusSeconds(31);
         new CodingRunOutcomeProjectionMiddleware(
                         new CodingRunOutcomeProjectionService(policy(fixture.store()), fixture.store()),
                         fixture.store(),
-                        () -> NOW.plusSeconds(31))
+                        time)
                 .apply(new RuntimeMiddlewareContext(fixture.run(), fixture.store()));
         assertThat(fixture.store().eventsFor(fixture.run().id()))
                 .filteredOn(event -> event.type().equals("coding.task-outcome"))

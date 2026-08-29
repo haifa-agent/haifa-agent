@@ -441,6 +441,115 @@ class ModelMessageAssemblerTest {
         assertThat(messages.get(3).content()).contains("RUNTIME_CONTROL_UPDATE");
     }
 
+    @Test
+    void mapsSummaryWithUserAnchoredMultiStepToolTurn() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCall1 = new ToolCallId("tool-call-1");
+        ProviderToolCallCorrelationId corr1 = new ProviderToolCallCorrelationId("provider-call-1");
+        ToolCallId toolCall2 = new ToolCallId("tool-call-2");
+        ProviderToolCallCorrelationId corr2 = new ProviderToolCallCorrelationId("provider-call-2");
+
+        ToolCall call1 = new ToolCall(
+                toolCall1,
+                RUN_ID,
+                new AgentStepId("step-1"),
+                corr1,
+                new RuntimeIdempotencyKey("idempotency-1"),
+                "echo",
+                "1.0.0",
+                new ToolArguments("echo.input", "1.0.0", Map.of("text", "first")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call1.beginValidation();
+        call1.beginPolicyCheck();
+        call1.start(Instant.parse("2026-07-21T00:00:01Z"));
+        call1.complete(
+                new io.haifa.agent.core.tool.ToolResult(
+                        true, "first result", Map.of("text", "first"), List.of(), List.of(), false),
+                Instant.parse("2026-07-21T00:00:02Z"));
+        store.appendToolCall(call1);
+
+        ToolCall call2 = new ToolCall(
+                toolCall2,
+                RUN_ID,
+                new AgentStepId("step-2"),
+                corr2,
+                new RuntimeIdempotencyKey("idempotency-2"),
+                "echo",
+                "1.0.0",
+                new ToolArguments("echo.input", "1.0.0", Map.of("text", "second")),
+                Instant.parse("2026-07-21T00:00:03Z"));
+        call2.beginValidation();
+        call2.beginPolicyCheck();
+        call2.start(Instant.parse("2026-07-21T00:00:04Z"));
+        call2.complete(
+                new io.haifa.agent.core.tool.ToolResult(
+                        true, "second result", Map.of("text", "second"), List.of(), List.of(), false),
+                Instant.parse("2026-07-21T00:00:05Z"));
+        store.appendToolCall(call2);
+
+        var summaryContent = new io.haifa.agent.context.item.ConversationSummaryContent(
+                "sum-1", 1, List.of("fact: turn 0 completed"), List.of(), List.of(), List.of());
+        AgentMessage user = message(
+                "user-msg", sessionId, RUN_ID, MessageRole.USER, 1, List.of(new TextPart("run multi-step", "plain")));
+        AgentMessage assistant1 = message(
+                "asst-1",
+                sessionId,
+                RUN_ID,
+                MessageRole.ASSISTANT,
+                2,
+                List.of(new ToolCallPart(toolCall1, corr1, "echo", "1.0.0")));
+        AgentMessage tool1 = message(
+                "tool-1",
+                sessionId,
+                RUN_ID,
+                MessageRole.TOOL,
+                3,
+                List.of(new ToolResultPart(toolCall1, corr1, "first result")));
+        AgentMessage assistant2 = message(
+                "asst-2",
+                sessionId,
+                RUN_ID,
+                MessageRole.ASSISTANT,
+                4,
+                List.of(new ToolCallPart(toolCall2, corr2, "echo", "1.0.0")));
+        AgentMessage tool2 = message(
+                "tool-2",
+                sessionId,
+                RUN_ID,
+                MessageRole.TOOL,
+                5,
+                List.of(new ToolResultPart(toolCall2, corr2, "second result")));
+
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item("summary", ContextItemType.CONVERSATION_SUMMARY, summaryContent),
+                        item("user", ContextItemType.MESSAGE, new MessageContextContent(user)),
+                        item("asst-1", ContextItemType.MESSAGE, new MessageContextContent(assistant1)),
+                        item("tool-1", ContextItemType.MESSAGE, new MessageContextContent(tool1)),
+                        item("asst-2", ContextItemType.MESSAGE, new MessageContextContent(assistant2)),
+                        item("tool-2", ContextItemType.MESSAGE, new MessageContextContent(tool2))),
+                List.of(),
+                budget(),
+                50);
+
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context);
+
+        assertThat(messages)
+                .extracting(ModelMessage::role)
+                .containsExactly(
+                        ModelMessageRole.SYSTEM, // prompt
+                        ModelMessageRole.SYSTEM, // summary
+                        ModelMessageRole.USER, // turn anchor
+                        ModelMessageRole.ASSISTANT, // call 1
+                        ModelMessageRole.TOOL, // result 1
+                        ModelMessageRole.ASSISTANT, // call 2
+                        ModelMessageRole.TOOL); // result 2
+        assertThat(messages.get(1).content()).contains("conversation-summary");
+        assertThat(messages.get(2).content()).isEqualTo("run multi-step");
+    }
+
     private static AgentMessage message(
             String id,
             AgentSessionId sessionId,

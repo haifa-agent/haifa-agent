@@ -57,8 +57,9 @@ class GitAdapterTest {
             }
         };
         AtomicInteger ids = new AtomicInteger();
-        var adapter = new ExecutionBrokerGitRevisionProbe(
-                broker, () -> "git-" + ids.incrementAndGet(), new SandboxProfileRef("git-read", "1"), "git");
+        io.haifa.agent.common.id.IdentifierGenerator generator = () -> "git-" + ids.incrementAndGet();
+        var adapter =
+                new ExecutionBrokerGitRevisionProbe(broker, generator, new SandboxProfileRef("git-read", "1"), "git");
         WorkspaceId workspaceId = new WorkspaceId("workspace-1");
         var repository = new GitRepositoryRef(WorkspacePath.root(workspaceId));
         var context = new GitCommandContext(new TrustedExecutionContext(

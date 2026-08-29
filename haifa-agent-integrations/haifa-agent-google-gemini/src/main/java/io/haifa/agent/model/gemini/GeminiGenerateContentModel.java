@@ -436,8 +436,16 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                     ModelMessage tool = messages.get(index);
                     String id = tool.providerCorrelationId().orElseThrow().value();
                     CallIdentity call = calls.get(id);
-                    if (call == null)
-                        throw new IllegalArgumentException("tool result does not match a preceding function call");
+                    if (call == null) {
+                        throw failure(
+                                request,
+                                ModelErrorCategory.INVALID_REQUEST,
+                                false,
+                                0,
+                                "gemini_tool_call_unmatched",
+                                "tool result does not match a preceding function call",
+                                null);
+                    }
                     Map<String, Object> response = tool.toolResultData().isEmpty()
                             ? Map.of("output", tool.content(), "truncated", tool.toolResultTruncated())
                             : tool.toolResultData();
@@ -448,6 +456,7 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                 contents.add(content("user", parts));
             }
         }
+        validateContents(request, contents);
         Map<String, Object> body = new LinkedHashMap<>();
         if (!systemParts.isEmpty()) body.put("systemInstruction", Map.of("parts", systemParts));
         body.put("contents", contents);
@@ -469,6 +478,44 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
             body.put("safetySettings", safetySettings());
         }
         return body;
+    }
+
+    private void validateContents(AgentChatRequest request, List<Map<String, Object>> contents) {
+        if (contents.isEmpty()) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "gemini_contents_empty",
+                    "Gemini contents must not be empty",
+                    null);
+        }
+        Map<String, Object> firstContent = contents.getFirst();
+        if (!"user".equals(firstContent.get("role"))) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "gemini_turn_anchor_missing",
+                    "Gemini contents must begin with a user turn anchor",
+                    null);
+        }
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> firstParts = (List<Map<String, Object>>) firstContent.get("parts");
+        if (firstParts == null
+                || firstParts.isEmpty()
+                || firstParts.stream().allMatch(part -> part.containsKey("functionResponse"))) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "gemini_turn_anchor_missing",
+                    "Gemini contents must begin with a user message containing user content",
+                    null);
+        }
     }
 
     private List<Map<String, Object>> continuationParts(AgentChatRequest request, ModelMessage message) {

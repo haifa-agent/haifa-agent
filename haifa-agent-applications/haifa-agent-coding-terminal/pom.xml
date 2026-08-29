@@ -28,6 +28,8 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-common</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-runtime-api</artifactId></dependency>
         <dependency><groupId>com.williamcallahan</groupId><artifactId>tui4j</artifactId></dependency>
 
