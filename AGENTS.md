@@ -1,212 +1,103 @@
 # Haifa Agent 开发索引
 
-本文件是仓库级 Coding Agent 入口，适用于整个仓库。它只记录稳定约定、事实来源和任务路由，不复制详细设计文档。
-
-主仓当前没有更深层的 `AGENTS.md` 或 `AGENTS.override.md`。独立的 `test-config/` 仓库有自己的 `AGENTS.md`，修改该仓库内容时必须同时遵守。若后续某个主仓模块需要特殊约定，请在该模块目录新增精简的 `AGENTS.md`；只写与本文件不同或更具体的规则。
+本文件是主仓的 Coding Agent 入口，适用于整个根仓。它只保留稳定约束、事实源和任务路由；
+详细设计、模块清单和命令矩阵转入对应文档。`docs/` 和 `test-config/` 是独立仓库，并各自拥有
+`AGENTS.md`；修改时必须同时遵守。
 
 ## 开始工作前
 
-1. 先读根目录 [`README.md`](README.md)，确认当前已实现范围和常用命令。
-2. 根据任务定位模块，并阅读对应模块的 `README.md`、`pom.xml` 和架构测试。
-3. 涉及架构、模块边界或新能力时，先读 [`docs/architecture-baseline.md`](docs/architecture-baseline.md) 及对应专题文档。
-4. 用代码、测试和 Maven Reactor 核对文档描述；不要把尚未实现的设计稿当成现有行为。
-5. 开始修改前运行 `git status --short`，保留用户已有改动，不处理任务范围外的文件。
+1. 先读根目录 [`README.md`](README.md)，确认当前已实现范围和常用入口。
+2. 根据根/聚合 `pom.xml` 定位模块，并阅读最近的模块 `README.md`、`pom.xml` 和架构测试。
+3. 涉及架构、模块边界或新能力时，先读 [`docs/architecture-baseline.md`](docs/architecture-baseline.md)，
+   再按 [`docs/README.md`](docs/README.md) 进入对应专题。
+4. 开始修改前分别检查本次涉及仓库的 `git status --short`，保留用户已有改动。
 
-## Git 分支与交付规则
+## 仓库与交付边界
 
-- 根目录仓库 `haifa-agent` 的功能开发必须使用以 `feat-` 开头的特性分支，例如 `feat-agent-memory`；不要直接在 `main` 或 `dev` 分支上开发。
-- 根目录仓库的功能开发完成并通过验证后，向 GitHub 发起 Pull Request；除非当前任务明确指定其他目标，PR 的目标分支必须是 `dev`。
-- Git Commit Message 和 GitHub Pull Request 说明必须统一使用英文。
-- 大任务的 GitHub Pull Request 说明最多包含 7 条；小修改的 GitHub Pull Request 说明最多包含 2 条，验证结果也计入该上限。
-- GitHub 平台操作必须使用 GitHub CLI（`gh`）命令，不得使用 GitHub Connector；本地 Git 操作和远端分支推送仍使用 `git` 命令。
-- `docs/` 是独立 Git 仓库 `haifa-agent-internal-docs`，不参与根目录仓库的分支、暂存、提交、推送或 Pull Request 流程。根目录仓库的 Git 命令不得把 `docs/` 当作普通目录处理，也不得用根目录的 `git status` 判断文档仓库状态。
-- 文档仓库操作必须使用 `git -C docs ...`（或先进入 `docs/`），在其独立 `main` 分支上直接提交并推送到 `origin/main`；除非当前任务明确要求其他流程，不为文档改动创建 `feat-*` 分支或 Pull Request。
-- `test-config/` 是独立私有 Git 仓库 `haifa-agent-test-config`，不参与根目录仓库的分支、暂存、提交、推送或 Pull Request 流程。测试配置仓库操作必须使用 `git -C test-config ...`，并遵守其 `AGENTS.md`；默认在独立 `main` 分支上直接提交并推送到 `origin/main`。
-- 同一任务同时修改代码、文档或测试配置时，必须按仓库分别检查、暂存、提交和推送，禁止跨仓库混合提交。
+- 根仓功能开发必须使用 `feat-` 开头的特性分支，不得直接在 `main` 或 `dev` 上开发；默认向 `dev`
+  发起 Pull Request。
+- Git Commit Message 和 GitHub Pull Request 说明必须使用英文。大任务 PR 说明最多 7 条；小修改最多
+  2 条，验证结果也计入上限。
+- GitHub 平台操作必须使用 GitHub CLI（`gh`）；本地 Git 和远端分支操作使用 `git`。
+- `docs/` 是独立仓库 `haifa-agent-internal-docs`；使用 `git -C docs ...`，默认在其 `main` 上直接提交并
+  推送 `origin/main`，不为普通文档改动创建 PR。
+- `test-config/` 是独立私有仓库 `haifa-agent-test-config`；使用 `git -C test-config ...`并遵守其
+  `AGENTS.md`，默认在其 `main` 上直接提交并推送。
+- 根仓、`docs/` 和 `test-config/` 必须分别检查、暂存、提交和推送；禁止跨仓库混合交付。
 
-## 事实来源与冲突处理
+## 事实源与任务路由
 
-按以下顺序判断项目事实：
+项目事实按以下顺序判断：
 
 1. 当前任务的明确需求和验收标准；
-2. `docs/architecture-baseline.md` 中已确定的架构决策；
-3. 模块 `README.md`、模块 `pom.xml` 和 `*ArchitectureTest.java` 中的边界约束；
+2. [`docs/architecture-baseline.md`](docs/architecture-baseline.md) 中已确定的架构决策；
+3. 模块 `README.md`、`pom.xml` 和 `*ArchitectureTest.java` 中的边界约束；
 4. 当前代码与自动化测试所体现的已实现行为；
 5. 其他专题设计、开发提示词和开发报告。
 
-如果专题设计与架构基线冲突，不要静默选择一方或顺手重构；明确指出冲突，并通过 ADR 或用户决策解决。若文档与代码不一致，先区分“未来设计”与“实现漂移”，再决定修改对象。
+当前能力和产品入口见 [`README.md`](README.md)；Reactor 模块以根/聚合 `pom.xml` 为准；稳定依赖方向和
+边界以架构基线为准；专题文档从 [`docs/README.md`](docs/README.md) 进入。不得将未采纳或未实现的设计稿
+当作现有行为。文档与代码不一致时，先区分未来设计与实现漂移；专题设计与架构基线冲突时，通过 ADR 或
+用户决策解决，不得静默选边。`docs/` 和 `test-config/` 的版本状态必须在各自仓库中核对。
 
-`docs/` 在根目录仓库中被忽略，是因为它由独立的 `haifa-agent-internal-docs` 仓库管理；这不表示文档不受版本控制。读取文档时可直接使用其内容，交付文档改动时必须通过 `git -C docs status`、`git -C docs diff` 和文档仓库自己的提交历史核对。
+## 全局实现约束
 
-`test-config/` 在根目录仓库中被忽略，是因为它由独立的私有 `haifa-agent-test-config` 仓库管理；这不表示测试配置不受版本控制。读取配置和 Fixture 时可直接使用其内容，交付测试配置改动时必须通过 `git -C test-config status`、`git -C test-config diff` 和测试配置仓库自己的提交历史核对。
-
-## 项目快照
-
-- 项目：面向 Java / Spring 生态的通用 Agent Runtime 与 Agent 产品开发平台。
-- 当前版本：`0.1.0-SNAPSHOT`。
-- 当前已落地：Agent Core 领域模型、Runtime/AgentLoop、模型能力契约与首个 OpenAI-compatible/DeepSeek 纵向集成。
-- 构建基线：Java 21、Maven Wrapper 3.9.15、多模块 Monorepo。
-- Java 根包：`io.haifa.agent`；Maven Group ID：`io.haifa`；Artifact ID 使用 `haifa-agent-` 前缀。
-- 当前阶段不要假设 Context、Memory、Workspace、Tool/Skill/MCP 等专题设计已经完整实现。
-
-## 模块导航
-
-| 路径 | 职责 | 关键约束 |
-| --- | --- | --- |
-| [`build-support/`](build-support/README.md) | Reactor 内的 BOM 与构建支持 | 不承载业务代码 |
-| [`build-support/haifa-agent-bom/`](build-support/haifa-agent-bom/README.md) | 内部模块与纯 Java 依赖管理 | 禁止引入 Spring BOM |
-| [`build-support/haifa-agent-spring-bom/`](build-support/haifa-agent-spring-bom/README.md) | Spring Boot、Spring AI、Spring AI Alibaba 依赖线 | 不得被纯 Java 底层模块反向依赖 |
-| [`haifa-agent-contract/`](haifa-agent-contract/README.md) | 对外 API/事件协议对象 | 只依赖 Common/JDK；不暴露 Core、Runtime、框架或 Provider DTO |
-| [`haifa-agent-sdk/`](haifa-agent-sdk/README.md) | 纯 Java SDK Facade、产品装配、Conversation 与 Java Tool 入口 | 普通 API 不暴露 Runtime Core、框架或 Provider DTO |
-| [`haifa-agent-sdk-starter/`](haifa-agent-sdk-starter/README.md) | 纯 Java 安全默认 Quickstart | 默认 DeepSeek V4 Flash、进程内开发 Store；不作为生产持久化方案 |
-| [`haifa-agent-spring/`](haifa-agent-spring/README.md) | Spring Boot 自动装配与依赖 Starter | 只适配纯 Java SDK；不得复制 Runtime/Capability 语义或引入 Spring AI |
-| [`haifa-agent-kernel/haifa-agent-common/`](haifa-agent-kernel/haifa-agent-common/README.md) | ID、时间、版本和基础异常 | 仅依赖 JDK；不包含产品语义 |
-| [`haifa-agent-kernel/haifa-agent-core/`](haifa-agent-kernel/haifa-agent-core/README.md) | 稳定 Agent 领域模型与 Run 状态机 | 纯 Java；状态变化必须经过命名领域行为 |
-| [`haifa-agent-kernel/haifa-agent-runtime-api/`](haifa-agent-kernel/haifa-agent-runtime-api/README.md) | Runtime 启动、查询、恢复、命令与交互契约 | 同步提交、异步执行；不依赖具体实现或 Provider |
-| [`haifa-agent-kernel/haifa-agent-runtime-core/`](haifa-agent-kernel/haifa-agent-runtime-core/README.md) | AgentLoop、Attempt、工具/完成管线、Checkpoint 与内存存储 | 只协调 Core 行为，不复制或绕过状态机 |
-| [`haifa-agent-capabilities/haifa-agent-model-api/`](haifa-agent-capabilities/haifa-agent-model-api/README.md) | Provider-neutral 模型契约 | 不依赖 Jackson、HTTP、Spring 或具体 Provider SDK |
-| [`haifa-agent-capabilities/haifa-agent-model-core/`](haifa-agent-capabilities/haifa-agent-model-core/README.md) | 模型目录、选择、访问策略与健康状态 | 选择必须确定；首版无隐式 fallback/轮询 |
-| [`haifa-agent-integrations/haifa-agent-model-openai-compatible/`](haifa-agent-integrations/haifa-agent-model-openai-compatible/README.md) | OpenAI Chat Completions 兼容适配及 DeepSeek 默认配置 | Provider 细节留在适配层；首版强制关闭 thinking |
-| [`haifa-agent-integrations/haifa-agent-web/`](haifa-agent-integrations/haifa-agent-web/README.md) | 通用 Web Search/Fetch Tool 与 HTTP Provider | 产品显式选择 Provider 和凭据；公共模块不依赖 Runtime、Spring 或具体产品 |
-| [`haifa-agent-applications/haifa-agent-runtime-demo/`](haifa-agent-applications/haifa-agent-runtime-demo/README.md) | Runtime/Tool/MCP/Skill 可执行示例 | 不是测试事实源；真实调用必须显式 opt-in |
-| [`examples/haifa-agent-example/`](examples/haifa-agent-example/README.md) | 独立 Pure Java/Spring Boot 消费者应用 | 主仓跟踪但不加入 Reactor；先安装匹配版本制品，再独立构建 |
-| [`haifa-agent-applications/haifa-agent-sdk-example/`](haifa-agent-applications/haifa-agent-sdk-example/README.md) | Basic/Intermediate/Advanced 可运行 SDK 示例与 SQLite 单机持久化参考装配 | 除显式真实 Provider Quickstart 外默认离线；示例模块不发布 |
-| [`haifa-agent-testing/`](haifa-agent-testing/README.md) | Reactor 末端的测试基础设施聚合层 | 生产模块不得依赖测试模块；运行产物不得进入源码仓库 |
-| [`haifa-agent-testing/haifa-agent-test-harness/`](haifa-agent-testing/haifa-agent-test-harness/README.md) | 可执行测试控制面 | 位于 Reactor 末端；统一计划、授权、执行和证据生命周期 |
-| [`haifa-agent-testing/haifa-agent-test-fixtures/`](haifa-agent-testing/haifa-agent-test-fixtures/README.md) | 可共享的小型安全 Fixture | 禁止秘密、生产数据、主机路径和运行产物 |
-| [`haifa-agent-testing/haifa-agent-integration-tests/`](haifa-agent-testing/haifa-agent-integration-tests/README.md) | 确定性跨模块验证 | 默认不访问公网，第三方服务使用 Stub/Fake |
-| [`haifa-agent-testing/haifa-agent-e2e-tests/`](haifa-agent-testing/haifa-agent-e2e-tests/README.md) | CLI 到最终结果的完整产品路径 | 运行根必须位于两个 Git 仓库之外 |
-
-固定依赖方向：
-
-```text
-common <- core <- runtime-api <- runtime-core -> model-api
-                  model-api <- model-core
-                  model-api <- model-openai-compatible
-   ^
-   └──── contract
-
-testing 位于 Reactor 末端，可按测试需要依赖产品模块；产品模块不得反向依赖 testing。
-```
-
-高层可以依赖低层；低层不得依赖高层；禁止循环依赖。Spring Framework 从 Adapter/Integration 边界开始引入，Spring Boot 只进入 Starter、Server、Worker、Scheduler、Admin 或 Example Application。
-
-## 设计文档路由
-
-| 主题 | 先读文档 | 使用方式 |
-| --- | --- | --- |
-| 不可随意改变的决策 | [`docs/architecture-baseline.md`](docs/architecture-baseline.md) | 架构基线；关键变更先提出 ADR |
-| 产品定位与总体架构 | [`docs/01-product-positioning-and-overall-architecture.md`](docs/01-product-positioning-and-overall-architecture.md) | 理解分层和产品路线 |
-| 仓库模块与依赖 | [`docs/02-repository-modules-and-dependencies.md`](docs/02-repository-modules-and-dependencies.md) | 新模块、拆分或依赖调整前阅读 |
-| Core 领域模型 | [`docs/03-agent-core-domain-model.md`](docs/03-agent-core-domain-model.md) | 修改领域对象、状态机或引用模型前阅读 |
-| Runtime 与 AgentLoop | [`docs/04-agent-runtime-and-agent-loop.md`](docs/04-agent-runtime-and-agent-loop.md) | 修改生命周期、Attempt、Loop、Checkpoint 或完成门禁前阅读 |
-| 首个模型纵向集成 | [`docs/04-post-first-integration-model.md`](docs/04-post-first-integration-model.md) | 修改模型快照、DeepSeek 或 OpenAI-compatible 适配前阅读 |
-| Context 与 Memory | [`docs/05-context-memory-and-compression.md`](docs/05-context-memory-and-compression.md) | 未来设计输入；先核对代码是否已落地 |
-| Project、Workspace 与文件系统 | [`docs/06-project-workspace-and-filesystem.md`](docs/06-project-workspace-and-filesystem.md) | 未来设计输入，尤其关注路径与执行安全 |
-| Tool、MCP 与 Skill | [`docs/07-implementation-overview.md`](docs/07-implementation-overview.md) | 活动总览；依次阅读 `07-tool-platform.md`、`07-mcp-client-2025-11-25.md`、`07-skill-platform.md`，开发按 `docs/prompts/07-phase-*.md` 顺序执行 |
-| 持久化与存储 | [`docs/08-persistence-and-storage-architecture.md`](docs/08-persistence-and-storage-architecture.md) | SQLite 是唯一事实源，JSONL 仅为可选 Outbox 投影；实现按 `docs/prompts/08-persistence-task-*.md` 顺序执行 |
-| SDK 基建与多产品路线 | [`docs/roadmap/sdk-foundation-and-multi-product-roadmap.md`](docs/roadmap/sdk-foundation-and-multi-product-roadmap.md) | 09～18 是产品无关的 SDK/平台能力专题；实现状态与优先级以路线图为准 |
-| 产品架构与 PRD | [`docs/products/README.md`](docs/products/README.md) | Coding、Document、Research、Enterprise、Personal 是上层产品；Pi 对标仅作为 Coding Agent 产品输入 |
-| 已知待办 | [`docs/00-to-do-note.md`](docs/00-to-do-note.md) | 核对明确延期能力，避免意外启用 |
-
-`docs/prompts/` 和 `docs/ai-coding-report/` 用于追溯阶段目标、验收过程和历史决策，不替代当前代码、测试或架构基线。
-
-## 必须保持的实现约束
-
-- Core 对象不是 JPA Entity，公共 API 不暴露框架或第三方 SDK 类型。
-- `AgentRun` 的生命周期合法性只由 Core 的受控行为决定；Runtime 不维护第二份状态转换表。
-- ID 和时间由调用方通过可注入边界生成；领域对象中不要直接调用随机生成器或 `Instant.now()`。
-- 所有持久化、事件、协议和对外输出时间统一使用 UTC epoch milliseconds 精度；通过
-  `TimePrecision` / `SystemTimeProvider` 生成或归一化，禁止把纳秒或微秒写入数据库、BLOB、JSON、
-  JSONL 或稳定哈希载荷。高精度时间只允许用于不落盘的进程内耗时测量。
-- Run 创建时冻结 Definition 版本和不可变配置快照引用；后续配置变化不得改变历史 Run 语义。
-- `AgentRunSnapshot` 是运行中视图，`AgentRunResult` 是最终结构化结果，`AgentRunHandle` 只是查询、等待和控制的便利层。
-- 公共 `AgentRunRequest` 不允许注入 Tenant、Principal 或配置快照引用；这些信息从可信 Caller Context 解析。
+- Core 对象不是 JPA Entity，公共 API 不暴露框架、Provider SDK 或 Runtime Core 类型。Spring Framework
+  从 Adapter/Integration 边界引入，Spring Boot 只进入 Starter 和最高层 Application。
+- `AgentRun` 生命周期只由 Core 的命名行为决定；Runtime 不维护第二份状态转换表，也不绕过聚合行为。
+- ID 和时间由可注入边界生成。持久化、事件、协议和对外输出统一使用 UTC epoch milliseconds；禁止在
+  领域对象直接调用随机生成器或 `Instant.now()`，也不得将微秒/纳秒写入稳定载荷。
+- Run 创建时冻结 Definition 版本和不可变配置快照。`AgentRunSnapshot` 是运行视图，`AgentRunResult`
+  是最终结果，`AgentRunHandle` 只是便利层。公共 `AgentRunRequest` 不得注入 Tenant、Principal 或快照引用。
 - Tool Call/Result 必须保留关联 ID；有副作用且结果不确定的工具不得盲目自动重放。
-- DeepSeek thinking 只能按 `HAIFA-ADR-023` 对精确验证的产品 Binding 开放；Personal Assistant 当前只允许
-  V4 Flash/Pro 的 Chat Completions 与 Anthropic Messages 使用推荐/快速/深度，Responses reasoning 只读，
-  其他产品继续保持各自既有默认。`reasoning_content` 只在受保护的 Tool continuation、Checkpoint 与恢复链
-  内传递，不得进入公共 DTO、日志、Activity、Admin、测试输出或浏览器。
-- 测试和日志不得输出 API Key、完整 Prompt、凭据内容或原始供应商响应。
-- 新增依赖前检查它应归属纯 Java BOM 还是 Spring BOM，并确认没有破坏模块边界。
+- Thinking/reasoning 必须遵守 `HAIFA-ADR-023` 及当前产品 Binding；原文不得进入公共 DTO、日志、
+  Activity、Admin、测试输出或浏览器。
+- 测试、异常和日志不得输出 API Key、完整 Prompt、凭据明文或原始供应商响应。
+- 新增依赖前确定归属纯 Java BOM 还是 Spring BOM，并确认没有破坏模块边界。
 
 ## 修改与测试工作流
 
-- 优先做满足需求的最小变更；不要顺带重命名、重排包结构或扩大公共 API。
-- 编写脚本工具时，公共业务逻辑必须使用 Python，入口同时提供 `.ps1` 与 `.sh` 薄包装并原样透传参数；
-  两个入口必须统一使用 Unix 风格 CLI，包括小写位置动作和 `--kebab-case` 长参数，不得为
-  PowerShell 单独设计 `-Action` 一类参数。
-- 修改公共行为时补充相邻单元测试；修改依赖边界时补充或更新 ArchUnit/Maven Enforcer 约束。
-- 测试命名遵循现有 Maven 约定：Surefire 执行 `*Test.java`、`*ContractTest.java`；Failsafe 执行 `*IT.java`、`*LiveIT.java`、`*E2E.java`。
-- 先运行受影响模块，再运行与 CI 一致的全仓验证。
-- 行为、边界或使用方式变化时同步更新对应模块 `README.md`；对用户可见的版本变化再更新 `CHANGELOG.md`。
-- 不修改生成目录 `target/`，不提交日志、IDE 配置或密钥文件。
+- 优先做满足需求的最小变更；不顺带重命名、重排包结构或扩大公共 API。
+- 脚本的公共业务逻辑使用 Python，`.ps1` 与 `.sh` 只作为原样透传参数的薄入口；两端统一使用
+  小写位置动作和 `--kebab-case` 长参数。
+- 修改公共行为时补充相邻单元测试；修改依赖边界时更新 ArchUnit/Maven Enforcer 约束。Surefire/Failsafe
+  命名与分层见 [`build-support/README.md`](build-support/README.md)。
+- 先运行受影响模块，再运行与 CI 一致的全仓验证。行为、边界或用法变化时同步更新模块
+  `README.md`；对用户可见的版本变化再更新 `CHANGELOG.md`。
+- 不修改生成目录 `target/`，不提交日志、IDE 配置、运行产物或密钥文件。
 
-## 构建与验证命令
+## 构建与验证
 
-Linux/macOS 的 Maven Wrapper 为 `./mvnw`，Windows PowerShell 为 `.\mvnw.cmd`。日常命令优先通过
-仓库统一入口调用 Wrapper，以获得固定并发、超时分类和构建指标。
+本地开发优先使用 `build-support/scripts/invoke-haifa-maven.ps1`（Windows）或对应的 `.sh`
+入口，以获得固定并发、超时分类和脱敏指标。
 
-### Windows PowerShell 命令拼接规则
+### Windows PowerShell 参数规则
 
-- 调用 `.ps1` 统一构建入口时，Maven 参数分隔符必须写成字面量 `'--'`，禁止使用未加引号的 `--`。
-- 每个 Maven `-D...` 参数必须整体加单引号，例如 `'-Dtest=FooTest,BarTest'` 和
-  `'-Dsurefire.failIfNoSpecifiedTests=false'`；只有需要展开 PowerShell 变量时才整体使用双引号。
-- 长命令或动态参数使用字符串数组和 splatting 传递，每个数组元素只表示一个参数；禁止拼接命令字符串
-  或使用 `Invoke-Expression`。
+- Maven 参数分隔符必须写成字面量 `'--'`；每个 `-D...` 参数必须整体加单引号。
+- 长命令或动态参数使用字符串数组和 splatting；禁止拼接命令字符串或使用 `Invoke-Expression`。
 
 ```bash
-# 精确测试类及必要依赖；L1 默认串行，适合编辑内循环
+# 精确测试：按任务替换示例中的模块名和测试类
 ./build-support/scripts/invoke-haifa-maven.sh --layer L1 -- \
   -pl :haifa-agent-runtime-core -am \
   -Dtest=RuntimeCoreTest -Dsurefire.failIfNoSpecifiedTests=false test
 
-# 受影响模块完整测试；L2 固定 -T 4
+# 受影响模块完整测试
 ./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- \
   -pl :haifa-agent-runtime-core -am test
 
-# 全仓 Unit/Contract/Architecture；增量运行、不 clean
-./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- test
-
-# 显式运行默认排除的慢速 Surefire 测试
-./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- -Pslow-tests test
-
-# 应用 Spotless 格式化
-./build-support/scripts/invoke-haifa-maven.sh --layer L0 -- spotless:apply
-
-# 本地最终验证；统一入口记录指标并使用资源感知的固定并发
-./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-fast clean verify
-
-# 同一 SHA 已通过 ci-fast 后，只运行 Failsafe Integration
-./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-integration-only verify
-
-# 同一 SHA 已通过 ci-fast 后，只验证 CLI/JAR/Source/Javadoc 制品
+# 同一 SHA 的最终门禁
 ./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- \
-  -pl :haifa-agent-cli -am -Prelease-artifacts verify
-
-# 发布配置验证；必须通过 -pl 指定受影响模块，并用 -am 补齐其依赖
-./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- \
-  -pl :haifa-agent-runtime-core -am -Prelease verify
+  -Pci-fast clean verify
 ```
 
-`ci-fast` 运行 Unit/Contract/Architecture 并跳过 Integration。`ci-integration` 保留为兼容入口，仍会
-重复 Unit；只有同一 SHA 已通过 `ci-fast` 时才能使用 `ci-integration-only`。`release-artifacts` 跳过
-Unit/Integration，只验证打包、Source、Javadoc 和制品 smoke，不能单独作为代码正确性门禁。
+精确测试使用 L1；模块完整测试和全仓增量测试使用 L2；最终门禁使用 L3。不得按本机 CPU 数直接使用
+`-T 1C`。慢测、Integration、Release Artifact 和发布验证的命令及前置条件见
+[`build-support/README.md`](build-support/README.md)。`ci-integration-only` 和 `release-artifacts` 不能单独作为代码正确性门禁。
+运行 `-Prelease verify` 或 `-Prelease-artifacts verify` 必须使用 `-pl` 指定受影响模块，禁止全仓直接执行。
 
-普通 Surefire、L1/L2 和 L3 `ci-fast` 默认排除类级 `@Tag("slow")`。当前慢测集合只包含
-`PersonalAssistantRestartTest`、`PersonalAssistantWebFluxTest`、`SqliteRuntimeRecoveryTest` 和
-`LocalCodingAgentTest`；测试代码不得删除，使用 `-Pslow-tests test` 显式执行，并由夜间三平台工作流覆盖。
-
-本地 Maven 开发优先使用 `build-support/scripts/invoke-haifa-maven.ps1`（Windows）或对应的 `.sh`
-入口。精确测试使用 L1；模块完整测试和全仓增量测试使用 L2；最终门禁使用 L3。L0/L1 默认串行，
-L2 默认 `-T 4`，L3 默认 `-T 2`；不要按本机 CPU 数直接使用 `-T 1C`。入口把脱敏指标
-写入 `local-tmp/maven-build-metrics/`，并原样返回 Maven 退出码。精确语法和分层矩阵见
-[`build-support/README.md`](build-support/README.md)。
-
-运行 `-Prelease verify` 或 `-Prelease-artifacts verify` 时必须使用 `-pl` 指定本次任务的受影响模块；
-禁止不带 `-pl` 直接执行全仓 Release 验证，以免产生不必要的长时间构建。
-
-真实 DeepSeek 冒烟测试还要求显式设置 `HAIFA_DEEPSEEK_LIVE_TEST=true` 和 `DEEPSEEK_API_KEY`，会访问外部服务并产生真实成本；普通开发和 CI 验证不得运行。默认只使用本地 Stub HTTP Server 测试适配器。
+真实 Provider 测试必须有显式开关和凭据，会访问外部服务并可能产生费用；未获得当前任务授权时不得运行。
+普通开发和 CI 默认只使用本地 Stub/Fake。
 
 ## 完成标准
 
@@ -215,6 +106,6 @@ L2 默认 `-T 4`，L3 默认 `-T 2`；不要按本机 CPU 数直接使用 `-T 1C
 - 修改范围与任务一致，未覆盖用户已有改动；
 - 模块依赖方向和纯 Java 边界未被破坏；
 - 受影响测试通过，架构测试未被绕过；
-- 同一 Git SHA 的 L3 `-Pci-fast clean verify` 通过，或已明确说明无法运行的原因；
+- 同一 Git SHA 的 L3 `-Pci-fast clean verify` 通过，或已明确说明未运行/未通过的原因；
 - 文档、日志和测试输出不包含秘密或敏感原文；
 - 最终说明列出修改文件、验证命令和任何剩余风险。
