@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import real_environment
 
@@ -31,7 +31,7 @@ class RealEnvironmentTest(unittest.TestCase):
             archive.writestr("BOOT-INF/lib/dependency.jar", b"dependency")
 
     def test_root_scripts_location_resolves_repository_paths(self) -> None:
-        repository = Path(__file__).resolve().parents[1]
+        repository = Path(__file__).resolve().parents[2]
 
         paths = real_environment.paths()
 

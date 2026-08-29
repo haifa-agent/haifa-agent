@@ -39,7 +39,7 @@ def write_json(path: Path, value: object) -> None:
 
 def main() -> int:
     options = arguments()
-    repository = Path(__file__).resolve().parent.parent
+    repository = Path(__file__).resolve().parents[2]
     run_root = Path(options.run_root).absolute()
     launcher = Path(options.launcher).resolve()
     workspace = Path(options.workspace).resolve()
