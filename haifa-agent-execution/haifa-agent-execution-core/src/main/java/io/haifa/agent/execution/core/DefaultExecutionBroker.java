@@ -12,6 +12,7 @@ import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ExecutionStore;
+import io.haifa.agent.execution.api.ResolvedExecutionEnvironment;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.core.change.WorkspaceChangeObservation;
 import io.haifa.agent.execution.core.change.WorkspaceChangeObserver;
@@ -33,6 +34,7 @@ import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.io.ByteArrayOutputStream;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -82,7 +84,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
     @Override
     public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
         Objects.requireNonNull(request, "request must not be null");
-        Objects.requireNonNull(observer, "observer must not be null");
         Optional<ExecutionResult> replay = executions.findByIdempotencyKey(request.idempotencyKey());
         if (replay.isPresent()) {
             var previous = executions.findRequest(replay.orElseThrow().id()).orElseThrow();
@@ -95,7 +96,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         authorize(request);
         policy.authorize(request);
         ResolvedSandbox resolved = resolveSandbox(request, false);
-        Map<String, String> environment = Map.copyOf(environments.resolve(request.environmentRef()));
+        ResolvedExecutionEnvironment environment = environments.resolve(request.environmentRef());
+        List<byte[]> secrets = RedactingExecutionOutputObserver.extractSecrets(environment);
         WorkspaceChangeObservation changeObservation = beginChangeObservation(request);
         SandboxSession session;
         try {
@@ -109,19 +111,19 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         try (session) {
             io.haifa.agent.sandbox.api.SandboxProcessResult process;
             try (var asynchronous = new BoundedAsyncExecutionOutputObserver(observer)) {
-                ExecutionOutputObserver safeObserver = new RedactingExecutionOutputObserver(asynchronous, environment);
+                ExecutionOutputObserver safeObserver = new RedactingExecutionOutputObserver(asynchronous, secrets);
                 process = session.execute(
                         new SandboxExecution(
                                 request.command(),
                                 request.workingDirectory(),
-                                environment,
+                                environment.values(),
                                 request.limits(),
                                 request.input(),
                                 request.scratchSpace()),
                         safeObserver);
             }
-            byte[] stdoutBytes = redact(process.stdout(), environment);
-            byte[] stderrBytes = redact(process.stderr(), environment);
+            byte[] stdoutBytes = RedactingExecutionOutputObserver.redactAll(process.stdout(), secrets);
+            byte[] stderrBytes = RedactingExecutionOutputObserver.redactAll(process.stderr(), secrets);
             var stdout = outputs.store(
                     request.id(), ExecutionOutputChannel.STDOUT, stdoutBytes, 4096, process.stdoutTruncated());
             var stderr = outputs.store(
@@ -194,7 +196,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         authorize(request);
         policy.authorize(request);
         ResolvedSandbox resolved = resolveSandbox(request, true);
-        Map<String, String> environment = Map.copyOf(environments.resolve(request.environmentRef()));
+        ResolvedExecutionEnvironment environment = environments.resolve(request.environmentRef());
+        List<byte[]> secrets = RedactingExecutionOutputObserver.extractSecrets(environment);
         WorkspaceChangeObservation changeObservation = beginChangeObservation(request);
         SandboxSession sandbox;
         try {
@@ -209,11 +212,12 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             var process = sandbox.openManagedProcess(new SandboxExecution(
                     request.command(),
                     request.workingDirectory(),
-                    environment,
+                    environment.values(),
                     request.limits(),
                     request.input(),
                     request.scratchSpace()));
-            return new BrokerManagedSession(request, sandbox, process, environment, changeObservation);
+            return new BrokerManagedSession(
+                    request, sandbox, process, environment.values(), secrets, changeObservation);
         } catch (RuntimeException exception) {
             changeObservation.cancel();
             active.remove(request.id());
@@ -274,26 +278,42 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         private final SandboxSession sandbox;
         private final io.haifa.agent.sandbox.api.SandboxManagedProcess process;
         private final Map<String, String> environment;
+        private final List<byte[]> secrets;
         private final WorkspaceChangeObservation changeObservation;
         private final ByteArrayOutputStream stdout = new ByteArrayOutputStream();
         private final ByteArrayOutputStream stderr = new ByteArrayOutputStream();
         private final java.util.concurrent.atomic.AtomicBoolean closed =
                 new java.util.concurrent.atomic.AtomicBoolean();
         private final java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit> exit;
+        private final RedactingExecutionOutputObserver redactingObserver;
+        private final java.util.concurrent.ConcurrentLinkedQueue<io.haifa.agent.execution.api.ProcessOutputChunk>
+                safeChunks = new java.util.concurrent.ConcurrentLinkedQueue<>();
 
         private BrokerManagedSession(
                 ExecutionRequest request,
                 SandboxSession sandbox,
                 io.haifa.agent.sandbox.api.SandboxManagedProcess process,
                 Map<String, String> environment,
+                List<byte[]> secrets,
                 WorkspaceChangeObservation changeObservation) {
             this.request = request;
             this.sandbox = sandbox;
             this.process = process;
             this.environment = environment;
+            this.secrets = secrets;
             this.changeObservation = changeObservation;
             this.exit = process.exit().thenApply(this::complete);
             this.exit.whenComplete((ignored, failure) -> changeObservation.cancel());
+            this.redactingObserver = new RedactingExecutionOutputObserver(
+                    chunk -> {
+                        synchronized (this) {
+                            ByteArrayOutputStream target =
+                                    chunk.channel() == ExecutionOutputChannel.STDOUT ? stdout : stderr;
+                            target.writeBytes(chunk.bytes());
+                        }
+                        safeChunks.add(chunk);
+                    },
+                    secrets);
         }
 
         @Override
@@ -311,15 +331,18 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         @Override
         public Optional<io.haifa.agent.execution.api.ProcessOutputChunk> read(Duration timeout) {
             if (closed.get()) return Optional.empty();
-            return process.read(timeout).map(chunk -> {
-                byte[] redacted = redact(chunk.bytes(), environment);
-                synchronized (this) {
-                    ByteArrayOutputStream target = chunk.channel() == ExecutionOutputChannel.STDOUT ? stdout : stderr;
-                    target.writeBytes(redacted);
-                }
-                return new io.haifa.agent.execution.api.ProcessOutputChunk(
-                        chunk.channel(), redacted, chunk.endOfStream(), chunk.truncated());
-            });
+            var buffered = safeChunks.poll();
+            if (buffered != null) return Optional.of(buffered);
+            var readChunk = process.read(timeout);
+            if (readChunk.isPresent()) {
+                redactingObserver.onOutput(readChunk.get());
+                return Optional.ofNullable(safeChunks.poll());
+            }
+            if (process.exit().isDone()) {
+                redactingObserver.flush();
+                return Optional.ofNullable(safeChunks.poll());
+            }
+            return Optional.empty();
         }
 
         @Override
@@ -340,6 +363,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         @Override
         public void close() {
             if (!closed.compareAndSet(false, true)) return;
+            redactingObserver.flush();
             try {
                 process.close();
                 exit.get(5, java.util.concurrent.TimeUnit.SECONDS);
@@ -358,6 +382,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
 
         private io.haifa.agent.execution.api.ProcessExit complete(
                 io.haifa.agent.execution.api.ProcessExit processExit) {
+            redactingObserver.flush();
             byte[] stdoutBytes;
             byte[] stderrBytes;
             synchronized (this) {
@@ -472,43 +497,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             case CANCELLED -> new ExecutionFailure("CANCELLED", "execution was cancelled");
             case UNKNOWN -> new ExecutionFailure("OUTCOME_UNKNOWN", "execution outcome could not be determined");
         };
-    }
-
-    private static byte[] redact(byte[] source, Map<String, String> environment) {
-        byte[] redacted = source.clone();
-        for (byte[] secret : ExecutionOutputRedactionPolicy.redactionValues(environment)) {
-            redacted = replace(redacted, secret, new byte[] {'*', '*', '*'});
-        }
-        return redactUriUserInfo(redacted);
-    }
-
-    private static byte[] redactUriUserInfo(byte[] source) {
-        String value = new String(source, java.nio.charset.StandardCharsets.UTF_8);
-        String redacted = value.replaceAll("(?i)(https?://)[^/@\\s]+@", "$1***@");
-        return redacted.equals(value) ? source : redacted.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    }
-
-    private static byte[] replace(byte[] source, byte[] target, byte[] replacement) {
-        if (target.length == 0 || source.length < target.length) return source;
-        ByteArrayOutputStream output = new ByteArrayOutputStream(source.length);
-        int index = 0;
-        while (index <= source.length - target.length) {
-            boolean match = true;
-            for (int offset = 0; offset < target.length; offset++) {
-                if (source[index + offset] != target[offset]) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) {
-                output.writeBytes(replacement);
-                index += target.length;
-            } else {
-                output.write(source[index++]);
-            }
-        }
-        output.write(source, index, source.length - index);
-        return output.toByteArray();
     }
 
     private static ExecutionRejectedException reject(String code, String message) {
