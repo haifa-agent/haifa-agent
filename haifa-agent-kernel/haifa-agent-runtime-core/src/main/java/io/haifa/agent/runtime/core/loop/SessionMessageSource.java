@@ -284,11 +284,24 @@ public final class SessionMessageSource {
         if (candidateSplit == 0 || candidateSplit >= groups.size()) {
             return candidateSplit;
         }
-        int split = candidateSplit;
-        while (split > 0 && !isTurnAnchor(groups.get(split))) {
-            split--;
+        if (isTurnAnchor(groups.get(candidateSplit))) {
+            return candidateSplit;
         }
-        return split;
+        int forwardAnchor = candidateSplit + 1;
+        while (forwardAnchor < groups.size() && !isTurnAnchor(groups.get(forwardAnchor))) {
+            forwardAnchor++;
+        }
+        if (forwardAnchor < groups.size()) {
+            return forwardAnchor;
+        }
+        int backwardAnchor = candidateSplit;
+        while (backwardAnchor > 0 && !isTurnAnchor(groups.get(backwardAnchor))) {
+            backwardAnchor--;
+        }
+        if (backwardAnchor > 0 && isTurnAnchor(groups.get(backwardAnchor))) {
+            return backwardAnchor;
+        }
+        return 0;
     }
 
     private boolean isTurnAnchor(List<AgentMessage> group) {
