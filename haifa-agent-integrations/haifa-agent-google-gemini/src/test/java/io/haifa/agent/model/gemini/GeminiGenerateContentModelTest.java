@@ -357,6 +357,42 @@ class GeminiGenerateContentModelTest {
     }
 
     @Test
+    void trailingFunctionCallWithoutResponseFailsPreDispatch() {
+        var assistantCall = ModelMessage.assistant(
+                "",
+                List.of(new ModelToolCall(
+                        new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("call-1"),
+                        "get_alpha",
+                        Map.of("step", 1))),
+                io.haifa.agent.model.api.SensitiveModelReasoning.of(
+                        "{\"version\":1,\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"get_alpha\",\"args\":{\"step\":1}},\"thoughtSignature\":\"sig-1\"}]}"));
+
+        var messages = List.of(ModelMessage.text(ModelMessageRole.USER, "execute step"), assistantCall);
+
+        assertThatThrownBy(() ->
+                        standardStubModel().invoke(request(standardSnapshot(), messages, List.of(tool("get_alpha")))))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.INVALID_REQUEST);
+                    assertThat(failure.providerCode()).isEqualTo("gemini_tool_call_unmatched");
+                });
+    }
+
+    @Test
+    void orphanFunctionResponseAfterUserAnchorFailsPreDispatch() {
+        var orphanToolResult =
+                ModelMessage.tool(new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("orphan-call"), "result");
+
+        var messages = List.of(ModelMessage.text(ModelMessageRole.USER, "execute step"), orphanToolResult);
+
+        assertThatThrownBy(() ->
+                        standardStubModel().invoke(request(standardSnapshot(), messages, List.of(tool("get_alpha")))))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.INVALID_REQUEST);
+                    assertThat(failure.providerCode()).isEqualTo("gemini_tool_call_unmatched");
+                });
+    }
+
+    @Test
     void sequentialFunctionCallingRequestPreservesUserTurnAnchorAndThoughtSignatures() throws Exception {
         AtomicReference<HttpExchange> exchange = new AtomicReference<>();
         AtomicReference<JsonNode> requestBody = new AtomicReference<>();

@@ -940,6 +940,100 @@ class SessionCompressionCheckpointTest {
         assertThat(selection.summary()).isEmpty();
     }
 
+    @Test
+    void compactionWithMultiTurnHistoryAlignsForwardToNextTurnAnchorWhenCandidateSplitInTurnZero() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId session = new AgentSessionId("multi-turn-session");
+        AgentRunId run1 = new AgentRunId("run-1");
+        AgentRunId run2 = new AgentRunId("run-2");
+
+        // Turn 0: User, ToolCall 1, ToolResult 1, ToolCall 2, ToolResult 2, Assistant Final
+        store.appendSessionMessage(draft("turn0-user", session, "run-1", MessageRole.USER, "turn 0 prompt"));
+        ToolCallId call0_1 = new ToolCallId("call-0-1");
+        ProviderToolCallCorrelationId corr0_1 = new ProviderToolCallCorrelationId("corr-0-1");
+        ToolCallId call0_2 = new ToolCallId("call-0-2");
+        ProviderToolCallCorrelationId corr0_2 = new ProviderToolCallCorrelationId("corr-0-2");
+
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("turn0-call-1"),
+                session,
+                Optional.of(run1),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(call0_1, corr0_1, "echo", "1.0")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("turn0-res-1"),
+                session,
+                Optional.of(run1),
+                Optional.empty(),
+                MessageRole.TOOL,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolResultPart(call0_1, corr0_1, "result 1")),
+                Map.of(),
+                NOW));
+
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("turn0-call-2"),
+                session,
+                Optional.of(run1),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(call0_2, corr0_2, "echo", "1.0")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("turn0-res-2"),
+                session,
+                Optional.of(run1),
+                Optional.empty(),
+                MessageRole.TOOL,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolResultPart(call0_2, corr0_2, "result 2")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(
+                draft("turn0-final", session, "run-1", MessageRole.ASSISTANT, "turn 0 final answer"));
+
+        // Turn 1: User "continue"
+        store.appendSessionMessage(draft("turn1-user", session, "run-2", MessageRole.USER, "continue"));
+
+        // Policy: small retainedTailBudget so candidateSplit lands on turn0-res-2 or turn0-call-2
+        SessionMessageSource source = new SessionMessageSource(
+                store,
+                store,
+                new DeterministicContextCompressor(),
+                new CompressionPolicy(2, 50, 1),
+                () -> "turn0-summary",
+                () -> NOW);
+
+        var compaction = source.compact(session);
+
+        assertThat(compaction.summary()).isPresent();
+        assertThat(compaction.summary().orElseThrow().sourceMessageIds())
+                .contains(
+                        new AgentMessageId("turn0-user"),
+                        new AgentMessageId("turn0-call-1"),
+                        new AgentMessageId("turn0-res-1"),
+                        new AgentMessageId("turn0-call-2"),
+                        new AgentMessageId("turn0-res-2"),
+                        new AgentMessageId("turn0-final"));
+
+        List<AgentMessage> tailMessages = compaction.items().stream()
+                .filter(item -> item.content() instanceof MessageGroupContextContent)
+                .flatMap(item -> ((MessageGroupContextContent) item.content()).messages().stream())
+                .toList();
+
+        assertThat(tailMessages.getFirst().id()).isEqualTo(new AgentMessageId("turn1-user"));
+    }
+
     private static DefaultAgentRuntime runtime(
             InMemoryRuntimeStore store, ManualExecutionScheduler scheduler, AgentChatModel model, AtomicInteger ids) {
         IdentifierGenerator generator = () -> "test-id-" + ids.incrementAndGet();

@@ -44,6 +44,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -514,6 +515,92 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                     0,
                     "gemini_turn_anchor_missing",
                     "Gemini contents must begin with a user message containing user content",
+                    null);
+        }
+
+        Set<String> pendingCallIds = new LinkedHashSet<>();
+        for (Map<String, Object> content : contents) {
+            String role = (String) content.get("role");
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> parts = (List<Map<String, Object>>) content.get("parts");
+            if (parts == null || parts.isEmpty()) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.INVALID_REQUEST,
+                        false,
+                        0,
+                        "gemini_content_parts_empty",
+                        "Gemini content parts must not be empty",
+                        null);
+            }
+
+            if ("model".equals(role)) {
+                if (!pendingCallIds.isEmpty()) {
+                    throw failure(
+                            request,
+                            ModelErrorCategory.INVALID_REQUEST,
+                            false,
+                            0,
+                            "gemini_tool_call_unmatched",
+                            "preceding function calls missing function responses before next model turn",
+                            null);
+                }
+                for (Map<String, Object> part : parts) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> functionCall = (Map<String, Object>) part.get("functionCall");
+                    if (functionCall != null) {
+                        String id = (String) functionCall.get("id");
+                        if (id != null) {
+                            pendingCallIds.add(id);
+                        }
+                    }
+                }
+            } else if ("user".equals(role)) {
+                List<String> responseIds = new ArrayList<>();
+                for (Map<String, Object> part : parts) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> functionResponse = (Map<String, Object>) part.get("functionResponse");
+                    if (functionResponse != null) {
+                        String id = (String) functionResponse.get("id");
+                        if (id != null) {
+                            responseIds.add(id);
+                        }
+                    }
+                }
+                if (!responseIds.isEmpty()) {
+                    if (pendingCallIds.isEmpty()) {
+                        throw failure(
+                                request,
+                                ModelErrorCategory.INVALID_REQUEST,
+                                false,
+                                0,
+                                "gemini_tool_call_unmatched",
+                                "orphan function response without preceding model function call",
+                                null);
+                    }
+                    for (String resId : responseIds) {
+                        if (!pendingCallIds.remove(resId)) {
+                            throw failure(
+                                    request,
+                                    ModelErrorCategory.INVALID_REQUEST,
+                                    false,
+                                    0,
+                                    "gemini_tool_call_unmatched",
+                                    "function response id does not match preceding function call: " + resId,
+                                    null);
+                        }
+                    }
+                }
+            }
+        }
+        if (!pendingCallIds.isEmpty()) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "gemini_tool_call_unmatched",
+                    "trailing function calls without function responses",
                     null);
         }
     }
