@@ -65,52 +65,6 @@ public final class OpenAiResponsesDialects {
         return profile;
     }
 
-    public static io.haifa.agent.model.api.ModelBindingProfile profile(
-            ResolvedModelSnapshot snapshot, java.time.LocalDate verifiedOn) {
-        var admission = OpenAiResponsesBindingRegistry.find(snapshot);
-        if (admission.isEmpty()) {
-            boolean reasoning = snapshot.capabilities().contains(io.haifa.agent.model.api.ModelCapability.REASONING);
-            return io.haifa.agent.model.api.ModelBindingProfile.create(
-                    snapshot.modelId(),
-                    snapshot.apiStyle(),
-                    "1.0",
-                    snapshot.capabilities(),
-                    reasoning
-                            ? io.haifa.agent.model.api.ModelReasoningBehavior.OPTIONAL
-                            : io.haifa.agent.model.api.ModelReasoningBehavior.NONE,
-                    reasoning
-                            ? Set.of(
-                                    io.haifa.agent.model.api.ModelReasoningMode.DISABLED,
-                                    io.haifa.agent.model.api.ModelReasoningMode.ENABLED)
-                            : Set.of(io.haifa.agent.model.api.ModelReasoningMode.DISABLED),
-                    reasoning ? Set.of(io.haifa.agent.model.api.ModelReasoningEffort.HIGH) : Set.of(),
-                    java.util.OptionalLong.empty(),
-                    1,
-                    snapshot.maxOutputTokens(),
-                    false,
-                    io.haifa.agent.model.api.ModelProfileStatus.UNVERIFIED,
-                    verifiedOn);
-        }
-        var binding = admission.get();
-        boolean reasoning = snapshot.capabilities().contains(io.haifa.agent.model.api.ModelCapability.REASONING);
-        return io.haifa.agent.model.api.ModelBindingProfile.create(
-                snapshot.modelId(),
-                snapshot.apiStyle(),
-                "1.0",
-                snapshot.capabilities(),
-                reasoning ? binding.reasoningBehavior() : io.haifa.agent.model.api.ModelReasoningBehavior.NONE,
-                reasoning
-                        ? binding.allowedReasoningModes()
-                        : Set.of(io.haifa.agent.model.api.ModelReasoningMode.DISABLED),
-                reasoning ? binding.allowedReasoningEfforts() : Set.of(),
-                java.util.OptionalLong.empty(),
-                1,
-                snapshot.maxOutputTokens(),
-                reasoning && binding.toolReasoningContinuationRequired(),
-                io.haifa.agent.model.api.ModelProfileStatus.VERIFIED,
-                verifiedOn);
-    }
-
     private static void validateEndpoint(URI endpoint, boolean allowInsecureHttp, Profile profile) {
         URI value = Objects.requireNonNull(endpoint, "endpoint must not be null");
         String host = value.getHost();

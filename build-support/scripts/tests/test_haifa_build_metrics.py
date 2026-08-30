@@ -76,6 +76,67 @@ class HaifaBuildMetricsTest(unittest.TestCase):
             output.seek(0)
             self.assertEqual("bad: ?\n", output.read())
 
+    def test_test_report_facts_discovers_reports_and_computes_totals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            surefire = root / "module-a" / "target" / "surefire-reports"
+            surefire.mkdir(parents=True)
+            (surefire / "TEST-io.haifa.FastTest.xml").write_text(
+                '<testsuite name="io.haifa.FastTest" time="0.150" tests="5" failures="0" errors="0" skipped="1"/>',
+                encoding="utf-8",
+            )
+            failsafe = root / "module-b" / "target" / "failsafe-reports"
+            failsafe.mkdir(parents=True)
+            (failsafe / "TEST-io.haifa.SlowIT.xml").write_text(
+                '<testsuite name="io.haifa.SlowIT" time="2.500" tests="2" failures="1" errors="0" skipped="0"/>',
+                encoding="utf-8",
+            )
+
+            totals, classes = MODULE.test_report_facts(root, started_epoch=0.0)
+
+            self.assertEqual(2, totals["forkReportFiles"])
+            self.assertEqual(7, totals["tests"])
+            self.assertEqual(1, totals["failures"])
+            self.assertEqual(0, totals["errors"])
+            self.assertEqual(1, totals["skipped"])
+            self.assertEqual("io.haifa.SlowIT", classes[0]["testClass"])
+            self.assertEqual(2500, classes[0]["millis"])
+
+    def test_test_report_facts_skips_noisy_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            node_modules_surefire = root / "frontend" / "node_modules" / "pkg" / "surefire-reports"
+            node_modules_surefire.mkdir(parents=True)
+            (node_modules_surefire / "TEST-ignored.xml").write_text(
+                '<testsuite name="ignored" time="1.0" tests="10" failures="0" errors="0" skipped="0"/>',
+                encoding="utf-8",
+            )
+            git_surefire = root / ".git" / "surefire-reports"
+            git_surefire.mkdir(parents=True)
+            (git_surefire / "TEST-git.xml").write_text(
+                '<testsuite name="git" time="1.0" tests="10" failures="0" errors="0" skipped="0"/>',
+                encoding="utf-8",
+            )
+
+            totals, classes = MODULE.test_report_facts(root, started_epoch=0.0)
+
+            self.assertEqual(0, totals["forkReportFiles"])
+            self.assertEqual(0, totals["tests"])
+            self.assertEqual([], classes)
+
+    def test_test_report_facts_handles_corrupt_and_stale_reports_gracefully(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            surefire = root / "target" / "surefire-reports"
+            surefire.mkdir(parents=True)
+            corrupt = surefire / "TEST-corrupt.xml"
+            corrupt.write_text("<not-valid-xml", encoding="utf-8")
+
+            totals, classes = MODULE.test_report_facts(root, started_epoch=0.0)
+
+            self.assertEqual(0, totals["forkReportFiles"])
+            self.assertEqual(0, totals["tests"])
+
 
 if __name__ == "__main__":
     unittest.main()

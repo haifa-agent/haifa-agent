@@ -8,6 +8,8 @@ import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProfileStatus;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelReasoningBehavior;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.net.URI;
 import java.time.LocalDate;
@@ -17,6 +19,71 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class GeminiModelProfileFactoryTest {
+    @Test
+    void verifiesEverySingleAdmittedBindingInGeminiRegistryWithAndWithoutReasoning() {
+        var admissions = GeminiBindingRegistry.admissions();
+        assertThat(admissions).hasSize(2);
+
+        for (var admission : admissions) {
+            ResolvedModelSnapshot reasoningSnapshot = ResolvedModelSnapshot.create(
+                    new ModelProviderId(admission.providerId()),
+                    "1",
+                    new ModelDefinitionId("gemini-test"),
+                    "1",
+                    admission.providerModelId(),
+                    ModelApiStyles.GOOGLE_GEMINI_ADAPTER,
+                    GeminiGenerateContentModel.ADAPTER_VERSION,
+                    admission.apiStyle(),
+                    admission.dialect(),
+                    URI.create("http://127.0.0.1:8317/v1beta"),
+                    new CredentialRef(GeminiGenerateContentModel.CLIPROXY_CREDENTIAL_REF),
+                    true,
+                    EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING),
+                    131072,
+                    8192,
+                    Map.of(),
+                    Map.of());
+
+            var reasoningProfile = GeminiModelProfileFactory.fromSnapshot(reasoningSnapshot, LocalDate.of(2026, 8, 24));
+            assertThat(reasoningProfile.status())
+                    .as("Admitted Gemini binding %s must be VERIFIED", admission)
+                    .isEqualTo(ModelProfileStatus.VERIFIED);
+            assertThat(reasoningProfile.selectable()).isTrue();
+            assertThat(reasoningProfile.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.ALWAYS);
+            assertThat(reasoningProfile.allowedReasoningModes()).containsExactly(ModelReasoningMode.ENABLED);
+            assertThat(reasoningProfile.toolReasoningContinuationRequired()).isTrue();
+
+            ResolvedModelSnapshot nonReasoningSnapshot = ResolvedModelSnapshot.create(
+                    new ModelProviderId(admission.providerId()),
+                    "1",
+                    new ModelDefinitionId("gemini-test-non-reasoning"),
+                    "1",
+                    admission.providerModelId(),
+                    ModelApiStyles.GOOGLE_GEMINI_ADAPTER,
+                    GeminiGenerateContentModel.ADAPTER_VERSION,
+                    admission.apiStyle(),
+                    admission.dialect(),
+                    URI.create("http://127.0.0.1:8317/v1beta"),
+                    new CredentialRef(GeminiGenerateContentModel.CLIPROXY_CREDENTIAL_REF),
+                    true,
+                    EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                    131072,
+                    8192,
+                    Map.of(),
+                    Map.of());
+
+            var nonReasoningProfile =
+                    GeminiModelProfileFactory.fromSnapshot(nonReasoningSnapshot, LocalDate.of(2026, 8, 24));
+            assertThat(nonReasoningProfile.status())
+                    .as("Admitted Gemini binding without reasoning %s must be VERIFIED", admission)
+                    .isEqualTo(ModelProfileStatus.VERIFIED);
+            assertThat(nonReasoningProfile.selectable()).isTrue();
+            assertThat(nonReasoningProfile.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.NONE);
+            assertThat(nonReasoningProfile.allowedReasoningModes()).containsExactly(ModelReasoningMode.DISABLED);
+            assertThat(nonReasoningProfile.toolReasoningContinuationRequired()).isFalse();
+        }
+    }
+
     @Test
     void verifiesGovernedLocalDialectAndRequiresProtectedContinuation() {
         var profile = GeminiModelProfileFactory.fromSnapshot(
