@@ -414,6 +414,7 @@ public final class ToolPipeline {
         call.start(time.now());
         state.appendToolCall(call);
         appendToolEvent(run, call, "tool.started", "STARTED", "NONE", "");
+        ToolExecutionTiming timing = ToolExecutionTiming.started();
         PolicyDecision dispatchDecision = effectiveDecision;
         recordTrace(new RuntimeTraceEvent(
                 traceContext.traceId(),
@@ -434,7 +435,8 @@ public final class ToolPipeline {
                         "providerId", definition.providerId().value(),
                         "definitionHash", binding.coordinate().definitionHash().value()),
                 time.now()));
-        try (var permit = environment.acquire(run, binding)) {
+        try (var permit = acquireEnvironment(run, binding, timing)) {
+            long providerStartedNanos = System.nanoTime();
             ToolResult rawResult = retries.execute(
                     () -> {
                         if (run.usage().toolCalls() >= run.limits().maxToolCalls()) {
@@ -447,9 +449,12 @@ public final class ToolPipeline {
                         return invokeProvider(run, call, request, binding, dispatchDecision);
                     },
                     retryPolicy.forTool(binding));
+            timing.providerInvocationMillis = elapsedMillis(providerStartedNanos);
             if (rawResult.successful()) {
+                long validationStartedNanos = System.nanoTime();
                 ToolSchemaValidationResult outputValidation =
                         schemaValidator.validate(definition.outputSchema(), rawResult.structuredData());
+                timing.outputValidationMillis = elapsedMillis(validationStartedNanos);
                 if (!outputValidation.valid()) {
                     LOGGER.warn(
                             "event=tool.output.invalid runId={} toolCallId={} tool={} validationErrors={}",
@@ -467,8 +472,10 @@ public final class ToolPipeline {
                 journal.recordUncertain(run.id(), request.idempotencyKey(), rawResult);
                 return reconcileUnknown(run, call, request, iteration, ToolJournalState.OUTCOME_UNKNOWN, traceContext);
             }
+            long journalStartedNanos = System.nanoTime();
             try {
                 journal.recordPendingResult(run.id(), request.idempotencyKey(), rawResult);
+                timing.resultJournalMillis = elapsedMillis(journalStartedNanos);
             } catch (RuntimeException persistenceFailure) {
                 StackTraceElement location = persistenceFailure.getStackTrace().length == 0
                         ? null
@@ -483,7 +490,7 @@ public final class ToolPipeline {
                 throw new ToolResultPersistenceException(persistenceFailure);
             }
             return new ToolPipelineOutcome.Completed(
-                    persistResult(run, call, request, rawResult, iteration, traceContext));
+                    persistResult(run, call, request, rawResult, iteration, traceContext, timing));
         } catch (CancellationObservedException cancelled) {
             appendToolEvent(run, call, "tool.cancelled", "CANCELLED", "RUN_CANCELLED", "");
             throw cancelled;
@@ -779,12 +786,27 @@ public final class ToolPipeline {
             ToolResult rawResult,
             int iteration,
             RuntimeTraceContext traceContext) {
+        return persistResult(
+                run, call, request, rawResult, iteration, traceContext, ToolExecutionTiming.notMeasured());
+    }
+
+    private ToolResult persistResult(
+            AgentRun run,
+            ToolCall call,
+            ToolRequest request,
+            ToolResult rawResult,
+            int iteration,
+            RuntimeTraceContext traceContext,
+            ToolExecutionTiming timing) {
         FrozenToolBinding binding = binding(run, request);
         var definition = binding.definition();
+        long normalizationStartedNanos = System.nanoTime();
         ToolResult result = resultNormalizer.normalize(binding, rawResult);
+        timing.resultNormalizationMillis = elapsedMillis(normalizationStartedNanos);
         boolean externalizationRequired = largeResultPolicy.requiresExternalization(rawResult);
         boolean externalized = false;
         if (externalizationRequired) {
+            long externalizationStartedNanos = System.nanoTime();
             var reference = putResultAssetWithOnePersistenceRetry(call, rawResult);
             var assets = new ArrayList<>(result.assets());
             if (reference.isPresent() && !assets.contains(reference.get())) {
@@ -793,7 +815,9 @@ public final class ToolPipeline {
             }
             result = new ToolResult(
                     result.successful(), result.summary(), result.structuredData(), assets, result.artifacts(), true);
+            timing.resultExternalizationMillis = elapsedMillis(externalizationStartedNanos);
         }
+        long persistenceStartedNanos = System.nanoTime();
         try {
             journal.recordCompleted(run.id(), request.idempotencyKey(), result);
             if (call.status() == ToolCallStatus.POLICY_CHECK || call.status() == ToolCallStatus.APPROVED) {
@@ -823,6 +847,18 @@ public final class ToolPipeline {
         } catch (RuntimeException persistenceFailure) {
             throw new ToolResultPersistenceException(persistenceFailure);
         }
+        timing.resultPersistenceMillis = elapsedMillis(persistenceStartedNanos);
+        var traceAttributes = new java.util.LinkedHashMap<String, Object>();
+        traceAttributes.put("toolName", definition.name().value());
+        traceAttributes.put("toolVersion", definition.version().value());
+        traceAttributes.put("providerId", definition.providerId().value());
+        traceAttributes.put("successful", result.successful());
+        traceAttributes.put("failureCode", result.successful() ? "NONE" : stableResultFailureCode(result));
+        traceAttributes.put("retryable", false);
+        traceAttributes.put("truncated", result.truncated());
+        traceAttributes.put("externalizationRequired", externalizationRequired);
+        traceAttributes.put("externalized", externalized);
+        traceAttributes.putAll(timing.traceAttributes());
         recordTrace(new RuntimeTraceEvent(
                 traceContext.traceId(),
                 run.id(),
@@ -836,18 +872,7 @@ public final class ToolPipeline {
                 "tool.persisted",
                 RuntimeTraceScope.TOOL_CALL,
                 result.successful() ? RuntimeTraceStatus.SUCCESS : RuntimeTraceStatus.FAILURE,
-                java.util.Map.ofEntries(
-                        java.util.Map.entry("toolName", definition.name().value()),
-                        java.util.Map.entry("toolVersion", definition.version().value()),
-                        java.util.Map.entry(
-                                "providerId", definition.providerId().value()),
-                        java.util.Map.entry("successful", result.successful()),
-                        java.util.Map.entry(
-                                "failureCode", result.successful() ? "NONE" : stableResultFailureCode(result)),
-                        java.util.Map.entry("retryable", false),
-                        java.util.Map.entry("truncated", result.truncated()),
-                        java.util.Map.entry("externalizationRequired", externalizationRequired),
-                        java.util.Map.entry("externalized", externalized)),
+                java.util.Map.copyOf(traceAttributes),
                 time.now()));
         return result;
     }
@@ -998,6 +1023,62 @@ public final class ToolPipeline {
 
     private static boolean isStableFailureCode(String value) {
         return value != null && value.matches("[A-Z][A-Z0-9_]{0,127}");
+    }
+
+    private ToolExecutionEnvironment.ExecutionPermit acquireEnvironment(
+            AgentRun run, FrozenToolBinding binding, ToolExecutionTiming timing) {
+        long startedNanos = System.nanoTime();
+        try {
+            return environment.acquire(run, binding);
+        } finally {
+            timing.environmentAcquireMillis = elapsedMillis(startedNanos);
+        }
+    }
+
+    private static long elapsedMillis(long startedNanos) {
+        return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+    }
+
+    /**
+     * Monotonic, trace-only timing for a completed tool call. These values are diagnostics and
+     * intentionally do not participate in domain state, persistence, retry, or recovery.
+     */
+    private static final class ToolExecutionTiming {
+        private final long startedNanos;
+        private final boolean measured;
+        private long environmentAcquireMillis;
+        private long providerInvocationMillis;
+        private long outputValidationMillis;
+        private long resultJournalMillis;
+        private long resultNormalizationMillis;
+        private long resultExternalizationMillis;
+        private long resultPersistenceMillis;
+
+        private ToolExecutionTiming(long startedNanos, boolean measured) {
+            this.startedNanos = startedNanos;
+            this.measured = measured;
+        }
+
+        static ToolExecutionTiming started() {
+            return new ToolExecutionTiming(System.nanoTime(), true);
+        }
+
+        static ToolExecutionTiming notMeasured() {
+            return new ToolExecutionTiming(0, false);
+        }
+
+        Map<String, Object> traceAttributes() {
+            if (!measured) return Map.of();
+            return Map.ofEntries(
+                    Map.entry("toolElapsedMillis", elapsedMillis(startedNanos)),
+                    Map.entry("environmentAcquireMillis", environmentAcquireMillis),
+                    Map.entry("providerInvocationMillis", providerInvocationMillis),
+                    Map.entry("outputValidationMillis", outputValidationMillis),
+                    Map.entry("resultJournalMillis", resultJournalMillis),
+                    Map.entry("resultNormalizationMillis", resultNormalizationMillis),
+                    Map.entry("resultExternalizationMillis", resultExternalizationMillis),
+                    Map.entry("resultPersistenceMillis", resultPersistenceMillis));
+        }
     }
 
     private void recordTrace(RuntimeTraceEvent event) {

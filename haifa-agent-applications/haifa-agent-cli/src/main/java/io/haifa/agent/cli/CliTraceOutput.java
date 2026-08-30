@@ -142,7 +142,15 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
                             "retryable",
                             "truncated",
                             "externalizationRequired",
-                            "externalized")),
+                            "externalized",
+                            "toolElapsedMillis",
+                            "environmentAcquireMillis",
+                            "providerInvocationMillis",
+                            "outputValidationMillis",
+                            "resultJournalMillis",
+                            "resultNormalizationMillis",
+                            "resultExternalizationMillis",
+                            "resultPersistenceMillis")),
             Map.entry(
                     "runtime.error",
                     Set.of("errorCode", "diagnosticId", "exceptionType", "rootExceptionType", "failureTypes")),
@@ -162,7 +170,15 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
             Map.entry("delayMillis", "delayMs"),
             Map.entry("truncated", "outputTruncated"),
             Map.entry("externalized", "payloadExternalized"),
-            Map.entry("externalizationRequired", "payloadExternalizationRequired"));
+            Map.entry("externalizationRequired", "payloadExternalizationRequired"),
+            Map.entry("toolElapsedMillis", "toolElapsedMs"),
+            Map.entry("environmentAcquireMillis", "environmentAcquireMs"),
+            Map.entry("providerInvocationMillis", "providerInvocationMs"),
+            Map.entry("outputValidationMillis", "outputValidationMs"),
+            Map.entry("resultJournalMillis", "resultJournalMs"),
+            Map.entry("resultNormalizationMillis", "resultNormalizationMs"),
+            Map.entry("resultExternalizationMillis", "resultExternalizationMs"),
+            Map.entry("resultPersistenceMillis", "resultPersistenceMs"));
 
     private final Optional<CliTraceMode> mode;
     private final PrintStream terminal;

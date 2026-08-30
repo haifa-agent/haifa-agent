@@ -19,7 +19,7 @@ class ExternalLoginSafeViewTest {
         String account = "account-canary";
         StoredExternalCredential credential = new StoredExternalCredential(
                 LocalModelAuthReference.parse("model-auth://openai-codex/default"),
-                ExternalLoginMethodId.OPENAI_CODEX,
+                new ExternalLoginMethodId("openai-codex"),
                 client,
                 access,
                 refresh,
@@ -28,14 +28,14 @@ class ExternalLoginSafeViewTest {
                 account);
         LocalModelConnectionView connection = credential.safeView(true);
         ExternalLoginMethodDescriptor descriptor = new ExternalLoginMethodDescriptor(
-                ExternalLoginMethodId.OPENAI_CODEX,
+                new ExternalLoginMethodId("openai-codex"),
                 "ChatGPT sign-in",
                 Set.of(ExternalLoginMode.BROWSER),
                 true,
                 Optional.empty());
         ExternalLoginAttemptSnapshot attempt = new ExternalLoginAttemptSnapshot(
                 new ExternalLoginAttemptId(ATTEMPT_ID),
-                ExternalLoginMethodId.OPENAI_CODEX,
+                new ExternalLoginMethodId("openai-codex"),
                 ExternalLoginMode.DEVICE_CODE,
                 ExternalLoginAttemptState.WAITING_USER,
                 Optional.of(URI.create("https://auth.openai.com/codex/device")),

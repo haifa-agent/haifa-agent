@@ -204,12 +204,20 @@ class CliTraceOutputTest {
             trace.accept(event(
                     "tool.persisted",
                     Optional.of(new ToolCallId("tool-call-1")),
-                    Map.of(
-                            "toolName", "file.read",
-                            "successful", true,
-                            "truncated", true,
-                            "externalizationRequired", false,
-                            "externalized", false)));
+                    Map.ofEntries(
+                            Map.entry("toolName", "file.read"),
+                            Map.entry("successful", true),
+                            Map.entry("truncated", true),
+                            Map.entry("externalizationRequired", false),
+                            Map.entry("externalized", false),
+                            Map.entry("toolElapsedMillis", 93),
+                            Map.entry("environmentAcquireMillis", 1),
+                            Map.entry("providerInvocationMillis", 72),
+                            Map.entry("outputValidationMillis", 2),
+                            Map.entry("resultJournalMillis", 6),
+                            Map.entry("resultNormalizationMillis", 3),
+                            Map.entry("resultExternalizationMillis", 0),
+                            Map.entry("resultPersistenceMillis", 9))));
             trace.accept(event(
                     "model.invoke",
                     Optional.empty(),
@@ -228,6 +236,15 @@ class CliTraceOutputTest {
         assertThat(persisted.path("attributes").has("payloadExternalizationRequired"))
                 .isTrue();
         assertThat(persisted.path("attributes").has("payloadExternalized")).isTrue();
+        assertThat(persisted.path("attributes").path("toolElapsedMs").asInt()).isEqualTo(93);
+        assertThat(persisted.path("attributes").path("environmentAcquireMs").asInt()).isEqualTo(1);
+        assertThat(persisted.path("attributes").path("providerInvocationMs").asInt()).isEqualTo(72);
+        assertThat(persisted.path("attributes").path("outputValidationMs").asInt()).isEqualTo(2);
+        assertThat(persisted.path("attributes").path("resultJournalMs").asInt()).isEqualTo(6);
+        assertThat(persisted.path("attributes").path("resultNormalizationMs").asInt()).isEqualTo(3);
+        assertThat(persisted.path("attributes").path("resultExternalizationMs").asInt())
+                .isEqualTo(0);
+        assertThat(persisted.path("attributes").path("resultPersistenceMs").asInt()).isEqualTo(9);
         assertThat(persisted.path("attributes").has("successful")).isFalse();
         assertThat(persisted.path("attributes").has("truncated")).isFalse();
         assertThat(invoke.path("attributes").has("costKnown")).isFalse();

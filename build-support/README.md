@@ -113,6 +113,25 @@ Windows 控制台阻塞 Surefire。只有交互终端会持续消费全部输出
 性能比较必须绑定相同 Git SHA、dirty 状态、JDK、OS、Profile 和 clean/incremental 条件。睡眠污染样本
 保留原始墙钟，但不进入 P50/P95。
 
+## Issue 29 文件 Tool 延迟基线
+
+CLI 的 `--trace jsonl --trace-file <path>` 会为完成的 Tool 写入安全、单调计时字段；它们只包含
+Tool 名称和阶段毫秒数，不包含路径、参数、文件内容、Prompt 或 Credential。将一次实际 Coding Run 的
+Trace 汇总为 Markdown：
+
+```powershell
+java -jar .\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar `
+  --terminal --trace jsonl --trace-file .\local-tmp\issue-29\runtime-trace.jsonl
+
+python .\build-support\scripts\summarize_tool_latency.py `
+  .\local-tmp\issue-29\runtime-trace.jsonl `
+  --output .\local-tmp\issue-29\baseline-report.md
+```
+
+报告按 Tool 输出端到端、环境获取、Provider 调用、输出校验、Journal、归一化、外部化和终态持久化的
+P50/P95/Max。`provider invocation` 覆盖本地 Project Tool 操作；若 `terminal persistence` 异常，必须与
+同次运行的 `sqlite.uow` 阶段日志交叉核对，再讨论耐久性或恢复语义的调整。
+
 ## Java Language Server 开关
 
 在本地 Maven 构建需要独占各模块 `target/` 输出目录时，可以暂停当前工作区由 Red Hat Java 扩展启动的

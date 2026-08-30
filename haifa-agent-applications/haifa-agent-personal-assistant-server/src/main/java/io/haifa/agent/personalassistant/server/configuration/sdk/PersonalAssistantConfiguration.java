@@ -214,7 +214,9 @@ public class PersonalAssistantConfiguration {
                     execution.shell(),
                     modelAuthentication.credentialResolver(),
                     antigravityProjects::resolve,
-                    ref -> modelAuthentication.findCodexAccountId(ref).map(CodexAccountIdentity::new));
+                    ref -> modelAuthentication
+                            .findExternalAccountId(ref, CodexExternalLoginMethod.METHOD_ID)
+                            .map(CodexAccountIdentity::new));
             var modelPreferences = new SqlitePersonalModelPreferenceStore(
                     dataDirectory.resolve("personal-assistant.sqlite"),
                     properties.caller().tenant(),

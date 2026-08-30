@@ -304,7 +304,8 @@ final class LocalCodingAgent implements AutoCloseable {
                 "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var responses = new OpenAiResponsesModel(
                 http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024, ref -> authenticationService
-                        .findCodexAccountId(ref)
+                        .findExternalAccountId(
+                                ref, io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod.METHOD_ID)
                         .map(io.haifa.agent.model.openai.responses.CodexAccountIdentity::new));
         var anthropic = new AnthropicMessagesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var gemini = new GeminiGenerateContentModel(

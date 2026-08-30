@@ -16,6 +16,11 @@ class LocalModelAuthArchitectureTest {
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage(
+                        "io.haifa.agent.auth.localmodel.codex..",
+                        "io.haifa.agent.auth.localmodel.antigravity..",
+                        "io.haifa.agent.model.openai..",
+                        "io.haifa.agent.model.anthropic..",
+                        "io.haifa.agent.model.gemini..",
                         "io.haifa.agent.cli..",
                         "io.haifa.agent.application..",
                         "io.haifa.agent.personalassistant..",

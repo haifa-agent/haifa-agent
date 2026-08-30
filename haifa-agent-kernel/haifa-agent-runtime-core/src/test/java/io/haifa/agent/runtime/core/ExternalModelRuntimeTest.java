@@ -214,6 +214,25 @@ class ExternalModelRuntimeTest {
                         || trace.operation().equals("tool.persisted"))
                 .extracting(RuntimeTraceEvent::iteration)
                 .containsExactly(OptionalInt.of(1), OptionalInt.of(1));
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("tool.persisted"))
+                .singleElement()
+                .satisfies(trace -> assertThat(trace.safeAttributes())
+                        .containsKeys(
+                                "toolElapsedMillis",
+                                "environmentAcquireMillis",
+                                "providerInvocationMillis",
+                                "outputValidationMillis",
+                                "resultJournalMillis",
+                                "resultNormalizationMillis",
+                                "resultExternalizationMillis",
+                                "resultPersistenceMillis")
+                        .allSatisfy((key, value) -> {
+                            if (key.endsWith("Millis")) {
+                                assertThat(value).isInstanceOf(Long.class);
+                                assertThat((Long) value).isGreaterThanOrEqualTo(0L);
+                            }
+                        }));
         assertThat(modelRequests).hasSize(2);
         List<ModelMessage> firstRequest = modelRequests.getFirst();
         List<ModelMessage> secondRequest = modelRequests.getLast();

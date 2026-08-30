@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
-import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethodUnavailableException;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.LocalModelAuthReference;
@@ -73,7 +72,7 @@ class AntigravityExternalLoginMethodTest {
                     restored::set);
             StoredExternalCredential credential = new StoredExternalCredential(
                     LocalModelAuthReference.parse("model-auth://google-antigravity/default"),
-                    ExternalLoginMethodId.GOOGLE_ANTIGRAVITY,
+                    AntigravityExternalLoginMethod.METHOD_ID,
                     "registration",
                     "persisted-access",
                     "persisted-refresh",
@@ -107,12 +106,12 @@ class AntigravityExternalLoginMethodTest {
         AntigravityExternalLoginMethod method =
                 new AntigravityExternalLoginMethod(registration, tokens, SecureRandom::new, Duration.ofMinutes(5));
 
-        assertThat(method.descriptor().methodId()).isEqualTo(ExternalLoginMethodId.GOOGLE_ANTIGRAVITY);
+        assertThat(method.descriptor().methodId()).isEqualTo(AntigravityExternalLoginMethod.METHOD_ID);
         assertThat(method.descriptor().supportedModes()).containsExactly(ExternalLoginMode.BROWSER);
 
         StoredExternalCredential foreign = new StoredExternalCredential(
                 LocalModelAuthReference.parse("model-auth://google-antigravity/foreign"),
-                ExternalLoginMethodId.GOOGLE_ANTIGRAVITY,
+                AntigravityExternalLoginMethod.METHOD_ID,
                 "other-registration",
                 "access",
                 "refresh",
