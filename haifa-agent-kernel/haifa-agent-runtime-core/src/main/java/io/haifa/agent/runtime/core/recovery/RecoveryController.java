@@ -13,6 +13,11 @@ public final class RecoveryController {
 
     public Update observe(ToolOutcomeObservation observation) {
         Objects.requireNonNull(observation, "observation must not be null");
+        if (observation.category() == ToolFailureCategory.CANCELLED
+                || observation.category() == ToolFailureCategory.OUTCOME_UNKNOWN) {
+            active = null;
+            return new Update(observation, 0, direct(observation.category(), 0));
+        }
         if (active != null
                 && active.fingerprintDigest().equals(observation.fingerprint().digest())) {
             active = new FailureCluster(active.fingerprintDigest(), active.attempts() + 1, observation.category());

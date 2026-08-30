@@ -54,6 +54,9 @@ ANALYZE/REVIEW 不会被强制进入 CHANGE；仅修改工作区也
 `execution.run` 1.7.2 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
 可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
+失败结果同样保留执行状态、可选退出码、墙钟耗时、截断标记、bounded 合并输出和稳定失败/动作码，
+并通过权威 `ToolResult` 进入后续模型上下文。普通进程非零退出保持 `COMMAND_FAILED`；只有执行器明确
+报告可执行文件或工具链缺失时才使用 `DEPENDENCY_UNAVAILABLE`，不会从普通命令输出关键词推断。
 
 ## 自主交付模式与完成证据
 

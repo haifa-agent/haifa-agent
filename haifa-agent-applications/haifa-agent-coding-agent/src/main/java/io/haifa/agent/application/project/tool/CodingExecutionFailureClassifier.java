@@ -90,18 +90,12 @@ final class CodingExecutionFailureClassifier {
                     resource,
                     "Use an authorized workspace path or request the required permission from the user.");
         }
-        if (output.contains("command not found")
-                || output.contains("commandnotfoundexception")
-                || output.contains("is not recognized as the name of a cmdlet")
-                || output.contains("is not recognized as an internal or external command")
-                || output.contains("no such file or directory")
-                || output.contains("module not found")
-                || output.contains("cannot find package")) {
+        if (isConfirmedMissingExecutable(providerCode)) {
             String code =
                     switch (commandClassification.target()) {
                         case GIT -> "GIT_CLI_UNAVAILABLE";
                         case GITHUB -> "GH_CLI_UNAVAILABLE";
-                        case OTHER -> "DEPENDENCY_UNAVAILABLE";
+                        case OTHER -> providerCode;
                     };
             String action =
                     switch (commandClassification.target()) {
@@ -132,6 +126,12 @@ final class CodingExecutionFailureClassifier {
                 providerCode.isBlank() ? "NON_ZERO_EXIT" : providerCode,
                 "COMMAND",
                 "Review the bounded command output and choose the smallest corrective action.");
+    }
+
+    private static boolean isConfirmedMissingExecutable(String providerCode) {
+        return providerCode.equals("EXECUTABLE_NOT_FOUND")
+                || providerCode.equals("TOOLCHAIN_NOT_FOUND")
+                || providerCode.equals("PROCESS_EXECUTABLE_NOT_FOUND");
     }
 
     record Classification(String category, String stableFailureCode, String resourceClass, String action) {}

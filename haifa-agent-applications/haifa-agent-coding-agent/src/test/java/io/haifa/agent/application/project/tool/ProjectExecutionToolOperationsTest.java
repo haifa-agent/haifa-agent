@@ -425,6 +425,13 @@ class ProjectExecutionToolOperationsTest {
 
         assertThat(executions).hasValue(1);
         assertThat(observed.structuredData()).doesNotContainKey("runtimeOutcome");
+        assertThat(observed.structuredData())
+                .containsEntry("status", "TIMED_OUT")
+                .containsEntry("durationMillis", 1000L)
+                .containsEntry("failureCategory", "TIMEOUT")
+                .containsEntry("stableFailureCode", "TIMEOUT")
+                .containsEntry("failureActionCode", "VERIFY_OUTCOME_BEFORE_RETRY")
+                .containsKey("output");
         assertThat(reconciled.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
         assertThat(reconciled.reasonCode()).isEqualTo("EXECUTION_TERMINAL_AND_WORKSPACE_OBSERVATION_CONFIRMED");
         assertThat(reconciled.result()).hasValueSatisfying(result -> {
@@ -434,6 +441,44 @@ class ProjectExecutionToolOperationsTest {
                     .containsEntry("reconcileStatus", "RESOLVED")
                     .containsEntry("replayAllowed", false);
         });
+    }
+
+    @Test
+    void preservesCancellationAndUnknownOutcomeAsDistinctExecutionFacts() {
+        AtomicInteger invocation = new AtomicInteger();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                ExecutionStatus status =
+                        invocation.getAndIncrement() == 0 ? ExecutionStatus.CANCELLED : ExecutionStatus.UNKNOWN;
+                return resultWithFailure(
+                        request.id(),
+                        status,
+                        new ExecutionFailure(
+                                status == ExecutionStatus.CANCELLED ? "CANCELLED" : "OUTCOME_UNKNOWN",
+                                "bounded execution fact"));
+            }
+        };
+        var operations = operations(broker, 4096, 100);
+
+        ToolResult cancelled = operations.execute(
+                invocation(Map.of("command", "long-running", "operationFamily", "TEST"), () -> false), access());
+        ToolResult unknown = operations.execute(
+                invocation(Map.of("command", "side-effecting", "operationFamily", "MUTATE"), () -> false), access());
+
+        assertThat(cancelled.structuredData())
+                .containsEntry("status", "CANCELLED")
+                .containsEntry("failureCategory", "CANCELLED")
+                .containsEntry("stableFailureCode", "CANCELLED")
+                .containsEntry("failureActionCode", "DO_NOT_AUTOMATICALLY_RETRY")
+                .doesNotContainKey("exitCode");
+        assertThat(unknown.structuredData())
+                .containsEntry("status", "UNKNOWN")
+                .containsEntry("runtimeOutcome", "OUTCOME_UNKNOWN")
+                .containsEntry("failureCategory", "OUTCOME_UNKNOWN")
+                .containsEntry("stableFailureCode", "OUTCOME_UNKNOWN")
+                .containsEntry("failureActionCode", "VERIFY_OUTCOME_BEFORE_RETRY")
+                .doesNotContainKey("exitCode");
     }
 
     @Test
@@ -604,14 +649,13 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void classifiesCrossShellMissingCommandsAsRecoverableToolchainFailures() {
+    void keepsOrdinaryMissingFileOutputAsACommandFailure() {
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 captured.set(request);
-                observer.onOutput(chunk("The term 'fast-search' is not recognized as the name of a cmdlet. "
-                        + "CommandNotFoundException\n"));
+                observer.onOutput(chunk("Traceback: no such file or directory: app.py\n"));
                 return result(request.id(), ExecutionStatus.FAILED, 1);
             }
         };
@@ -626,13 +670,39 @@ class ProjectExecutionToolOperationsTest {
                         access());
 
         assertThat(result.structuredData())
-                .containsEntry("failureCategory", "DEPENDENCY_UNAVAILABLE")
-                .containsEntry("stableFailureCode", "DEPENDENCY_UNAVAILABLE")
-                .containsEntry("resourceClass", "TOOLCHAIN");
+                .containsEntry("failureCategory", "COMMAND_FAILED")
+                .containsEntry("stableFailureCode", "PROCESS_EXIT_NONZERO")
+                .containsEntry("resourceClass", "COMMAND")
+                .containsEntry("failureActionCode", "CONTINUE_WITH_DIAGNOSTIC");
         assertThat(captured.get().limits().maxStdoutBytes()).isEqualTo(4096);
         assertThat(captured.get().limits().maxStderrBytes()).isEqualTo(4096);
         assertThat(captured.get().limits().outputOverflowPolicy())
                 .isEqualTo(io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE);
+    }
+
+    @Test
+    void classifiesOnlyExplicitLauncherEvidenceAsDependencyUnavailable() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                observer.onOutput(chunk("bounded launcher diagnostic\n"));
+                return resultWithFailure(
+                        request.id(),
+                        ExecutionStatus.FAILED,
+                        new ExecutionFailure("EXECUTABLE_NOT_FOUND", "configured executable was not found"));
+            }
+        };
+
+        ToolResult result = operations(broker, 4096, 100)
+                .execute(
+                        invocation(Map.of("command", "fast-search needle", "operationFamily", "INSPECT"), () -> false),
+                        access());
+
+        assertThat(result.structuredData())
+                .containsEntry("failureCategory", "DEPENDENCY_UNAVAILABLE")
+                .containsEntry("stableFailureCode", "EXECUTABLE_NOT_FOUND")
+                .containsEntry("resourceClass", "TOOLCHAIN")
+                .containsEntry("failureActionCode", "RESTORE_TOOLCHAIN_OR_USE_EQUIVALENT");
     }
 
     @Test
@@ -668,6 +738,10 @@ class ProjectExecutionToolOperationsTest {
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 if (invocation.getAndIncrement() == 0) {
                     observer.onOutput(chunk("gh: command not found\n"));
+                    return resultWithFailure(
+                            request.id(),
+                            ExecutionStatus.FAILED,
+                            new ExecutionFailure("EXECUTABLE_NOT_FOUND", "configured executable was not found"));
                 } else {
                     observer.onOutput(chunk("You are not logged into any GitHub hosts.\n"));
                 }
