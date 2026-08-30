@@ -1,4 +1,4 @@
-package io.haifa.agent.model.openai.anthropic;
+package io.haifa.agent.model.anthropic;
 
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelApiStyles;

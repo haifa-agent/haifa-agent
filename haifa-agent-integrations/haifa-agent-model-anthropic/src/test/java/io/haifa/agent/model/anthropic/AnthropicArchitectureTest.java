@@ -1,11 +1,11 @@
-package io.haifa.agent.model.openai;
+package io.haifa.agent.model.anthropic;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import org.junit.jupiter.api.Test;
 
-class OpenAiCompatibleArchitectureTest {
+class AnthropicArchitectureTest {
     @Test
     void integrationDoesNotDependOnProductsOrOtherProviderAdapters() {
         noClasses()
@@ -15,8 +15,8 @@ class OpenAiCompatibleArchitectureTest {
                         "io.haifa.agent.personalassistant..",
                         "io.haifa.agent.coding..",
                         "io.haifa.agent.cli..",
-                        "io.haifa.agent.model.anthropic..",
+                        "io.haifa.agent.model.openai..",
                         "io.haifa.agent.model.gemini..")
-                .check(new ClassFileImporter().importPackages("io.haifa.agent.model.openai"));
+                .check(new ClassFileImporter().importPackages("io.haifa.agent.model.anthropic"));
     }
 }

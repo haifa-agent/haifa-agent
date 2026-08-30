@@ -1,4 +1,4 @@
-package io.haifa.agent.model.openai.anthropic;
+package io.haifa.agent.model.anthropic;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -24,8 +24,6 @@ import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
-import io.haifa.agent.model.openai.ModelStreamObservation;
-import io.haifa.agent.model.openai.RetryAfterParser;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;

@@ -15,7 +15,6 @@ import io.haifa.agent.model.api.ModelReasoningBehavior;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesDialects;
 import java.net.URI;
 import java.time.LocalDate;
@@ -30,20 +29,6 @@ class OpenAiCompatibleModelProfileFactoryTest {
         var openAiChatAdmissions = OpenAiCompatibleBindingRegistry.admissions();
         assertThat(openAiChatAdmissions).hasSize(18);
         for (var admission : openAiChatAdmissions) {
-            verifyAdmittedBinding(
-                    admission.key().providerId(),
-                    admission.key().providerModelId(),
-                    admission.key().apiStyle(),
-                    admission.key().dialect(),
-                    admission.reasoningBehavior(),
-                    admission.allowedReasoningModes(),
-                    admission.allowedReasoningEfforts(),
-                    admission.toolReasoningContinuationRequired());
-        }
-
-        var anthropicAdmissions = AnthropicMessagesBindingRegistry.admissions();
-        assertThat(anthropicAdmissions).hasSize(3);
-        for (var admission : anthropicAdmissions) {
             verifyAdmittedBinding(
                     admission.key().providerId(),
                     admission.key().providerModelId(),
@@ -95,32 +80,6 @@ class OpenAiCompatibleModelProfileFactoryTest {
                         Set.of(ModelReasoningMode.ENABLED),
                         Set.of(ModelReasoningEffort.HIGH),
                         true))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Duplicate model binding admission key");
-
-        // Anthropic registry
-        Map<AnthropicMessagesBindingRegistry.AdmissionKey, AnthropicMessagesBindingRegistry.AdmittedBinding>
-                anthropicMap = new HashMap<>();
-        AnthropicMessagesBindingRegistry.register(
-                anthropicMap,
-                "deepseek",
-                "deepseek-v4-flash",
-                ModelApiStyles.ANTHROPIC_MESSAGES,
-                AnthropicMessagesDialects.DEEPSEEK,
-                ModelReasoningBehavior.ALWAYS,
-                Set.of(ModelReasoningMode.ENABLED),
-                Set.of(ModelReasoningEffort.HIGH),
-                true);
-        assertThatThrownBy(() -> AnthropicMessagesBindingRegistry.register(
-                        anthropicMap,
-                        "deepseek",
-                        "deepseek-v4-flash",
-                        ModelApiStyles.ANTHROPIC_MESSAGES,
-                        AnthropicMessagesDialects.DEEPSEEK,
-                        ModelReasoningBehavior.OPTIONAL,
-                        Set.of(ModelReasoningMode.DISABLED),
-                        Set.of(),
-                        false))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Duplicate model binding admission key");
 

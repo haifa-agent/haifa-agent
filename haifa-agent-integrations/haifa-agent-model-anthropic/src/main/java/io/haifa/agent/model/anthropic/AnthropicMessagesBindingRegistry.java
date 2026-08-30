@@ -1,4 +1,4 @@
-package io.haifa.agent.model.openai;
+package io.haifa.agent.model.anthropic;
 
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.ModelApiStyles;
@@ -6,7 +6,6 @@ import io.haifa.agent.model.api.ModelReasoningBehavior;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
