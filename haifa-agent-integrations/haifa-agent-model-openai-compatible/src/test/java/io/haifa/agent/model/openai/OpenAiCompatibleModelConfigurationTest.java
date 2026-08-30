@@ -11,8 +11,6 @@ import io.haifa.agent.model.openai.OpenAiCompatibleModelConfiguration.ApiStyle;
 import io.haifa.agent.model.openai.OpenAiCompatibleModelConfiguration.Dialect;
 import io.haifa.agent.model.openai.OpenAiCompatibleModelConfiguration.ResponseFormat;
 import io.haifa.agent.model.openai.OpenAiCompatibleModelConfiguration.ToolChoice;
-import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
-import io.haifa.agent.model.openai.anthropic.AnthropicMessagesModel;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesDialects;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import java.net.URI;
@@ -56,24 +54,13 @@ class OpenAiCompatibleModelConfigurationTest {
         var responses = deepSeek(ApiStyle.RESPONSES, "deepseek-v4-flash", URI.create("https://api.deepseek.com"))
                 .responseFormat(ResponseFormat.JSON_OBJECT)
                 .build();
-        var anthropic = deepSeek(
-                        ApiStyle.ANTHROPIC_MESSAGES,
-                        "deepseek-v4-pro",
-                        URI.create("https://api.deepseek.com/anthropic"))
-                .toolChoice(ToolChoice.REQUIRED)
-                .build();
 
         assertThat(chat.model()).isInstanceOf(OpenAiCompatibleChatModel.class);
         assertThat(chat.snapshot().dialect()).isEqualTo(OpenAiCompatibleDialects.DEEPSEEK);
         assertThat(responses.model()).isInstanceOf(OpenAiResponsesModel.class);
         assertThat(responses.snapshot().dialect()).isEqualTo(OpenAiResponsesDialects.DEEPSEEK);
-        assertThat(anthropic.model()).isInstanceOf(AnthropicMessagesModel.class);
-        assertThat(anthropic.snapshot().dialect()).isEqualTo(AnthropicMessagesDialects.DEEPSEEK);
         assertThat(chat.snapshot().invocationOptions()).containsEntry("thinking", "disabled");
         assertThat(responses.snapshot().invocationOptions()).containsEntry("thinking", "disabled");
-        assertThat(anthropic.snapshot().invocationOptions())
-                .containsEntry("thinking", "disabled")
-                .containsEntry("tool_choice", "any");
     }
 
     @Test
@@ -95,14 +82,6 @@ class OpenAiCompatibleModelConfigurationTest {
                                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("AUTO");
-        assertThatThrownBy(() -> deepSeek(
-                                ApiStyle.ANTHROPIC_MESSAGES,
-                                "deepseek-v4-pro",
-                                URI.create("https://api.deepseek.com/anthropic"))
-                        .responseFormat(ResponseFormat.JSON_OBJECT)
-                        .build())
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("does not support responseFormat");
         assertThatThrownBy(() -> standardChat().requestTimeout(Duration.ofMinutes(11)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("requestTimeout");

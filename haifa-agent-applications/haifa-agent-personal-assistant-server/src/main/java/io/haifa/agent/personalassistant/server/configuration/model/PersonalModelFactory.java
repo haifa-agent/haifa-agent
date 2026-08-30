@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.model.anthropic.AnthropicMessagesDialects;
+import io.haifa.agent.model.anthropic.AnthropicMessagesModel;
+import io.haifa.agent.model.anthropic.AnthropicModelProfileFactory;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ApiStyleId;
@@ -37,8 +40,6 @@ import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.model.openai.OpenAiCompatibleModelProfileFactory;
-import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
-import io.haifa.agent.model.openai.anthropic.AnthropicMessagesModel;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import io.haifa.agent.personalassistant.application.PersonalModelCatalog;
 import io.haifa.agent.personalassistant.application.PersonalModelOption;
@@ -176,7 +177,10 @@ public final class PersonalModelFactory {
                         value -> value.modelId().value(),
                         value -> ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(value.apiStyle())
                                 ? GeminiModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 24))
-                                : OpenAiCompatibleModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 13))));
+                                : ModelApiStyles.ANTHROPIC_MESSAGES.equals(value.apiStyle())
+                                        ? AnthropicModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 30))
+                                        : OpenAiCompatibleModelProfileFactory.fromSnapshot(
+                                                value, LocalDate.of(2026, 8, 13))));
         if (!profiles.get(selected.model().id()).selectable()) {
             throw new IllegalArgumentException("default Personal model profile is not verified");
         }
