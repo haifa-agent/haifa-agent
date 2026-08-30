@@ -437,10 +437,10 @@ public final class ToolPipeline {
         try (var permit = environment.acquire(run, binding)) {
             ToolResult rawResult = retries.execute(
                     () -> {
-                        if (run.usage().toolCalls() >= run.budget().maxToolCalls()) {
+                        if (run.usage().toolCalls() >= run.limits().maxToolCalls()) {
                             throw new RuntimeLimitExceededException(
                                     "toolCalls",
-                                    run.budget().maxToolCalls(),
+                                    run.limits().maxToolCalls(),
                                     run.usage().toolCalls());
                         }
                         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 1, 0, 0, 0));

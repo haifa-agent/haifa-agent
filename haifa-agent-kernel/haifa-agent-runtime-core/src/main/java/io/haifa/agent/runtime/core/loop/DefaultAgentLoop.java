@@ -447,10 +447,10 @@ public final class DefaultAgentLoop implements AgentLoop {
             try {
                 response = retries.execute(
                         retryAttempt -> {
-                            if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
+                            if (run.usage().modelCalls() >= run.limits().maxModelCalls()) {
                                 throw new io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException(
                                         "modelCalls",
-                                        run.budget().maxModelCalls(),
+                                        run.limits().maxModelCalls(),
                                         run.usage().modelCalls());
                             }
                             transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
@@ -531,10 +531,10 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 modelStepRef[0] = recoveryStep;
                                 modelRequestIdRef[0] = new ModelRequestId(ids.nextValue());
                                 requestAttemptOffset[0] = retryAttempt - 1;
-                                if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
+                                if (run.usage().modelCalls() >= run.limits().maxModelCalls()) {
                                     throw new io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException(
                                             "modelCalls",
-                                            run.budget().maxModelCalls(),
+                                            run.limits().maxModelCalls(),
                                             run.usage().modelCalls());
                                 }
                                 transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
@@ -926,60 +926,69 @@ public final class DefaultAgentLoop implements AgentLoop {
     }
 
     private static RuntimeLimitExceededException modelContinuationLimit(AgentRun run, int iteration) {
-        if (run.budget().isExceededBy(run.usage())) return RuntimeLimitExceededException.forRunBudget(run);
-        if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
+        if (run.usage().modelCalls() >= run.limits().maxModelCalls()) {
             return new RuntimeLimitExceededException(
-                    "modelCalls", run.budget().maxModelCalls(), run.usage().modelCalls());
+                    "modelCalls", run.limits().maxModelCalls(), run.usage().modelCalls());
         }
         if (iteration > run.limits().maxIterations()) {
             return new RuntimeLimitExceededException(
                     "iterations", run.limits().maxIterations(), Math.max(0, iteration - 1L));
         }
-        if (run.budget().maxInputTokens() > 0
-                && run.usage().inputTokens() >= run.budget().maxInputTokens()) {
-            return new RuntimeLimitExceededException(
-                    "inputTokens", run.budget().maxInputTokens(), run.usage().inputTokens());
-        }
-        if (run.budget().maxOutputTokens() > 0
-                && run.usage().outputTokens() >= run.budget().maxOutputTokens()) {
-            return new RuntimeLimitExceededException(
-                    "outputTokens", run.budget().maxOutputTokens(), run.usage().outputTokens());
-        }
-        if (run.budget().maxCostMinorUnits() > 0
-                && run.usage().costMinorUnits() >= run.budget().maxCostMinorUnits()) {
-            return new RuntimeLimitExceededException(
-                    "costMinorUnits",
-                    run.budget().maxCostMinorUnits(),
-                    run.usage().costMinorUnits());
+        var quota = run.quotaPolicy();
+        if (quota.mode() == io.haifa.agent.core.run.QuotaMode.HARD_STOP) {
+            if (quota.maxInputTokens() != null
+                    && quota.maxInputTokens() > 0
+                    && run.usage().inputTokens() >= quota.maxInputTokens()) {
+                return new RuntimeLimitExceededException(
+                        "inputTokens", quota.maxInputTokens(), run.usage().inputTokens());
+            }
+            if (quota.maxOutputTokens() != null
+                    && quota.maxOutputTokens() > 0
+                    && run.usage().outputTokens() >= quota.maxOutputTokens()) {
+                return new RuntimeLimitExceededException(
+                        "outputTokens", quota.maxOutputTokens(), run.usage().outputTokens());
+            }
+            if (quota.maxCostMinorUnits() != null
+                    && quota.maxCostMinorUnits() > 0
+                    && run.usage().costMinorUnits() >= quota.maxCostMinorUnits()) {
+                return new RuntimeLimitExceededException(
+                        "costMinorUnits", quota.maxCostMinorUnits(), run.usage().costMinorUnits());
+            }
         }
         return null;
     }
 
     private static RuntimeLimitExceededException decisionBudgetLimit(
             AgentRun run, int iteration, AgentDecision decision) {
-        if (run.budget().isExceededBy(run.usage())) return RuntimeLimitExceededException.forRunBudget(run);
+        var quota = run.quotaPolicy();
+        if (quota.mode() == io.haifa.agent.core.run.QuotaMode.HARD_STOP && quota.isExceededBy(run.usage())) {
+            return RuntimeLimitExceededException.forRunBudget(run);
+        }
         if (decision instanceof FinalAnswerDecision) return null;
         if (decision instanceof ToolCallDecision toolDecision) {
             long projectedToolCalls =
                     run.usage().toolCalls() + toolDecision.requests().size();
-            if (projectedToolCalls > run.budget().maxToolCalls()) {
+            if (projectedToolCalls > run.limits().maxToolCalls()) {
                 return new RuntimeLimitExceededException(
-                        "toolCalls", run.budget().maxToolCalls(), projectedToolCalls);
+                        "toolCalls", run.limits().maxToolCalls(), projectedToolCalls);
             }
         }
         if (decision instanceof DelegationDecision) {
             long projectedChildRuns = run.usage().childRuns() + 1;
-            if (projectedChildRuns > run.budget().maxChildRuns()) {
+            if (projectedChildRuns > run.limits().maxChildRuns()) {
                 return new RuntimeLimitExceededException(
-                        "childRuns", run.budget().maxChildRuns(), projectedChildRuns);
+                        "childRuns", run.limits().maxChildRuns(), projectedChildRuns);
             }
         }
-        if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
+        if (run.usage().modelCalls() >= run.limits().maxModelCalls()) {
             return new RuntimeLimitExceededException(
-                    "modelCalls", run.budget().maxModelCalls(), run.usage().modelCalls());
+                    "modelCalls", run.limits().maxModelCalls(), run.usage().modelCalls());
         }
         if (iteration >= run.limits().maxIterations()) {
             return new RuntimeLimitExceededException("iterations", run.limits().maxIterations(), iteration);
+        }
+        if (quota.mode() == io.haifa.agent.core.run.QuotaMode.HARD_STOP && quota.isExceededBy(run.usage())) {
+            return RuntimeLimitExceededException.forRunBudget(run);
         }
         return null;
     }

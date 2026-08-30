@@ -526,6 +526,10 @@ public final class AgentRun {
         return budget;
     }
 
+    public QuotaPolicy quotaPolicy() {
+        return budget.toQuotaPolicy();
+    }
+
     public AgentRunLimits limits() {
         return limits;
     }

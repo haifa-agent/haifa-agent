@@ -43,11 +43,7 @@ public final class DefaultAgentContextBuilder implements AgentContextBuilder {
     public ContextBuildResult build(ContextBuildRequest request) {
         Objects.requireNonNull(request, "request must not be null");
         ContextWindowBudget budget = ContextWindowBudget.calculate(
-                request.model(),
-                request.runBudget(),
-                request.runUsage(),
-                request.requestedOutputTokens(),
-                request.safetyMarginTokens());
+                request.model(), request.requestedOutputTokens(), request.safetyMarginTokens());
         long promptTokens =
                 request.prompts().stream().mapToLong(estimator::estimate).sum();
         long toolTokens =

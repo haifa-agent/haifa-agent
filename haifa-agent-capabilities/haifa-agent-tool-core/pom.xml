@@ -14,6 +14,14 @@
     <dependencies>
         <dependency>
             <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-tool-api</artifactId>
         </dependency>
         <dependency>
