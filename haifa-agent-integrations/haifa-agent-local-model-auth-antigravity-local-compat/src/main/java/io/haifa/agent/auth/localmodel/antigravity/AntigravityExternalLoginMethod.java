@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -32,7 +33,7 @@ public final class AntigravityExternalLoginMethod implements ExternalLoginMethod
     private final ExternalLoginMethodDescriptor descriptor;
     private final Consumer<AntigravityProjectAndQuota> projectSink;
     private final Object preparationLock = new Object();
-    private volatile long preparedIssuedAtEpochMillis = -1;
+    private final ConcurrentHashMap<String, Long> preparedCredentialVersions = new ConcurrentHashMap<>();
 
     public AntigravityExternalLoginMethod(
             AntigravityOAuthClientRegistration registration,
@@ -100,12 +101,13 @@ public final class AntigravityExternalLoginMethod implements ExternalLoginMethod
     @Override
     public void prepare(StoredExternalCredential credential) {
         StoredExternalCredential current = requireCompatible(credential);
-        if (preparedIssuedAtEpochMillis == current.issuedAtEpochMillis()) return;
+        String reference = current.reference().value();
+        if (preparedCredentialVersions.getOrDefault(reference, -1L) == current.issuedAtEpochMillis()) return;
         synchronized (preparationLock) {
-            if (preparedIssuedAtEpochMillis == current.issuedAtEpochMillis()) return;
+            if (preparedCredentialVersions.getOrDefault(reference, -1L) == current.issuedAtEpochMillis()) return;
             try {
                 projectSink.accept(tokens.fetchProjectAndQuota(current.accessToken()));
-                preparedIssuedAtEpochMillis = current.issuedAtEpochMillis();
+                preparedCredentialVersions.put(reference, current.issuedAtEpochMillis());
             } catch (AntigravityTokenClient.AntigravityTokenException exception) {
                 throw new ExternalLoginMethodUnavailableException(
                         exception.retryable() ? "AUTH_LOGIN_SERVICE_UNAVAILABLE" : "AUTH_REAUTH_REQUIRED");
@@ -119,10 +121,10 @@ public final class AntigravityExternalLoginMethod implements ExternalLoginMethod
         Objects.requireNonNull(refreshBefore, "refreshBefore must not be null");
         try {
             AntigravityTokenClient.TokenSet refreshed = tokens.refresh(current.refreshToken());
-            projectSink.accept(refreshed.projectAndQuota());
             if (!current.accountId().equals(refreshed.accountId())) {
                 throw new ExternalLoginMethodUnavailableException("AUTH_REAUTH_REQUIRED");
             }
+            projectSink.accept(refreshed.projectAndQuota());
             StoredExternalCredential result = new StoredExternalCredential(
                     current.reference(),
                     current.methodId(),
@@ -132,7 +134,7 @@ public final class AntigravityExternalLoginMethod implements ExternalLoginMethod
                     refreshed.expiresAtEpochMillis(),
                     refreshed.issuedAtEpochMillis(),
                     refreshed.accountId());
-            preparedIssuedAtEpochMillis = result.issuedAtEpochMillis();
+            preparedCredentialVersions.put(result.reference().value(), result.issuedAtEpochMillis());
             return result;
         } catch (AntigravityTokenClient.AntigravityTokenException exception) {
             throw new ExternalLoginMethodUnavailableException(
