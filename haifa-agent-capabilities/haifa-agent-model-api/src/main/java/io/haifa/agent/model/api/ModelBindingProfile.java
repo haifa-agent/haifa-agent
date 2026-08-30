@@ -170,7 +170,24 @@ public record ModelBindingProfile(
         }
     }
 
-    private static String digest(
+    public String canonicalString() {
+        return canonicalString(
+                bindingId,
+                apiStyle,
+                version,
+                capabilities,
+                reasoningBehavior,
+                allowedReasoningModes,
+                allowedReasoningEfforts,
+                maximumReasoningTokens,
+                minimumOutputTokens,
+                maximumOutputTokens,
+                toolReasoningContinuationRequired,
+                status,
+                lastVerifiedOn);
+    }
+
+    public static String canonicalString(
             ModelDefinitionId bindingId,
             ApiStyleId apiStyle,
             String version,
@@ -184,7 +201,7 @@ public record ModelBindingProfile(
             boolean toolContinuationRequired,
             ModelProfileStatus status,
             LocalDate lastVerifiedOn) {
-        String canonical = String.join(
+        return String.join(
                 "|",
                 "model-binding-profile-v1",
                 bindingId.value(),
@@ -200,6 +217,36 @@ public record ModelBindingProfile(
                 Boolean.toString(toolContinuationRequired),
                 status.name(),
                 lastVerifiedOn.toString());
+    }
+
+    public static String digest(
+            ModelDefinitionId bindingId,
+            ApiStyleId apiStyle,
+            String version,
+            Set<ModelCapability> capabilities,
+            ModelReasoningBehavior behavior,
+            Set<ModelReasoningMode> modes,
+            Set<ModelReasoningEffort> efforts,
+            OptionalLong maximumReasoningTokens,
+            int minimumOutputTokens,
+            int maximumOutputTokens,
+            boolean toolContinuationRequired,
+            ModelProfileStatus status,
+            LocalDate lastVerifiedOn) {
+        String canonical = canonicalString(
+                bindingId,
+                apiStyle,
+                version,
+                capabilities,
+                behavior,
+                modes,
+                efforts,
+                maximumReasoningTokens,
+                minimumOutputTokens,
+                maximumOutputTokens,
+                toolContinuationRequired,
+                status,
+                lastVerifiedOn);
         try {
             byte[] value = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
             return "sha256:" + HexFormat.of().formatHex(value);
