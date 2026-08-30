@@ -1,22 +1,21 @@
-package io.haifa.agent.auth.localmodel;
+package io.haifa.agent.auth.localmodel.codex;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import org.junit.jupiter.api.Test;
 
-class LocalModelAuthArchitectureTest {
+class CodexLocalCompatArchitectureTest {
     @Test
-    void localModelAuthDoesNotDependOnProductsRuntimeSpringOrSqlite() {
-        var classes = new ClassFileImporter().importPackages("io.haifa.agent.auth.localmodel");
+    void codexLocalCompatDoesNotDependOnAntigravityAdaptersProductsRuntimeSpringOrSqlite() {
+        var classes = new ClassFileImporter().importPackages("io.haifa.agent.auth.localmodel.codex");
 
         noClasses()
                 .that()
-                .resideInAPackage("io.haifa.agent.auth.localmodel..")
+                .resideInAPackage("io.haifa.agent.auth.localmodel.codex..")
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage(
-                        "io.haifa.agent.auth.localmodel.codex..",
                         "io.haifa.agent.auth.localmodel.antigravity..",
                         "io.haifa.agent.model.openai..",
                         "io.haifa.agent.model.anthropic..",

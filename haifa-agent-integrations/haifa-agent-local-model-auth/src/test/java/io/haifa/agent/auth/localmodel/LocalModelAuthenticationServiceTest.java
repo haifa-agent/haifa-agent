@@ -68,7 +68,7 @@ class LocalModelAuthenticationServiceTest {
         LocalModelAuthReference ref = LocalModelAuthReference.parse("model-auth://openai-codex/default");
         StoredExternalCredential cred = new StoredExternalCredential(
                 ref,
-                ExternalLoginMethodId.OPENAI_CODEX,
+                new ExternalLoginMethodId("openai-codex"),
                 "reg-1",
                 "access-token",
                 "refresh-token",
@@ -77,10 +77,21 @@ class LocalModelAuthenticationServiceTest {
                 "account-12345");
         store.save(cred);
 
-        assertThat(service.findCodexAccountId(new CredentialRef(ref.value()))).contains("account-12345");
-        assertThat(service.findCodexAccountId(new CredentialRef("env://OTHER"))).isEmpty();
-        assertThat(service.findCodexAccountId(new CredentialRef("model-auth://openai-codex/nonexistent")))
+        assertThat(service.findExternalAccountId(
+                        new CredentialRef(ref.value()), new ExternalLoginMethodId("openai-codex")))
+                .contains("account-12345");
+        assertThat(service.findExternalAccountId(
+                        new CredentialRef(ref.value()), new ExternalLoginMethodId("other-method")))
                 .isEmpty();
+        assertThat(service.findExternalAccountId(
+                        new CredentialRef("env://OTHER"), new ExternalLoginMethodId("openai-codex")))
+                .isEmpty();
+        assertThat(service.findExternalAccountId(
+                        new CredentialRef("model-auth://openai-codex/nonexistent"),
+                        new ExternalLoginMethodId("openai-codex")))
+                .isEmpty();
+        assertThat(service.findExternalCredential(new CredentialRef(ref.value())))
+                .contains(cred);
     }
 
     private static LocalModelAuthenticationService service(InMemoryStore store, Map<String, String> environment) {

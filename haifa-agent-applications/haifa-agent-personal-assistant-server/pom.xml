@@ -41,6 +41,14 @@
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-local-model-auth</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-local-model-auth-codex-local-compat</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-local-model-auth-antigravity-local-compat</artifactId>
+        </dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-personal-assistant-application</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-runtime-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-web</artifactId></dependency>

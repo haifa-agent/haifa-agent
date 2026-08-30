@@ -4,6 +4,8 @@ import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
+import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
@@ -197,24 +199,24 @@ public final class PersonalModelAuthenticationController {
 
     private static ExternalLoginMethodId externalLoginMethod(String methodId) {
         return switch (Objects.requireNonNull(methodId, "methodId must not be null")) {
-            case "codex" -> ExternalLoginMethodId.OPENAI_CODEX;
-            case "antigravity" -> ExternalLoginMethodId.GOOGLE_ANTIGRAVITY;
+            case "codex" -> CodexExternalLoginMethod.METHOD_ID;
+            case "antigravity" -> AntigravityExternalLoginMethod.METHOD_ID;
             default -> throw new IllegalArgumentException("AUTH_LOGIN_METHOD_UNAVAILABLE");
         };
     }
 
     private static java.util.Optional<ExternalLoginMethodId> externalLoginMethod(
             PersonalAssistantProperties.ModelProvider provider) {
-        if ("openai-codex".equals(provider.id())) return java.util.Optional.of(ExternalLoginMethodId.OPENAI_CODEX);
+        if ("openai-codex".equals(provider.id())) return java.util.Optional.of(CodexExternalLoginMethod.METHOD_ID);
         if ("model-auth://google-antigravity/default".equals(provider.credentialReference())) {
-            return java.util.Optional.of(ExternalLoginMethodId.GOOGLE_ANTIGRAVITY);
+            return java.util.Optional.of(AntigravityExternalLoginMethod.METHOD_ID);
         }
         return java.util.Optional.empty();
     }
 
     private static String externalCredentialReference(ExternalLoginMethodId methodId) {
-        if (ExternalLoginMethodId.OPENAI_CODEX.equals(methodId)) return "model-auth://openai-codex/default";
-        if (ExternalLoginMethodId.GOOGLE_ANTIGRAVITY.equals(methodId)) {
+        if (CodexExternalLoginMethod.METHOD_ID.equals(methodId)) return "model-auth://openai-codex/default";
+        if (AntigravityExternalLoginMethod.METHOD_ID.equals(methodId)) {
             return "model-auth://google-antigravity/default";
         }
         throw new IllegalArgumentException("AUTH_LOGIN_METHOD_UNAVAILABLE");

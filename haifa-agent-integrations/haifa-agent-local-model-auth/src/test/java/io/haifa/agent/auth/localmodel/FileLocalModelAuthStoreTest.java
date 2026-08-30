@@ -32,7 +32,7 @@ class FileLocalModelAuthStoreTest {
         LocalModelAuthReference codexReference = LocalModelAuthReference.parse("model-auth://openai-codex/default");
         StoredExternalCredential oauth = new StoredExternalCredential(
                 codexReference,
-                ExternalLoginMethodId.OPENAI_CODEX,
+                new ExternalLoginMethodId("openai-codex"),
                 "registration",
                 "access-canary",
                 "refresh-canary",

@@ -95,7 +95,7 @@ public final class LocalModelAuthenticationService implements AutoCloseable {
         return store.delete(LocalModelAuthReference.parse(connectionId));
     }
 
-    public Optional<String> findCodexAccountId(CredentialRef reference) {
+    public Optional<StoredExternalCredential> findExternalCredential(CredentialRef reference) {
         Objects.requireNonNull(reference, "reference must not be null");
         if (!reference.value().startsWith("model-auth://")) {
             return Optional.empty();
@@ -108,8 +108,13 @@ public final class LocalModelAuthenticationService implements AutoCloseable {
         }
         return store.find(localRef)
                 .filter(StoredExternalCredential.class::isInstance)
-                .map(StoredExternalCredential.class::cast)
-                .filter(cred -> ExternalLoginMethodId.OPENAI_CODEX.equals(cred.methodId()))
+                .map(StoredExternalCredential.class::cast);
+    }
+
+    public Optional<String> findExternalAccountId(CredentialRef reference, ExternalLoginMethodId methodId) {
+        Objects.requireNonNull(methodId, "methodId must not be null");
+        return findExternalCredential(reference)
+                .filter(cred -> methodId.equals(cred.methodId()))
                 .map(StoredExternalCredential::accountId);
     }
 

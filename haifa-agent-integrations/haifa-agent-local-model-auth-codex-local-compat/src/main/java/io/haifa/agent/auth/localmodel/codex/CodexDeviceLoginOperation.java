@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
-import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.ExternalLoginOperation;
 import io.haifa.agent.auth.localmodel.ExternalLoginOperationContext;
@@ -77,7 +76,7 @@ public final class CodexDeviceLoginOperation implements ExternalLoginOperation {
                         poll.authorizationCode(), poll.codeVerifier(), registration.deviceRedirectUri());
                 return new StoredExternalCredential(
                         CodexBrowserLoginOperation.CREDENTIAL_REFERENCE,
-                        ExternalLoginMethodId.OPENAI_CODEX,
+                        CodexExternalLoginMethod.METHOD_ID,
                         registration.reference(),
                         tokenSet.accessToken(),
                         tokenSet.refreshToken(),
@@ -200,7 +199,7 @@ public final class CodexDeviceLoginOperation implements ExternalLoginOperation {
             ExternalLoginAttemptState state, Optional<java.net.URI> verificationUri, Optional<String> userCode) {
         snapshot = new ExternalLoginAttemptSnapshot(
                 context.attemptId(),
-                ExternalLoginMethodId.OPENAI_CODEX,
+                CodexExternalLoginMethod.METHOD_ID,
                 ExternalLoginMode.DEVICE_CODE,
                 state,
                 verificationUri,
@@ -214,7 +213,7 @@ public final class CodexDeviceLoginOperation implements ExternalLoginOperation {
             ExternalLoginAttemptState state, Optional<java.net.URI> verificationUri, Optional<String> userCode) {
         return new ExternalLoginAttemptSnapshot(
                 context.attemptId(),
-                ExternalLoginMethodId.OPENAI_CODEX,
+                CodexExternalLoginMethod.METHOD_ID,
                 ExternalLoginMode.DEVICE_CODE,
                 state,
                 verificationUri,
