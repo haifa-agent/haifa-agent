@@ -33,10 +33,19 @@ public final class AnthropicMessagesDialects {
                 };
         validateEndpoint(snapshot.endpoint(), allowInsecureHttp, profile);
         if (profile == Profile.DEEPSEEK
-                && !Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(snapshot.providerModelId())) {
+                && !AnthropicMessagesBindingRegistry.isAdmitted(
+                        snapshot.providerId().value(),
+                        snapshot.providerModelId(),
+                        ModelApiStyles.ANTHROPIC_MESSAGES,
+                        DEEPSEEK)) {
             throw new IllegalArgumentException("DeepSeek Anthropic model profile is not verified");
         }
-        if (profile == Profile.ZHIPU && !"glm-5.2".equals(snapshot.providerModelId())) {
+        if (profile == Profile.ZHIPU
+                && !AnthropicMessagesBindingRegistry.isAdmitted(
+                        snapshot.providerId().value(),
+                        snapshot.providerModelId(),
+                        ModelApiStyles.ANTHROPIC_MESSAGES,
+                        ZHIPU)) {
             throw new IllegalArgumentException("Zhipu Anthropic model profile is not verified");
         }
         return profile;

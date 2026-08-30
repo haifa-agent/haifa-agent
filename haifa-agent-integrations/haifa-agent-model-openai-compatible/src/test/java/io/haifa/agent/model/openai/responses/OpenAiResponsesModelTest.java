@@ -13,6 +13,7 @@ import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -21,6 +22,9 @@ import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ModelReasoningBehavior;
+import io.haifa.agent.model.api.ModelReasoningEffort;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolCall;
@@ -35,8 +39,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -395,17 +401,26 @@ class OpenAiResponsesModelTest {
     }
 
     private ResolvedModelSnapshot deepSeekSnapshot(String providerModelId) {
-        return snapshot(providerModelId, OpenAiResponsesDialects.DEEPSEEK, true);
+        return snapshot("deepseek", providerModelId, OpenAiResponsesDialects.DEEPSEEK, true, Map.of());
     }
 
     private ResolvedModelSnapshot snapshot(String providerModelId, String dialect, boolean nativeStreaming) {
-        return snapshot(providerModelId, dialect, nativeStreaming, Map.of());
+        return snapshot("stub", providerModelId, dialect, nativeStreaming, Map.of());
     }
 
     private ResolvedModelSnapshot snapshot(
             String providerModelId, String dialect, boolean nativeStreaming, Map<String, Object> invocationOptions) {
+        return snapshot("stub", providerModelId, dialect, nativeStreaming, invocationOptions);
+    }
+
+    private ResolvedModelSnapshot snapshot(
+            String providerId,
+            String providerModelId,
+            String dialect,
+            boolean nativeStreaming,
+            Map<String, Object> invocationOptions) {
         return ResolvedModelSnapshot.create(
-                new io.haifa.agent.model.api.ModelProviderId("stub"),
+                new io.haifa.agent.model.api.ModelProviderId(providerId),
                 "provider-v1",
                 new ModelDefinitionId("model"),
                 "model-v1",
@@ -437,6 +452,34 @@ class OpenAiResponsesModelTest {
         exchange.sendResponseHeaders(configured.status(), body.length);
         exchange.getResponseBody().write(body);
         exchange.close();
+    }
+
+    @Test
+    void rejectsDuplicateAdmissionKeyRegistrationInResponsesRegistry() {
+        Map<OpenAiResponsesBindingRegistry.AdmissionKey, OpenAiResponsesBindingRegistry.AdmittedBinding> map =
+                new HashMap<>();
+        OpenAiResponsesBindingRegistry.register(
+                map,
+                "provider-test",
+                "model-test",
+                ModelApiStyles.OPENAI_RESPONSES,
+                OpenAiResponsesDialects.DEEPSEEK,
+                ModelReasoningBehavior.ALWAYS,
+                Set.of(ModelReasoningMode.ENABLED),
+                Set.of(ModelReasoningEffort.HIGH),
+                false);
+        assertThatThrownBy(() -> OpenAiResponsesBindingRegistry.register(
+                        map,
+                        "provider-test",
+                        "model-test",
+                        ModelApiStyles.OPENAI_RESPONSES,
+                        OpenAiResponsesDialects.DEEPSEEK,
+                        ModelReasoningBehavior.OPTIONAL,
+                        Set.of(ModelReasoningMode.DISABLED),
+                        Set.of(),
+                        true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Duplicate model binding admission key");
     }
 
     private record Response(int status, String contentType, String body) {

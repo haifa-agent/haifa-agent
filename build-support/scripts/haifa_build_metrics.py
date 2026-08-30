@@ -312,26 +312,32 @@ def parse_maven_log(log_path: Path) -> dict[str, Any]:
 def test_report_facts(root: Path, started_epoch: float) -> tuple[dict[str, int], list[dict[str, Any]]]:
     totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0, "forkReportFiles": 0}
     classes: list[dict[str, Any]] = []
-    for pattern in ("**/surefire-reports/TEST-*.xml", "**/failsafe-reports/TEST-*.xml"):
-        for report in root.glob(pattern):
-            try:
-                if report.stat().st_mtime < started_epoch - 2:
-                    continue
-                suite = ET.parse(report).getroot()
-                item = {
-                    "testClass": suite.attrib.get("name", report.stem.removeprefix("TEST-")),
-                    "millis": round(float(suite.attrib.get("time", "0")) * 1000),
-                    "tests": int(float(suite.attrib.get("tests", "0"))),
-                    "failures": int(float(suite.attrib.get("failures", "0"))),
-                    "errors": int(float(suite.attrib.get("errors", "0"))),
-                    "skipped": int(float(suite.attrib.get("skipped", "0"))),
-                }
-            except (OSError, ET.ParseError, ValueError):
-                continue
-            totals["forkReportFiles"] += 1
-            for key in ("tests", "failures", "errors", "skipped"):
-                totals[key] += item[key]
-            classes.append(item)
+    ignored_dirs = {"node_modules", ".git", ".idea", ".vscode", "dist", "build"}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in ignored_dirs and not d.startswith(".")]
+        base = os.path.basename(dirpath)
+        if base in ("surefire-reports", "failsafe-reports"):
+            for fname in filenames:
+                if fname.startswith("TEST-") and fname.endswith(".xml"):
+                    report = Path(dirpath) / fname
+                    try:
+                        if report.stat().st_mtime < started_epoch - 2:
+                            continue
+                        suite = ET.parse(report).getroot()
+                        item = {
+                            "testClass": suite.attrib.get("name", report.stem.removeprefix("TEST-")),
+                            "millis": round(float(suite.attrib.get("time", "0")) * 1000),
+                            "tests": int(float(suite.attrib.get("tests", "0"))),
+                            "failures": int(float(suite.attrib.get("failures", "0"))),
+                            "errors": int(float(suite.attrib.get("errors", "0"))),
+                            "skipped": int(float(suite.attrib.get("skipped", "0"))),
+                        }
+                    except (OSError, ET.ParseError, ValueError):
+                        continue
+                    totals["forkReportFiles"] += 1
+                    for key in ("tests", "failures", "errors", "skipped"):
+                        totals[key] += item[key]
+                    classes.append(item)
     classes.sort(key=lambda item: item["millis"], reverse=True)
     return totals, classes[:10]
 
