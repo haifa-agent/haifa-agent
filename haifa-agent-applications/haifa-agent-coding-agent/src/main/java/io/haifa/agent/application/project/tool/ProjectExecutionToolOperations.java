@@ -725,7 +725,9 @@ public final class ProjectExecutionToolOperations {
             data.put("failureCategory", classification.category());
             data.put("stableFailureCode", classification.stableFailureCode());
             data.put("resourceClass", classification.resourceClass());
-            data.put("failureActionCode", failureActionCode(classification.stableFailureCode()));
+            data.put(
+                    "failureActionCode",
+                    failureActionCode(classification.category(), classification.stableFailureCode()));
             data.put("failureAction", classification.action());
         }
         List<AssetRef> assets = new ArrayList<>();
@@ -916,7 +918,7 @@ public final class ProjectExecutionToolOperations {
                         Map.entry("failureCategory", "POLICY"),
                         Map.entry("stableFailureCode", stableCode),
                         Map.entry("resourceClass", resourceClass),
-                        Map.entry("failureActionCode", failureActionCode(stableCode)),
+                        Map.entry("failureActionCode", failureActionCode("POLICY", stableCode)),
                         Map.entry("failureAction", hardBoundaryAction(stableCode))),
                 List.of(),
                 List.of(),
@@ -986,7 +988,7 @@ public final class ProjectExecutionToolOperations {
         };
     }
 
-    private static String failureActionCode(String stableCode) {
+    private static String failureActionCode(String category, String stableCode) {
         return switch (stableCode) {
             case "AUTHENTICATION_OVERRIDE_DENIED" -> "REMOVE_AUTHENTICATION_OVERRIDE";
             case "REPOSITORY_BOUNDARY_DENIED" -> "USE_BOUND_REPOSITORY";
@@ -994,8 +996,15 @@ public final class ProjectExecutionToolOperations {
             case "GIT_REVISION_NOT_FOUND" -> "READ_AUTHORITATIVE_REF_ONCE";
             case "DEPENDENCY_UNAVAILABLE", "GIT_CLI_UNAVAILABLE", "GH_CLI_UNAVAILABLE" ->
                 "RESTORE_TOOLCHAIN_OR_USE_EQUIVALENT";
-            case "TIMEOUT", "CANCELLED", "OUTCOME_UNKNOWN" -> "VERIFY_OUTCOME_BEFORE_RETRY";
-            default -> "REVIEW_BOUNDED_FAILURE";
+            case "CANCELLED" -> "DO_NOT_AUTOMATICALLY_RETRY";
+            case "TIMEOUT", "OUTCOME_UNKNOWN", "OUTPUT_LIMIT_EXCEEDED", "PROCESS_LIMIT_EXCEEDED" ->
+                "VERIFY_OUTCOME_BEFORE_RETRY";
+            default ->
+                switch (category) {
+                    case "DEPENDENCY_UNAVAILABLE" -> "RESTORE_TOOLCHAIN_OR_USE_EQUIVALENT";
+                    case "COMMAND_FAILED" -> "CONTINUE_WITH_DIAGNOSTIC";
+                    default -> "REVIEW_BOUNDED_FAILURE";
+                };
         };
     }
 

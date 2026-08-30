@@ -30,6 +30,8 @@ import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolCallPart;
 import io.haifa.agent.core.content.ToolResultPart;
+import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
@@ -44,6 +46,7 @@ import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelMessage;
@@ -272,6 +275,72 @@ class ModelMessageAssemblerTest {
                 .isEqualTo(correlationId);
         assertThat(messages.get(2).providerCorrelationId()).contains(correlationId);
         assertThat(messages.get(2).content()).isEqualTo("Tool execution was rejected by the operator.");
+    }
+
+    @Test
+    void passesCanonicalBoundedExecutionFailureFactsIntoTheModelToolMessage() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-failed");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-call-failed");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                RUN_ID,
+                new AgentStepId("step-failed"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-failed"),
+                "execution_run",
+                "1.7.2",
+                new ToolArguments("haifa.execution.run.input", "1.7.2", Map.of("command", "mvn test")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(Instant.parse("2026-07-21T00:00:01Z"));
+        var canonicalResult = new io.haifa.agent.core.tool.ToolResult(
+                false,
+                "Command failed (exit 1)\nbounded stderr tail",
+                Map.ofEntries(
+                        Map.entry("status", "FAILED"),
+                        Map.entry("exitCode", 1),
+                        Map.entry("durationMillis", 1240L),
+                        Map.entry("truncated", true),
+                        Map.entry("output", "bounded stderr tail"),
+                        Map.entry("failureCategory", "COMMAND_FAILED"),
+                        Map.entry("stableFailureCode", "NON_ZERO_EXIT"),
+                        Map.entry("failureActionCode", "CONTINUE_WITH_DIAGNOSTIC")),
+                List.of(),
+                List.of(),
+                true);
+        call.fail(
+                new ToolExecutionError(new AgentError(
+                        AgentErrorCode.TOOL_BUSINESS_FAILURE,
+                        Map.of("failureCategory", "COMMAND_FAILED", "stableFailureCode", "NON_ZERO_EXIT"),
+                        "diagnostic-failed",
+                        Instant.parse("2026-07-21T00:00:02Z"))),
+                canonicalResult,
+                Instant.parse("2026-07-21T00:00:02Z"));
+        store.appendToolCall(call);
+
+        AgentMessage toolResult = message(
+                "tool-result-failed",
+                sessionId,
+                RUN_ID,
+                MessageRole.TOOL,
+                1,
+                List.of(new ToolResultPart(toolCallId, correlationId, canonicalResult.summary())));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item("tool-result-failed", ContextItemType.MESSAGE, new MessageContextContent(toolResult))),
+                List.of(),
+                budget(),
+                30);
+
+        ModelMessage modelMessage =
+                new ModelMessageAssembler(store).assemble(RUN_ID, context).getLast();
+
+        assertThat(modelMessage.content()).contains("bounded stderr tail");
+        assertThat(modelMessage.toolResultData()).containsAllEntriesOf(canonicalResult.structuredData());
+        assertThat(modelMessage.toolResultTruncated()).isTrue();
     }
 
     @Test

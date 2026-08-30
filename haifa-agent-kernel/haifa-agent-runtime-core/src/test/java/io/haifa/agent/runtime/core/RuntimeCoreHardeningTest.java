@@ -495,13 +495,13 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void repeatedSemanticEnvironmentFailuresConvergeWithinBoundedModelAndToolCalls() {
+    void repeatedIdenticalEnvironmentFailuresConvergeWithinBoundedModelAndToolCalls() {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger toolCalls = new AtomicInteger();
         Queue<io.haifa.agent.runtime.core.decision.AgentDecision> decisions = new ArrayDeque<>(List.of(
                 environmentFailureRequest("failure-1", "/private/random-a", "probe"),
-                environmentFailureRequest("failure-2", "/private/random-b", "probe"),
-                environmentFailureRequest("failure-3", "/private/random-c", "alternate-probe")));
+                environmentFailureRequest("failure-2", "/private/random-a", "probe"),
+                environmentFailureRequest("failure-3", "/private/random-a", "probe")));
         AgentChatModel boundedModel = request -> {
             modelCalls.incrementAndGet();
             return response(decisions.remove());
@@ -541,7 +541,7 @@ class RuntimeCoreHardeningTest {
                 .isEqualTo(AgentRunStatus.FAILED);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().output())
                 .hasValueSatisfying(summary -> assertThat(summary)
-                        .contains("The task did not fully complete", "alternate-probe", "REPEATED_TOOL_FAILURE")
+                        .contains("The task did not fully complete", "probe", "REPEATED_TOOL_FAILURE")
                         .doesNotContain("/private/random"));
         assertThat(fixture.store.messages(accepted.runId())).anySatisfy(message -> {
             assertThat(message.role()).isEqualTo(io.haifa.agent.core.message.MessageRole.ASSISTANT);

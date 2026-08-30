@@ -57,9 +57,9 @@ Checkpoint 恢复、失败副作用和 Interaction/Approval 继续等十类控�
 
 ## 自主恢复与有效进展
 
-AgentLoop 按 Tool 坐标摘要、命令目标、可信有效操作族、语义失败类别、稳定错误码、归一化意图摘要、
-资源类别和 Sandbox 摘要生成 SHA-256 Failure Fingerprint；原始命令、随机路径、描述、原始 stderr
-和 Credential 不进入身份或恢复事件。无有效进展的同一失败簇按“首次诊断、第二次强制改变策略、
+AgentLoop 按 Tool 坐标摘要、命令目标、可信有效操作族、语义失败类别、稳定错误码、完整规范化 Tool
+请求的不可逆摘要、工作区范围摘要、资源类别和 Sandbox 摘要生成 SHA-256 Failure Fingerprint；原始
+Tool 参数、命令、路径、描述、stderr 和 Credential 不进入恢复事件。无有效进展的完全相同请求失败簇按“首次诊断、第二次强制改变策略、
 第三次结构化终止”推进；`OUTCOME_UNKNOWN`、取消和 Policy 拒绝继续服从
 各自更严格的既有边界。Decision 使用 `action/1:<type>:<sha256>` 的有界动作身份，原始 Prompt、正文、
 路径、Tool 参数和运行标识不写入 Step 或 Checkpoint。完全重复 Tool Call 仍由专门 Guard 处理；
