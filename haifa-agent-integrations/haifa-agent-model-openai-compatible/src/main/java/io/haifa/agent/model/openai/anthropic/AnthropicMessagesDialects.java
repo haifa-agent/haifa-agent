@@ -2,11 +2,18 @@ package io.haifa.agent.model.openai.anthropic;
 
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelBindingProfile;
+import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelProfileStatus;
+import io.haifa.agent.model.api.ModelReasoningBehavior;
+import io.haifa.agent.model.api.ModelReasoningEffort;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.model.openai.OpenAiCompatibleBindingRegistry;
 import java.net.URI;
+import java.time.LocalDate;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /** Validated Anthropic Messages compatibility profiles. */
@@ -34,16 +41,61 @@ public final class AnthropicMessagesDialects {
                 };
         validateEndpoint(snapshot.endpoint(), allowInsecureHttp, profile);
         if (profile == Profile.DEEPSEEK
-                && !OpenAiCompatibleBindingRegistry.isAdmitted(
-                        "deepseek", snapshot.providerModelId(), ModelApiStyles.ANTHROPIC_MESSAGES, DEEPSEEK)) {
+                && !AnthropicMessagesBindingRegistry.isAdmitted(
+                        snapshot.providerId().value(),
+                        snapshot.providerModelId(),
+                        ModelApiStyles.ANTHROPIC_MESSAGES,
+                        DEEPSEEK)) {
             throw new IllegalArgumentException("DeepSeek Anthropic model profile is not verified");
         }
         if (profile == Profile.ZHIPU
-                && !OpenAiCompatibleBindingRegistry.isAdmitted(
-                        "zhipu", snapshot.providerModelId(), ModelApiStyles.ANTHROPIC_MESSAGES, ZHIPU)) {
+                && !AnthropicMessagesBindingRegistry.isAdmitted(
+                        snapshot.providerId().value(),
+                        snapshot.providerModelId(),
+                        ModelApiStyles.ANTHROPIC_MESSAGES,
+                        ZHIPU)) {
             throw new IllegalArgumentException("Zhipu Anthropic model profile is not verified");
         }
         return profile;
+    }
+
+    public static ModelBindingProfile profile(ResolvedModelSnapshot snapshot, LocalDate verifiedOn) {
+        var admission = AnthropicMessagesBindingRegistry.find(snapshot);
+        if (admission.isEmpty()) {
+            boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
+            return ModelBindingProfile.create(
+                    snapshot.modelId(),
+                    snapshot.apiStyle(),
+                    "1.0",
+                    snapshot.capabilities(),
+                    reasoning ? ModelReasoningBehavior.OPTIONAL : ModelReasoningBehavior.NONE,
+                    reasoning
+                            ? Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED)
+                            : Set.of(ModelReasoningMode.DISABLED),
+                    reasoning ? Set.of(ModelReasoningEffort.HIGH) : Set.of(),
+                    OptionalLong.empty(),
+                    1,
+                    snapshot.maxOutputTokens(),
+                    false,
+                    ModelProfileStatus.UNVERIFIED,
+                    verifiedOn);
+        }
+        var binding = admission.get();
+        boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
+        return ModelBindingProfile.create(
+                snapshot.modelId(),
+                snapshot.apiStyle(),
+                "1.0",
+                snapshot.capabilities(),
+                reasoning ? binding.reasoningBehavior() : ModelReasoningBehavior.NONE,
+                reasoning ? binding.allowedReasoningModes() : Set.of(ModelReasoningMode.DISABLED),
+                reasoning ? binding.allowedReasoningEfforts() : Set.of(),
+                OptionalLong.empty(),
+                1,
+                snapshot.maxOutputTokens(),
+                reasoning && binding.toolReasoningContinuationRequired(),
+                ModelProfileStatus.VERIFIED,
+                verifiedOn);
     }
 
     private static void validateEndpoint(URI endpoint, boolean allowInsecureHttp, Profile profile) {

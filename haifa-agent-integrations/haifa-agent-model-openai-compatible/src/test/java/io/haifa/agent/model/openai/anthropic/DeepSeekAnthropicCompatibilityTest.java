@@ -52,9 +52,23 @@ class DeepSeekAnthropicCompatibilityTest {
     }
 
     @Test
+    void rejectsDeepSeekDialectWithMismatchedProviderId() {
+        assertThatThrownBy(() -> AnthropicMessagesDialects.resolve(
+                        snapshot(
+                                "fake-deepseek",
+                                "deepseek-v4-flash",
+                                AnthropicMessagesDialects.DEEPSEEK,
+                                URI.create("https://api.deepseek.com/anthropic")),
+                        false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not verified");
+    }
+
+    @Test
     void acceptsOnlyGlm52AtTheDocumentedZhipuAnthropicEndpoint() {
         assertThat(AnthropicMessagesDialects.resolve(
                         snapshot(
+                                "zhipu",
                                 "glm-5.2",
                                 AnthropicMessagesDialects.ZHIPU,
                                 URI.create("https://open.bigmodel.cn/api/anthropic")),
@@ -62,6 +76,7 @@ class DeepSeekAnthropicCompatibilityTest {
                 .isEqualTo(AnthropicMessagesDialects.Profile.ZHIPU);
         assertThatThrownBy(() -> AnthropicMessagesDialects.resolve(
                         snapshot(
+                                "zhipu",
                                 "glm-5.1",
                                 AnthropicMessagesDialects.ZHIPU,
                                 URI.create("https://open.bigmodel.cn/api/anthropic")),
@@ -69,6 +84,15 @@ class DeepSeekAnthropicCompatibilityTest {
                 .hasMessageContaining("not verified");
         assertThatThrownBy(() -> AnthropicMessagesDialects.resolve(
                         snapshot(
+                                "fake-zhipu",
+                                "glm-5.2",
+                                AnthropicMessagesDialects.ZHIPU,
+                                URI.create("https://open.bigmodel.cn/api/anthropic")),
+                        false))
+                .hasMessageContaining("not verified");
+        assertThatThrownBy(() -> AnthropicMessagesDialects.resolve(
+                        snapshot(
+                                "zhipu",
                                 "glm-5.2",
                                 AnthropicMessagesDialects.ZHIPU,
                                 URI.create("https://open.bigmodel.cn/api/paas/v4")),
@@ -78,12 +102,20 @@ class DeepSeekAnthropicCompatibilityTest {
 
     private static ResolvedModelSnapshot deepSeek(String providerModelId) {
         return snapshot(
-                providerModelId, AnthropicMessagesDialects.DEEPSEEK, URI.create("https://api.deepseek.com/anthropic"));
+                "deepseek",
+                providerModelId,
+                AnthropicMessagesDialects.DEEPSEEK,
+                URI.create("https://api.deepseek.com/anthropic"));
     }
 
     private static ResolvedModelSnapshot snapshot(String providerModelId, String dialect, URI endpoint) {
+        return snapshot("compatibility-provider", providerModelId, dialect, endpoint);
+    }
+
+    private static ResolvedModelSnapshot snapshot(
+            String providerId, String providerModelId, String dialect, URI endpoint) {
         return ResolvedModelSnapshot.create(
-                new ModelProviderId("compatibility-provider"),
+                new ModelProviderId(providerId),
                 "provider-v1",
                 new ModelDefinitionId("compatibility-model"),
                 "model-v1",

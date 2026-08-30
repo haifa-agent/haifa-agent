@@ -1,5 +1,6 @@
 package io.haifa.agent.model.openai;
 
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelProfileStatus;
@@ -7,6 +8,8 @@ import io.haifa.agent.model.api.ModelReasoningBehavior;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
+import io.haifa.agent.model.openai.responses.OpenAiResponsesDialects;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -19,6 +22,13 @@ public final class OpenAiCompatibleModelProfileFactory {
     private OpenAiCompatibleModelProfileFactory() {}
 
     public static ModelBindingProfile fromSnapshot(ResolvedModelSnapshot snapshot, LocalDate verifiedOn) {
+        if (ModelApiStyles.ANTHROPIC_MESSAGES.equals(snapshot.apiStyle())) {
+            return AnthropicMessagesDialects.profile(snapshot, verifiedOn);
+        }
+        if (ModelApiStyles.OPENAI_RESPONSES.equals(snapshot.apiStyle())) {
+            return OpenAiResponsesDialects.profile(snapshot, verifiedOn);
+        }
+
         Optional<OpenAiCompatibleBindingRegistry.AdmittedBinding> admission =
                 OpenAiCompatibleBindingRegistry.find(snapshot);
 

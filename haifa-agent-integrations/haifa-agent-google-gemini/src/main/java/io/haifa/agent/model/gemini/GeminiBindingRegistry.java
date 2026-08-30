@@ -10,9 +10,9 @@ import java.util.Set;
  * Authoritative, immutable registry of trusted model binding admissions for Google Gemini integration.
  * Admissions are keyed by the exact 4-tuple: {@code (providerId, providerModelId, apiStyle, dialect)}.
  */
-public final class GeminiBindingRegistry {
-    public record AdmissionKey(String providerId, String providerModelId, ApiStyleId apiStyle, String dialect) {
-        public AdmissionKey {
+final class GeminiBindingRegistry {
+    record AdmissionKey(String providerId, String providerModelId, ApiStyleId apiStyle, String dialect) {
+        AdmissionKey {
             Objects.requireNonNull(providerId, "providerId must not be null");
             Objects.requireNonNull(providerModelId, "providerModelId must not be null");
             Objects.requireNonNull(apiStyle, "apiStyle must not be null");
@@ -24,14 +24,14 @@ public final class GeminiBindingRegistry {
 
     private GeminiBindingRegistry() {}
 
-    public static boolean isAdmitted(String providerId, String providerModelId, ApiStyleId apiStyle, String dialect) {
+    static boolean isAdmitted(String providerId, String providerModelId, ApiStyleId apiStyle, String dialect) {
         if (providerId == null || providerModelId == null || apiStyle == null || dialect == null) {
             return false;
         }
         return ADMISSIONS.contains(new AdmissionKey(providerId, providerModelId, apiStyle, dialect));
     }
 
-    public static boolean isAdmitted(ResolvedModelSnapshot snapshot) {
+    static boolean isAdmitted(ResolvedModelSnapshot snapshot) {
         if (snapshot == null || snapshot.providerId() == null) {
             return false;
         }
@@ -50,11 +50,6 @@ public final class GeminiBindingRegistry {
                         "google-antigravity",
                         "gemini-3-flash",
                         ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
-                        GeminiDialects.ANTIGRAVITY_DIRECT),
-                new AdmissionKey(
-                        "google-gemini",
-                        "gemini-3-flash",
-                        ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
-                        GeminiDialects.STANDARD));
+                        GeminiDialects.ANTIGRAVITY_DIRECT));
     }
 }

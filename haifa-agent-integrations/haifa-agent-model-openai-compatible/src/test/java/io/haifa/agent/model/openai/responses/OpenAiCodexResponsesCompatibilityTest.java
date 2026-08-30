@@ -247,6 +247,33 @@ class OpenAiCodexResponsesCompatibilityTest {
         assertThatThrownBy(() -> OpenAiResponsesDialects.resolve(unverified, true))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("OpenAI Codex Responses model profile is not verified");
+
+        ResolvedModelSnapshot fakeProvider = ResolvedModelSnapshot.create(
+                new ModelProviderId("fake-codex"),
+                "provider-v1",
+                new ModelDefinitionId("codex-test"),
+                "model-v1",
+                "gpt-5.6-sol",
+                OpenAiResponsesModel.ADAPTER_TYPE,
+                OpenAiResponsesModel.ADAPTER_VERSION,
+                new ApiStyleId("openai-responses"),
+                OpenAiResponsesDialects.OPENAI_CODEX,
+                loopbackEndpoint(),
+                new CredentialRef("model-auth://openai-codex/default"),
+                false,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                128_000,
+                8_192,
+                Map.of(
+                        OpenAiResponsesDialects.CODEX_ORIGINATOR_OPTION,
+                        "haifa-local-test",
+                        OpenAiResponsesDialects.CODEX_USER_AGENT_OPTION,
+                        "haifa-agent-test/1"),
+                Map.of());
+
+        assertThatThrownBy(() -> OpenAiResponsesDialects.resolve(fakeProvider, true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("OpenAI Codex Responses model profile is not verified");
     }
 
     private ResolvedModelSnapshot snapshot(URI endpoint) {

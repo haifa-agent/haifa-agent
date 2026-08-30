@@ -3,7 +3,6 @@ package io.haifa.agent.model.openai.responses;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.model.openai.OpenAiCompatibleBindingRegistry;
 import java.net.URI;
 import java.util.Locale;
 import java.util.Objects;
@@ -38,13 +37,16 @@ public final class OpenAiResponsesDialects {
                 };
         validateEndpoint(snapshot.endpoint(), allowInsecureHttp, profile);
         if (profile == Profile.DEEPSEEK
-                && !OpenAiCompatibleBindingRegistry.isAdmitted(
-                        "deepseek", snapshot.providerModelId(), ModelApiStyles.OPENAI_RESPONSES, DEEPSEEK)) {
+                && !OpenAiResponsesBindingRegistry.isAdmitted(
+                        snapshot.providerId().value(),
+                        snapshot.providerModelId(),
+                        ModelApiStyles.OPENAI_RESPONSES,
+                        DEEPSEEK)) {
             throw new IllegalArgumentException("DeepSeek Responses model profile is not verified");
         }
         if (profile == Profile.ALIYUN_BAILIAN
-                && !OpenAiCompatibleBindingRegistry.isAdmitted(
-                        "aliyun-bailian",
+                && !OpenAiResponsesBindingRegistry.isAdmitted(
+                        snapshot.providerId().value(),
                         snapshot.providerModelId(),
                         ModelApiStyles.OPENAI_RESPONSES,
                         ALIYUN_BAILIAN)) {
@@ -52,12 +54,61 @@ public final class OpenAiResponsesDialects {
         }
         if (profile == Profile.OPENAI_CODEX) {
             validateCodexOptions(snapshot, isLoopback(snapshot.endpoint()));
-            if (!OpenAiCompatibleBindingRegistry.isAdmitted(
-                    "openai-codex", snapshot.providerModelId(), ModelApiStyles.OPENAI_RESPONSES, OPENAI_CODEX)) {
+            if (!OpenAiResponsesBindingRegistry.isAdmitted(
+                    snapshot.providerId().value(),
+                    snapshot.providerModelId(),
+                    ModelApiStyles.OPENAI_RESPONSES,
+                    OPENAI_CODEX)) {
                 throw new IllegalArgumentException("OpenAI Codex Responses model profile is not verified");
             }
         }
         return profile;
+    }
+
+    public static io.haifa.agent.model.api.ModelBindingProfile profile(
+            ResolvedModelSnapshot snapshot, java.time.LocalDate verifiedOn) {
+        var admission = OpenAiResponsesBindingRegistry.find(snapshot);
+        if (admission.isEmpty()) {
+            boolean reasoning = snapshot.capabilities().contains(io.haifa.agent.model.api.ModelCapability.REASONING);
+            return io.haifa.agent.model.api.ModelBindingProfile.create(
+                    snapshot.modelId(),
+                    snapshot.apiStyle(),
+                    "1.0",
+                    snapshot.capabilities(),
+                    reasoning
+                            ? io.haifa.agent.model.api.ModelReasoningBehavior.OPTIONAL
+                            : io.haifa.agent.model.api.ModelReasoningBehavior.NONE,
+                    reasoning
+                            ? Set.of(
+                                    io.haifa.agent.model.api.ModelReasoningMode.DISABLED,
+                                    io.haifa.agent.model.api.ModelReasoningMode.ENABLED)
+                            : Set.of(io.haifa.agent.model.api.ModelReasoningMode.DISABLED),
+                    reasoning ? Set.of(io.haifa.agent.model.api.ModelReasoningEffort.HIGH) : Set.of(),
+                    java.util.OptionalLong.empty(),
+                    1,
+                    snapshot.maxOutputTokens(),
+                    false,
+                    io.haifa.agent.model.api.ModelProfileStatus.UNVERIFIED,
+                    verifiedOn);
+        }
+        var binding = admission.get();
+        boolean reasoning = snapshot.capabilities().contains(io.haifa.agent.model.api.ModelCapability.REASONING);
+        return io.haifa.agent.model.api.ModelBindingProfile.create(
+                snapshot.modelId(),
+                snapshot.apiStyle(),
+                "1.0",
+                snapshot.capabilities(),
+                reasoning ? binding.reasoningBehavior() : io.haifa.agent.model.api.ModelReasoningBehavior.NONE,
+                reasoning
+                        ? binding.allowedReasoningModes()
+                        : Set.of(io.haifa.agent.model.api.ModelReasoningMode.DISABLED),
+                reasoning ? binding.allowedReasoningEfforts() : Set.of(),
+                java.util.OptionalLong.empty(),
+                1,
+                snapshot.maxOutputTokens(),
+                reasoning && binding.toolReasoningContinuationRequired(),
+                io.haifa.agent.model.api.ModelProfileStatus.VERIFIED,
+                verifiedOn);
     }
 
     private static void validateEndpoint(URI endpoint, boolean allowInsecureHttp, Profile profile) {
