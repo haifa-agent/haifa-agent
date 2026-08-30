@@ -62,9 +62,18 @@ public final class OpenAiResponsesModel implements AgentChatModel {
     private final CredentialResolver credentials;
     private final boolean allowInsecureHttp;
     private final int maxResponseBytes;
+    private final CodexAccountIdentityResolver codexAccountResolver;
 
     public OpenAiResponsesModel(HttpClient http, ObjectMapper json, CredentialResolver credentials) {
-        this(http, json, credentials, false, DEFAULT_MAX_RESPONSE_BYTES);
+        this(http, json, credentials, false, DEFAULT_MAX_RESPONSE_BYTES, ignored -> java.util.Optional.empty());
+    }
+
+    public OpenAiResponsesModel(
+            HttpClient http,
+            ObjectMapper json,
+            CredentialResolver credentials,
+            CodexAccountIdentityResolver codexAccountResolver) {
+        this(http, json, credentials, false, DEFAULT_MAX_RESPONSE_BYTES, codexAccountResolver);
     }
 
     public OpenAiResponsesModel(
@@ -73,12 +82,24 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             CredentialResolver credentials,
             boolean allowInsecureHttp,
             int maxResponseBytes) {
+        this(http, json, credentials, allowInsecureHttp, maxResponseBytes, ignored -> java.util.Optional.empty());
+    }
+
+    public OpenAiResponsesModel(
+            HttpClient http,
+            ObjectMapper json,
+            CredentialResolver credentials,
+            boolean allowInsecureHttp,
+            int maxResponseBytes,
+            CodexAccountIdentityResolver codexAccountResolver) {
         this.http = Objects.requireNonNull(http, "http must not be null");
         this.json = Objects.requireNonNull(json, "json must not be null");
         this.credentials = Objects.requireNonNull(credentials, "credentials must not be null");
         this.allowInsecureHttp = allowInsecureHttp;
         if (maxResponseBytes < 1) throw new IllegalArgumentException("maxResponseBytes must be positive");
         this.maxResponseBytes = maxResponseBytes;
+        this.codexAccountResolver =
+                Objects.requireNonNull(codexAccountResolver, "codexAccountResolver must not be null");
     }
 
     @Override
@@ -223,7 +244,9 @@ public final class OpenAiResponsesModel implements AgentChatModel {
 
     private ResolvedCredential credential(AgentChatRequest request) {
         try {
-            return credentials.resolve(request.model().credentialRef());
+            ResolvedCredential credential = credentials.resolve(request.model().credentialRef());
+            OpenAiCodexAuthentication.validateHeaderValue(credential.value(), "model credential");
+            return credential;
         } catch (RuntimeException exception) {
             throw failure(
                     request,
@@ -262,8 +285,11 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body));
         if (profile == OpenAiResponsesDialects.Profile.OPENAI_CODEX) {
             try {
-                OpenAiCodexAuthentication.apply(builder, json, request.model(), credential.value());
-            } catch (IllegalArgumentException exception) {
+                CodexAccountIdentity identity = codexAccountResolver
+                        .resolve(request.model().credentialRef())
+                        .orElseThrow(() -> new IllegalArgumentException("Codex account identity missing"));
+                OpenAiCodexAuthentication.apply(builder, request.model(), credential.value(), identity);
+            } catch (RuntimeException exception) {
                 throw failure(
                         request,
                         ModelErrorCategory.AUTHENTICATION_FAILED,
@@ -274,7 +300,8 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                         null);
             }
         } else {
-            builder.header("Authorization", "Bearer " + credential.value());
+            String secret = OpenAiCodexAuthentication.validateHeaderValue(credential.value(), "model credential");
+            builder.header("Authorization", "Bearer " + secret);
         }
         return builder.build();
     }
