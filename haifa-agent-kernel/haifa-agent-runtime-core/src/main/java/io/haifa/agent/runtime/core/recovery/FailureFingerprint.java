@@ -7,15 +7,16 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 
-/** Safe canonical identity for semantically equivalent Tool failures. */
+/** Safe canonical identity for failures of the same authoritative Tool request. */
 public record FailureFingerprint(
         String toolCoordinateDigest,
         String commandTarget,
         String effectiveOperation,
         ToolFailureCategory failureCategory,
         String stableFailureCode,
-        String normalizedIntentDigest,
+        String requestDigest,
         String resourceClass,
+        String workspaceScopeDigest,
         String sandboxProfileDigest,
         String digest) {
     public FailureFingerprint(
@@ -24,8 +25,9 @@ public record FailureFingerprint(
             String effectiveOperation,
             ToolFailureCategory failureCategory,
             String stableFailureCode,
-            String normalizedIntentDigest,
+            String requestDigest,
             String resourceClass,
+            String workspaceScopeDigest,
             String sandboxProfileDigest) {
         this(
                 safe(toolCoordinateDigest, "toolCoordinateDigest"),
@@ -33,8 +35,9 @@ public record FailureFingerprint(
                 token(effectiveOperation, "effectiveOperation"),
                 Objects.requireNonNull(failureCategory, "failureCategory must not be null"),
                 token(stableFailureCode, "stableFailureCode"),
-                safe(normalizedIntentDigest, "normalizedIntentDigest"),
+                safe(requestDigest, "requestDigest"),
                 token(resourceClass, "resourceClass"),
+                safe(workspaceScopeDigest, "workspaceScopeDigest"),
                 safe(sandboxProfileDigest, "sandboxProfileDigest"),
                 digest(List.of(
                         safe(toolCoordinateDigest, "toolCoordinateDigest"),
@@ -42,12 +45,34 @@ public record FailureFingerprint(
                         token(effectiveOperation, "effectiveOperation"),
                         failureCategory.name(),
                         token(stableFailureCode, "stableFailureCode"),
-                        safe(normalizedIntentDigest, "normalizedIntentDigest"),
+                        safe(requestDigest, "requestDigest"),
                         token(resourceClass, "resourceClass"),
+                        safe(workspaceScopeDigest, "workspaceScopeDigest"),
                         safe(sandboxProfileDigest, "sandboxProfileDigest"))));
     }
 
-    /** Source-compatible constructor for non-command callers that predate trusted target and intent fields. */
+    public FailureFingerprint(
+            String toolCoordinateDigest,
+            String commandTarget,
+            String effectiveOperation,
+            ToolFailureCategory failureCategory,
+            String stableFailureCode,
+            String requestDigest,
+            String resourceClass,
+            String sandboxProfileDigest) {
+        this(
+                toolCoordinateDigest,
+                commandTarget,
+                effectiveOperation,
+                failureCategory,
+                stableFailureCode,
+                requestDigest,
+                resourceClass,
+                digest(List.of("unknown-workspace-scope")),
+                sandboxProfileDigest);
+    }
+
+    /** Source-compatible constructor for non-command callers that predate trusted target and request fields. */
     public FailureFingerprint(
             String toolCoordinateDigest,
             String operationFamily,
@@ -63,6 +88,7 @@ public record FailureFingerprint(
                 stableFailureCode,
                 digest(List.of("legacy-intent")),
                 resourceClass,
+                digest(List.of("unknown-workspace-scope")),
                 sandboxProfileDigest);
     }
 
