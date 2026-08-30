@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
 import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
 import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
@@ -32,6 +33,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Tag;
@@ -73,7 +75,11 @@ class OpenAiCodexLiveIT {
                 new ExternalLoginRegistry(codexMethod.stream().toList()),
                 clock,
                 Duration.ZERO);
-        var model = new OpenAiResponsesModel(http, json, credentials, false, 1024 * 1024);
+        var authenticationService =
+                new LocalModelAuthenticationService(store, Optional.empty(), credentials, environment::get);
+        var model = new OpenAiResponsesModel(http, json, credentials, false, 1024 * 1024, ref -> authenticationService
+                .findCodexAccountId(ref)
+                .map(CodexAccountIdentity::new));
 
         var request = new AgentChatRequest(
                 new ModelCallId("codex-live-hello-world-call"),
