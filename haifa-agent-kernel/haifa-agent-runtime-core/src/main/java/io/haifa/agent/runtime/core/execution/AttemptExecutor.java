@@ -274,7 +274,18 @@ public final class AttemptExecutor {
                 default -> AgentErrorCode.RUN_BUDGET_EXCEEDED;
             };
         }
-        if (budgetExceeded != null) return AgentErrorCode.RUN_BUDGET_EXCEEDED;
+        if (budgetExceeded != null) {
+            return switch (budgetExceeded.resource()) {
+                case "iterations",
+                        "modelCalls",
+                        "toolCalls",
+                        "childRuns",
+                        "wallTimeMillis",
+                        "idleTimeMillis",
+                        "depth" -> AgentErrorCode.RUN_EXECUTION_LIMIT_EXCEEDED;
+                default -> AgentErrorCode.RUN_BUDGET_EXCEEDED;
+            };
+        }
         if (contextBuild == null) return AgentErrorCode.RUNTIME_EXECUTION_FAILED;
         return switch (contextBuild.failure()) {
             case MODEL_WINDOW_TOO_SMALL, REQUIRED_CONTEXT_TOO_LARGE -> AgentErrorCode.MODEL_CONTEXT_TOO_LONG;

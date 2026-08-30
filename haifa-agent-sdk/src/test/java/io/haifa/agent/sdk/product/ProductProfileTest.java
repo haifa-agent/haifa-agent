@@ -41,9 +41,48 @@ class ProductProfileTest {
                 ProductCapabilityRequirement.required(
                         EXTRA, Set.of(firstCoordinate), ProductProviderSuitability.DEVELOPMENT));
 
+        ProductProfile differentQuotaMode = ProductProfile.create(
+                new ProductId("profile-test"),
+                new ProductVersion("1.0.0"),
+                new AgentDefinitionId("profile-test-agent"),
+                new AgentDefinitionVersion(1, 0, 0),
+                "profile-test-chat",
+                "1.0.0",
+                "Safe instructions.",
+                AgentRunBudget.disabled(),
+                new AgentRunLimits(2, 0, 1, 10_000, 10_000, 64, 32, 8),
+                ProductPolicies.safeDefaults(),
+                Map.of(
+                        EXTRA,
+                        ProductCapabilityRequirement.required(
+                                EXTRA, Set.of(firstCoordinate), ProductProviderSuitability.DEVELOPMENT)),
+                Set.of(),
+                Set.of(),
+                Set.of());
+        ProductProfile differentLimits = ProductProfile.create(
+                new ProductId("profile-test"),
+                new ProductVersion("1.0.0"),
+                new AgentDefinitionId("profile-test-agent"),
+                new AgentDefinitionVersion(1, 0, 0),
+                "profile-test-chat",
+                "1.0.0",
+                "Safe instructions.",
+                new AgentRunBudget(1_000, 1_000, 1_000, 2, 2, 0, "USD", 100),
+                new AgentRunLimits(2, 0, 1, 10_000, 10_000, 128, 64, 16),
+                ProductPolicies.safeDefaults(),
+                Map.of(
+                        EXTRA,
+                        ProductCapabilityRequirement.required(
+                                EXTRA, Set.of(firstCoordinate), ProductProviderSuitability.DEVELOPMENT)),
+                Set.of(),
+                Set.of(),
+                Set.of());
+
         assertThat(repeated.configurationDigest()).isEqualTo(first.configurationDigest());
         assertThat(differentCoordinate.configurationDigest()).isNotEqualTo(first.configurationDigest());
         assertThat(differentPolicy.configurationDigest()).isNotEqualTo(first.configurationDigest());
+        assertThat(differentQuotaMode.configurationDigest()).isNotEqualTo(first.configurationDigest());
+        assertThat(differentLimits.configurationDigest()).isNotEqualTo(first.configurationDigest());
     }
 
     @Test

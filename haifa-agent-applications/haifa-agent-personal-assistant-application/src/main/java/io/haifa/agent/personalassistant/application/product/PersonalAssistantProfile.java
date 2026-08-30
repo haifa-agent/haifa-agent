@@ -113,7 +113,7 @@ public final class PersonalAssistantProfile {
                         + "Do not resume or retry a previous failed or abandoned tool call unless the latest user "
                         + "message explicitly requests it. Keep answers concise and ask for clarification when needed.",
                 new AgentRunBudget(512_000, 128_000, 512_000, 64, 64, 0, "USD", 0),
-                new AgentRunLimits(64, 0, 1, 300_000, 120_000),
+                new AgentRunLimits(64, 0, 1, 300_000, 120_000, 64, 64, 0),
                 policies,
                 requirements,
                 allowedTools,

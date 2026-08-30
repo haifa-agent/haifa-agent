@@ -330,7 +330,7 @@ public final class HaifaAgentStarterBuilder {
                 VERSION,
                 instructions,
                 new AgentRunBudget(65_536, 8_192, 65_536, 16, 16, 0, "USD", 100),
-                new AgentRunLimits(16, 0, 1, 120_000, 60_000),
+                new AgentRunLimits(16, 0, 1, 120_000, 60_000, 16, 16, 0),
                 requirements,
                 Set.of(),
                 Set.of(),
@@ -346,7 +346,7 @@ public final class HaifaAgentStarterBuilder {
                 snapshot.modelId().value(),
                 io.haifa.agent.core.run.AgentRunType.CHAT,
                 new AgentRunBudget(65_536, 8_192, 65_536, 16, 16, 0, "USD", 100),
-                new AgentRunLimits(16, 0, 1, Math.max(120_000, requestTimeoutMillis), requestTimeoutMillis),
+                new AgentRunLimits(16, 0, 1, Math.max(120_000, requestTimeoutMillis), requestTimeoutMillis, 16, 16, 0),
                 Map.of());
     }
 

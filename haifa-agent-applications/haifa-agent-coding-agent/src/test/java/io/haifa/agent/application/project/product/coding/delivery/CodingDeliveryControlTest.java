@@ -600,6 +600,46 @@ class CodingDeliveryControlTest {
     }
 
     @Test
+    void workProjectionReportsPositiveLimitsWhenBudgetIsDisabled() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = AgentRun.createRoot(
+                new AgentRunId("run-disabled-budget"),
+                new AgentRunSpec(
+                        new AgentSessionId("session-1"),
+                        null,
+                        new TenantRef("tenant"),
+                        new PrincipalRef("principal", "user"),
+                        new AgentDefinitionId("coding-agent"),
+                        new AgentDefinitionVersion(1, 0, 0),
+                        "coding",
+                        "1.0",
+                        AgentRunType.CHAT,
+                        "task text",
+                        AgentRunBudget.disabled(),
+                        new AgentRunLimits(20, 0, 1, 60_000, 60_000, 64, 32, 8),
+                        new RunConfigurationSnapshotRef("config-1", "sha256:config")),
+                NOW);
+        store.insert(run);
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("message-1"),
+                run.sessionId(),
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.USER,
+                MessageStatus.COMPLETED,
+                MessageVisibility.USER_VISIBLE,
+                List.of(new TextPart("task text", "plain")),
+                trusted("CHANGE"),
+                NOW));
+
+        CodingWorkProjection projection = projection(store).project(run);
+        assertThat(projection.remainingModelCalls()).isEqualTo(64);
+        assertThat(projection.remainingToolCalls()).isEqualTo(32);
+        assertThat(projection.remainingPercent()).isEqualTo(83);
+        assertThat(projection.contextText()).contains("remainingModelCalls=64").contains("remainingToolCalls=32");
+    }
+
+    @Test
     void workProjectionKeepsTheMostRecentBoundedReferencesDeterministically() {
         Fixture fixture = fixture("review the repository", trusted("REVIEW"));
         for (int index = 1; index <= 17; index++) {

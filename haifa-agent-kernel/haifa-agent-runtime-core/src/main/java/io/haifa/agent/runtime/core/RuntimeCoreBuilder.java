@@ -801,7 +801,7 @@ public final class RuntimeCoreBuilder {
                 "1.0.0",
                 AgentRunType.CHAT,
                 new AgentRunBudget(1_000_000, 1_000_000, 1_000_000, maxToolCalls, maxModelCalls, 8, "USD", 1_000_000),
-                new AgentRunLimits(maxIterations, 4, 1, maxWallTime, 60_000));
+                new AgentRunLimits(maxIterations, 4, 1, maxWallTime, 60_000, maxModelCalls, maxToolCalls, 8));
     }
 
     private static long number(io.haifa.agent.runtime.api.RuntimeOverrides overrides, String key, long fallback) {
