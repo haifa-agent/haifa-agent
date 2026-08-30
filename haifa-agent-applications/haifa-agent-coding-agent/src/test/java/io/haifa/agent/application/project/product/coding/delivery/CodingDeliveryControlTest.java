@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.product.coding.CodingCommandBinding;
 import io.haifa.agent.application.project.product.coding.InMemoryCodingSessionStore;
+import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.content.TextPart;
@@ -421,10 +422,11 @@ class CodingDeliveryControlTest {
         assertThat(outcome.protocolStatus()).isEqualTo(CodingRunProtocolStatus.UNCLEAN);
         assertThat(outcome.diagnosticCodes()).contains("COMPLETION_REPAIR_EXHAUSTED", "OUTPUT_CONTRACT_INVALID");
 
+        TimeProvider time = () -> NOW.plusSeconds(31);
         new CodingRunOutcomeProjectionMiddleware(
                         new CodingRunOutcomeProjectionService(policy(fixture.store()), fixture.store()),
                         fixture.store(),
-                        () -> NOW.plusSeconds(31))
+                        time)
                 .apply(new RuntimeMiddlewareContext(fixture.run(), fixture.store()));
         assertThat(fixture.store().eventsFor(fixture.run().id()))
                 .filteredOn(event -> event.type().equals("coding.task-outcome"))
@@ -595,6 +597,46 @@ class CodingDeliveryControlTest {
                 .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("codingWorkProjection")))
                 .extracting(message -> message.metadata().get("phase"))
                 .containsExactly("ORIENT", "VERIFY");
+    }
+
+    @Test
+    void workProjectionReportsPositiveLimitsWhenBudgetIsDisabled() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = AgentRun.createRoot(
+                new AgentRunId("run-disabled-budget"),
+                new AgentRunSpec(
+                        new AgentSessionId("session-1"),
+                        null,
+                        new TenantRef("tenant"),
+                        new PrincipalRef("principal", "user"),
+                        new AgentDefinitionId("coding-agent"),
+                        new AgentDefinitionVersion(1, 0, 0),
+                        "coding",
+                        "1.0",
+                        AgentRunType.CHAT,
+                        "task text",
+                        AgentRunBudget.disabled(),
+                        new AgentRunLimits(20, 0, 1, 60_000, 60_000, 64, 32, 8),
+                        new RunConfigurationSnapshotRef("config-1", "sha256:config")),
+                NOW);
+        store.insert(run);
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("message-1"),
+                run.sessionId(),
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.USER,
+                MessageStatus.COMPLETED,
+                MessageVisibility.USER_VISIBLE,
+                List.of(new TextPart("task text", "plain")),
+                trusted("CHANGE"),
+                NOW));
+
+        CodingWorkProjection projection = projection(store).project(run);
+        assertThat(projection.remainingModelCalls()).isEqualTo(64);
+        assertThat(projection.remainingToolCalls()).isEqualTo(32);
+        assertThat(projection.remainingPercent()).isEqualTo(83);
+        assertThat(projection.contextText()).contains("remainingModelCalls=64").contains("remainingToolCalls=32");
     }
 
     @Test

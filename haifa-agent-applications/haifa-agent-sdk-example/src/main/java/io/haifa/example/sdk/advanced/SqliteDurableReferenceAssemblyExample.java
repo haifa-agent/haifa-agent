@@ -145,7 +145,7 @@ public final class SqliteDurableReferenceAssemblyExample {
                 VERSION,
                 "Answer carefully using only explicitly contributed capabilities.",
                 new AgentRunBudget(65_536, 8_192, 65_536, 16, 16, 0, "USD", 100),
-                new AgentRunLimits(16, 0, 1, 120_000, 60_000),
+                new AgentRunLimits(16, 0, 1, 120_000, 60_000, 16, 16, 0),
                 policies,
                 requirements,
                 Set.of(),

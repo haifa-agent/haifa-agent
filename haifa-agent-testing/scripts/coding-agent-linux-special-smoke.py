@@ -45,7 +45,7 @@ def main() -> int:
     options = arguments()
     if platform.system() != "Linux":
         raise RuntimeError("this smoke is Linux-only")
-    repository = Path(__file__).resolve().parent.parent
+    repository = Path(__file__).resolve().parents[2]
     run_root = Path(options.run_root).absolute()
     launcher = Path(options.launcher).resolve()
     distribution = launcher.parent

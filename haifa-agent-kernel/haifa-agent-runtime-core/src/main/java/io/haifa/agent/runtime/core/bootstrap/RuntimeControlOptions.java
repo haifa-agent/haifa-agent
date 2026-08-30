@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.bootstrap;
 
 import io.haifa.agent.core.run.AgentRunBudget;
+import io.haifa.agent.core.run.AgentRunLimits;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -25,6 +26,22 @@ public final class RuntimeControlOptions {
             throw new IllegalArgumentException(FINALIZE_AFTER_TOOL_CALLS + " must be a positive integer");
         }
         return OptionalInt.of(number.intValue());
+    }
+
+    public static void validate(Map<String, Object> options, AgentRunLimits limits) {
+        Objects.requireNonNull(options, "options must not be null");
+        Objects.requireNonNull(limits, "limits must not be null");
+        options.keySet().stream()
+                .filter(key -> key.startsWith(PREFIX) && !key.equals(FINALIZE_AFTER_TOOL_CALLS))
+                .findFirst()
+                .ifPresent(key -> {
+                    throw new IllegalArgumentException("unsupported Runtime control option: " + key);
+                });
+        OptionalInt threshold = finalizeAfterToolCalls(options);
+        if (threshold.isPresent() && threshold.getAsInt() >= limits.maxToolCalls()) {
+            throw new IllegalArgumentException(
+                    FINALIZE_AFTER_TOOL_CALLS + " must be lower than the hard Tool-call limit");
+        }
     }
 
     public static void validate(Map<String, Object> options, AgentRunBudget budget) {

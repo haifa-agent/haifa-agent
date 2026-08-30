@@ -828,7 +828,7 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void modelUsageBudgetOverrunCompletesWithRetainedPartialResult() {
+    void modelUsageBudgetOverrunFailsClosedWhenHardStopQuotaExceeded() {
         Fixture fixture = fixture(request -> new AgentChatResponse(
                 "over-budget-response",
                 "deepseek-v4-pro",
@@ -842,32 +842,11 @@ class RuntimeCoreHardeningTest {
         var accepted = fixture.runtime.start(request("model-usage-budget"));
         fixture.scheduler.runAll();
 
-        var completed = fixture.store.find(accepted.runId()).orElseThrow();
-        assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
-        assertThat(completed.error()).isEmpty();
-        assertThat(completed.result()).hasValueSatisfying(result -> {
-            assertThat(result.outcome()).isEqualTo(AgentRunOutcome.PARTIAL_SUCCESS);
-            assertThat(result.summary()).isEqualTo("retained final response");
-            assertThat(result.warnings()).containsExactly("BUDGET_LIMITED:INPUT_TOKENS");
-        });
-        assertThat(fixture.store.output(accepted.runId())).contains("retained final response");
-        assertThat(fixture.store.steps(accepted.runId()))
-                .singleElement()
-                .satisfies(step -> assertThat(step.status().name()).isEqualTo("COMPLETED"));
-        assertThat(fixture.store.attemptsFor(accepted.runId())).singleElement().satisfies(attempt -> {
-            assertThat(attempt.status().name()).isEqualTo("SUCCEEDED");
-            assertThat(attempt.error()).isEmpty();
-        });
-        assertThat(fixture.store.eventsFor(accepted.runId()))
-                .filteredOn(event -> event.type().equals("run.completed"))
-                .singleElement()
-                .satisfies(event -> assertThat(event.data()).containsEntry("status", "COMPLETED"));
-        assertThat(fixture.store.messages(accepted.runId()))
-                .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("partial")))
-                .singleElement()
-                .satisfies(message -> assertThat(message.metadata())
-                        .containsEntry("completionReason", "BUDGET_LIMITED")
-                        .containsEntry("limitingResource", "INPUT_TOKENS"));
+        var failed = fixture.store.find(accepted.runId()).orElseThrow();
+        assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(failed.error()).hasValueSatisfying(error -> assertThat(error.code())
+                .isEqualTo(AgentErrorCode.RUN_INPUT_QUOTA_EXHAUSTED));
+        assertThat(failed.result()).isEmpty();
     }
 
     @Test
@@ -954,8 +933,8 @@ class RuntimeCoreHardeningTest {
 
         var failed = fixture.store.find(accepted.runId()).orElseThrow();
         assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
-        assertThat(failed.error())
-                .hasValueSatisfying(error -> assertThat(error.code()).isEqualTo(AgentErrorCode.RUN_BUDGET_EXCEEDED));
+        assertThat(failed.error()).hasValueSatisfying(error -> assertThat(error.code())
+                .isEqualTo(AgentErrorCode.RUN_EXECUTION_LIMIT_EXCEEDED));
         assertThat(failed.result()).isEmpty();
         assertThat(modelCalls).hasValue(0);
     }

@@ -12,6 +12,7 @@ import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.guard.LoopDetectedException;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
+import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
@@ -218,12 +219,18 @@ public final class AttemptExecutor {
 
     private AgentError safeError(RuntimeException error) {
         if (error instanceof AgentExecutionFailureException classified) return classified.error();
+        RuntimeQuotaExceededException quotaExceeded = findFailure(error, RuntimeQuotaExceededException.class);
         RuntimeLimitExceededException budgetExceeded = findFailure(error, RuntimeLimitExceededException.class);
         ContextBuildException contextBuild = findFailure(error, ContextBuildException.class);
         LoopDetectedException loopDetected = findFailure(error, LoopDetectedException.class);
         Map<String, Object> details;
         if (loopDetected != null) {
             details = Map.of("loopReason", loopDetected.reason().name());
+        } else if (quotaExceeded != null) {
+            details = Map.of(
+                    "resource", quotaExceeded.resource(),
+                    "limit", quotaExceeded.limit(),
+                    "used", quotaExceeded.used());
         } else if (budgetExceeded != null) {
             details = Map.of(
                     "resource", budgetExceeded.resource(),
@@ -235,23 +242,52 @@ public final class AttemptExecutor {
             details = Map.of();
         }
         return new AgentError(
-                classifiedErrorCode(budgetExceeded, contextBuild, loopDetected), details, ids.nextValue(), time.now());
+                classifiedErrorCode(quotaExceeded, budgetExceeded, contextBuild, loopDetected),
+                details,
+                ids.nextValue(),
+                time.now());
     }
 
     static AgentErrorCode classifiedErrorCode(
             RuntimeLimitExceededException budgetExceeded, ContextBuildException contextBuild) {
-        return classifiedErrorCode(budgetExceeded, contextBuild, null);
+        return classifiedErrorCode(null, budgetExceeded, contextBuild, null);
     }
 
     static AgentErrorCode classifiedErrorCode(
             RuntimeLimitExceededException budgetExceeded,
             ContextBuildException contextBuild,
             LoopDetectedException loopDetected) {
+        return classifiedErrorCode(null, budgetExceeded, contextBuild, loopDetected);
+    }
+
+    static AgentErrorCode classifiedErrorCode(
+            RuntimeQuotaExceededException quotaExceeded,
+            RuntimeLimitExceededException budgetExceeded,
+            ContextBuildException contextBuild,
+            LoopDetectedException loopDetected) {
         if (loopDetected != null) return AgentErrorCode.AGENT_LOOP_DETECTED;
-        if (budgetExceeded != null) return AgentErrorCode.RUN_BUDGET_EXCEEDED;
+        if (quotaExceeded != null) {
+            return switch (quotaExceeded.resource()) {
+                case "inputTokens" -> AgentErrorCode.RUN_INPUT_QUOTA_EXHAUSTED;
+                case "outputTokens" -> AgentErrorCode.RUN_OUTPUT_QUOTA_EXHAUSTED;
+                case "costMinorUnits" -> AgentErrorCode.RUN_COST_QUOTA_EXHAUSTED;
+                default -> AgentErrorCode.RUN_BUDGET_EXCEEDED;
+            };
+        }
+        if (budgetExceeded != null) {
+            return switch (budgetExceeded.resource()) {
+                case "iterations",
+                        "modelCalls",
+                        "toolCalls",
+                        "childRuns",
+                        "wallTimeMillis",
+                        "idleTimeMillis",
+                        "depth" -> AgentErrorCode.RUN_EXECUTION_LIMIT_EXCEEDED;
+                default -> AgentErrorCode.RUN_BUDGET_EXCEEDED;
+            };
+        }
         if (contextBuild == null) return AgentErrorCode.RUNTIME_EXECUTION_FAILED;
         return switch (contextBuild.failure()) {
-            case RUN_INPUT_BUDGET_EXHAUSTED, RUN_OUTPUT_BUDGET_EXHAUSTED -> AgentErrorCode.RUN_BUDGET_EXCEEDED;
             case MODEL_WINDOW_TOO_SMALL, REQUIRED_CONTEXT_TOO_LARGE -> AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
             case UNSUPPORTED_CONTEXT_CONTENT -> AgentErrorCode.RUNTIME_EXECUTION_FAILED;
         };

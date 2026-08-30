@@ -29,31 +29,57 @@ public final class RuntimeLimitExceededException extends IllegalStateException {
         return used;
     }
 
-    public static RuntimeLimitExceededException forRunBudget(AgentRun run) {
-        var budget = run.budget();
+    public static RuntimeLimitExceededException forRunLimits(AgentRun run) {
+        var limits = run.limits();
         var usage = run.usage();
-        if (usage.inputTokens() > budget.maxInputTokens()) {
-            return new RuntimeLimitExceededException("inputTokens", budget.maxInputTokens(), usage.inputTokens());
+        if (usage.modelCalls() >= limits.maxModelCalls()) {
+            return new RuntimeLimitExceededException("modelCalls", limits.maxModelCalls(), usage.modelCalls());
         }
-        if (usage.outputTokens() > budget.maxOutputTokens()) {
-            return new RuntimeLimitExceededException("outputTokens", budget.maxOutputTokens(), usage.outputTokens());
+        if (usage.toolCalls() > limits.maxToolCalls()) {
+            return new RuntimeLimitExceededException("toolCalls", limits.maxToolCalls(), usage.toolCalls());
         }
-        if (usage.cachedInputTokens() > budget.maxCachedInputTokens()) {
-            return new RuntimeLimitExceededException(
-                    "cachedInputTokens", budget.maxCachedInputTokens(), usage.cachedInputTokens());
+        if (usage.childRuns() > limits.maxChildRuns()) {
+            return new RuntimeLimitExceededException("childRuns", limits.maxChildRuns(), usage.childRuns());
         }
-        if (usage.toolCalls() > budget.maxToolCalls()) {
-            return new RuntimeLimitExceededException("toolCalls", budget.maxToolCalls(), usage.toolCalls());
+        return new RuntimeLimitExceededException("runLimits", 0, 0);
+    }
+
+    public static RuntimeLimitExceededException forRunBudget(AgentRun run) {
+        var quota = run.quotaPolicy();
+        var limits = run.limits();
+        var usage = run.usage();
+        if (usage.modelCalls() >= limits.maxModelCalls()) {
+            return new RuntimeLimitExceededException("modelCalls", limits.maxModelCalls(), usage.modelCalls());
         }
-        if (usage.modelCalls() > budget.maxModelCalls()) {
-            return new RuntimeLimitExceededException("modelCalls", budget.maxModelCalls(), usage.modelCalls());
+        if (usage.toolCalls() > limits.maxToolCalls()) {
+            return new RuntimeLimitExceededException("toolCalls", limits.maxToolCalls(), usage.toolCalls());
         }
-        if (usage.childRuns() > budget.maxChildRuns()) {
-            return new RuntimeLimitExceededException("childRuns", budget.maxChildRuns(), usage.childRuns());
+        if (usage.childRuns() > limits.maxChildRuns()) {
+            return new RuntimeLimitExceededException("childRuns", limits.maxChildRuns(), usage.childRuns());
         }
-        if (usage.costMinorUnits() > budget.maxCostMinorUnits()) {
-            return new RuntimeLimitExceededException(
-                    "costMinorUnits", budget.maxCostMinorUnits(), usage.costMinorUnits());
+        if (quota.mode() == io.haifa.agent.core.run.QuotaMode.HARD_STOP) {
+            if (quota.maxInputTokens() != null
+                    && quota.maxInputTokens() > 0
+                    && usage.inputTokens() > quota.maxInputTokens()) {
+                return new RuntimeLimitExceededException("inputTokens", quota.maxInputTokens(), usage.inputTokens());
+            }
+            if (quota.maxOutputTokens() != null
+                    && quota.maxOutputTokens() > 0
+                    && usage.outputTokens() > quota.maxOutputTokens()) {
+                return new RuntimeLimitExceededException("outputTokens", quota.maxOutputTokens(), usage.outputTokens());
+            }
+            if (quota.maxCachedInputTokens() != null
+                    && quota.maxCachedInputTokens() > 0
+                    && usage.cachedInputTokens() > quota.maxCachedInputTokens()) {
+                return new RuntimeLimitExceededException(
+                        "cachedInputTokens", quota.maxCachedInputTokens(), usage.cachedInputTokens());
+            }
+            if (quota.maxCostMinorUnits() != null
+                    && quota.maxCostMinorUnits() > 0
+                    && usage.costMinorUnits() > quota.maxCostMinorUnits()) {
+                return new RuntimeLimitExceededException(
+                        "costMinorUnits", quota.maxCostMinorUnits(), usage.costMinorUnits());
+            }
         }
         return new RuntimeLimitExceededException("runBudget", 0, 0);
     }

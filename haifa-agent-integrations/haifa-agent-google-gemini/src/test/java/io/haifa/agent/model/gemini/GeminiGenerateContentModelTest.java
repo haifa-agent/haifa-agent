@@ -308,6 +308,197 @@ class GeminiGenerateContentModelTest {
     }
 
     @Test
+    void leadingModelToolCallWithoutUserAnchorFailsPreDispatch() {
+        var assistant = ModelMessage.assistant(
+                "",
+                List.of(new ModelToolCall(
+                        new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("call-1"), "get_alpha", Map.of())),
+                io.haifa.agent.model.api.SensitiveModelReasoning.of(
+                        "{\"version\":1,\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"get_alpha\",\"args\":{}},\"thoughtSignature\":\"sig\"}]}"));
+        var toolResult = ModelMessage.tool(new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("call-1"), "ok");
+
+        assertThatThrownBy(() -> standardStubModel()
+                        .invoke(request(
+                                standardSnapshot(),
+                                List.of(ModelMessage.text(ModelMessageRole.SYSTEM, "sys"), assistant, toolResult),
+                                List.of(tool("get_alpha")))))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.INVALID_REQUEST);
+                    assertThat(failure.providerCode()).isEqualTo("gemini_turn_anchor_missing");
+                });
+    }
+
+    @Test
+    void leadingOrphanFunctionResponseWithoutUserAnchorFailsPreDispatch() {
+        var toolResult = ModelMessage.tool(new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("call-1"), "ok");
+
+        assertThatThrownBy(() -> standardStubModel()
+                        .invoke(request(
+                                standardSnapshot(),
+                                List.of(ModelMessage.text(ModelMessageRole.SYSTEM, "sys"), toolResult),
+                                List.of(tool("get_alpha")))))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.INVALID_REQUEST);
+                    assertThat(failure.providerCode()).isEqualTo("gemini_tool_call_unmatched");
+                });
+    }
+
+    @Test
+    void emptyContentsFailsPreDispatch() {
+        assertThatThrownBy(() -> standardStubModel()
+                        .invoke(request(
+                                standardSnapshot(),
+                                List.of(ModelMessage.text(ModelMessageRole.SYSTEM, "only system")),
+                                List.of())))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.INVALID_REQUEST);
+                    assertThat(failure.providerCode()).isEqualTo("gemini_contents_empty");
+                });
+    }
+
+    @Test
+    void trailingFunctionCallWithoutResponseFailsPreDispatch() {
+        var assistantCall = ModelMessage.assistant(
+                "",
+                List.of(new ModelToolCall(
+                        new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("call-1"),
+                        "get_alpha",
+                        Map.of("step", 1))),
+                io.haifa.agent.model.api.SensitiveModelReasoning.of(
+                        "{\"version\":1,\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"get_alpha\",\"args\":{\"step\":1}},\"thoughtSignature\":\"sig-1\"}]}"));
+
+        var messages = List.of(ModelMessage.text(ModelMessageRole.USER, "execute step"), assistantCall);
+
+        assertThatThrownBy(() ->
+                        standardStubModel().invoke(request(standardSnapshot(), messages, List.of(tool("get_alpha")))))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.INVALID_REQUEST);
+                    assertThat(failure.providerCode()).isEqualTo("gemini_tool_call_unmatched");
+                });
+    }
+
+    @Test
+    void orphanFunctionResponseAfterUserAnchorFailsPreDispatch() {
+        var orphanToolResult =
+                ModelMessage.tool(new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("orphan-call"), "result");
+
+        var messages = List.of(ModelMessage.text(ModelMessageRole.USER, "execute step"), orphanToolResult);
+
+        assertThatThrownBy(() ->
+                        standardStubModel().invoke(request(standardSnapshot(), messages, List.of(tool("get_alpha")))))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.INVALID_REQUEST);
+                    assertThat(failure.providerCode()).isEqualTo("gemini_tool_call_unmatched");
+                });
+    }
+
+    @Test
+    void sequentialFunctionCallingRequestPreservesUserTurnAnchorAndThoughtSignatures() throws Exception {
+        AtomicReference<HttpExchange> exchange = new AtomicReference<>();
+        AtomicReference<JsonNode> requestBody = new AtomicReference<>();
+        start(exchange, requestBody, List.of(Response.json(200, textResponse("all done"))));
+
+        var assistant1 = ModelMessage.assistant(
+                "",
+                List.of(new ModelToolCall(
+                        new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("call-1"),
+                        "get_alpha",
+                        Map.of("step", 1))),
+                io.haifa.agent.model.api.SensitiveModelReasoning.of(
+                        "{\"version\":1,\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"get_alpha\",\"args\":{\"step\":1}},\"thoughtSignature\":\"sig-1\"}]}"));
+        var toolResult1 = ModelMessage.tool(
+                new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("call-1"),
+                "result 1",
+                Map.of("data", "v1"),
+                false);
+
+        var assistant2 = ModelMessage.assistant(
+                "",
+                List.of(new ModelToolCall(
+                        new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("call-2"),
+                        "get_alpha",
+                        Map.of("step", 2))),
+                io.haifa.agent.model.api.SensitiveModelReasoning.of(
+                        "{\"version\":1,\"parts\":[{\"functionCall\":{\"id\":\"call-2\",\"name\":\"get_alpha\",\"args\":{\"step\":2}},\"thoughtSignature\":\"sig-2\"}]}"));
+        var toolResult2 = ModelMessage.tool(
+                new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("call-2"),
+                "result 2",
+                Map.of("data", "v2"),
+                false);
+
+        var messages = List.of(
+                ModelMessage.text(ModelMessageRole.SYSTEM, "conversation summary facts"),
+                ModelMessage.text(ModelMessageRole.USER, "execute sequential steps"),
+                assistant1,
+                toolResult1,
+                assistant2,
+                toolResult2);
+
+        var response = standardStubModel().invoke(request(standardSnapshot(), messages, List.of(tool("get_alpha"))));
+
+        assertThat(response.content()).isEqualTo("all done");
+
+        JsonNode body = requestBody.get();
+        assertThat(body.path("systemInstruction")
+                        .path("parts")
+                        .get(0)
+                        .path("text")
+                        .asText())
+                .isEqualTo("conversation summary facts");
+
+        JsonNode contents = body.path("contents");
+        assertThat(contents).hasSize(5);
+
+        // contents[0] = User turn anchor
+        assertThat(contents.get(0).path("role").asText()).isEqualTo("user");
+        assertThat(contents.get(0).path("parts").get(0).path("text").asText()).isEqualTo("execute sequential steps");
+
+        // contents[1] = Model functionCall 1 + signature
+        assertThat(contents.get(1).path("role").asText()).isEqualTo("model");
+        assertThat(contents.get(1)
+                        .path("parts")
+                        .get(0)
+                        .path("functionCall")
+                        .path("id")
+                        .asText())
+                .isEqualTo("call-1");
+        assertThat(contents.get(1).path("parts").get(0).path("thoughtSignature").asText())
+                .isEqualTo("sig-1");
+
+        // contents[2] = User functionResponse 1
+        assertThat(contents.get(2).path("role").asText()).isEqualTo("user");
+        assertThat(contents.get(2)
+                        .path("parts")
+                        .get(0)
+                        .path("functionResponse")
+                        .path("id")
+                        .asText())
+                .isEqualTo("call-1");
+
+        // contents[3] = Model functionCall 2 + signature
+        assertThat(contents.get(3).path("role").asText()).isEqualTo("model");
+        assertThat(contents.get(3)
+                        .path("parts")
+                        .get(0)
+                        .path("functionCall")
+                        .path("id")
+                        .asText())
+                .isEqualTo("call-2");
+        assertThat(contents.get(3).path("parts").get(0).path("thoughtSignature").asText())
+                .isEqualTo("sig-2");
+
+        // contents[4] = User functionResponse 2
+        assertThat(contents.get(4).path("role").asText()).isEqualTo("user");
+        assertThat(contents.get(4)
+                        .path("parts")
+                        .get(0)
+                        .path("functionResponse")
+                        .path("id")
+                        .asText())
+                .isEqualTo("call-2");
+    }
+
+    @Test
     void rejectsUnapprovedDialectCredentialReferenceBeforeNetwork() {
         ResolvedModelSnapshot invalid = snapshot(
                 GeminiDialects.CLIPROXYAPI_ANTIGRAVITY, URI.create("http://127.0.0.1:8317/v1beta"), "env://OTHER");
@@ -454,20 +645,21 @@ class GeminiGenerateContentModelTest {
     }
 
     private ResolvedModelSnapshot standardSnapshot() {
+        int port = server == null ? 8080 : server.getAddress().getPort();
         return snapshot(
-                GeminiDialects.STANDARD,
-                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1beta"),
-                "env://GEMINI_API_KEY");
+                GeminiDialects.STANDARD, URI.create("http://127.0.0.1:" + port + "/v1beta"), "env://GEMINI_API_KEY");
     }
 
     private ResolvedModelSnapshot dialectSnapshot() {
+        int port = server == null ? 8080 : server.getAddress().getPort();
         return snapshot(
                 GeminiDialects.CLIPROXYAPI_ANTIGRAVITY,
-                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1beta"),
+                URI.create("http://127.0.0.1:" + port + "/v1beta"),
                 GeminiGenerateContentModel.CLIPROXY_CREDENTIAL_REF);
     }
 
     private ResolvedModelSnapshot antigravityDirectSnapshot(String project) {
+        int port = server == null ? 8080 : server.getAddress().getPort();
         return ResolvedModelSnapshot.create(
                 new ModelProviderId("google-antigravity"),
                 "1",
@@ -478,7 +670,7 @@ class GeminiGenerateContentModelTest {
                 GeminiGenerateContentModel.ADAPTER_VERSION,
                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
                 GeminiDialects.ANTIGRAVITY_DIRECT,
-                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1internal"),
+                URI.create("http://127.0.0.1:" + port + "/v1internal"),
                 new CredentialRef("model-auth://google-antigravity/default"),
                 true,
                 EnumSet.of(

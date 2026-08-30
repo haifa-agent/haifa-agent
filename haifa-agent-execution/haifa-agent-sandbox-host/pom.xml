@@ -10,6 +10,7 @@
     <artifactId>haifa-agent-sandbox-host</artifactId>
     <name>Haifa Agent Host Guarded Sandbox</name>
     <dependencies>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-common</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-sandbox-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project</artifactId></dependency>
         <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-api</artifactId><scope>test</scope></dependency>

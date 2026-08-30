@@ -99,11 +99,7 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         int safetyMargin =
                 Math.min(16_384, Math.max(256, model.configuration().model().contextWindow() / divisor));
         ContextWindowBudget budget = ContextWindowBudget.calculate(
-                model.configuration().model(),
-                run.budget(),
-                run.usage(),
-                model.configuration().model().maxOutputTokens(),
-                safetyMargin);
+                model.configuration().model(), model.configuration().model().maxOutputTokens(), safetyMargin);
         HeuristicTokenEstimator estimator = new HeuristicTokenEstimator();
         long nonSessionTokens = middlewareContext.prompts().stream()
                         .mapToLong(estimator::estimate)
@@ -133,8 +129,6 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 run.principal(),
                 loopContext.iteration(),
                 model.configuration().model(),
-                run.budget(),
-                run.usage(),
                 middlewareContext.prompts(),
                 items,
                 effectiveTools,

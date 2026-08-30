@@ -7,9 +7,7 @@ import io.haifa.agent.application.project.context.WorkspaceFileContextSource;
 import io.haifa.agent.context.api.ContextBuildRequest;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.core.run.AgentRunUsage;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
@@ -141,8 +139,6 @@ class ProjectContextSourceTest {
                         100,
                         Map.of("transport", "https"),
                         Map.of("thinking", "disabled")),
-                new AgentRunBudget(1000, 1000, 0, 10, 10, 1, "USD", 100),
-                AgentRunUsage.ZERO,
                 List.of(),
                 List.of(),
                 List.of(),
