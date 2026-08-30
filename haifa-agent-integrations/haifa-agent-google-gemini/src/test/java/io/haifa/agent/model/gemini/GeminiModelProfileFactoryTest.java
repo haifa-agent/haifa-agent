@@ -37,13 +37,12 @@ class GeminiModelProfileFactoryTest {
     }
 
     @Test
-    void verifiesGovernedStandardDialect() {
+    void rejectsStandardDialectWithoutIndependentLiveEvidence() {
         var profile = GeminiModelProfileFactory.fromSnapshot(
                 snapshot("google-gemini", GeminiDialects.STANDARD, "gemini-3-flash"), LocalDate.of(2026, 8, 27));
 
-        assertThat(profile.status()).isEqualTo(ModelProfileStatus.VERIFIED);
-        assertThat(profile.toolReasoningContinuationRequired()).isTrue();
-        assertThat(profile.selectable()).isTrue();
+        assertThat(profile.status()).isEqualTo(ModelProfileStatus.UNVERIFIED);
+        assertThat(profile.selectable()).isFalse();
     }
 
     @Test

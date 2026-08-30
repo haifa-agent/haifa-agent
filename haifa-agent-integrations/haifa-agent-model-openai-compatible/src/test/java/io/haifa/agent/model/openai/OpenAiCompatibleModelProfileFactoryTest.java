@@ -340,15 +340,12 @@ class OpenAiCompatibleModelProfileFactoryTest {
 
     @Test
     void verifiesAllAdmittedBindingsBothWithAndWithoutReasoningCapabilities() {
-        for (var admitted : OpenAiCompatibleBindingRegistry.find(
-                        "deepseek",
-                        "deepseek-v4-flash",
-                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
-                        OpenAiCompatibleDialects.DEEPSEEK)
-                .stream()
-                .toList()) {
-            assertThat(admitted).isNotNull();
-        }
+        var admitted = OpenAiCompatibleBindingRegistry.find(
+                "deepseek",
+                "deepseek-v4-flash",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.DEEPSEEK);
+        assertThat(admitted).isPresent();
 
         // Test every admitted binding
         var reasoningSnapshot = snapshot(

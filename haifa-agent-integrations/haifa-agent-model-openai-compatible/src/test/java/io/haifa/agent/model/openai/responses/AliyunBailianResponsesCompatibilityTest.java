@@ -21,6 +21,9 @@ class AliyunBailianResponsesCompatibilityTest {
                 .isEqualTo(OpenAiResponsesDialects.Profile.ALIYUN_BAILIAN);
         assertThatThrownBy(() -> OpenAiResponsesDialects.resolve(snapshot("future-qwen", endpoint()), false))
                 .hasMessageContaining("not verified");
+        assertThatThrownBy(() ->
+                        OpenAiResponsesDialects.resolve(snapshot("fake-bailian", "qwen3.7-plus", endpoint()), false))
+                .hasMessageContaining("not verified");
         assertThatThrownBy(() -> OpenAiResponsesDialects.resolve(
                         snapshot("qwen3.7-plus", URI.create("https://dashscope.aliyuncs.com/compatible-mode/v1")),
                         false))
@@ -32,8 +35,12 @@ class AliyunBailianResponsesCompatibilityTest {
     }
 
     private static ResolvedModelSnapshot snapshot(String providerModelId, URI endpoint) {
+        return snapshot("aliyun-bailian", providerModelId, endpoint);
+    }
+
+    private static ResolvedModelSnapshot snapshot(String providerId, String providerModelId, URI endpoint) {
         return ResolvedModelSnapshot.create(
-                new ModelProviderId("aliyun-bailian"),
+                new ModelProviderId(providerId),
                 "1",
                 new ModelDefinitionId("bailian-responses"),
                 "1",
