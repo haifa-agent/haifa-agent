@@ -4,7 +4,6 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
-import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.ExternalLoginOperation;
 import io.haifa.agent.auth.localmodel.ExternalLoginOperationContext;
@@ -139,7 +138,7 @@ public final class AntigravityBrowserLoginOperation implements ExternalLoginOper
     private StoredExternalCredential credential(AntigravityTokenClient.TokenSet tokenSet) {
         return new StoredExternalCredential(
                 CREDENTIAL_REFERENCE,
-                ExternalLoginMethodId.GOOGLE_ANTIGRAVITY,
+                AntigravityExternalLoginMethod.METHOD_ID,
                 registration.reference(),
                 tokenSet.accessToken(),
                 tokenSet.refreshToken(),
@@ -271,7 +270,7 @@ public final class AntigravityBrowserLoginOperation implements ExternalLoginOper
     private ExternalLoginAttemptSnapshot snapshot(ExternalLoginAttemptState state, Optional<String> reason) {
         return new ExternalLoginAttemptSnapshot(
                 context.attemptId(),
-                ExternalLoginMethodId.GOOGLE_ANTIGRAVITY,
+                AntigravityExternalLoginMethod.METHOD_ID,
                 ExternalLoginMode.BROWSER,
                 state,
                 Optional.empty(),

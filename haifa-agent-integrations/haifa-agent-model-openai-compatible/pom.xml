@@ -50,5 +50,10 @@
             <artifactId>haifa-agent-local-model-auth</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-local-model-auth-codex-local-compat</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

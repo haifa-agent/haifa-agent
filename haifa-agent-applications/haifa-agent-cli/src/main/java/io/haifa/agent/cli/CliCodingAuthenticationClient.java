@@ -8,9 +8,10 @@ import io.haifa.agent.application.project.product.coding.client.CodingDeviceLogi
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
-import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
+import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.model.api.CredentialRef;
 import java.time.Duration;
 import java.util.Collection;
@@ -122,7 +123,7 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     public CodingAuthenticationView loginCodexBrowser(
             Consumer<CodingBrowserLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
         ExternalLoginAttemptSnapshot started =
-                authentication.startExternalLogin(ExternalLoginMethodId.OPENAI_CODEX, ExternalLoginMode.BROWSER);
+                authentication.startExternalLogin(CodexExternalLoginMethod.METHOD_ID, ExternalLoginMode.BROWSER);
         return await(
                 started.attemptId(),
                 Objects.requireNonNull(instructions, "instructions must not be null"),
@@ -139,7 +140,7 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     public CodingAuthenticationView loginCodexDevice(
             Consumer<CodingDeviceLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
         ExternalLoginAttemptSnapshot started =
-                authentication.startExternalLogin(ExternalLoginMethodId.OPENAI_CODEX, ExternalLoginMode.DEVICE_CODE);
+                authentication.startExternalLogin(CodexExternalLoginMethod.METHOD_ID, ExternalLoginMode.DEVICE_CODE);
         return await(
                 started.attemptId(),
                 null,
@@ -151,7 +152,7 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     public CodingAuthenticationView loginAntigravityBrowser(
             Consumer<CodingBrowserLoginView> instructions, Consumer<CodingAuthenticationProgressView> progress) {
         ExternalLoginAttemptSnapshot started =
-                authentication.startExternalLogin(ExternalLoginMethodId.GOOGLE_ANTIGRAVITY, ExternalLoginMode.BROWSER);
+                authentication.startExternalLogin(AntigravityExternalLoginMethod.METHOD_ID, ExternalLoginMode.BROWSER);
         return await(
                 started.attemptId(),
                 Objects.requireNonNull(instructions, "instructions must not be null"),

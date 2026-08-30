@@ -58,6 +58,7 @@ class OpenAiCodexLiveIT {
         HttpClient http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .followRedirects(HttpClient.Redirect.NEVER)
+                .proxy(java.net.ProxySelector.getDefault())
                 .build();
         FileLocalModelAuthStore store = new FileLocalModelAuthStore(authFile, json);
         var codexMethod = CodexLocalCompatibilityRegistrationFactory.create(environment)
@@ -78,7 +79,7 @@ class OpenAiCodexLiveIT {
         var authenticationService =
                 new LocalModelAuthenticationService(store, Optional.empty(), credentials, environment::get);
         var model = new OpenAiResponsesModel(http, json, credentials, false, 1024 * 1024, ref -> authenticationService
-                .findCodexAccountId(ref)
+                .findExternalAccountId(ref, CodexExternalLoginMethod.METHOD_ID)
                 .map(CodexAccountIdentity::new));
 
         var request = new AgentChatRequest(

@@ -21,6 +21,8 @@ import java.util.function.Supplier;
 
 /** External-login driver for Google Antigravity OAuth and CloudCode PA API access. */
 public final class AntigravityExternalLoginMethod implements ExternalLoginMethod {
+    public static final ExternalLoginMethodId METHOD_ID = new ExternalLoginMethodId("google-antigravity");
+
     private final AntigravityOAuthClientRegistration registration;
     private final AntigravityTokenClient tokens;
     private final HttpClient http;
@@ -48,7 +50,7 @@ public final class AntigravityExternalLoginMethod implements ExternalLoginMethod
         this.browserTimeout = Objects.requireNonNull(browserTimeout, "browserTimeout must not be null");
         this.projectSink = Objects.requireNonNull(projectSink, "projectSink must not be null");
         this.descriptor = new ExternalLoginMethodDescriptor(
-                ExternalLoginMethodId.GOOGLE_ANTIGRAVITY,
+                METHOD_ID,
                 "Google sign-in (Antigravity)",
                 Set.of(ExternalLoginMode.BROWSER),
                 registration.unofficialLocalCompatibility(),
@@ -146,7 +148,7 @@ public final class AntigravityExternalLoginMethod implements ExternalLoginMethod
 
     private StoredExternalCredential requireCompatible(StoredExternalCredential credential) {
         StoredExternalCredential current = Objects.requireNonNull(credential, "credential must not be null");
-        if (!ExternalLoginMethodId.GOOGLE_ANTIGRAVITY.equals(current.methodId())
+        if (!METHOD_ID.equals(current.methodId())
                 || !registration.reference().equals(current.clientRegistrationRef())) {
             throw new ExternalLoginMethodUnavailableException("AUTH_REAUTH_REQUIRED");
         }

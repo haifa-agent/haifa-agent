@@ -21,7 +21,7 @@ class LocalModelAuthFileCodecTest {
                 external,
                 new StoredExternalCredential(
                         external,
-                        ExternalLoginMethodId.OPENAI_CODEX,
+                        new ExternalLoginMethodId("openai-codex"),
                         "registration",
                         "access-secret",
                         "refresh-secret",
