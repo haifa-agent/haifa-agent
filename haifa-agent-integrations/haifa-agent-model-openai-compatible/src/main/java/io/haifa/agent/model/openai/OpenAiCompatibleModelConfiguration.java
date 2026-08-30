@@ -11,8 +11,6 @@ import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
-import io.haifa.agent.model.openai.anthropic.AnthropicMessagesModel;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesDialects;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import java.net.URI;
@@ -75,8 +73,7 @@ public final class OpenAiCompatibleModelConfiguration {
     /** API styles implemented by this Integration. */
     public enum ApiStyle {
         CHAT_COMPLETIONS(ModelApiStyles.OPENAI_CHAT_COMPLETIONS),
-        RESPONSES(ModelApiStyles.OPENAI_RESPONSES),
-        ANTHROPIC_MESSAGES(ModelApiStyles.ANTHROPIC_MESSAGES);
+        RESPONSES(ModelApiStyles.OPENAI_RESPONSES);
 
         private final ApiStyleId id;
 
@@ -284,9 +281,6 @@ public final class OpenAiCompatibleModelConfiguration {
                     && toolChoice != ToolChoice.AUTO) {
                 throw new IllegalArgumentException("DeepSeek Responses supports only AUTO toolChoice");
             }
-            if (responseFormat == ResponseFormat.JSON_OBJECT && apiStyle == ApiStyle.ANTHROPIC_MESSAGES) {
-                throw new IllegalArgumentException("Anthropic Messages does not support responseFormat");
-            }
             if (responseFormat == ResponseFormat.JSON_OBJECT
                     && !resolvedCapabilities.contains(ModelCapability.STRUCTURED_OUTPUT)) {
                 throw new IllegalArgumentException("JSON_OBJECT responseFormat requires STRUCTURED_OUTPUT capability");
@@ -309,7 +303,7 @@ public final class OpenAiCompatibleModelConfiguration {
             if (dialect == Dialect.DEEPSEEK) values.put("thinking", "disabled");
             if (temperature != null) values.put("temperature", temperature);
             if (toolChoice != null) {
-                values.put("tool_choice", OpenAiCompatibleModelConfiguration.toolChoice(apiStyle, toolChoice));
+                values.put("tool_choice", OpenAiCompatibleModelConfiguration.toolChoice(toolChoice));
             }
             if (responseFormat == ResponseFormat.JSON_OBJECT) {
                 values.put("response_format", Map.of("type", "json_object"));
@@ -342,11 +336,6 @@ public final class OpenAiCompatibleModelConfiguration {
                         OpenAiResponsesModel.ADAPTER_TYPE,
                         OpenAiResponsesModel.ADAPTER_VERSION,
                         new OpenAiResponsesModel(http, json, credentials, false, MAX_RESPONSE_BYTES));
-            case ANTHROPIC_MESSAGES ->
-                new Adapter(
-                        AnthropicMessagesModel.ADAPTER_TYPE,
-                        AnthropicMessagesModel.ADAPTER_VERSION,
-                        new AnthropicMessagesModel(http, json, credentials, false, MAX_RESPONSE_BYTES));
         };
     }
 
@@ -355,12 +344,10 @@ public final class OpenAiCompatibleModelConfiguration {
         return switch (style) {
             case CHAT_COMPLETIONS -> OpenAiCompatibleDialects.DEEPSEEK;
             case RESPONSES -> OpenAiResponsesDialects.DEEPSEEK;
-            case ANTHROPIC_MESSAGES -> AnthropicMessagesDialects.DEEPSEEK;
         };
     }
 
-    private static Object toolChoice(ApiStyle style, ToolChoice choice) {
-        if (style == ApiStyle.ANTHROPIC_MESSAGES && choice == ToolChoice.REQUIRED) return "any";
+    private static Object toolChoice(ToolChoice choice) {
         return choice.name().toLowerCase(java.util.Locale.ROOT);
     }
 
@@ -374,17 +361,12 @@ public final class OpenAiCompatibleModelConfiguration {
         if (!"api.deepseek.com".equalsIgnoreCase(endpoint.getHost())) {
             throw new IllegalArgumentException("DeepSeek endpoint host must be api.deepseek.com");
         }
-        String expectedPath = style == ApiStyle.ANTHROPIC_MESSAGES ? "/anthropic" : "";
-        if (!expectedPath.equals(normalizedPath(endpoint))) {
+        if (!"".equals(normalizedPath(endpoint))) {
             throw new IllegalArgumentException("DeepSeek endpoint path is invalid for the selected API style");
         }
         if (style == ApiStyle.RESPONSES && !"deepseek-v4-flash".equals(providerModelId)) {
             throw new IllegalArgumentException(
                     "DeepSeek Responses supports only the verified deepseek-v4-flash profile");
-        }
-        if (style == ApiStyle.ANTHROPIC_MESSAGES
-                && !Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(providerModelId)) {
-            throw new IllegalArgumentException("DeepSeek Anthropic model profile is not verified");
         }
     }
 

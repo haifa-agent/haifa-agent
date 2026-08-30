@@ -77,14 +77,6 @@ public final class OpenAiCompatibleModelProfileFactory {
     }
 
     private static Optional<AdmittedBindingSpec> findAdmission(ResolvedModelSnapshot snapshot) {
-        if (ModelApiStyles.ANTHROPIC_MESSAGES.equals(snapshot.apiStyle())) {
-            return AnthropicMessagesBindingRegistry.find(snapshot)
-                    .map(b -> new AdmittedBindingSpec(
-                            b.reasoningBehavior(),
-                            b.allowedReasoningModes(),
-                            b.allowedReasoningEfforts(),
-                            b.toolReasoningContinuationRequired()));
-        }
         if (ModelApiStyles.OPENAI_RESPONSES.equals(snapshot.apiStyle())) {
             return OpenAiResponsesBindingRegistry.find(snapshot)
                     .map(b -> new AdmittedBindingSpec(

@@ -1,4 +1,4 @@
-package io.haifa.agent.model.openai.anthropic;
+package io.haifa.agent.model.anthropic;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -18,8 +18,8 @@ import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolSpecification;
+import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -102,7 +102,8 @@ class AnthropicMessagesLiveIT {
         return new AnthropicMessagesModel(
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build(),
                 new ObjectMapper(),
-                new EnvironmentCredentialResolver(),
+                reference -> new ResolvedCredential(
+                        requireEnvironment(reference.value().replace("env://", ""))),
                 false,
                 1024 * 1024);
     }
