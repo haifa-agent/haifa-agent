@@ -30,9 +30,7 @@ import io.haifa.agent.context.trace.ContextSelectionDecision;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.core.run.AgentRunUsage;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
@@ -127,7 +125,7 @@ class ContextCoreTest {
     }
 
     @Test
-    void requiredOverflowAndExhaustedRunBudgetsFailWithTypedReasons() {
+    void requiredOverflowAndModelWindowTooSmallFailWithTypedReasons() {
         ContextItem tooLarge =
                 item("too-large", "large-hash", 61, ContextPriority.CRITICAL, ContextRetention.MUST_KEEP, true);
         assertThatThrownBy(() -> builder().build(request(List.of(tooLarge), 20, 10)))
@@ -135,27 +133,19 @@ class ContextCoreTest {
                 .extracting(error -> ((ContextBuildException) error).failure())
                 .isEqualTo(ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE);
 
-        ContextBuildRequest exhausted = new ContextBuildRequest(
-                new AgentRunId("run"),
-                new AgentSessionId("session"),
-                new TenantRef("tenant"),
-                new PrincipalRef("principal", "user"),
-                1,
-                snapshot(),
-                new AgentRunBudget(10, 100, 0, 10, 10, 1, "USD", 100),
-                new AgentRunUsage(10, 0, 0, 0, 0, 0, 0, 0),
-                List.of(prompt()),
-                List.of(),
-                List.of(),
-                20,
-                10,
-                "none-v1",
-                "none-v1",
-                0);
-        assertThatThrownBy(() -> builder().build(exhausted))
+        assertThatThrownBy(() -> io.haifa.agent.context.budget.ContextWindowBudget.calculate(snapshot(), 40, 70))
                 .isInstanceOf(ContextBuildException.class)
                 .extracting(error -> ((ContextBuildException) error).failure())
-                .isEqualTo(ContextBuildFailure.RUN_INPUT_BUDGET_EXHAUSTED);
+                .isEqualTo(ContextBuildFailure.MODEL_WINDOW_TOO_SMALL);
+    }
+
+    @Test
+    void contextWindowBudgetCalculationIsIndependentOfCumulativeUsage() {
+        var budget = io.haifa.agent.context.budget.ContextWindowBudget.calculate(snapshot(), 20, 10);
+        assertThat(budget.modelContextWindow()).isEqualTo(100);
+        assertThat(budget.outputReserve()).isEqualTo(20);
+        assertThat(budget.safetyMargin()).isEqualTo(10);
+        assertThat(budget.availableInputTokens()).isEqualTo(70);
     }
 
     private static DefaultAgentContextBuilder builder() {
@@ -170,8 +160,6 @@ class ContextCoreTest {
                 new PrincipalRef("principal", "user"),
                 1,
                 snapshot(),
-                new AgentRunBudget(1_000, 1_000, 0, 10, 10, 1, "USD", 100),
-                AgentRunUsage.ZERO,
                 List.of(prompt()),
                 items,
                 List.of(),

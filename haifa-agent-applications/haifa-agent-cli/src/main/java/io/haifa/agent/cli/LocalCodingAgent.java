@@ -708,21 +708,16 @@ final class LocalCodingAgent implements AutoCloseable {
                             profileId,
                             "1.0.0",
                             AgentRunType.CHAT,
-                            new AgentRunBudget(
-                                    1_000_000,
-                                    1_000_000,
-                                    1_000_000,
-                                    configuration.maxToolCalls(),
-                                    64,
-                                    8,
-                                    "USD",
-                                    1_000_000),
+                            AgentRunBudget.disabled(),
                             new AgentRunLimits(
                                     configuration.maxIterations(),
                                     4,
                                     1,
                                     configuration.timeout().toMillis(),
-                                    configuration.timeout().toMillis()),
+                                    configuration.timeout().toMillis(),
+                                    64,
+                                    configuration.maxToolCalls(),
+                                    8),
                             Optional.ofNullable(modelSnapshots.get(profileId))
                                     .or(() -> "cli-coding".equals(profileId)
                                             ? Optional.of(modelSnapshots.get(

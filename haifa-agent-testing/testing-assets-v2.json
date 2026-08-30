@@ -79,6 +79,54 @@
       "coverageMode": "EXACT"
     },
     {
+      "assetId": "coding-agent-linux-special-smoke-driver",
+      "path": "haifa-agent-testing/scripts/coding-agent-linux-special-smoke.py",
+      "kind": "SCRIPT",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "coding-agent",
+      "referencedBy": ["haifa-agent-testing/scripts/README.md"],
+      "replacement": "",
+      "rationale": "Deterministic Coding Agent Linux filesystem, Git, process, and package smoke driver.",
+      "coverageMode": "EXACT"
+    },
+    {
+      "assetId": "terminal-ui-unix-pty-smoke-driver",
+      "path": "haifa-agent-testing/scripts/terminal-ui-unix-pty-smoke.py",
+      "kind": "SCRIPT",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "coding-terminal",
+      "referencedBy": ["haifa-agent-testing/scripts/README.md"],
+      "replacement": "",
+      "rationale": "No-provider Unix PTY smoke driver for production Terminal startup, draft editing, resize, and quit.",
+      "coverageMode": "EXACT"
+    },
+    {
+      "assetId": "terminal-ui-conpty-acceptance-driver",
+      "path": "haifa-agent-testing/scripts/terminal-ui-conpty-acceptance.mjs",
+      "kind": "SCRIPT",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "coding-terminal",
+      "referencedBy": ["haifa-agent-testing/scripts/README.md"],
+      "replacement": "",
+      "rationale": "Production CLI Windows ConPTY automated acceptance and evidence generation driver.",
+      "coverageMode": "EXACT"
+    },
+    {
+      "assetId": "terminal-ui-macos-manual-launcher",
+      "path": "haifa-agent-testing/scripts/run-haifa-coding-terminal.command",
+      "kind": "SCRIPT",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "coding-terminal",
+      "referencedBy": ["haifa-agent-testing/scripts/README.md", "haifa-agent-applications/haifa-agent-cli/README.md"],
+      "replacement": "",
+      "rationale": "Interactive macOS manual Terminal testing and debugging launcher.",
+      "coverageMode": "EXACT"
+    },
+    {
       "assetId": "testing-asset-inventory-v2",
       "path": "haifa-agent-testing/testing-assets-v2.json",
       "kind": "MANIFEST",

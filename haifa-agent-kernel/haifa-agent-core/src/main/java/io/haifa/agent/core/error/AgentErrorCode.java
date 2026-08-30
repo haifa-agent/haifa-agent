@@ -14,6 +14,26 @@ public enum AgentErrorCode {
             "Run budget exceeded",
             AgentErrorCategory.RESOURCE_LIMIT,
             Retryability.NOT_RETRYABLE),
+    RUN_INPUT_QUOTA_EXHAUSTED(
+            "RUN_INPUT_QUOTA_EXHAUSTED",
+            "Run input token quota exceeded",
+            AgentErrorCategory.RESOURCE_LIMIT,
+            Retryability.NOT_RETRYABLE),
+    RUN_OUTPUT_QUOTA_EXHAUSTED(
+            "RUN_OUTPUT_QUOTA_EXHAUSTED",
+            "Run output token quota exceeded",
+            AgentErrorCategory.RESOURCE_LIMIT,
+            Retryability.NOT_RETRYABLE),
+    RUN_COST_QUOTA_EXHAUSTED(
+            "RUN_COST_QUOTA_EXHAUSTED",
+            "Run cost quota exceeded",
+            AgentErrorCategory.RESOURCE_LIMIT,
+            Retryability.NOT_RETRYABLE),
+    RUN_EXECUTION_LIMIT_EXCEEDED(
+            "RUN_EXECUTION_LIMIT_EXCEEDED",
+            "Run execution limit exceeded",
+            AgentErrorCategory.RESOURCE_LIMIT,
+            Retryability.NOT_RETRYABLE),
     COMPLETION_REPAIR_EXHAUSTED(
             "COMPLETION_REPAIR_EXHAUSTED",
             "Required completion evidence is still missing",

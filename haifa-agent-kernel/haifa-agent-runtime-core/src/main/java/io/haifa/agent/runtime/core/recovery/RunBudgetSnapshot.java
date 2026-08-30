@@ -2,7 +2,9 @@ package io.haifa.agent.runtime.core.recovery;
 
 import io.haifa.agent.core.run.AgentRun;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 /** Pure remaining-budget view computed from frozen limits, authoritative usage and an injected time. */
@@ -21,63 +23,80 @@ public record RunBudgetSnapshot(
         int remainingPercent) {
     public static RunBudgetSnapshot from(
             AgentRun run, int iteration, int failureClusterAttempts, int completionRepairAttempts, Instant now) {
-        long model = remaining(run.budget().maxModelCalls(), run.usage().modelCalls());
-        long tools = remaining(run.budget().maxToolCalls(), run.usage().toolCalls());
+        long model = remaining(run.limits().maxModelCalls(), run.usage().modelCalls());
+        long tools = remaining(run.limits().maxToolCalls(), run.usage().toolCalls());
         long iterations = Math.max(0, (long) run.limits().maxIterations() - iteration + 1L);
         long activeElapsedMillis = run.activeElapsedMillis(now);
         long wall = Math.max(0, run.limits().maxWallTimeMillis() - activeElapsedMillis);
-        long input = remaining(run.budget().maxInputTokens(), run.usage().inputTokens());
-        long output = remaining(run.budget().maxOutputTokens(), run.usage().outputTokens());
+
+        var quota = run.quotaPolicy();
+        long maxInput = quota.maxInputTokens() != null
+                ? quota.maxInputTokens()
+                : run.budget().maxInputTokens();
+        long maxOutput = quota.maxOutputTokens() != null
+                ? quota.maxOutputTokens()
+                : run.budget().maxOutputTokens();
+        long maxCachedInput = quota.maxCachedInputTokens() != null
+                ? quota.maxCachedInputTokens()
+                : run.budget().maxCachedInputTokens();
+        long maxCost = quota.maxCostMinorUnits() != null
+                ? quota.maxCostMinorUnits()
+                : run.budget().maxCostMinorUnits();
+
+        long input = maxInput > 0 ? remaining(maxInput, run.usage().inputTokens()) : -1L;
+        long output = maxOutput > 0 ? remaining(maxOutput, run.usage().outputTokens()) : -1L;
         long cachedInput =
-                remaining(run.budget().maxCachedInputTokens(), run.usage().cachedInputTokens());
-        long children = remaining(run.budget().maxChildRuns(), run.usage().childRuns());
-        long cost = remaining(run.budget().maxCostMinorUnits(), run.usage().costMinorUnits());
-        BudgetDimension limiting = minimum(
-                new BudgetDimension(
-                        "MODEL_CALLS",
-                        run.usage().modelCalls(),
-                        run.budget().maxModelCalls(),
-                        percent(model, run.budget().maxModelCalls())),
-                new BudgetDimension(
-                        "TOOL_CALLS",
-                        run.usage().toolCalls(),
-                        run.budget().maxToolCalls(),
-                        percent(tools, run.budget().maxToolCalls())),
-                new BudgetDimension(
-                        "ITERATIONS",
-                        Math.max(0, iteration - 1L),
-                        run.limits().maxIterations(),
-                        percent(iterations, run.limits().maxIterations())),
-                new BudgetDimension(
-                        "WALL_TIME_MILLIS",
-                        activeElapsedMillis,
-                        run.limits().maxWallTimeMillis(),
-                        percent(wall, run.limits().maxWallTimeMillis())),
-                new BudgetDimension(
-                        "INPUT_TOKENS",
-                        run.usage().inputTokens(),
-                        run.budget().maxInputTokens(),
-                        percent(input, run.budget().maxInputTokens())),
-                new BudgetDimension(
-                        "OUTPUT_TOKENS",
-                        run.usage().outputTokens(),
-                        run.budget().maxOutputTokens(),
-                        percent(output, run.budget().maxOutputTokens())),
-                new BudgetDimension(
-                        "CACHED_INPUT_TOKENS",
-                        run.usage().cachedInputTokens(),
-                        run.budget().maxCachedInputTokens(),
-                        percent(cachedInput, run.budget().maxCachedInputTokens())),
-                new BudgetDimension(
-                        "CHILD_RUNS",
-                        run.usage().childRuns(),
-                        run.budget().maxChildRuns(),
-                        percent(children, run.budget().maxChildRuns())),
-                new BudgetDimension(
-                        "COST_MINOR_UNITS",
-                        run.usage().costMinorUnits(),
-                        run.budget().maxCostMinorUnits(),
-                        percent(cost, run.budget().maxCostMinorUnits())));
+                maxCachedInput > 0 ? remaining(maxCachedInput, run.usage().cachedInputTokens()) : -1L;
+        long children = remaining(run.limits().maxChildRuns(), run.usage().childRuns());
+        long cost = maxCost > 0 ? remaining(maxCost, run.usage().costMinorUnits()) : -1L;
+
+        List<BudgetDimension> dimensions = new ArrayList<>();
+        dimensions.add(new BudgetDimension(
+                "MODEL_CALLS",
+                run.usage().modelCalls(),
+                run.limits().maxModelCalls(),
+                percent(model, run.limits().maxModelCalls())));
+        dimensions.add(new BudgetDimension(
+                "TOOL_CALLS",
+                run.usage().toolCalls(),
+                run.limits().maxToolCalls(),
+                percent(tools, run.limits().maxToolCalls())));
+        dimensions.add(new BudgetDimension(
+                "ITERATIONS",
+                Math.max(0, iteration - 1L),
+                run.limits().maxIterations(),
+                percent(iterations, run.limits().maxIterations())));
+        dimensions.add(new BudgetDimension(
+                "WALL_TIME_MILLIS",
+                activeElapsedMillis,
+                run.limits().maxWallTimeMillis(),
+                percent(wall, run.limits().maxWallTimeMillis())));
+        if (maxInput > 0) {
+            dimensions.add(
+                    new BudgetDimension("INPUT_TOKENS", run.usage().inputTokens(), maxInput, percent(input, maxInput)));
+        }
+        if (maxOutput > 0) {
+            dimensions.add(new BudgetDimension(
+                    "OUTPUT_TOKENS", run.usage().outputTokens(), maxOutput, percent(output, maxOutput)));
+        }
+        if (maxCachedInput > 0) {
+            dimensions.add(new BudgetDimension(
+                    "CACHED_INPUT_TOKENS",
+                    run.usage().cachedInputTokens(),
+                    maxCachedInput,
+                    percent(cachedInput, maxCachedInput)));
+        }
+        dimensions.add(new BudgetDimension(
+                "CHILD_RUNS",
+                run.usage().childRuns(),
+                run.limits().maxChildRuns(),
+                percent(children, run.limits().maxChildRuns())));
+        if (maxCost > 0) {
+            dimensions.add(new BudgetDimension(
+                    "COST_MINOR_UNITS", run.usage().costMinorUnits(), maxCost, percent(cost, maxCost)));
+        }
+
+        BudgetDimension limiting = minimum(dimensions);
         return new RunBudgetSnapshot(
                 model,
                 tools,
@@ -102,17 +121,21 @@ public record RunBudgetSnapshot(
     }
 
     public String promptText() {
-        return ("Remaining resource budget: modelCalls=%d, toolCalls=%d, iterations=%d, wallTimeMillis=%d, "
-                        + "inputTokens=%d, outputTokens=%d, failureClusterAttempts=%d, completionRepairAttempts=%d.")
-                .formatted(
-                        remainingModelCalls,
-                        remainingToolCalls,
-                        remainingIterations,
-                        remainingWallTimeMillis,
-                        remainingInputTokens,
-                        remainingOutputTokens,
-                        failureClusterAttempts,
-                        completionRepairAttempts);
+        StringBuilder builder = new StringBuilder("Remaining resource budget: ");
+        builder.append("modelCalls=").append(remainingModelCalls);
+        builder.append(", toolCalls=").append(remainingToolCalls);
+        builder.append(", iterations=").append(remainingIterations);
+        builder.append(", wallTimeMillis=").append(remainingWallTimeMillis);
+        if (remainingInputTokens >= 0) {
+            builder.append(", inputTokens=").append(remainingInputTokens);
+        }
+        if (remainingOutputTokens >= 0) {
+            builder.append(", outputTokens=").append(remainingOutputTokens);
+        }
+        builder.append(", failureClusterAttempts=").append(failureClusterAttempts);
+        builder.append(", completionRepairAttempts=").append(completionRepairAttempts);
+        builder.append(".");
+        return builder.toString();
     }
 
     private static long remaining(long maximum, long used) {
@@ -124,8 +147,8 @@ public record RunBudgetSnapshot(
         return (int) Math.max(0, Math.min(100, remaining * 100L / maximum));
     }
 
-    private static BudgetDimension minimum(BudgetDimension... values) {
-        BudgetDimension result = values[0];
+    private static BudgetDimension minimum(List<BudgetDimension> values) {
+        BudgetDimension result = values.get(0);
         for (BudgetDimension value : values) {
             if (value.remainingPercent() < result.remainingPercent()) result = value;
         }

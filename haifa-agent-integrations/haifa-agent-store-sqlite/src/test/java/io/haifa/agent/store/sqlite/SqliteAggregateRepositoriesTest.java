@@ -65,6 +65,46 @@ class SqliteAggregateRepositoriesTest {
         assertThat(foundation.attempts().attemptsFor(run.id())).hasSize(1);
     }
 
+    @Test
+    void quotaModesRoundTripCorrectly(@TempDir java.nio.file.Path directory) {
+        SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory);
+        prepareParents(foundation);
+
+        for (io.haifa.agent.core.run.QuotaMode mode : io.haifa.agent.core.run.QuotaMode.values()) {
+            AgentRunBudget budget =
+                    switch (mode) {
+                        case DISABLED -> AgentRunBudget.disabled();
+                        case OBSERVE_ONLY -> AgentRunBudget.observeOnly(1000, 500, 1000, "USD", 100);
+                        case WARN ->
+                            new AgentRunBudget(
+                                    io.haifa.agent.core.run.QuotaMode.WARN, 1000, 500, 1000, 10, 10, 2, "USD", 100);
+                        case HARD_STOP -> AgentRunBudget.hardStop(1000, 500, 1000, "USD", 100);
+                    };
+            AgentRunSpec spec = new AgentRunSpec(
+                    new AgentSessionId("session"),
+                    null,
+                    new TenantRef("tenant"),
+                    new PrincipalRef("principal", "user"),
+                    new AgentDefinitionId("agent"),
+                    new AgentDefinitionVersion(1, 0, 0),
+                    "profile",
+                    "1",
+                    AgentRunType.CHAT,
+                    "objective for " + mode,
+                    budget,
+                    new AgentRunLimits(10, 2, 1, 60_000, 10_000, 10, 10, 2),
+                    new RunConfigurationSnapshotRef("config", "sha256:config"));
+            AgentRun run =
+                    AgentRun.createRoot(new AgentRunId("run-" + mode.name().toLowerCase()), spec, NOW);
+            foundation.runs().insert(run);
+
+            AgentRun restored = foundation.runs().find(run.id()).orElseThrow();
+            assertThat(restored.budget().quotaMode()).isEqualTo(mode);
+            assertThat(restored.budget().maxCostCurrency()).isEqualTo("USD");
+            assertThat(restored.quotaPolicy().mode()).isEqualTo(mode);
+        }
+    }
+
     private static void prepareParents(SqliteStoreFoundation foundation) {
         AgentSession session = AgentSession.open(
                 new AgentSessionId("session"),
@@ -119,7 +159,7 @@ class SqliteAggregateRepositoriesTest {
                 AgentRunType.CHAT,
                 "objective",
                 new AgentRunBudget(100, 100, 100, 10, 10, 2, "USD", 100),
-                new AgentRunLimits(10, 2, 1, 60_000, 10_000),
+                new AgentRunLimits(10, 2, 1, 60_000, 10_000, 10, 10, 2),
                 new RunConfigurationSnapshotRef("config", "sha256:config"));
     }
 }

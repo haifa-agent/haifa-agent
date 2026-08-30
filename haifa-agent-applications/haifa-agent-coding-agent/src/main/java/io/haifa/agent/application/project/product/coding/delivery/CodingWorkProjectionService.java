@@ -100,11 +100,11 @@ public final class CodingWorkProjectionService {
         List<String> missing = missingEvidence(taskIntent, deliveryIntent, snapshot);
         CodingWorkPhase phase = phase(taskIntent, snapshot, refs.get(RefKind.BLOCKED_ITEM), missing);
         int remainingModelCalls =
-                remaining(run.budget().maxModelCalls(), run.usage().modelCalls());
+                remaining(run.limits().maxModelCalls(), run.usage().modelCalls());
         int remainingToolCalls =
-                remaining(run.budget().maxToolCalls(), run.usage().toolCalls());
-        int modelPercent = percent(remainingModelCalls, run.budget().maxModelCalls());
-        int toolPercent = percent(remainingToolCalls, run.budget().maxToolCalls());
+                remaining(run.limits().maxToolCalls(), run.usage().toolCalls());
+        int modelPercent = percent(remainingModelCalls, run.limits().maxModelCalls());
+        int toolPercent = percent(remainingToolCalls, run.limits().maxToolCalls());
         long wallUsed = run.activeElapsedMillis(time.now());
         long wallRemaining = Math.max(0, run.limits().maxWallTimeMillis() - wallUsed);
         int wallPercent = percent(wallRemaining, run.limits().maxWallTimeMillis());

@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
-const repositoryRoot = path.resolve(scriptDirectory, "..");
+const repositoryRoot = path.resolve(scriptDirectory, "..", "..");
 
 function parseArguments(values) {
   const result = new Map();
@@ -19,7 +19,7 @@ function parseArguments(values) {
     const value = values[index + 1];
     if (!key?.startsWith("--") || value == null) {
       throw new Error(
-        "Usage: node scripts/terminal-ui-conpty-acceptance.mjs " +
+        "Usage: node haifa-agent-testing/scripts/terminal-ui-conpty-acceptance.mjs " +
           "--run-root <outside-repository-path> --attempt <1|2|3> " +
           "[--jar <path>] [--node-pty <module-directory>]",
       );

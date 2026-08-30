@@ -11,7 +11,7 @@ export LESS=-FRX
 
 readonly SCRIPT_PATH="${0:A}"
 readonly SCRIPT_DIR="${SCRIPT_PATH:h}"
-readonly REPO_DIR="${HAIFA_AGENT_REPO_DIR:-${SCRIPT_DIR:h}}"
+readonly REPO_DIR="${HAIFA_AGENT_REPO_DIR:-${SCRIPT_DIR:h:h}}"
 readonly JAR_FILE="${REPO_DIR}/haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0-SNAPSHOT.jar"
 readonly FIXTURE_DIR="${REPO_DIR}/haifa-agent-testing/haifa-agent-e2e-tests/src/test/resources/coding-e2e/fixtures/single-file-bugfix"
 readonly VERIFIER_FILE="${REPO_DIR}/haifa-agent-testing/haifa-agent-e2e-tests/src/test/resources/coding-e2e/support/verify_java.py"

@@ -382,6 +382,7 @@
                     <configuration>
                         <parameters>${maven.compiler.parameters}</parameters>
                         <release>${maven.compiler.release}</release>
+                        <useIncrementalCompilation>false</useIncrementalCompilation>
                     </configuration>
                 </plugin>
                 <plugin>
