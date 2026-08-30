@@ -56,7 +56,7 @@ import org.junit.jupiter.api.Test;
 class AntigravityDirectLiveIT {
     private static final String LIVE_SWITCH = "HAIFA_ANTIGRAVITY_LIVE_TEST";
     private static final String CREDENTIAL_REFERENCE = "model-auth://google-antigravity/default";
-    private static final URI ANTIGRAVITY_ENDPOINT = URI.create("https://cloudcode-pa.googleapis.com/v1internal");
+    private static final String DEFAULT_ANTIGRAVITY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 
     @Test
     void completesHelloWorldWithStoredAntigravityCredential() {
@@ -215,7 +215,7 @@ class AntigravityDirectLiveIT {
                 GeminiGenerateContentModel.ADAPTER_VERSION,
                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
                 GeminiDialects.ANTIGRAVITY_DIRECT,
-                ANTIGRAVITY_ENDPOINT,
+                URI.create(environment(environment, "HAIFA_ANTIGRAVITY_MODEL_ENDPOINT", DEFAULT_ANTIGRAVITY_ENDPOINT)),
                 new CredentialRef(CREDENTIAL_REFERENCE),
                 true,
                 EnumSet.of(

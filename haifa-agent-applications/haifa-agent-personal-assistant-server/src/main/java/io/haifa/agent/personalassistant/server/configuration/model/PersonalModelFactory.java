@@ -15,6 +15,7 @@ import io.haifa.agent.model.api.CredentialResolver;
 import io.haifa.agent.model.api.ModelAdapterCoordinate;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelBindingConsistencyValidator;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
@@ -190,7 +191,6 @@ public final class PersonalModelFactory {
                 adapters,
                 snapshot,
                 snapshots);
-        StaticModelPlatform modelPlatform = modelPlatform(providers, adapters);
         TenantRef tenant = new TenantRef("personal-product");
         PrincipalRef principal = new PrincipalRef("personal-user", "user");
         PersonalModelProductDefaults productDefaults = new PersonalModelProductDefaults();
@@ -203,6 +203,7 @@ public final class PersonalModelFactory {
                                         ? AnthropicModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 30))
                                         : OpenAiCompatibleModelProfileFactory.fromSnapshot(
                                                 value, LocalDate.of(2026, 8, 13))));
+        StaticModelPlatform modelPlatform = modelPlatform(providers, adapters, profiles);
         if (!profiles.get(selected.model().id()).selectable()) {
             throw new IllegalArgumentException("default Personal model profile is not verified");
         }
@@ -457,7 +458,8 @@ public final class PersonalModelFactory {
 
     private static StaticModelPlatform modelPlatform(
             List<PersonalAssistantProperties.ModelProvider> configured,
-            Map<ModelAdapterCoordinate, AgentChatModel> adapters) {
+            Map<ModelAdapterCoordinate, AgentChatModel> adapters,
+            Map<String, ModelBindingProfile> profiles) {
         List<ModelProviderDefinition> providers = configured.stream()
                 .map(provider -> {
                     ModelProviderId providerId = new ModelProviderId(provider.id());
@@ -493,6 +495,9 @@ public final class PersonalModelFactory {
                             Map.of());
                 })
                 .toList();
+        for (ModelProviderDefinition provider : providers) {
+            ModelBindingConsistencyValidator.validateAll(provider, profiles);
+        }
         return new StaticModelPlatform(
                 new ImmutableModelCatalog(providers),
                 ModelAccessPolicy.allowAll(),
