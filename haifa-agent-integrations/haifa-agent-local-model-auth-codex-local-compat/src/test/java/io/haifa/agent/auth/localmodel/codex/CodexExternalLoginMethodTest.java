@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethodUnavailableException;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.LocalModelAuthReference;
@@ -37,7 +36,7 @@ class CodexExternalLoginMethodTest {
                 duration -> {});
         StoredExternalCredential credential = new StoredExternalCredential(
                 LocalModelAuthReference.parse("model-auth://openai-codex/default"),
-                ExternalLoginMethodId.OPENAI_CODEX,
+                CodexExternalLoginMethod.METHOD_ID,
                 "another-registration",
                 "access",
                 "refresh",

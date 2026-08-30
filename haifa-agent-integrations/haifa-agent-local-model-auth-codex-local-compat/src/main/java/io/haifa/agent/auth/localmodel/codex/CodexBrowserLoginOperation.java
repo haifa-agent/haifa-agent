@@ -4,7 +4,6 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptSnapshot;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
-import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.ExternalLoginOperation;
 import io.haifa.agent.auth.localmodel.ExternalLoginOperationContext;
@@ -126,7 +125,7 @@ public final class CodexBrowserLoginOperation implements ExternalLoginOperation 
     private StoredExternalCredential credential(CodexTokenClient.TokenSet tokenSet) {
         return new StoredExternalCredential(
                 CREDENTIAL_REFERENCE,
-                ExternalLoginMethodId.OPENAI_CODEX,
+                CodexExternalLoginMethod.METHOD_ID,
                 registration.reference(),
                 tokenSet.accessToken(),
                 tokenSet.refreshToken(),
@@ -225,7 +224,7 @@ public final class CodexBrowserLoginOperation implements ExternalLoginOperation 
     private void progress(ExternalLoginAttemptState state, Optional<String> reason) {
         snapshot = new ExternalLoginAttemptSnapshot(
                 context.attemptId(),
-                ExternalLoginMethodId.OPENAI_CODEX,
+                CodexExternalLoginMethod.METHOD_ID,
                 ExternalLoginMode.BROWSER,
                 state,
                 Optional.empty(),
@@ -238,7 +237,7 @@ public final class CodexBrowserLoginOperation implements ExternalLoginOperation 
     private ExternalLoginAttemptSnapshot snapshot(ExternalLoginAttemptState state, Optional<String> reason) {
         return new ExternalLoginAttemptSnapshot(
                 context.attemptId(),
-                ExternalLoginMethodId.OPENAI_CODEX,
+                CodexExternalLoginMethod.METHOD_ID,
                 ExternalLoginMode.BROWSER,
                 state,
                 Optional.empty(),

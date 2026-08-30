@@ -18,6 +18,8 @@
         <module>haifa-agent-model-anthropic</module>
         <module>haifa-agent-google-gemini</module>
         <module>haifa-agent-local-model-auth</module>
+        <module>haifa-agent-local-model-auth-codex-local-compat</module>
+        <module>haifa-agent-local-model-auth-antigravity-local-compat</module>
         <module>haifa-agent-git</module>
         <module>haifa-agent-store-sqlite</module>
         <module>haifa-agent-store-jsonl</module>
