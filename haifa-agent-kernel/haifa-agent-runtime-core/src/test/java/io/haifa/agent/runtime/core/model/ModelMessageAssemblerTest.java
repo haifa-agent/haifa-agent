@@ -597,6 +597,6 @@ class ModelMessageAssemblerTest {
     }
 
     private static ContextWindowBudget budget() {
-        return new ContextWindowBudget(200, 50, 10, 140, 1_000, 1_000);
+        return new ContextWindowBudget(200, 50, 10, 140);
     }
 }

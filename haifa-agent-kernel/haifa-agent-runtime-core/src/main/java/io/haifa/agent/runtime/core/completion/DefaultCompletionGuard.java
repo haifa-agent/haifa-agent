@@ -59,7 +59,8 @@ public final class DefaultCompletionGuard implements CompletionGuard {
                     "REQUIRED_ARTIFACT_MISSING", "A required artifact is missing.", "REQUIRED_ARTIFACT"));
         CompletionPolicyResult policyResult = policy.evaluate(run, decision);
         blockers.addAll(policyResult.blockers());
-        if (run.budget().isExceededBy(run.usage()))
+        if (run.quotaPolicy().mode() == io.haifa.agent.core.run.QuotaMode.HARD_STOP
+                && run.quotaPolicy().isExceededBy(run.usage()))
             blockers.add(CompletionBlocker.terminal("BUDGET_EXCEEDED", "Run budget is exhausted.", "BUDGET"));
         if (tools.hasUncertainExecution(run))
             blockers.add(CompletionBlocker.recoverable(

@@ -119,7 +119,7 @@ class SqliteAggregateRepositoriesTest {
                 AgentRunType.CHAT,
                 "objective",
                 new AgentRunBudget(100, 100, 100, 10, 10, 2, "USD", 100),
-                new AgentRunLimits(10, 2, 1, 60_000, 10_000),
+                new AgentRunLimits(10, 2, 1, 60_000, 10_000, 10, 10, 2),
                 new RunConfigurationSnapshotRef("config", "sha256:config"));
     }
 }

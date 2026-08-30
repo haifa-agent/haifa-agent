@@ -1051,7 +1051,7 @@ class SessionCompressionCheckpointTest {
                 List.of(),
                 selection.items(),
                 List.of(),
-                new ContextWindowBudget(10_000, 1, 0, 9_999, 10_000, 10_000),
+                new ContextWindowBudget(10_000, 1, 0, 9_999),
                 selection.estimatedSessionTokens());
     }
 

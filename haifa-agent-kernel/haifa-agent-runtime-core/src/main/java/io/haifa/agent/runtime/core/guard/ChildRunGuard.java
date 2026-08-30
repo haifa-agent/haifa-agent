@@ -20,7 +20,7 @@ public final class ChildRunGuard {
         if (run.depth() >= run.limits().maxDepth()) {
             throw new IllegalStateException("delegation would exceed child depth limit");
         }
-        if (run.usage().childRuns() >= run.budget().maxChildRuns()) {
+        if (run.usage().childRuns() >= run.limits().maxChildRuns()) {
             throw new IllegalStateException("delegation would exceed child run budget");
         }
         var configuration = state.configuration(run.configurationSnapshot())

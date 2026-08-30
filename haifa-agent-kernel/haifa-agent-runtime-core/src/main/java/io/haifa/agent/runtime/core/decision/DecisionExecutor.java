@@ -401,9 +401,9 @@ public final class DecisionExecutor {
             AgentLoopContext loopContext,
             java.util.Optional<ModelInvocationResult> invocation) {
         long projectedToolCalls = run.usage().toolCalls() + decision.requests().size();
-        if (projectedToolCalls > run.budget().maxToolCalls()) {
+        if (projectedToolCalls > run.limits().maxToolCalls()) {
             RuntimeLimitExceededException limit =
-                    new RuntimeLimitExceededException("toolCalls", run.budget().maxToolCalls(), projectedToolCalls);
+                    new RuntimeLimitExceededException("toolCalls", run.limits().maxToolCalls(), projectedToolCalls);
             if (completeBudgetLimited(run, limit, Optional.empty())) return AgentLoopDirective.STOP;
             throw limit;
         }
@@ -771,9 +771,9 @@ public final class DecisionExecutor {
     private AgentLoopDirective executeDelegation(
             AgentRun run, DelegationDecision decision, AgentLoopContext loopContext) {
         long projectedChildRuns = run.usage().childRuns() + 1;
-        if (projectedChildRuns > run.budget().maxChildRuns()) {
+        if (projectedChildRuns > run.limits().maxChildRuns()) {
             RuntimeLimitExceededException limit =
-                    new RuntimeLimitExceededException("childRuns", run.budget().maxChildRuns(), projectedChildRuns);
+                    new RuntimeLimitExceededException("childRuns", run.limits().maxChildRuns(), projectedChildRuns);
             if (completeBudgetLimited(run, limit, Optional.empty())) return AgentLoopDirective.STOP;
             throw limit;
         }
