@@ -148,14 +148,46 @@ class OpenAiCodexResponsesCompatibilityTest {
     }
 
     @Test
-    void rejectsAccessTokenWithoutTheCodexAccountClaimBeforeNetworkUse() {
-        assertThatThrownBy(() -> model(jwt(Map.of("sub", "user"))).invoke(request(snapshot(loopbackEndpoint()))))
+    void rejectsMissingCodexAccountIdentityBeforeNetworkUse() {
+        assertThatThrownBy(() -> model("any-token", ignored -> java.util.Optional.empty())
+                        .invoke(request(snapshot(loopbackEndpoint()))))
                 .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
                     assertThat(failure.category()).isEqualTo(ModelErrorCategory.AUTHENTICATION_FAILED);
                     assertThat(failure.providerCode()).isEqualTo("codex_account_identity_invalid");
-                    assertThat(failure.getMessage()).doesNotContain("user");
                 });
         assertThat(headers.get()).isNull();
+    }
+
+    @Test
+    void acceptsOpaqueNonJwtAccessTokenWhenAccountIdentityProvided() {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-1","status":"completed","model":"gpt-codex-test",
+                 "output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed",
+                   "content":[{"type":"output_text","text":"ready","annotations":[]}]}],
+                 "usage":{"input_tokens":1,"output_tokens":1}}
+                """));
+
+        String opaqueToken = "opaque_canary_token_12345";
+        var actual = model(opaqueToken).invoke(request(snapshot(loopbackEndpoint())));
+
+        assertThat(actual.content()).isEqualTo("ready");
+        assertThat(firstHeader("Authorization")).isEqualTo("Bearer " + opaqueToken);
+        assertThat(firstHeader("chatgpt-account-id")).isEqualTo(ACCOUNT_ID);
+    }
+
+    @Test
+    void rejectsCrlfInAccessTokenOrAccountIdentityBeforeNetworkUse() {
+        assertThatThrownBy(() -> model("bad\r\ntoken").invoke(request(snapshot(loopbackEndpoint()))))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.AUTHENTICATION_FAILED);
+                });
+        assertThat(headers.get()).isNull();
+
+        assertThatThrownBy(() -> new CodexAccountIdentity("bad\r\naccount"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -197,8 +229,17 @@ class OpenAiCodexResponsesCompatibilityTest {
     }
 
     private OpenAiResponsesModel model(String accessToken) {
+        return model(accessToken, ignored -> java.util.Optional.of(new CodexAccountIdentity(ACCOUNT_ID)));
+    }
+
+    private OpenAiResponsesModel model(String accessToken, CodexAccountIdentityResolver resolver) {
         return new OpenAiResponsesModel(
-                HttpClient.newHttpClient(), json, ignored -> new ResolvedCredential(accessToken), true, 1024 * 1024);
+                HttpClient.newHttpClient(),
+                json,
+                ignored -> new ResolvedCredential(accessToken),
+                true,
+                1024 * 1024,
+                resolver);
     }
 
     private AgentChatRequest request(ResolvedModelSnapshot snapshot) {

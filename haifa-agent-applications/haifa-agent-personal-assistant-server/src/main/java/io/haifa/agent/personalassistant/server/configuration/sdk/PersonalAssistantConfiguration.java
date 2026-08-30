@@ -20,6 +20,7 @@ import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.openai.responses.CodexAccountIdentity;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.PersonalAssistantAssembler;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
@@ -212,7 +213,8 @@ public class PersonalAssistantConfiguration {
                     mapper,
                     execution.shell(),
                     modelAuthentication.credentialResolver(),
-                    antigravityProjects::resolve);
+                    antigravityProjects::resolve,
+                    ref -> modelAuthentication.findCodexAccountId(ref).map(CodexAccountIdentity::new));
             var modelPreferences = new SqlitePersonalModelPreferenceStore(
                     dataDirectory.resolve("personal-assistant.sqlite"),
                     properties.caller().tenant(),

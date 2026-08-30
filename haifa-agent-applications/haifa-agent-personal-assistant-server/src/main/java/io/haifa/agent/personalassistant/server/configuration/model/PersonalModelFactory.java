@@ -34,12 +34,14 @@ import io.haifa.agent.model.core.ModelAccessPolicy;
 import io.haifa.agent.model.core.ModelAvailabilityRequest;
 import io.haifa.agent.model.core.ModelSelectionRequest;
 import io.haifa.agent.model.core.StaticModelPlatform;
+import io.haifa.agent.model.gemini.AntigravityCloudCodeProjectResolver;
 import io.haifa.agent.model.gemini.GeminiGenerateContentModel;
 import io.haifa.agent.model.gemini.GeminiModelProfileFactory;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.model.openai.OpenAiCompatibleModelProfileFactory;
+import io.haifa.agent.model.openai.responses.CodexAccountIdentityResolver;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import io.haifa.agent.personalassistant.application.PersonalModelCatalog;
 import io.haifa.agent.personalassistant.application.PersonalModelOption;
@@ -67,7 +69,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Function;
 
 /** Creates either the production remote adapter or an explicitly enabled deterministic acceptance model. */
 public final class PersonalModelFactory {
@@ -120,7 +121,27 @@ public final class PersonalModelFactory {
             ObjectMapper mapper,
             ShellPlatformContribution shell,
             CredentialResolver credentials,
-            Function<CredentialRef, Optional<String>> trustedProjectResolver) {
+            AntigravityCloudCodeProjectResolver trustedProjectResolver) {
+        return createPlatform(
+                configured,
+                defaultModelId,
+                allowInsecureLoopbackModel,
+                mapper,
+                shell,
+                credentials,
+                trustedProjectResolver,
+                ignored -> Optional.empty());
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            ShellPlatformContribution shell,
+            CredentialResolver credentials,
+            AntigravityCloudCodeProjectResolver trustedProjectResolver,
+            CodexAccountIdentityResolver codexAccountResolver) {
         List<PersonalAssistantProperties.ModelProvider> providers = List.copyOf(configured);
         java.util.Objects.requireNonNull(credentials, "credentials must not be null");
         if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
@@ -157,7 +178,8 @@ public final class PersonalModelFactory {
                 shell,
                 allowInsecureLoopbackModel,
                 credentials,
-                trustedProjectResolver);
+                trustedProjectResolver,
+                codexAccountResolver);
         ModelContribution contribution = new ModelContribution(
                 new SdkContributionMetadata(
                         new ProductContributionCoordinate("haifa-personal-model", "1.0.0"),
@@ -560,7 +582,8 @@ public final class PersonalModelFactory {
             ShellPlatformContribution shell,
             boolean allowInsecureLoopbackModel,
             CredentialResolver credentials,
-            Function<CredentialRef, Optional<String>> trustedProjectResolver) {
+            AntigravityCloudCodeProjectResolver trustedProjectResolver,
+            CodexAccountIdentityResolver codexAccountResolver) {
         if (deterministic) {
             AgentChatModel model = new LoggingAgentChatModel(
                     new DeterministicAcceptanceModel(selected.model().providerModelId(), shell));
@@ -586,7 +609,12 @@ public final class PersonalModelFactory {
                                     4 * 1024 * 1024);
                         case ModelApiStyles.OPENAI_RESPONSES_ADAPTER ->
                             new OpenAiResponsesModel(
-                                    http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
+                                    http,
+                                    mapper,
+                                    credentials,
+                                    allowInsecureLoopbackModel,
+                                    4 * 1024 * 1024,
+                                    codexAccountResolver);
                         case ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER ->
                             new AnthropicMessagesModel(
                                     http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);

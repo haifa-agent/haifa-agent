@@ -229,7 +229,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
 
     private ResolvedCredential credential(AgentChatRequest request) {
         try {
-            return credentials.resolve(request.model().credentialRef());
+            ResolvedCredential credential = credentials.resolve(request.model().credentialRef());
+            validateSecret(credential.value());
+            return credential;
         } catch (RuntimeException exception) {
             throw failure(
                     request,
@@ -240,6 +242,16 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                     "model credential is unavailable",
                     null);
         }
+    }
+
+    private static String validateSecret(String secret) {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalArgumentException("model credential value must not be blank");
+        }
+        if (secret.indexOf('\r') >= 0 || secret.indexOf('\n') >= 0 || secret.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("model credential contains invalid control characters");
+        }
+        return secret.trim();
     }
 
     private HttpRequest request(
@@ -274,7 +286,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                 .timeout(request.timeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", stream ? "text/event-stream" : "application/json")
-                .header("x-api-key", credential.value())
+                .header("x-api-key", validateSecret(credential.value()))
                 .header("anthropic-version", ANTHROPIC_VERSION)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                 .build();
