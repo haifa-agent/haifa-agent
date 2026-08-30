@@ -14,7 +14,9 @@ class GeminiArchitectureTest {
                 .resideInAnyPackage(
                         "io.haifa.agent.personalassistant..",
                         "io.haifa.agent.coding..",
-                        "io.haifa.agent.model.openai..")
+                        "io.haifa.agent.cli..",
+                        "io.haifa.agent.model.openai..",
+                        "io.haifa.agent.model.anthropic..")
                 .check(new ClassFileImporter().importPackages("io.haifa.agent.model.gemini"));
     }
 }

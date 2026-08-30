@@ -1,8 +1,7 @@
-package io.haifa.agent.model.openai;
+package io.haifa.agent.model.anthropic;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.model.api.AgentChatModel;
-import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.CredentialResolver;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
@@ -11,8 +10,6 @@ import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.model.openai.responses.OpenAiResponsesDialects;
-import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -23,12 +20,11 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Typed, immutable assembly of one model adapter and its frozen model snapshot.
+ * Typed, immutable assembly of one Anthropic model adapter and its frozen model snapshot.
  *
- * <p>This is an Integration-local convenience API, not a provider discovery or fallback
- * facility. Provider-specific governed factories remain the advanced path for Bailian and Ark.
+ * <p>This is an Integration-local convenience API, not a provider discovery or fallback facility.
  */
-public final class OpenAiCompatibleModelConfiguration {
+public final class AnthropicModelConfiguration {
     static final String CONNECT_TIMEOUT_MILLIS = "haifa_connect_timeout_millis";
     static final String REQUEST_TIMEOUT_MILLIS = "haifa_request_timeout_millis";
 
@@ -43,8 +39,7 @@ public final class OpenAiCompatibleModelConfiguration {
     private final ResolvedModelSnapshot snapshot;
     private final Duration requestTimeout;
 
-    private OpenAiCompatibleModelConfiguration(
-            AgentChatModel model, ResolvedModelSnapshot snapshot, Duration requestTimeout) {
+    private AnthropicModelConfiguration(AgentChatModel model, ResolvedModelSnapshot snapshot, Duration requestTimeout) {
         this.model = Objects.requireNonNull(model, "model must not be null");
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot must not be null");
         this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout must not be null");
@@ -70,35 +65,18 @@ public final class OpenAiCompatibleModelConfiguration {
         return requestTimeout;
     }
 
-    /** API styles implemented by this Integration. */
-    public enum ApiStyle {
-        CHAT_COMPLETIONS(ModelApiStyles.OPENAI_CHAT_COMPLETIONS),
-        RESPONSES(ModelApiStyles.OPENAI_RESPONSES);
-
-        private final ApiStyleId id;
-
-        ApiStyle(ApiStyleId id) {
-            this.id = id;
-        }
-    }
-
-    /** Generic and DeepSeek compatibility profiles supported by the typed path. */
+    /** Supported Anthropic dialects. */
     public enum Dialect {
         STANDARD,
-        DEEPSEEK
+        DEEPSEEK,
+        ZHIPU
     }
 
-    /** Bounded provider-neutral choices mapped to the selected API style. */
+    /** Bounded provider-neutral choices mapped to the Anthropic API style. */
     public enum ToolChoice {
         AUTO,
         NONE,
         REQUIRED
-    }
-
-    /** Phase 2 response modes; JSON Schema decoding remains outside this phase. */
-    public enum ResponseFormat {
-        TEXT,
-        JSON_OBJECT
     }
 
     /** Mutable construction surface that produces an immutable configuration. */
@@ -109,7 +87,6 @@ public final class OpenAiCompatibleModelConfiguration {
         private String modelId;
         private String modelVersion = DEFAULT_VERSION;
         private String providerModelId;
-        private ApiStyle apiStyle = ApiStyle.CHAT_COMPLETIONS;
         private Dialect dialect = Dialect.STANDARD;
         private URI endpoint;
         private CredentialRef credentialRef;
@@ -119,9 +96,7 @@ public final class OpenAiCompatibleModelConfiguration {
         private int maxOutputTokens;
         private Duration connectTimeout = DEFAULT_CONNECT_TIMEOUT;
         private Duration requestTimeout = DEFAULT_REQUEST_TIMEOUT;
-        private Double temperature;
         private ToolChoice toolChoice;
-        private ResponseFormat responseFormat = ResponseFormat.TEXT;
 
         private Builder(CredentialResolver credentialResolver) {
             this.credentialResolver = Objects.requireNonNull(credentialResolver, "credentialResolver must not be null");
@@ -149,11 +124,6 @@ public final class OpenAiCompatibleModelConfiguration {
 
         public Builder providerModelId(String value) {
             providerModelId = text(value, "providerModelId");
-            return this;
-        }
-
-        public Builder apiStyle(ApiStyle value) {
-            apiStyle = Objects.requireNonNull(value, "apiStyle must not be null");
             return this;
         }
 
@@ -198,25 +168,12 @@ public final class OpenAiCompatibleModelConfiguration {
             return this;
         }
 
-        public Builder temperature(double value) {
-            if (!Double.isFinite(value) || value < 0.0d || value > 2.0d) {
-                throw new IllegalArgumentException("temperature must be between 0.0 and 2.0");
-            }
-            temperature = value;
-            return this;
-        }
-
         public Builder toolChoice(ToolChoice value) {
             toolChoice = Objects.requireNonNull(value, "toolChoice must not be null");
             return this;
         }
 
-        public Builder responseFormat(ResponseFormat value) {
-            responseFormat = Objects.requireNonNull(value, "responseFormat must not be null");
-            return this;
-        }
-
-        public OpenAiCompatibleModelConfiguration build() {
+        public AnthropicModelConfiguration build() {
             String resolvedProviderId = text(providerId, "providerId");
             String resolvedModelId = text(modelId, "modelId");
             String resolvedProviderModelId = text(providerModelId, "providerModelId");
@@ -227,21 +184,27 @@ public final class OpenAiCompatibleModelConfiguration {
             validateCapabilities(resolvedCapabilities);
             validateTokenLimits();
             validateOptions(resolvedCapabilities);
-            String resolvedDialect = OpenAiCompatibleModelConfiguration.dialect(apiStyle, dialect);
-            validateProfile(resolvedEndpoint, resolvedProviderModelId, apiStyle, dialect);
+            String resolvedDialect = AnthropicModelConfiguration.dialect(dialect);
+            validateProfile(resolvedEndpoint, resolvedProviderId, resolvedProviderModelId, dialect);
 
-            Map<String, Object> providerOptions = providerOptions(resolvedEndpoint);
+            Map<String, Object> providerOptions = providerOptions();
             Map<String, Object> invocationOptions = invocationOptions();
-            Adapter adapter = adapter(apiStyle, credentialResolver, connectTimeout);
+            HttpClient http = HttpClient.newBuilder()
+                    .connectTimeout(connectTimeout)
+                    .followRedirects(HttpClient.Redirect.NEVER)
+                    .build();
+            ObjectMapper json = new ObjectMapper();
+            AgentChatModel adapter =
+                    new AnthropicMessagesModel(http, json, credentialResolver, false, MAX_RESPONSE_BYTES);
             ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
                     new ModelProviderId(resolvedProviderId),
                     providerVersion,
                     new ModelDefinitionId(resolvedModelId),
                     modelVersion,
                     resolvedProviderModelId,
-                    adapter.type(),
-                    adapter.version(),
-                    apiStyle.id,
+                    AnthropicMessagesModel.ADAPTER_TYPE,
+                    AnthropicMessagesModel.ADAPTER_VERSION,
+                    ModelApiStyles.ANTHROPIC_MESSAGES,
                     resolvedDialect,
                     resolvedEndpoint,
                     resolvedCredentialRef,
@@ -251,7 +214,7 @@ public final class OpenAiCompatibleModelConfiguration {
                     maxOutputTokens,
                     providerOptions,
                     invocationOptions);
-            return new OpenAiCompatibleModelConfiguration(adapter.model(), snapshot, requestTimeout);
+            return new AnthropicModelConfiguration(adapter, snapshot, requestTimeout);
         }
 
         private void validateTokenLimits() {
@@ -267,32 +230,15 @@ public final class OpenAiCompatibleModelConfiguration {
         }
 
         private void validateOptions(Set<ModelCapability> resolvedCapabilities) {
-            if (temperature != null && apiStyle != ApiStyle.CHAT_COMPLETIONS) {
-                throw new IllegalArgumentException("temperature is supported only by Chat Completions");
-            }
             if (toolChoice != null
                     && toolChoice != ToolChoice.NONE
                     && !resolvedCapabilities.contains(ModelCapability.TOOL_CALLING)) {
                 throw new IllegalArgumentException("toolChoice requires TOOL_CALLING capability");
             }
-            if (dialect == Dialect.DEEPSEEK
-                    && apiStyle == ApiStyle.RESPONSES
-                    && toolChoice != null
-                    && toolChoice != ToolChoice.AUTO) {
-                throw new IllegalArgumentException("DeepSeek Responses supports only AUTO toolChoice");
-            }
-            if (responseFormat == ResponseFormat.JSON_OBJECT
-                    && !resolvedCapabilities.contains(ModelCapability.STRUCTURED_OUTPUT)) {
-                throw new IllegalArgumentException("JSON_OBJECT responseFormat requires STRUCTURED_OUTPUT capability");
-            }
         }
 
-        private Map<String, Object> providerOptions(URI resolvedEndpoint) {
+        private Map<String, Object> providerOptions() {
             Map<String, Object> values = new LinkedHashMap<>();
-            if (apiStyle == ApiStyle.CHAT_COMPLETIONS && dialect == Dialect.STANDARD) {
-                values.putAll(OpenAiCompatibleDialects.configuredOptions(
-                        ModelApiBindingDefinition.STANDARD_DIALECT, resolvedEndpoint));
-            }
             values.put(CONNECT_TIMEOUT_MILLIS, connectTimeout.toMillis());
             values.put(REQUEST_TIMEOUT_MILLIS, requestTimeout.toMillis());
             return Map.copyOf(values);
@@ -301,72 +247,55 @@ public final class OpenAiCompatibleModelConfiguration {
         private Map<String, Object> invocationOptions() {
             Map<String, Object> values = new LinkedHashMap<>();
             if (dialect == Dialect.DEEPSEEK) values.put("thinking", "disabled");
-            if (temperature != null) values.put("temperature", temperature);
             if (toolChoice != null) {
-                values.put("tool_choice", OpenAiCompatibleModelConfiguration.toolChoice(toolChoice));
-            }
-            if (responseFormat == ResponseFormat.JSON_OBJECT) {
-                values.put("response_format", Map.of("type", "json_object"));
+                values.put("tool_choice", AnthropicModelConfiguration.toolChoice(toolChoice));
             }
             return Map.copyOf(values);
         }
     }
 
-    private static Adapter adapter(ApiStyle style, CredentialResolver credentials, Duration connectTimeout) {
-        HttpClient http = HttpClient.newBuilder()
-                .connectTimeout(connectTimeout)
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .build();
-        ObjectMapper json = new ObjectMapper();
-        return switch (style) {
-            case CHAT_COMPLETIONS ->
-                new Adapter(
-                        ModelApiStyles.OPENAI_CHAT_ADAPTER,
-                        DEFAULT_VERSION,
-                        new OpenAiCompatibleChatModel(
-                                ModelApiStyles.OPENAI_CHAT_ADAPTER,
-                                DEFAULT_VERSION,
-                                http,
-                                json,
-                                credentials,
-                                false,
-                                MAX_RESPONSE_BYTES));
-            case RESPONSES ->
-                new Adapter(
-                        OpenAiResponsesModel.ADAPTER_TYPE,
-                        OpenAiResponsesModel.ADAPTER_VERSION,
-                        new OpenAiResponsesModel(http, json, credentials, false, MAX_RESPONSE_BYTES));
-        };
-    }
-
-    private static String dialect(ApiStyle style, Dialect dialect) {
-        if (dialect == Dialect.STANDARD) return ModelApiBindingDefinition.STANDARD_DIALECT;
-        return switch (style) {
-            case CHAT_COMPLETIONS -> OpenAiCompatibleDialects.DEEPSEEK;
-            case RESPONSES -> OpenAiResponsesDialects.DEEPSEEK;
+    private static String dialect(Dialect dialect) {
+        return switch (dialect) {
+            case STANDARD -> ModelApiBindingDefinition.STANDARD_DIALECT;
+            case DEEPSEEK -> AnthropicMessagesDialects.DEEPSEEK;
+            case ZHIPU -> AnthropicMessagesDialects.ZHIPU;
         };
     }
 
     private static Object toolChoice(ToolChoice choice) {
+        if (choice == ToolChoice.REQUIRED) return "any";
         return choice.name().toLowerCase(java.util.Locale.ROOT);
     }
 
-    private static void validateProfile(URI endpoint, String providerModelId, ApiStyle style, Dialect dialect) {
+    private static void validateProfile(URI endpoint, String providerId, String providerModelId, Dialect dialect) {
         if (dialect == Dialect.STANDARD) {
-            if (style == ApiStyle.CHAT_COMPLETIONS && !"/v1".equals(normalizedPath(endpoint))) {
-                throw new IllegalArgumentException("standard Chat Completions endpoint path must be /v1");
-            }
             return;
         }
-        if (!"api.deepseek.com".equalsIgnoreCase(endpoint.getHost())) {
-            throw new IllegalArgumentException("DeepSeek endpoint host must be api.deepseek.com");
-        }
-        if (!"".equals(normalizedPath(endpoint))) {
-            throw new IllegalArgumentException("DeepSeek endpoint path is invalid for the selected API style");
-        }
-        if (style == ApiStyle.RESPONSES && !"deepseek-v4-flash".equals(providerModelId)) {
-            throw new IllegalArgumentException(
-                    "DeepSeek Responses supports only the verified deepseek-v4-flash profile");
+        if (dialect == Dialect.DEEPSEEK) {
+            if (!"api.deepseek.com".equalsIgnoreCase(endpoint.getHost())) {
+                throw new IllegalArgumentException("DeepSeek endpoint host must be api.deepseek.com");
+            }
+            if (!"/anthropic".equals(normalizedPath(endpoint))) {
+                throw new IllegalArgumentException("DeepSeek endpoint path is invalid for the selected API style");
+            }
+            if (!AnthropicMessagesBindingRegistry.isAdmitted(
+                    providerId,
+                    providerModelId,
+                    ModelApiStyles.ANTHROPIC_MESSAGES,
+                    AnthropicMessagesDialects.DEEPSEEK)) {
+                throw new IllegalArgumentException("DeepSeek Anthropic model profile is not verified");
+            }
+        } else if (dialect == Dialect.ZHIPU) {
+            if (!"open.bigmodel.cn".equalsIgnoreCase(endpoint.getHost())) {
+                throw new IllegalArgumentException("Zhipu endpoint host must be open.bigmodel.cn");
+            }
+            if (!"/api/anthropic".equals(normalizedPath(endpoint))) {
+                throw new IllegalArgumentException("Zhipu endpoint path is invalid for the selected API style");
+            }
+            if (!AnthropicMessagesBindingRegistry.isAdmitted(
+                    providerId, providerModelId, ModelApiStyles.ANTHROPIC_MESSAGES, AnthropicMessagesDialects.ZHIPU)) {
+                throw new IllegalArgumentException("Zhipu Anthropic model profile is not verified");
+            }
         }
     }
 
@@ -407,6 +336,4 @@ public final class OpenAiCompatibleModelConfiguration {
         if (normalized.isEmpty()) throw new IllegalArgumentException(field + " must not be blank");
         return normalized;
     }
-
-    private record Adapter(String type, String version, AgentChatModel model) {}
 }

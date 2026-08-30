@@ -9,7 +9,6 @@ the respective protocol registries:
   the reviewed SiliconFlow DeepSeek V4 Flash Chat binding, TokenRhythm DeepSeek V4 Flash Chat binding, selected Bailian Qwen bindings,
   Kimi K3/K2.7/K2.6, selected Zhipu GLM bindings, and the `personal-local` test fixture.
 - `OpenAiResponsesBindingRegistry`: Responses bindings for DeepSeek, Bailian Qwen Max/Plus, and OpenAI Codex (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`).
-- `AnthropicMessagesBindingRegistry`: Anthropic Messages bindings for DeepSeek and Zhipu GLM-5.2 (maintained separately prior to Phase 2 module isolation).
 
 Unknown vendor bindings, unverified model IDs, or style/dialect mutations fail closed as `UNVERIFIED`
 instead of inheriting capabilities merely because they share a transport. Product exposure can
@@ -17,11 +16,11 @@ still keep a verified control read-only. Provider request mapping remains in the
 
 ## API Style 与 dialect
 
-本模块实现彼此独立的 `openai-chat-completions`、`openai-responses` 与 `anthropic-messages`。三者复用
+本模块实现彼此独立的 `openai-chat-completions` 与 `openai-responses`。二者复用
 Java HTTP、凭据解析和安全限制，但分别拥有自己的请求/响应 DTO 与 SSE accumulator，不跨 Style 复用
-`messages`、`choices`、Item 或 Content Block parser。Provider ID 不参与 Style 或 dialect 推断。
+`messages`、`choices` 或 Item parser。Provider ID 不参与 Style 或 dialect 推断。
 
-普通宿主可以使用 `OpenAiCompatibleModelConfiguration.builder(credentialResolver)` 类型化装配三种已实现
+普通宿主可以使用 `OpenAiCompatibleModelConfiguration.builder(credentialResolver)` 类型化装配两种已实现
 Style 的 adapter、`ResolvedModelSnapshot`、连接/请求超时和受限调用选项。类型化路径只开放 `standard`
 与 DeepSeek profile；百炼和方舟继续使用各自的受治理工厂，不能借此绕过 workspace、region 或模型
 profile 校验。Builder 只接收 `CredentialRef`，DeepSeek 始终冻结 `thinking=disabled`。
@@ -46,7 +45,7 @@ var configured = OpenAiCompatibleModelConfiguration.builder(new EnvironmentCrede
 `STRUCTURED_OUTPUT` 的 Chat Completions/Responses。该格式选项不是 Java record 解码或结构化最终输出 API。
 所有 endpoint 必须是干净的 HTTPS URI。高级宿主仍可直接构造 Adapter 与 Snapshot。
 
-三种内建 Style 的同步和 SSE 解析都把“终态存在但没有文本、Tool Call 或结构化输出”标准化为
+两种内建 Style 的同步和 SSE 解析都把“终态存在但没有文本、Tool Call 或结构化输出”标准化为
 `EMPTY_RESPONSE/empty_response`，并标记为可由 Runtime 在同一冻结请求上有界重试。HTTP 5xx、连接失败
 和流在可消费输出前中断分别归一化为 `SERVER_ERROR`、`TRANSPORT_ERROR`；标准 `Retry-After` 只作为
 类型化等待建议交给 Runtime。流一旦已经发出文本或 Tool 意图，后续协议/传输失败归一化为不可盲重放的
@@ -63,8 +62,6 @@ Adapter。该动态 Run 要求与上面的静态 `responseFormat(JSON_OBJECT)` �
 | Chat Completions `standard` | 原生 `response_format.type=json_schema`，携带 name、strict 与精确 Schema | 无 Tool Call 的最终 content 必须是 JSON object，归一化后由 Runtime 再校验冻结 Schema |
 | Chat Completions DeepSeek/现有非标准 dialect | `response_format.type=json_object`，并以有界 developer instruction 披露最终 Schema | Tool Call 不受最终 Schema 限制；最终 object 仍由 Runtime 作为权威门禁 |
 | OpenAI Responses `standard` | `text.format.type=json_schema`，携带 name、strict 与精确 Schema | 最终 output text 归一化后由 Runtime 再校验冻结 Schema |
-| Anthropic Messages `standard` | 原生 `output_config.format.type=json_schema`，携带精确 Schema | 最终 text block 归一化后由 Runtime 再校验冻结 Schema |
-| DeepSeek Anthropic Messages | 当前没有已验证的 `output_config.format` 兼容证据，稳定返回 `structured_output_unsupported` | 不降级成提示词解析或未校验 JSON |
 
 Adapter 只负责协议映射和 JSON object 归一化，不决定业务 record 是否有效。Tool Calls 优先进入既有
 Runtime Tool Pipeline；只有最终回答才触发 Schema 门禁。无效 JSON、能力缺失、Provider 拒答和输出截断
@@ -115,28 +112,6 @@ delta，但仍要求 delta 字段为字符串；空 delta 不产生公共流事�
 DeepSeek 与百炼 Responses Binding 当前只发布固定的推荐推理 Profile：`ENABLED/HIGH`。共享 Profile
 不声明尚未逐 dialect 验证的关闭能力，也不会把缺失参数解释为关闭。后续只有在对应 Responses dialect
 完成显式关闭映射、请求体 Contract 和真实 API 验证后，才会扩展可选 mode/effort；`standard` 不做推断。
-
-## Anthropic Messages
-
-`AnthropicMessagesModel` 以 Anthropic Messages 官方契约作为 `standard`：请求使用 `POST /v1/messages`、
-`x-api-key` 与 `anthropic-version: 2023-06-01`，映射顶层 system、Content Blocks、`tool_use`、
-`tool_result`、`input_schema`、usage 和 named SSE。thinking、signature 与 redacted thinking 只作为受保护
-continuation 保留，不进入公共输出；Tool 参数 JSON、累计响应、事件数和单事件均受限。
-
-`standard` Structured Output 使用官方 `output_config.format` JSON Schema；已有 `output_config.effort` 会与
-format 合并。Schema 只约束最终直接输出，不限制 Tool Call、Tool Result 或 Thinking；同步和 SSE 都只在
-终态 text block 归一化 structured Map，拒答与截断先保持各自 finish reason。
-
-DeepSeek Anthropic API 使用显式 `deepseek-anthropic-messages` dialect，因为其 ignored/unsupported 字段、
-模型映射与 thinking 行为不完全等同 Anthropic standard。该 dialect 仅允许已验证的
-`deepseek-v4-flash`/`deepseek-v4-pro`，拒绝图片、文档、redacted thinking 和 server tools；产品默认
-冻结 `thinking=disabled`。该 dialect 尚未验证 `output_config.format`，类型化 Structured Output 在网络调用
-前 fail closed。Binding 使用完整 Endpoint 覆盖 `https://api.deepseek.com/anthropic`，共享 Credential 与
-`nativeStreaming` 仍归 Provider 所有。
-
-智谱 Anthropic-compatible 使用独立 `zhipu-anthropic-messages` dialect，只允许 `glm-5.2` 与完整
-`https://open.bigmodel.cn/api/anthropic` Endpoint。Contract/差异测试已通过；真实环境若返回 429，保持
-`MODEL_RATE_LIMITED`，不 fallback 到 Chat 或把限流误报为协议兼容成功。
 
 ## 阿里云百炼
 
@@ -242,20 +217,11 @@ models:
           dialect: deepseek-openai-chat
         - style: openai-responses
           dialect: deepseek-openai-responses
-        - style: anthropic-messages
-          dialect: deepseek-anthropic-messages
-          endpoint: https://api.deepseek.com/anthropic
       models:
         - id: deepseek-responses-flash
           providerModelId: deepseek-v4-flash
           style: openai-responses
           capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-          contextWindow: 131072
-          maxOutputTokens: 8192
-        - id: deepseek-anthropic-flash
-          providerModelId: deepseek-v4-flash
-          style: anthropic-messages
-          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
           contextWindow: 131072
           maxOutputTokens: 8192
 ```
@@ -314,10 +280,6 @@ OPENAI_MODEL_ID=<model-id>
 
 # 独立探测普通 function Tool Call/Tool Result；不由文本 Live 开关隐式启用
 HAIFA_OPENAI_RESPONSES_TOOL_LIVE_TEST=true
-
-HAIFA_DEEPSEEK_ANTHROPIC_LIVE_TEST=true
-DEEPSEEK_API_KEY=<secret>
-HAIFA_DEEPSEEK_ANTHROPIC_MODEL_ID=deepseek-v4-flash
 ```
 
 ChatGPT Codex 订阅凭据冒烟由 `OpenAiCodexLiveIT` 覆盖。它默认读取当前用户的

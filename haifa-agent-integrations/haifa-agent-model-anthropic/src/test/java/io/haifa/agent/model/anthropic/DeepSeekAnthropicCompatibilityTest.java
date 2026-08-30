@@ -1,4 +1,4 @@
-package io.haifa.agent.model.openai.anthropic;
+package io.haifa.agent.model.anthropic;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

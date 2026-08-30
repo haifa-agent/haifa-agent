@@ -1,6 +1,5 @@
-package io.haifa.agent.model.openai;
+package io.haifa.agent.model.anthropic;
 
-import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelProfileStatus;
@@ -13,14 +12,15 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 
-/** Builds provider-neutral profiles from capabilities already verified by this integration. */
-public final class OpenAiCompatibleModelProfileFactory {
+/** Builds provider-neutral profiles from capabilities already verified by Anthropic Messages integration. */
+public final class AnthropicModelProfileFactory {
     public static final String CURRENT_PROFILE_VERSION = "1.0";
 
-    private OpenAiCompatibleModelProfileFactory() {}
+    private AnthropicModelProfileFactory() {}
 
     public static ModelBindingProfile fromSnapshot(ResolvedModelSnapshot snapshot, LocalDate verifiedOn) {
-        Optional<AdmittedBindingSpec> admission = findAdmission(snapshot);
+        Optional<AnthropicMessagesBindingRegistry.AdmittedBinding> admission =
+                AnthropicMessagesBindingRegistry.find(snapshot);
         boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
 
         if (admission.isEmpty()) {
@@ -42,7 +42,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                     verifiedOn);
         }
 
-        AdmittedBindingSpec binding = admission.get();
+        AnthropicMessagesBindingRegistry.AdmittedBinding binding = admission.get();
         if (!reasoning) {
             return ModelBindingProfile.create(
                     snapshot.modelId(),
@@ -75,27 +75,4 @@ public final class OpenAiCompatibleModelProfileFactory {
                 ModelProfileStatus.VERIFIED,
                 verifiedOn);
     }
-
-    private static Optional<AdmittedBindingSpec> findAdmission(ResolvedModelSnapshot snapshot) {
-        if (ModelApiStyles.OPENAI_RESPONSES.equals(snapshot.apiStyle())) {
-            return OpenAiResponsesBindingRegistry.find(snapshot)
-                    .map(b -> new AdmittedBindingSpec(
-                            b.reasoningBehavior(),
-                            b.allowedReasoningModes(),
-                            b.allowedReasoningEfforts(),
-                            b.toolReasoningContinuationRequired()));
-        }
-        return OpenAiCompatibleBindingRegistry.find(snapshot)
-                .map(b -> new AdmittedBindingSpec(
-                        b.reasoningBehavior(),
-                        b.allowedReasoningModes(),
-                        b.allowedReasoningEfforts(),
-                        b.toolReasoningContinuationRequired()));
-    }
-
-    private record AdmittedBindingSpec(
-            ModelReasoningBehavior reasoningBehavior,
-            Set<ModelReasoningMode> allowedReasoningModes,
-            Set<ModelReasoningEffort> allowedReasoningEfforts,
-            boolean toolReasoningContinuationRequired) {}
 }
