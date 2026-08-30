@@ -781,10 +781,21 @@ class AnthropicMessagesModelTest {
     }
 
     private ResolvedModelSnapshot deepSeekSnapshot(String providerModelId, Map<String, Object> invocationOptions) {
-        return snapshot(providerModelId, AnthropicMessagesDialects.DEEPSEEK, true, "/anthropic", invocationOptions);
+        return snapshot(
+                "deepseek", providerModelId, AnthropicMessagesDialects.DEEPSEEK, true, "/anthropic", invocationOptions);
     }
 
     private ResolvedModelSnapshot snapshot(
+            String providerModelId,
+            String dialect,
+            boolean nativeStreaming,
+            String path,
+            Map<String, Object> invocationOptions) {
+        return snapshot("stub", providerModelId, dialect, nativeStreaming, path, invocationOptions);
+    }
+
+    private ResolvedModelSnapshot snapshot(
+            String providerId,
             String providerModelId,
             String dialect,
             boolean nativeStreaming,
@@ -796,7 +807,7 @@ class AnthropicMessagesModelTest {
             capabilities.add(ModelCapability.STRUCTURED_OUTPUT);
         }
         return ResolvedModelSnapshot.create(
-                new ModelProviderId("stub"),
+                new ModelProviderId(providerId),
                 "provider-v1",
                 new ModelDefinitionId("model"),
                 "model-v1",

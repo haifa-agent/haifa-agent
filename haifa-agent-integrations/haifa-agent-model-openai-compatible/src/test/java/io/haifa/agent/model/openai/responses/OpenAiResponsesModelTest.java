@@ -395,17 +395,26 @@ class OpenAiResponsesModelTest {
     }
 
     private ResolvedModelSnapshot deepSeekSnapshot(String providerModelId) {
-        return snapshot(providerModelId, OpenAiResponsesDialects.DEEPSEEK, true);
+        return snapshot("deepseek", providerModelId, OpenAiResponsesDialects.DEEPSEEK, true, Map.of());
     }
 
     private ResolvedModelSnapshot snapshot(String providerModelId, String dialect, boolean nativeStreaming) {
-        return snapshot(providerModelId, dialect, nativeStreaming, Map.of());
+        return snapshot("stub", providerModelId, dialect, nativeStreaming, Map.of());
     }
 
     private ResolvedModelSnapshot snapshot(
             String providerModelId, String dialect, boolean nativeStreaming, Map<String, Object> invocationOptions) {
+        return snapshot("stub", providerModelId, dialect, nativeStreaming, invocationOptions);
+    }
+
+    private ResolvedModelSnapshot snapshot(
+            String providerId,
+            String providerModelId,
+            String dialect,
+            boolean nativeStreaming,
+            Map<String, Object> invocationOptions) {
         return ResolvedModelSnapshot.create(
-                new io.haifa.agent.model.api.ModelProviderId("stub"),
+                new io.haifa.agent.model.api.ModelProviderId(providerId),
                 "provider-v1",
                 new ModelDefinitionId("model"),
                 "model-v1",
