@@ -23,6 +23,9 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelReasoningBehavior;
+import io.haifa.agent.model.api.ModelReasoningEffort;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolSpecification;
@@ -36,8 +39,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -781,10 +786,21 @@ class AnthropicMessagesModelTest {
     }
 
     private ResolvedModelSnapshot deepSeekSnapshot(String providerModelId, Map<String, Object> invocationOptions) {
-        return snapshot(providerModelId, AnthropicMessagesDialects.DEEPSEEK, true, "/anthropic", invocationOptions);
+        return snapshot(
+                "deepseek", providerModelId, AnthropicMessagesDialects.DEEPSEEK, true, "/anthropic", invocationOptions);
     }
 
     private ResolvedModelSnapshot snapshot(
+            String providerModelId,
+            String dialect,
+            boolean nativeStreaming,
+            String path,
+            Map<String, Object> invocationOptions) {
+        return snapshot("stub", providerModelId, dialect, nativeStreaming, path, invocationOptions);
+    }
+
+    private ResolvedModelSnapshot snapshot(
+            String providerId,
             String providerModelId,
             String dialect,
             boolean nativeStreaming,
@@ -796,7 +812,7 @@ class AnthropicMessagesModelTest {
             capabilities.add(ModelCapability.STRUCTURED_OUTPUT);
         }
         return ResolvedModelSnapshot.create(
-                new ModelProviderId("stub"),
+                new ModelProviderId(providerId),
                 "provider-v1",
                 new ModelDefinitionId("model"),
                 "model-v1",
@@ -835,6 +851,34 @@ class AnthropicMessagesModelTest {
         exchange.sendResponseHeaders(configured.status(), body.length);
         exchange.getResponseBody().write(body);
         exchange.close();
+    }
+
+    @Test
+    void rejectsDuplicateAdmissionKeyRegistrationInAnthropicRegistry() {
+        Map<AnthropicMessagesBindingRegistry.AdmissionKey, AnthropicMessagesBindingRegistry.AdmittedBinding> map =
+                new HashMap<>();
+        AnthropicMessagesBindingRegistry.register(
+                map,
+                "provider-test",
+                "model-test",
+                ModelApiStyles.ANTHROPIC_MESSAGES,
+                AnthropicMessagesDialects.DEEPSEEK,
+                ModelReasoningBehavior.ALWAYS,
+                Set.of(ModelReasoningMode.ENABLED),
+                Set.of(ModelReasoningEffort.HIGH),
+                false);
+        assertThatThrownBy(() -> AnthropicMessagesBindingRegistry.register(
+                        map,
+                        "provider-test",
+                        "model-test",
+                        ModelApiStyles.ANTHROPIC_MESSAGES,
+                        AnthropicMessagesDialects.DEEPSEEK,
+                        ModelReasoningBehavior.OPTIONAL,
+                        Set.of(ModelReasoningMode.DISABLED),
+                        Set.of(),
+                        true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Duplicate model binding admission key");
     }
 
     private record Response(int status, String contentType, String body, long delayMillis) {

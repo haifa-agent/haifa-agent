@@ -37,15 +37,31 @@ public final class OpenAiResponsesDialects {
                 };
         validateEndpoint(snapshot.endpoint(), allowInsecureHttp, profile);
         if (profile == Profile.DEEPSEEK
-                && !Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(snapshot.providerModelId())) {
+                && !OpenAiResponsesBindingRegistry.isAdmitted(
+                        snapshot.providerId().value(),
+                        snapshot.providerModelId(),
+                        ModelApiStyles.OPENAI_RESPONSES,
+                        DEEPSEEK)) {
             throw new IllegalArgumentException("DeepSeek Responses model profile is not verified");
         }
         if (profile == Profile.ALIYUN_BAILIAN
-                && !Set.of("qwen3.8-max-preview", "qwen3.7-max", "qwen3.7-max-2026-05-17", "qwen3.7-plus")
-                        .contains(snapshot.providerModelId())) {
+                && !OpenAiResponsesBindingRegistry.isAdmitted(
+                        snapshot.providerId().value(),
+                        snapshot.providerModelId(),
+                        ModelApiStyles.OPENAI_RESPONSES,
+                        ALIYUN_BAILIAN)) {
             throw new IllegalArgumentException("Bailian Responses model profile is not verified");
         }
-        if (profile == Profile.OPENAI_CODEX) validateCodexOptions(snapshot, isLoopback(snapshot.endpoint()));
+        if (profile == Profile.OPENAI_CODEX) {
+            validateCodexOptions(snapshot, isLoopback(snapshot.endpoint()));
+            if (!OpenAiResponsesBindingRegistry.isAdmitted(
+                    snapshot.providerId().value(),
+                    snapshot.providerModelId(),
+                    ModelApiStyles.OPENAI_RESPONSES,
+                    OPENAI_CODEX)) {
+                throw new IllegalArgumentException("OpenAI Codex Responses model profile is not verified");
+            }
+        }
         return profile;
     }
 

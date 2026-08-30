@@ -1,6 +1,5 @@
 package io.haifa.agent.model.gemini;
 
-import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelProfileStatus;
@@ -19,15 +18,7 @@ public final class GeminiModelProfileFactory {
     private GeminiModelProfileFactory() {}
 
     public static ModelBindingProfile fromSnapshot(ResolvedModelSnapshot snapshot, LocalDate verifiedOn) {
-        boolean governed = ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(snapshot.apiStyle())
-                && ((GeminiDialects.STANDARD.equals(snapshot.dialect())
-                                && "google-gemini".equals(snapshot.providerId().value()))
-                        || (GeminiDialects.CLIPROXYAPI_ANTIGRAVITY.equals(snapshot.dialect())
-                                && "cliproxyapi-antigravity"
-                                        .equals(snapshot.providerId().value()))
-                        || (GeminiDialects.ANTIGRAVITY_DIRECT.equals(snapshot.dialect())
-                                && "google-antigravity"
-                                        .equals(snapshot.providerId().value())));
+        boolean governed = GeminiBindingRegistry.isAdmitted(snapshot);
         boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
         return ModelBindingProfile.create(
                 snapshot.modelId(),
