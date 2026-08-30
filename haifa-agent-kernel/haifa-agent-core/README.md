@@ -23,3 +23,5 @@
 - `AgentRun`、`AgentSession`、`AgentStep`、`ToolCall`、`AgentPlan`/`TodoItem` 提供带
   `schemaVersion` 的纯 Java 持久化快照和受控 `reconstitute` 入口；未知版本、未知枚举和非法历史组合
   按 `DomainReconstitutionFailure` 分类失败。快照不使用 Java 原生序列化、反射、Jackson 或 ORM。
+- 失败的 `ToolCall` 可同时保留不成功的结构化 `ToolResult` 与稳定 `ToolExecutionError`；前者承载
+  bounded 工具事实，后者承载领域错误语义，旧快照中仅含错误的失败状态仍可恢复。

@@ -89,10 +89,16 @@ class AutonomousDeliveryRecoveryControlTest {
                 .orElseThrow();
 
         assertThat(first.fingerprint()).isEqualTo(same.fingerprint());
-        assertThat(first.fingerprint()).isEqualTo(sameIntentWithDifferentOperand.fingerprint());
+        assertThat(first.fingerprint()).isNotEqualTo(sameIntentWithDifferentOperand.fingerprint());
         assertThat(first.fingerprint()).isNotEqualTo(otherOperation.fingerprint());
-        assertThat(first.fingerprint().normalizedIntentDigest()).matches("[0-9a-f]{64}");
+        assertThat(first.fingerprint().requestDigest()).matches("[0-9a-f]{64}");
         assertThat(first.fingerprint().toString()).doesNotContain("git show", "missing", "other-random-ref");
+
+        var controller = new RecoveryController();
+        assertThat(controller.observe(first).attempts()).isOne();
+        assertThat(controller.observe(same).attempts()).isEqualTo(2);
+        assertThat(controller.observe(sameIntentWithDifferentOperand).attempts())
+                .isOne();
     }
 
     @Test
@@ -310,6 +316,25 @@ class AutonomousDeliveryRecoveryControlTest {
     }
 
     @Test
+    void cancellationAndUnknownOutcomesDoNotAccumulateAsRepeatedFailures() {
+        var classifier = new ToolOutcomeClassifier();
+        var controller = new RecoveryController();
+        var cancelled = classifier
+                .classify(failed("call-cancelled", "bounded", PROFILE_A, "CANCELLED", "TOOL_CANCELLED"))
+                .orElseThrow();
+        var unknown = classifier
+                .classify(failed("call-unknown", "bounded", PROFILE_A, "OUTCOME_UNKNOWN", "TOOL_OUTCOME_UNKNOWN"))
+                .orElseThrow();
+
+        assertThat(controller.observe(cancelled).attempts()).isZero();
+        assertThat(controller.observe(cancelled).directive()).isEqualTo(RecoveryDirective.TERMINATE_CANCELLED);
+        assertThat(controller.activeAttempts()).isZero();
+        assertThat(controller.observe(unknown).attempts()).isZero();
+        assertThat(controller.observe(unknown).directive()).isEqualTo(RecoveryDirective.TERMINATE_OUTCOME_UNKNOWN);
+        assertThat(controller.activeAttempts()).isZero();
+    }
+
+    @Test
     void restoreKeepsFailureClusterAndSuppressesAlreadyCrossedBudgetThresholds() {
         var restored = new AgentLoopContext(3, List.of());
         var snapshot = new RunBudgetSnapshot(4, 4, 4, 4_000, 4, 4, 2, 0, "TOOL_CALLS", 3, 4, 25);
@@ -443,15 +468,7 @@ class AutonomousDeliveryRecoveryControlTest {
     private static ToolCall failedCommand(String id, String command, String target, String operation) {
         ToolCall call = requested(
                 id,
-                Map.of(
-                        "operationFamily",
-                        "INSPECT",
-                        "command",
-                        command,
-                        "workdir",
-                        ".",
-                        "description",
-                        "diagnostic-" + id));
+                Map.of("operationFamily", "INSPECT", "command", command, "workdir", ".", "description", "diagnostic"));
         call.beginValidation();
         call.beginPolicyCheck();
         call.start(NOW.plusSeconds(1));

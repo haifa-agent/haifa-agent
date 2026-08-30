@@ -808,6 +808,7 @@ public final class ToolPipeline {
                                 failureAttributes(definition.name().value(), result),
                                 ids.nextValue(),
                                 time.now())),
+                        result,
                         time.now());
             }
             state.appendToolCall(call);
@@ -970,6 +971,7 @@ public final class ToolPipeline {
                 "commandOperation",
                 "commandTarget",
                 "sandboxProfileDigest",
+                "deliveryRepositoryScopeDigest",
                 "failureActionCode",
                 "failureCode",
                 "status",

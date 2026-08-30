@@ -134,7 +134,8 @@ public final class ToolCall {
                     case FAILED ->
                         snapshot.startedAt() != null
                                 && snapshot.completedAt() != null
-                                && snapshot.result() == null
+                                && (snapshot.result() == null
+                                        || !snapshot.result().successful())
                                 && snapshot.error() != null
                                 && snapshot.version() >= 4;
                     case DENIED ->
@@ -207,6 +208,17 @@ public final class ToolCall {
     public void fail(ToolExecutionError error, Instant at) {
         ToolExecutionError executionError = Objects.requireNonNull(error, "error must not be null");
         transitionFromRunning(ToolCallStatus.FAILED, at);
+        this.error = executionError;
+    }
+
+    public void fail(ToolExecutionError error, ToolResult result, Instant at) {
+        ToolExecutionError executionError = Objects.requireNonNull(error, "error must not be null");
+        ToolResult failedResult = Objects.requireNonNull(result, "result must not be null");
+        if (failedResult.successful()) {
+            throw new IllegalArgumentException("failed tool result must not be successful");
+        }
+        transitionFromRunning(ToolCallStatus.FAILED, at);
+        this.result = failedResult;
         this.error = executionError;
     }
 

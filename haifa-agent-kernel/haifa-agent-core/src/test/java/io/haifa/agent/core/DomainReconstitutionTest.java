@@ -174,7 +174,16 @@ class DomainReconstitutionTest {
 
         ToolCall failed = throughPolicy("failed");
         failed.start(NOW.plusSeconds(1));
-        failed.fail(new ToolExecutionError(error(NOW.plusSeconds(2))), NOW.plusSeconds(2));
+        failed.fail(
+                new ToolExecutionError(error(NOW.plusSeconds(2))),
+                new ToolResult(
+                        false,
+                        "bounded failure",
+                        Map.of("failureCategory", "COMMAND_FAILED", "output", "bounded output"),
+                        List.of(),
+                        List.of(),
+                        false),
+                NOW.plusSeconds(2));
         assertToolRoundTrip(failed);
 
         ToolCall denied = throughPolicy("denied");
