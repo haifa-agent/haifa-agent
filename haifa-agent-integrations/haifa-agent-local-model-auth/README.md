@@ -4,17 +4,13 @@
 `model-auth://` 凭据解析、外部登录方法注册、登录 Attempt 协调和进程内 Token Refresh single-flight。
 
 本模块只依赖 Common、Model API、Jackson 与 JDK。它不依赖 Coding Agent、Personal Assistant、Spring、Runtime、
-SQLite 或任何 UI。产品只在最高层装配受信的登录方法与 Client Registration；普通配置不能注入任意 OAuth
-Endpoint、Scope、Header 或实现类。支持 OpenAI Codex 设备码/浏览器登录；Google Antigravity 本地浏览器 OAuth
-仅在 `HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true` 且 Client ID/Secret 由运行环境显式注入时注册。账号已有
-CloudCode Project 时登录只读取该 Project；缺失 Project 时默认返回 `AUTH_ONBOARDING_CONFIRMATION_REQUIRED`，
-只有额外设置 `HAIFA_ANTIGRAVITY_ALLOW_ONBOARDING=true` 才允许执行账号初始化。
-Project ID 不进入 `auth.json`；产品重启后首次解析已保存的 Antigravity 凭据时，登录方法通过受信
-`loadCodeAssist` 恢复进程内 Project 投影，同一 Token 签发版本只恢复一次。
+SQLite 或任何 UI，也不直接绑定特定供应商（Codex、Antigravity 等非公开驱动已拆入独立的外围兼容模块中）。
+产品只在最高层装配受信的登录方法与 Client Registration；普通配置不能注入任意 OAuth
+Endpoint、Scope、Header 或实现类。
 
 产品通过 `LocalModelAuthenticationService` 执行列出连接、保存 API Key、启动/查询/取消外部登录和退出登录；
-该 Service 是唯一公开写入口，并向模型 Adapter 暴露同一 `CredentialResolver`。接入未来外部登录时，
-新增 `ExternalLoginMethod` 并在产品 Composition Root 注册，不修改 Store、Coordinator 或产品 UI 状态机。
+该 Service 是唯一公开写入口，并向模型 Adapter 暴露同一 `CredentialResolver`。接入外部登录驱动时，
+实现 `ExternalLoginMethod` 并在产品 Composition Root 注册，不修改 Store、Coordinator 或产品 UI 状态机。
 
 `auth.json` 是当前用户专属的明文本机存储，不提供静态加密。权限或 ACL、文件锁、严格 Schema、原子替换
 任一检查失败时均拒绝使用。Secret 不得进入日志、异常、公共 View、Runtime SQLite、JSONL 或 Workspace。

@@ -20,6 +20,8 @@ import java.util.function.Supplier;
 
 /** First allowlisted external-login driver: ChatGPT sign-in for Codex subscription access. */
 public final class CodexExternalLoginMethod implements ExternalLoginMethod {
+    public static final ExternalLoginMethodId METHOD_ID = new ExternalLoginMethodId("openai-codex");
+
     private final CodexOAuthClientRegistration registration;
     private final CodexTokenClient tokens;
     private final HttpClient http;
@@ -45,7 +47,7 @@ public final class CodexExternalLoginMethod implements ExternalLoginMethod {
         this.browserTimeout = Objects.requireNonNull(browserTimeout, "browserTimeout must not be null");
         this.sleeper = Objects.requireNonNull(sleeper, "sleeper must not be null");
         this.descriptor = new ExternalLoginMethodDescriptor(
-                ExternalLoginMethodId.OPENAI_CODEX,
+                METHOD_ID,
                 "ChatGPT sign-in (Codex)",
                 Set.of(ExternalLoginMode.BROWSER, ExternalLoginMode.DEVICE_CODE),
                 registration.unofficialLocalCompatibility(),
@@ -75,7 +77,7 @@ public final class CodexExternalLoginMethod implements ExternalLoginMethod {
     public StoredExternalCredential refresh(StoredExternalCredential credential, Instant refreshBefore) {
         StoredExternalCredential current = Objects.requireNonNull(credential, "credential must not be null");
         Objects.requireNonNull(refreshBefore, "refreshBefore must not be null");
-        if (!ExternalLoginMethodId.OPENAI_CODEX.equals(current.methodId())
+        if (!METHOD_ID.equals(current.methodId())
                 || !registration.reference().equals(current.clientRegistrationRef())) {
             throw new ExternalLoginMethodUnavailableException("AUTH_REAUTH_REQUIRED");
         }

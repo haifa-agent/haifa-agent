@@ -7,10 +7,10 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethodDescriptor;
-import io.haifa.agent.auth.localmodel.ExternalLoginMethodId;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
+import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
@@ -34,7 +34,7 @@ class PersonalModelAuthenticationControllerTest {
         when(service.connections()).thenReturn(java.util.List.of());
         when(service.externalLoginMethods())
                 .thenReturn(java.util.List.of(new ExternalLoginMethodDescriptor(
-                        ExternalLoginMethodId.GOOGLE_ANTIGRAVITY,
+                        AntigravityExternalLoginMethod.METHOD_ID,
                         "Google sign-in (Antigravity)",
                         java.util.Set.of(ExternalLoginMode.BROWSER),
                         true,

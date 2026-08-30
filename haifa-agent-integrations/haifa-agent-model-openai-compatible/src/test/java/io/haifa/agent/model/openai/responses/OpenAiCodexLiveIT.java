@@ -78,7 +78,7 @@ class OpenAiCodexLiveIT {
         var authenticationService =
                 new LocalModelAuthenticationService(store, Optional.empty(), credentials, environment::get);
         var model = new OpenAiResponsesModel(http, json, credentials, false, 1024 * 1024, ref -> authenticationService
-                .findCodexAccountId(ref)
+                .findExternalAccountId(ref, CodexExternalLoginMethod.METHOD_ID)
                 .map(CodexAccountIdentity::new));
 
         var request = new AgentChatRequest(

@@ -5,9 +5,6 @@ import java.util.Objects;
 
 /** Stable identifier for an allowlisted external login driver. */
 public record ExternalLoginMethodId(String value) {
-    public static final ExternalLoginMethodId OPENAI_CODEX = new ExternalLoginMethodId("openai-codex");
-    public static final ExternalLoginMethodId GOOGLE_ANTIGRAVITY = new ExternalLoginMethodId("google-antigravity");
-
     public ExternalLoginMethodId {
         value = Objects.requireNonNull(value, "value must not be null").trim().toLowerCase(Locale.ROOT);
         if (!value.matches("[a-z][a-z0-9]*(?:-[a-z0-9]+)*") || value.length() > 64) {
