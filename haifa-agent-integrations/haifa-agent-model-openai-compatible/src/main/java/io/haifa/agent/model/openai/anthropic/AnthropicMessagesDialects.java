@@ -3,6 +3,7 @@ package io.haifa.agent.model.openai.anthropic;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.openai.OpenAiCompatibleBindingRegistry;
 import java.net.URI;
 import java.util.Locale;
 import java.util.Objects;
@@ -33,10 +34,13 @@ public final class AnthropicMessagesDialects {
                 };
         validateEndpoint(snapshot.endpoint(), allowInsecureHttp, profile);
         if (profile == Profile.DEEPSEEK
-                && !Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(snapshot.providerModelId())) {
+                && !OpenAiCompatibleBindingRegistry.isAdmitted(
+                        "deepseek", snapshot.providerModelId(), ModelApiStyles.ANTHROPIC_MESSAGES, DEEPSEEK)) {
             throw new IllegalArgumentException("DeepSeek Anthropic model profile is not verified");
         }
-        if (profile == Profile.ZHIPU && !"glm-5.2".equals(snapshot.providerModelId())) {
+        if (profile == Profile.ZHIPU
+                && !OpenAiCompatibleBindingRegistry.isAdmitted(
+                        "zhipu", snapshot.providerModelId(), ModelApiStyles.ANTHROPIC_MESSAGES, ZHIPU)) {
             throw new IllegalArgumentException("Zhipu Anthropic model profile is not verified");
         }
         return profile;

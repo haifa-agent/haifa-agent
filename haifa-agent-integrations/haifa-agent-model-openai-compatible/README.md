@@ -3,9 +3,11 @@
 ## Profile factory
 
 `OpenAiCompatibleModelProfileFactory` derives a versioned binding profile from an already resolved snapshot. It
-recognizes only exact model/style/dialect combinations that completed contract verification: DeepSeek, the reviewed
-SiliconFlow DeepSeek V4 Flash Chat binding, selected Bailian Qwen bindings, Kimi K3/K2.7/K2.6, and selected Zhipu
-GLM bindings. Unknown vendor bindings remain unverified
+recognizes only exact 4-tuple `(providerId, providerModelId, apiStyle, dialect)` combinations registered in
+`OpenAiCompatibleBindingRegistry` that completed contract verification: DeepSeek (`deepseek-v4-flash`, `deepseek-v4-pro`),
+the reviewed SiliconFlow DeepSeek V4 Flash Chat binding, TokenRhythm DeepSeek V4 Flash Chat binding, selected Bailian Qwen bindings,
+Kimi K3/K2.7/K2.6, selected Zhipu GLM bindings, OpenAI Codex (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`), and the
+`personal-local` test fixture. Unknown vendor bindings, unverified model IDs, or style/dialect mutations fail closed as `UNVERIFIED`
 instead of inheriting capabilities merely because they share an OpenAI-compatible transport. Product exposure can
 still keep a verified control read-only. Provider request mapping remains in the dialect/adapter layer.
 
