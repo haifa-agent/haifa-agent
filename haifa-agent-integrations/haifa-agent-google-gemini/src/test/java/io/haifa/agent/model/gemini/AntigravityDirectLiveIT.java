@@ -71,6 +71,7 @@ class AntigravityDirectLiveIT {
         HttpClient http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .followRedirects(HttpClient.Redirect.NEVER)
+                .proxy(java.net.ProxySelector.getDefault())
                 .build();
         FileLocalModelAuthStore store = new FileLocalModelAuthStore(authFile, json);
         AntigravityProjectRegistry projectRegistry = new AntigravityProjectRegistry();
@@ -131,6 +132,7 @@ class AntigravityDirectLiveIT {
         HttpClient http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .followRedirects(HttpClient.Redirect.NEVER)
+                .proxy(java.net.ProxySelector.getDefault())
                 .build();
         FileLocalModelAuthStore store = new FileLocalModelAuthStore(authFile, json);
         AntigravityProjectRegistry projectRegistry = new AntigravityProjectRegistry();

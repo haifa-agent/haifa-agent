@@ -58,6 +58,7 @@ class OpenAiCodexLiveIT {
         HttpClient http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .followRedirects(HttpClient.Redirect.NEVER)
+                .proxy(java.net.ProxySelector.getDefault())
                 .build();
         FileLocalModelAuthStore store = new FileLocalModelAuthStore(authFile, json);
         var codexMethod = CodexLocalCompatibilityRegistrationFactory.create(environment)
