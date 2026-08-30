@@ -30,7 +30,8 @@ class ModelBindingProfileTest {
         assertThat(profile.canonicalString())
                 .isEqualTo("model-binding-profile-v1|aliyun-qwen3.7-max|openai-chat-completions|1.0|"
                         + "[TEXT_CHAT, TOOL_CALLING]|NONE|[DISABLED]|[]|none|1|8192|false|VERIFIED|2026-08-13");
-        assertThat(profile.digest()).startsWith("sha256:");
+        assertThat(profile.digest())
+                .isEqualTo("sha256:296dc5ed732d761f28c3be879beb24d8f72f2b48ee3530dcc50b3f1c416aeffe");
         assertThat(profile.selectable()).isTrue();
     }
 
@@ -55,7 +56,8 @@ class ModelBindingProfileTest {
                 .isEqualTo(
                         "model-binding-profile-v1|deepseek-chat-flash|openai-chat-completions|1.0|"
                                 + "[REASONING, TEXT_CHAT, TOOL_CALLING]|OPTIONAL|[DISABLED, ENABLED]|[HIGH]|none|1|8192|false|VERIFIED|2026-08-13");
-        assertThat(profile.digest()).startsWith("sha256:");
+        assertThat(profile.digest())
+                .isEqualTo("sha256:919cb33295be3d1ccabedda569fd27f85fca3cb89c647df5e316aa03d31dd370");
         assertThat(profile.selectable()).isTrue();
     }
 
@@ -80,7 +82,8 @@ class ModelBindingProfileTest {
                 .isEqualTo(
                         "model-binding-profile-v1|deepseek-responses-flash|openai-responses|1.0|"
                                 + "[REASONING, TEXT_CHAT, TOOL_CALLING]|OPTIONAL|[DISABLED, ENABLED]|[HIGH]|none|1|8192|true|VERIFIED|2026-08-13");
-        assertThat(profile.digest()).startsWith("sha256:");
+        assertThat(profile.digest())
+                .isEqualTo("sha256:4aa976feacf5f1bca365d83d1c95465876f9a8ec4f63cb809a438511e7020d96");
         assertThat(profile.selectable()).isTrue();
     }
 
@@ -105,7 +108,8 @@ class ModelBindingProfileTest {
                 .isEqualTo(
                         "model-binding-profile-v1|claude-3-7-sonnet|anthropic-messages|1.0|"
                                 + "[REASONING, TEXT_CHAT, TOOL_CALLING]|ALWAYS|[ENABLED]|[HIGH, LOW, MEDIUM]|none|1|64000|false|VERIFIED|2026-08-30");
-        assertThat(profile.digest()).startsWith("sha256:");
+        assertThat(profile.digest())
+                .isEqualTo("sha256:b6bd427a63b8265702e0067f8faa36fbe978b952003395be0bb2e9229e6700cd");
         assertThat(profile.selectable()).isTrue();
     }
 
@@ -129,7 +133,8 @@ class ModelBindingProfileTest {
         assertThat(profile.canonicalString())
                 .isEqualTo("model-binding-profile-v1|unknown-model|openai-chat-completions|1.0|"
                         + "[TEXT_CHAT]|NONE|[DISABLED]|[]|none|1|4096|false|UNVERIFIED|2026-08-30");
-        assertThat(profile.digest()).startsWith("sha256:");
+        assertThat(profile.digest())
+                .isEqualTo("sha256:b3d49ec0693f9f577f6b795bc0acd621c427a1e8957ca6616d635fa2a2e1eaf6");
         assertThat(profile.selectable()).isFalse();
     }
 
@@ -158,6 +163,26 @@ class ModelBindingProfileTest {
                         "sha256:tampered-digest-value"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("model profile digest does not match profile fields");
+    }
+
+    @Test
+    void canonicalFormRejectsAmbiguousDelimiterCharacters() {
+        assertThatThrownBy(() -> ModelBindingProfile.create(
+                        new ModelDefinitionId("model|other"),
+                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                        "1.0",
+                        Set.of(ModelCapability.TEXT_CHAT),
+                        ModelReasoningBehavior.NONE,
+                        Set.of(ModelReasoningMode.DISABLED),
+                        Set.of(),
+                        OptionalLong.empty(),
+                        1,
+                        4096,
+                        false,
+                        ModelProfileStatus.VERIFIED,
+                        LocalDate.of(2026, 8, 30)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("bindingId is invalid for the model profile canonical form");
     }
 
     @Test

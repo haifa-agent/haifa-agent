@@ -39,6 +39,7 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
             EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING);
 
     private final String defaultModelId;
+    private final Map<String, ModelBindingProfile> profiles;
     private final StaticModelPlatform platform;
 
     CliCodingModelCatalog(CliConfiguration configuration) {
@@ -50,7 +51,7 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
         List<ModelProviderDefinition> providers = grouped.entrySet().stream()
                 .map(entry -> provider(entry.getKey(), entry.getValue()))
                 .toList();
-        Map<String, ModelBindingProfile> profiles = configuration.availableModels().stream()
+        profiles = configuration.availableModels().stream()
                 .collect(java.util.stream.Collectors.toUnmodifiableMap(CliConfiguration.Model::id, model -> {
                     var snapshot = LocalCodingAgent.modelSnapshot(model);
                     if (ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(snapshot.apiStyle())) {
@@ -84,6 +85,9 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
     public List<CodingModelOption> available(TenantRef tenant, PrincipalRef principal) {
         return platform.listAvailable(new ModelAvailabilityRequest(tenant, principal, REQUIRED)).stream()
                 .flatMap(provider -> provider.models().stream()
+                        .filter(model -> Optional.ofNullable(profiles.get(model.id().value()))
+                                .map(ModelBindingProfile::selectable)
+                                .orElse(false))
                         .map(model -> new CodingModelOption(
                                 model.id().value(),
                                 model.displayName(),
