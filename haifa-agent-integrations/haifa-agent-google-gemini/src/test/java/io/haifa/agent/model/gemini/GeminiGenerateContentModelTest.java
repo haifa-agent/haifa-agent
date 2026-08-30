@@ -121,7 +121,7 @@ class GeminiGenerateContentModelTest {
 
         var response = standardStubModel()
                 .invoke(request(
-                        antigravityDirectSnapshot("my-custom-project"),
+                        antigravityDirectSnapshot(),
                         List.of(ModelMessage.text(ModelMessageRole.USER, "hello direct")),
                         List.of()));
 
@@ -173,7 +173,7 @@ class GeminiGenerateContentModelTest {
 
         assertThatThrownBy(() -> standardStubModel()
                         .invoke(request(
-                                antigravityDirectSnapshot("project-1"),
+                                antigravityDirectSnapshot(),
                                 List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
                                 List.of())))
                 .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
@@ -206,7 +206,7 @@ class GeminiGenerateContentModelTest {
 
         assertThatThrownBy(() -> standardStubModel()
                         .invoke(request(
-                                antigravityDirectSnapshot("project-1"),
+                                antigravityDirectSnapshot(),
                                 List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
                                 List.of())))
                 .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
@@ -546,7 +546,7 @@ class GeminiGenerateContentModelTest {
         var response = standardStubModel()
                 .invokeStreaming(
                         request(
-                                antigravityDirectSnapshot("project-1"),
+                                antigravityDirectSnapshot(),
                                 List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
                                 List.of()),
                         event -> {
@@ -582,25 +582,65 @@ class GeminiGenerateContentModelTest {
                 ignored -> new ResolvedCredential("secret-value"),
                 false,
                 1024 * 1024,
-                true);
+                true,
+                ref -> java.util.Optional.empty());
         AgentChatRequest injected = new AgentChatRequest(
                 new ModelCallId("call-project"),
                 new AgentRunId("run-project"),
                 1,
                 1,
-                antigravityDirectSnapshot(""),
+                antigravityDirectSnapshot(),
                 List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
                 List.of(),
                 256,
                 Duration.ofSeconds(5),
                 Map.of("project", "request-project"));
 
-        assertThatThrownBy(() -> model.invoke(injected)).hasRootCauseMessage("request project injection is forbidden");
+        assertThatThrownBy(() -> model.invoke(injected))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.providerCode()).isEqualTo("project_injection_forbidden");
+                });
 
         AgentChatRequest missingTrustedProject = request(
-                antigravityDirectSnapshot(""), List.of(ModelMessage.text(ModelMessageRole.USER, "hi")), List.of());
+                antigravityDirectSnapshot(), List.of(ModelMessage.text(ModelMessageRole.USER, "hi")), List.of());
         assertThatThrownBy(() -> model.invoke(missingTrustedProject))
-                .hasRootCauseMessage("trusted Antigravity project is unavailable");
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.providerCode()).isEqualTo("antigravity_project_unavailable");
+                });
+    }
+
+    @Test
+    void rejectsCrlfOrBlankCredentialOrProjectBeforeNetworkUse() {
+        var badCredentialModel = new GeminiGenerateContentModel(
+                HttpClient.newHttpClient(),
+                json,
+                ignored -> new ResolvedCredential("bad\r\nsecret"),
+                false,
+                1024 * 1024,
+                true,
+                ref -> java.util.Optional.of("my-project"));
+        assertThatThrownBy(() -> badCredentialModel.invoke(request(
+                        standardSnapshot(), List.of(ModelMessage.text(ModelMessageRole.USER, "hi")), List.of())))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.AUTHENTICATION_FAILED);
+                });
+
+        var badProjectModel = new GeminiGenerateContentModel(
+                HttpClient.newHttpClient(),
+                json,
+                ignored -> new ResolvedCredential("secret-value"),
+                false,
+                1024 * 1024,
+                true,
+                ref -> java.util.Optional.of("bad\r\nproject"));
+        assertThatThrownBy(() -> badProjectModel.invoke(request(
+                        antigravityDirectSnapshot(),
+                        List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                        List.of())))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.AUTHENTICATION_FAILED);
+                    assertThat(failure.providerCode()).isEqualTo("antigravity_project_invalid");
+                });
     }
 
     @Test
@@ -626,7 +666,8 @@ class GeminiGenerateContentModelTest {
                 ignored -> new ResolvedCredential("secret-value"),
                 false,
                 1024 * 1024,
-                true);
+                true,
+                ref -> java.util.Optional.of("my-custom-project"));
     }
 
     private AgentChatRequest request(
@@ -658,7 +699,7 @@ class GeminiGenerateContentModelTest {
                 GeminiGenerateContentModel.CLIPROXY_CREDENTIAL_REF);
     }
 
-    private ResolvedModelSnapshot antigravityDirectSnapshot(String project) {
+    private ResolvedModelSnapshot antigravityDirectSnapshot() {
         int port = server == null ? 8080 : server.getAddress().getPort();
         return ResolvedModelSnapshot.create(
                 new ModelProviderId("google-antigravity"),
@@ -682,7 +723,7 @@ class GeminiGenerateContentModelTest {
                         ModelCapability.REASONING),
                 8192,
                 1024,
-                project.isEmpty() ? Map.of() : Map.of("project", project),
+                Map.of(),
                 Map.of());
     }
 

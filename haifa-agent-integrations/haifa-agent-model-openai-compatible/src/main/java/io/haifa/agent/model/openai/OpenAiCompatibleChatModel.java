@@ -95,19 +95,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
     public AgentChatResponse invoke(AgentChatRequest request) {
         Objects.requireNonNull(request, "request must not be null");
         validateSelection(request);
-        ResolvedCredential credential;
-        try {
-            credential = credentials.resolve(request.model().credentialRef());
-        } catch (RuntimeException exception) {
-            throw failure(
-                    request,
-                    ModelErrorCategory.AUTHENTICATION_FAILED,
-                    false,
-                    0,
-                    "credential_unavailable",
-                    "model credential is unavailable",
-                    null);
-        }
+        ResolvedCredential credential = resolveCredential(request);
         byte[] body;
         try {
             body = json.writeValueAsBytes(requestBody(request, false));
@@ -126,7 +114,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 .timeout(request.timeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
-                .header("Authorization", "Bearer " + credential.value())
+                .header("Authorization", "Bearer " + credential.value().trim())
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                 .build();
         try {
@@ -195,19 +183,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         if (!request.model().nativeStreaming()) {
             return AgentChatModel.super.invokeStreaming(request, sink);
         }
-        ResolvedCredential credential;
-        try {
-            credential = credentials.resolve(request.model().credentialRef());
-        } catch (RuntimeException exception) {
-            throw failure(
-                    request,
-                    ModelErrorCategory.AUTHENTICATION_FAILED,
-                    false,
-                    0,
-                    "credential_unavailable",
-                    "model credential is unavailable",
-                    null);
-        }
+        ResolvedCredential credential = resolveCredential(request);
         byte[] body;
         try {
             body = json.writeValueAsBytes(requestBody(request, true));
@@ -226,7 +202,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 .timeout(request.timeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
-                .header("Authorization", "Bearer " + credential.value())
+                .header("Authorization", "Bearer " + credential.value().trim())
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                 .build();
         ModelStreamObservation observation = new ModelStreamObservation();
@@ -286,6 +262,33 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     null,
                     observation.outputObserved());
         }
+    }
+
+    private ResolvedCredential resolveCredential(AgentChatRequest request) {
+        try {
+            ResolvedCredential credential = credentials.resolve(request.model().credentialRef());
+            validateSecret(credential.value());
+            return credential;
+        } catch (RuntimeException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.AUTHENTICATION_FAILED,
+                    false,
+                    0,
+                    "credential_unavailable",
+                    "model credential is unavailable",
+                    null);
+        }
+    }
+
+    private static String validateSecret(String secret) {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalArgumentException("model credential value must not be blank");
+        }
+        if (secret.indexOf('\r') >= 0 || secret.indexOf('\n') >= 0 || secret.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("model credential contains invalid control characters");
+        }
+        return secret.trim();
     }
 
     private void validateSelection(AgentChatRequest request) {

@@ -61,6 +61,28 @@ class LocalModelAuthenticationServiceTest {
                 .hasMessage("AUTH_ENVIRONMENT_REFERENCE_INVALID");
     }
 
+    @Test
+    void findsCodexAccountIdForValidatedExternalCredential() {
+        InMemoryStore store = new InMemoryStore();
+        var service = service(store, Map.of());
+        LocalModelAuthReference ref = LocalModelAuthReference.parse("model-auth://openai-codex/default");
+        StoredExternalCredential cred = new StoredExternalCredential(
+                ref,
+                ExternalLoginMethodId.OPENAI_CODEX,
+                "reg-1",
+                "access-token",
+                "refresh-token",
+                System.currentTimeMillis() + 100000,
+                System.currentTimeMillis(),
+                "account-12345");
+        store.save(cred);
+
+        assertThat(service.findCodexAccountId(new CredentialRef(ref.value()))).contains("account-12345");
+        assertThat(service.findCodexAccountId(new CredentialRef("env://OTHER"))).isEmpty();
+        assertThat(service.findCodexAccountId(new CredentialRef("model-auth://openai-codex/nonexistent")))
+                .isEmpty();
+    }
+
     private static LocalModelAuthenticationService service(InMemoryStore store, Map<String, String> environment) {
         return new LocalModelAuthenticationService(
                 store,
