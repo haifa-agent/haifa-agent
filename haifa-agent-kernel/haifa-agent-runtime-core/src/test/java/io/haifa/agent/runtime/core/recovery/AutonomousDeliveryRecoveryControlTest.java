@@ -542,4 +542,19 @@ class AutonomousDeliveryRecoveryControlTest {
                 new ToolArguments("execution.input", "1", arguments),
                 NOW);
     }
+
+    @Test
+    void promptTextOmitsUnconfiguredTokenQuotas() {
+        var withTokens = new RunBudgetSnapshot(10, 5, 20, 30_000, 100_000, 20_000, 1, 2, "MODEL_CALLS", 5, 10, 50);
+        assertThat(withTokens.promptText())
+                .isEqualTo(
+                        "Remaining resource budget: modelCalls=10, toolCalls=5, iterations=20, wallTimeMillis=30000, "
+                                + "inputTokens=100000, outputTokens=20000, failureClusterAttempts=1, completionRepairAttempts=2.");
+
+        var withoutTokens = new RunBudgetSnapshot(10, 5, 20, 30_000, -1L, -1L, 1, 2, "MODEL_CALLS", 5, 10, 50);
+        assertThat(withoutTokens.promptText())
+                .isEqualTo(
+                        "Remaining resource budget: modelCalls=10, toolCalls=5, iterations=20, wallTimeMillis=30000, "
+                                + "failureClusterAttempts=1, completionRepairAttempts=2.");
+    }
 }

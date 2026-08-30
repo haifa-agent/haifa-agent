@@ -25,7 +25,7 @@ class AttemptExecutorTest {
                 .isEqualTo(AgentErrorCode.RUN_COST_QUOTA_EXHAUSTED);
         assertThat(AttemptExecutor.classifiedErrorCode(
                         null, new RuntimeLimitExceededException("modelCalls", 64, 65), null, null))
-                .isEqualTo(AgentErrorCode.RUN_BUDGET_EXCEEDED);
+                .isEqualTo(AgentErrorCode.RUN_EXECUTION_LIMIT_EXCEEDED);
         assertThat(AttemptExecutor.classifiedErrorCode(
                         null, null, failure(ContextBuildFailure.MODEL_WINDOW_TOO_SMALL), null))
                 .isEqualTo(AgentErrorCode.MODEL_CONTEXT_TOO_LONG);

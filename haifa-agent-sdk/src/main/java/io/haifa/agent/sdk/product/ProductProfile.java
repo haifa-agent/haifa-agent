@@ -196,12 +196,10 @@ public record ProductProfile(
         add(fields, "runProfileId", ProductValues.text(runProfileId, "runProfileId", 128));
         add(fields, "runProfileVersion", ProductValues.text(runProfileVersion, "runProfileVersion", 64));
         add(fields, "instructions", ProductValues.text(instructions, "instructions", 32_000));
+        add(fields, "budget.quotaMode", budget.quotaMode().name());
         add(fields, "budget.maxInputTokens", budget.maxInputTokens());
         add(fields, "budget.maxOutputTokens", budget.maxOutputTokens());
         add(fields, "budget.maxCachedInputTokens", budget.maxCachedInputTokens());
-        add(fields, "budget.maxToolCalls", budget.maxToolCalls());
-        add(fields, "budget.maxModelCalls", budget.maxModelCalls());
-        add(fields, "budget.maxChildRuns", budget.maxChildRuns());
         add(fields, "budget.maxCostCurrency", budget.maxCostCurrency());
         add(fields, "budget.maxCostMinorUnits", budget.maxCostMinorUnits());
         add(fields, "limits.maxIterations", limits.maxIterations());
@@ -209,6 +207,9 @@ public record ProductProfile(
         add(fields, "limits.maxParallelChildren", limits.maxParallelChildren());
         add(fields, "limits.maxWallTimeMillis", limits.maxWallTimeMillis());
         add(fields, "limits.maxIdleTimeMillis", limits.maxIdleTimeMillis());
+        add(fields, "limits.maxModelCalls", limits.maxModelCalls());
+        add(fields, "limits.maxToolCalls", limits.maxToolCalls());
+        add(fields, "limits.maxChildRuns", limits.maxChildRuns());
         add(fields, "memory.manualReviewRequired", policies.memory().manualReviewRequired());
         add(fields, "memory.maxCandidateContentChars", policies.memory().maxCandidateContentChars());
         add(fields, "memory.maxQueryLimit", policies.memory().maxQueryLimit());

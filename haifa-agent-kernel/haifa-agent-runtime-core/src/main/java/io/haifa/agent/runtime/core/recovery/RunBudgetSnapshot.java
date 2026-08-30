@@ -43,12 +43,12 @@ public record RunBudgetSnapshot(
                 ? quota.maxCostMinorUnits()
                 : run.budget().maxCostMinorUnits();
 
-        long input = maxInput > 0 ? remaining(maxInput, run.usage().inputTokens()) : Long.MAX_VALUE;
-        long output = maxOutput > 0 ? remaining(maxOutput, run.usage().outputTokens()) : Long.MAX_VALUE;
+        long input = maxInput > 0 ? remaining(maxInput, run.usage().inputTokens()) : -1L;
+        long output = maxOutput > 0 ? remaining(maxOutput, run.usage().outputTokens()) : -1L;
         long cachedInput =
-                maxCachedInput > 0 ? remaining(maxCachedInput, run.usage().cachedInputTokens()) : Long.MAX_VALUE;
+                maxCachedInput > 0 ? remaining(maxCachedInput, run.usage().cachedInputTokens()) : -1L;
         long children = remaining(run.limits().maxChildRuns(), run.usage().childRuns());
-        long cost = maxCost > 0 ? remaining(maxCost, run.usage().costMinorUnits()) : Long.MAX_VALUE;
+        long cost = maxCost > 0 ? remaining(maxCost, run.usage().costMinorUnits()) : -1L;
 
         List<BudgetDimension> dimensions = new ArrayList<>();
         dimensions.add(new BudgetDimension(
@@ -121,17 +121,21 @@ public record RunBudgetSnapshot(
     }
 
     public String promptText() {
-        return ("Remaining resource budget: modelCalls=%d, toolCalls=%d, iterations=%d, wallTimeMillis=%d, "
-                        + "inputTokens=%d, outputTokens=%d, failureClusterAttempts=%d, completionRepairAttempts=%d.")
-                .formatted(
-                        remainingModelCalls,
-                        remainingToolCalls,
-                        remainingIterations,
-                        remainingWallTimeMillis,
-                        remainingInputTokens,
-                        remainingOutputTokens,
-                        failureClusterAttempts,
-                        completionRepairAttempts);
+        StringBuilder builder = new StringBuilder("Remaining resource budget: ");
+        builder.append("modelCalls=").append(remainingModelCalls);
+        builder.append(", toolCalls=").append(remainingToolCalls);
+        builder.append(", iterations=").append(remainingIterations);
+        builder.append(", wallTimeMillis=").append(remainingWallTimeMillis);
+        if (remainingInputTokens >= 0) {
+            builder.append(", inputTokens=").append(remainingInputTokens);
+        }
+        if (remainingOutputTokens >= 0) {
+            builder.append(", outputTokens=").append(remainingOutputTokens);
+        }
+        builder.append(", failureClusterAttempts=").append(failureClusterAttempts);
+        builder.append(", completionRepairAttempts=").append(completionRepairAttempts);
+        builder.append(".");
+        return builder.toString();
     }
 
     private static long remaining(long maximum, long used) {

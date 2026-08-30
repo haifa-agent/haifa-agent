@@ -155,7 +155,15 @@ public final class DeepSeekRuntimeRunner {
                         0,
                         "USD",
                         100_000),
-                new AgentRunLimits(capabilityCalls ? 6 : 4, 0, 1, COMPLETION_TIMEOUT.toMillis(), 120_000),
+                new AgentRunLimits(
+                        capabilityCalls ? 6 : 4,
+                        0,
+                        1,
+                        COMPLETION_TIMEOUT.toMillis(),
+                        120_000,
+                        capabilityCalls ? 3 : 2,
+                        capabilityCalls ? 1 : 0,
+                        0),
                 modelSnapshot);
     }
 }

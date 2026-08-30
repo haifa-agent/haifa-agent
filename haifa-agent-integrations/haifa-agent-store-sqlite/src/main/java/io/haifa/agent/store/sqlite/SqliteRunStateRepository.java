@@ -111,7 +111,7 @@ public final class SqliteRunStateRepository implements RunStateRepository {
                 value.limits().maxToolCalls(),
                 value.limits().maxModelCalls(),
                 value.limits().maxChildRuns(),
-                value.budget().maxCostCurrency(),
+                encodeBudgetCurrency(value.budget()),
                 value.budget().maxCostMinorUnits(),
                 value.limits().maxIterations(),
                 value.limits().maxDepth(),
@@ -175,6 +175,11 @@ public final class SqliteRunStateRepository implements RunStateRepository {
                                         row.errorPayload(),
                                         row.errorHash()))
                         .toDomain();
+        DecodedBudgetCurrency decodedCurrency = decodeBudgetCurrency(
+                row.budgetMaxCostCurrency(),
+                row.budgetMaxInputTokens(),
+                row.budgetMaxOutputTokens(),
+                row.budgetMaxCostMinorUnits());
         return AgentRun.reconstitute(new AgentRunPersistenceSnapshot(
                 row.schemaVersion(),
                 new AgentRunId(row.runId()),
@@ -193,13 +198,14 @@ public final class SqliteRunStateRepository implements RunStateRepository {
                 row.depth(),
                 row.objective(),
                 new AgentRunBudget(
+                        decodedCurrency.mode(),
                         row.budgetMaxInputTokens(),
                         row.budgetMaxOutputTokens(),
                         row.budgetMaxCachedInputTokens(),
                         row.budgetMaxToolCalls(),
                         row.budgetMaxModelCalls(),
                         row.budgetMaxChildRuns(),
-                        row.budgetMaxCostCurrency(),
+                        decodedCurrency.currency(),
                         row.budgetMaxCostMinorUnits()),
                 new AgentRunLimits(
                         row.limitMaxIterations(),
@@ -254,6 +260,30 @@ public final class SqliteRunStateRepository implements RunStateRepository {
         if (parts.length != 3) throw new IllegalArgumentException("invalid agent definition version");
         return new AgentDefinitionVersion(
                 Integer.parseInt(parts[0]), Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+    }
+
+    private static String encodeBudgetCurrency(AgentRunBudget budget) {
+        return budget.quotaMode().name() + "|" + budget.maxCostCurrency();
+    }
+
+    private static record DecodedBudgetCurrency(io.haifa.agent.core.run.QuotaMode mode, String currency) {}
+
+    private static DecodedBudgetCurrency decodeBudgetCurrency(
+            String stored, long maxInput, long maxOutput, long maxCost) {
+        if (stored != null && stored.contains("|")) {
+            int index = stored.indexOf('|');
+            String modeStr = stored.substring(0, index);
+            String currency = stored.substring(index + 1);
+            try {
+                return new DecodedBudgetCurrency(io.haifa.agent.core.run.QuotaMode.valueOf(modeStr), currency);
+            } catch (IllegalArgumentException ignored) {
+                // fall through to legacy inference
+            }
+        }
+        io.haifa.agent.core.run.QuotaMode mode = (maxInput == 0 && maxOutput == 0 && maxCost == 0)
+                ? io.haifa.agent.core.run.QuotaMode.DISABLED
+                : io.haifa.agent.core.run.QuotaMode.HARD_STOP;
+        return new DecodedBudgetCurrency(mode, stored == null ? "USD" : stored);
     }
 
     private <T> T execute(Supplier<T> work) {
