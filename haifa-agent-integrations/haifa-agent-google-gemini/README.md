@@ -22,3 +22,13 @@ allowlist and a 10 MiB per-file limit before this adapter boundary.
 
 Gemini function-call part order and thought signatures are stored as protected provider continuation. Missing or
 corrupt signatures fail closed even if a gateway would repair them.
+
+## Profile factory and admission
+
+`GeminiModelProfileFactory` derives profiles strictly for 4-tuple bindings registered in `GeminiBindingRegistry`:
+- `cliproxyapi-antigravity` + `gemini-3-flash` + `google-gemini-generate-content` + `cliproxyapi-antigravity`
+- `google-antigravity` + `gemini-3-flash` + `google-gemini-generate-content` + `antigravity-direct`
+- `google-gemini` + `gemini-3-flash` + `google-gemini-generate-content` + `standard`
+
+Unknown `providerModelId` values, unadmitted dialects, or mutated identity dimensions fail closed as `UNVERIFIED`
+(`selectable() == false`).

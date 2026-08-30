@@ -3,6 +3,7 @@ package io.haifa.agent.model.openai.responses;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.openai.OpenAiCompatibleBindingRegistry;
 import java.net.URI;
 import java.util.Locale;
 import java.util.Objects;
@@ -37,15 +38,25 @@ public final class OpenAiResponsesDialects {
                 };
         validateEndpoint(snapshot.endpoint(), allowInsecureHttp, profile);
         if (profile == Profile.DEEPSEEK
-                && !Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(snapshot.providerModelId())) {
+                && !OpenAiCompatibleBindingRegistry.isAdmitted(
+                        "deepseek", snapshot.providerModelId(), ModelApiStyles.OPENAI_RESPONSES, DEEPSEEK)) {
             throw new IllegalArgumentException("DeepSeek Responses model profile is not verified");
         }
         if (profile == Profile.ALIYUN_BAILIAN
-                && !Set.of("qwen3.8-max-preview", "qwen3.7-max", "qwen3.7-max-2026-05-17", "qwen3.7-plus")
-                        .contains(snapshot.providerModelId())) {
+                && !OpenAiCompatibleBindingRegistry.isAdmitted(
+                        "aliyun-bailian",
+                        snapshot.providerModelId(),
+                        ModelApiStyles.OPENAI_RESPONSES,
+                        ALIYUN_BAILIAN)) {
             throw new IllegalArgumentException("Bailian Responses model profile is not verified");
         }
-        if (profile == Profile.OPENAI_CODEX) validateCodexOptions(snapshot, isLoopback(snapshot.endpoint()));
+        if (profile == Profile.OPENAI_CODEX) {
+            validateCodexOptions(snapshot, isLoopback(snapshot.endpoint()));
+            if (!OpenAiCompatibleBindingRegistry.isAdmitted(
+                    "openai-codex", snapshot.providerModelId(), ModelApiStyles.OPENAI_RESPONSES, OPENAI_CODEX)) {
+                throw new IllegalArgumentException("OpenAI Codex Responses model profile is not verified");
+            }
+        }
         return profile;
     }
 

@@ -439,6 +439,15 @@ class PersonalModelFactoryTest {
 
     @Test
     void freezesStandardChatCompletionsDialectForAnArbitraryProviderId() {
+        var deepSeek = provider(
+                "deepseek",
+                "DeepSeek",
+                true,
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", "deepseek-openai-chat", null)),
+                List.of(model("deepseek-v4-flash", "DeepSeek Flash", "deepseek-v4-flash", "openai-chat-completions")));
         var provider = provider(
                 "third-party-openai",
                 "Third-party OpenAI-compatible",
@@ -448,15 +457,22 @@ class PersonalModelFactoryTest {
                 List.of(new PersonalAssistantProperties.ApiBinding("openai-chat-completions", null, null)),
                 List.of(model("third-party-chat", "Third-party Chat", "vendor-chat-model", "openai-chat-completions")));
 
-        var platform =
-                PersonalModelFactory.createPlatform(List.of(provider), "third-party-chat", new ObjectMapper(), shell());
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(deepSeek, provider), "deepseek-v4-flash", new ObjectMapper(), shell());
 
-        assertThat(platform.contribution().snapshot().providerId().value()).isEqualTo("third-party-openai");
-        assertThat(platform.contribution().snapshot().dialect()).isEqualTo("standard");
-        assertThat(platform.contribution().snapshot().nativeStreaming()).isTrue();
-        assertThat(platform.contribution().snapshot().providerOptions())
+        var snapshot = platform.contribution().snapshots().get("third-party-chat");
+        assertThat(snapshot.providerId().value()).isEqualTo("third-party-openai");
+        assertThat(snapshot.dialect()).isEqualTo("standard");
+        assertThat(snapshot.nativeStreaming()).isTrue();
+        assertThat(snapshot.providerOptions())
                 .containsEntry("endpoint_host", "gateway.example.com")
                 .doesNotContainKeys("thinking", "reasoning_effort");
+        assertThat(platform.catalog().find("third-party-chat")).isEmpty();
+
+        assertThatThrownBy(() -> PersonalModelFactory.createPlatform(
+                        List.of(deepSeek, provider), "third-party-chat", new ObjectMapper(), shell()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("default Personal model profile is not verified");
     }
 
     @Test

@@ -13,6 +13,7 @@ import io.haifa.agent.model.api.ModelReasoningBehavior;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesDialects;
 import java.net.URI;
 import java.time.LocalDate;
@@ -240,6 +241,213 @@ class OpenAiCompatibleModelProfileFactoryTest {
         assertThat(reviewed.toolReasoningContinuationRequired()).isFalse();
         assertThat(unknown.status()).isEqualTo(ModelProfileStatus.UNVERIFIED);
         assertThat(unknown.selectable()).isFalse();
+    }
+
+    @Test
+    void rejectsUnregisteredDeterministicChatOnlyBecauseOfApiStyle() {
+        ResolvedModelSnapshot snapshot = snapshot(
+                "unregistered-provider",
+                "custom-test-binding",
+                "custom-model",
+                ModelApiStyles.DETERMINISTIC_CHAT,
+                ModelApiBindingDefinition.STANDARD_DIALECT,
+                "http://127.0.0.1:20999");
+
+        var profile = profile(snapshot);
+
+        assertThat(profile.status()).isEqualTo(ModelProfileStatus.UNVERIFIED);
+        assertThat(profile.selectable()).isFalse();
+    }
+
+    @Test
+    void rejectsUnregisteredStandardDialectNonReasoningModel() {
+        ResolvedModelSnapshot arbitrary = ResolvedModelSnapshot.create(
+                new ModelProviderId("third-party-openai"),
+                "1",
+                new ModelDefinitionId("third-party-chat"),
+                "1",
+                "vendor-chat-model",
+                ModelApiStyles.OPENAI_CHAT_ADAPTER,
+                "1",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                ModelApiBindingDefinition.STANDARD_DIALECT,
+                URI.create("https://gateway.example.com/v1"),
+                new CredentialRef("env://THIRD_PARTY_API_KEY"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                131072,
+                8192,
+                Map.of(),
+                Map.of());
+
+        var profile = profile(arbitrary);
+
+        assertThat(profile.status()).isEqualTo(ModelProfileStatus.UNVERIFIED);
+        assertThat(profile.selectable()).isFalse();
+
+        ResolvedModelSnapshot openAiLuna = ResolvedModelSnapshot.create(
+                new ModelProviderId("openai"),
+                "1",
+                new ModelDefinitionId("openai-gpt-5.6-luna"),
+                "1",
+                "gpt-5.6-luna",
+                ModelApiStyles.OPENAI_CHAT_ADAPTER,
+                "1",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                ModelApiBindingDefinition.STANDARD_DIALECT,
+                URI.create("http://localhost:30000/v1"),
+                new CredentialRef("env://OPENAI_API_KEY"),
+                false,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                131072,
+                8192,
+                Map.of(),
+                Map.of());
+
+        var lunaProfile = profile(openAiLuna);
+
+        assertThat(lunaProfile.status()).isEqualTo(ModelProfileStatus.UNVERIFIED);
+        assertThat(lunaProfile.selectable()).isFalse();
+    }
+
+    @Test
+    void verifiesExactPersonalLocalOfflineAcceptanceFixture() {
+        ResolvedModelSnapshot fixture = ResolvedModelSnapshot.create(
+                new ModelProviderId("personal-local"),
+                "1",
+                new ModelDefinitionId("personal-test"),
+                "1",
+                "personal-test",
+                ModelApiStyles.adapterType(ModelApiStyles.DETERMINISTIC_CHAT),
+                "1",
+                ModelApiStyles.DETERMINISTIC_CHAT,
+                ModelApiBindingDefinition.STANDARD_DIALECT,
+                URI.create("http://127.0.0.1:20999"),
+                new CredentialRef("env://UNUSED"),
+                false,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                16384,
+                1024,
+                Map.of(),
+                Map.of());
+
+        var profile = profile(fixture);
+
+        assertThat(profile.status()).isEqualTo(ModelProfileStatus.VERIFIED);
+        assertThat(profile.selectable()).isTrue();
+        assertThat(profile.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.NONE);
+    }
+
+    @Test
+    void verifiesAllAdmittedBindingsBothWithAndWithoutReasoningCapabilities() {
+        for (var admitted : OpenAiCompatibleBindingRegistry.find(
+                        "deepseek",
+                        "deepseek-v4-flash",
+                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                        OpenAiCompatibleDialects.DEEPSEEK)
+                .stream()
+                .toList()) {
+            assertThat(admitted).isNotNull();
+        }
+
+        // Test every admitted binding
+        var reasoningSnapshot = snapshot(
+                "zhipu",
+                "glm-5.2-messages",
+                "glm-5.2",
+                ModelApiStyles.ANTHROPIC_MESSAGES,
+                AnthropicMessagesDialects.ZHIPU,
+                "https://open.bigmodel.cn/api/anthropic");
+        var reasoningProfile = profile(reasoningSnapshot);
+        assertThat(reasoningProfile.status()).isEqualTo(ModelProfileStatus.VERIFIED);
+        assertThat(reasoningProfile.selectable()).isTrue();
+        assertThat(reasoningProfile.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.ADAPTIVE);
+        assertThat(reasoningProfile.toolReasoningContinuationRequired()).isFalse();
+
+        // Non-reasoning snapshot for the same admitted binding
+        var nonReasoningSnapshot = ResolvedModelSnapshot.create(
+                new ModelProviderId("zhipu"),
+                "1",
+                new ModelDefinitionId("glm-5.2-messages-non-reasoning"),
+                "1",
+                "glm-5.2",
+                ModelApiStyles.adapterType(ModelApiStyles.ANTHROPIC_MESSAGES),
+                "1",
+                ModelApiStyles.ANTHROPIC_MESSAGES,
+                AnthropicMessagesDialects.ZHIPU,
+                URI.create("https://open.bigmodel.cn/api/anthropic"),
+                new CredentialRef("env://TEST_API_KEY"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                1_048_576,
+                131_072,
+                Map.of(),
+                Map.of());
+        var nonReasoningProfile = profile(nonReasoningSnapshot);
+        assertThat(nonReasoningProfile.status()).isEqualTo(ModelProfileStatus.VERIFIED);
+        assertThat(nonReasoningProfile.selectable()).isTrue();
+        assertThat(nonReasoningProfile.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.NONE);
+        assertThat(nonReasoningProfile.allowedReasoningModes()).containsExactly(ModelReasoningMode.DISABLED);
+        assertThat(nonReasoningProfile.allowedReasoningEfforts()).isEmpty();
+        assertThat(nonReasoningProfile.toolReasoningContinuationRequired()).isFalse();
+    }
+
+    @Test
+    void doesNotVerifyMutatedFourTupleDimensionsForVerifiedBindings() {
+        // DeepSeek chat completion: providerId mutated
+        assertThat(profile(snapshot(
+                                "deepseek-fake",
+                                "deepseek-v4-flash",
+                                "deepseek-v4-flash",
+                                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                                OpenAiCompatibleDialects.DEEPSEEK,
+                                "https://api.deepseek.com"))
+                        .status())
+                .isEqualTo(ModelProfileStatus.UNVERIFIED);
+
+        // DeepSeek chat completion: providerModelId mutated
+        assertThat(profile(snapshot(
+                                "deepseek",
+                                "deepseek-unknown",
+                                "deepseek-v4-unknown",
+                                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                                OpenAiCompatibleDialects.DEEPSEEK,
+                                "https://api.deepseek.com"))
+                        .status())
+                .isEqualTo(ModelProfileStatus.UNVERIFIED);
+
+        // DeepSeek chat completion: apiStyle mutated
+        assertThat(profile(snapshot(
+                                "deepseek",
+                                "deepseek-v4-flash",
+                                "deepseek-v4-flash",
+                                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                                OpenAiCompatibleDialects.DEEPSEEK,
+                                "https://api.deepseek.com"))
+                        .status())
+                .isEqualTo(ModelProfileStatus.UNVERIFIED);
+
+        // DeepSeek chat completion: dialect mutated
+        assertThat(profile(snapshot(
+                                "deepseek",
+                                "deepseek-v4-flash",
+                                "deepseek-v4-flash",
+                                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                                OpenAiCompatibleDialects.KIMI,
+                                "https://api.deepseek.com"))
+                        .status())
+                .isEqualTo(ModelProfileStatus.UNVERIFIED);
+
+        // Bailian chat completion: dialect mutated to standard
+        assertThat(profile(snapshot(
+                                "aliyun-bailian",
+                                "qwen3.7-max",
+                                "qwen3.7-max",
+                                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                                ModelApiBindingDefinition.STANDARD_DIALECT,
+                                "https://example.com"))
+                        .status())
+                .isEqualTo(ModelProfileStatus.UNVERIFIED);
     }
 
     private static io.haifa.agent.model.api.ModelBindingProfile profile(ResolvedModelSnapshot snapshot) {
