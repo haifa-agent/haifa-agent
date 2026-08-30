@@ -59,7 +59,19 @@ public final class OpenAiCompatibleHealthProbe implements ProviderHealthProbe {
     public ProviderHealth check() {
         Instant observedAt = Instant.ofEpochMilli(clock.millis());
         try {
-            String secret = credentials.resolve(provider.credentialRef()).value();
+            String rawSecret = credentials.resolve(provider.credentialRef()).value();
+            if (rawSecret == null
+                    || rawSecret.isBlank()
+                    || rawSecret.indexOf('\r') >= 0
+                    || rawSecret.indexOf('\n') >= 0
+                    || rawSecret.indexOf('\0') >= 0) {
+                return new ProviderHealth(
+                        provider.id(),
+                        ProviderHealthStatus.UNAVAILABLE,
+                        "provider probe credential invalid",
+                        observedAt);
+            }
+            String secret = rawSecret.trim();
             HttpRequest request = HttpRequest.newBuilder(modelsUri())
                     .timeout(timeout)
                     .header("Accept", "application/json")

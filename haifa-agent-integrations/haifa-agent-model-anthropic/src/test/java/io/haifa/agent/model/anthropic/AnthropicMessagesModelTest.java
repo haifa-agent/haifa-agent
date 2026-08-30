@@ -854,6 +854,22 @@ class AnthropicMessagesModelTest {
     }
 
     @Test
+    void rejectsCrlfOrBlankApiKeyBeforeNetworkUse() {
+        var request = request(
+                standardSnapshot(true, Map.of()),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                List.of(),
+                Map.of());
+        var badModel = new AnthropicMessagesModel(
+                HttpClient.newHttpClient(), json, ignored -> new ResolvedCredential("bad\r\nkey"), true, 1024 * 1024);
+        assertThatThrownBy(() -> badModel.invoke(request))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.AUTHENTICATION_FAILED);
+                });
+        assertThat(apiKey.get()).isNull();
+    }
+
+    @Test
     void rejectsDuplicateAdmissionKeyRegistrationInAnthropicRegistry() {
         Map<AnthropicMessagesBindingRegistry.AdmissionKey, AnthropicMessagesBindingRegistry.AdmittedBinding> map =
                 new HashMap<>();

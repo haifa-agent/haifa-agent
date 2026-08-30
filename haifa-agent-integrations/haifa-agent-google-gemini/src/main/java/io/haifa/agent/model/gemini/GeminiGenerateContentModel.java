@@ -9,7 +9,6 @@ import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.AudioDataPart;
-import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.CredentialResolver;
 import io.haifa.agent.model.api.ImageDataPart;
 import io.haifa.agent.model.api.ImageUrlPart;
@@ -51,7 +50,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Function;
 
 /** Official Gemini generateContent adapter with bounded CLIProxyAPI and direct Antigravity CloudCode PA dialects. */
 public final class GeminiGenerateContentModel implements AgentChatModel {
@@ -70,10 +68,18 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
     private final boolean allowInsecureLoopback;
     private final boolean allowStandardLoopbackStub;
     private final int maxResponseBytes;
-    private final Function<CredentialRef, Optional<String>> trustedProjectResolver;
+    private final AntigravityCloudCodeProjectResolver trustedProjectResolver;
 
     public GeminiGenerateContentModel(HttpClient http, ObjectMapper json, CredentialResolver credentials) {
         this(http, json, credentials, false, DEFAULT_MAX_RESPONSE_BYTES, false, ignored -> Optional.empty());
+    }
+
+    public GeminiGenerateContentModel(
+            HttpClient http,
+            ObjectMapper json,
+            CredentialResolver credentials,
+            AntigravityCloudCodeProjectResolver trustedProjectResolver) {
+        this(http, json, credentials, false, DEFAULT_MAX_RESPONSE_BYTES, false, trustedProjectResolver);
     }
 
     public GeminiGenerateContentModel(
@@ -109,7 +115,7 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
             boolean allowInsecureLoopback,
             int maxResponseBytes,
             boolean allowStandardLoopbackStub,
-            Function<CredentialRef, Optional<String>> trustedProjectResolver) {
+            AntigravityCloudCodeProjectResolver trustedProjectResolver) {
         this.http = Objects.requireNonNull(http, "http must not be null");
         this.json = Objects.requireNonNull(json, "json must not be null");
         this.credentials = Objects.requireNonNull(credentials, "credentials must not be null");
@@ -303,12 +309,13 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                 .timeout(request.timeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", streaming ? "text/event-stream" : "application/json");
+        String secret = validateSecret(credential.value());
         if (GeminiDialects.CLIPROXYAPI_ANTIGRAVITY.equals(request.model().dialect())) {
-            builder.header("Authorization", "Bearer " + credential.value());
+            builder.header("Authorization", "Bearer " + secret);
         } else if (GeminiDialects.ANTIGRAVITY_DIRECT.equals(request.model().dialect())) {
-            builder.header("Authorization", "Bearer " + credential.value()).header("User-Agent", "Antigravity");
+            builder.header("Authorization", "Bearer " + secret).header("User-Agent", "Antigravity");
         } else {
-            builder.header("x-goog-api-key", credential.value());
+            builder.header("x-goog-api-key", secret);
         }
         return builder;
     }
@@ -348,9 +355,6 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
             }
             Map<String, Object> directBody = new LinkedHashMap<>();
             String project = resolveProject(request);
-            if (project.isEmpty()) {
-                throw new IllegalArgumentException("trusted Antigravity project is unavailable");
-            }
             directBody.put("project", project);
             directBody.put("model", request.model().providerModelId());
             directBody.put("userAgent", "antigravity");
@@ -373,17 +377,43 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
     }
 
     private String resolveProject(AgentChatRequest request) {
-        if (request.options().containsKey("project")) {
-            throw new IllegalArgumentException("request project injection is forbidden");
+        if (request.options().containsKey("project")
+                || request.model().invocationOptions().containsKey("project")
+                || request.model().providerOptions().containsKey("project")) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "project_injection_forbidden",
+                    "Antigravity project injection via request or model options is forbidden",
+                    null);
         }
-        Object projectObj = request.model().invocationOptions().get("project");
-        if (projectObj == null) {
-            projectObj = request.model().providerOptions().get("project");
+        String resolved = trustedProjectResolver
+                .resolveProject(request.model().credentialRef())
+                .orElseThrow(() -> failure(
+                        request,
+                        ModelErrorCategory.AUTHENTICATION_FAILED,
+                        false,
+                        0,
+                        "antigravity_project_unavailable",
+                        "trusted Antigravity project is unavailable for the selected credential",
+                        null));
+        if (resolved == null
+                || resolved.isBlank()
+                || resolved.indexOf('\r') >= 0
+                || resolved.indexOf('\n') >= 0
+                || resolved.indexOf('\0') >= 0) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.AUTHENTICATION_FAILED,
+                    false,
+                    0,
+                    "antigravity_project_invalid",
+                    "trusted Antigravity project is invalid",
+                    null);
         }
-        if (projectObj instanceof String project && !project.isBlank()) {
-            return project.trim();
-        }
-        return trustedProjectResolver.apply(request.model().credentialRef()).orElse("");
+        return resolved.trim();
     }
 
     private Map<String, Object> buildInnerRequestBody(AgentChatRequest request) {
@@ -998,7 +1028,9 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
 
     private ResolvedCredential resolveCredential(AgentChatRequest request) {
         try {
-            return credentials.resolve(request.model().credentialRef());
+            ResolvedCredential credential = credentials.resolve(request.model().credentialRef());
+            validateSecret(credential.value());
+            return credential;
         } catch (RuntimeException exception) {
             throw failure(
                     request,
@@ -1009,6 +1041,16 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                     "model credential is unavailable",
                     null);
         }
+    }
+
+    private static String validateSecret(String secret) {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalArgumentException("model credential value must not be blank");
+        }
+        if (secret.indexOf('\r') >= 0 || secret.indexOf('\n') >= 0 || secret.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("model credential contains invalid control characters");
+        }
+        return secret.trim();
     }
 
     private void requireContentType(AgentChatRequest request, HttpHeaders headers, String expected, int status) {
