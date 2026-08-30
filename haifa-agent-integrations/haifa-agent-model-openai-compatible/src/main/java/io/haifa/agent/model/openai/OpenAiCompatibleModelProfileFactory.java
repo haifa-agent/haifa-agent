@@ -8,8 +8,6 @@ import io.haifa.agent.model.api.ModelReasoningBehavior;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
-import io.haifa.agent.model.openai.responses.OpenAiResponsesDialects;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -22,18 +20,10 @@ public final class OpenAiCompatibleModelProfileFactory {
     private OpenAiCompatibleModelProfileFactory() {}
 
     public static ModelBindingProfile fromSnapshot(ResolvedModelSnapshot snapshot, LocalDate verifiedOn) {
-        if (ModelApiStyles.ANTHROPIC_MESSAGES.equals(snapshot.apiStyle())) {
-            return AnthropicMessagesDialects.profile(snapshot, verifiedOn);
-        }
-        if (ModelApiStyles.OPENAI_RESPONSES.equals(snapshot.apiStyle())) {
-            return OpenAiResponsesDialects.profile(snapshot, verifiedOn);
-        }
-
-        Optional<OpenAiCompatibleBindingRegistry.AdmittedBinding> admission =
-                OpenAiCompatibleBindingRegistry.find(snapshot);
+        Optional<AdmittedBindingSpec> admission = findAdmission(snapshot);
+        boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
 
         if (admission.isEmpty()) {
-            boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
             return ModelBindingProfile.create(
                     snapshot.modelId(),
                     snapshot.apiStyle(),
@@ -52,9 +42,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                     verifiedOn);
         }
 
-        OpenAiCompatibleBindingRegistry.AdmittedBinding binding = admission.get();
-        boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
-
+        AdmittedBindingSpec binding = admission.get();
         if (!reasoning) {
             return ModelBindingProfile.create(
                     snapshot.modelId(),
@@ -87,4 +75,35 @@ public final class OpenAiCompatibleModelProfileFactory {
                 ModelProfileStatus.VERIFIED,
                 verifiedOn);
     }
+
+    private static Optional<AdmittedBindingSpec> findAdmission(ResolvedModelSnapshot snapshot) {
+        if (ModelApiStyles.ANTHROPIC_MESSAGES.equals(snapshot.apiStyle())) {
+            return AnthropicMessagesBindingRegistry.find(snapshot)
+                    .map(b -> new AdmittedBindingSpec(
+                            b.reasoningBehavior(),
+                            b.allowedReasoningModes(),
+                            b.allowedReasoningEfforts(),
+                            b.toolReasoningContinuationRequired()));
+        }
+        if (ModelApiStyles.OPENAI_RESPONSES.equals(snapshot.apiStyle())) {
+            return OpenAiResponsesBindingRegistry.find(snapshot)
+                    .map(b -> new AdmittedBindingSpec(
+                            b.reasoningBehavior(),
+                            b.allowedReasoningModes(),
+                            b.allowedReasoningEfforts(),
+                            b.toolReasoningContinuationRequired()));
+        }
+        return OpenAiCompatibleBindingRegistry.find(snapshot)
+                .map(b -> new AdmittedBindingSpec(
+                        b.reasoningBehavior(),
+                        b.allowedReasoningModes(),
+                        b.allowedReasoningEfforts(),
+                        b.toolReasoningContinuationRequired()));
+    }
+
+    private record AdmittedBindingSpec(
+            ModelReasoningBehavior reasoningBehavior,
+            Set<ModelReasoningMode> allowedReasoningModes,
+            Set<ModelReasoningEffort> allowedReasoningEfforts,
+            boolean toolReasoningContinuationRequired) {}
 }

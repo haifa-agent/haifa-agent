@@ -312,13 +312,14 @@ def parse_maven_log(log_path: Path) -> dict[str, Any]:
 def test_report_facts(root: Path, started_epoch: float) -> tuple[dict[str, int], list[dict[str, Any]]]:
     totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0, "forkReportFiles": 0}
     classes: list[dict[str, Any]] = []
-    report_dirs = {"surefire-reports", "failsafe-reports"}
+    ignored_dirs = {"node_modules", ".git", ".idea", ".vscode", "dist", "build"}
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in ("node_modules", ".git", ".idea", ".vscode", "dist", "build")]
-        if os.path.basename(dirpath) in report_dirs:
-            for filename in filenames:
-                if filename.startswith("TEST-") and filename.endswith(".xml"):
-                    report = Path(dirpath) / filename
+        dirnames[:] = [d for d in dirnames if d not in ignored_dirs and not d.startswith(".")]
+        base = os.path.basename(dirpath)
+        if base in ("surefire-reports", "failsafe-reports"):
+            for fname in filenames:
+                if fname.startswith("TEST-") and fname.endswith(".xml"):
+                    report = Path(dirpath) / fname
                     try:
                         if report.stat().st_mtime < started_epoch - 2:
                             continue

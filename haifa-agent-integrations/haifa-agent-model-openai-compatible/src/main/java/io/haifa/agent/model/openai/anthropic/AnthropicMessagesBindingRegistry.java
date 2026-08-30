@@ -6,6 +6,7 @@ import io.haifa.agent.model.api.ModelReasoningBehavior;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -63,6 +64,10 @@ final class AnthropicMessagesBindingRegistry {
         return find(providerId, providerModelId, apiStyle, dialect).isPresent();
     }
 
+    static Collection<AdmittedBinding> admissions() {
+        return ADMISSIONS.values();
+    }
+
     private static Map<AdmissionKey, AdmittedBinding> buildAdmissions() {
         Map<AdmissionKey, AdmittedBinding> map = new HashMap<>();
 
@@ -95,7 +100,7 @@ final class AnthropicMessagesBindingRegistry {
         return Map.copyOf(map);
     }
 
-    private static void register(
+    static void register(
             Map<AdmissionKey, AdmittedBinding> map,
             String providerId,
             String providerModelId,
@@ -106,13 +111,15 @@ final class AnthropicMessagesBindingRegistry {
             Set<ModelReasoningEffort> allowedReasoningEfforts,
             boolean toolReasoningContinuationRequired) {
         AdmissionKey key = new AdmissionKey(providerId, providerModelId, apiStyle, dialect);
-        map.put(
+        AdmittedBinding binding = new AdmittedBinding(
                 key,
-                new AdmittedBinding(
-                        key,
-                        reasoningBehavior,
-                        allowedReasoningModes,
-                        allowedReasoningEfforts,
-                        toolReasoningContinuationRequired));
+                reasoningBehavior,
+                allowedReasoningModes,
+                allowedReasoningEfforts,
+                toolReasoningContinuationRequired);
+        AdmittedBinding existing = map.putIfAbsent(key, binding);
+        if (existing != null) {
+            throw new IllegalStateException("Duplicate model binding admission key: " + key);
+        }
     }
 }

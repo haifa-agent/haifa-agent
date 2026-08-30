@@ -39,6 +39,10 @@ final class GeminiBindingRegistry {
                 snapshot.providerId().value(), snapshot.providerModelId(), snapshot.apiStyle(), snapshot.dialect());
     }
 
+    static Set<AdmissionKey> admissions() {
+        return ADMISSIONS;
+    }
+
     private static Set<AdmissionKey> buildAdmissions() {
         return Set.of(
                 new AdmissionKey(

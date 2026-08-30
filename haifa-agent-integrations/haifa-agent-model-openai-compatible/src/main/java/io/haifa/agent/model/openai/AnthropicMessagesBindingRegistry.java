@@ -1,4 +1,4 @@
-package io.haifa.agent.model.openai.responses;
+package io.haifa.agent.model.openai;
 
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.ModelApiStyles;
@@ -6,6 +6,7 @@ import io.haifa.agent.model.api.ModelReasoningBehavior;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -14,10 +15,10 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Authoritative, immutable registry of trusted model binding admissions for OpenAI Responses integration.
+ * Authoritative, immutable registry of trusted model binding admissions for Anthropic Messages integration.
  * Admissions are keyed by the exact 4-tuple: {@code (providerId, providerModelId, apiStyle, dialect)}.
  */
-final class OpenAiResponsesBindingRegistry {
+final class AnthropicMessagesBindingRegistry {
     record AdmissionKey(String providerId, String providerModelId, ApiStyleId apiStyle, String dialect) {
         AdmissionKey {
             Objects.requireNonNull(providerId, "providerId must not be null");
@@ -43,7 +44,7 @@ final class OpenAiResponsesBindingRegistry {
 
     private static final Map<AdmissionKey, AdmittedBinding> ADMISSIONS = buildAdmissions();
 
-    private OpenAiResponsesBindingRegistry() {}
+    private AnthropicMessagesBindingRegistry() {}
 
     static Optional<AdmittedBinding> find(
             String providerId, String providerModelId, ApiStyleId apiStyle, String dialect) {
@@ -71,47 +72,31 @@ final class OpenAiResponsesBindingRegistry {
     private static Map<AdmissionKey, AdmittedBinding> buildAdmissions() {
         Map<AdmissionKey, AdmittedBinding> map = new HashMap<>();
 
-        // DeepSeek Responses
+        // DeepSeek Anthropic Messages
         for (String model : Set.of("deepseek-v4-flash", "deepseek-v4-pro")) {
             register(
                     map,
                     "deepseek",
                     model,
-                    ModelApiStyles.OPENAI_RESPONSES,
-                    OpenAiResponsesDialects.DEEPSEEK,
+                    ModelApiStyles.ANTHROPIC_MESSAGES,
+                    AnthropicMessagesDialects.DEEPSEEK,
                     ModelReasoningBehavior.ALWAYS,
                     Set.of(ModelReasoningMode.ENABLED),
                     Set.of(ModelReasoningEffort.HIGH),
                     true);
         }
 
-        // Alibaba Cloud Bailian - Responses
-        for (String model : Set.of("qwen3.8-max-preview", "qwen3.7-max", "qwen3.7-max-2026-05-17", "qwen3.7-plus")) {
-            register(
-                    map,
-                    "aliyun-bailian",
-                    model,
-                    ModelApiStyles.OPENAI_RESPONSES,
-                    OpenAiResponsesDialects.ALIYUN_BAILIAN,
-                    ModelReasoningBehavior.ALWAYS,
-                    Set.of(ModelReasoningMode.ENABLED),
-                    Set.of(ModelReasoningEffort.HIGH),
-                    false);
-        }
-
-        // OpenAI Codex - Responses
-        for (String model : Set.of("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")) {
-            register(
-                    map,
-                    "openai-codex",
-                    model,
-                    ModelApiStyles.OPENAI_RESPONSES,
-                    OpenAiResponsesDialects.OPENAI_CODEX,
-                    ModelReasoningBehavior.ALWAYS,
-                    Set.of(ModelReasoningMode.ENABLED),
-                    Set.of(ModelReasoningEffort.HIGH),
-                    false);
-        }
+        // Zhipu Anthropic Messages
+        register(
+                map,
+                "zhipu",
+                "glm-5.2",
+                ModelApiStyles.ANTHROPIC_MESSAGES,
+                AnthropicMessagesDialects.ZHIPU,
+                ModelReasoningBehavior.ADAPTIVE,
+                Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED, ModelReasoningMode.ADAPTIVE),
+                Set.of(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX),
+                false);
 
         return Map.copyOf(map);
     }
