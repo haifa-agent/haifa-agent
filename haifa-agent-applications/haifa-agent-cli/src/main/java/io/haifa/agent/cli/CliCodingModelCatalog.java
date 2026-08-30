@@ -85,7 +85,8 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
     public List<CodingModelOption> available(TenantRef tenant, PrincipalRef principal) {
         return platform.listAvailable(new ModelAvailabilityRequest(tenant, principal, REQUIRED)).stream()
                 .flatMap(provider -> provider.models().stream()
-                        .filter(model -> Optional.ofNullable(profiles.get(model.id().value()))
+                        .filter(model -> Optional.ofNullable(
+                                        profiles.get(model.id().value()))
                                 .map(ModelBindingProfile::selectable)
                                 .orElse(false))
                         .map(model -> new CodingModelOption(
