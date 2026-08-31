@@ -11,6 +11,45 @@ import org.junit.jupiter.api.Test;
 class ModelBindingProfileTest {
 
     @Test
+    void executionFactsAreTypedDigestCoveredAndExposeAConservativeInputBudget() {
+        ModelBindingProfile profile = ModelBindingProfile.create(
+                new ModelDefinitionId("streaming-reasoning-binding"),
+                ModelApiStyles.OPENAI_RESPONSES,
+                "2.0",
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.REASONING),
+                ModelReasoningBehavior.OPTIONAL,
+                Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED),
+                Set.of(ModelReasoningEffort.HIGH),
+                OptionalLong.of(16_384),
+                new ModelExecutionLimits(131_072, 1_024, 8_192),
+                true,
+                new ModelStreamingProfile(
+                        true, true, true, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                ModelProfileStatus.VERIFIED,
+                LocalDate.of(2026, 8, 31));
+
+        assertThat(profile.contextWindowTokens()).isEqualTo(131_072);
+        assertThat(profile.executionLimits().effectiveInputBudgetTokens(8_192, 1_024)).isEqualTo(121_856);
+        assertThat(profile.reasoning().maximumTokens()).hasValue(16_384);
+        assertThat(profile.toolResponse())
+                .isEqualTo(new ModelToolResponseProfile(true, true, true));
+        assertThat(profile.streaming().reasoningStreaming()).isTrue();
+        assertThat(profile.canonicalString()).contains("|131072|1024|8192|true|true|true|true|NON_RETRYABLE|");
+    }
+
+    @Test
+    void streamingFactsCannotClaimUsageOrReasoningWithoutNativeStreaming() {
+        assertThatThrownBy(() -> new ModelStreamingProfile(
+                        false, true, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requires native streaming");
+    }
+
+    @Test
     void standardChatBindingProfileProducesExpectedCanonicalStringAndDigest() {
         ModelBindingProfile profile = ModelBindingProfile.create(
                 new ModelDefinitionId("aliyun-qwen3.7-max"),
@@ -28,10 +67,10 @@ class ModelBindingProfileTest {
                 LocalDate.of(2026, 8, 13));
 
         assertThat(profile.canonicalString())
-                .isEqualTo("model-binding-profile-v1|aliyun-qwen3.7-max|openai-chat-completions|1.0|"
-                        + "[TEXT_CHAT, TOOL_CALLING]|NONE|[DISABLED]|[]|none|1|8192|false|VERIFIED|2026-08-13");
+                .isEqualTo("model-binding-profile-v2|aliyun-qwen3.7-max|openai-chat-completions|1.0|"
+                        + "[TEXT_CHAT, TOOL_CALLING]|NONE|[DISABLED]|[]|none|8192|1|8192|false|false|false|false|NON_RETRYABLE|VERIFIED|2026-08-13");
         assertThat(profile.digest())
-                .isEqualTo("sha256:296dc5ed732d761f28c3be879beb24d8f72f2b48ee3530dcc50b3f1c416aeffe");
+                .isEqualTo("sha256:a109e84db44a93f44c4e18cbb3867f25407a4c81ef8f79e7e85b7f94a7443b2a");
         assertThat(profile.selectable()).isTrue();
     }
 
@@ -54,10 +93,10 @@ class ModelBindingProfileTest {
 
         assertThat(profile.canonicalString())
                 .isEqualTo(
-                        "model-binding-profile-v1|deepseek-chat-flash|openai-chat-completions|1.0|"
-                                + "[REASONING, TEXT_CHAT, TOOL_CALLING]|OPTIONAL|[DISABLED, ENABLED]|[HIGH]|none|1|8192|false|VERIFIED|2026-08-13");
+                        "model-binding-profile-v2|deepseek-chat-flash|openai-chat-completions|1.0|"
+                                + "[REASONING, TEXT_CHAT, TOOL_CALLING]|OPTIONAL|[DISABLED, ENABLED]|[HIGH]|none|8192|1|8192|false|false|false|false|NON_RETRYABLE|VERIFIED|2026-08-13");
         assertThat(profile.digest())
-                .isEqualTo("sha256:919cb33295be3d1ccabedda569fd27f85fca3cb89c647df5e316aa03d31dd370");
+                .isEqualTo("sha256:1244ccfdeda7974064927859ce95ab49b6326d371c3207b8f2a74868db784992");
         assertThat(profile.selectable()).isTrue();
     }
 
@@ -80,10 +119,10 @@ class ModelBindingProfileTest {
 
         assertThat(profile.canonicalString())
                 .isEqualTo(
-                        "model-binding-profile-v1|deepseek-responses-flash|openai-responses|1.0|"
-                                + "[REASONING, TEXT_CHAT, TOOL_CALLING]|OPTIONAL|[DISABLED, ENABLED]|[HIGH]|none|1|8192|true|VERIFIED|2026-08-13");
+                        "model-binding-profile-v2|deepseek-responses-flash|openai-responses|1.0|"
+                                + "[REASONING, TEXT_CHAT, TOOL_CALLING]|OPTIONAL|[DISABLED, ENABLED]|[HIGH]|none|8192|1|8192|true|false|false|false|NON_RETRYABLE|VERIFIED|2026-08-13");
         assertThat(profile.digest())
-                .isEqualTo("sha256:4aa976feacf5f1bca365d83d1c95465876f9a8ec4f63cb809a438511e7020d96");
+                .isEqualTo("sha256:042e729370d65e3fcbef4188f9265a7cc75ec65d7741df5db17ac304483142bc");
         assertThat(profile.selectable()).isTrue();
     }
 
@@ -106,10 +145,10 @@ class ModelBindingProfileTest {
 
         assertThat(profile.canonicalString())
                 .isEqualTo(
-                        "model-binding-profile-v1|claude-3-7-sonnet|anthropic-messages|1.0|"
-                                + "[REASONING, TEXT_CHAT, TOOL_CALLING]|ALWAYS|[ENABLED]|[HIGH, LOW, MEDIUM]|none|1|64000|false|VERIFIED|2026-08-30");
+                        "model-binding-profile-v2|claude-3-7-sonnet|anthropic-messages|1.0|"
+                                + "[REASONING, TEXT_CHAT, TOOL_CALLING]|ALWAYS|[ENABLED]|[HIGH, LOW, MEDIUM]|none|64000|1|64000|false|false|false|false|NON_RETRYABLE|VERIFIED|2026-08-30");
         assertThat(profile.digest())
-                .isEqualTo("sha256:b6bd427a63b8265702e0067f8faa36fbe978b952003395be0bb2e9229e6700cd");
+                .isEqualTo("sha256:c3290ed2f45610e6a49b584ee7d5241e9eaad3788069b5ca31ccad26dc74aaf9");
         assertThat(profile.selectable()).isTrue();
     }
 
@@ -131,10 +170,10 @@ class ModelBindingProfileTest {
                 LocalDate.of(2026, 8, 30));
 
         assertThat(profile.canonicalString())
-                .isEqualTo("model-binding-profile-v1|unknown-model|openai-chat-completions|1.0|"
-                        + "[TEXT_CHAT]|NONE|[DISABLED]|[]|none|1|4096|false|UNVERIFIED|2026-08-30");
+                .isEqualTo("model-binding-profile-v2|unknown-model|openai-chat-completions|1.0|"
+                        + "[TEXT_CHAT]|NONE|[DISABLED]|[]|none|4096|1|4096|false|false|false|false|NON_RETRYABLE|UNVERIFIED|2026-08-30");
         assertThat(profile.digest())
-                .isEqualTo("sha256:b3d49ec0693f9f577f6b795bc0acd621c427a1e8957ca6616d635fa2a2e1eaf6");
+                .isEqualTo("sha256:d39101d5560faef9a9ad4cda5f8e8a5fd983bef038ba3b7aac900773bec2b509");
         assertThat(profile.selectable()).isFalse();
     }
 

@@ -89,15 +89,18 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
                                         profiles.get(model.id().value()))
                                 .map(ModelBindingProfile::selectable)
                                 .orElse(false))
-                        .map(model -> new CodingModelOption(
-                                model.id().value(),
-                                model.displayName(),
-                                provider.id().value(),
-                                provider.displayName(),
-                                model.capabilities().stream()
-                                        .map(Enum::name)
-                                        .collect(java.util.stream.Collectors.toSet()),
-                                model.contextWindow())))
+                        .map(model -> {
+                            ModelBindingProfile profile = profiles.get(model.id().value());
+                            return new CodingModelOption(
+                                    model.id().value(),
+                                    model.displayName(),
+                                    provider.id().value(),
+                                    provider.displayName(),
+                                    profile.capabilities().stream()
+                                            .map(Enum::name)
+                                            .collect(java.util.stream.Collectors.toSet()),
+                                    profile.contextWindowTokens());
+                        }))
                 .toList();
     }
 

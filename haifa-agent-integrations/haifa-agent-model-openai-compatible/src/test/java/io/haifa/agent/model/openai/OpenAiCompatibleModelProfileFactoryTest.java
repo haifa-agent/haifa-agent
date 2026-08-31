@@ -250,6 +250,9 @@ class OpenAiCompatibleModelProfileFactoryTest {
         assertThat(profile.allowedReasoningEfforts())
                 .containsExactlyInAnyOrder(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
         assertThat(profile.toolReasoningContinuationRequired()).isTrue();
+        assertThat(profile.executionLimits().contextWindowTokens()).isEqualTo(snapshot.contextWindow());
+        assertThat(profile.streaming().usageStreaming()).isTrue();
+        assertThat(profile.streaming().reasoningStreaming()).isTrue();
         assertThat(profile.digest()).startsWith("sha256:");
     }
 

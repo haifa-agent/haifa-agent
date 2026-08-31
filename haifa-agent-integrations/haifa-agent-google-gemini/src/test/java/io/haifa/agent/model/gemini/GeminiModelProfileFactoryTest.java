@@ -52,6 +52,10 @@ class GeminiModelProfileFactoryTest {
             assertThat(reasoningProfile.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.ALWAYS);
             assertThat(reasoningProfile.allowedReasoningModes()).containsExactly(ModelReasoningMode.ENABLED);
             assertThat(reasoningProfile.toolReasoningContinuationRequired()).isTrue();
+            assertThat(reasoningProfile.executionLimits().contextWindowTokens())
+                    .isEqualTo(reasoningSnapshot.contextWindow());
+            assertThat(reasoningProfile.streaming().usageStreaming()).isTrue();
+            assertThat(reasoningProfile.streaming().reasoningStreaming()).isFalse();
 
             ResolvedModelSnapshot nonReasoningSnapshot = ResolvedModelSnapshot.create(
                     new ModelProviderId(admission.providerId()),
