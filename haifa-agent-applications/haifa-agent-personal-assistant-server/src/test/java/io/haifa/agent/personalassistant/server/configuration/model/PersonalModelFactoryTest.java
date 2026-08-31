@@ -18,6 +18,7 @@ import io.haifa.agent.personalassistant.application.PersonalModelPreferences;
 import io.haifa.agent.personalassistant.application.PersonalModelSelectionRequest;
 import io.haifa.agent.personalassistant.application.PersonalResponseLength;
 import io.haifa.agent.personalassistant.application.PersonalResponseMode;
+import io.haifa.agent.personalassistant.application.PersonalSelectionCompatibility;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
@@ -672,6 +673,43 @@ class PersonalModelFactoryTest {
                         List.of(external), "openai-gpt-5.6-luna", true, new ObjectMapper(), shell()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("loopback-only opt-in");
+    }
+
+    @Test
+    void selectionCompatibilityDistinguishesCurrentReselectionAndUnavailable() {
+        var provider = provider(
+                "deepseek",
+                "DeepSeek",
+                true,
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", "deepseek-openai-chat", null)),
+                List.of(model(
+                        "deepseek-v4-flash", "DeepSeek V4 Flash", "deepseek-v4-flash", "openai-chat-completions")));
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(provider), "deepseek-v4-flash", new ObjectMapper(), shell());
+        var option = platform.catalog().available().getFirst();
+        var recommended = PersonalModelPreferences.recommended();
+
+        assertThat(platform.catalog()
+                        .selectionCompatibility(option.id(), option.preferenceSchemaVersion(), recommended))
+                .isEqualTo(PersonalSelectionCompatibility.CURRENT);
+        assertThat(platform.catalog().selectionCompatibility(option.id(), "999.9", recommended))
+                .isEqualTo(PersonalSelectionCompatibility.RESELECTION_REQUIRED);
+        assertThat(platform.catalog()
+                        .selectionCompatibility("missing-binding", option.preferenceSchemaVersion(), recommended))
+                .isEqualTo(PersonalSelectionCompatibility.UNAVAILABLE);
+
+        // Consistency with resolve: an accepted selection must be CURRENT (catches projection drift).
+        var request = new PersonalModelSelectionRequest(
+                option.id(),
+                option.preferenceSchemaVersion(),
+                option.profileVersion(),
+                option.profileDigest(),
+                recommended);
+        assertThat(platform.catalog().resolve(request).option().id()).isEqualTo(option.id());
+        assertThat(platform.catalog().optionById(option.id())).contains(option);
     }
 
     private static PersonalAssistantProperties.ModelProvider provider(

@@ -73,7 +73,7 @@ import {
   type PersonalAssistantClient,
 } from "./api/client";
 import { appReducer, initialState } from "./state/appReducer";
-import { ModelConnectionPanel } from "./components/ModelConnectionPanel";
+import { ModelConnectionsModal, type ModelConnectionsTab } from "./components/ModelConnectionsModal";
 import type { ConnectionState, OutputPhase } from "./types";
 import {
   defaultMissionAcceptanceCriteria,
@@ -3091,6 +3091,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [newModelPreferences, setNewModelPreferences] = useState<ModelPreferences | null>(null);
   const [modelConnections, setModelConnections] = useState<ModelConnection[] | null>(null);
   const [modelConnectionsOpen, setModelConnectionsOpen] = useState(false);
+  const [modelCenterTab, setModelCenterTab] = useState<ModelConnectionsTab>("catalog");
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [slashFromPlus, setSlashFromPlus] = useState(false);
@@ -3675,6 +3676,15 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     });
   };
 
+  const openModelCenter = (tab: ModelConnectionsTab) => {
+    setModelCenterTab(tab);
+    setModelConnectionsOpen(true);
+  };
+
+  const applyModelFromCenter = (model: Model, preferences: ModelPreferences) => {
+    selectModel(model.id, preferences);
+  };
+
   const configuredModels = state.bootstrap?.models ?? [];
   const modelProviders = groupModelsByProvider(configuredModels);
   const selectedModelId = state.selectedConversation?.model.model.id ?? newModelId;
@@ -3698,6 +3708,13 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const audioCapable = (state.selectedConversation?.model.model
     ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId)))
     ?.capabilities.includes("AUDIO_INPUT") ?? false;
+  const selectedImageInput = (state.selectedConversation?.model.model
+    ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId)))
+    ?.imageInput ?? null;
+  const imageMaxCount = selectedImageInput?.maxImagesPerRequest ?? 4;
+  const imageTotalLabel = selectedImageInput
+    ? `${Math.round(selectedImageInput.maxTotalBytes / (1024 * 1024))} MB`
+    : "20 MB";
   const pendingMediaCount = pendingImages.length + pendingAudios.length;
 
   const addImageUrl = () => {
@@ -4078,7 +4095,12 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 state.connection === "connecting" ? "正在连接" : "连接中断"
           }</span>
           {client.modelConnections && (
-            <button className="button" onClick={() => setModelConnectionsOpen(true)}>
+            <button className="button" onClick={() => openModelCenter("catalog")}>
+              <Bot size={16} /> 模型
+            </button>
+          )}
+          {client.modelConnections && (
+            <button className="button" onClick={() => openModelCenter("connections")}>
               <KeyRound size={16} /> 模型连接{modelConnections?.length ? <b>{modelConnections.length}</b> : null}
             </button>
           )}
@@ -4120,7 +4142,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
 
         <main className="conversation">
           {modelConnections && selectedModel && !selectedProviderConnected && (
-            <button type="button" className="model-connection-notice" onClick={() => setModelConnectionsOpen(true)}>
+            <button type="button" className="model-connection-notice" onClick={() => openModelCenter("connections")}>
               <KeyRound size={16} /><span><strong>尚未连接模型</strong><small>模型目录仍可浏览；首次使用前登录 ChatGPT 或保存 API Key。</small></span>
             </button>
           )}
@@ -4568,7 +4590,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       onClick={() => fileInputRef.current?.click()}
                     >
                       <Paperclip size={17} />
-                      <span><strong>{uploadingImage ? "正在上传…" : "上传图片"}</strong><small>选择或拖放，最多 4 张</small></span>
+                      <span><strong>{uploadingImage ? "正在上传…" : "上传图片"}</strong><small>选择或拖放，最多 {imageMaxCount} 张/{imageTotalLabel}</small></span>
                     </button>}
                     {audioCapable && <button
                       type="button"
@@ -4578,6 +4600,16 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       <AudioLines size={17} />
                       <span><strong>{uploadingAudio ? "正在上传…" : "上传音频"}</strong><small>WAV、MP3、AIFF、AAC、OGG 或 FLAC</small></span>
                     </button>}
+                    {!imageCapable && !audioCapable && (
+                      <button
+                        type="button"
+                        disabled
+                        title="当前所选模型不支持图片输入。如需分析图片，请在模型目录中切换至多模态模型。"
+                      >
+                        <ImageIcon size={17} />
+                        <span><strong>附带图片</strong><small>当前模型不支持</small></span>
+                      </button>
+                    )}
                     {imageUrlCapable && <button
                       type="button"
                       aria-expanded={imageUrlInputOpen}
@@ -4752,12 +4784,19 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           }}
         />
       )}
-      <ModelConnectionPanel
+      <ModelConnectionsModal
         client={client}
         open={modelConnectionsOpen}
-        providerId={selectedModel?.providerId ?? "openai"}
+        initialTab={modelCenterTab}
+        models={configuredModels}
+        modelConnections={modelConnections}
+        selectedModelId={selectedModelId}
+        activeRun={Boolean(state.selectedConversation?.activeRunId)}
+        currentPreferences={state.selectedConversation?.model.preferences ?? null}
+        selectionCompatibility={state.selectedConversation?.model.selectionCompatibility}
         onClose={() => setModelConnectionsOpen(false)}
         onConnectionsChanged={setModelConnections}
+        onSelectModel={applyModelFromCenter}
       />
       <div className="sr-only" aria-live="polite">{state.pending ? `${state.pending.label}进行中` : ""}</div>
     </div>
