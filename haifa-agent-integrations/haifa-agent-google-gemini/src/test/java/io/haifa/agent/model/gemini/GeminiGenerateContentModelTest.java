@@ -265,7 +265,7 @@ class GeminiGenerateContentModelTest {
                         java.time.Duration.ofSeconds(5),
                         Map.of()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("image URL input capability");
+                .hasMessageContaining("image URL input");
 
         // Layer 2: Even if snapshot declared IMAGE_URL_INPUT, Gemini adapter rejects ImageUrlPart
         var urlSnapshot = ResolvedModelSnapshot.create(

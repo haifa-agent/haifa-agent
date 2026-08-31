@@ -580,6 +580,64 @@ class OpenAiCompatibleModelProfileFactoryTest {
                 .hasMessageContaining("Duplicate model binding admission key");
     }
 
+    @Test
+    void producesAuthoritativeImageInputProfileForAdmittedMultimodalBindingsOnly() {
+        ResolvedModelSnapshot qwenVl = ResolvedModelSnapshot.create(
+                new ModelProviderId("aliyun-bailian"),
+                "1",
+                new ModelDefinitionId("qwen3-vl-plus"),
+                "1",
+                "qwen3-vl-plus",
+                ModelApiStyles.adapterType(ModelApiStyles.OPENAI_CHAT_COMPLETIONS),
+                "1",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.ALIYUN_BAILIAN,
+                URI.create("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                new CredentialRef("env://TEST_KEY"),
+                true,
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT),
+                131072,
+                8192,
+                Map.of(),
+                Map.of());
+
+        var vlProfile = profile(qwenVl);
+        assertThat(vlProfile.imageInput()).isPresent();
+        assertThat(vlProfile.imageInput().get().allowedSources())
+                .containsExactlyInAnyOrder(
+                        io.haifa.agent.model.api.ModelImageSource.UPLOAD,
+                        io.haifa.agent.model.api.ModelImageSource.URL);
+        assertThat(vlProfile.imageInput().get().maxImagesPerRequest()).isEqualTo(4);
+
+        // Admitted pure-text model does NOT get image profile even if coarse snapshot mistakenly declared image
+        // capability
+        ResolvedModelSnapshot qwenMaxWithBogusCapability = ResolvedModelSnapshot.create(
+                new ModelProviderId("aliyun-bailian"),
+                "1",
+                new ModelDefinitionId("qwen3.7-max"),
+                "1",
+                "qwen3.7-max",
+                ModelApiStyles.adapterType(ModelApiStyles.OPENAI_CHAT_COMPLETIONS),
+                "1",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.ALIYUN_BAILIAN,
+                URI.create("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                new CredentialRef("env://TEST_KEY"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_UPLOAD_INPUT, ModelCapability.REASONING),
+                131072,
+                8192,
+                Map.of(),
+                Map.of());
+
+        var maxProfile = profile(qwenMaxWithBogusCapability);
+        assertThat(maxProfile.imageInput()).isEmpty();
+    }
+
     private static io.haifa.agent.model.api.ModelBindingProfile profile(ResolvedModelSnapshot snapshot) {
         return OpenAiCompatibleModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 13));
     }

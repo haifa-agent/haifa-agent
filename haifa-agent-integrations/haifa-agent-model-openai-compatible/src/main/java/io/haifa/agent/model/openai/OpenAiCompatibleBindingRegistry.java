@@ -33,12 +33,14 @@ final class OpenAiCompatibleBindingRegistry {
             ModelReasoningBehavior reasoningBehavior,
             Set<ModelReasoningMode> allowedReasoningModes,
             Set<ModelReasoningEffort> allowedReasoningEfforts,
-            boolean toolReasoningContinuationRequired) {
+            boolean toolReasoningContinuationRequired,
+            io.haifa.agent.model.api.ModelIoProfile ioProfile) {
         AdmittedBinding {
             Objects.requireNonNull(key, "key must not be null");
             Objects.requireNonNull(reasoningBehavior, "reasoningBehavior must not be null");
             allowedReasoningModes = Set.copyOf(allowedReasoningModes);
             allowedReasoningEfforts = Set.copyOf(allowedReasoningEfforts);
+            ioProfile = Objects.requireNonNullElse(ioProfile, io.haifa.agent.model.api.ModelIoProfile.textOnly());
         }
     }
 
@@ -88,12 +90,7 @@ final class OpenAiCompatibleBindingRegistry {
 
         // Alibaba Cloud Bailian - Chat Completions
         for (String model : Set.of(
-                "qwen3.8-max-preview",
-                "qwen3.7-max",
-                "qwen3.7-max-2026-05-17",
-                "qwen3.7-plus",
-                "qwen3.7-flash",
-                "qwen3-vl-plus")) {
+                "qwen3.8-max-preview", "qwen3.7-max", "qwen3.7-max-2026-05-17", "qwen3.7-plus", "qwen3.7-flash")) {
             register(
                     map,
                     "aliyun-bailian",
@@ -103,8 +100,24 @@ final class OpenAiCompatibleBindingRegistry {
                     ModelReasoningBehavior.OPTIONAL,
                     Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED),
                     Set.of(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX),
-                    true);
+                    true,
+                    io.haifa.agent.model.api.ModelIoProfile.textOnly());
         }
+        register(
+                map,
+                "aliyun-bailian",
+                "qwen3-vl-plus",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.ALIYUN_BAILIAN,
+                ModelReasoningBehavior.OPTIONAL,
+                Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED),
+                Set.of(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX),
+                true,
+                io.haifa.agent.model.api.ModelIoProfile.withImage(io.haifa.agent.model.api.ImageInputProfile.standard(
+                        Set.of(
+                                io.haifa.agent.model.api.ModelImageSource.UPLOAD,
+                                io.haifa.agent.model.api.ModelImageSource.URL),
+                        true)));
 
         // Kimi / Moonshot - Chat Completions
         register(
@@ -206,7 +219,12 @@ final class OpenAiCompatibleBindingRegistry {
                 ModelReasoningBehavior.NONE,
                 Set.of(ModelReasoningMode.DISABLED),
                 Set.of(),
-                false);
+                false,
+                io.haifa.agent.model.api.ModelIoProfile.withImage(io.haifa.agent.model.api.ImageInputProfile.standard(
+                        Set.of(
+                                io.haifa.agent.model.api.ModelImageSource.UPLOAD,
+                                io.haifa.agent.model.api.ModelImageSource.URL),
+                        true)));
 
         return Map.copyOf(map);
     }
@@ -221,13 +239,38 @@ final class OpenAiCompatibleBindingRegistry {
             Set<ModelReasoningMode> allowedReasoningModes,
             Set<ModelReasoningEffort> allowedReasoningEfforts,
             boolean toolReasoningContinuationRequired) {
+        register(
+                map,
+                providerId,
+                providerModelId,
+                apiStyle,
+                dialect,
+                reasoningBehavior,
+                allowedReasoningModes,
+                allowedReasoningEfforts,
+                toolReasoningContinuationRequired,
+                io.haifa.agent.model.api.ModelIoProfile.textOnly());
+    }
+
+    static void register(
+            Map<AdmissionKey, AdmittedBinding> map,
+            String providerId,
+            String providerModelId,
+            ApiStyleId apiStyle,
+            String dialect,
+            ModelReasoningBehavior reasoningBehavior,
+            Set<ModelReasoningMode> allowedReasoningModes,
+            Set<ModelReasoningEffort> allowedReasoningEfforts,
+            boolean toolReasoningContinuationRequired,
+            io.haifa.agent.model.api.ModelIoProfile ioProfile) {
         AdmissionKey key = new AdmissionKey(providerId, providerModelId, apiStyle, dialect);
         AdmittedBinding binding = new AdmittedBinding(
                 key,
                 reasoningBehavior,
                 allowedReasoningModes,
                 allowedReasoningEfforts,
-                toolReasoningContinuationRequired);
+                toolReasoningContinuationRequired,
+                ioProfile);
         AdmittedBinding existing = map.putIfAbsent(key, binding);
         if (existing != null) {
             throw new IllegalStateException("Duplicate model binding admission key: " + key);

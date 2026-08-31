@@ -28,9 +28,15 @@ public record ImageInputProfile(
         allowedSources = Set.copyOf(Objects.requireNonNull(allowedSources, "allowedSources must not be null"));
         Objects.requireNonNull(supportedMediaTypes, "supportedMediaTypes must not be null");
         supportedMediaTypes = supportedMediaTypes.stream()
-                .map(type -> Objects.requireNonNull(type, "mediaType must not be null")
-                        .trim()
-                        .toLowerCase(Locale.ROOT))
+                .map(type -> {
+                    String normalized = Objects.requireNonNull(type, "mediaType must not be null")
+                            .trim()
+                            .toLowerCase(Locale.ROOT);
+                    if (!normalized.matches("^[a-z0-9_+-]+/[a-z0-9_+-]+$")) {
+                        throw new IllegalArgumentException("invalid media type format: " + type);
+                    }
+                    return normalized;
+                })
                 .collect(Collectors.toUnmodifiableSet());
         allowedDetails = Set.copyOf(Objects.requireNonNull(allowedDetails, "allowedDetails must not be null"));
         if (allowedSources.isEmpty()) {
@@ -63,5 +69,17 @@ public record ImageInputProfile(
                 detailSupported
                         ? Set.of(ModelImageDetail.AUTO, ModelImageDetail.LOW, ModelImageDetail.HIGH)
                         : Set.of());
+    }
+
+    public static ImageInputProfile gemini(Set<ModelImageSource> sources) {
+        return new ImageInputProfile(
+                sources,
+                STANDARD_MEDIA_TYPES,
+                DEFAULT_MAX_IMAGES,
+                DEFAULT_MAX_BYTES_PER_ITEM,
+                12 * 1024 * 1024L,
+                DEFAULT_MAX_URL_CHARACTERS,
+                false,
+                Set.of());
     }
 }

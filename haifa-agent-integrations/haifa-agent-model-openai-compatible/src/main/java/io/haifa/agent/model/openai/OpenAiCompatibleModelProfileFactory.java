@@ -1,11 +1,9 @@
 package io.haifa.agent.model.openai;
 
-import io.haifa.agent.model.api.ImageInputProfile;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelExecutionLimits;
-import io.haifa.agent.model.api.ModelImageSource;
 import io.haifa.agent.model.api.ModelIoProfile;
 import io.haifa.agent.model.api.ModelPartialOutputFailureBehavior;
 import io.haifa.agent.model.api.ModelProfileStatus;
@@ -15,7 +13,6 @@ import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ModelStreamingProfile;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.time.LocalDate;
-import java.util.EnumSet;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
@@ -45,7 +42,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                     limits(snapshot),
                     false,
                     streaming(snapshot),
-                    ioProfile(snapshot),
+                    ModelIoProfile.textOnly(),
                     ModelProfileStatus.UNVERIFIED,
                     verifiedOn);
         }
@@ -64,7 +61,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                     limits(snapshot),
                     false,
                     streaming(snapshot),
-                    ioProfile(snapshot),
+                    binding.ioProfile(),
                     ModelProfileStatus.VERIFIED,
                     verifiedOn);
         }
@@ -81,7 +78,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                 limits(snapshot),
                 binding.toolReasoningContinuationRequired(),
                 streaming(snapshot),
-                ioProfile(snapshot),
+                binding.ioProfile(),
                 ModelProfileStatus.VERIFIED,
                 verifiedOn);
     }
@@ -93,14 +90,16 @@ public final class OpenAiCompatibleModelProfileFactory {
                             b.reasoningBehavior(),
                             b.allowedReasoningModes(),
                             b.allowedReasoningEfforts(),
-                            b.toolReasoningContinuationRequired()));
+                            b.toolReasoningContinuationRequired(),
+                            ModelIoProfile.textOnly()));
         }
         return OpenAiCompatibleBindingRegistry.find(snapshot)
                 .map(b -> new AdmittedBindingSpec(
                         b.reasoningBehavior(),
                         b.allowedReasoningModes(),
                         b.allowedReasoningEfforts(),
-                        b.toolReasoningContinuationRequired()));
+                        b.toolReasoningContinuationRequired(),
+                        b.ioProfile()));
     }
 
     private static ModelExecutionLimits limits(ResolvedModelSnapshot snapshot) {
@@ -115,21 +114,10 @@ public final class OpenAiCompatibleModelProfileFactory {
                 ModelPartialOutputFailureBehavior.NON_RETRYABLE);
     }
 
-    private static ModelIoProfile ioProfile(ResolvedModelSnapshot snapshot) {
-        boolean upload = snapshot.capabilities().contains(ModelCapability.IMAGE_UPLOAD_INPUT);
-        boolean url = snapshot.capabilities().contains(ModelCapability.IMAGE_URL_INPUT);
-        if (!upload && !url) {
-            return ModelIoProfile.textOnly();
-        }
-        EnumSet<ModelImageSource> sources = EnumSet.noneOf(ModelImageSource.class);
-        if (upload) sources.add(ModelImageSource.UPLOAD);
-        if (url) sources.add(ModelImageSource.URL);
-        return ModelIoProfile.withImage(ImageInputProfile.standard(Set.copyOf(sources), true));
-    }
-
     private record AdmittedBindingSpec(
             ModelReasoningBehavior reasoningBehavior,
             Set<ModelReasoningMode> allowedReasoningModes,
             Set<ModelReasoningEffort> allowedReasoningEfforts,
-            boolean toolReasoningContinuationRequired) {}
+            boolean toolReasoningContinuationRequired,
+            ModelIoProfile ioProfile) {}
 }

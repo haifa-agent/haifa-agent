@@ -105,7 +105,7 @@ public final class LoggingAgentChatModel implements AgentChatModel {
                     imageUrlCount++;
                 } else if (image instanceof ImageDataPart data) {
                     imageDataCount++;
-                    imageDataBytes += data.bytes().length;
+                    imageDataBytes += data.sizeBytes();
                 }
             }
         }

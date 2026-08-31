@@ -563,7 +563,8 @@ public final class PersonalAssistantAssembler {
                             profile,
                             List.of(snapshot.modelId().value()),
                             snapshot.modelId().value()),
-                    PersonalModelPreferences.recommended());
+                    PersonalModelPreferences.recommended(),
+                    profile.imageInput());
             return new PersonalModelCatalog() {
                 @Override
                 public String defaultModelId() {

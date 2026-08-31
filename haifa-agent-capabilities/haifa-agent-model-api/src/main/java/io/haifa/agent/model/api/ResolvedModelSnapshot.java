@@ -164,7 +164,15 @@ public record ResolvedModelSnapshot(
                         "reasoning_token_budget",
                         EffectiveModelParameters.PROFILE_VERSION_OPTION,
                         EffectiveModelParameters.PROFILE_DIGEST_OPTION,
-                        EffectiveModelParameters.MAX_OUTPUT_TOKENS_OPTION));
+                        EffectiveModelParameters.MAX_OUTPUT_TOKENS_OPTION,
+                        EffectiveModelParameters.IMAGE_INPUT_SOURCES_OPTION,
+                        EffectiveModelParameters.IMAGE_INPUT_MEDIA_TYPES_OPTION,
+                        EffectiveModelParameters.IMAGE_INPUT_MAX_IMAGES_OPTION,
+                        EffectiveModelParameters.IMAGE_INPUT_MAX_BYTES_PER_ITEM_OPTION,
+                        EffectiveModelParameters.IMAGE_INPUT_MAX_TOTAL_BYTES_OPTION,
+                        EffectiveModelParameters.IMAGE_INPUT_MAX_URL_CHARS_OPTION,
+                        EffectiveModelParameters.IMAGE_INPUT_DETAIL_SUPPORTED_OPTION,
+                        EffectiveModelParameters.IMAGE_INPUT_ALLOWED_DETAILS_OPTION));
         options.putAll(parameters.frozenOptions());
         return create(
                 providerId,
@@ -184,6 +192,75 @@ public record ResolvedModelSnapshot(
                 parameters.maxOutputTokens(),
                 providerOptions,
                 options);
+    }
+
+    /** Returns the frozen image input constraints if image input is active for this model. */
+    public java.util.Optional<ImageInputProfile> frozenImageInputProfile() {
+        if (invocationOptions.containsKey(EffectiveModelParameters.IMAGE_INPUT_MAX_IMAGES_OPTION)) {
+            try {
+                @SuppressWarnings("unchecked")
+                List<String> sourceNames =
+                        (List<String>) invocationOptions.get(EffectiveModelParameters.IMAGE_INPUT_SOURCES_OPTION);
+                Set<ModelImageSource> sources = sourceNames == null
+                        ? Set.of()
+                        : sourceNames.stream()
+                                .map(ModelImageSource::valueOf)
+                                .collect(java.util.stream.Collectors.toSet());
+
+                @SuppressWarnings("unchecked")
+                List<String> mediaTypesList =
+                        (List<String>) invocationOptions.get(EffectiveModelParameters.IMAGE_INPUT_MEDIA_TYPES_OPTION);
+                Set<String> mediaTypes = mediaTypesList == null ? Set.of() : Set.copyOf(mediaTypesList);
+
+                int maxImages = ((Number) invocationOptions.get(EffectiveModelParameters.IMAGE_INPUT_MAX_IMAGES_OPTION))
+                        .intValue();
+                long maxBytesPerItem = ((Number)
+                                invocationOptions.get(EffectiveModelParameters.IMAGE_INPUT_MAX_BYTES_PER_ITEM_OPTION))
+                        .longValue();
+                long maxTotalBytes = ((Number)
+                                invocationOptions.get(EffectiveModelParameters.IMAGE_INPUT_MAX_TOTAL_BYTES_OPTION))
+                        .longValue();
+                int maxUrlChars = ((Number)
+                                invocationOptions.get(EffectiveModelParameters.IMAGE_INPUT_MAX_URL_CHARS_OPTION))
+                        .intValue();
+                boolean detailSupported = Boolean.TRUE.equals(
+                        invocationOptions.get(EffectiveModelParameters.IMAGE_INPUT_DETAIL_SUPPORTED_OPTION));
+
+                @SuppressWarnings("unchecked")
+                List<String> detailNames = (List<String>)
+                        invocationOptions.get(EffectiveModelParameters.IMAGE_INPUT_ALLOWED_DETAILS_OPTION);
+                Set<ModelImageDetail> details = detailNames == null
+                        ? Set.of()
+                        : detailNames.stream()
+                                .map(ModelImageDetail::valueOf)
+                                .collect(java.util.stream.Collectors.toSet());
+
+                return java.util.Optional.of(new ImageInputProfile(
+                        sources,
+                        mediaTypes,
+                        maxImages,
+                        maxBytesPerItem,
+                        maxTotalBytes,
+                        maxUrlChars,
+                        detailSupported,
+                        details));
+            } catch (Exception e) {
+                return java.util.Optional.empty();
+            }
+        }
+        Set<ModelImageSource> sources = new java.util.HashSet<>();
+        if (capabilities.contains(ModelCapability.IMAGE_UPLOAD_INPUT)) sources.add(ModelImageSource.UPLOAD);
+        if (capabilities.contains(ModelCapability.IMAGE_URL_INPUT)) sources.add(ModelImageSource.URL);
+        if (sources.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        boolean isGemini = ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(apiStyle)
+                || "google-antigravity".equals(providerId.value())
+                || "cliproxyapi-antigravity".equals(providerId.value());
+        return java.util.Optional.of(
+                isGemini
+                        ? ImageInputProfile.gemini(sources)
+                        : ImageInputProfile.standard(sources, sources.contains(ModelImageSource.URL)));
     }
 
     private static URI normalizeEndpoint(URI endpoint) {
