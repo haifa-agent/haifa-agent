@@ -1,8 +1,11 @@
 package io.haifa.agent.model.gemini;
 
+import io.haifa.agent.model.api.ImageInputProfile;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelExecutionLimits;
+import io.haifa.agent.model.api.ModelImageSource;
+import io.haifa.agent.model.api.ModelIoProfile;
 import io.haifa.agent.model.api.ModelPartialOutputFailureBehavior;
 import io.haifa.agent.model.api.ModelProfileStatus;
 import io.haifa.agent.model.api.ModelReasoningBehavior;
@@ -39,7 +42,15 @@ public final class GeminiModelProfileFactory {
                         snapshot.nativeStreaming(),
                         false,
                         ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                ioProfile(snapshot),
                 governed ? ModelProfileStatus.VERIFIED : ModelProfileStatus.UNVERIFIED,
                 verifiedOn);
+    }
+
+    private static ModelIoProfile ioProfile(ResolvedModelSnapshot snapshot) {
+        if (snapshot.capabilities().contains(ModelCapability.IMAGE_UPLOAD_INPUT)) {
+            return ModelIoProfile.withImage(ImageInputProfile.standard(Set.of(ModelImageSource.UPLOAD), false));
+        }
+        return ModelIoProfile.textOnly();
     }
 }

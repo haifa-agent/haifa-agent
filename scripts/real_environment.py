@@ -1349,6 +1349,7 @@ def backend_environment(
                 f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
                 f"{prefix}_MODELS_0_CAPABILITIES_2": "STRUCTURED_OUTPUT",
                 f"{prefix}_MODELS_0_CAPABILITIES_3": "REASONING",
+                f"{prefix}_MODELS_0_CAPABILITIES_4": "IMAGE_UPLOAD_INPUT",
                 f"{prefix}_MODELS_0_CONTEXTWINDOW": "131072",
                 f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
             }

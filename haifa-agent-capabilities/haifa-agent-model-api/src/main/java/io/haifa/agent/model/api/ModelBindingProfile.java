@@ -6,6 +6,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.util.HexFormat;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 
@@ -24,6 +25,7 @@ public record ModelBindingProfile(
         boolean toolReasoningContinuationRequired,
         ModelExecutionLimits executionLimits,
         ModelStreamingProfile streaming,
+        ModelIoProfile ioProfile,
         ModelProfileStatus status,
         LocalDate lastVerifiedOn,
         String digest) {
@@ -56,6 +58,7 @@ public record ModelBindingProfile(
         if (streaming.reasoningStreaming() && !capabilities.contains(ModelCapability.REASONING)) {
             throw new IllegalArgumentException("reasoning streaming requires reasoning capability");
         }
+        ioProfile = Objects.requireNonNull(ioProfile, "ioProfile must not be null");
         status = Objects.requireNonNull(status, "status must not be null");
         lastVerifiedOn = Objects.requireNonNull(lastVerifiedOn, "lastVerifiedOn must not be null");
         validateReasoning(
@@ -77,6 +80,7 @@ public record ModelBindingProfile(
                 executionLimits,
                 toolReasoningContinuationRequired,
                 streaming,
+                ioProfile,
                 status,
                 lastVerifiedOn);
         if (!expected.equals(digest)) {
@@ -85,9 +89,48 @@ public record ModelBindingProfile(
     }
 
     /**
+     * Compatibility constructor for callers still using the Phase 6 profile shape.
+     */
+    @Deprecated
+    public ModelBindingProfile(
+            ModelDefinitionId bindingId,
+            ApiStyleId apiStyle,
+            String version,
+            Set<ModelCapability> capabilities,
+            ModelReasoningBehavior reasoningBehavior,
+            Set<ModelReasoningMode> allowedReasoningModes,
+            Set<ModelReasoningEffort> allowedReasoningEfforts,
+            OptionalLong maximumReasoningTokens,
+            int minimumOutputTokens,
+            int maximumOutputTokens,
+            boolean toolReasoningContinuationRequired,
+            ModelExecutionLimits executionLimits,
+            ModelStreamingProfile streaming,
+            ModelProfileStatus status,
+            LocalDate lastVerifiedOn,
+            String digest) {
+        this(
+                bindingId,
+                apiStyle,
+                version,
+                capabilities,
+                reasoningBehavior,
+                allowedReasoningModes,
+                allowedReasoningEfforts,
+                maximumReasoningTokens,
+                minimumOutputTokens,
+                maximumOutputTokens,
+                toolReasoningContinuationRequired,
+                executionLimits,
+                streaming,
+                ModelIoProfile.textOnly(),
+                status,
+                lastVerifiedOn,
+                digest);
+    }
+
+    /**
      * Compatibility constructor for callers still using the Phase 5 profile shape.
-     * It is conservative: callers must migrate to the execution-aware factory before using the profile for
-     * catalog consistency validation.
      */
     @Deprecated
     public ModelBindingProfile(
@@ -119,12 +162,13 @@ public record ModelBindingProfile(
                 toolReasoningContinuationRequired,
                 new ModelExecutionLimits(maximumOutputTokens, minimumOutputTokens, maximumOutputTokens),
                 ModelStreamingProfile.disabled(),
+                ModelIoProfile.textOnly(),
                 status,
                 lastVerifiedOn,
                 digest);
     }
 
-    /** Creates a profile with all execution-affecting fields explicit and digest-covered. */
+    /** Creates a profile with all execution and IO affecting fields explicit and digest-covered. */
     public static ModelBindingProfile create(
             ModelDefinitionId bindingId,
             ApiStyleId apiStyle,
@@ -137,6 +181,7 @@ public record ModelBindingProfile(
             ModelExecutionLimits executionLimits,
             boolean toolReasoningContinuationRequired,
             ModelStreamingProfile streaming,
+            ModelIoProfile ioProfile,
             ModelProfileStatus status,
             LocalDate lastVerifiedOn) {
         Set<ModelCapability> frozenCapabilities = Set.copyOf(capabilities);
@@ -156,6 +201,7 @@ public record ModelBindingProfile(
                 toolReasoningContinuationRequired,
                 executionLimits,
                 streaming,
+                ioProfile,
                 status,
                 lastVerifiedOn,
                 digest(
@@ -170,14 +216,45 @@ public record ModelBindingProfile(
                         executionLimits,
                         toolReasoningContinuationRequired,
                         streaming,
+                        ioProfile,
                         status,
                         lastVerifiedOn));
     }
 
-    /**
-     * Compatibility factory for the Phase 5 shape. The inferred context and disabled streaming facts are not
-     * suitable for a registered Phase 6 binding; integrations must call the execution-aware overload.
-     */
+    /** Compatibility factory for callers creating profiles without explicit ModelIoProfile. */
+    @Deprecated
+    public static ModelBindingProfile create(
+            ModelDefinitionId bindingId,
+            ApiStyleId apiStyle,
+            String version,
+            Set<ModelCapability> capabilities,
+            ModelReasoningBehavior reasoningBehavior,
+            Set<ModelReasoningMode> allowedReasoningModes,
+            Set<ModelReasoningEffort> allowedReasoningEfforts,
+            OptionalLong maximumReasoningTokens,
+            ModelExecutionLimits executionLimits,
+            boolean toolReasoningContinuationRequired,
+            ModelStreamingProfile streaming,
+            ModelProfileStatus status,
+            LocalDate lastVerifiedOn) {
+        return create(
+                bindingId,
+                apiStyle,
+                version,
+                capabilities,
+                reasoningBehavior,
+                allowedReasoningModes,
+                allowedReasoningEfforts,
+                maximumReasoningTokens,
+                executionLimits,
+                toolReasoningContinuationRequired,
+                streaming,
+                ModelIoProfile.textOnly(),
+                status,
+                lastVerifiedOn);
+    }
+
+    /** Compatibility factory for the Phase 5 shape. */
     @Deprecated
     public static ModelBindingProfile create(
             ModelDefinitionId bindingId,
@@ -205,6 +282,7 @@ public record ModelBindingProfile(
                 new ModelExecutionLimits(maximumOutputTokens, minimumOutputTokens, maximumOutputTokens),
                 toolReasoningContinuationRequired,
                 ModelStreamingProfile.disabled(),
+                ModelIoProfile.textOnly(),
                 status,
                 lastVerifiedOn);
     }
@@ -222,6 +300,11 @@ public record ModelBindingProfile(
     /** Compatibility projection of the exact tool/response facts. */
     public ModelToolResponseProfile toolResponse() {
         return ModelToolResponseProfile.fromCapabilities(capabilities, toolReasoningContinuationRequired);
+    }
+
+    /** Compatibility projection of image input constraints. */
+    public Optional<ImageInputProfile> imageInput() {
+        return ioProfile.imageInput();
     }
 
     public int contextWindowTokens() {
@@ -282,6 +365,7 @@ public record ModelBindingProfile(
                 executionLimits,
                 toolReasoningContinuationRequired,
                 streaming,
+                ioProfile,
                 status,
                 lastVerifiedOn);
     }
@@ -298,6 +382,7 @@ public record ModelBindingProfile(
             ModelExecutionLimits executionLimits,
             boolean toolContinuationRequired,
             ModelStreamingProfile streaming,
+            ModelIoProfile ioProfile,
             ModelProfileStatus status,
             LocalDate lastVerifiedOn) {
         String canonicalBindingId = canonicalSegment(
@@ -312,11 +397,65 @@ public record ModelBindingProfile(
         Objects.requireNonNull(maximumReasoningTokens, "maximumReasoningTokens must not be null");
         Objects.requireNonNull(executionLimits, "executionLimits must not be null");
         Objects.requireNonNull(streaming, "streaming must not be null");
+        Objects.requireNonNull(ioProfile, "ioProfile must not be null");
         Objects.requireNonNull(status, "status must not be null");
         Objects.requireNonNull(lastVerifiedOn, "lastVerifiedOn must not be null");
+
+        String inputModalities = ioProfile.inputModalities().stream()
+                .map(Enum::name)
+                .sorted()
+                .toList()
+                .toString();
+        String outputModalities = ioProfile.outputModalities().stream()
+                .map(Enum::name)
+                .sorted()
+                .toList()
+                .toString();
+
+        String imageSources = ioProfile
+                .imageInput()
+                .map(img -> img.allowedSources().stream()
+                        .map(Enum::name)
+                        .sorted()
+                        .toList()
+                        .toString())
+                .orElse("[]");
+        String imageMediaTypes = ioProfile
+                .imageInput()
+                .map(img -> img.supportedMediaTypes().stream().sorted().toList().toString())
+                .orElse("[]");
+        String maxImagesPerRequest = ioProfile
+                .imageInput()
+                .map(img -> Integer.toString(img.maxImagesPerRequest()))
+                .orElse("0");
+        String maxBytesPerItem = ioProfile
+                .imageInput()
+                .map(img -> Long.toString(img.maxBytesPerItem()))
+                .orElse("0");
+        String maxTotalBytes = ioProfile
+                .imageInput()
+                .map(img -> Long.toString(img.maxTotalBytes()))
+                .orElse("0");
+        String maxUrlCharacters = ioProfile
+                .imageInput()
+                .map(img -> Integer.toString(img.maxUrlCharacters()))
+                .orElse("0");
+        String imageDetailSupported = ioProfile
+                .imageInput()
+                .map(img -> Boolean.toString(img.detailSupported()))
+                .orElse("false");
+        String imageDetails = ioProfile
+                .imageInput()
+                .map(img -> img.allowedDetails().stream()
+                        .map(Enum::name)
+                        .sorted()
+                        .toList()
+                        .toString())
+                .orElse("[]");
+
         return String.join(
                 "|",
-                "model-binding-profile-v2",
+                "model-binding-profile-v3",
                 canonicalBindingId,
                 canonicalApiStyle,
                 canonicalVersion,
@@ -333,6 +472,16 @@ public record ModelBindingProfile(
                 Boolean.toString(streaming.usageStreaming()),
                 Boolean.toString(streaming.reasoningStreaming()),
                 streaming.partialOutputFailureBehavior().name(),
+                inputModalities,
+                outputModalities,
+                imageSources,
+                imageMediaTypes,
+                maxImagesPerRequest,
+                maxBytesPerItem,
+                maxTotalBytes,
+                maxUrlCharacters,
+                imageDetailSupported,
+                imageDetails,
                 status.name(),
                 lastVerifiedOn.toString());
     }
@@ -359,6 +508,7 @@ public record ModelBindingProfile(
             ModelExecutionLimits executionLimits,
             boolean toolContinuationRequired,
             ModelStreamingProfile streaming,
+            ModelIoProfile ioProfile,
             ModelProfileStatus status,
             LocalDate lastVerifiedOn) {
         String canonical = canonicalString(
@@ -373,6 +523,7 @@ public record ModelBindingProfile(
                 executionLimits,
                 toolContinuationRequired,
                 streaming,
+                ioProfile,
                 status,
                 lastVerifiedOn);
         try {

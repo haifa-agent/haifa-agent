@@ -132,6 +132,51 @@ public final class ModelBindingConsistencyValidator {
                         + " cannot declare tool reasoning continuation required");
             }
         }
+
+        // Rule 10: Multimodal / IO Profile bidirectional consistency
+        if (profile.capabilities().contains(ModelCapability.IMAGE_INPUT)) {
+            throw new IllegalArgumentException(
+                    "deprecated IMAGE_INPUT capability is not allowed in binding profile for model: "
+                            + definition.id());
+        }
+
+        boolean hasImageUpload = profile.capabilities().contains(ModelCapability.IMAGE_UPLOAD_INPUT);
+        boolean hasImageUrl = profile.capabilities().contains(ModelCapability.IMAGE_URL_INPUT);
+        boolean hasImageCapability = hasImageUpload || hasImageUrl;
+
+        if (profile.ioProfile().imageInput().isPresent()) {
+            ImageInputProfile img = profile.ioProfile().imageInput().get();
+            if (!profile.ioProfile().inputModalities().contains(ModelInputModality.IMAGE)) {
+                throw new IllegalArgumentException(
+                        "imageInput is present but inputModalities does not contain IMAGE for model: "
+                                + definition.id());
+            }
+            if (img.allowedSources().contains(ModelImageSource.UPLOAD) && !hasImageUpload) {
+                throw new IllegalArgumentException("profile allows UPLOAD image source but model " + definition.id()
+                        + " does not declare IMAGE_UPLOAD_INPUT capability");
+            }
+            if (img.allowedSources().contains(ModelImageSource.URL) && !hasImageUrl) {
+                throw new IllegalArgumentException("profile allows URL image source but model " + definition.id()
+                        + " does not declare IMAGE_URL_INPUT capability");
+            }
+            if (hasImageUpload && !img.allowedSources().contains(ModelImageSource.UPLOAD)) {
+                throw new IllegalArgumentException("model " + definition.id()
+                        + " declares IMAGE_UPLOAD_INPUT but profile imageInput does not allow UPLOAD source");
+            }
+            if (hasImageUrl && !img.allowedSources().contains(ModelImageSource.URL)) {
+                throw new IllegalArgumentException("model " + definition.id()
+                        + " declares IMAGE_URL_INPUT but profile imageInput does not allow URL source");
+            }
+        } else {
+            if (profile.ioProfile().inputModalities().contains(ModelInputModality.IMAGE)) {
+                throw new IllegalArgumentException(
+                        "inputModalities contains IMAGE but imageInput is missing for model: " + definition.id());
+            }
+            if (hasImageCapability) {
+                throw new IllegalArgumentException(
+                        "model " + definition.id() + " declares image capabilities but profile imageInput is missing");
+            }
+        }
     }
 
     /**
