@@ -174,8 +174,7 @@ public final class PersonalApiMapper {
                 value.imageInput().map(this::imageInput).orElse(null));
     }
 
-    private PersonalApiDtos.ImageInputView imageInput(
-            io.haifa.agent.model.api.ImageInputProfile value) {
+    private PersonalApiDtos.ImageInputView imageInput(io.haifa.agent.model.api.ImageInputProfile value) {
         return new PersonalApiDtos.ImageInputView(
                 value.allowedSources().stream().map(Enum::name).sorted().toList(),
                 value.supportedMediaTypes().stream().sorted().toList(),
