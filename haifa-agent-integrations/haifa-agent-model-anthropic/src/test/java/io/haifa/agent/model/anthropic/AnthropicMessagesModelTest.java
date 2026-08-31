@@ -897,6 +897,62 @@ class AnthropicMessagesModelTest {
                 .hasMessageContaining("Duplicate model binding admission key");
     }
 
+    @Test
+    void rejectsImageInputBecauseAnthropicHasNoVerifiedMultimodalEvidence() {
+        var message = ModelMessage.user(
+                "inspect", List.of(new io.haifa.agent.model.api.ImageDataPart("image/png", new byte[] {1, 2, 3})));
+        var snapshot = standardSnapshot(true, Map.of());
+
+        assertThatThrownBy(() -> new AgentChatRequest(
+                        new io.haifa.agent.model.api.ModelCallId("call-img"),
+                        new io.haifa.agent.core.run.AgentRunId("run-img"),
+                        1,
+                        1,
+                        snapshot,
+                        List.of(message),
+                        List.of(),
+                        1024,
+                        java.time.Duration.ofSeconds(5),
+                        Map.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not support image input");
+
+        var imageSnapshot = ResolvedModelSnapshot.create(
+                new io.haifa.agent.model.api.ModelProviderId("anthropic"),
+                "1.0",
+                new ModelDefinitionId("claude-test"),
+                "1.0",
+                "claude-3-7-sonnet",
+                AnthropicMessagesModel.ADAPTER_TYPE,
+                AnthropicMessagesModel.ADAPTER_VERSION,
+                ModelApiStyles.ANTHROPIC_MESSAGES,
+                AnthropicMessagesDialects.STANDARD,
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"),
+                new CredentialRef("env://TEST_KEY"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.IMAGE_UPLOAD_INPUT),
+                128_000,
+                8_192,
+                Map.of(),
+                Map.of());
+
+        var request = new AgentChatRequest(
+                new io.haifa.agent.model.api.ModelCallId("call-img"),
+                new io.haifa.agent.core.run.AgentRunId("run-img"),
+                1,
+                1,
+                imageSnapshot,
+                List.of(message),
+                List.of(),
+                1024,
+                java.time.Duration.ofSeconds(5),
+                Map.of());
+
+        assertThatThrownBy(() -> model().invoke(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Anthropic Messages image input is not enabled by this adapter profile");
+    }
+
     private record Response(int status, String contentType, String body, long delayMillis) {
         private static Response json(int status, String body) {
             return new Response(status, "application/json", body, 0);

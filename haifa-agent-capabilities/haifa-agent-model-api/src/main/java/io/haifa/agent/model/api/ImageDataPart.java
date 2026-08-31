@@ -36,6 +36,10 @@ public final class ImageDataPart implements ModelImagePart {
         return bytes.clone();
     }
 
+    public int sizeBytes() {
+        return bytes.length;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof ImageDataPart value

@@ -274,7 +274,8 @@ public final class PersonalModelFactory {
                         profile.status(),
                         profile.lastVerifiedOn(),
                         productDefaults.controls(profile, styleBindings, recommendedBindingId),
-                        PersonalModelPreferences.recommended());
+                        PersonalModelPreferences.recommended(),
+                        profile.imageInput());
             }
 
             @Override

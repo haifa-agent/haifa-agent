@@ -4,6 +4,7 @@ import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelExecutionLimits;
+import io.haifa.agent.model.api.ModelIoProfile;
 import io.haifa.agent.model.api.ModelPartialOutputFailureBehavior;
 import io.haifa.agent.model.api.ModelProfileStatus;
 import io.haifa.agent.model.api.ModelReasoningBehavior;
@@ -41,6 +42,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                     limits(snapshot),
                     false,
                     streaming(snapshot),
+                    ModelIoProfile.textOnly(),
                     ModelProfileStatus.UNVERIFIED,
                     verifiedOn);
         }
@@ -59,6 +61,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                     limits(snapshot),
                     false,
                     streaming(snapshot),
+                    binding.ioProfile(),
                     ModelProfileStatus.VERIFIED,
                     verifiedOn);
         }
@@ -75,6 +78,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                 limits(snapshot),
                 binding.toolReasoningContinuationRequired(),
                 streaming(snapshot),
+                binding.ioProfile(),
                 ModelProfileStatus.VERIFIED,
                 verifiedOn);
     }
@@ -86,14 +90,16 @@ public final class OpenAiCompatibleModelProfileFactory {
                             b.reasoningBehavior(),
                             b.allowedReasoningModes(),
                             b.allowedReasoningEfforts(),
-                            b.toolReasoningContinuationRequired()));
+                            b.toolReasoningContinuationRequired(),
+                            ModelIoProfile.textOnly()));
         }
         return OpenAiCompatibleBindingRegistry.find(snapshot)
                 .map(b -> new AdmittedBindingSpec(
                         b.reasoningBehavior(),
                         b.allowedReasoningModes(),
                         b.allowedReasoningEfforts(),
-                        b.toolReasoningContinuationRequired()));
+                        b.toolReasoningContinuationRequired(),
+                        b.ioProfile()));
     }
 
     private static ModelExecutionLimits limits(ResolvedModelSnapshot snapshot) {
@@ -112,5 +118,6 @@ public final class OpenAiCompatibleModelProfileFactory {
             ModelReasoningBehavior reasoningBehavior,
             Set<ModelReasoningMode> allowedReasoningModes,
             Set<ModelReasoningEffort> allowedReasoningEfforts,
-            boolean toolReasoningContinuationRequired) {}
+            boolean toolReasoningContinuationRequired,
+            ModelIoProfile ioProfile) {}
 }
