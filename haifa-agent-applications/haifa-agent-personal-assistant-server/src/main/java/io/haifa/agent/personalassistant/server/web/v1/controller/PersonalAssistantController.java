@@ -155,14 +155,14 @@ public final class PersonalAssistantController {
             PersonalApiDtos.SelectModel request) {
         var preferences = java.util.Objects.requireNonNull(request.preferences(), "preferences must not be null");
         return new io.haifa.agent.personalassistant.application.PersonalModelPreferences(
-                        io.haifa.agent.personalassistant.application.PersonalResponseMode.valueOf(
-                                text(preferences.responseMode(), "responseMode")),
-                        java.util.Optional.ofNullable(preferences.effort())
-                                .map(String::trim)
-                                .filter(value -> !value.isEmpty())
-                                .map(io.haifa.agent.model.api.ModelReasoningEffort::valueOf),
-                        io.haifa.agent.personalassistant.application.PersonalResponseLength.valueOf(
-                                text(preferences.responseLength(), "responseLength")));
+                io.haifa.agent.personalassistant.application.PersonalResponseMode.valueOf(
+                        text(preferences.responseMode(), "responseMode")),
+                java.util.Optional.ofNullable(preferences.effort())
+                        .map(String::trim)
+                        .filter(value -> !value.isEmpty())
+                        .map(io.haifa.agent.model.api.ModelReasoningEffort::valueOf),
+                io.haifa.agent.personalassistant.application.PersonalResponseLength.valueOf(
+                        text(preferences.responseLength(), "responseLength")));
     }
 
     @GetMapping("/conversations/{conversationId}")

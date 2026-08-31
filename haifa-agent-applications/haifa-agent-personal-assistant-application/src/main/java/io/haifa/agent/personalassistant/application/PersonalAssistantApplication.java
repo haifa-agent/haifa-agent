@@ -326,11 +326,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                         + selection.preferences().digest()),
                 TimePrecision.now(clock));
         return new ModelSelectionView(
-                selected,
-                selection.preferences(),
-                changed.revision(),
-                true,
-                PersonalSelectionCompatibility.CURRENT);
+                selected, selection.preferences(), changed.revision(), true, PersonalSelectionCompatibility.CURRENT);
     }
 
     public ConversationView rename(String sessionId, long expectedRevision, String idempotencyKey, String displayName) {

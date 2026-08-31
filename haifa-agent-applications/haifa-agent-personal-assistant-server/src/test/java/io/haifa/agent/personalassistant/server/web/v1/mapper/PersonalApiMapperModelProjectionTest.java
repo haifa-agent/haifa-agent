@@ -3,7 +3,6 @@ package io.haifa.agent.personalassistant.server.web.v1.mapper;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.model.api.ImageInputProfile;
-import io.haifa.agent.model.api.ModelImageDetail;
 import io.haifa.agent.model.api.ModelImageSource;
 import io.haifa.agent.model.api.ModelProfileStatus;
 import io.haifa.agent.model.api.ModelReasoningEffort;
@@ -28,8 +27,8 @@ class PersonalApiMapperModelProjectionTest {
 
     @Test
     void mapsImageInputWhiteListAndNeverLeaksProfileIdentity() {
-        ImageInputProfile imageProfile = ImageInputProfile.standard(
-                Set.of(ModelImageSource.UPLOAD, ModelImageSource.URL), true);
+        ImageInputProfile imageProfile =
+                ImageInputProfile.standard(Set.of(ModelImageSource.UPLOAD, ModelImageSource.URL), true);
         PersonalApiDtos.Model dto = mapper.model(option(Optional.of(imageProfile)));
 
         assertThat(dto.imageInput()).isNotNull();
@@ -69,11 +68,7 @@ class PersonalApiMapperModelProjectionTest {
     private static PersonalAssistantApplication.ModelSelectionView view(
             PersonalSelectionCompatibility compatibility, boolean available) {
         return new PersonalAssistantApplication.ModelSelectionView(
-                option(Optional.empty()),
-                PersonalModelPreferences.recommended(),
-                7L,
-                available,
-                compatibility);
+                option(Optional.empty()), PersonalModelPreferences.recommended(), 7L, available, compatibility);
     }
 
     private static PersonalModelOption option(Optional<ImageInputProfile> imageProfile) {
@@ -123,7 +118,10 @@ class PersonalApiMapperModelProjectionTest {
                         "responseLength",
                         true,
                         false,
-                        List.of(PersonalResponseLength.SHORT, PersonalResponseLength.RECOMMENDED, PersonalResponseLength.LONG),
+                        List.of(
+                                PersonalResponseLength.SHORT,
+                                PersonalResponseLength.RECOMMENDED,
+                                PersonalResponseLength.LONG),
                         PersonalResponseLength.RECOMMENDED,
                         "Standard response length",
                         "Controls the approximate length of model responses"),

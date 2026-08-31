@@ -24,9 +24,7 @@ public interface PersonalModelCatalog {
      * that rejects an incompatible selection at submit time.
      */
     default PersonalSelectionCompatibility selectionCompatibility(
-            String bindingId,
-            String preferenceSchemaVersion,
-            PersonalModelPreferences preferences) {
+            String bindingId, String preferenceSchemaVersion, PersonalModelPreferences preferences) {
         return available().stream()
                 .filter(option -> option.id().equals(bindingId))
                 .findFirst()
@@ -42,21 +40,26 @@ public interface PersonalModelCatalog {
 
     /** Returns the catalog option for an id without filtering availability or mutating selection state. */
     default Optional<PersonalModelOption> optionById(String modelId) {
-        return available().stream().filter(option -> option.id().equals(modelId)).findFirst();
+        return available().stream()
+                .filter(option -> option.id().equals(modelId))
+                .findFirst();
     }
 
     /** Mirrors the preference checks enforced by {@link #resolve}; profile version/digest are not visible here. */
     static boolean compatiblePreferences(PersonalModelOption option, PersonalModelPreferences preferences) {
         if (option.controls().responseMode().readOnly()
-                && preferences.responseMode() != option.controls().responseMode().recommendedValue()) {
+                && preferences.responseMode()
+                        != option.controls().responseMode().recommendedValue()) {
             return false;
         }
-        if (!option.controls().reasoningEffort().visible() && preferences.effort().isPresent()) {
+        if (!option.controls().reasoningEffort().visible()
+                && preferences.effort().isPresent()) {
             return false;
         }
         if (!option.controls().responseMode().allowedValues().contains(preferences.responseMode())
                 || !option.controls().responseLength().allowedValues().contains(preferences.responseLength())
-                || preferences.effort()
+                || preferences
+                        .effort()
                         .filter(value -> !option.controls()
                                 .reasoningEffort()
                                 .allowedValues()
@@ -66,12 +69,15 @@ public interface PersonalModelCatalog {
         }
         if (option.controls().reasoningEffort().readOnly()
                 && preferences.effort().isPresent()
-                && !preferences.effort()
-                        .equals(Optional.ofNullable(option.controls().reasoningEffort().recommendedValue()))) {
+                && !preferences
+                        .effort()
+                        .equals(Optional.ofNullable(
+                                option.controls().reasoningEffort().recommendedValue()))) {
             return false;
         }
         if (option.controls().responseLength().readOnly()
-                && preferences.responseLength() != option.controls().responseLength().recommendedValue()) {
+                && preferences.responseLength()
+                        != option.controls().responseLength().recommendedValue()) {
             return false;
         }
         return true;

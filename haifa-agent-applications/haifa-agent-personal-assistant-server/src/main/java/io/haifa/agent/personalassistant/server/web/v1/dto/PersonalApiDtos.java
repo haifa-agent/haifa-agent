@@ -154,10 +154,7 @@ public final class PersonalApiDtos {
             boolean available,
             String selectionCompatibility) {}
 
-    public record SelectModel(
-            String modelBindingId,
-            String preferenceSchemaVersion,
-            ModelPreferences preferences) {}
+    public record SelectModel(String modelBindingId, String preferenceSchemaVersion, ModelPreferences preferences) {}
 
     public record Conversation(
             String id,
