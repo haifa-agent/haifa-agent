@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import java.util.List;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class CodingModelControlsTest {
@@ -28,13 +27,19 @@ class CodingModelControlsTest {
     void reasoningEffortVisibleForDeepCapableProfile() {
         CodingModelControls controls = new CodingModelControls(
                 new CodingModelControls.ResponseModeControl(
-                        "responseMode", true, false,
+                        "responseMode",
+                        true,
+                        false,
                         List.of(CodingResponseMode.FAST, CodingResponseMode.RECOMMENDED, CodingResponseMode.DEEP),
-                        CodingResponseMode.RECOMMENDED, "Balanced"),
+                        CodingResponseMode.RECOMMENDED,
+                        "Balanced"),
                 new CodingModelControls.ReasoningEffortControl(
-                        "reasoningEffort", true, false,
+                        "reasoningEffort",
+                        true,
+                        false,
                         List.of(ModelReasoningEffort.LOW, ModelReasoningEffort.MEDIUM, ModelReasoningEffort.HIGH),
-                        ModelReasoningEffort.MEDIUM, "Multi-level"));
+                        ModelReasoningEffort.MEDIUM,
+                        "Multi-level"));
 
         assertThat(controls.reasoningEffort().visible()).isTrue();
         assertThat(controls.reasoningEffort().allowedValues())
@@ -44,8 +49,7 @@ class CodingModelControlsTest {
     @Test
     void rejectsWrongControlKind() {
         assertThatThrownBy(() -> new CodingModelControls.ResponseModeControl(
-                "wrongKind", true, false, List.of(CodingResponseMode.FAST),
-                CodingResponseMode.FAST, "summary"))
+                        "wrongKind", true, false, List.of(CodingResponseMode.FAST), CodingResponseMode.FAST, "summary"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("control kind");
     }
@@ -53,8 +57,12 @@ class CodingModelControlsTest {
     @Test
     void rejectsRecommendedNotInAllowed() {
         assertThatThrownBy(() -> new CodingModelControls.ResponseModeControl(
-                "responseMode", true, false, List.of(CodingResponseMode.FAST),
-                CodingResponseMode.RECOMMENDED, "summary"))
+                        "responseMode",
+                        true,
+                        false,
+                        List.of(CodingResponseMode.FAST),
+                        CodingResponseMode.RECOMMENDED,
+                        "summary"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("recommended value must be allowed");
     }
@@ -62,8 +70,7 @@ class CodingModelControlsTest {
     @Test
     void rejectsBlankEffectiveSummary() {
         assertThatThrownBy(() -> new CodingModelControls.ResponseModeControl(
-                "responseMode", true, false, List.of(CodingResponseMode.FAST),
-                CodingResponseMode.FAST, "  "))
+                        "responseMode", true, false, List.of(CodingResponseMode.FAST), CodingResponseMode.FAST, "  "))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("effectiveSummary");
     }
@@ -72,12 +79,14 @@ class CodingModelControlsTest {
     void reasoningEffortAllowsEmptyAllowedWhenNotVisible() {
         CodingModelControls controls = new CodingModelControls(
                 new CodingModelControls.ResponseModeControl(
-                        "responseMode", true, false,
+                        "responseMode",
+                        true,
+                        false,
                         List.of(CodingResponseMode.FAST, CodingResponseMode.RECOMMENDED),
-                        CodingResponseMode.RECOMMENDED, "Standard"),
+                        CodingResponseMode.RECOMMENDED,
+                        "Standard"),
                 new CodingModelControls.ReasoningEffortControl(
-                        "reasoningEffort", false, false,
-                        List.of(), ModelReasoningEffort.MEDIUM, "Standard"));
+                        "reasoningEffort", false, false, List.of(), ModelReasoningEffort.MEDIUM, "Standard"));
 
         assertThat(controls.reasoningEffort().visible()).isFalse();
         assertThat(controls.reasoningEffort().allowedValues()).isEmpty();

@@ -5,9 +5,7 @@ import java.util.List;
 import java.util.Objects;
 
 /** Two closed controls understood by the Coding terminal renderer. */
-public record CodingModelControls(
-        ResponseModeControl responseMode,
-        ReasoningEffortControl reasoningEffort) {
+public record CodingModelControls(ResponseModeControl responseMode, ReasoningEffortControl reasoningEffort) {
     public CodingModelControls {
         Objects.requireNonNull(responseMode, "responseMode must not be null");
         Objects.requireNonNull(reasoningEffort, "reasoningEffort must not be null");
