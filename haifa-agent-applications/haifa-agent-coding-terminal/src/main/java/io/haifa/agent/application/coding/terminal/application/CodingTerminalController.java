@@ -1578,6 +1578,47 @@ public final class CodingTerminalController implements AutoCloseable {
         return value.length() <= 12 ? value : value.substring(0, 12);
     }
 
+    private static String formatContextWindow(int tokens) {
+        if (tokens >= 1_000_000) return (tokens / 1_000_000) + "M";
+        if (tokens >= 1_000) return (tokens / 1_000) + "K";
+        return String.valueOf(tokens);
+    }
+
+    private static String formatCapabilities(CodingModelOption value) {
+        java.util.List<String> caps = new java.util.ArrayList<>();
+        if (value.capabilities().contains("TEXT_CHAT")) caps.add("Text");
+        if (value.capabilities().contains("TOOL_CALLING")) caps.add("Tools");
+        if (value.capabilities().contains("IMAGE_URL_INPUT") || value.capabilities().contains("IMAGE_UPLOAD_INPUT")) {
+            caps.add("Images");
+        }
+        if (value.capabilities().contains("REASONING")) caps.add("Reasoning");
+        return String.join(", ", caps);
+    }
+
+    private static String formatModelState(
+            CodingModelOption value,
+            io.haifa.agent.application.project.product.coding.CodingModelState.RunScope runScope) {
+        java.util.List<String> states = new java.util.ArrayList<>();
+        switch (value.state().connection()) {
+            case LOGIN_REQUIRED -> states.add("LoginReq");
+            case REAUTH_REQUIRED -> states.add("Re-Auth");
+            case CONNECTED -> { }
+        }
+        switch (value.state().bindingAvailability()) {
+            case UNAVAILABLE -> states.add("Unavail");
+            case AVAILABLE -> { }
+        }
+        switch (value.state().runtime()) {
+            case RATE_LIMITED -> states.add("RateLtd");
+            case UNREACHABLE -> states.add("Unreachable");
+            case NORMAL -> { }
+        }
+        if (runScope == io.haifa.agent.application.project.product.coding.CodingModelState.RunScope.ACTIVE_RUN) {
+            states.add("ActiveRun");
+        }
+        return states.isEmpty() ? "Ready" : String.join(", ", states);
+    }
+
     private Runnable loadModels(
             Optional<CodingSessionView> current,
             String argument,
@@ -1613,11 +1654,18 @@ public final class CodingTerminalController implements AutoCloseable {
                     .filter(index -> modelOptions.get(index).id().equals(selectedModelId))
                     .findFirst()
                     .orElse(0);
+            var runScope = reconciled.flatMap(CodingSessionView::activeRun).isPresent()
+                    ? io.haifa.agent.application.project.product.coding.CodingModelState.RunScope.ACTIVE_RUN
+                    : io.haifa.agent.application.project.product.coding.CodingModelState.RunScope.IDLE;
             apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                     "model",
                     reconciled.isPresent() ? "Model for future new Runs" : "Model for next session",
                     modelOptions.stream()
-                            .map(value -> value.displayName() + " · " + value.providerDisplayName())
+                            .map(value -> value.displayName()
+                                    + " · " + value.providerDisplayName()
+                                    + " · " + formatContextWindow(value.contextWindow())
+                                    + " · [" + formatCapabilities(value) + "]"
+                                    + " · [" + formatModelState(value, runScope) + "]")
                             .toList(),
                     selected)));
         };

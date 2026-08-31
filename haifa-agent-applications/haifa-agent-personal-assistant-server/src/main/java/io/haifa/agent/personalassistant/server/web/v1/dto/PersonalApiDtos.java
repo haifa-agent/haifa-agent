@@ -58,8 +58,6 @@ public final class PersonalApiDtos {
             int contextWindow,
             int maxOutputTokens,
             String preferenceSchemaVersion,
-            String profileVersion,
-            String profileDigest,
             ModelControls controls,
             ModelPreferences recommendedPreferences) {}
 
@@ -139,8 +137,6 @@ public final class PersonalApiDtos {
     public record SelectModel(
             String modelBindingId,
             String preferenceSchemaVersion,
-            String profileVersion,
-            String profileDigest,
             ModelPreferences preferences) {}
 
     public record Conversation(

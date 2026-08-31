@@ -135,6 +135,27 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         return start(idempotencyKey, displayName, message, selection, inputs);
     }
 
+    /** Starts with a safe client request; trusted Profile identity is resolved only inside the application. */
+    public ConversationView start(
+            String idempotencyKey,
+            String displayName,
+            String message,
+            String modelId,
+            String preferenceSchemaVersion,
+            PersonalModelPreferences preferences,
+            List<ContentPart> inputs) {
+        PersonalModelOption selected = requireModel(modelId);
+        var profile = models.profile(selected.id())
+                .orElseThrow(() -> new IllegalArgumentException("MODEL_PROFILE_RESELECTION_REQUIRED"));
+        return start(
+                idempotencyKey,
+                displayName,
+                message,
+                new PersonalModelSelectionRequest(
+                        selected.id(), preferenceSchemaVersion, profile.version(), profile.digest(), preferences),
+                inputs);
+    }
+
     public ConversationView start(
             String idempotencyKey,
             String displayName,
@@ -261,6 +282,28 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                         selected.profileVersion(),
                         selected.profileDigest(),
                         selected.recommendedPreferences()));
+    }
+
+    /**
+     * Resolves the current trusted Profile server-side so ordinary clients never receive or echo internal
+     * Profile version and digest fields.
+     */
+    public ModelSelectionView selectModel(
+            String sessionId,
+            long expectedRevision,
+            String idempotencyKey,
+            String modelId,
+            String preferenceSchemaVersion,
+            PersonalModelPreferences preferences) {
+        PersonalModelOption selected = requireModel(modelId);
+        var profile = models.profile(selected.id())
+                .orElseThrow(() -> new IllegalArgumentException("MODEL_PROFILE_RESELECTION_REQUIRED"));
+        return selectModel(
+                sessionId,
+                expectedRevision,
+                idempotencyKey,
+                new PersonalModelSelectionRequest(
+                        selected.id(), preferenceSchemaVersion, profile.version(), profile.digest(), preferences));
     }
 
     public ModelSelectionView selectModel(

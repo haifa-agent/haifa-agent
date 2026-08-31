@@ -67,8 +67,6 @@ function selectionRequest(model: Model, preferences: ModelPreferences) {
   return {
     modelBindingId: model.id,
     preferenceSchemaVersion: model.preferenceSchemaVersion,
-    profileVersion: model.profileVersion,
-    profileDigest: model.profileDigest,
     preferences,
   };
 }
