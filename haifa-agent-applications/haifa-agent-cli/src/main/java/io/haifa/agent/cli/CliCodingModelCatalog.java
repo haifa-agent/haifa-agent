@@ -4,8 +4,8 @@ import io.haifa.agent.application.project.product.coding.CodingModelCatalog;
 import io.haifa.agent.application.project.product.coding.CodingModelControls;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingModelPreferences;
-import io.haifa.agent.application.project.product.coding.CodingResponseMode;
 import io.haifa.agent.application.project.product.coding.CodingModelState;
+import io.haifa.agent.application.project.product.coding.CodingResponseMode;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.model.anthropic.AnthropicModelProfileFactory;
@@ -18,10 +18,10 @@ import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelProviderId;
-import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningBehavior;
-import io.haifa.agent.model.api.ProviderHealthStatus;
+import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelStatus;
+import io.haifa.agent.model.api.ProviderHealthStatus;
 import io.haifa.agent.model.api.ProviderStatus;
 import io.haifa.agent.model.core.ImmutableModelCatalog;
 import io.haifa.agent.model.core.InMemoryProviderHealthRegistry;
@@ -92,13 +92,16 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
     @Override
     public List<CodingModelOption> available(TenantRef tenant, PrincipalRef principal) {
         return platform.listAvailable(new ModelAvailabilityRequest(tenant, principal, REQUIRED)).stream()
-                .flatMap(provider -> provider.models().stream()
-                        .map(model -> {
-                            ModelBindingProfile profile =
-                                    profiles.get(model.id().value());
-                            return toOption(model.id().value(), model.displayName(), provider.id().value(),
-                                    provider.displayName(), profile, provider.healthStatus());
-                        }))
+                .flatMap(provider -> provider.models().stream().map(model -> {
+                    ModelBindingProfile profile = profiles.get(model.id().value());
+                    return toOption(
+                            model.id().value(),
+                            model.displayName(),
+                            provider.id().value(),
+                            provider.displayName(),
+                            profile,
+                            provider.healthStatus());
+                }))
                 .toList();
     }
 
@@ -107,12 +110,11 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
         Optional<CodingModelOption> option = available(tenant, principal).stream()
                 .filter(value -> value.id().equals(modelId))
                 .findFirst();
-        option.filter(value -> value.state().bindingAvailability()
-                        == CodingModelState.BindingAvailability.AVAILABLE)
+        option.filter(value -> value.state().bindingAvailability() == CodingModelState.BindingAvailability.AVAILABLE)
                 .ifPresent(ignored -> platform.select(
-                new ModelSelectionRequest(tenant, principal, new ModelDefinitionId(modelId), REQUIRED)));
-        return option.filter(value -> value.state().bindingAvailability()
-                == CodingModelState.BindingAvailability.AVAILABLE);
+                        new ModelSelectionRequest(tenant, principal, new ModelDefinitionId(modelId), REQUIRED)));
+        return option.filter(
+                value -> value.state().bindingAvailability() == CodingModelState.BindingAvailability.AVAILABLE);
     }
 
     private static CodingModelOption toOption(
@@ -130,17 +132,14 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
                 runtimeStatus(healthStatus),
                 CodingModelState.RunScope.IDLE);
         String reason = profile.selectable() ? "" : "Binding profile has not passed contract verification";
-        CodingModelControls controls = profile.selectable()
-                ? controlsFromProfile(profile)
-                : CodingModelControls.unavailable();
+        CodingModelControls controls =
+                profile.selectable() ? controlsFromProfile(profile) : CodingModelControls.unavailable();
         return new CodingModelOption(
                 bindingId,
                 displayName,
                 providerId,
                 providerDisplayName,
-                profile.capabilities().stream()
-                        .map(Enum::name)
-                        .collect(Collectors.toSet()),
+                profile.capabilities().stream().map(Enum::name).collect(Collectors.toSet()),
                 profile.contextWindowTokens(),
                 profile.executionLimits().maximumOutputTokens(),
                 state,
@@ -151,21 +150,19 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
     }
 
     private static CodingModelControls controlsFromProfile(ModelBindingProfile profile) {
-        List<ModelReasoningEffort> efforts = profile.allowedReasoningEfforts().stream()
-                .sorted()
-                .toList();
+        List<ModelReasoningEffort> efforts =
+                profile.allowedReasoningEfforts().stream().sorted().toList();
         ModelReasoningEffort recommendedEffort = efforts.isEmpty()
                 ? ModelReasoningEffort.MEDIUM
-                : efforts.contains(ModelReasoningEffort.MEDIUM)
-                        ? ModelReasoningEffort.MEDIUM
-                        : efforts.getFirst();
+                : efforts.contains(ModelReasoningEffort.MEDIUM) ? ModelReasoningEffort.MEDIUM : efforts.getFirst();
 
         ModelReasoningBehavior behavior = profile.reasoningBehavior();
-        List<CodingResponseMode> modes = switch (behavior) {
-            case NONE, ALWAYS, ADAPTIVE -> List.of(CodingResponseMode.RECOMMENDED);
-            case OPTIONAL -> List.of(
-                    CodingResponseMode.FAST, CodingResponseMode.RECOMMENDED, CodingResponseMode.DEEP);
-        };
+        List<CodingResponseMode> modes =
+                switch (behavior) {
+                    case NONE, ALWAYS, ADAPTIVE -> List.of(CodingResponseMode.RECOMMENDED);
+                    case OPTIONAL ->
+                        List.of(CodingResponseMode.FAST, CodingResponseMode.RECOMMENDED, CodingResponseMode.DEEP);
+                };
         boolean responseReadOnly = modes.size() == 1;
         boolean effortVisible = behavior == ModelReasoningBehavior.ALWAYS && efforts.size() > 1
                 || behavior == ModelReasoningBehavior.OPTIONAL && efforts.size() > 1;
