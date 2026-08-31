@@ -1,9 +1,12 @@
 package io.haifa.agent.model.openai;
 
+import io.haifa.agent.model.api.ImageInputProfile;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelExecutionLimits;
+import io.haifa.agent.model.api.ModelImageSource;
+import io.haifa.agent.model.api.ModelIoProfile;
 import io.haifa.agent.model.api.ModelPartialOutputFailureBehavior;
 import io.haifa.agent.model.api.ModelProfileStatus;
 import io.haifa.agent.model.api.ModelReasoningBehavior;
@@ -12,6 +15,7 @@ import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ModelStreamingProfile;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.time.LocalDate;
+import java.util.EnumSet;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
@@ -41,6 +45,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                     limits(snapshot),
                     false,
                     streaming(snapshot),
+                    ioProfile(snapshot),
                     ModelProfileStatus.UNVERIFIED,
                     verifiedOn);
         }
@@ -59,6 +64,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                     limits(snapshot),
                     false,
                     streaming(snapshot),
+                    ioProfile(snapshot),
                     ModelProfileStatus.VERIFIED,
                     verifiedOn);
         }
@@ -75,6 +81,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                 limits(snapshot),
                 binding.toolReasoningContinuationRequired(),
                 streaming(snapshot),
+                ioProfile(snapshot),
                 ModelProfileStatus.VERIFIED,
                 verifiedOn);
     }
@@ -106,6 +113,18 @@ public final class OpenAiCompatibleModelProfileFactory {
                 snapshot.nativeStreaming(),
                 snapshot.nativeStreaming() && snapshot.capabilities().contains(ModelCapability.REASONING),
                 ModelPartialOutputFailureBehavior.NON_RETRYABLE);
+    }
+
+    private static ModelIoProfile ioProfile(ResolvedModelSnapshot snapshot) {
+        boolean upload = snapshot.capabilities().contains(ModelCapability.IMAGE_UPLOAD_INPUT);
+        boolean url = snapshot.capabilities().contains(ModelCapability.IMAGE_URL_INPUT);
+        if (!upload && !url) {
+            return ModelIoProfile.textOnly();
+        }
+        EnumSet<ModelImageSource> sources = EnumSet.noneOf(ModelImageSource.class);
+        if (upload) sources.add(ModelImageSource.UPLOAD);
+        if (url) sources.add(ModelImageSource.URL);
+        return ModelIoProfile.withImage(ImageInputProfile.standard(Set.copyOf(sources), true));
     }
 
     private record AdmittedBindingSpec(

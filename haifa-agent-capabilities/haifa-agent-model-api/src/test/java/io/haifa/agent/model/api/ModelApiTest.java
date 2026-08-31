@@ -142,6 +142,36 @@ class ModelApiTest {
     }
 
     @Test
+    void chatRequestEnforcesImageCountAndTotalBytesBounds() {
+        ModelMessage message1 = ModelMessage.user(
+                "msg1",
+                List.of(
+                        new ImageDataPart("image/png", new byte[] {1, 2, 3}),
+                        new ImageDataPart("image/png", new byte[] {4, 5, 6}),
+                        new ImageDataPart("image/png", new byte[] {7, 8, 9})));
+        ModelMessage message2 = ModelMessage.user(
+                "msg2",
+                List.of(
+                        new ImageDataPart("image/png", new byte[] {10, 11, 12}),
+                        new ImageDataPart("image/png", new byte[] {13, 14, 15})));
+
+        // 3 + 2 = 5 images across messages exceeds request limit of 4
+        assertThatThrownBy(() -> new AgentChatRequest(
+                        new ModelCallId("call-1"),
+                        new AgentRunId("run-1"),
+                        1,
+                        1,
+                        imageSnapshot(ModelCapability.IMAGE_UPLOAD_INPUT),
+                        List.of(message1, message2),
+                        List.of(),
+                        1024,
+                        Duration.ofSeconds(5),
+                        Map.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("exceeds maximum allowed (4)");
+    }
+
+    @Test
     void audioPartsAreBoundedTypedNormalizedAndRedacted() {
         byte[] source = {(byte) 'I', (byte) 'D', (byte) '3', 1};
         AudioDataPart audio = new AudioDataPart("audio/mpeg", source);

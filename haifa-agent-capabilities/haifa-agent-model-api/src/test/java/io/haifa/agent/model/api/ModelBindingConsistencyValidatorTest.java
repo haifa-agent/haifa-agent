@@ -38,6 +38,7 @@ class ModelBindingConsistencyValidatorTest {
                 new ModelExecutionLimits(131072, 1, 8192),
                 false,
                 new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                ModelIoProfile.textOnly(),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
@@ -68,11 +69,219 @@ class ModelBindingConsistencyValidatorTest {
                 new ModelExecutionLimits(65536, 1, 8192),
                 false,
                 new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                ModelIoProfile.textOnly(),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
         assertThatCode(() -> ModelBindingConsistencyValidator.validate(definition, profile))
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    void validMultimodalDefinitionAndProfilePassValidation() {
+        ModelDefinition definition = createDefinition(
+                "qwen3-vl-plus",
+                "aliyun-bailian",
+                "qwen3-vl-plus",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT),
+                131072,
+                8192);
+
+        ImageInputProfile imageInput =
+                ImageInputProfile.standard(Set.of(ModelImageSource.UPLOAD, ModelImageSource.URL), true);
+        ModelBindingProfile profile = ModelBindingProfile.create(
+                new ModelDefinitionId("qwen3-vl-plus"),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "2.0",
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT),
+                ModelReasoningBehavior.NONE,
+                Set.of(ModelReasoningMode.DISABLED),
+                Set.of(),
+                OptionalLong.empty(),
+                new ModelExecutionLimits(131072, 1, 8192),
+                false,
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                ModelIoProfile.withImage(imageInput),
+                ModelProfileStatus.VERIFIED,
+                VERIFIED_ON);
+
+        assertThatCode(() -> ModelBindingConsistencyValidator.validate(definition, profile))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void validGeminiUploadOnlyDefinitionAndProfilePassValidation() {
+        ModelDefinition definition = createDefinition(
+                "gemini-3-flash",
+                "cliproxyapi-antigravity",
+                "gemini-3-flash",
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.IMAGE_UPLOAD_INPUT),
+                1048576,
+                65536);
+
+        ImageInputProfile imageInput = ImageInputProfile.standard(Set.of(ModelImageSource.UPLOAD), false);
+        ModelBindingProfile profile = ModelBindingProfile.create(
+                new ModelDefinitionId("gemini-3-flash"),
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                "2.0",
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.IMAGE_UPLOAD_INPUT),
+                ModelReasoningBehavior.NONE,
+                Set.of(ModelReasoningMode.DISABLED),
+                Set.of(),
+                OptionalLong.empty(),
+                new ModelExecutionLimits(1048576, 1, 65536),
+                false,
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                ModelIoProfile.withImage(imageInput),
+                ModelProfileStatus.VERIFIED,
+                VERIFIED_ON);
+
+        assertThatCode(() -> ModelBindingConsistencyValidator.validate(definition, profile))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void rule10DeprecatedImageInputCapabilityThrowsException() {
+        ModelDefinition definition = createDefinition(
+                "legacy-image-model",
+                "provider-1",
+                "legacy-image-model",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_INPUT),
+                8192,
+                4096);
+
+        ModelBindingProfile profile = ModelBindingProfile.create(
+                new ModelDefinitionId("legacy-image-model"),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "1.0",
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_INPUT),
+                ModelReasoningBehavior.NONE,
+                Set.of(ModelReasoningMode.DISABLED),
+                Set.of(),
+                OptionalLong.empty(),
+                new ModelExecutionLimits(8192, 1, 4096),
+                false,
+                ModelStreamingProfile.disabled(),
+                ModelIoProfile.textOnly(),
+                ModelProfileStatus.VERIFIED,
+                VERIFIED_ON);
+
+        assertThatThrownBy(() -> ModelBindingConsistencyValidator.validate(definition, profile))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("deprecated IMAGE_INPUT capability is not allowed");
+    }
+
+    @Test
+    void rule10ImageUploadCapabilityWithoutImageProfileThrowsException() {
+        ModelDefinition definition = createDefinition(
+                "model-a",
+                "provider-1",
+                "model-a",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_UPLOAD_INPUT),
+                8192,
+                4096);
+
+        ModelBindingProfile profile = ModelBindingProfile.create(
+                new ModelDefinitionId("model-a"),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "1.0",
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_UPLOAD_INPUT),
+                ModelReasoningBehavior.NONE,
+                Set.of(ModelReasoningMode.DISABLED),
+                Set.of(),
+                OptionalLong.empty(),
+                new ModelExecutionLimits(8192, 1, 4096),
+                false,
+                ModelStreamingProfile.disabled(),
+                ModelIoProfile.textOnly(),
+                ModelProfileStatus.VERIFIED,
+                VERIFIED_ON);
+
+        assertThatThrownBy(() -> ModelBindingConsistencyValidator.validate(definition, profile))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("declares image capabilities but profile imageInput is missing");
+    }
+
+    @Test
+    void rule10ImageUploadCapabilityWithUrlOnlyProfileThrowsException() {
+        ModelDefinition definition = createDefinition(
+                "model-a",
+                "provider-1",
+                "model-a",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_UPLOAD_INPUT),
+                8192,
+                4096);
+
+        ImageInputProfile imageInput = ImageInputProfile.standard(Set.of(ModelImageSource.URL), false);
+        ModelBindingProfile profile = ModelBindingProfile.create(
+                new ModelDefinitionId("model-a"),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "1.0",
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_UPLOAD_INPUT),
+                ModelReasoningBehavior.NONE,
+                Set.of(ModelReasoningMode.DISABLED),
+                Set.of(),
+                OptionalLong.empty(),
+                new ModelExecutionLimits(8192, 1, 4096),
+                false,
+                ModelStreamingProfile.disabled(),
+                ModelIoProfile.withImage(imageInput),
+                ModelProfileStatus.VERIFIED,
+                VERIFIED_ON);
+
+        assertThatThrownBy(() -> ModelBindingConsistencyValidator.validate(definition, profile))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(
+                        "profile allows URL image source but model model-a does not declare IMAGE_URL_INPUT");
+    }
+
+    @Test
+    void rule10ProfileUploadSourceWithoutUploadCapabilityThrowsException() {
+        ModelDefinition definition = createDefinition(
+                "model-a",
+                "provider-1",
+                "model-a",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_URL_INPUT),
+                8192,
+                4096);
+
+        ImageInputProfile imageInput =
+                ImageInputProfile.standard(Set.of(ModelImageSource.UPLOAD, ModelImageSource.URL), false);
+        ModelBindingProfile profile = ModelBindingProfile.create(
+                new ModelDefinitionId("model-a"),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "1.0",
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_URL_INPUT),
+                ModelReasoningBehavior.NONE,
+                Set.of(ModelReasoningMode.DISABLED),
+                Set.of(),
+                OptionalLong.empty(),
+                new ModelExecutionLimits(8192, 1, 4096),
+                false,
+                ModelStreamingProfile.disabled(),
+                ModelIoProfile.withImage(imageInput),
+                ModelProfileStatus.VERIFIED,
+                VERIFIED_ON);
+
+        assertThatThrownBy(() -> ModelBindingConsistencyValidator.validate(definition, profile))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(
+                        "profile allows UPLOAD image source but model model-a does not declare IMAGE_UPLOAD_INPUT");
     }
 
     @Test

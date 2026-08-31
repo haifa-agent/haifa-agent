@@ -3,6 +3,7 @@ package io.haifa.agent.model.anthropic;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelExecutionLimits;
+import io.haifa.agent.model.api.ModelIoProfile;
 import io.haifa.agent.model.api.ModelPartialOutputFailureBehavior;
 import io.haifa.agent.model.api.ModelProfileStatus;
 import io.haifa.agent.model.api.ModelReasoningBehavior;
@@ -41,6 +42,7 @@ public final class AnthropicModelProfileFactory {
                     limits(snapshot),
                     false,
                     streaming(snapshot),
+                    ModelIoProfile.textOnly(),
                     ModelProfileStatus.UNVERIFIED,
                     verifiedOn);
         }
@@ -59,6 +61,7 @@ public final class AnthropicModelProfileFactory {
                     limits(snapshot),
                     false,
                     streaming(snapshot),
+                    ModelIoProfile.textOnly(),
                     ModelProfileStatus.VERIFIED,
                     verifiedOn);
         }
@@ -75,6 +78,7 @@ public final class AnthropicModelProfileFactory {
                 limits(snapshot),
                 binding.toolReasoningContinuationRequired(),
                 streaming(snapshot),
+                ModelIoProfile.textOnly(),
                 ModelProfileStatus.VERIFIED,
                 verifiedOn);
     }

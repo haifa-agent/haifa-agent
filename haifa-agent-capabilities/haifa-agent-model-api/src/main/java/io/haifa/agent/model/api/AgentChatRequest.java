@@ -83,14 +83,35 @@ public record AgentChatRequest(
         model = Objects.requireNonNull(model, "model must not be null");
         messages = List.copyOf(Objects.requireNonNull(messages, "messages must not be null"));
         if (messages.isEmpty()) throw new IllegalArgumentException("messages must not be empty");
-        if (messages.stream().flatMap(message -> message.images().stream()).anyMatch(ImageUrlPart.class::isInstance)
-                && !supports(ModelCapability.IMAGE_URL_INPUT, model)) {
-            throw new IllegalArgumentException("selected model does not declare image URL input capability");
+
+        List<ModelImagePart> allImages =
+                messages.stream().flatMap(message -> message.images().stream()).toList();
+        if (!allImages.isEmpty()) {
+            if (allImages.size() > ImageInputProfile.DEFAULT_MAX_IMAGES) {
+                throw new IllegalArgumentException("number of images in chat request (" + allImages.size()
+                        + ") exceeds maximum allowed (" + ImageInputProfile.DEFAULT_MAX_IMAGES + ")");
+            }
+            long totalBytes = 0;
+            for (ModelImagePart image : allImages) {
+                if (image instanceof ImageUrlPart remote) {
+                    if (!supports(ModelCapability.IMAGE_URL_INPUT, model)) {
+                        throw new IllegalArgumentException(
+                                "selected model does not declare image URL input capability");
+                    }
+                } else if (image instanceof ImageDataPart data) {
+                    if (!supports(ModelCapability.IMAGE_UPLOAD_INPUT, model)) {
+                        throw new IllegalArgumentException(
+                                "selected model does not declare uploaded image input capability");
+                    }
+                    totalBytes += data.bytes().length;
+                }
+            }
+            if (totalBytes > ImageInputProfile.DEFAULT_MAX_TOTAL_BYTES) {
+                throw new IllegalArgumentException("total image data bytes (" + totalBytes
+                        + ") exceeds request maximum (" + ImageInputProfile.DEFAULT_MAX_TOTAL_BYTES + ")");
+            }
         }
-        if (messages.stream().flatMap(message -> message.images().stream()).anyMatch(ImageDataPart.class::isInstance)
-                && !supports(ModelCapability.IMAGE_UPLOAD_INPUT, model)) {
-            throw new IllegalArgumentException("selected model does not declare uploaded image input capability");
-        }
+
         if (messages.stream().anyMatch(message -> !message.audios().isEmpty())
                 && !model.capabilities().contains(ModelCapability.AUDIO_INPUT)) {
             throw new IllegalArgumentException("selected model does not declare audio input capability");

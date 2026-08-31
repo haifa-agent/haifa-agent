@@ -378,6 +378,7 @@ class RealEnvironmentTest(unittest.TestCase):
         )
         self.assertEqual("gemini-3-flash", environment[f"{prefix}_MODELS_0_PROVIDERMODELID"])
         self.assertEqual("REASONING", environment[f"{prefix}_MODELS_0_CAPABILITIES_3"])
+        self.assertEqual("IMAGE_UPLOAD_INPUT", environment[f"{prefix}_MODELS_0_CAPABILITIES_4"])
         self.assertFalse(any(name.startswith(f"{prefix}_MODELS_1_") for name in environment))
 
         self.assertEqual(
