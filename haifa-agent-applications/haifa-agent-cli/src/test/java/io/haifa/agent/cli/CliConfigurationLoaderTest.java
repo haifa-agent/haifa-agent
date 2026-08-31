@@ -137,6 +137,21 @@ class CliConfigurationLoaderTest {
                 .filteredOn(model -> model.providerId().equals("deepseek"))
                 .extracting(io.haifa.agent.application.project.product.coding.CodingModelOption::id)
                 .containsExactly("deepseek-v4-pro", "deepseek-v4-flash");
+        assertThat(new CliCodingModelCatalog(
+                                result,
+                                model -> model.id().equals("deepseek-v4-flash")
+                                        ? io.haifa.agent.application.project.product.coding.CodingModelState.Connection
+                                                .LOGIN_REQUIRED
+                                        : io.haifa.agent.application.project.product.coding.CodingModelState.Connection
+                                                .CONNECTED)
+                        .available(
+                                new io.haifa.agent.core.reference.TenantRef("local"),
+                                new io.haifa.agent.core.reference.PrincipalRef("user", "user")))
+                .filteredOn(model -> model.id().equals("deepseek-v4-flash"))
+                .singleElement()
+                .extracting(model -> model.state().connection())
+                .isEqualTo(
+                        io.haifa.agent.application.project.product.coding.CodingModelState.Connection.LOGIN_REQUIRED);
     }
 
     @Test

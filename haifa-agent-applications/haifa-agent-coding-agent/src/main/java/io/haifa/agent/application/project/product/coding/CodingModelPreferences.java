@@ -13,8 +13,8 @@ public record CodingModelPreferences(CodingResponseMode responseMode, Optional<M
     public CodingModelPreferences {
         responseMode = Objects.requireNonNull(responseMode, "responseMode must not be null");
         effort = Objects.requireNonNull(effort, "effort must not be null");
-        if (responseMode != CodingResponseMode.DEEP && effort.isPresent()) {
-            throw new IllegalArgumentException("effort is only valid for DEEP response mode");
+        if (responseMode == CodingResponseMode.FAST && effort.isPresent()) {
+            throw new IllegalArgumentException("effort is not valid for FAST response mode");
         }
     }
 

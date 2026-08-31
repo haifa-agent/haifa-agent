@@ -97,6 +97,7 @@ export function ModelConnectionsModal({
   const [tab, setTab] = useState<ModelConnectionsTab>(initialTab);
   const [search, setSearch] = useState("");
   const [inspectedModel, setInspectedModel] = useState<Model | null>(null);
+  const [inspectedBindings, setInspectedBindings] = useState<Model[]>([]);
   const [draftPreferences, setDraftPreferences] = useState<ModelPreferences | null>(null);
 
   useEffect(() => {
@@ -141,9 +142,10 @@ export function ModelConnectionsModal({
 
   if (!open) return null;
 
-  const inspect = (model: Model) => {
+  const inspect = (model: Model, bindings: Model[]) => {
     const isCurrent = model.id === selectedModelId;
     setInspectedModel(model);
+    setInspectedBindings(bindings);
     setDraftPreferences(
       isCurrent && currentPreferences ? currentPreferences : model.recommendedPreferences,
     );
@@ -157,8 +159,21 @@ export function ModelConnectionsModal({
   };
 
   return (
-    <div className="model-connection-backdrop" role="presentation">
-      <section className="model-connections-window" role="dialog" aria-modal="true" aria-label="模型与连接">
+    <div
+      className="model-connection-backdrop"
+      role="presentation"
+      onClick={onClose}
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="model-connections-window"
+        role="dialog"
+        aria-modal="true"
+        aria-label="模型与连接"
+        onClick={(event) => event.stopPropagation()}
+      >
         <header>
           <div>
             <span>MODEL &amp; CONNECTIONS</span>
@@ -242,7 +257,7 @@ export function ModelConnectionsModal({
                           <button
                             type="button"
                             className="button"
-                            onClick={() => inspect(group.bindings[0])}
+                            onClick={() => inspect(group.bindings[0], group.bindings)}
                           >
                             查看详情与设置
                           </button>
@@ -268,17 +283,27 @@ export function ModelConnectionsModal({
       {inspectedModel && draftPreferences && (
         <ModelDetailDrawer
           model={inspectedModel}
+          bindings={inspectedBindings}
           preferences={draftPreferences}
           selectionCompatibility={
             inspectedModel.id === selectedModelId ? selectionCompatibility : undefined
           }
           connectionLabel={providerConnectionLabel(inspectedModel.providerId, modelConnections)}
           applyingDisabled={activeRun}
+          onBindingChange={(binding) => {
+            setInspectedModel(binding);
+            setDraftPreferences(
+              binding.id === selectedModelId && currentPreferences
+                ? currentPreferences
+                : binding.recommendedPreferences,
+            );
+          }}
           onPreferencesChange={setDraftPreferences}
           onReset={() => setDraftPreferences(inspectedModel.recommendedPreferences)}
           onApply={() => void apply()}
           onClose={() => {
             setInspectedModel(null);
+            setInspectedBindings([]);
             setDraftPreferences(null);
           }}
         />

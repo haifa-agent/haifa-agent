@@ -8,8 +8,12 @@ import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.project.product.ProjectProductException;
+import io.haifa.agent.application.project.product.coding.CodingModelControls;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
+import io.haifa.agent.application.project.product.coding.CodingModelPreferences;
+import io.haifa.agent.application.project.product.coding.CodingModelState;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
+import io.haifa.agent.application.project.product.coding.CodingResponseMode;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionCreateOptions;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryItem;
@@ -27,6 +31,7 @@ import io.haifa.agent.application.project.product.coding.client.CodingSessionCli
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
@@ -680,9 +685,7 @@ class CodingTerminalControllerTest {
     @Test
     void modelCanBeSelectedBeforeTheFirstSessionAndIsAppliedAtCreation() {
         FakeClient client = new FakeClient(view(Optional.empty()));
-        client.models = List.of(
-                new CodingModelOption("default-model", "Default", "provider", "Provider", Set.of(), 128_000),
-                new CodingModelOption("codex-model", "Codex", "openai-codex", "ChatGPT Codex", Set.of(), 128_000));
+        client.models = List.of(model("default-model", "Default"), model("codex-model", "Codex"));
         var controller = controller(client);
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, "/model"));
@@ -691,10 +694,47 @@ class CodingTerminalControllerTest {
         assertThat(controller.state().selector().orElseThrow().title()).isEqualTo("Model for next session");
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-detail");
+        assertThat(controller.state().selector().orElseThrow().title()).contains("Codex", "128K context");
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
         controller.accept(input(TerminalInput.Kind.SUBMIT, "first message"));
 
         assertThat(client.createOptions.initialModelId()).contains("codex-model");
         assertThat(controller.state().session()).isPresent();
+    }
+
+    @Test
+    void directModelSelectionRejectsAnUnavailableBindingBeforeTheFirstSession() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.models = List.of(unavailableModel("unavailable-model", "Unavailable"));
+        var controller = controller(client);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/model unavailable-model"));
+
+        assertThat(controller.state().recoverableError()).contains("MODEL_UNAVAILABLE");
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "first message"));
+        assertThat(client.createOptions.initialModelId()).isEmpty();
+    }
+
+    @Test
+    void modelDetailsExposeAReadOnlyVerifiedProfileBeforeConfirmation() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.models = List.of(model("codex-model", "Codex"));
+        var controller = controller(client);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/model"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-settings");
+        assertThat(controller.state().selector().orElseThrow().options())
+                .contains(
+                        "Response mode: RECOMMENDED · Balanced",
+                        "Reasoning effort: Profile default · Choose from verified reasoning effort levels");
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().status())
+                .isEqualTo("Response settings are defined by the verified model profile");
     }
 
     @Test
@@ -957,6 +997,62 @@ class CodingTerminalControllerTest {
                 new TerminalUiReducer(),
                 TerminalUiState.initial(120, 40),
                 Runnable::run);
+    }
+
+    private static CodingModelOption model(String id, String displayName) {
+        return new CodingModelOption(
+                id,
+                displayName,
+                "provider",
+                "Provider",
+                Set.of("TEXT_CHAT", "TOOL_CALLING", "REASONING"),
+                128_000,
+                16_000,
+                new CodingModelState(
+                        CodingModelState.Connection.CONNECTED,
+                        CodingModelState.BindingAvailability.AVAILABLE,
+                        CodingModelState.RuntimeStatus.NORMAL,
+                        CodingModelState.RunScope.IDLE),
+                "",
+                new CodingModelControls(
+                        new CodingModelControls.ResponseModeControl(
+                                "responseMode",
+                                true,
+                                false,
+                                List.of(
+                                        CodingResponseMode.FAST,
+                                        CodingResponseMode.RECOMMENDED,
+                                        CodingResponseMode.DEEP),
+                                CodingResponseMode.RECOMMENDED,
+                                "Balanced"),
+                        new CodingModelControls.ReasoningEffortControl(
+                                "reasoningEffort",
+                                true,
+                                false,
+                                List.of(
+                                        ModelReasoningEffort.LOW,
+                                        ModelReasoningEffort.MEDIUM,
+                                        ModelReasoningEffort.HIGH),
+                                ModelReasoningEffort.MEDIUM,
+                                "Choose from verified reasoning effort levels")),
+                CodingModelPreferences.recommended(),
+                Optional.empty());
+    }
+
+    private static CodingModelOption unavailableModel(String id, String displayName) {
+        return new CodingModelOption(
+                id,
+                displayName,
+                "provider",
+                "Provider",
+                Set.of("TEXT_CHAT", "TOOL_CALLING"),
+                128_000,
+                16_000,
+                CodingModelState.unavailable(),
+                "Binding profile has not passed contract verification",
+                CodingModelControls.unavailable(),
+                CodingModelPreferences.recommended(),
+                Optional.empty());
     }
 
     private static CodingAuthenticationView authenticatedCodexConnection() {

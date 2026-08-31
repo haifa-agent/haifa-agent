@@ -3681,6 +3681,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     setModelConnectionsOpen(true);
   };
 
+  const closeModelCenter = () => {
+    setModelConnectionsOpen(false);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
   const applyModelFromCenter = (model: Model, preferences: ModelPreferences) => {
     selectModel(model.id, preferences);
   };
@@ -3697,31 +3702,37 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     ?? newModelPreferences
     ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId))?.recommendedPreferences
     ?? null;
-  const selectedInputCapabilities = (state.selectedConversation?.model.model
-    ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId)))
-    ?.capabilities ?? [];
-  const imageUploadCapable = selectedInputCapabilities.includes("IMAGE_UPLOAD_INPUT")
-    || selectedInputCapabilities.includes("IMAGE_INPUT");
-  const imageUrlCapable = selectedInputCapabilities.includes("IMAGE_URL_INPUT")
-    || selectedInputCapabilities.includes("IMAGE_INPUT");
+  const selectedInputModel = state.selectedConversation?.model.model
+    ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId));
+  const selectedInputCapabilities = selectedInputModel?.capabilities ?? [];
+  const selectedImageInput = selectedInputModel?.imageInput ?? null;
+  const imageUploadCapable = selectedImageInput
+    ? selectedImageInput.allowedSources.includes("UPLOAD")
+    : selectedInputCapabilities.includes("IMAGE_UPLOAD_INPUT")
+      || selectedInputCapabilities.includes("IMAGE_INPUT");
+  const imageUrlCapable = selectedImageInput
+    ? selectedImageInput.allowedSources.includes("URL")
+    : selectedInputCapabilities.includes("IMAGE_URL_INPUT")
+      || selectedInputCapabilities.includes("IMAGE_INPUT");
   const imageCapable = imageUploadCapable || imageUrlCapable;
-  const audioCapable = (state.selectedConversation?.model.model
-    ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId)))
-    ?.capabilities.includes("AUDIO_INPUT") ?? false;
-  const selectedImageInput = (state.selectedConversation?.model.model
-    ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId)))
-    ?.imageInput ?? null;
+  const audioCapable = selectedInputCapabilities.includes("AUDIO_INPUT");
   const imageMaxCount = selectedImageInput?.maxImagesPerRequest ?? 4;
+  const imageMaxBytesPerItem = selectedImageInput?.maxBytesPerItem ?? 10 * 1024 * 1024;
+  const imageMaxUrlCharacters = selectedImageInput?.maxUrlCharacters ?? 2048;
+  const imageMediaTypes = new Set(
+    selectedImageInput?.supportedMediaTypes ?? ["image/png", "image/jpeg", "image/webp", "image/gif"],
+  );
   const imageTotalLabel = selectedImageInput
     ? `${Math.round(selectedImageInput.maxTotalBytes / (1024 * 1024))} MB`
     : "20 MB";
   const pendingMediaCount = pendingImages.length + pendingAudios.length;
 
   const addImageUrl = () => {
-    if (!imageUrlCapable || pendingMediaCount >= 4) return;
+    if (!imageUrlCapable || pendingImages.length >= imageMaxCount) return;
     try {
       const parsed = new URL(imageUrl.trim());
       if (parsed.protocol !== "https:") throw new Error("not HTTPS");
+      if (parsed.toString().length > imageMaxUrlCharacters) throw new Error("URL too long");
       setPendingImages((current) => [...current, {
         kind: "url",
         url: parsed.toString(),
@@ -3730,17 +3741,16 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       }]);
       closeImageTools();
     } catch {
-      dispatch({ type: "error", message: "图片 URL 必须是可公开访问的 HTTPS 地址。" });
+      dispatch({ type: "error", message: "图片 URL 必须是可公开访问的 HTTPS 地址，且长度符合当前模型限制。" });
     }
   };
 
   const uploadFiles = async (files: FileList | File[]) => {
     if (!imageUploadCapable || !client.uploadImage || uploadingImage) return;
-    const selected = Array.from(files).slice(0, Math.max(0, 4 - pendingMediaCount));
+    const selected = Array.from(files).slice(0, Math.max(0, imageMaxCount - pendingImages.length));
     if (!selected.length) return;
-    const allowed = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
-    if (selected.some((file) => !allowed.has(file.type) || file.size < 1 || file.size > 10 * 1024 * 1024)) {
-      dispatch({ type: "error", message: "仅支持不超过 10 MiB 的 PNG、JPEG、WEBP 或非动画 GIF。" });
+    if (selected.some((file) => !imageMediaTypes.has(file.type) || file.size < 1 || file.size > imageMaxBytesPerItem)) {
+      dispatch({ type: "error", message: "图片格式或单张大小不符合当前模型的图片输入限制。" });
       return;
     }
     setUploadingImage(true);
@@ -3758,7 +3768,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           previewUrl,
         });
       }
-      setPendingImages((current) => [...current, ...uploaded].slice(0, 4));
+      setPendingImages((current) => [...current, ...uploaded].slice(0, imageMaxCount));
       closeImageTools();
     } catch (error) {
       uploaded.forEach((image) => revokePreview(image.previewUrl));
@@ -3879,12 +3889,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         window.requestAnimationFrame(() => textareaRef.current?.focus());
         return;
       }
-      dispatch({ type: "setComposer", value: "/model" });
-      setSlashMenu({ stage: "providers" });
-      const currentProviderIndex = modelProviders.findIndex((provider) =>
-        provider.modelGroups.some((group) => group.bindings.some((model) => model.id === selectedModelId))
-      );
-      setSlashActiveIndex(Math.max(0, currentProviderIndex));
+      dispatch({ type: "setComposer", value: "" });
+      setSlashMenu(null);
+      setSlashActiveIndex(0);
+      openModelCenter("catalog");
       return;
     }
     if (slashMenu.stage === "providers") {
@@ -4071,7 +4079,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     event.preventDefault();
     setDraggingImages(false);
     if (composerDisabled) return;
-    const files = Array.from(event.dataTransfer.files).slice(0, Math.max(0, 4 - pendingMediaCount));
+    const files = Array.from(event.dataTransfer.files);
     const images = files.filter((file) => file.type.startsWith("image/"));
     const audios = files.filter((file) => file.type.startsWith("audio/"));
     void (async () => {
@@ -4572,21 +4580,15 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       <span><strong>Deep Research</strong><small>输入研究目标后打开 Mission 确认页</small></span>
                     </button>
                     <button type="button" onClick={() => {
-                      setSlashFromPlus(true);
-                      setSlashMenu({ stage: "providers" });
-                      const currentProviderIndex = modelProviders.findIndex((provider) =>
-                        provider.modelGroups.some((group) => group.bindings.some((model) => model.id === selectedModelId))
-                      );
-                      setSlashActiveIndex(Math.max(0, currentProviderIndex));
+                      openModelCenter("catalog");
                       closeImageTools();
-                      window.requestAnimationFrame(() => textareaRef.current?.focus());
                     }}>
                       <Bot size={17} />
                       <span><strong>选择模型</strong><small>选择当前会话后续消息使用的模型</small></span>
                     </button>
                     {imageUploadCapable && <button
                       type="button"
-                      disabled={composerDisabled || uploadingImage || pendingMediaCount >= 4}
+                      disabled={composerDisabled || uploadingImage || pendingImages.length >= imageMaxCount}
                       onClick={() => fileInputRef.current?.click()}
                     >
                       <Paperclip size={17} />
@@ -4600,7 +4602,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       <AudioLines size={17} />
                       <span><strong>{uploadingAudio ? "正在上传…" : "上传音频"}</strong><small>WAV、MP3、AIFF、AAC、OGG 或 FLAC</small></span>
                     </button>}
-                    {!imageCapable && !audioCapable && (
+                    {!imageCapable && (
                       <button
                         type="button"
                         disabled
@@ -4632,7 +4634,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                             id="image-url-input"
                             type="url"
                             value={imageUrl}
-                            disabled={composerDisabled || pendingMediaCount >= 4}
+                            disabled={composerDisabled || pendingImages.length >= imageMaxCount}
                             placeholder="https://…"
                             aria-label="图片 URL"
                             autoFocus
@@ -4647,7 +4649,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                           <button
                             type="button"
                             aria-label="确认添加图片 URL"
-                            disabled={!imageUrl.trim() || composerDisabled || pendingMediaCount >= 4}
+                            disabled={!imageUrl.trim() || composerDisabled || pendingImages.length >= imageMaxCount}
                             onClick={addImageUrl}
                           >添加</button>
                         </div>
@@ -4794,7 +4796,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         activeRun={Boolean(state.selectedConversation?.activeRunId)}
         currentPreferences={state.selectedConversation?.model.preferences ?? null}
         selectionCompatibility={state.selectedConversation?.model.selectionCompatibility}
-        onClose={() => setModelConnectionsOpen(false)}
+        onClose={closeModelCenter}
         onConnectionsChanged={setModelConnections}
         onSelectModel={applyModelFromCenter}
       />

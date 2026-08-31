@@ -139,6 +139,39 @@ describe("ModelDetailDrawer", () => {
     );
   });
 
+  it("switches only among the safe bindings allowed by the selected model profile", () => {
+    const onBindingChange = vi.fn();
+    const alternateBinding: Model = {
+      ...baseModel,
+      id: "qwen3.8-max-responses",
+      apiStyle: "openai-responses",
+      apiStyleDisplayName: "Responses API",
+    };
+    const modelWithSelectableApiStyle: Model = {
+      ...baseModel,
+      controls: {
+        ...baseModel.controls,
+        apiStyle: {
+          ...baseModel.controls.apiStyle,
+          readOnly: false,
+          allowedValues: [baseModel.id, alternateBinding.id],
+        },
+      },
+    };
+
+    renderDrawer({
+      model: modelWithSelectableApiStyle,
+      bindings: [modelWithSelectableApiStyle, alternateBinding],
+      onBindingChange,
+    });
+
+    fireEvent.click(screen.getByText("高级连接方式"));
+    fireEvent.change(screen.getByRole("combobox", { name: "API 风格" }), {
+      target: { value: alternateBinding.id },
+    });
+    expect(onBindingChange).toHaveBeenCalledWith(alternateBinding);
+  });
+
   it("exposes reasoning effort only in Deep mode", () => {
     renderDrawer({ preferences: { ...baseModel.recommendedPreferences, responseMode: "DEEP" } });
     expect(screen.getByText("思考强度（仅深度模式）")).toBeTruthy();
