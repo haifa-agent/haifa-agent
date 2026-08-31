@@ -500,7 +500,7 @@ class OpenAiResponsesModelTest {
                         Duration.ofSeconds(5),
                         Map.of()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("uploaded image input capability");
+                .hasMessageContaining("does not support image input");
 
         var imageSnapshot = ResolvedModelSnapshot.create(
                 new io.haifa.agent.model.api.ModelProviderId("deepseek"),

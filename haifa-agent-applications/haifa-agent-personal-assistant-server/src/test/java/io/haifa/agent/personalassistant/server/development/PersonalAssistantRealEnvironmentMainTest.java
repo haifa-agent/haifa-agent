@@ -37,7 +37,9 @@ class PersonalAssistantRealEnvironmentMainTest {
                         temporaryDirectory, "python", new String[] {"--default-model-id", "antigravity-gemini"}))
                 .containsExactly(
                         "python",
-                        temporaryDirectory.resolve("scripts/real_environment.py").toString(),
+                        temporaryDirectory
+                                .resolve("scripts/real_environment.py")
+                                .toString(),
                         "--default-model-id",
                         "antigravity-gemini",
                         "--backend-launch-mode",
@@ -51,7 +53,15 @@ class PersonalAssistantRealEnvironmentMainTest {
         assertThat(PersonalAssistantRealEnvironmentMain.absoluteClasspath(raw, temporaryDirectory))
                 .isEqualTo(String.join(
                         File.pathSeparator,
-                        temporaryDirectory.resolve("target/test-classes").toAbsolutePath().normalize().toString(),
-                        temporaryDirectory.resolve("target/classes").toAbsolutePath().normalize().toString()));
+                        temporaryDirectory
+                                .resolve("target/test-classes")
+                                .toAbsolutePath()
+                                .normalize()
+                                .toString(),
+                        temporaryDirectory
+                                .resolve("target/classes")
+                                .toAbsolutePath()
+                                .normalize()
+                                .toString()));
     }
 }

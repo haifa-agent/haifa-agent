@@ -308,7 +308,14 @@ class PersonalObservabilityTest {
 
     private static AgentChatRequest requestWithImages() {
         ResolvedModelSnapshot model = mock(ResolvedModelSnapshot.class);
-        when(model.capabilities()).thenReturn(Set.of(ModelCapability.IMAGE_URL_INPUT, ModelCapability.IMAGE_UPLOAD_INPUT));
+        when(model.capabilities())
+                .thenReturn(Set.of(ModelCapability.IMAGE_URL_INPUT, ModelCapability.IMAGE_UPLOAD_INPUT));
+        when(model.frozenImageInputProfile())
+                .thenReturn(java.util.Optional.of(io.haifa.agent.model.api.ImageInputProfile.standard(
+                        Set.of(
+                                io.haifa.agent.model.api.ModelImageSource.URL,
+                                io.haifa.agent.model.api.ModelImageSource.UPLOAD),
+                        true)));
         return new AgentChatRequest(
                 new ModelCallId("call-log-media-1"),
                 new AgentRunId("run-log-media-1"),

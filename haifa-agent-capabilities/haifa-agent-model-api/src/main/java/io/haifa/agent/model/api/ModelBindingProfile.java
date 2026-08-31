@@ -4,11 +4,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /** Provider-neutral, versioned execution contract for one exact model binding. */
 public record ModelBindingProfile(
@@ -401,28 +403,16 @@ public record ModelBindingProfile(
         Objects.requireNonNull(status, "status must not be null");
         Objects.requireNonNull(lastVerifiedOn, "lastVerifiedOn must not be null");
 
-        String inputModalities = ioProfile.inputModalities().stream()
-                .map(Enum::name)
-                .sorted()
-                .toList()
-                .toString();
-        String outputModalities = ioProfile.outputModalities().stream()
-                .map(Enum::name)
-                .sorted()
-                .toList()
-                .toString();
+        String inputModalities = encodeEnumCollection(ioProfile.inputModalities());
+        String outputModalities = encodeEnumCollection(ioProfile.outputModalities());
 
         String imageSources = ioProfile
                 .imageInput()
-                .map(img -> img.allowedSources().stream()
-                        .map(Enum::name)
-                        .sorted()
-                        .toList()
-                        .toString())
+                .map(img -> encodeEnumCollection(img.allowedSources()))
                 .orElse("[]");
         String imageMediaTypes = ioProfile
                 .imageInput()
-                .map(img -> img.supportedMediaTypes().stream().sorted().toList().toString())
+                .map(img -> encodeStringCollection(img.supportedMediaTypes()))
                 .orElse("[]");
         String maxImagesPerRequest = ioProfile
                 .imageInput()
@@ -446,11 +436,7 @@ public record ModelBindingProfile(
                 .orElse("false");
         String imageDetails = ioProfile
                 .imageInput()
-                .map(img -> img.allowedDetails().stream()
-                        .map(Enum::name)
-                        .sorted()
-                        .toList()
-                        .toString())
+                .map(img -> encodeEnumCollection(img.allowedDetails()))
                 .orElse("[]");
 
         return String.join(
@@ -532,5 +518,15 @@ public record ModelBindingProfile(
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException("SHA-256 is required", impossible);
         }
+    }
+
+    private static String encodeStringCollection(Collection<String> items) {
+        if (items == null || items.isEmpty()) return "[]";
+        return "[" + items.stream().sorted().map(s -> s.length() + ":" + s).collect(Collectors.joining(",")) + "]";
+    }
+
+    private static <E extends Enum<E>> String encodeEnumCollection(Collection<E> items) {
+        if (items == null || items.isEmpty()) return "[]";
+        return "[" + items.stream().map(Enum::name).sorted().collect(Collectors.joining(", ")) + "]";
     }
 }

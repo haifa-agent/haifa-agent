@@ -170,13 +170,13 @@ class ModelBindingProfileTest {
                 .isEqualTo(
                         "model-binding-profile-v3|qwen3-vl-plus|openai-chat-completions|2.0|"
                                 + "[IMAGE_UPLOAD_INPUT, IMAGE_URL_INPUT, TEXT_CHAT, TOOL_CALLING]|NONE|[DISABLED]|[]|none|131072|1|8192|false|true|true|false|NON_RETRYABLE|"
-                                + "[IMAGE, TEXT]|[TEXT]|[UPLOAD, URL]|[image/gif, image/jpeg, image/png, image/webp]|4|10485760|20971520|2048|true|[AUTO, HIGH, LOW]|VERIFIED|2026-08-31");
+                                + "[IMAGE, TEXT]|[TEXT]|[UPLOAD, URL]|[9:image/gif,10:image/jpeg,9:image/png,10:image/webp]|4|10485760|20971520|2048|true|[AUTO, HIGH, LOW]|VERIFIED|2026-08-31");
         assertThat(profile.selectable()).isTrue();
     }
 
     @Test
     void geminiUploadOnlyImageBindingProfileProducesExpectedCanonicalString() {
-        ImageInputProfile imageInput = ImageInputProfile.standard(Set.of(ModelImageSource.UPLOAD), false);
+        ImageInputProfile imageInput = ImageInputProfile.gemini(Set.of(ModelImageSource.UPLOAD));
         ModelIoProfile ioProfile = ModelIoProfile.withImage(imageInput);
 
         ModelBindingProfile profile = ModelBindingProfile.create(
@@ -199,7 +199,64 @@ class ModelBindingProfileTest {
                 .isEqualTo(
                         "model-binding-profile-v3|gemini-3-flash|google-gemini-generate-content|2.0|"
                                 + "[IMAGE_UPLOAD_INPUT, TEXT_CHAT, TOOL_CALLING]|NONE|[DISABLED]|[]|none|1048576|1|65536|false|true|true|false|NON_RETRYABLE|"
-                                + "[IMAGE, TEXT]|[TEXT]|[UPLOAD]|[image/gif, image/jpeg, image/png, image/webp]|4|10485760|20971520|2048|false|[]|VERIFIED|2026-08-31");
+                                + "[IMAGE, TEXT]|[TEXT]|[UPLOAD]|[9:image/gif,10:image/jpeg,9:image/png,10:image/webp]|4|10485760|12582912|2048|false|[]|VERIFIED|2026-08-31");
+    }
+
+    @Test
+    void canonicalDigestIsCollisionFreeForMediaTypes() {
+        ImageInputProfile profile1 = new ImageInputProfile(
+                Set.of(ModelImageSource.UPLOAD),
+                Set.of("image/png", "image/jpeg"),
+                4,
+                1024,
+                2048,
+                2048,
+                false,
+                Set.of());
+        ImageInputProfile profile2 = new ImageInputProfile(
+                Set.of(ModelImageSource.UPLOAD),
+                Set.of("image/png", "image/webp"),
+                4,
+                1024,
+                2048,
+                2048,
+                false,
+                Set.of());
+
+        ModelBindingProfile binding1 = ModelBindingProfile.create(
+                new ModelDefinitionId("binding-1"),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "2.0",
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_UPLOAD_INPUT),
+                ModelReasoningBehavior.NONE,
+                Set.of(ModelReasoningMode.DISABLED),
+                Set.of(),
+                OptionalLong.empty(),
+                new ModelExecutionLimits(32768, 1, 4096),
+                false,
+                ModelStreamingProfile.disabled(),
+                ModelIoProfile.withImage(profile1),
+                ModelProfileStatus.VERIFIED,
+                LocalDate.of(2026, 8, 31));
+
+        ModelBindingProfile binding2 = ModelBindingProfile.create(
+                new ModelDefinitionId("binding-1"),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "2.0",
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_UPLOAD_INPUT),
+                ModelReasoningBehavior.NONE,
+                Set.of(ModelReasoningMode.DISABLED),
+                Set.of(),
+                OptionalLong.empty(),
+                new ModelExecutionLimits(32768, 1, 4096),
+                false,
+                ModelStreamingProfile.disabled(),
+                ModelIoProfile.withImage(profile2),
+                ModelProfileStatus.VERIFIED,
+                LocalDate.of(2026, 8, 31));
+
+        assertThat(binding1.canonicalString()).isNotEqualTo(binding2.canonicalString());
+        assertThat(binding1.digest()).isNotEqualTo(binding2.digest());
     }
 
     @Test

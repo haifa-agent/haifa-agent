@@ -54,4 +54,46 @@ class ResolvedModelSnapshotEffectiveParametersTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("different model binding");
     }
+
+    @Test
+    void propagatesFrozenImageInputProfileIntoDerivedSnapshot() {
+        ResolvedModelSnapshot base = ResolvedModelSnapshot.create(
+                new ModelProviderId("aliyun-bailian"),
+                "1",
+                new ModelDefinitionId("qwen3-vl-plus"),
+                "1",
+                "qwen3-vl-plus",
+                ModelApiStyles.OPENAI_CHAT_ADAPTER,
+                "1",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "aliyun-bailian",
+                URI.create("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                new CredentialRef("env://DASHSCOPE_API_KEY"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_UPLOAD_INPUT, ModelCapability.IMAGE_URL_INPUT),
+                131072,
+                8192,
+                Map.of(),
+                Map.of());
+
+        ImageInputProfile imageProfile =
+                ImageInputProfile.standard(Set.of(ModelImageSource.UPLOAD, ModelImageSource.URL), true);
+        EffectiveModelParameters parameters = new EffectiveModelParameters(
+                base.modelId(),
+                "2.0",
+                "sha256:" + "a".repeat(64),
+                ModelReasoningPolicy.disabled(),
+                4096,
+                Optional.of(imageProfile));
+
+        ResolvedModelSnapshot derived = base.withEffectiveParameters(parameters);
+
+        assertThat(derived.frozenImageInputProfile()).isPresent();
+        assertThat(derived.frozenImageInputProfile().get().maxImagesPerRequest())
+                .isEqualTo(4);
+        assertThat(derived.frozenImageInputProfile().get().allowedSources())
+                .containsExactlyInAnyOrder(ModelImageSource.UPLOAD, ModelImageSource.URL);
+        assertThat(derived.invocationOptions())
+                .containsEntry(EffectiveModelParameters.IMAGE_INPUT_MAX_IMAGES_OPTION, 4);
+    }
 }

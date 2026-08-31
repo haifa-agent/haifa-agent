@@ -21,8 +21,8 @@ public final class PersonalAssistantRealEnvironmentMain {
         String python = System.getenv().getOrDefault(PYTHON_COMMAND_ENVIRONMENT, defaultPythonCommand());
         ProcessBuilder process = new ProcessBuilder(command(repository, python, args));
         process.directory(repository.toFile());
-        String classpath = absoluteClasspath(
-                System.getProperty("java.class.path"), Path.of(System.getProperty("user.dir")));
+        String classpath =
+                absoluteClasspath(System.getProperty("java.class.path"), Path.of(System.getProperty("user.dir")));
         process.environment().put(DEVELOPMENT_CLASSPATH_ENVIRONMENT, classpath);
         process.inheritIO();
         int exitCode = process.start().waitFor();

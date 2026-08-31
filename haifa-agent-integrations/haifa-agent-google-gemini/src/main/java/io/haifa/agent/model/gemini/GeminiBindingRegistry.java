@@ -20,40 +20,61 @@ final class GeminiBindingRegistry {
         }
     }
 
-    private static final Set<AdmissionKey> ADMISSIONS = buildAdmissions();
+    record AdmittedBinding(AdmissionKey key, io.haifa.agent.model.api.ModelIoProfile ioProfile) {
+        AdmittedBinding {
+            Objects.requireNonNull(key, "key must not be null");
+            ioProfile = Objects.requireNonNullElse(ioProfile, io.haifa.agent.model.api.ModelIoProfile.textOnly());
+        }
+    }
+
+    private static final java.util.Map<AdmissionKey, AdmittedBinding> ADMISSIONS = buildAdmissions();
 
     private GeminiBindingRegistry() {}
 
-    static boolean isAdmitted(String providerId, String providerModelId, ApiStyleId apiStyle, String dialect) {
+    static java.util.Optional<AdmittedBinding> find(
+            String providerId, String providerModelId, ApiStyleId apiStyle, String dialect) {
         if (providerId == null || providerModelId == null || apiStyle == null || dialect == null) {
-            return false;
+            return java.util.Optional.empty();
         }
-        return ADMISSIONS.contains(new AdmissionKey(providerId, providerModelId, apiStyle, dialect));
+        return java.util.Optional.ofNullable(
+                ADMISSIONS.get(new AdmissionKey(providerId, providerModelId, apiStyle, dialect)));
+    }
+
+    static java.util.Optional<AdmittedBinding> find(ResolvedModelSnapshot snapshot) {
+        if (snapshot == null || snapshot.providerId() == null) {
+            return java.util.Optional.empty();
+        }
+        return find(snapshot.providerId().value(), snapshot.providerModelId(), snapshot.apiStyle(), snapshot.dialect());
+    }
+
+    static boolean isAdmitted(String providerId, String providerModelId, ApiStyleId apiStyle, String dialect) {
+        return find(providerId, providerModelId, apiStyle, dialect).isPresent();
     }
 
     static boolean isAdmitted(ResolvedModelSnapshot snapshot) {
-        if (snapshot == null || snapshot.providerId() == null) {
-            return false;
-        }
-        return isAdmitted(
-                snapshot.providerId().value(), snapshot.providerModelId(), snapshot.apiStyle(), snapshot.dialect());
+        return find(snapshot).isPresent();
     }
 
-    static Set<AdmissionKey> admissions() {
-        return ADMISSIONS;
+    static java.util.Collection<AdmittedBinding> admissions() {
+        return ADMISSIONS.values();
     }
 
-    private static Set<AdmissionKey> buildAdmissions() {
-        return Set.of(
-                new AdmissionKey(
-                        "cliproxyapi-antigravity",
-                        "gemini-3-flash",
-                        ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
-                        GeminiDialects.CLIPROXYAPI_ANTIGRAVITY),
-                new AdmissionKey(
-                        "google-antigravity",
-                        "gemini-3-flash",
-                        ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
-                        GeminiDialects.ANTIGRAVITY_DIRECT));
+    private static java.util.Map<AdmissionKey, AdmittedBinding> buildAdmissions() {
+        var geminiIoProfile =
+                io.haifa.agent.model.api.ModelIoProfile.withImage(io.haifa.agent.model.api.ImageInputProfile.gemini(
+                        Set.of(io.haifa.agent.model.api.ModelImageSource.UPLOAD)));
+        var keyCliproxy = new AdmissionKey(
+                "cliproxyapi-antigravity",
+                "gemini-3-flash",
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                GeminiDialects.CLIPROXYAPI_ANTIGRAVITY);
+        var keyDirect = new AdmissionKey(
+                "google-antigravity",
+                "gemini-3-flash",
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                GeminiDialects.ANTIGRAVITY_DIRECT);
+        return java.util.Map.of(
+                keyCliproxy, new AdmittedBinding(keyCliproxy, geminiIoProfile),
+                keyDirect, new AdmittedBinding(keyDirect, geminiIoProfile));
     }
 }
