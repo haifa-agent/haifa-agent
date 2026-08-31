@@ -9,7 +9,7 @@ import java.util.Objects;
 import java.util.OptionalLong;
 import java.util.Set;
 
-/** Provider-neutral, versioned limits for one exact model binding. */
+/** Provider-neutral, versioned execution contract for one exact model binding. */
 public record ModelBindingProfile(
         ModelDefinitionId bindingId,
         ApiStyleId apiStyle,
@@ -22,6 +22,8 @@ public record ModelBindingProfile(
         int minimumOutputTokens,
         int maximumOutputTokens,
         boolean toolReasoningContinuationRequired,
+        ModelExecutionLimits executionLimits,
+        ModelStreamingProfile streaming,
         ModelProfileStatus status,
         LocalDate lastVerifiedOn,
         String digest) {
@@ -45,10 +47,14 @@ public record ModelBindingProfile(
         if (allowedReasoningModes.isEmpty()) {
             throw new IllegalArgumentException("allowedReasoningModes must not be empty");
         }
-        if (minimumOutputTokens < 1
-                || maximumOutputTokens < minimumOutputTokens
-                || maximumOutputTokens > Integer.MAX_VALUE) {
-            throw new IllegalArgumentException("profile output token limits are invalid");
+        executionLimits = Objects.requireNonNull(executionLimits, "executionLimits must not be null");
+        if (minimumOutputTokens != executionLimits.minimumOutputTokens()
+                || maximumOutputTokens != executionLimits.maximumOutputTokens()) {
+            throw new IllegalArgumentException("legacy output accessors must match execution limits");
+        }
+        streaming = Objects.requireNonNull(streaming, "streaming must not be null");
+        if (streaming.reasoningStreaming() && !capabilities.contains(ModelCapability.REASONING)) {
+            throw new IllegalArgumentException("reasoning streaming requires reasoning capability");
         }
         status = Objects.requireNonNull(status, "status must not be null");
         lastVerifiedOn = Objects.requireNonNull(lastVerifiedOn, "lastVerifiedOn must not be null");
@@ -68,9 +74,9 @@ public record ModelBindingProfile(
                 allowedReasoningModes,
                 allowedReasoningEfforts,
                 maximumReasoningTokens,
-                minimumOutputTokens,
-                maximumOutputTokens,
+                executionLimits,
                 toolReasoningContinuationRequired,
+                streaming,
                 status,
                 lastVerifiedOn);
         if (!expected.equals(digest)) {
@@ -78,7 +84,13 @@ public record ModelBindingProfile(
         }
     }
 
-    public static ModelBindingProfile create(
+    /**
+     * Compatibility constructor for callers still using the Phase 5 profile shape.
+     * It is conservative: callers must migrate to the execution-aware factory before using the profile for
+     * catalog consistency validation.
+     */
+    @Deprecated
+    public ModelBindingProfile(
             ModelDefinitionId bindingId,
             ApiStyleId apiStyle,
             String version,
@@ -90,6 +102,41 @@ public record ModelBindingProfile(
             int minimumOutputTokens,
             int maximumOutputTokens,
             boolean toolReasoningContinuationRequired,
+            ModelProfileStatus status,
+            LocalDate lastVerifiedOn,
+            String digest) {
+        this(
+                bindingId,
+                apiStyle,
+                version,
+                capabilities,
+                reasoningBehavior,
+                allowedReasoningModes,
+                allowedReasoningEfforts,
+                maximumReasoningTokens,
+                minimumOutputTokens,
+                maximumOutputTokens,
+                toolReasoningContinuationRequired,
+                new ModelExecutionLimits(maximumOutputTokens, minimumOutputTokens, maximumOutputTokens),
+                ModelStreamingProfile.disabled(),
+                status,
+                lastVerifiedOn,
+                digest);
+    }
+
+    /** Creates a profile with all execution-affecting fields explicit and digest-covered. */
+    public static ModelBindingProfile create(
+            ModelDefinitionId bindingId,
+            ApiStyleId apiStyle,
+            String version,
+            Set<ModelCapability> capabilities,
+            ModelReasoningBehavior reasoningBehavior,
+            Set<ModelReasoningMode> allowedReasoningModes,
+            Set<ModelReasoningEffort> allowedReasoningEfforts,
+            OptionalLong maximumReasoningTokens,
+            ModelExecutionLimits executionLimits,
+            boolean toolReasoningContinuationRequired,
+            ModelStreamingProfile streaming,
             ModelProfileStatus status,
             LocalDate lastVerifiedOn) {
         Set<ModelCapability> frozenCapabilities = Set.copyOf(capabilities);
@@ -104,9 +151,11 @@ public record ModelBindingProfile(
                 frozenModes,
                 frozenEfforts,
                 maximumReasoningTokens,
-                minimumOutputTokens,
-                maximumOutputTokens,
+                executionLimits.minimumOutputTokens(),
+                executionLimits.maximumOutputTokens(),
                 toolReasoningContinuationRequired,
+                executionLimits,
+                streaming,
                 status,
                 lastVerifiedOn,
                 digest(
@@ -118,15 +167,65 @@ public record ModelBindingProfile(
                         frozenModes,
                         frozenEfforts,
                         maximumReasoningTokens,
-                        minimumOutputTokens,
-                        maximumOutputTokens,
+                        executionLimits,
                         toolReasoningContinuationRequired,
+                        streaming,
                         status,
                         lastVerifiedOn));
     }
 
+    /**
+     * Compatibility factory for the Phase 5 shape. The inferred context and disabled streaming facts are not
+     * suitable for a registered Phase 6 binding; integrations must call the execution-aware overload.
+     */
+    @Deprecated
+    public static ModelBindingProfile create(
+            ModelDefinitionId bindingId,
+            ApiStyleId apiStyle,
+            String version,
+            Set<ModelCapability> capabilities,
+            ModelReasoningBehavior reasoningBehavior,
+            Set<ModelReasoningMode> allowedReasoningModes,
+            Set<ModelReasoningEffort> allowedReasoningEfforts,
+            OptionalLong maximumReasoningTokens,
+            int minimumOutputTokens,
+            int maximumOutputTokens,
+            boolean toolReasoningContinuationRequired,
+            ModelProfileStatus status,
+            LocalDate lastVerifiedOn) {
+        return create(
+                bindingId,
+                apiStyle,
+                version,
+                capabilities,
+                reasoningBehavior,
+                allowedReasoningModes,
+                allowedReasoningEfforts,
+                maximumReasoningTokens,
+                new ModelExecutionLimits(maximumOutputTokens, minimumOutputTokens, maximumOutputTokens),
+                toolReasoningContinuationRequired,
+                ModelStreamingProfile.disabled(),
+                status,
+                lastVerifiedOn);
+    }
+
     public boolean selectable() {
         return status == ModelProfileStatus.VERIFIED;
+    }
+
+    /** Compatibility projection of the Phase 6 typed reasoning facts. */
+    public ModelReasoningProfile reasoning() {
+        return new ModelReasoningProfile(
+                reasoningBehavior, allowedReasoningModes, allowedReasoningEfforts, maximumReasoningTokens);
+    }
+
+    /** Compatibility projection of the exact tool/response facts. */
+    public ModelToolResponseProfile toolResponse() {
+        return ModelToolResponseProfile.fromCapabilities(capabilities, toolReasoningContinuationRequired);
+    }
+
+    public int contextWindowTokens() {
+        return executionLimits.contextWindowTokens();
     }
 
     private static void validateReasoning(
@@ -180,9 +279,9 @@ public record ModelBindingProfile(
                 allowedReasoningModes,
                 allowedReasoningEfforts,
                 maximumReasoningTokens,
-                minimumOutputTokens,
-                maximumOutputTokens,
+                executionLimits,
                 toolReasoningContinuationRequired,
+                streaming,
                 status,
                 lastVerifiedOn);
     }
@@ -196,9 +295,9 @@ public record ModelBindingProfile(
             Set<ModelReasoningMode> modes,
             Set<ModelReasoningEffort> efforts,
             OptionalLong maximumReasoningTokens,
-            int minimumOutputTokens,
-            int maximumOutputTokens,
+            ModelExecutionLimits executionLimits,
             boolean toolContinuationRequired,
+            ModelStreamingProfile streaming,
             ModelProfileStatus status,
             LocalDate lastVerifiedOn) {
         String canonicalBindingId = canonicalSegment(
@@ -211,11 +310,13 @@ public record ModelBindingProfile(
         Objects.requireNonNull(modes, "modes must not be null");
         Objects.requireNonNull(efforts, "efforts must not be null");
         Objects.requireNonNull(maximumReasoningTokens, "maximumReasoningTokens must not be null");
+        Objects.requireNonNull(executionLimits, "executionLimits must not be null");
+        Objects.requireNonNull(streaming, "streaming must not be null");
         Objects.requireNonNull(status, "status must not be null");
         Objects.requireNonNull(lastVerifiedOn, "lastVerifiedOn must not be null");
         return String.join(
                 "|",
-                "model-binding-profile-v1",
+                "model-binding-profile-v2",
                 canonicalBindingId,
                 canonicalApiStyle,
                 canonicalVersion,
@@ -224,9 +325,14 @@ public record ModelBindingProfile(
                 modes.stream().map(Enum::name).sorted().toList().toString(),
                 efforts.stream().map(Enum::name).sorted().toList().toString(),
                 maximumReasoningTokens.isPresent() ? Long.toString(maximumReasoningTokens.getAsLong()) : "none",
-                Integer.toString(minimumOutputTokens),
-                Integer.toString(maximumOutputTokens),
+                Integer.toString(executionLimits.contextWindowTokens()),
+                Integer.toString(executionLimits.minimumOutputTokens()),
+                Integer.toString(executionLimits.maximumOutputTokens()),
                 Boolean.toString(toolContinuationRequired),
+                Boolean.toString(streaming.nativeStreaming()),
+                Boolean.toString(streaming.usageStreaming()),
+                Boolean.toString(streaming.reasoningStreaming()),
+                streaming.partialOutputFailureBehavior().name(),
                 status.name(),
                 lastVerifiedOn.toString());
     }
@@ -250,9 +356,9 @@ public record ModelBindingProfile(
             Set<ModelReasoningMode> modes,
             Set<ModelReasoningEffort> efforts,
             OptionalLong maximumReasoningTokens,
-            int minimumOutputTokens,
-            int maximumOutputTokens,
+            ModelExecutionLimits executionLimits,
             boolean toolContinuationRequired,
+            ModelStreamingProfile streaming,
             ModelProfileStatus status,
             LocalDate lastVerifiedOn) {
         String canonical = canonicalString(
@@ -264,9 +370,9 @@ public record ModelBindingProfile(
                 modes,
                 efforts,
                 maximumReasoningTokens,
-                minimumOutputTokens,
-                maximumOutputTokens,
+                executionLimits,
                 toolContinuationRequired,
+                streaming,
                 status,
                 lastVerifiedOn);
         try {

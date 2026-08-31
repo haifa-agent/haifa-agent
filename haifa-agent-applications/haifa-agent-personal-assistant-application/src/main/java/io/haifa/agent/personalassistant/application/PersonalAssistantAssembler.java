@@ -517,7 +517,7 @@ public final class PersonalAssistantAssembler {
             var profile = io.haifa.agent.model.api.ModelBindingProfile.create(
                     snapshot.modelId(),
                     snapshot.apiStyle(),
-                    "1.0",
+                    "2.0",
                     snapshot.capabilities(),
                     reasoning
                             ? io.haifa.agent.model.api.ModelReasoningBehavior.OPTIONAL
@@ -529,9 +529,14 @@ public final class PersonalAssistantAssembler {
                             : Set.of(io.haifa.agent.model.api.ModelReasoningMode.DISABLED),
                     reasoning ? Set.of(io.haifa.agent.model.api.ModelReasoningEffort.HIGH) : Set.of(),
                     java.util.OptionalLong.empty(),
-                    1,
-                    snapshot.maxOutputTokens(),
+                    new io.haifa.agent.model.api.ModelExecutionLimits(
+                            snapshot.contextWindow(), 1, snapshot.maxOutputTokens()),
                     false,
+                    new io.haifa.agent.model.api.ModelStreamingProfile(
+                            snapshot.nativeStreaming(),
+                            false,
+                            false,
+                            io.haifa.agent.model.api.ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                     io.haifa.agent.model.api.ModelProfileStatus.VERIFIED,
                     java.time.LocalDate.of(2026, 8, 13));
             var defaults = new PersonalModelProductDefaults();
@@ -546,9 +551,9 @@ public final class PersonalAssistantAssembler {
                     snapshot.apiStyle().value(),
                     "AVAILABLE",
                     "",
-                    snapshot.capabilities().stream().map(Enum::name).collect(java.util.stream.Collectors.toSet()),
-                    snapshot.contextWindow(),
-                    snapshot.maxOutputTokens(),
+                    profile.capabilities().stream().map(Enum::name).collect(java.util.stream.Collectors.toSet()),
+                    profile.contextWindowTokens(),
+                    profile.executionLimits().maximumOutputTokens(),
                     PersonalModelProductDefaults.PREFERENCE_SCHEMA_VERSION,
                     profile.version(),
                     profile.digest(),

@@ -44,11 +44,14 @@ class AnthropicModelProfileFactoryTest {
 
         assertThat(profile.status()).isEqualTo(ModelProfileStatus.VERIFIED);
         assertThat(profile.selectable()).isTrue();
-        assertThat(profile.version()).isEqualTo(AnthropicModelProfileFactory.CURRENT_PROFILE_VERSION);
+        assertThat(profile.version()).isEqualTo("2.0");
         assertThat(profile.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.ALWAYS);
         assertThat(profile.allowedReasoningModes()).containsExactly(ModelReasoningMode.ENABLED);
         assertThat(profile.allowedReasoningEfforts()).containsExactly(ModelReasoningEffort.HIGH);
         assertThat(profile.toolReasoningContinuationRequired()).isTrue();
+        assertThat(profile.executionLimits().contextWindowTokens()).isEqualTo(snapshot.contextWindow());
+        assertThat(profile.streaming().usageStreaming()).isTrue();
+        assertThat(profile.streaming().reasoningStreaming()).isTrue();
     }
 
     @Test

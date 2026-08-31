@@ -46,7 +46,8 @@ class AntigravityTokenClientTest {
     @Test
     void singleFlightRefreshTriggersOnlyOneUpstreamRequest() throws Exception {
         AtomicInteger tokenCalls = new AtomicInteger();
-        try (MockGoogleServer server = MockGoogleServer.start(tokenCalls)) {
+        CountDownLatch serverHoldLatch = new CountDownLatch(1);
+        try (MockGoogleServer server = MockGoogleServer.start(tokenCalls, serverHoldLatch)) {
             AntigravityTokenClient client = client(server.port());
 
             int concurrency = 5;
@@ -68,6 +69,8 @@ class AntigravityTokenClientTest {
             }
 
             latch.countDown();
+            Thread.sleep(50);
+            serverHoldLatch.countDown();
             CompletableFuture.allOf(futures).get(5, TimeUnit.SECONDS);
 
             // Even with 5 concurrent callers, tokenEndpoint was only requested once
@@ -136,13 +139,24 @@ class AntigravityTokenClientTest {
 
     private record MockGoogleServer(HttpServer server, int port) implements AutoCloseable {
         static MockGoogleServer start() throws IOException {
-            return start(new AtomicInteger());
+            return start(new AtomicInteger(), null);
         }
 
         static MockGoogleServer start(AtomicInteger tokenCalls) throws IOException {
+            return start(tokenCalls, null);
+        }
+
+        static MockGoogleServer start(AtomicInteger tokenCalls, CountDownLatch serverHoldLatch) throws IOException {
             HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.createContext("/token", exchange -> {
                 tokenCalls.incrementAndGet();
+                if (serverHoldLatch != null) {
+                    try {
+                        serverHoldLatch.await(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
                 String resp =
                         """
                         {

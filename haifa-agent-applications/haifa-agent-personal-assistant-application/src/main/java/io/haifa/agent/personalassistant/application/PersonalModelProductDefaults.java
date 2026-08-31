@@ -31,7 +31,9 @@ public final class PersonalModelProductDefaults {
                     case RECOMMENDED, STANDARD -> 8_192;
                     case LONG -> 16_384;
                 };
-        int output = Math.max(profile.minimumOutputTokens(), Math.min(profile.maximumOutputTokens(), requestedOutput));
+        int output = Math.max(
+                profile.executionLimits().minimumOutputTokens(),
+                Math.min(profile.executionLimits().maximumOutputTokens(), requestedOutput));
         return resolver.resolve(
                 profile,
                 new ModelParameterResolutionRequest(
