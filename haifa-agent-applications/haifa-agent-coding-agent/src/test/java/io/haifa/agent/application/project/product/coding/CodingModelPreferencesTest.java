@@ -19,8 +19,8 @@ class CodingModelPreferencesTest {
 
     @Test
     void deepModeWithEffort() {
-        CodingModelPreferences prefs = new CodingModelPreferences(
-                CodingResponseMode.DEEP, Optional.of(ModelReasoningEffort.HIGH));
+        CodingModelPreferences prefs =
+                new CodingModelPreferences(CodingResponseMode.DEEP, Optional.of(ModelReasoningEffort.HIGH));
 
         assertThat(prefs.responseMode()).isEqualTo(CodingResponseMode.DEEP);
         assertThat(prefs.effort()).contains(ModelReasoningEffort.HIGH);
@@ -28,16 +28,15 @@ class CodingModelPreferencesTest {
 
     @Test
     void rejectsEffortWithNonDeepMode() {
-        assertThatThrownBy(() -> new CodingModelPreferences(
-                CodingResponseMode.FAST, Optional.of(ModelReasoningEffort.MEDIUM)))
+        assertThatThrownBy(() ->
+                        new CodingModelPreferences(CodingResponseMode.FAST, Optional.of(ModelReasoningEffort.MEDIUM)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("effort is only valid for DEEP");
     }
 
     @Test
     void fastModeWithoutEffort() {
-        CodingModelPreferences prefs = new CodingModelPreferences(
-                CodingResponseMode.FAST, Optional.empty());
+        CodingModelPreferences prefs = new CodingModelPreferences(CodingResponseMode.FAST, Optional.empty());
 
         assertThat(prefs.responseMode()).isEqualTo(CodingResponseMode.FAST);
         assertThat(prefs.effort()).isEmpty();
@@ -54,10 +53,9 @@ class CodingModelPreferencesTest {
 
     @Test
     void digestDiffersForDifferentModes() {
-        CodingModelPreferences fast = new CodingModelPreferences(
-                CodingResponseMode.FAST, Optional.empty());
-        CodingModelPreferences deep = new CodingModelPreferences(
-                CodingResponseMode.DEEP, Optional.of(ModelReasoningEffort.HIGH));
+        CodingModelPreferences fast = new CodingModelPreferences(CodingResponseMode.FAST, Optional.empty());
+        CodingModelPreferences deep =
+                new CodingModelPreferences(CodingResponseMode.DEEP, Optional.of(ModelReasoningEffort.HIGH));
 
         assertThat(fast.digest()).isNotEqualTo(deep.digest());
     }

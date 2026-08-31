@@ -9,9 +9,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /** Closed Coding user intent for model parameter configuration. */
-public record CodingModelPreferences(
-        CodingResponseMode responseMode,
-        Optional<ModelReasoningEffort> effort) {
+public record CodingModelPreferences(CodingResponseMode responseMode, Optional<ModelReasoningEffort> effort) {
     public CodingModelPreferences {
         responseMode = Objects.requireNonNull(responseMode, "responseMode must not be null");
         effort = Objects.requireNonNull(effort, "effort must not be null");
