@@ -2,12 +2,14 @@
 
 ## Binding profiles and effective parameters
 
-`ModelBindingProfile` is the provider-neutral, versioned capability and parameter contract for one exact model
-binding. `ModelBindingConsistencyValidator` enforces strict bidirectional consistency between `ModelDefinition`
-and its authoritative `ModelBindingProfile`. `EffectiveModelParameters` contains only values validated against
-that trusted profile. A run derives a new `ResolvedModelSnapshot` with those effective values and a new digest;
-endpoint and credential data remain frozen and are never exposed as user preferences. Product-specific controls
-and labels do not belong in this module.
+`ModelBindingProfile` is the provider-neutral, versioned capability and execution contract for one exact model
+binding. Its `ModelExecutionLimits`, typed reasoning projection, tool/response projection, and
+`ModelStreamingProfile` are digest-covered; Profile v2 cannot silently inherit a Context window or streaming
+setting from a Provider default. `ModelBindingConsistencyValidator` enforces strict bidirectional consistency
+between the compatibility mirrors in `ModelDefinition`/`ModelProviderDefinition` and the authoritative Profile.
+`EffectiveModelParameters` contains only values validated against that trusted Profile. A run derives a new
+`ResolvedModelSnapshot` with those effective values and a new digest; endpoint and credential data remain frozen
+and are never exposed as user preferences. Product-specific controls and labels do not belong in this module.
 
 ## Reasoning safety
 

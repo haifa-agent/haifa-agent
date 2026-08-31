@@ -52,7 +52,17 @@ public final class ModelBindingConsistencyValidator {
                     + definition.id());
         }
 
-        // Rule 4: Maximum output tokens match
+        // Rule 4: Context window mirror matches the authoritative execution limits.
+        if (definition.contextWindow() != profile.contextWindowTokens()) {
+            throw new IllegalArgumentException("contextWindow mismatch between definition ("
+                    + definition.contextWindow()
+                    + ") and profile ("
+                    + profile.contextWindowTokens()
+                    + ") for model: "
+                    + definition.id());
+        }
+
+        // Rule 5: Maximum output tokens match
         if (definition.maxOutputTokens() != profile.maximumOutputTokens()) {
             throw new IllegalArgumentException("maxOutputTokens mismatch between definition ("
                     + definition.maxOutputTokens()
@@ -62,7 +72,7 @@ public final class ModelBindingConsistencyValidator {
                     + definition.id());
         }
 
-        // Rule 5: Profile output tokens range validity
+        // Rule 6: Profile output tokens range validity
         if (profile.minimumOutputTokens() < 1 || profile.minimumOutputTokens() > profile.maximumOutputTokens()) {
             throw new IllegalArgumentException("invalid profile output token range (min="
                     + profile.minimumOutputTokens()
@@ -72,17 +82,17 @@ public final class ModelBindingConsistencyValidator {
                     + definition.id());
         }
 
-        // Rule 6: Maximum output tokens does not exceed context window
-        if (profile.maximumOutputTokens() > definition.contextWindow()) {
+        // Rule 7: Maximum output tokens does not exceed the profile context window.
+        if (profile.maximumOutputTokens() > profile.contextWindowTokens()) {
             throw new IllegalArgumentException("maximum output tokens ("
                     + profile.maximumOutputTokens()
                     + ") exceed context window ("
-                    + definition.contextWindow()
+                    + profile.contextWindowTokens()
                     + ") for model: "
                     + definition.id());
         }
 
-        // Rule 7: Reasoning configuration and capability consistency
+        // Rule 8: Reasoning configuration and capability consistency
         boolean hasReasoning = profile.capabilities().contains(ModelCapability.REASONING);
         if (hasReasoning) {
             if (profile.reasoningBehavior() == ModelReasoningBehavior.NONE) {
@@ -139,6 +149,14 @@ public final class ModelBindingConsistencyValidator {
                     + provider.id());
         }
         validate(definition, profile);
+        if (provider.nativeStreaming() != profile.streaming().nativeStreaming()) {
+            throw new IllegalArgumentException("nativeStreaming mismatch between provider ("
+                    + provider.nativeStreaming()
+                    + ") and profile ("
+                    + profile.streaming().nativeStreaming()
+                    + ") for model: "
+                    + definition.id());
+        }
     }
 
     /**
