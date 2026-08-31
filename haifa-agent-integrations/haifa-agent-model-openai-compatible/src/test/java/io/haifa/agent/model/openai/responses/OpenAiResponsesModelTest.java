@@ -482,6 +482,65 @@ class OpenAiResponsesModelTest {
                 .hasMessageContaining("Duplicate model binding admission key");
     }
 
+    @Test
+    void rejectsImageInputForDeepSeekResponsesDialect() {
+        var message = ModelMessage.user(
+                "inspect", List.of(new io.haifa.agent.model.api.ImageDataPart("image/png", new byte[] {1, 2, 3})));
+        var snapshot = deepSeekSnapshot();
+
+        assertThatThrownBy(() -> new AgentChatRequest(
+                        new ModelCallId("call-img"),
+                        new AgentRunId("run-img"),
+                        1,
+                        1,
+                        snapshot,
+                        List.of(message),
+                        List.of(),
+                        1024,
+                        Duration.ofSeconds(5),
+                        Map.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not support image input");
+
+        var imageSnapshot = ResolvedModelSnapshot.create(
+                new io.haifa.agent.model.api.ModelProviderId("deepseek"),
+                "provider-v1",
+                new ModelDefinitionId("model"),
+                "model-v1",
+                "deepseek-v4-flash",
+                OpenAiResponsesModel.ADAPTER_TYPE,
+                OpenAiResponsesModel.ADAPTER_VERSION,
+                new ApiStyleId("openai-responses"),
+                OpenAiResponsesDialects.DEEPSEEK,
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"),
+                new CredentialRef("env://TEST_KEY"),
+                true,
+                EnumSet.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.REASONING),
+                128_000,
+                8_192,
+                Map.of(),
+                Map.of());
+        var request = new AgentChatRequest(
+                new ModelCallId("call-img"),
+                new AgentRunId("run-img"),
+                1,
+                1,
+                imageSnapshot,
+                List.of(message),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of());
+
+        assertThatThrownBy(() -> model().invoke(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DeepSeek Responses image input is not verified");
+    }
+
     private record Response(int status, String contentType, String body) {
         private static Response json(int status, String body) {
             return new Response(status, "application/json", body);

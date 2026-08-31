@@ -83,14 +83,53 @@ public record AgentChatRequest(
         model = Objects.requireNonNull(model, "model must not be null");
         messages = List.copyOf(Objects.requireNonNull(messages, "messages must not be null"));
         if (messages.isEmpty()) throw new IllegalArgumentException("messages must not be empty");
-        if (messages.stream().flatMap(message -> message.images().stream()).anyMatch(ImageUrlPart.class::isInstance)
-                && !supports(ModelCapability.IMAGE_URL_INPUT, model)) {
-            throw new IllegalArgumentException("selected model does not declare image URL input capability");
+
+        List<ModelImagePart> allImages =
+                messages.stream().flatMap(message -> message.images().stream()).toList();
+        if (!allImages.isEmpty()) {
+            java.util.Optional<ImageInputProfile> imageProfileOpt = model.frozenImageInputProfile();
+            if (imageProfileOpt.isEmpty()) {
+                throw new IllegalArgumentException("selected model does not support image input");
+            }
+            ImageInputProfile imageProfile = imageProfileOpt.get();
+            if (allImages.size() > imageProfile.maxImagesPerRequest()) {
+                throw new IllegalArgumentException("number of images in chat request (" + allImages.size()
+                        + ") exceeds maximum allowed (" + imageProfile.maxImagesPerRequest() + ")");
+            }
+            long totalBytes = 0;
+            for (ModelImagePart image : allImages) {
+                if (image instanceof ImageUrlPart remote) {
+                    if (!imageProfile.allowedSources().contains(ModelImageSource.URL)
+                            || !model.capabilities().contains(ModelCapability.IMAGE_URL_INPUT)) {
+                        throw new IllegalArgumentException("selected model does not support image URL input");
+                    }
+                    if (remote.url().toASCIIString().length() > imageProfile.maxUrlCharacters()) {
+                        throw new IllegalArgumentException("image URL length ("
+                                + remote.url().toASCIIString().length() + ") exceeds maximum allowed ("
+                                + imageProfile.maxUrlCharacters() + ")");
+                    }
+                } else if (image instanceof ImageDataPart data) {
+                    if (!imageProfile.allowedSources().contains(ModelImageSource.UPLOAD)
+                            || !model.capabilities().contains(ModelCapability.IMAGE_UPLOAD_INPUT)) {
+                        throw new IllegalArgumentException("selected model does not support uploaded image input");
+                    }
+                    if (!imageProfile.supportedMediaTypes().contains(data.mediaType())) {
+                        throw new IllegalArgumentException(
+                                "image media type '" + data.mediaType() + "' is not supported by the selected model");
+                    }
+                    if (data.sizeBytes() > imageProfile.maxBytesPerItem()) {
+                        throw new IllegalArgumentException("image item size (" + data.sizeBytes()
+                                + " bytes) exceeds maximum allowed (" + imageProfile.maxBytesPerItem() + " bytes)");
+                    }
+                    totalBytes += data.sizeBytes();
+                }
+            }
+            if (totalBytes > imageProfile.maxTotalBytes()) {
+                throw new IllegalArgumentException("total image data bytes (" + totalBytes
+                        + ") exceeds request maximum (" + imageProfile.maxTotalBytes() + ")");
+            }
         }
-        if (messages.stream().flatMap(message -> message.images().stream()).anyMatch(ImageDataPart.class::isInstance)
-                && !supports(ModelCapability.IMAGE_UPLOAD_INPUT, model)) {
-            throw new IllegalArgumentException("selected model does not declare uploaded image input capability");
-        }
+
         if (messages.stream().anyMatch(message -> !message.audios().isEmpty())
                 && !model.capabilities().contains(ModelCapability.AUDIO_INPUT)) {
             throw new IllegalArgumentException("selected model does not declare audio input capability");
@@ -101,10 +140,5 @@ public record AgentChatRequest(
         if (timeout.isZero() || timeout.isNegative()) throw new IllegalArgumentException("timeout must be positive");
         options = ModelValues.map(options, "options");
         structuredOutput = Objects.requireNonNullElse(structuredOutput, java.util.Optional.empty());
-    }
-
-    @SuppressWarnings("deprecation")
-    private static boolean supports(ModelCapability capability, ResolvedModelSnapshot model) {
-        return model.capabilities().contains(capability) || model.capabilities().contains(ModelCapability.IMAGE_INPUT);
     }
 }

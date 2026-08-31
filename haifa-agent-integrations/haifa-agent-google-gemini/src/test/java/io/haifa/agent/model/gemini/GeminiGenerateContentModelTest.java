@@ -247,6 +247,54 @@ class GeminiGenerateContentModelTest {
     }
 
     @Test
+    void rejectsImageUrlPartsForGemini() throws Exception {
+        start(new AtomicReference<>(), new AtomicReference<>(), List.of(Response.json(200, textResponse("ok"))));
+        var urlImage = new io.haifa.agent.model.api.ImageUrlPart(URI.create("https://images.example.com/cat.png"));
+        var message = ModelMessage.user("inspect", List.of(urlImage));
+
+        // Layer 1: AgentChatRequest rejects image URL because dialectSnapshot does not declare IMAGE_URL_INPUT
+        assertThatThrownBy(() -> new AgentChatRequest(
+                        new io.haifa.agent.model.api.ModelCallId("call-url"),
+                        new io.haifa.agent.core.run.AgentRunId("run-url"),
+                        1,
+                        1,
+                        dialectSnapshot(),
+                        List.of(message),
+                        List.of(),
+                        1024,
+                        java.time.Duration.ofSeconds(5),
+                        Map.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("image URL input");
+
+        // Layer 2: Even if snapshot declared IMAGE_URL_INPUT, Gemini adapter rejects ImageUrlPart
+        var urlSnapshot = ResolvedModelSnapshot.create(
+                new io.haifa.agent.model.api.ModelProviderId("provider"),
+                "1.0",
+                new ModelDefinitionId("gemini-test"),
+                "1.0",
+                "gemini-test",
+                ModelApiStyles.GOOGLE_GEMINI_ADAPTER,
+                GeminiGenerateContentModel.ADAPTER_VERSION,
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                GeminiDialects.CLIPROXYAPI_ANTIGRAVITY,
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1beta"),
+                new CredentialRef(GeminiGenerateContentModel.CLIPROXY_CREDENTIAL_REF),
+                true,
+                java.util.Set.of(
+                        ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.IMAGE_URL_INPUT),
+                1048576,
+                65536,
+                Map.of(),
+                Map.of());
+
+        assertThatThrownBy(() -> model(true).invoke(request(urlSnapshot, List.of(message), List.of())))
+                .isInstanceOf(ModelInvocationException.class)
+                .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                .hasRootCauseMessage("Gemini image URLs are not supported; upload image bytes");
+    }
+
+    @Test
     void replaysProtectedSignatureAndCorrelatesFunctionResponse() throws Exception {
         AtomicReference<HttpExchange> exchange = new AtomicReference<>();
         AtomicReference<JsonNode> requestBody = new AtomicReference<>();

@@ -26,15 +26,15 @@ class GeminiModelProfileFactoryTest {
 
         for (var admission : admissions) {
             ResolvedModelSnapshot reasoningSnapshot = ResolvedModelSnapshot.create(
-                    new ModelProviderId(admission.providerId()),
+                    new ModelProviderId(admission.key().providerId()),
                     "1",
                     new ModelDefinitionId("gemini-test"),
                     "1",
-                    admission.providerModelId(),
+                    admission.key().providerModelId(),
                     ModelApiStyles.GOOGLE_GEMINI_ADAPTER,
                     GeminiGenerateContentModel.ADAPTER_VERSION,
-                    admission.apiStyle(),
-                    admission.dialect(),
+                    admission.key().apiStyle(),
+                    admission.key().dialect(),
                     URI.create("http://127.0.0.1:8317/v1beta"),
                     new CredentialRef(GeminiGenerateContentModel.CLIPROXY_CREDENTIAL_REF),
                     true,
@@ -56,17 +56,19 @@ class GeminiModelProfileFactoryTest {
                     .isEqualTo(reasoningSnapshot.contextWindow());
             assertThat(reasoningProfile.streaming().usageStreaming()).isTrue();
             assertThat(reasoningProfile.streaming().reasoningStreaming()).isFalse();
+            assertThat(reasoningProfile.imageInput()).isPresent();
+            assertThat(reasoningProfile.imageInput().get().maxTotalBytes()).isEqualTo(12 * 1024 * 1024L);
 
             ResolvedModelSnapshot nonReasoningSnapshot = ResolvedModelSnapshot.create(
-                    new ModelProviderId(admission.providerId()),
+                    new ModelProviderId(admission.key().providerId()),
                     "1",
                     new ModelDefinitionId("gemini-test-non-reasoning"),
                     "1",
-                    admission.providerModelId(),
+                    admission.key().providerModelId(),
                     ModelApiStyles.GOOGLE_GEMINI_ADAPTER,
                     GeminiGenerateContentModel.ADAPTER_VERSION,
-                    admission.apiStyle(),
-                    admission.dialect(),
+                    admission.key().apiStyle(),
+                    admission.key().dialect(),
                     URI.create("http://127.0.0.1:8317/v1beta"),
                     new CredentialRef(GeminiGenerateContentModel.CLIPROXY_CREDENTIAL_REF),
                     true,
@@ -85,6 +87,8 @@ class GeminiModelProfileFactoryTest {
             assertThat(nonReasoningProfile.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.NONE);
             assertThat(nonReasoningProfile.allowedReasoningModes()).containsExactly(ModelReasoningMode.DISABLED);
             assertThat(nonReasoningProfile.toolReasoningContinuationRequired()).isFalse();
+            assertThat(nonReasoningProfile.imageInput()).isPresent();
+            assertThat(nonReasoningProfile.imageInput().get().maxTotalBytes()).isEqualTo(12 * 1024 * 1024L);
         }
     }
 

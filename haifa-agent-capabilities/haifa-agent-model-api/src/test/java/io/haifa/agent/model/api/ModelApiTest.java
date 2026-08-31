@@ -12,6 +12,7 @@ import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ModelApiTest {
@@ -132,13 +133,119 @@ class ModelApiTest {
                 .containsExactly(uploaded);
         assertThatThrownBy(() -> chatRequest(imageSnapshot(ModelCapability.IMAGE_UPLOAD_INPUT), remote))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("image URL input capability");
+                .hasMessageContaining("image URL input");
         assertThat(chatRequest(imageSnapshot(ModelCapability.IMAGE_URL_INPUT), remote)
                         .messages())
                 .containsExactly(remote);
         assertThatThrownBy(() -> chatRequest(imageSnapshot(ModelCapability.IMAGE_URL_INPUT), uploaded))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("uploaded image input capability");
+                .hasMessageContaining("uploaded image input");
+    }
+
+    @Test
+    void chatRequestEnforcesImageCountAndTotalBytesBounds() {
+        ModelMessage message1 = ModelMessage.user(
+                "msg1",
+                List.of(
+                        new ImageDataPart("image/png", new byte[] {1, 2, 3}),
+                        new ImageDataPart("image/png", new byte[] {4, 5, 6}),
+                        new ImageDataPart("image/png", new byte[] {7, 8, 9})));
+        ModelMessage message2 = ModelMessage.user(
+                "msg2",
+                List.of(
+                        new ImageDataPart("image/png", new byte[] {10, 11, 12}),
+                        new ImageDataPart("image/png", new byte[] {13, 14, 15})));
+
+        // 3 + 2 = 5 images across messages exceeds request limit of 4
+        assertThatThrownBy(() -> new AgentChatRequest(
+                        new ModelCallId("call-1"),
+                        new AgentRunId("run-1"),
+                        1,
+                        1,
+                        imageSnapshot(ModelCapability.IMAGE_UPLOAD_INPUT),
+                        List.of(message1, message2),
+                        List.of(),
+                        1024,
+                        Duration.ofSeconds(5),
+                        Map.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("exceeds maximum allowed (4)");
+    }
+
+    @Test
+    void chatRequestValidatesAgainstCustomFrozenImageInputProfile() {
+        ImageInputProfile customProfile = new ImageInputProfile(
+                Set.of(ModelImageSource.UPLOAD), Set.of("image/png"), 2, 100, 150, 50, false, Set.of());
+        EffectiveModelParameters params = new EffectiveModelParameters(
+                new ModelDefinitionId("image-model"),
+                "1.0",
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                ModelReasoningPolicy.disabled(),
+                512,
+                java.util.Optional.of(customProfile));
+
+        ResolvedModelSnapshot snapshot =
+                imageSnapshot(ModelCapability.IMAGE_UPLOAD_INPUT).withEffectiveParameters(params);
+
+        // 1. Valid request passes
+        ModelMessage validMsg = ModelMessage.user("valid", List.of(new ImageDataPart("image/png", new byte[50])));
+        AgentChatRequest req = chatRequest(snapshot, validMsg);
+        assertThat(req.messages()).containsExactly(validMsg);
+
+        // 2. Count limit (2) exceeded with 3 images
+        ModelMessage msg3 = ModelMessage.user(
+                "too many",
+                List.of(
+                        new ImageDataPart("image/png", new byte[10]),
+                        new ImageDataPart("image/png", new byte[10]),
+                        new ImageDataPart("image/png", new byte[10])));
+        assertThatThrownBy(() -> chatRequest(snapshot, msg3))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("exceeds maximum allowed (2)");
+
+        // 3. Single item limit (100) exceeded
+        ModelMessage msgLargeItem =
+                ModelMessage.user("large item", List.of(new ImageDataPart("image/png", new byte[101])));
+        assertThatThrownBy(() -> chatRequest(snapshot, msgLargeItem))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("exceeds maximum allowed (100 bytes)");
+
+        // 4. Total bytes limit (150) exceeded with two 80-byte images (total 160)
+        ModelMessage msgTotal = ModelMessage.user(
+                "large total",
+                List.of(new ImageDataPart("image/png", new byte[80]), new ImageDataPart("image/png", new byte[80])));
+        assertThatThrownBy(() -> chatRequest(snapshot, msgTotal))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("exceeds request maximum (150)");
+
+        // 5. Unsupported media type (image/jpeg)
+        ModelMessage msgJpeg = ModelMessage.user("jpeg", List.of(new ImageDataPart("image/jpeg", new byte[10])));
+        assertThatThrownBy(() -> chatRequest(snapshot, msgJpeg))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("image/jpeg' is not supported");
+
+        // 6. Text-only model rejects images
+        ResolvedModelSnapshot textOnlySnapshot = ResolvedModelSnapshot.create(
+                new ModelProviderId("text-provider"),
+                "provider-v1",
+                new ModelDefinitionId("text-model"),
+                "model-v1",
+                "text-model",
+                "openai-compatible",
+                "adapter-v1",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "standard",
+                URI.create("https://models.example.com/v1"),
+                new CredentialRef("env://MODEL_API_KEY"),
+                true,
+                EnumSet.of(ModelCapability.TEXT_CHAT),
+                8192,
+                1024,
+                Map.of(),
+                Map.of());
+        assertThatThrownBy(() -> chatRequest(textOnlySnapshot, validMsg))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("selected model does not support image input");
     }
 
     @Test

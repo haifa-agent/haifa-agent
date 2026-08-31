@@ -632,22 +632,63 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private static void requireMediaInput(PersonalModelOption model, List<ContentPart> inputs) {
-        if (inputs.stream().anyMatch(ImageUrlContentPart.class::isInstance)
-                && !supportsImageInput(model, "IMAGE_URL_INPUT")) {
-            throw new IllegalArgumentException("selected model does not support image URL input");
+        List<ImageUrlContentPart> urlImages = inputs.stream()
+                .filter(ImageUrlContentPart.class::isInstance)
+                .map(ImageUrlContentPart.class::cast)
+                .toList();
+        List<StoredImageContentPart> uploadImages = inputs.stream()
+                .filter(StoredImageContentPart.class::isInstance)
+                .map(StoredImageContentPart.class::cast)
+                .toList();
+
+        int totalImages = urlImages.size() + uploadImages.size();
+        if (totalImages > 0) {
+            var imageInputOpt = model.imageInput();
+            if (imageInputOpt.isEmpty()) {
+                throw new IllegalArgumentException("selected model does not support image input");
+            }
+            var imageInput = imageInputOpt.get();
+            if (totalImages > imageInput.maxImagesPerRequest()) {
+                throw new IllegalArgumentException("number of images (" + totalImages + ") exceeds maximum allowed ("
+                        + imageInput.maxImagesPerRequest() + ")");
+            }
+            if (!urlImages.isEmpty()) {
+                if (!imageInput.allowedSources().contains(io.haifa.agent.model.api.ModelImageSource.URL)
+                        || !model.capabilities().contains("IMAGE_URL_INPUT")) {
+                    throw new IllegalArgumentException("selected model does not support image URL input");
+                }
+                for (var urlImg : urlImages) {
+                    if (urlImg.url().toASCIIString().length() > imageInput.maxUrlCharacters()) {
+                        throw new IllegalArgumentException("image URL length exceeds maximum allowed");
+                    }
+                }
+            }
+            if (!uploadImages.isEmpty()) {
+                if (!imageInput.allowedSources().contains(io.haifa.agent.model.api.ModelImageSource.UPLOAD)
+                        || !model.capabilities().contains("IMAGE_UPLOAD_INPUT")) {
+                    throw new IllegalArgumentException("selected model does not support uploaded image input");
+                }
+                long totalBytes = 0;
+                for (var uploadImg : uploadImages) {
+                    if (!imageInput.supportedMediaTypes().contains(uploadImg.mediaType())) {
+                        throw new IllegalArgumentException("image media type '" + uploadImg.mediaType()
+                                + "' is not supported by the selected model");
+                    }
+                    if (uploadImg.sizeBytes() > imageInput.maxBytesPerItem()) {
+                        throw new IllegalArgumentException("image size exceeds maximum allowed per item");
+                    }
+                    totalBytes += uploadImg.sizeBytes();
+                }
+                if (totalBytes > imageInput.maxTotalBytes()) {
+                    throw new IllegalArgumentException("total image data bytes exceeds request maximum");
+                }
+            }
         }
-        if (inputs.stream().anyMatch(StoredImageContentPart.class::isInstance)
-                && !supportsImageInput(model, "IMAGE_UPLOAD_INPUT")) {
-            throw new IllegalArgumentException("selected model does not support uploaded image input");
-        }
+
         if (inputs.stream().anyMatch(StoredAudioContentPart.class::isInstance)
                 && !model.capabilities().contains("AUDIO_INPUT")) {
             throw new IllegalArgumentException("selected model does not support audio input");
         }
-    }
-
-    private static boolean supportsImageInput(PersonalModelOption model, String capability) {
-        return model.capabilities().contains(capability) || model.capabilities().contains("IMAGE_INPUT");
     }
 
     private static InteractionViewValue interaction(InteractionView value) {

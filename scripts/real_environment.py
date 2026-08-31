@@ -31,6 +31,8 @@ DEFAULT_MODEL_ID = "deepseek-chat-flash"
 EXPECTED_SERVER_START_CLASS = (
     "io.haifa.agent.personalassistant.server.PersonalAssistantServerApplication"
 )
+BACKEND_LAUNCH_MODES = ("jar", "classpath")
+DEVELOPMENT_CLASSPATH_ENVIRONMENT = "HAIFA_PERSONAL_DEV_CLASSPATH"
 BAILIAN_DEFAULT_MODEL_ID = "qwen3.7-max-2026-05-17"
 CLIPROXY_GEMINI_MODEL_ID = "gemini-cliproxy-flash"
 ANTIGRAVITY_DIRECT_MODEL_ID = "antigravity-gemini"
@@ -123,6 +125,13 @@ class AntigravityConfiguration:
     endpoint: str
     provider_model_id: str
     proxy: str
+
+
+@dataclass(frozen=True)
+class BackendLaunch:
+    command: str
+    arguments: tuple[str, ...]
+    environment: dict[str, str]
 
 
 def warn(message: str) -> None:
@@ -245,6 +254,12 @@ def parser() -> argparse.ArgumentParser:
         default=os.getenv("HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST", ""),
     )
     result.add_argument("--startup-timeout-seconds", type=int, default=180)
+    result.add_argument(
+        "--backend-launch-mode",
+        choices=BACKEND_LAUNCH_MODES,
+        default=os.getenv("HAIFA_PERSONAL_BACKEND_LAUNCH_MODE", "jar").strip() or "jar",
+        help="Launch the backend from an executable JAR or an IDE-provided compiled classpath.",
+    )
     result.add_argument("--rebuild", action="store_true")
     result.add_argument("--stop", action="store_true")
     result.add_argument("--force", action="store_true")
@@ -261,6 +276,8 @@ def validate_arguments(args: argparse.Namespace) -> None:
         fail("--force may only be used with --stop.")
     if args.dry_run and not args.stop:
         fail("--dry-run may only be used with --stop.")
+    if not args.stop and args.backend_launch_mode == "classpath" and args.rebuild:
+        fail("--backend-launch-mode classpath does not support --rebuild.")
 
 
 def paths() -> Paths:
@@ -702,7 +719,7 @@ def definitions(value: Paths) -> tuple[ServiceDefinition, ...]:
             "personal-backend",
             BACKEND_PORT,
             "java.exe" if os.name == "nt" else "java",
-            (str(value.runtime / "backend"), str(value.server)),
+            (str(value.runtime / "backend"), str(value.server), EXPECTED_SERVER_START_CLASS),
         ),
         ServiceDefinition(
             "utility-mcp",
@@ -1349,6 +1366,7 @@ def backend_environment(
                 f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
                 f"{prefix}_MODELS_0_CAPABILITIES_2": "STRUCTURED_OUTPUT",
                 f"{prefix}_MODELS_0_CAPABILITIES_3": "REASONING",
+                f"{prefix}_MODELS_0_CAPABILITIES_4": "IMAGE_UPLOAD_INPUT",
                 f"{prefix}_MODELS_0_CONTEXTWINDOW": "131072",
                 f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
             }
@@ -1432,6 +1450,32 @@ def backend_build_arguments(rebuild: bool) -> tuple[str, ...]:
     )
 
 
+def backend_launch(
+    java: str,
+    launch_mode: str,
+    server_jar: Path | None,
+    environment: Mapping[str, str] | None = None,
+) -> BackendLaunch:
+    if launch_mode == "jar":
+        if server_jar is None:
+            fail("The executable Personal Assistant Server JAR is unavailable.")
+        return BackendLaunch(java, ("-jar", str(server_jar)), {})
+    if launch_mode != "classpath":
+        fail(f"Unsupported backend launch mode: {launch_mode}")
+    source = os.environ if environment is None else environment
+    classpath = str(source.get(DEVELOPMENT_CLASSPATH_ENVIRONMENT, "")).strip()
+    if not classpath:
+        fail(
+            f"{DEVELOPMENT_CLASSPATH_ENVIRONMENT} is required for classpath backend launch. "
+            "Run PersonalAssistantRealEnvironmentMain from the IDE instead of invoking this mode directly."
+        )
+    return BackendLaunch(
+        java,
+        (EXPECTED_SERVER_START_CLASS,),
+        {"CLASSPATH": classpath},
+    )
+
+
 def start_environment(args: argparse.Namespace, value: Paths) -> None:
     if args.rebuild and any(port_open(port) for port in (FRONTEND_PORT, BACKEND_PORT, MCP_PORT)):
         fail(rebuild_port_conflict_message())
@@ -1495,7 +1539,11 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         directory.mkdir(parents=True, exist_ok=True)
         directory.chmod(stat.S_IRWXU)
 
-    server_jar = ensure_executable_server_jar(value, args.rebuild)
+    server_jar = (
+        ensure_executable_server_jar(value, args.rebuild)
+        if args.backend_launch_mode == "jar"
+        else None
+    )
 
     backend_health_uri = f"http://127.0.0.1:{BACKEND_PORT}/actuator/health"
     if http_healthy(backend_health_uri):
@@ -1506,7 +1554,13 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
             "No process was stopped."
         )
     else:
-        runtime_server_jar = stage_server_jar(server_jar, value)
+        runtime_server_jar = stage_server_jar(server_jar, value) if server_jar is not None else None
+
+    backend_process = backend_launch(
+        java,
+        args.backend_launch_mode,
+        runtime_server_jar,
+    )
 
     serve_script = value.web / "node_modules/serve/build/main.js"
     if not serve_script.is_file():
@@ -1538,34 +1592,36 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         args.startup_timeout_seconds,
         value,
     )
+    personal_backend_environment = backend_environment(
+        deepseek_key,
+        default_model_id,
+        openai,
+        aliyun_key,
+        continuation,
+        value,
+        skill_root,
+        trusted_manifest,
+        bailian,
+        kimi_key,
+        bigmodel_key,
+        browserless_token,
+        tavily_key,
+        args.web_search_provider,
+        args.web_fetch_provider,
+        cliproxy=cliproxy,
+        siliconflow_key=siliconflow_key,
+        antigravity=antigravity,
+    )
+    personal_backend_environment.update(backend_process.environment)
     ensure_service(
         records,
         "personal-backend",
         BACKEND_PORT,
         backend_health_uri,
         value.runtime / "backend",
-        java,
-        ("-jar", str(runtime_server_jar)),
-        backend_environment(
-            deepseek_key,
-            default_model_id,
-            openai,
-            aliyun_key,
-            continuation,
-            value,
-            skill_root,
-            trusted_manifest,
-            bailian,
-            kimi_key,
-            bigmodel_key,
-            browserless_token,
-            tavily_key,
-            args.web_search_provider,
-            args.web_fetch_provider,
-            cliproxy=cliproxy,
-            siliconflow_key=siliconflow_key,
-            antigravity=antigravity,
-        ),
+        backend_process.command,
+        backend_process.arguments,
+        personal_backend_environment,
         args.startup_timeout_seconds,
         value,
     )

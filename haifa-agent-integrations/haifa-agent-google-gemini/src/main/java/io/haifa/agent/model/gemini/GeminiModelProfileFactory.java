@@ -3,6 +3,7 @@ package io.haifa.agent.model.gemini;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelExecutionLimits;
+import io.haifa.agent.model.api.ModelIoProfile;
 import io.haifa.agent.model.api.ModelPartialOutputFailureBehavior;
 import io.haifa.agent.model.api.ModelProfileStatus;
 import io.haifa.agent.model.api.ModelReasoningBehavior;
@@ -39,7 +40,14 @@ public final class GeminiModelProfileFactory {
                         snapshot.nativeStreaming(),
                         false,
                         ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                ioProfile(snapshot),
                 governed ? ModelProfileStatus.VERIFIED : ModelProfileStatus.UNVERIFIED,
                 verifiedOn);
+    }
+
+    private static ModelIoProfile ioProfile(ResolvedModelSnapshot snapshot) {
+        return GeminiBindingRegistry.find(snapshot)
+                .map(GeminiBindingRegistry.AdmittedBinding::ioProfile)
+                .orElse(ModelIoProfile.textOnly());
     }
 }

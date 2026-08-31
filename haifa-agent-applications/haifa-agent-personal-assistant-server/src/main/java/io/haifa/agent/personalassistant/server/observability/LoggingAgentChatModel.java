@@ -3,6 +3,8 @@ package io.haifa.agent.personalassistant.server.observability;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ImageDataPart;
+import io.haifa.agent.model.api.ImageUrlPart;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelStreamSink;
 import java.util.Objects;
@@ -38,14 +40,18 @@ public final class LoggingAgentChatModel implements AgentChatModel {
     private static AgentChatResponse invokeLogged(AgentChatRequest request, Supplier<AgentChatResponse> invocation) {
         Objects.requireNonNull(request, "request must not be null");
         long started = System.nanoTime();
+        MediaInputSummary mediaInputs = summarizeMediaInputs(request);
         LOGGER.info(
-                "event=model.call.started runId={} callId={} iteration={} attempt={} messageCount={} toolCount={} timeoutMillis={}",
+                "event=model.call.started runId={} callId={} iteration={} attempt={} messageCount={} toolCount={} imageUrlCount={} imageDataCount={} imageDataBytes={} timeoutMillis={}",
                 request.runId().value(),
                 request.callId().value(),
                 request.iteration(),
                 request.attempt(),
                 request.messages().size(),
                 request.tools().size(),
+                mediaInputs.imageUrlCount(),
+                mediaInputs.imageDataCount(),
+                mediaInputs.imageDataBytes(),
                 request.timeout().toMillis());
         try {
             AgentChatResponse response = invocation.get();
@@ -88,4 +94,24 @@ public final class LoggingAgentChatModel implements AgentChatModel {
     private static long elapsedMillis(long started) {
         return Math.max(0, (System.nanoTime() - started) / 1_000_000);
     }
+
+    private static MediaInputSummary summarizeMediaInputs(AgentChatRequest request) {
+        int imageUrlCount = 0;
+        int imageDataCount = 0;
+        long imageDataBytes = 0;
+        for (var message : request.messages()) {
+            for (var image : message.images()) {
+                if (image instanceof ImageUrlPart) {
+                    imageUrlCount++;
+                } else if (image instanceof ImageDataPart data) {
+                    imageDataCount++;
+                    imageDataBytes += data.sizeBytes();
+                }
+            }
+        }
+        return new MediaInputSummary(imageUrlCount, imageDataCount, imageDataBytes);
+    }
+
+    /** Bounded request-shape telemetry; URLs, image bytes, and message content are intentionally excluded. */
+    private record MediaInputSummary(int imageUrlCount, int imageDataCount, long imageDataBytes) {}
 }

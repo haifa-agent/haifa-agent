@@ -54,7 +54,12 @@ public final class DefaultModelParameterResolver {
             fail(ModelParameterResolutionFailure.OUTPUT_LIMIT_UNSUPPORTED);
         }
         return new EffectiveModelParameters(
-                request.bindingId(), profile.version(), profile.digest(), reasoning, request.maxOutputTokens());
+                request.bindingId(),
+                profile.version(),
+                profile.digest(),
+                reasoning,
+                request.maxOutputTokens(),
+                profile.imageInput());
     }
 
     private static void fail(ModelParameterResolutionFailure failure) {
