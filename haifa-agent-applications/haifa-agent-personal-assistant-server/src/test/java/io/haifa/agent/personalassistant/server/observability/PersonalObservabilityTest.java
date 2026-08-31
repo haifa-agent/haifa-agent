@@ -17,7 +17,10 @@ import ch.qos.logback.core.read.ListAppender;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ImageDataPart;
+import io.haifa.agent.model.api.ImageUrlPart;
 import io.haifa.agent.model.api.ModelCallId;
+import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelInvocationException;
@@ -27,11 +30,13 @@ import io.haifa.agent.model.api.ModelStreamSink;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
+import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -42,6 +47,7 @@ class PersonalObservabilityTest {
     private static final String SECRET_RESPONSE = "response-secret-must-not-be-logged";
     private static final String SECRET_FAILURE = "failure-secret-must-not-be-logged";
     private static final String SECRET_COMMAND = "command-secret-must-not-be-logged";
+    private static final String SECRET_IMAGE_URL = "https://image-secret-must-not-be-logged.example/path";
 
     @Test
     void modelLogsContainOperationalMetadataButNotPayloadsOrFailureMessages() {
@@ -92,6 +98,30 @@ class PersonalObservabilityTest {
                             "providerCode=invalid_tool_schema",
                             "safeMessage=model provider request failed with HTTP 400")
                     .doesNotContain(SECRET_PROMPT, SECRET_RESPONSE, SECRET_FAILURE);
+        } finally {
+            detach(capture);
+        }
+    }
+
+    @Test
+    void modelLogsMediaSourceCountsWithoutImagePayloadsOrUrls() {
+        LogCapture capture = attach(LoggingAgentChatModel.class);
+        AgentChatResponse response = new AgentChatResponse(
+                "response-1",
+                "personal-test",
+                SECRET_RESPONSE,
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(12, 3),
+                "",
+                Map.of());
+
+        try {
+            new LoggingAgentChatModel(ignored -> response).invoke(requestWithImages());
+
+            assertThat(formatted(capture))
+                    .contains("imageUrlCount=1", "imageDataCount=1", "imageDataBytes=3")
+                    .doesNotContain(SECRET_PROMPT, SECRET_IMAGE_URL);
         } finally {
             detach(capture);
         }
@@ -270,6 +300,26 @@ class PersonalObservabilityTest {
                 1,
                 mock(ResolvedModelSnapshot.class),
                 List.of(ModelMessage.text(ModelMessageRole.USER, SECRET_PROMPT)),
+                List.of(),
+                256,
+                Duration.ofSeconds(5),
+                Map.of());
+    }
+
+    private static AgentChatRequest requestWithImages() {
+        ResolvedModelSnapshot model = mock(ResolvedModelSnapshot.class);
+        when(model.capabilities()).thenReturn(Set.of(ModelCapability.IMAGE_URL_INPUT, ModelCapability.IMAGE_UPLOAD_INPUT));
+        return new AgentChatRequest(
+                new ModelCallId("call-log-media-1"),
+                new AgentRunId("run-log-media-1"),
+                1,
+                1,
+                model,
+                List.of(ModelMessage.user(
+                        SECRET_PROMPT,
+                        List.of(
+                                new ImageUrlPart(URI.create(SECRET_IMAGE_URL)),
+                                new ImageDataPart("image/png", new byte[] {1, 2, 3})))),
                 List.of(),
                 256,
                 Duration.ofSeconds(5),
