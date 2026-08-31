@@ -77,10 +77,20 @@ export interface Model {
   contextWindow: number;
   maxOutputTokens: number;
   preferenceSchemaVersion: string;
-  profileVersion: string;
-  profileDigest: string;
   controls: ModelControls;
   recommendedPreferences: ModelPreferences;
+  imageInput?: ImageInputView | null;
+}
+
+export interface ImageInputView {
+  allowedSources: Array<"UPLOAD" | "URL">;
+  supportedMediaTypes: Array<string>;
+  maxImagesPerRequest: number;
+  maxBytesPerItem: number;
+  maxTotalBytes: number;
+  maxUrlCharacters: number;
+  detailSupported: boolean;
+  allowedDetails: Array<"AUTO" | "LOW" | "HIGH">;
 }
 
 export interface ModelConnection {
@@ -171,13 +181,12 @@ export interface ModelSelection {
   preferences: ModelPreferences;
   revision: number;
   available: boolean;
+  selectionCompatibility: "CURRENT" | "RESELECTION_REQUIRED" | "UNAVAILABLE";
 }
 
 export interface SelectModel {
   modelBindingId: string;
   preferenceSchemaVersion: string;
-  profileVersion: string;
-  profileDigest: string;
   preferences: ModelPreferences;
 }
 

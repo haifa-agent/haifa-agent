@@ -169,10 +169,21 @@ public final class PersonalApiMapper {
                 value.contextWindow(),
                 value.maxOutputTokens(),
                 value.preferenceSchemaVersion(),
-                value.profileVersion(),
-                value.profileDigest(),
                 controls(value.controls()),
-                preferences(value.recommendedPreferences()));
+                preferences(value.recommendedPreferences()),
+                value.imageInput().map(this::imageInput).orElse(null));
+    }
+
+    private PersonalApiDtos.ImageInputView imageInput(io.haifa.agent.model.api.ImageInputProfile value) {
+        return new PersonalApiDtos.ImageInputView(
+                value.allowedSources().stream().map(Enum::name).sorted().toList(),
+                value.supportedMediaTypes().stream().sorted().toList(),
+                value.maxImagesPerRequest(),
+                value.maxBytesPerItem(),
+                value.maxTotalBytes(),
+                value.maxUrlCharacters(),
+                value.detailSupported(),
+                value.allowedDetails().stream().map(Enum::name).sorted().toList());
     }
 
     private PersonalApiDtos.ModelControls controls(
@@ -230,7 +241,11 @@ public final class PersonalApiMapper {
 
     public PersonalApiDtos.ModelSelection modelSelection(PersonalAssistantApplication.ModelSelectionView value) {
         return new PersonalApiDtos.ModelSelection(
-                model(value.model()), preferences(value.preferences()), value.revision(), value.available());
+                model(value.model()),
+                preferences(value.preferences()),
+                value.revision(),
+                value.available(),
+                value.selectionCompatibility().name());
     }
 
     public PersonalApiDtos.Turn turn(PersonalAssistantApplication.TurnView value) {

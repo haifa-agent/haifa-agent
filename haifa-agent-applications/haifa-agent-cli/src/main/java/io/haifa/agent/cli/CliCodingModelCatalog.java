@@ -1,7 +1,11 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.product.coding.CodingModelCatalog;
+import io.haifa.agent.application.project.product.coding.CodingModelControls;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
+import io.haifa.agent.application.project.product.coding.CodingModelPreferences;
+import io.haifa.agent.application.project.product.coding.CodingModelState;
+import io.haifa.agent.application.project.product.coding.CodingResponseMode;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.model.anthropic.AnthropicModelProfileFactory;
@@ -14,7 +18,10 @@ import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelReasoningBehavior;
+import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelStatus;
+import io.haifa.agent.model.api.ProviderHealthStatus;
 import io.haifa.agent.model.api.ProviderStatus;
 import io.haifa.agent.model.core.ImmutableModelCatalog;
 import io.haifa.agent.model.core.InMemoryProviderHealthRegistry;
@@ -30,8 +37,11 @@ import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /** CLI product adapter over model-core's immutable, deterministic model platform. */
 final class CliCodingModelCatalog implements CodingModelCatalog {
@@ -39,11 +49,22 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
             EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING);
 
     private final String defaultModelId;
+    private final Map<String, CliConfiguration.Model> models;
     private final Map<String, ModelBindingProfile> profiles;
     private final StaticModelPlatform platform;
+    private final Function<CliConfiguration.Model, CodingModelState.Connection> connectionState;
 
     CliCodingModelCatalog(CliConfiguration configuration) {
+        this(configuration, ignored -> CodingModelState.Connection.CONNECTED);
+    }
+
+    CliCodingModelCatalog(
+            CliConfiguration configuration,
+            Function<CliConfiguration.Model, CodingModelState.Connection> connectionState) {
+        this.connectionState = Objects.requireNonNull(connectionState, "connectionState must not be null");
         defaultModelId = configuration.model().id();
+        models = configuration.availableModels().stream()
+                .collect(Collectors.toUnmodifiableMap(CliConfiguration.Model::id, Function.identity()));
         Map<String, List<CliConfiguration.Model>> grouped = new LinkedHashMap<>();
         configuration.availableModels().forEach(model -> grouped.computeIfAbsent(
                         model.providerId(), ignored -> new ArrayList<>())
@@ -84,24 +105,17 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
     @Override
     public List<CodingModelOption> available(TenantRef tenant, PrincipalRef principal) {
         return platform.listAvailable(new ModelAvailabilityRequest(tenant, principal, REQUIRED)).stream()
-                .flatMap(provider -> provider.models().stream()
-                        .filter(model -> Optional.ofNullable(
-                                        profiles.get(model.id().value()))
-                                .map(ModelBindingProfile::selectable)
-                                .orElse(false))
-                        .map(model -> {
-                            ModelBindingProfile profile =
-                                    profiles.get(model.id().value());
-                            return new CodingModelOption(
-                                    model.id().value(),
-                                    model.displayName(),
-                                    provider.id().value(),
-                                    provider.displayName(),
-                                    profile.capabilities().stream()
-                                            .map(Enum::name)
-                                            .collect(java.util.stream.Collectors.toSet()),
-                                    profile.contextWindowTokens());
-                        }))
+                .flatMap(provider -> provider.models().stream().map(model -> {
+                    ModelBindingProfile profile = profiles.get(model.id().value());
+                    return toOption(
+                            model.id().value(),
+                            model.displayName(),
+                            provider.id().value(),
+                            provider.displayName(),
+                            profile,
+                            provider.healthStatus(),
+                            connectionState.apply(models.get(model.id().value())));
+                }))
                 .toList();
     }
 
@@ -110,9 +124,102 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
         Optional<CodingModelOption> option = available(tenant, principal).stream()
                 .filter(value -> value.id().equals(modelId))
                 .findFirst();
-        option.ifPresent(ignored -> platform.select(
-                new ModelSelectionRequest(tenant, principal, new ModelDefinitionId(modelId), REQUIRED)));
-        return option;
+        option.filter(value -> value.state().bindingAvailability() == CodingModelState.BindingAvailability.AVAILABLE)
+                .ifPresent(ignored -> platform.select(
+                        new ModelSelectionRequest(tenant, principal, new ModelDefinitionId(modelId), REQUIRED)));
+        return option.filter(
+                value -> value.state().bindingAvailability() == CodingModelState.BindingAvailability.AVAILABLE);
+    }
+
+    private static CodingModelOption toOption(
+            String bindingId,
+            String displayName,
+            String providerId,
+            String providerDisplayName,
+            ModelBindingProfile profile,
+            ProviderHealthStatus healthStatus,
+            CodingModelState.Connection connection) {
+        CodingModelState state = new CodingModelState(
+                Objects.requireNonNull(connection, "connection must not be null"),
+                profile.selectable()
+                        ? CodingModelState.BindingAvailability.AVAILABLE
+                        : CodingModelState.BindingAvailability.UNAVAILABLE,
+                runtimeStatus(healthStatus),
+                CodingModelState.RunScope.IDLE);
+        String reason = profile.selectable() ? "" : "Binding profile has not passed contract verification";
+        CodingModelControls controls =
+                profile.selectable() ? controlsFromProfile(profile) : CodingModelControls.unavailable();
+        return new CodingModelOption(
+                bindingId,
+                displayName,
+                providerId,
+                providerDisplayName,
+                profile.capabilities().stream().map(Enum::name).collect(Collectors.toSet()),
+                profile.contextWindowTokens(),
+                profile.executionLimits().maximumOutputTokens(),
+                state,
+                reason,
+                controls,
+                CodingModelPreferences.recommended(),
+                profile.imageInput());
+    }
+
+    private static CodingModelControls controlsFromProfile(ModelBindingProfile profile) {
+        List<ModelReasoningEffort> efforts =
+                profile.allowedReasoningEfforts().stream().sorted().toList();
+        ModelReasoningEffort recommendedEffort = efforts.isEmpty()
+                ? ModelReasoningEffort.MEDIUM
+                : efforts.contains(ModelReasoningEffort.MEDIUM) ? ModelReasoningEffort.MEDIUM : efforts.getFirst();
+
+        ModelReasoningBehavior behavior = profile.reasoningBehavior();
+        List<CodingResponseMode> modes =
+                switch (behavior) {
+                    case NONE, ALWAYS, ADAPTIVE -> List.of(CodingResponseMode.RECOMMENDED);
+                    case OPTIONAL ->
+                        List.of(CodingResponseMode.FAST, CodingResponseMode.RECOMMENDED, CodingResponseMode.DEEP);
+                };
+        boolean responseReadOnly = modes.size() == 1;
+        boolean effortVisible = behavior == ModelReasoningBehavior.ALWAYS && efforts.size() > 1
+                || behavior == ModelReasoningBehavior.OPTIONAL && efforts.size() > 1;
+        return new CodingModelControls(
+                new CodingModelControls.ResponseModeControl(
+                        "responseMode",
+                        true,
+                        responseReadOnly,
+                        modes,
+                        CodingResponseMode.RECOMMENDED,
+                        responseSummary(behavior)),
+                new CodingModelControls.ReasoningEffortControl(
+                        "reasoningEffort",
+                        effortVisible,
+                        !effortVisible,
+                        effortVisible ? efforts : List.of(),
+                        recommendedEffort,
+                        effortSummary(behavior, effortVisible)));
+    }
+
+    private static CodingModelState.RuntimeStatus runtimeStatus(ProviderHealthStatus status) {
+        return switch (status) {
+            case RATE_LIMITED -> CodingModelState.RuntimeStatus.RATE_LIMITED;
+            case UNAVAILABLE -> CodingModelState.RuntimeStatus.UNREACHABLE;
+            case UNKNOWN, HEALTHY, DEGRADED -> CodingModelState.RuntimeStatus.NORMAL;
+        };
+    }
+
+    private static String responseSummary(ModelReasoningBehavior behavior) {
+        return switch (behavior) {
+            case NONE -> "Standard response generation";
+            case ALWAYS -> "Reasoning is required by this verified model";
+            case OPTIONAL -> "Choose a reviewed response mode";
+            case ADAPTIVE -> "Uses the verified adaptive reasoning policy";
+        };
+    }
+
+    private static String effortSummary(ModelReasoningBehavior behavior, boolean visible) {
+        if (visible) return "Choose from verified reasoning effort levels";
+        return behavior == ModelReasoningBehavior.NONE
+                ? "Reasoning is not supported"
+                : "Reasoning effort is fixed by the verified model policy";
     }
 
     private static ModelProviderDefinition provider(String providerId, List<CliConfiguration.Model> models) {

@@ -126,7 +126,9 @@ public final class PersonalAssistantController {
                                 key(idempotencyKey),
                                 text(request.displayName(), "displayName"),
                                 text(request.message(), "message"),
-                                modelSelection(request.modelSelection()),
+                                text(request.modelSelection().modelBindingId(), "modelBindingId"),
+                                text(request.modelSelection().preferenceSchemaVersion(), "preferenceSchemaVersion"),
+                                modelPreferences(request.modelSelection()),
                                 mediaInputs(request.images(), request.audios())));
         value.activeRunId().ifPresent(runId -> runLogging.observe(value.id(), runId, "conversation-created"));
         return ResponseEntity.created(URI.create("/api/v1/conversations/" + value.id()))
@@ -141,26 +143,26 @@ public final class PersonalAssistantController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody PersonalApiDtos.SelectModel request) {
         return mapper.modelSelection(application.selectModel(
-                conversationId, revision(ifMatch), key(idempotencyKey), modelSelection(request)));
-    }
-
-    private static io.haifa.agent.personalassistant.application.PersonalModelSelectionRequest modelSelection(
-            PersonalApiDtos.SelectModel request) {
-        var preferences = java.util.Objects.requireNonNull(request.preferences(), "preferences must not be null");
-        return new io.haifa.agent.personalassistant.application.PersonalModelSelectionRequest(
+                conversationId,
+                revision(ifMatch),
+                key(idempotencyKey),
                 text(request.modelBindingId(), "modelBindingId"),
                 text(request.preferenceSchemaVersion(), "preferenceSchemaVersion"),
-                text(request.profileVersion(), "profileVersion"),
-                text(request.profileDigest(), "profileDigest"),
-                new io.haifa.agent.personalassistant.application.PersonalModelPreferences(
-                        io.haifa.agent.personalassistant.application.PersonalResponseMode.valueOf(
-                                text(preferences.responseMode(), "responseMode")),
-                        java.util.Optional.ofNullable(preferences.effort())
-                                .map(String::trim)
-                                .filter(value -> !value.isEmpty())
-                                .map(io.haifa.agent.model.api.ModelReasoningEffort::valueOf),
-                        io.haifa.agent.personalassistant.application.PersonalResponseLength.valueOf(
-                                text(preferences.responseLength(), "responseLength"))));
+                modelPreferences(request)));
+    }
+
+    private static io.haifa.agent.personalassistant.application.PersonalModelPreferences modelPreferences(
+            PersonalApiDtos.SelectModel request) {
+        var preferences = java.util.Objects.requireNonNull(request.preferences(), "preferences must not be null");
+        return new io.haifa.agent.personalassistant.application.PersonalModelPreferences(
+                io.haifa.agent.personalassistant.application.PersonalResponseMode.valueOf(
+                        text(preferences.responseMode(), "responseMode")),
+                java.util.Optional.ofNullable(preferences.effort())
+                        .map(String::trim)
+                        .filter(value -> !value.isEmpty())
+                        .map(io.haifa.agent.model.api.ModelReasoningEffort::valueOf),
+                io.haifa.agent.personalassistant.application.PersonalResponseLength.valueOf(
+                        text(preferences.responseLength(), "responseLength")));
     }
 
     @GetMapping("/conversations/{conversationId}")
