@@ -584,6 +584,38 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertEqual("tavily", arguments.web_search_provider)
         self.assertEqual("tavily", arguments.web_fetch_provider)
 
+    def test_backend_launch_mode_defaults_to_jar(self) -> None:
+        with mock.patch.dict(real_environment.os.environ):
+            real_environment.os.environ.pop("HAIFA_PERSONAL_BACKEND_LAUNCH_MODE", None)
+
+            arguments = real_environment.parser().parse_args([])
+
+        self.assertEqual("jar", arguments.backend_launch_mode)
+
+    def test_classpath_backend_launch_uses_current_compiled_classes_without_a_jar(self) -> None:
+        launch = real_environment.backend_launch(
+            "java",
+            "classpath",
+            None,
+            {"HAIFA_PERSONAL_DEV_CLASSPATH": "classes;dependencies"},
+        )
+
+        self.assertEqual("java", launch.command)
+        self.assertEqual((real_environment.EXPECTED_SERVER_START_CLASS,), launch.arguments)
+        self.assertEqual({"CLASSPATH": "classes;dependencies"}, launch.environment)
+
+    def test_classpath_backend_launch_fails_closed_without_an_ide_classpath(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "HAIFA_PERSONAL_DEV_CLASSPATH"):
+            real_environment.backend_launch("java", "classpath", None, {})
+
+    def test_classpath_backend_launch_rejects_rebuild(self) -> None:
+        arguments = real_environment.parser().parse_args(
+            ["--backend-launch-mode", "classpath", "--rebuild"]
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "does not support --rebuild"):
+            real_environment.validate_arguments(arguments)
+
     def test_optional_bailian_configuration_does_not_replace_the_verified_default(self) -> None:
         bailian = ("bailian-secret", "workspace-123", "cn-beijing")
 
@@ -739,7 +771,11 @@ class RealEnvironmentTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            (str(paths.runtime / "backend"), str(paths.server)),
+            (
+                str(paths.runtime / "backend"),
+                str(paths.server),
+                real_environment.EXPECTED_SERVER_START_CLASS,
+            ),
             backend.command_tokens,
         )
         with mock.patch.object(

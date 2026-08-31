@@ -58,6 +58,9 @@ Git/GH 目标、Operation Family 和恢复指标。公共逻辑位于 `analyze_c
 
 `start-real-environment.ps1`（Windows PowerShell）和 `start-real-environment.sh`（macOS/Linux）
 从仓库根目录启动、复用、验证或停止 Personal Assistant 的真实联调环境。两个入口统一调用 `real_environment.py`。
+需要从 IDE 直接运行当前编译结果、避免生成后端 JAR 时，运行测试源码集中的
+`PersonalAssistantRealEnvironmentMain`；该 Main 仍委托同一个 Python 生命周期实现，只把 IDE 当前
+classpath 作为后端启动输入，不复制 Provider 或凭据装配。
 运行方法和安全边界见
 [`haifa-agent-personal-assistant-server/REAL_ENVIRONMENT.md`](../haifa-agent-applications/haifa-agent-personal-assistant-server/REAL_ENVIRONMENT.md)。
 

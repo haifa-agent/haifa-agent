@@ -5,7 +5,7 @@
 | 组件 | 地址 | 启动方式 |
 | --- | --- | --- |
 | Personal Assistant Web | `http://127.0.0.1:20000/` | Node.js `serve` 直接提供 `dist/` |
-| Personal Assistant Server | `http://127.0.0.1:20001/` | Spring Boot executable JAR |
+| Personal Assistant Server | `http://127.0.0.1:20001/` | Spring Boot executable JAR，或 IDE 当前编译 classpath |
 | Utility MCP Server | `http://127.0.0.1:20002/mcp` | Maven Spring Boot Plugin |
 
 Web 在浏览器中直接请求 `http://127.0.0.1:20001/api/v1`。Server 已限定允许来自
@@ -83,12 +83,36 @@ $env:HAIFA_CLIPROXYAPI_MODEL_ID = 'gemini-3-flash' # optional
 `.ps1` 与同目录 `.sh` 只处理各自平台的参数入口和 Python 3 解释器发现；服务配置、构建、健康检查、
 状态文件、PID 身份校验与安全停止逻辑均由共用 Python 实现，两个入口保持同一行为。
 
+### 2.1 IDE 直接启动，不打包后端 JAR
+
+在 IDE 中运行测试源码集里的：
+
+```text
+io.haifa.agent.personalassistant.server.development.PersonalAssistantRealEnvironmentMain
+```
+
+该 Main 会把 IDE 已编译的模块 classpath 规范化为绝对路径，并以
+`--backend-launch-mode classpath` 调用同一个 `scripts/real_environment.py`。Provider 清单、Key 文件、
+Utility MCP、Web、端口、健康检查、PID 状态和停止流程仍由 Python 实现；Java 入口不维护第二份装配。
+因此修改 Java 源码后只需让 IDE 增量编译，再停止旧环境并重新运行该 Main，不会执行 Maven `package`、
+Spring Boot `repackage` 或 JAR staging。
+
+Main 参数会原样传给 Python，例如在 IDE Program arguments 中填写：
+
+```text
+--default-model-id antigravity-gemini
+```
+
+如 Python 不在默认 PATH，可在 IDE 环境变量中设置 `HAIFA_PYTHON_COMMAND` 为 Python 可执行文件绝对路径。
+`HAIFA_PERSONAL_DEV_CLASSPATH` 由 Main 自动注入，不应手工持久化。classpath 模式不接受 `--rebuild`；前端
+仍只在 `dist` 缺失时构建，显式全量重建继续使用脚本的 JAR 模式。
+
 脚本会依次完成：
 
 1. 校验本机工具、DeepSeek、所选 Web Provider Key、finance Skill 根目录和 Utility MCP 目录；
 2. 首次运行时生成随机 32 字节 Continuation Key，并持久化到
    `D:\workspace\ss-haifa-personal-continuation.txt`；
-3. 只在后端 JAR 不存在时构建后端；
+3. JAR 模式只在后端 JAR 不存在时构建后端；IDE classpath 模式直接使用当前编译结果；
 4. 按内容摘要把后端 JAR 复制到 `local-tmp/personal-assistant-real/backend/`，从运行副本启动，避免
    Java 进程锁定 Maven `target/` 下的构建产物；复制前校验 Spring Boot Manifest 和 `BOOT-INF`，
    遇到未完成 `repackage` 的普通 JAR 时自动重新执行 `package`，二次校验失败则拒绝启动；
