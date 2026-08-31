@@ -99,6 +99,8 @@ class PersonalAssistantWebFluxTest {
 
         assertThat(created.path("model").path("model").path("id").asText())
                 .isEqualTo(model.path("id").asText());
+        assertThat(created.path("model").path("selectionCompatibility").asText())
+                .isEqualTo("CURRENT");
         assertThat(created.path("model")
                         .path("preferences")
                         .path("responseMode")
@@ -154,6 +156,8 @@ class PersonalAssistantWebFluxTest {
                 .expectBody()
                 .jsonPath("$.model.id")
                 .isEqualTo(model.path("id").asText())
+                .jsonPath("$.selectionCompatibility")
+                .isEqualTo("CURRENT")
                 .jsonPath("$.model.profileDigest")
                 .doesNotExist()
                 .jsonPath("$.model.recommendedPreferences.responseLength")

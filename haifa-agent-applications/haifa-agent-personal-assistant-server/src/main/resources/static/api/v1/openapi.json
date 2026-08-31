@@ -552,7 +552,7 @@
       },
       "Model": {
         "type": "object",
-        "required": ["id", "modelGroupId", "modelDisplayName", "displayName", "providerId", "providerDisplayName", "apiStyle", "apiStyleDisplayName", "availability", "unavailableReason", "capabilities", "contextWindow", "maxOutputTokens", "preferenceSchemaVersion", "profileVersion", "profileDigest", "controls", "recommendedPreferences"],
+        "required": ["id", "modelGroupId", "modelDisplayName", "displayName", "providerId", "providerDisplayName", "apiStyle", "apiStyleDisplayName", "availability", "unavailableReason", "capabilities", "contextWindow", "maxOutputTokens", "preferenceSchemaVersion", "controls", "recommendedPreferences"],
         "properties": {
           "id": {"type": "string"},
           "modelGroupId": {"type": "string"},
@@ -568,10 +568,23 @@
           "contextWindow": {"type": "integer"},
           "maxOutputTokens": {"type": "integer"},
           "preferenceSchemaVersion": {"type": "string"},
-          "profileVersion": {"type": "string"},
-          "profileDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
           "controls": {"$ref": "#/components/schemas/ModelControls"},
-          "recommendedPreferences": {"$ref": "#/components/schemas/ModelPreferences"}
+          "recommendedPreferences": {"$ref": "#/components/schemas/ModelPreferences"},
+          "imageInput": {"oneOf": [{"$ref": "#/components/schemas/ImageInputView"}, {"type": "null"}]}
+        }
+      },
+      "ImageInputView": {
+        "type": "object",
+        "required": ["allowedSources", "supportedMediaTypes", "maxImagesPerRequest", "maxBytesPerItem", "maxTotalBytes", "maxUrlCharacters", "detailSupported", "allowedDetails"],
+        "properties": {
+          "allowedSources": {"type": "array", "items": {"type": "string", "enum": ["UPLOAD", "URL"]}},
+          "supportedMediaTypes": {"type": "array", "items": {"type": "string"}},
+          "maxImagesPerRequest": {"type": "integer"},
+          "maxBytesPerItem": {"type": "integer", "format": "int64"},
+          "maxTotalBytes": {"type": "integer", "format": "int64"},
+          "maxUrlCharacters": {"type": "integer"},
+          "detailSupported": {"type": "boolean"},
+          "allowedDetails": {"type": "array", "items": {"type": "string", "enum": ["AUTO", "LOW", "HIGH"]}}
         }
       },
       "ModelConnection": {
@@ -678,22 +691,21 @@
       },
       "ModelSelection": {
         "type": "object",
-        "required": ["model", "preferences", "revision", "available"],
+        "required": ["model", "preferences", "revision", "available", "selectionCompatibility"],
         "properties": {
           "model": {"$ref": "#/components/schemas/Model"},
           "preferences": {"$ref": "#/components/schemas/ModelPreferences"},
           "revision": {"type": "integer", "format": "int64"},
-          "available": {"type": "boolean"}
+          "available": {"type": "boolean"},
+          "selectionCompatibility": {"type": "string", "enum": ["CURRENT", "RESELECTION_REQUIRED", "UNAVAILABLE"]}
         }
       },
       "SelectModel": {
         "type": "object",
-        "required": ["modelBindingId", "preferenceSchemaVersion", "profileVersion", "profileDigest", "preferences"],
+        "required": ["modelBindingId", "preferenceSchemaVersion", "preferences"],
         "properties": {
           "modelBindingId": {"type": "string"},
           "preferenceSchemaVersion": {"type": "string"},
-          "profileVersion": {"type": "string"},
-          "profileDigest": {"type": "string"},
           "preferences": {"$ref": "#/components/schemas/ModelPreferences"}
         }
       },

@@ -325,7 +325,12 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 digest(sessionId + "|" + selected.id() + "|" + selected.preferenceSchemaVersion() + "|"
                         + selection.preferences().digest()),
                 TimePrecision.now(clock));
-        return new ModelSelectionView(selected, selection.preferences(), changed.revision(), true);
+        return new ModelSelectionView(
+                selected,
+                selection.preferences(),
+                changed.revision(),
+                true,
+                PersonalSelectionCompatibility.CURRENT);
     }
 
     public ConversationView rename(String sessionId, long expectedRevision, String idempotencyKey, String displayName) {
@@ -610,9 +615,13 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         PersonalModelPreference preference = modelPreferences
                 .find(conversationId)
                 .orElseThrow(() -> new IllegalStateException("MODEL_SELECTION_REQUIRED"));
-        Optional<PersonalModelOption> available = models.find(preference.modelBindingId());
-        PersonalModelOption value = available.orElseThrow(() -> new IllegalStateException("MODEL_SELECTION_REQUIRED"));
-        return new ModelSelectionView(value, preference.userPreferences(), preference.revision(), true);
+        PersonalSelectionCompatibility compatibility = models.selectionCompatibility(
+                preference.modelBindingId(), preference.preferenceSchemaVersion(), preference.userPreferences());
+        PersonalModelOption value = models.optionById(preference.modelBindingId())
+                .orElseThrow(() -> new IllegalStateException("MODEL_SELECTION_REQUIRED"));
+        boolean available = "AVAILABLE".equals(value.availability());
+        return new ModelSelectionView(
+                value, preference.userPreferences(), preference.revision(), available, compatibility);
     }
 
     private PersonalModelPreference requirePreference(String conversationId) {
@@ -969,7 +978,11 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             ModelSelectionView model) {}
 
     public record ModelSelectionView(
-            PersonalModelOption model, PersonalModelPreferences preferences, long revision, boolean available) {}
+            PersonalModelOption model,
+            PersonalModelPreferences preferences,
+            long revision,
+            boolean available,
+            PersonalSelectionCompatibility selectionCompatibility) {}
 
     public record TurnView(
             String id,

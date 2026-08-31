@@ -59,7 +59,8 @@ public final class PersonalApiDtos {
             int maxOutputTokens,
             String preferenceSchemaVersion,
             ModelControls controls,
-            ModelPreferences recommendedPreferences) {}
+            ModelPreferences recommendedPreferences,
+            ImageInputView imageInput) {}
 
     /** Safe model credential projection. Secret and OAuth registration fields are intentionally absent. */
     public record ModelConnection(
@@ -74,6 +75,20 @@ public final class PersonalApiDtos {
             boolean externalLoginSupported,
             boolean logoutSupported,
             boolean unofficialLocalCompatibility) {}
+
+    /**
+     * Safe, provider-neutral image input limits projection. Only the white-listed bounds are exposed;
+     * raw provider fields, profile identity, version and digest never cross the HTTP boundary.
+     */
+    public record ImageInputView(
+            List<String> allowedSources,
+            List<String> supportedMediaTypes,
+            int maxImagesPerRequest,
+            long maxBytesPerItem,
+            long maxTotalBytes,
+            int maxUrlCharacters,
+            boolean detailSupported,
+            List<String> allowedDetails) {}
 
     /** One-shot mutable request buffer; the authentication service clears {@code apiKey} on every path. */
     public record SaveModelApiKey(String providerId, char[] apiKey) {}
@@ -132,7 +147,12 @@ public final class PersonalApiDtos {
 
     public record ModelPreferences(String responseMode, String effort, String responseLength) {}
 
-    public record ModelSelection(Model model, ModelPreferences preferences, long revision, boolean available) {}
+    public record ModelSelection(
+            Model model,
+            ModelPreferences preferences,
+            long revision,
+            boolean available,
+            String selectionCompatibility) {}
 
     public record SelectModel(
             String modelBindingId,

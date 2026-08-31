@@ -103,7 +103,7 @@ const conversation: Conversation = {
   createdAt: "2026-07-28T01:00:00Z",
   lastActivityAt: "2026-07-28T02:00:00Z",
   revision: 3,
-  model: { model, preferences: model.recommendedPreferences, revision: 0, available: true },
+  model: { model, preferences: model.recommendedPreferences, revision: 0, available: true, selectionCompatibility: "CURRENT" as const },
 };
 const turns: Turn[] = [
   {
@@ -312,6 +312,7 @@ function client(): PersonalAssistantClient {
       preferences: selectedModel.recommendedPreferences,
       revision: 1,
       available: true,
+      selectionCompatibility: "CURRENT" as const,
     })),
     conversation: vi.fn(async () => conversation),
     updateConversation: vi.fn(async () => conversation),
