@@ -15,11 +15,13 @@ Persistence 装配仍由最高层应用模块负责。`CodingSessionView.activeR
 
 ## Shared model profile readiness
 
-Coding model preferences remain product-owned and this phase does not add `/thinking`, change the Session Store, or
-change Terminal UI. A compile-time architecture test imports the public `ModelBindingProfile` and
-`DefaultModelParameterResolver` contracts and verifies that Model API/Core have no Personal Assistant dependency.
-Future Coding controls can therefore reuse the common validation and snapshot semantics without copying PA DTOs or
-provider dialect logic.
+Coding model preferences remain product-owned and this phase does not add `/thinking` or change the Session Store.
+The Coding product projects the trusted Profile into a safe, four-dimensional model state: connection, binding
+availability, transient runtime health, and Run scope. Unknown Profile metadata is fail-closed, and version/digest
+fields remain outside the product projection. A compile-time architecture test imports the public
+`ModelBindingProfile` and `DefaultModelParameterResolver` contracts and verifies that Model API/Core have no Personal
+Assistant dependency. Future Coding controls can therefore reuse the common validation and snapshot semantics
+without copying PA DTOs or provider dialect logic.
 
 ## Prompt-first 自主交付
 

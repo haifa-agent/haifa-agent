@@ -33,8 +33,6 @@ const model = {
   contextWindow: 64000,
   maxOutputTokens: 16000,
   preferenceSchemaVersion: "1.0",
-  profileVersion: "1.0",
-  profileDigest: `sha256:${"0".repeat(64)}`,
   controls: {
     responseMode: { kind: "responseMode" as const, visible: true, readOnly: true, allowedValues: ["RECOMMENDED" as const], recommendedValue: "RECOMMENDED" as const, effectiveSummary: "Recommended", helpText: "Recommended" },
     reasoningEffort: { kind: "reasoningEffort" as const, visible: false, readOnly: true, allowedValues: ["HIGH" as const], recommendedValue: "HIGH" as const, effectiveSummary: "Disabled", helpText: "Disabled" },

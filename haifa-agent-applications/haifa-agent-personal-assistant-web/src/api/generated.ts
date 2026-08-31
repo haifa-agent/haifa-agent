@@ -77,8 +77,6 @@ export interface Model {
   contextWindow: number;
   maxOutputTokens: number;
   preferenceSchemaVersion: string;
-  profileVersion: string;
-  profileDigest: string;
   controls: ModelControls;
   recommendedPreferences: ModelPreferences;
 }
@@ -176,8 +174,6 @@ export interface ModelSelection {
 export interface SelectModel {
   modelBindingId: string;
   preferenceSchemaVersion: string;
-  profileVersion: string;
-  profileDigest: string;
   preferences: ModelPreferences;
 }
 

@@ -169,8 +169,6 @@ public final class PersonalApiMapper {
                 value.contextWindow(),
                 value.maxOutputTokens(),
                 value.preferenceSchemaVersion(),
-                value.profileVersion(),
-                value.profileDigest(),
                 controls(value.controls()),
                 preferences(value.recommendedPreferences()));
     }
