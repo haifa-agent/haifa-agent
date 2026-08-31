@@ -37,8 +37,7 @@ class ModelBindingConsistencyValidatorTest {
                 OptionalLong.empty(),
                 new ModelExecutionLimits(131072, 1, 8192),
                 false,
-                new ModelStreamingProfile(
-                        true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
@@ -68,8 +67,7 @@ class ModelBindingConsistencyValidatorTest {
                 OptionalLong.empty(),
                 new ModelExecutionLimits(65536, 1, 8192),
                 false,
-                new ModelStreamingProfile(
-                        true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
@@ -254,8 +252,7 @@ class ModelBindingConsistencyValidatorTest {
                 OptionalLong.empty(),
                 new ModelExecutionLimits(8192, 1, 4096),
                 false,
-                new ModelStreamingProfile(
-                        true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
@@ -296,8 +293,7 @@ class ModelBindingConsistencyValidatorTest {
                 OptionalLong.empty(),
                 new ModelExecutionLimits(8192, 1, 4096),
                 false,
-                new ModelStreamingProfile(
-                        true, true, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                new ModelStreamingProfile(true, true, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
@@ -350,8 +346,7 @@ class ModelBindingConsistencyValidatorTest {
                 OptionalLong.empty(),
                 new ModelExecutionLimits(8192, 1, 4096),
                 false,
-                new ModelStreamingProfile(
-                        true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
@@ -366,8 +361,7 @@ class ModelBindingConsistencyValidatorTest {
                 OptionalLong.empty(),
                 new ModelExecutionLimits(8192, 1, 4096),
                 false,
-                new ModelStreamingProfile(
-                        true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 

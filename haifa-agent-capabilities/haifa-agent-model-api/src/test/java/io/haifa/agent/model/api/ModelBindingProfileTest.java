@@ -27,26 +27,56 @@ class ModelBindingProfileTest {
                 OptionalLong.of(16_384),
                 new ModelExecutionLimits(131_072, 1_024, 8_192),
                 true,
-                new ModelStreamingProfile(
-                        true, true, true, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                new ModelStreamingProfile(true, true, true, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 LocalDate.of(2026, 8, 31));
 
         assertThat(profile.contextWindowTokens()).isEqualTo(131_072);
-        assertThat(profile.executionLimits().effectiveInputBudgetTokens(8_192, 1_024)).isEqualTo(121_856);
+        assertThat(profile.executionLimits().effectiveInputBudgetTokens(8_192, 1_024))
+                .isEqualTo(121_856);
         assertThat(profile.reasoning().maximumTokens()).hasValue(16_384);
-        assertThat(profile.toolResponse())
-                .isEqualTo(new ModelToolResponseProfile(true, true, true));
+        assertThat(profile.toolResponse()).isEqualTo(new ModelToolResponseProfile(true, true, true));
         assertThat(profile.streaming().reasoningStreaming()).isTrue();
         assertThat(profile.canonicalString()).contains("|131072|1024|8192|true|true|true|true|NON_RETRYABLE|");
     }
 
     @Test
     void streamingFactsCannotClaimUsageOrReasoningWithoutNativeStreaming() {
-        assertThatThrownBy(() -> new ModelStreamingProfile(
-                        false, true, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE))
+        assertThatThrownBy(() ->
+                        new ModelStreamingProfile(false, true, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("requires native streaming");
+    }
+
+    @Test
+    void nonReasoningBindingCannotClaimReasoningStreaming() {
+        assertThatThrownBy(() -> ModelBindingProfile.create(
+                        new ModelDefinitionId("non-reasoning-streaming-binding"),
+                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                        "2.0",
+                        Set.of(ModelCapability.TEXT_CHAT),
+                        ModelReasoningBehavior.NONE,
+                        Set.of(ModelReasoningMode.DISABLED),
+                        Set.of(),
+                        OptionalLong.empty(),
+                        new ModelExecutionLimits(32_768, 1_024, 8_192),
+                        false,
+                        new ModelStreamingProfile(true, false, true, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                        ModelProfileStatus.VERIFIED,
+                        LocalDate.of(2026, 8, 31)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reasoning streaming requires reasoning capability");
+    }
+
+    @Test
+    void reasoningProfileRejectsNonPositiveMaximumTokens() {
+        assertThatThrownBy(() -> new ModelReasoningProfile(
+                        ModelReasoningBehavior.OPTIONAL,
+                        Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED),
+                        Set.of(ModelReasoningEffort.HIGH),
+                        OptionalLong.of(0)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maximumTokens must be positive");
     }
 
     @Test
@@ -67,8 +97,9 @@ class ModelBindingProfileTest {
                 LocalDate.of(2026, 8, 13));
 
         assertThat(profile.canonicalString())
-                .isEqualTo("model-binding-profile-v2|aliyun-qwen3.7-max|openai-chat-completions|1.0|"
-                        + "[TEXT_CHAT, TOOL_CALLING]|NONE|[DISABLED]|[]|none|8192|1|8192|false|false|false|false|NON_RETRYABLE|VERIFIED|2026-08-13");
+                .isEqualTo(
+                        "model-binding-profile-v2|aliyun-qwen3.7-max|openai-chat-completions|1.0|"
+                                + "[TEXT_CHAT, TOOL_CALLING]|NONE|[DISABLED]|[]|none|8192|1|8192|false|false|false|false|NON_RETRYABLE|VERIFIED|2026-08-13");
         assertThat(profile.digest())
                 .isEqualTo("sha256:a109e84db44a93f44c4e18cbb3867f25407a4c81ef8f79e7e85b7f94a7443b2a");
         assertThat(profile.selectable()).isTrue();
@@ -170,8 +201,9 @@ class ModelBindingProfileTest {
                 LocalDate.of(2026, 8, 30));
 
         assertThat(profile.canonicalString())
-                .isEqualTo("model-binding-profile-v2|unknown-model|openai-chat-completions|1.0|"
-                        + "[TEXT_CHAT]|NONE|[DISABLED]|[]|none|4096|1|4096|false|false|false|false|NON_RETRYABLE|UNVERIFIED|2026-08-30");
+                .isEqualTo(
+                        "model-binding-profile-v2|unknown-model|openai-chat-completions|1.0|"
+                                + "[TEXT_CHAT]|NONE|[DISABLED]|[]|none|4096|1|4096|false|false|false|false|NON_RETRYABLE|UNVERIFIED|2026-08-30");
         assertThat(profile.digest())
                 .isEqualTo("sha256:d39101d5560faef9a9ad4cda5f8e8a5fd983bef038ba3b7aac900773bec2b509");
         assertThat(profile.selectable()).isFalse();

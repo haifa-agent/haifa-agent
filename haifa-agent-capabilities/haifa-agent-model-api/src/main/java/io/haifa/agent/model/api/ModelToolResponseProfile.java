@@ -2,9 +2,7 @@ package io.haifa.agent.model.api;
 
 /** Exact Binding facts for tool and structured-response execution. */
 public record ModelToolResponseProfile(
-        boolean toolCallingSupported,
-        boolean structuredOutputSupported,
-        boolean toolReasoningContinuationRequired) {
+        boolean toolCallingSupported, boolean structuredOutputSupported, boolean toolReasoningContinuationRequired) {
 
     public static ModelToolResponseProfile fromCapabilities(
             java.util.Set<ModelCapability> capabilities, boolean toolReasoningContinuationRequired) {

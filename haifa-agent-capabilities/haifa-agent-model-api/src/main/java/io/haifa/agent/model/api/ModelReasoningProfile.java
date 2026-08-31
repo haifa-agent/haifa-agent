@@ -16,5 +16,8 @@ public record ModelReasoningProfile(
         allowedModes = Set.copyOf(Objects.requireNonNull(allowedModes, "allowedModes must not be null"));
         allowedEfforts = Set.copyOf(Objects.requireNonNull(allowedEfforts, "allowedEfforts must not be null"));
         maximumTokens = Objects.requireNonNull(maximumTokens, "maximumTokens must not be null");
+        if (maximumTokens.isPresent() && maximumTokens.getAsLong() < 1) {
+            throw new IllegalArgumentException("maximumTokens must be positive when specified");
+        }
     }
 }
