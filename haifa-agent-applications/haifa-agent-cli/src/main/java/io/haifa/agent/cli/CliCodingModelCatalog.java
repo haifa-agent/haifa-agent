@@ -37,8 +37,10 @@ import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /** CLI product adapter over model-core's immutable, deterministic model platform. */
@@ -47,11 +49,22 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
             EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING);
 
     private final String defaultModelId;
+    private final Map<String, CliConfiguration.Model> models;
     private final Map<String, ModelBindingProfile> profiles;
     private final StaticModelPlatform platform;
+    private final Function<CliConfiguration.Model, CodingModelState.Connection> connectionState;
 
     CliCodingModelCatalog(CliConfiguration configuration) {
+        this(configuration, ignored -> CodingModelState.Connection.CONNECTED);
+    }
+
+    CliCodingModelCatalog(
+            CliConfiguration configuration,
+            Function<CliConfiguration.Model, CodingModelState.Connection> connectionState) {
+        this.connectionState = Objects.requireNonNull(connectionState, "connectionState must not be null");
         defaultModelId = configuration.model().id();
+        models = configuration.availableModels().stream()
+                .collect(Collectors.toUnmodifiableMap(CliConfiguration.Model::id, Function.identity()));
         Map<String, List<CliConfiguration.Model>> grouped = new LinkedHashMap<>();
         configuration.availableModels().forEach(model -> grouped.computeIfAbsent(
                         model.providerId(), ignored -> new ArrayList<>())
@@ -100,7 +113,8 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
                             provider.id().value(),
                             provider.displayName(),
                             profile,
-                            provider.healthStatus());
+                            provider.healthStatus(),
+                            connectionState.apply(models.get(model.id().value())));
                 }))
                 .toList();
     }
@@ -123,9 +137,10 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
             String providerId,
             String providerDisplayName,
             ModelBindingProfile profile,
-            ProviderHealthStatus healthStatus) {
+            ProviderHealthStatus healthStatus,
+            CodingModelState.Connection connection) {
         CodingModelState state = new CodingModelState(
-                CodingModelState.Connection.CONNECTED,
+                Objects.requireNonNull(connection, "connection must not be null"),
                 profile.selectable()
                         ? CodingModelState.BindingAvailability.AVAILABLE
                         : CodingModelState.BindingAvailability.UNAVAILABLE,

@@ -27,11 +27,20 @@ class CodingModelPreferencesTest {
     }
 
     @Test
-    void rejectsEffortWithNonDeepMode() {
+    void recommendedModeCanCarryEffortForAnAlwaysReasoningModel() {
+        CodingModelPreferences prefs =
+                new CodingModelPreferences(CodingResponseMode.RECOMMENDED, Optional.of(ModelReasoningEffort.HIGH));
+
+        assertThat(prefs.responseMode()).isEqualTo(CodingResponseMode.RECOMMENDED);
+        assertThat(prefs.effort()).contains(ModelReasoningEffort.HIGH);
+    }
+
+    @Test
+    void rejectsEffortWithFastMode() {
         assertThatThrownBy(() ->
                         new CodingModelPreferences(CodingResponseMode.FAST, Optional.of(ModelReasoningEffort.MEDIUM)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("effort is only valid for DEEP");
+                .hasMessageContaining("effort is not valid for FAST");
     }
 
     @Test

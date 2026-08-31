@@ -341,6 +341,19 @@ function client(): PersonalAssistantClient {
   };
 }
 
+async function openModelCenterFromSlash(composer: HTMLElement) {
+  fireEvent.change(composer, { target: { value: "/" } });
+  fireEvent.click(await screen.findByRole("option", { name: /选择模型/ }));
+  return screen.findByRole("dialog", { name: "模型与连接" });
+}
+
+async function openModelDetails(center: HTMLElement, displayName: string) {
+  const card = within(center).getByText(displayName, { exact: true }).closest("article");
+  if (!card) throw new Error(`model card not found: ${displayName}`);
+  fireEvent.click(within(card).getByRole("button", { name: "查看详情与设置" }));
+  return screen.findByRole("dialog", { name: new RegExp(`模型详情与设置：${displayName}`) });
+}
+
 describe("Personal Assistant application", () => {
   beforeEach(() => {
     window.history.replaceState(null, "", "/");
@@ -1719,7 +1732,7 @@ describe("Personal Assistant application", () => {
     expect(api.approveMemory).not.toHaveBeenCalled();
   });
 
-  it("opens slash commands and selects a model by provider then model", async () => {
+  it("opens the unified model center from slash commands and confirms a model", async () => {
     const api = client();
     vi.mocked(api.bootstrap).mockResolvedValue({
       ...bootstrap,
@@ -1735,13 +1748,9 @@ describe("Personal Assistant application", () => {
     expect(await screen.findByRole("dialog", { name: "命令功能" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("option", { name: /选择模型/ }));
-    expect(await screen.findByRole("dialog", { name: "选择模型厂商" })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("option", { name: /DeepSeek.*2 个可用模型/ }));
-    const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
-    fireEvent.click(within(modelDialog).getByRole("option", { name: /DeepSeek V4 Pro/ }));
-    const settingsDialog = await screen.findByRole("dialog", { name: "设置 DeepSeek V4 Pro" });
-    fireEvent.click(within(settingsDialog).getByRole("button", { name: "应用设置" }));
+    const center = await screen.findByRole("dialog", { name: "模型与连接" });
+    const details = await openModelDetails(center, "DeepSeek V4 Pro");
+    fireEvent.click(within(details).getByRole("button", { name: "确认并应用" }));
 
     await waitFor(() => expect(api.selectModel).toHaveBeenCalledWith(
       conversation,
@@ -1752,7 +1761,7 @@ describe("Personal Assistant application", () => {
     expect((composer as HTMLTextAreaElement).value).toBe("");
   });
 
-  it("closes model selection with Escape, the close button, and an outside pointer", async () => {
+  it("closes the unified model center with Escape, the close button, and an outside pointer", async () => {
     const api = client();
     vi.mocked(api.bootstrap).mockResolvedValue({
       ...bootstrap,
@@ -1763,26 +1772,22 @@ describe("Personal Assistant application", () => {
     render(<App client={api} />);
 
     const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
-    const openProviderDialog = async () => {
-      fireEvent.change(composer, { target: { value: "/" } });
-      fireEvent.click(await screen.findByRole("option", { name: /选择模型/ }));
-      return screen.findByRole("dialog", { name: "选择模型厂商" });
-    };
+    const openCenter = async () => openModelCenterFromSlash(composer);
 
-    let providerDialog = await openProviderDialog();
-    fireEvent.pointerDown(within(providerDialog).getByRole("option", { name: /DeepSeek/ }));
-    expect(screen.getByRole("dialog", { name: "选择模型厂商" })).toBeTruthy();
+    let center = await openCenter();
+    fireEvent.pointerDown(within(center).getByText("DeepSeek", { exact: true }));
+    expect(screen.getByRole("dialog", { name: "模型与连接" })).toBeTruthy();
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "选择模型厂商" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "模型与连接" })).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(composer));
 
-    providerDialog = await openProviderDialog();
-    fireEvent.click(within(providerDialog).getByRole("button", { name: "关闭模型选择" }));
-    expect(screen.queryByRole("dialog", { name: "选择模型厂商" })).toBeNull();
+    center = await openCenter();
+    fireEvent.click(within(center).getByRole("button", { name: "关闭模型与连接" }));
+    expect(screen.queryByRole("dialog", { name: "模型与连接" })).toBeNull();
 
-    await openProviderDialog();
-    fireEvent.pointerDown(document.body);
-    expect(screen.queryByRole("dialog", { name: "选择模型厂商" })).toBeNull();
+    const backdropCenter = await openCenter();
+    fireEvent.pointerDown(backdropCenter.parentElement!);
+    expect(screen.queryByRole("dialog", { name: "模型与连接" })).toBeNull();
   });
 
   it("keeps unavailable models visible with the backend reason but prevents selection", async () => {
@@ -1796,17 +1801,11 @@ describe("Personal Assistant application", () => {
     render(<App client={api} />);
 
     const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
-    fireEvent.change(composer, { target: { value: "/" } });
-    fireEvent.click(await screen.findByRole("option", { name: /选择模型/ }));
-    fireEvent.click(await screen.findByRole("option", { name: /DeepSeek.*1 个可用模型.*1 个不可用/ }));
-
-    const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
-    const unavailable = within(modelDialog).getByRole("option", {
-      name: /DeepSeek Experimental.*不可用.*Binding profile has not passed contract verification/,
-    }) as HTMLButtonElement;
-    expect(unavailable.disabled).toBe(true);
-    fireEvent.click(unavailable);
-    expect(screen.queryByRole("dialog", { name: "设置 DeepSeek Experimental" })).toBeNull();
+    const center = await openModelCenterFromSlash(composer);
+    const details = await openModelDetails(center, "DeepSeek Experimental");
+    expect(within(details).getByText("Binding profile has not passed contract verification")).toBeTruthy();
+    expect(within(details).getByRole("button", { name: "确认并应用" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(within(details).getByRole("button", { name: "确认并应用" }));
     expect(api.selectModel).not.toHaveBeenCalled();
   });
 
@@ -1821,13 +1820,8 @@ describe("Personal Assistant application", () => {
     render(<App client={api} />);
 
     const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
-    fireEvent.change(composer, { target: { value: "/" } });
-    fireEvent.click(await screen.findByRole("option", { name: /选择模型/ }));
-    fireEvent.click(await screen.findByRole("option", { name: /Orion Cloud.*1 个可用模型/ }));
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "选择 Orion Cloud 模型" }))
-      .getByRole("option", { name: /Orion Prime/ }));
-
-    const settings = await screen.findByRole("dialog", { name: "设置 Orion Prime" });
+    const center = await openModelCenterFromSlash(composer);
+    const settings = await openModelDetails(center, "Orion Prime");
     fireEvent.click(within(settings).getByText("高级连接方式"));
     fireEvent.change(within(settings).getByRole("combobox", { name: "API 风格" }), {
       target: { value: configurableMessagesModel.id },
@@ -1835,7 +1829,7 @@ describe("Personal Assistant application", () => {
     fireEvent.click(within(settings).getByRole("button", { name: "深度" }));
     fireEvent.click(within(settings).getByRole("button", { name: "Max" }));
     fireEvent.click(within(settings).getByRole("button", { name: "长" }));
-    fireEvent.click(within(settings).getByRole("button", { name: "应用设置" }));
+    fireEvent.click(within(settings).getByRole("button", { name: "确认并应用" }));
 
     await waitFor(() => expect(api.selectModel).toHaveBeenCalledWith(
       conversation,
@@ -1860,12 +1854,9 @@ describe("Personal Assistant application", () => {
     const plusMenu = screen.getByRole("dialog", { name: "更多功能" });
     expect(within(plusMenu).getByRole("button", { name: /Deep Research/ })).toBeTruthy();
     fireEvent.click(within(plusMenu).getByRole("button", { name: /选择模型/ }));
-
-    fireEvent.click(await screen.findByRole("option", { name: /DeepSeek.*2 个可用模型/ }));
-    const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
-    fireEvent.click(within(modelDialog).getByRole("option", { name: /DeepSeek V4 Pro/ }));
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "设置 DeepSeek V4 Pro" }))
-      .getByRole("button", { name: "应用设置" }));
+    const center = await screen.findByRole("dialog", { name: "模型与连接" });
+    const details = await openModelDetails(center, "DeepSeek V4 Pro");
+    fireEvent.click(within(details).getByRole("button", { name: "确认并应用" }));
 
     await waitFor(() => expect(api.selectModel).toHaveBeenCalledWith(
       conversation,
@@ -1889,14 +1880,10 @@ describe("Personal Assistant application", () => {
     await screen.findByText("每日计划");
     fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
     const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
-    fireEvent.change(composer, { target: { value: "/" } });
-    fireEvent.click(await screen.findByRole("option", { name: /选择模型/ }));
-    fireEvent.click(await screen.findByRole("option", { name: /DeepSeek.*2 个可用模型/ }));
-    const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
-    fireEvent.click(within(modelDialog).getByRole("option", { name: /DeepSeek V4 Pro/ }));
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "设置 DeepSeek V4 Pro" }))
-      .getByRole("button", { name: "应用设置" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "设置 DeepSeek V4 Pro" })).toBeNull());
+    const center = await openModelCenterFromSlash(composer);
+    const details = await openModelDetails(center, "DeepSeek V4 Pro");
+    fireEvent.click(within(details).getByRole("button", { name: "确认并应用" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /模型详情与设置：DeepSeek V4 Pro/ })).toBeNull());
 
     fireEvent.change(composer, { target: { value: "使用所选模型开始对话" } });
     fireEvent.keyDown(composer, { key: "Enter" });
@@ -1911,7 +1898,7 @@ describe("Personal Assistant application", () => {
     ));
   });
 
-  it("defaults slash model selection to DeepSeek Flash", async () => {
+  it("shows the default model in the unified model center before a new conversation", async () => {
     const api = client();
     vi.mocked(api.bootstrap).mockResolvedValue({
       ...bootstrap,
@@ -1924,22 +1911,10 @@ describe("Personal Assistant application", () => {
     await screen.findByText("每日计划");
     fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
     const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
-    fireEvent.change(composer, { target: { value: "/" } });
-    fireEvent.keyDown(composer, { key: "Enter" });
-
-    const providerDialog = await screen.findByRole("dialog", { name: "选择模型厂商" });
-    expect(within(providerDialog)
-      .getByRole("option", { name: /DeepSeek.*2 个可用模型/ })
-      .getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(composer, { key: "Enter" });
-
-    const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
-    expect(within(modelDialog)
-      .getByRole("option", { name: /DeepSeek V4 Flash/ })
-      .getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(composer, { key: "Enter" });
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "设置 DeepSeek V4 Flash" }))
-      .getByRole("button", { name: "应用设置" }));
+    const center = await openModelCenterFromSlash(composer);
+    const defaultCard = within(center).getByText("DeepSeek V4 Flash", { exact: true }).closest("article");
+    expect(defaultCard?.textContent).toContain("当前使用");
+    fireEvent.click(within(center).getByRole("button", { name: "关闭模型与连接" }));
 
     fireEvent.change(composer, { target: { value: "使用默认模型开始对话" } });
     fireEvent.keyDown(composer, { key: "Enter" });
@@ -1950,7 +1925,7 @@ describe("Personal Assistant application", () => {
       { idempotencyKey: expect.any(String) },
       flashModel.id,
       [],
-      { model: flashModel, preferences: flashModel.recommendedPreferences },
+      undefined,
     ));
   });
 

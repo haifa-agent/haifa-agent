@@ -49,13 +49,16 @@ function capabilityLabel(capability: string): string | null {
 
 export interface ModelDetailDrawerProps {
   model: Model;
+  /** Safe bindings for the same product model group, used only by the provider-controlled API-style control. */
+  bindings?: Model[];
   preferences: ModelPreferences;
   /** Server-computed compatibility of the currently persisted selection for this binding. */
   selectionCompatibility?: "CURRENT" | "RESELECTION_REQUIRED" | "UNAVAILABLE";
   /** Safe connection label for this model's provider, when known. */
   connectionLabel?: string | null;
-  /** Whether the current session is running; apply is then deferred to the next new Run. */
+  /** Whether the current session is running; changes are unavailable until it becomes idle. */
   applyingDisabled?: boolean;
+  onBindingChange?(binding: Model): void;
   onPreferencesChange(preferences: ModelPreferences): void;
   onReset(): void;
   onApply(): void;
@@ -65,10 +68,12 @@ export interface ModelDetailDrawerProps {
 /** Model detail and response-settings drawer, driven entirely by the safe PA model projection. */
 export function ModelDetailDrawer({
   model,
+  bindings = [model],
   preferences,
   selectionCompatibility,
   connectionLabel,
   applyingDisabled = false,
+  onBindingChange,
   onPreferencesChange,
   onReset,
   onApply,
@@ -122,6 +127,9 @@ export function ModelDetailDrawer({
           </span>
           {connectionLabel && <span className="model-drawer-connection">{connectionLabel}</span>}
         </div>
+        {unavailable && model.unavailableReason && (
+          <p className="model-drawer-muted">{model.unavailableReason}</p>
+        )}
 
         {selectionCompatibility === "RESELECTION_REQUIRED" && (
           <p className="model-compat-warning" role="alert">
@@ -270,7 +278,36 @@ export function ModelDetailDrawer({
           {model.controls.apiStyle.visible && (
             <details className="model-advanced-settings">
               <summary>高级连接方式</summary>
-              <p className="model-drawer-muted">{model.apiStyleDisplayName}</p>
+              {bindings.length > 1 && !model.controls.apiStyle.readOnly ? (
+                <label>
+                  <span>当前 API 风格</span>
+                  <select
+                    aria-label="API 风格"
+                    value={model.id}
+                    onChange={(event) => {
+                      const selected = bindings.find((binding) => binding.id === event.target.value);
+                      if (selected) onBindingChange?.(selected);
+                    }}
+                  >
+                    {bindings
+                      .filter((binding) => model.controls.apiStyle.allowedValues.includes(binding.id))
+                      .map((binding) => (
+                        <option
+                          key={binding.id}
+                          value={binding.id}
+                          disabled={binding.availability !== "AVAILABLE"}
+                        >
+                          {binding.apiStyleDisplayName}
+                          {binding.availability === "UNAVAILABLE"
+                            ? ` · 不可用：${binding.unavailableReason || "尚未通过验证"}`
+                            : ""}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              ) : (
+                <p className="model-drawer-muted">{model.apiStyleDisplayName}</p>
+              )}
               <small>{model.controls.apiStyle.helpText}</small>
             </details>
           )}
@@ -278,7 +315,7 @@ export function ModelDetailDrawer({
 
         <p className="model-drawer-effective">
           {applyingDisabled
-            ? "当前任务运行中，应用将在本次任务完成后、下一次新提问生效。"
+            ? "当前任务运行中，暂不能修改模型或参数；请在任务完成后重新打开设置。"
             : "切换模型或更新参数将在当前对话的下一次新提问生效，不影响历史记录。"}
         </p>
 
