@@ -90,7 +90,8 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
                                 .map(ModelBindingProfile::selectable)
                                 .orElse(false))
                         .map(model -> {
-                            ModelBindingProfile profile = profiles.get(model.id().value());
+                            ModelBindingProfile profile =
+                                    profiles.get(model.id().value());
                             return new CodingModelOption(
                                     model.id().value(),
                                     model.displayName(),

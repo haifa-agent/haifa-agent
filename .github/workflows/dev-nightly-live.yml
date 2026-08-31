@@ -83,7 +83,6 @@ jobs:
             HAIFA_TEST_APPROVED_PLAN_SHA256: ${{ vars.HAIFA_NIGHTLY_PROVIDER_SMOKE_PLAN_SHA256 }}
             HAIFA_TEST_MATRIX_COMBINATION: linux-primary
             HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
-            HAIFA_TEST_RUN_ROOT: ${{ runner.temp }}/haifa-test-runs
         steps:
             - uses: actions/checkout@v4
               with:
@@ -105,7 +104,9 @@ jobs:
             - name: Require configured service credentials
               run: test -n "$DASHSCOPE_API_KEY" && test -n "$ALIYUN_IQS_API_KEY" && test -n "$BAILIAN_WORKSPACE_ID" && test -n "$BAILIAN_ENDPOINT"
             - name: Prepare external run root
-              run: mkdir -p "$HAIFA_TEST_RUN_ROOT"
+              run: |
+                  echo "HAIFA_TEST_RUN_ROOT=$RUNNER_TEMP/haifa-test-runs" >> "$GITHUB_ENV"
+                  mkdir -p "$RUNNER_TEMP/haifa-test-runs"
             - name: Execute reviewed provider smoke suite
               run: bash test-config/scripts/run-suite.sh nightly-provider-smoke-v1 --execute
             - name: Upload redacted suite evidence

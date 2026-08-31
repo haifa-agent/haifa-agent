@@ -10,8 +10,8 @@ public record ModelStreamingProfile(
         ModelPartialOutputFailureBehavior partialOutputFailureBehavior) {
 
     public ModelStreamingProfile {
-        partialOutputFailureBehavior = Objects.requireNonNull(
-                partialOutputFailureBehavior, "partialOutputFailureBehavior must not be null");
+        partialOutputFailureBehavior =
+                Objects.requireNonNull(partialOutputFailureBehavior, "partialOutputFailureBehavior must not be null");
         if (!nativeStreaming && (usageStreaming || reasoningStreaming)) {
             throw new IllegalArgumentException("usage or reasoning streaming requires native streaming");
         }

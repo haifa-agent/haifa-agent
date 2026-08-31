@@ -92,7 +92,13 @@ public final class ModelBindingConsistencyValidator {
                     + definition.id());
         }
 
-        // Rule 8: Reasoning configuration and capability consistency
+        // Rule 8: Reasoning streaming requires reasoning capability.
+        if (profile.streaming().reasoningStreaming() && !profile.capabilities().contains(ModelCapability.REASONING)) {
+            throw new IllegalArgumentException(
+                    "non-reasoning model " + definition.id() + " cannot declare reasoning streaming");
+        }
+
+        // Rule 9: Reasoning configuration and capability consistency
         boolean hasReasoning = profile.capabilities().contains(ModelCapability.REASONING);
         if (hasReasoning) {
             if (profile.reasoningBehavior() == ModelReasoningBehavior.NONE) {

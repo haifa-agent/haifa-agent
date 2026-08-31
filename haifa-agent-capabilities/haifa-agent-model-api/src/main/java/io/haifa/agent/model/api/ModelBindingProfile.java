@@ -53,6 +53,9 @@ public record ModelBindingProfile(
             throw new IllegalArgumentException("legacy output accessors must match execution limits");
         }
         streaming = Objects.requireNonNull(streaming, "streaming must not be null");
+        if (streaming.reasoningStreaming() && !capabilities.contains(ModelCapability.REASONING)) {
+            throw new IllegalArgumentException("reasoning streaming requires reasoning capability");
+        }
         status = Objects.requireNonNull(status, "status must not be null");
         lastVerifiedOn = Objects.requireNonNull(lastVerifiedOn, "lastVerifiedOn must not be null");
         validateReasoning(
