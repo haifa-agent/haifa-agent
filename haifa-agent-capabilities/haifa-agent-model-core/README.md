@@ -3,9 +3,10 @@
 ## Parameter resolution
 
 `DefaultModelParameterResolver` deterministically validates a typed request against a verified
-`ModelBindingProfile`, applies explicit product defaults, and returns frozen `EffectiveModelParameters`. Unknown,
-unavailable, out-of-range, or unsupported values fail closed. The resolver has no Personal Assistant or Coding Agent
-dependency, so each product can own its preference vocabulary while reusing the same validation boundary.
+`ModelBindingProfile`, including its authoritative `ModelExecutionLimits`, applies explicit product defaults, and
+returns frozen `EffectiveModelParameters`. Unknown, unavailable, out-of-range, or unsupported values fail closed.
+The resolver has no Personal Assistant or Coding Agent dependency, so each product can own its preference
+vocabulary while reusing the same validation boundary.
 
 模型目录、治理与确定性选择实现。
 

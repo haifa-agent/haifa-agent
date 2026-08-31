@@ -49,8 +49,8 @@ public final class DefaultModelParameterResolver {
                 fail(ModelParameterResolutionFailure.REASONING_BUDGET_UNSUPPORTED);
             }
         }
-        if (request.maxOutputTokens() < profile.minimumOutputTokens()
-                || request.maxOutputTokens() > profile.maximumOutputTokens()) {
+        if (request.maxOutputTokens() < profile.executionLimits().minimumOutputTokens()
+                || request.maxOutputTokens() > profile.executionLimits().maximumOutputTokens()) {
             fail(ModelParameterResolutionFailure.OUTPUT_LIMIT_UNSUPPORTED);
         }
         return new EffectiveModelParameters(

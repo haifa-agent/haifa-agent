@@ -35,9 +35,9 @@ class ModelBindingConsistencyValidatorTest {
                 Set.of(ModelReasoningMode.DISABLED),
                 Set.of(),
                 OptionalLong.empty(),
-                1,
-                8192,
+                new ModelExecutionLimits(131072, 1, 8192),
                 false,
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
@@ -65,9 +65,9 @@ class ModelBindingConsistencyValidatorTest {
                 Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED),
                 Set.of(ModelReasoningEffort.HIGH),
                 OptionalLong.empty(),
-                1,
-                8192,
+                new ModelExecutionLimits(65536, 1, 8192),
                 false,
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
@@ -188,9 +188,9 @@ class ModelBindingConsistencyValidatorTest {
                 Set.of(ModelReasoningMode.DISABLED),
                 Set.of(),
                 OptionalLong.empty(),
-                1,
-                2048,
+                new ModelExecutionLimits(8192, 1, 2048),
                 false,
+                ModelStreamingProfile.disabled(),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
@@ -250,14 +250,56 @@ class ModelBindingConsistencyValidatorTest {
                 Set.of(ModelReasoningMode.DISABLED),
                 Set.of(),
                 OptionalLong.empty(),
-                1,
-                4096,
+                new ModelExecutionLimits(8192, 1, 4096),
                 false,
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
         assertThatThrownBy(() -> ModelBindingConsistencyValidator.validate(defWithReasoning, profileWithoutReasoning))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void providerNativeStreamingMustMatchTheExactBindingProfile() {
+        ModelDefinition definition = createDefinition(
+                "model-a",
+                "provider-1",
+                "model-a",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                Set.of(ModelCapability.TEXT_CHAT),
+                8192,
+                4096);
+        ModelProviderDefinition provider = new ModelProviderDefinition(
+                new ModelProviderId("provider-1"),
+                "1.0",
+                "Provider",
+                URI.create("https://api.example.com"),
+                new CredentialRef("env://TEST_KEY"),
+                false,
+                ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(ModelApiStyles.OPENAI_CHAT_COMPLETIONS, "standard")),
+                List.of(definition),
+                Map.of(),
+                Map.of());
+        ModelBindingProfile profile = ModelBindingProfile.create(
+                definition.id(),
+                definition.style(),
+                "1.0",
+                definition.capabilities(),
+                ModelReasoningBehavior.NONE,
+                Set.of(ModelReasoningMode.DISABLED),
+                Set.of(),
+                OptionalLong.empty(),
+                new ModelExecutionLimits(8192, 1, 4096),
+                false,
+                new ModelStreamingProfile(true, true, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                ModelProfileStatus.VERIFIED,
+                VERIFIED_ON);
+
+        assertThatThrownBy(() -> ModelBindingConsistencyValidator.validate(provider, definition, profile))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nativeStreaming mismatch");
     }
 
     @Test
@@ -302,9 +344,9 @@ class ModelBindingConsistencyValidatorTest {
                 Set.of(ModelReasoningMode.DISABLED),
                 Set.of(),
                 OptionalLong.empty(),
-                1,
-                4096,
+                new ModelExecutionLimits(8192, 1, 4096),
                 false,
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
@@ -317,9 +359,9 @@ class ModelBindingConsistencyValidatorTest {
                 Set.of(ModelReasoningMode.DISABLED),
                 Set.of(),
                 OptionalLong.empty(),
-                1,
-                4096,
+                new ModelExecutionLimits(8192, 1, 4096),
                 false,
+                new ModelStreamingProfile(true, false, false, ModelPartialOutputFailureBehavior.NON_RETRYABLE),
                 ModelProfileStatus.VERIFIED,
                 VERIFIED_ON);
 
