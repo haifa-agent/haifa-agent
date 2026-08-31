@@ -8,6 +8,7 @@ import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
 import io.haifa.agent.application.project.product.ProjectProductService;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.product.TrustedProductCallerProvider;
+import io.haifa.agent.application.project.product.coding.CodingModelState;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportService;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryService;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
@@ -151,6 +152,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import javax.crypto.spec.SecretKeySpec;
 
 /** Builds an in-process Coding Agent over one explicitly selected local workspace. */
@@ -322,7 +324,8 @@ final class LocalCodingAgent implements AutoCloseable {
                 traceObserver,
                 resolveContinuationProtector(configuration, resolvedEnvironment),
                 resolvedEnvironment,
-                authentication);
+                authentication,
+                model -> connectionState(authenticationService, model));
     }
 
     static boolean allowInsecureLoopback(CliConfiguration configuration, String optIn) {
@@ -387,7 +390,8 @@ final class LocalCodingAgent implements AutoCloseable {
                 traceObserver,
                 continuationProtector,
                 System.getenv(),
-                CodingAuthenticationClient.unavailable());
+                CodingAuthenticationClient.unavailable(),
+                ignored -> CodingModelState.Connection.CONNECTED);
     }
 
     private static LocalCodingAgent create(
@@ -398,7 +402,8 @@ final class LocalCodingAgent implements AutoCloseable {
             Consumer<RuntimeTraceEvent> traceObserver,
             ModelContinuationProtector continuationProtector,
             Map<String, String> environment,
-            CodingAuthenticationClient authentication) {
+            CodingAuthenticationClient authentication,
+            Function<CliConfiguration.Model, CodingModelState.Connection> connectionState) {
         Map<String, String> resolvedEnvironment =
                 Map.copyOf(Objects.requireNonNull(environment, "environment must not be null"));
         LocalWorkspaceIdentity workspaceIdentity = LocalWorkspaceIdentity.resolve(workspaceRoot);
@@ -752,7 +757,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     runtime,
                     identifiers,
                     clock,
-                    new CliCodingModelCatalog(configuration),
+                    new CliCodingModelCatalog(configuration, connectionState),
                     verificationProfile);
             var sessionHistory = new CodingSessionHistoryService(
                     codingSessions,
@@ -1114,6 +1119,22 @@ final class LocalCodingAgent implements AutoCloseable {
 
     static ResolvedModelSnapshot modelSnapshot(CliConfiguration configuration) {
         return modelSnapshot(configuration.model());
+    }
+
+    private static CodingModelState.Connection connectionState(
+            LocalModelAuthenticationService authenticationService, CliConfiguration.Model model) {
+        CredentialRef credentialRef = new CredentialRef(model.credentialRef());
+        if (authenticationService.connectionRequired(credentialRef)) {
+            return CodingModelState.Connection.LOGIN_REQUIRED;
+        }
+        return authenticationService.connections().stream()
+                .filter(connection -> connection.connectionId().value().equals(credentialRef.value()))
+                .map(connection -> switch (connection.status()) {
+                    case REAUTH_REQUIRED -> CodingModelState.Connection.REAUTH_REQUIRED;
+                    case AUTHENTICATED, RATE_LIMITED -> CodingModelState.Connection.CONNECTED;
+                })
+                .findFirst()
+                .orElse(CodingModelState.Connection.CONNECTED);
     }
 
     static ResolvedModelSnapshot modelSnapshot(CliConfiguration.Model model) {

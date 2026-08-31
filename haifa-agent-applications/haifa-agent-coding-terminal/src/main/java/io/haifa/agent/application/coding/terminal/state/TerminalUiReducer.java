@@ -42,7 +42,7 @@ public final class TerminalUiReducer {
                     view.summary().displayName(),
                     "queue: " + view.summary().queuedCount(),
                     view.model().model().providerDisplayName(),
-                    view.model().model().displayName(),
+                    modelFooterSummary(view),
                     view.summary().activeRunStatus().map(Enum::name).orElse("IDLE"),
                     "");
             return copy(
@@ -800,6 +800,17 @@ public final class TerminalUiReducer {
             if (values.get(index).id().equals(id)) return index;
         }
         return -1;
+    }
+
+    private static String modelFooterSummary(CodingSessionView view) {
+        var model = view.model().model();
+        String context = model.contextWindow() >= 1_000_000
+                ? (model.contextWindow() / 1_000_000) + "M"
+                : model.contextWindow() >= 1_000
+                        ? (model.contextWindow() / 1_000) + "K"
+                        : String.valueOf(model.contextWindow());
+        return model.displayName() + " · "
+                + model.recommendedPreferences().responseMode().name() + " · " + context;
     }
 
     private static TerminalFooter footer(TerminalFooter current, AgentRunEvent event) {

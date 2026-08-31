@@ -9,6 +9,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
+import io.haifa.agent.application.project.product.coding.CodingModelState;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionCreateOptions;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
@@ -86,6 +87,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private List<CodingSessionSummary> resumeOptions = List.of();
     private List<CodingQueuedMessage> restoreOptions = List.of();
     private List<CodingModelOption> modelOptions = List.of();
+    private CodingModelOption inspectedModel;
     private List<CodingAuthenticationView> authenticationOptions = List.of();
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
@@ -1384,23 +1386,9 @@ public final class CodingTerminalController implements AutoCloseable {
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case "session" -> apply(new TerminalUiAction.SelectorClosed());
-            case "model" -> {
-                CodingModelOption option = modelOptions.get(selected);
-                Optional<RunEventCursor> cursor = state.appliedCursor();
-                AgentRunId previousOutputRunId = outputRunId;
-                RunOutputCursor previousOutputCursor = outputCursor;
-                apply(new TerminalUiAction.SelectorClosed());
-                if (awaitingNewSessionMessage || state.session().isEmpty()) {
-                    pendingNewSessionModelId = option.id();
-                    apply(new TerminalUiAction.StatusChanged("Model selected for next session"));
-                } else {
-                    CodingSessionView current = state.session().orElseThrow();
-                    apply(new TerminalUiAction.StatusChanged("Changing model"));
-                    submitEffect(
-                            () -> selectModel(current, option.id(), cursor, previousOutputRunId, previousOutputCursor),
-                            code -> apply(new TerminalUiAction.RecoverableFailure(code)));
-                }
-            }
+            case "model" -> openModelDetails(modelOptions.get(selected));
+            case "model-detail" -> selectModelDetailAction(selected);
+            case "model-settings" -> selectModelSettingsAction(selected);
             case "auth-login" -> {
                 String option = connectionOptions().get(selected);
                 apply(new TerminalUiAction.SelectorClosed());
@@ -1578,6 +1566,181 @@ public final class CodingTerminalController implements AutoCloseable {
         return value.length() <= 12 ? value : value.substring(0, 12);
     }
 
+    private static String formatContextWindow(int tokens) {
+        if (tokens >= 1_000_000) return (tokens / 1_000_000) + "M";
+        if (tokens >= 1_000) return (tokens / 1_000) + "K";
+        return String.valueOf(tokens);
+    }
+
+    private static String formatCapabilities(CodingModelOption value) {
+        java.util.List<String> caps = new java.util.ArrayList<>();
+        if (value.capabilities().contains("TEXT_CHAT")) caps.add("Text");
+        if (value.capabilities().contains("TOOL_CALLING")) caps.add("Tools");
+        if (value.capabilities().contains("IMAGE_URL_INPUT")
+                || value.capabilities().contains("IMAGE_UPLOAD_INPUT")) {
+            caps.add("Images");
+        }
+        if (value.capabilities().contains("REASONING")) caps.add("Reasoning");
+        return String.join(", ", caps);
+    }
+
+    private static String formatModelState(
+            CodingModelOption value,
+            io.haifa.agent.application.project.product.coding.CodingModelState.RunScope runScope) {
+        java.util.List<String> states = new java.util.ArrayList<>();
+        switch (value.state().connection()) {
+            case LOGIN_REQUIRED -> states.add("LoginReq");
+            case REAUTH_REQUIRED -> states.add("Re-Auth");
+            case CONNECTED -> {}
+        }
+        switch (value.state().bindingAvailability()) {
+            case UNAVAILABLE -> states.add("Unavail");
+            case AVAILABLE -> {}
+        }
+        switch (value.state().runtime()) {
+            case RATE_LIMITED -> states.add("RateLtd");
+            case UNREACHABLE -> states.add("Unreachable");
+            case NORMAL -> {}
+        }
+        if (runScope == io.haifa.agent.application.project.product.coding.CodingModelState.RunScope.ACTIVE_RUN) {
+            states.add("ActiveRun");
+        }
+        return states.isEmpty() ? "Ready" : String.join(", ", states);
+    }
+
+    private void openModelDetails(CodingModelOption option) {
+        inspectedModel = Objects.requireNonNull(option, "option must not be null");
+        boolean selectable = option.state().bindingAvailability()
+                == io.haifa.agent.application.project.product.coding.CodingModelState.BindingAvailability.AVAILABLE;
+        var runScope = state.currentRunId().isPresent()
+                ? io.haifa.agent.application.project.product.coding.CodingModelState.RunScope.ACTIVE_RUN
+                : io.haifa.agent.application.project.product.coding.CodingModelState.RunScope.IDLE;
+        String title = "Model details · "
+                + option.displayName()
+                + " · "
+                + option.providerDisplayName()
+                + " · "
+                + formatContextWindow(option.contextWindow())
+                + " context · "
+                + formatContextWindow(option.maxOutputTokens())
+                + " output · ["
+                + formatCapabilities(option)
+                + "] · ["
+                + formatModelState(option, runScope)
+                + "]";
+        List<String> actions = selectable
+                ? List.of("Confirm and select this model", "Review response settings", "Back to model list")
+                : List.of("Unavailable: " + option.unavailableReason(), "Back to model list");
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector("model-detail", title, actions, 0)));
+    }
+
+    private void selectModelDetailAction(int selected) {
+        CodingModelOption option = requireInspectedModel();
+        boolean selectable = option.state().bindingAvailability()
+                == io.haifa.agent.application.project.product.coding.CodingModelState.BindingAvailability.AVAILABLE;
+        if (!selectable) {
+            if (selected == 0)
+                apply(new TerminalUiAction.StatusChanged(
+                        "This model cannot be selected: " + option.unavailableReason()));
+            else openModelList();
+            return;
+        }
+        switch (selected) {
+            case 0 -> confirmModelSelection(option);
+            case 1 -> openModelSettings(option);
+            default -> openModelList();
+        }
+    }
+
+    private void openModelSettings(CodingModelOption option) {
+        var response = option.controls().responseMode();
+        var effort = option.controls().reasoningEffort();
+        String responseValue = option.recommendedPreferences().responseMode().name();
+        String effortValue =
+                option.recommendedPreferences().effort().map(Enum::name).orElse("Profile default");
+        List<String> settings = new java.util.ArrayList<>();
+        if (response.visible()) {
+            settings.add("Response mode: " + responseValue + " · " + response.effectiveSummary());
+        }
+        if (effort.visible()) {
+            settings.add("Reasoning effort: " + effortValue + " · " + effort.effectiveSummary());
+        }
+        settings.add("Back to model details");
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "model-settings",
+                "Verified response profile · " + option.displayName() + " (read-only in this release)",
+                settings,
+                0)));
+    }
+
+    private void selectModelSettingsAction(int selected) {
+        CodingModelOption option = requireInspectedModel();
+        int backIndex = (option.controls().responseMode().visible() ? 1 : 0)
+                + (option.controls().reasoningEffort().visible() ? 1 : 0);
+        if (selected == backIndex) {
+            openModelDetails(option);
+        } else {
+            apply(new TerminalUiAction.StatusChanged("Response settings are defined by the verified model profile"));
+        }
+    }
+
+    private CodingModelOption requireInspectedModel() {
+        if (inspectedModel == null) throw new IllegalStateException("model detail selection is unavailable");
+        return inspectedModel;
+    }
+
+    private void openModelList() {
+        if (modelOptions.isEmpty()) {
+            apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
+            return;
+        }
+        int selected = java.util.stream.IntStream.range(0, modelOptions.size())
+                .filter(index -> modelOptions
+                        .get(index)
+                        .id()
+                        .equals(requireInspectedModel().id()))
+                .findFirst()
+                .orElse(0);
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "model",
+                state.session().isPresent() ? "Model for future new Runs" : "Model for next session",
+                modelOptions.stream().map(this::modelListOption).toList(),
+                selected)));
+    }
+
+    private void confirmModelSelection(CodingModelOption option) {
+        Optional<RunEventCursor> cursor = state.appliedCursor();
+        AgentRunId previousOutputRunId = outputRunId;
+        RunOutputCursor previousOutputCursor = outputCursor;
+        apply(new TerminalUiAction.SelectorClosed());
+        if (awaitingNewSessionMessage || state.session().isEmpty()) {
+            pendingNewSessionModelId = option.id();
+            apply(new TerminalUiAction.StatusChanged("Model selected for next session"));
+        } else {
+            CodingSessionView current = state.session().orElseThrow();
+            apply(new TerminalUiAction.StatusChanged("Changing model"));
+            submitEffect(
+                    () -> selectModel(current, option.id(), cursor, previousOutputRunId, previousOutputCursor),
+                    code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+        }
+    }
+
+    private String modelListOption(CodingModelOption value) {
+        var runScope = state.currentRunId().isPresent()
+                ? io.haifa.agent.application.project.product.coding.CodingModelState.RunScope.ACTIVE_RUN
+                : io.haifa.agent.application.project.product.coding.CodingModelState.RunScope.IDLE;
+        return value.displayName()
+                + " · "
+                + value.providerDisplayName()
+                + " · "
+                + formatContextWindow(value.contextWindow())
+                + " · ["
+                + formatCapabilities(value)
+                + "] · ["
+                + formatModelState(value, runScope)
+                + "]";
+    }
+
     private Runnable loadModels(
             Optional<CodingSessionView> current,
             String argument,
@@ -1596,6 +1759,9 @@ public final class CodingTerminalController implements AutoCloseable {
                     .filter(option -> option.id().equals(argument))
                     .findFirst()
                     .orElseThrow(() -> new IllegalArgumentException("MODEL_UNAVAILABLE"));
+            if (selected.state().bindingAvailability() != CodingModelState.BindingAvailability.AVAILABLE) {
+                throw new IllegalArgumentException("MODEL_UNAVAILABLE");
+            }
             return () -> {
                 pendingNewSessionModelId = selected.id();
                 apply(new TerminalUiAction.StatusChanged("Model selected for next session"));
@@ -1616,9 +1782,7 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
                     "model",
                     reconciled.isPresent() ? "Model for future new Runs" : "Model for next session",
-                    modelOptions.stream()
-                            .map(value -> value.displayName() + " · " + value.providerDisplayName())
-                            .toList(),
+                    modelOptions.stream().map(this::modelListOption).toList(),
                     selected)));
         };
     }

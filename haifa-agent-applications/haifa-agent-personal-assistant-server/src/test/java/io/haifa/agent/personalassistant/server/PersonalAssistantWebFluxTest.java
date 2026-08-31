@@ -85,8 +85,6 @@ class PersonalAssistantWebFluxTest {
         selection.put("modelBindingId", model.path("id").asText());
         selection.put(
                 "preferenceSchemaVersion", model.path("preferenceSchemaVersion").asText());
-        selection.put("profileVersion", model.path("profileVersion").asText());
-        selection.put("profileDigest", model.path("profileDigest").asText());
         var preferences = selection.putObject("preferences");
         preferences.put("responseMode", "RECOMMENDED");
         preferences.putNull("effort");
@@ -101,6 +99,8 @@ class PersonalAssistantWebFluxTest {
 
         assertThat(created.path("model").path("model").path("id").asText())
                 .isEqualTo(model.path("id").asText());
+        assertThat(created.path("model").path("selectionCompatibility").asText())
+                .isEqualTo("CURRENT");
         assertThat(created.path("model")
                         .path("preferences")
                         .path("responseMode")
@@ -136,30 +136,10 @@ class PersonalAssistantWebFluxTest {
         request.put("modelBindingId", model.path("id").asText());
         request.put(
                 "preferenceSchemaVersion", model.path("preferenceSchemaVersion").asText());
-        request.put("profileVersion", model.path("profileVersion").asText());
-        request.put("profileDigest", model.path("profileDigest").asText());
         var preferences = request.putObject("preferences");
         preferences.put("responseMode", "RECOMMENDED");
         preferences.putNull("effort");
         preferences.put("responseLength", "LONG");
-
-        var stale = request.deepCopy();
-        stale.put("profileDigest", "sha256:stale");
-        web.patch()
-                .uri("/api/v1/conversations/{id}/model", created.path("id").asText())
-                .header("X-Haifa-CSRF", "1")
-                .header("Idempotency-Key", "model-stale-" + IDS.incrementAndGet())
-                .header(
-                        "If-Match",
-                        '"' + conversation.path("model").path("revision").asText() + '"')
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(stale)
-                .exchange()
-                .expectStatus()
-                .isEqualTo(412)
-                .expectBody()
-                .jsonPath("$.code")
-                .isEqualTo("MODEL_PROFILE_STALE");
 
         web.patch()
                 .uri("/api/v1/conversations/{id}/model", created.path("id").asText())
@@ -176,8 +156,10 @@ class PersonalAssistantWebFluxTest {
                 .expectBody()
                 .jsonPath("$.model.id")
                 .isEqualTo(model.path("id").asText())
+                .jsonPath("$.selectionCompatibility")
+                .isEqualTo("CURRENT")
                 .jsonPath("$.model.profileDigest")
-                .isEqualTo(model.path("profileDigest").asText())
+                .doesNotExist()
                 .jsonPath("$.model.recommendedPreferences.responseLength")
                 .isEqualTo("RECOMMENDED")
                 .jsonPath("$.available")
@@ -357,9 +339,6 @@ class PersonalAssistantWebFluxTest {
         modelSelection.put(
                 "preferenceSchemaVersion",
                 selectedModel.path("preferenceSchemaVersion").asText());
-        modelSelection.put(
-                "profileVersion", selectedModel.path("profileVersion").asText());
-        modelSelection.put("profileDigest", selectedModel.path("profileDigest").asText());
         var preferences = modelSelection.putObject("preferences");
         preferences.put("responseMode", "RECOMMENDED");
         preferences.putNull("effort");

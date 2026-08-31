@@ -2,7 +2,20 @@
 
 ## Model contract migration
 
-The generated TypeScript contract carries exact binding/profile identity, closed controls, and typed PA preferences.
+The generated TypeScript contract carries exact binding/profile identity, closed controls, typed PA preferences, a
+safe image-input white list (`Model.imageInput`), and a server-computed `selectionCompatibility` on the session
+selection (`CURRENT | RESELECTION_REQUIRED | UNAVAILABLE`). The UI is driven entirely by this safe projection; it
+never receives or echoes Profile version/digest, endpoint, dialect, or raw provider fields.
+
+The unified “模型与连接” window (opened from the 模型 / 模型连接 top-bar buttons) has two tabs: 模型目录 shows
+Provider groups with a connection badge (derived from `model-connections`, never faked), model cards with limits and
+capabilities, a search box, and a 查看详情与设置 action; 账号连接 reuses the extracted `ModelConnectionTab`. The
+`ModelDetailDrawer` renders execution limits, capabilities, the image IO profile (when the binding declares one),
+response settings (response-mode, response-length, reasoning-effort, advanced connection) entirely from Server
+controls, a re-confirmation warning when `selectionCompatibility` is not `CURRENT`, and a 恢复默认推荐/取消/确认并应用
+footer. Applying a change is disabled while the Conversation has an active Run; the copy states the change takes
+effect on the next new Run and never promises a deferred auto-apply it does not implement.
+
 The `+` menu groups bindings by Provider and provider model, then renders dedicated response-mode, response-length,
 reasoning-effort, and advanced API-style controls from Server-provided visibility, read-only state, allowed values,
 defaults, and help text. It submits the exact selection atomically for a new Conversation or idle existing
@@ -12,8 +25,8 @@ reviewed defaults instead of carrying incompatible parameters across protocols.
 Bindings reported as unavailable remain visible for diagnostics but are disabled. The picker displays the Server's
 safe unavailable reason and never infers availability from Provider names or model IDs.
 
-The low-fidelity Model Connections panel reads credential readiness from the separate `model-connections` API. It can
-start browser-based ChatGPT/Codex login and, when the Server explicitly enables local compatibility, a separate
+The `ModelConnectionTab` reads credential readiness from the separate `model-connections` API. It can start
+browser-based ChatGPT/Codex login and, when the Server explicitly enables local compatibility, a separate
 Antigravity login; it can also accept a masked API Key, show safe account/status fields, cancel an active
 attempt, and log out. The Key exists only in component input state and is cleared after submit, cancel, or unmount; it
 is never placed in URL state, local storage, reducer snapshots, or telemetry. A missing connection produces a
