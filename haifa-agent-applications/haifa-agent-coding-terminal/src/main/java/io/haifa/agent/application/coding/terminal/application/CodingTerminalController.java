@@ -1588,7 +1588,8 @@ public final class CodingTerminalController implements AutoCloseable {
         java.util.List<String> caps = new java.util.ArrayList<>();
         if (value.capabilities().contains("TEXT_CHAT")) caps.add("Text");
         if (value.capabilities().contains("TOOL_CALLING")) caps.add("Tools");
-        if (value.capabilities().contains("IMAGE_URL_INPUT") || value.capabilities().contains("IMAGE_UPLOAD_INPUT")) {
+        if (value.capabilities().contains("IMAGE_URL_INPUT")
+                || value.capabilities().contains("IMAGE_UPLOAD_INPUT")) {
             caps.add("Images");
         }
         if (value.capabilities().contains("REASONING")) caps.add("Reasoning");
@@ -1602,16 +1603,16 @@ public final class CodingTerminalController implements AutoCloseable {
         switch (value.state().connection()) {
             case LOGIN_REQUIRED -> states.add("LoginReq");
             case REAUTH_REQUIRED -> states.add("Re-Auth");
-            case CONNECTED -> { }
+            case CONNECTED -> {}
         }
         switch (value.state().bindingAvailability()) {
             case UNAVAILABLE -> states.add("Unavail");
-            case AVAILABLE -> { }
+            case AVAILABLE -> {}
         }
         switch (value.state().runtime()) {
             case RATE_LIMITED -> states.add("RateLtd");
             case UNREACHABLE -> states.add("Unreachable");
-            case NORMAL -> { }
+            case NORMAL -> {}
         }
         if (runScope == io.haifa.agent.application.project.product.coding.CodingModelState.RunScope.ACTIVE_RUN) {
             states.add("ActiveRun");
