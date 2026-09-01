@@ -45,6 +45,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Map;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
+import io.haifa.agent.project.root.WorkspaceRootAlias;
+import io.haifa.agent.project.root.WorkspaceRootPermission;
+import io.haifa.agent.project.root.WorkspaceRootStrategy;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -225,6 +231,10 @@ class LocalFileToolOperationsTest {
     }
 
     private Fixture fixture() {
+        return fixture(null);
+    }
+
+    private Fixture fixture(LocalWorkspaceRootRegistry registry) {
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         WorkspaceId workspaceId = new WorkspaceId("workspace-file-read");
         WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-file-read");
@@ -259,7 +269,8 @@ class LocalFileToolOperationsTest {
                 files,
                 testMutations(workspaces, workspaceId, changeSets, new ProjectId("project-file-read")),
                 () -> "id-1",
-                changeSets);
+                changeSets,
+                registry);
         return new Fixture(workspaceId, operations, changeSets);
     }
 
@@ -344,4 +355,73 @@ class LocalFileToolOperationsTest {
 
     private record Fixture(
             WorkspaceId workspaceId, LocalFileToolOperations operations, InMemoryFileChangeSetStore changeSets) {}
+
+    @Test
+    void rejectsWriteToReadOnlyAttachedRoot() {
+        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(root, WorkspaceRootStrategy.GIT, false);
+        Path docsRoot = root.resolve("docs");
+        LocalWorkspaceRoot docs = LocalWorkspaceRoot.of(
+                WorkspaceRootAlias.of("docs"),
+                docsRoot,
+                WorkspaceRootPermission.READ_ONLY,
+                WorkspaceRootStrategy.PLAIN,
+                false);
+        LocalWorkspaceRootRegistry registry = LocalWorkspaceRootRegistry.builder()
+                .addRoot(mainRoot)
+                .addRoot(docs)
+                .build();
+
+        Fixture fixture = fixture(registry);
+
+        var result = fixture.operations.execute(
+                "file.create",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "docs:guide.md", "content", "new content")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "ROOT_READ_ONLY")
+                .containsEntry("failureCategory", "POLICY_DENIED")
+                .containsEntry("failureActionCode", "REQUEST_WRITE_PERMISSION");
+    }
+
+    @Test
+    void rejectsUnregisteredRootAlias() {
+        Fixture fixture = fixture();
+        var result = fixture.operations.execute(
+                "file.read",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "unknown:file.txt")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "ROOT_ALIAS_NOT_FOUND")
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("failureActionCode", "USE_REGISTERED_ROOT_ALIAS");
+    }
+
+    @Test
+    void rejectsAbsoluteHostPathInToolArguments() {
+        Fixture fixture = fixture();
+        var result = fixture.operations.execute(
+                "file.read",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "D:/workspace/file.txt")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "ABSOLUTE_PATH_FORBIDDEN")
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("failureActionCode", "USE_ALIAS_RELATIVE_SYNTAX");
+    }
+
 }
