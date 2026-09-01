@@ -15,6 +15,7 @@ public record SessionFileChangeRecord(
         long beforeSize,
         String afterHash,
         long afterSize,
+        String toolCallId,
         Instant timestamp) {
 
     public SessionFileChangeRecord {
@@ -28,9 +29,41 @@ public record SessionFileChangeRecord(
     }
 
     public static SessionFileChangeRecord create(
-            WorkspaceRootAlias rootAlias, ProjectPath path, String afterHash, long afterSize, Instant timestamp) {
+            WorkspaceRootAlias rootAlias,
+            ProjectPath path,
+            String afterHash,
+            long afterSize,
+            String toolCallId,
+            Instant timestamp) {
         return new SessionFileChangeRecord(
-                rootAlias, path, null, FileChangeType.CREATE, null, -1L, afterHash, afterSize, timestamp);
+                rootAlias, path, null, FileChangeType.CREATE, null, -1L, afterHash, afterSize, toolCallId, timestamp);
+    }
+
+    public static SessionFileChangeRecord create(
+            WorkspaceRootAlias rootAlias, ProjectPath path, String afterHash, long afterSize, Instant timestamp) {
+        return create(rootAlias, path, afterHash, afterSize, null, timestamp);
+    }
+
+    public static SessionFileChangeRecord replace(
+            WorkspaceRootAlias rootAlias,
+            ProjectPath path,
+            String beforeHash,
+            long beforeSize,
+            String afterHash,
+            long afterSize,
+            String toolCallId,
+            Instant timestamp) {
+        return new SessionFileChangeRecord(
+                rootAlias,
+                path,
+                null,
+                FileChangeType.REPLACE,
+                beforeHash,
+                beforeSize,
+                afterHash,
+                afterSize,
+                toolCallId,
+                timestamp);
     }
 
     public static SessionFileChangeRecord replace(
@@ -41,14 +74,46 @@ public record SessionFileChangeRecord(
             String afterHash,
             long afterSize,
             Instant timestamp) {
+        return replace(rootAlias, path, beforeHash, beforeSize, afterHash, afterSize, null, timestamp);
+    }
+
+    public static SessionFileChangeRecord delete(
+            WorkspaceRootAlias rootAlias,
+            ProjectPath path,
+            String beforeHash,
+            long beforeSize,
+            String toolCallId,
+            Instant timestamp) {
         return new SessionFileChangeRecord(
-                rootAlias, path, null, FileChangeType.REPLACE, beforeHash, beforeSize, afterHash, afterSize, timestamp);
+                rootAlias, path, null, FileChangeType.DELETE, beforeHash, beforeSize, null, -1L, toolCallId, timestamp);
     }
 
     public static SessionFileChangeRecord delete(
             WorkspaceRootAlias rootAlias, ProjectPath path, String beforeHash, long beforeSize, Instant timestamp) {
+        return delete(rootAlias, path, beforeHash, beforeSize, null, timestamp);
+    }
+
+    public static SessionFileChangeRecord move(
+            WorkspaceRootAlias rootAlias,
+            ProjectPath sourcePath,
+            ProjectPath targetPath,
+            String beforeHash,
+            long beforeSize,
+            String afterHash,
+            long afterSize,
+            String toolCallId,
+            Instant timestamp) {
         return new SessionFileChangeRecord(
-                rootAlias, path, null, FileChangeType.DELETE, beforeHash, beforeSize, null, -1L, timestamp);
+                rootAlias,
+                targetPath,
+                sourcePath,
+                FileChangeType.MOVE,
+                beforeHash,
+                beforeSize,
+                afterHash,
+                afterSize,
+                toolCallId,
+                timestamp);
     }
 
     public static SessionFileChangeRecord move(
@@ -60,15 +125,6 @@ public record SessionFileChangeRecord(
             String afterHash,
             long afterSize,
             Instant timestamp) {
-        return new SessionFileChangeRecord(
-                rootAlias,
-                targetPath,
-                sourcePath,
-                FileChangeType.MOVE,
-                beforeHash,
-                beforeSize,
-                afterHash,
-                afterSize,
-                timestamp);
+        return move(rootAlias, sourcePath, targetPath, beforeHash, beforeSize, afterHash, afterSize, null, timestamp);
     }
 }

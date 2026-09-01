@@ -124,7 +124,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                     request.id(), ExecutionOutputChannel.STDOUT, stdoutBytes, 4096, process.stdoutTruncated());
             var stderr = outputs.store(
                     request.id(), ExecutionOutputChannel.STDERR, stderrBytes, 4096, process.stderrTruncated());
-            String changeSetId = null;
             ExecutionStatus status = map(process.status(), process.exitCode());
             ExecutionFailure failure = failure(status, process.processTreeTerminated());
             try {
@@ -144,7 +143,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                     process.endedAt(),
                     stdout,
                     stderr,
-                    changeSetId,
                     session.id().value(),
                     new ResourceUsageSummary(
                             Duration.between(process.startedAt(), process.endedAt()), process.observedProcessCount()),
@@ -375,7 +373,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             }
             var storedStdout = outputs.store(request.id(), ExecutionOutputChannel.STDOUT, stdoutBytes, 4096, false);
             var storedStderr = outputs.store(request.id(), ExecutionOutputChannel.STDERR, stderrBytes, 4096, false);
-            String changeSetId = null;
             ExecutionStatus status = processExit.status();
             ExecutionFailure executionFailure = failure(status, processExit.processTreeTerminated());
             try {
@@ -395,7 +392,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                     processExit.endedAt(),
                     storedStdout,
                     storedStderr,
-                    changeSetId,
                     sandbox.id().value(),
                     new ResourceUsageSummary(
                             Duration.between(process.startedAt(), processExit.endedAt()),

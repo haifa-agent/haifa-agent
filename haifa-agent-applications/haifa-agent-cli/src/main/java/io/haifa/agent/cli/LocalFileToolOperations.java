@@ -5,6 +5,7 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.project.filesystem.FileContent;
 import io.haifa.agent.project.filesystem.FileListRequest;
 import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.filesystem.ReadOptions;
@@ -17,20 +18,23 @@ import io.haifa.agent.project.mutation.CreateFileRequest;
 import io.haifa.agent.project.mutation.DeleteFileRequest;
 import io.haifa.agent.project.mutation.MoveFileRequest;
 import io.haifa.agent.project.mutation.MutationContext;
+import io.haifa.agent.project.mutation.MutationErrorCode;
 import io.haifa.agent.project.mutation.MutationPrecondition;
 import io.haifa.agent.project.mutation.WorkspaceMutationException;
 import io.haifa.agent.project.mutation.WorkspaceMutationProvider;
 import io.haifa.agent.project.mutation.WriteFileRequest;
 import io.haifa.agent.project.patch.ApplyPatchParser;
-import io.haifa.agent.project.patch.PatchApplyRequest;
-import io.haifa.agent.project.patch.PatchService;
-import io.haifa.agent.project.patch.PatchValidationService;
+import io.haifa.agent.project.patch.FilePatch;
+import io.haifa.agent.project.patch.PatchHunk;
+import io.haifa.agent.project.patch.PatchLine;
+import io.haifa.agent.project.patch.PatchLineType;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.root.LocalMultiRootPathResolver;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
 import io.haifa.agent.project.root.MultiRootPath;
+import io.haifa.agent.project.root.WorkspaceRootAlias;
 import io.haifa.agent.project.root.WorkspaceRootErrorCode;
 import io.haifa.agent.project.root.WorkspaceRootException;
 import io.haifa.agent.project.root.WorkspaceRootPermission;
@@ -38,18 +42,27 @@ import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.tool.api.ToolReconciliation;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Stream;
 
-/** Local, capability-scoped file operations used by the CLI's Project Tool provider. */
+/**
+ * Local, capability-scoped file operations with authoritative multi-root physical routing.
+ */
 final class LocalFileToolOperations implements ProjectToolOperations {
     private static final int DEFAULT_READ_BYTES = 64 * 1024;
     private static final int MAX_READ_BYTES = 256 * 1024;
@@ -61,7 +74,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private final WorkspaceMutationProvider mutations;
     private final IdentifierGenerator identifiers;
     private final ApplyPatchParser patchParser;
-    private final PatchService patchService;
     private final LocalWorkspaceRootRegistry rootRegistry;
     private final SessionChangeLedger ledger;
 
@@ -94,8 +106,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         this.mutations = Objects.requireNonNull(mutations, "mutations must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.patchParser = new ApplyPatchParser(100, 1_000, 20_000, 4 * 1024 * 1024);
-        this.patchService = new PatchService(
-                this.workspaces, this.files, this.mutations, new PatchValidationService(100, 1_000, 20_000));
         this.rootRegistry = rootRegistry;
         this.ledger = ledger;
     }
@@ -177,257 +187,742 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     }
 
     private ToolResult list(WorkspaceId workspaceId, Map<String, Object> values) {
-        var page = files.list(
-                new FileListRequest(path(workspaceId, values, "path", WorkspaceRootPermission.READ_ONLY), 0, 500));
-        List<Map<String, Object>> entries = page.entries().stream()
-                .map(entry -> Map.<String, Object>of(
-                        "path", entry.metadata().path().projectPath().toString(),
-                        "type", entry.metadata().type().name(),
-                        "size", entry.metadata().size()))
-                .toList();
+        String pathStr = optionalString(values, "path");
+        ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_ONLY);
+        if (target.isMain()) {
+            var page = files.list(new FileListRequest(target.workspacePath(), 0, 500));
+            List<Map<String, Object>> entries = page.entries().stream()
+                    .map(entry -> Map.<String, Object>of(
+                            "path", entry.metadata().path().projectPath().toString(),
+                            "type", entry.metadata().type().name(),
+                            "size", entry.metadata().size()))
+                    .toList();
+            return success(
+                    "Listed " + entries.size() + " workspace entries",
+                    Map.of("entries", entries, "truncated", page.truncated()));
+        }
+
+        Path dir = target.hostPath();
+        if (!Files.exists(dir)) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
+                    target.workspacePath(),
+                    "directory not found: " + target.displayPath());
+        }
+        if (!Files.isDirectory(dir)) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
+                    target.workspacePath(),
+                    "path is not a directory: " + target.displayPath());
+        }
+
+        List<Map<String, Object>> entries = new ArrayList<>();
+        boolean truncated = false;
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
+            for (Path child : stream) {
+                if (entries.size() >= 500) {
+                    truncated = true;
+                    break;
+                }
+                String childName = child.getFileName().toString();
+                String entryPath = target.rootAlias().value() + ":"
+                        + (target.relativePath().isEmpty() ? childName : target.relativePath() + "/" + childName);
+                boolean isDir = Files.isDirectory(child);
+                long size = isDir ? 0L : Files.size(child);
+                entries.add(Map.of(
+                        "path", entryPath,
+                        "type", isDir ? "DIRECTORY" : "FILE",
+                        "size", size));
+            }
+        } catch (IOException e) {
+            throw new WorkspaceFileException(WorkspaceFileErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
+        }
+
+        entries.sort(Comparator.comparing(m -> String.valueOf(m.get("path"))));
         return success(
-                "Listed " + entries.size() + " workspace entries",
-                Map.of("entries", entries, "truncated", page.truncated()));
+                "Listed " + entries.size() + " workspace entries", Map.of("entries", entries, "truncated", truncated));
     }
 
     private ToolResult stat(WorkspaceId workspaceId, Map<String, Object> values) {
-        var metadata = files.stat(path(workspaceId, values, "path", WorkspaceRootPermission.READ_ONLY), true);
-        return success(
-                "Inspected " + metadata.path().projectPath(),
-                Map.of(
-                        "path",
-                        metadata.path().projectPath().toString(),
-                        "type",
-                        metadata.type().name(),
-                        "size",
-                        metadata.size(),
-                        "contentHash",
-                        metadata.contentHash().orElse("")));
+        String pathStr = string(values, "path");
+        ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_ONLY);
+        if (target.isMain()) {
+            var metadata = files.stat(target.workspacePath(), true);
+            return success(
+                    "Inspected " + metadata.path().projectPath(),
+                    Map.of(
+                            "path", metadata.path().projectPath().toString(),
+                            "type", metadata.type().name(),
+                            "size", metadata.size(),
+                            "contentHash", metadata.contentHash().orElse("")));
+        }
+
+        Path file = target.hostPath();
+        if (!Files.exists(file)) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
+                    target.workspacePath(),
+                    "file not found: " + target.displayPath());
+        }
+        boolean isDir = Files.isDirectory(file);
+        try {
+            long size = isDir ? 0L : Files.size(file);
+            String hash = isDir ? "" : "sha256:" + digest(Files.readAllBytes(file));
+            return success(
+                    "Inspected " + target.displayPath(),
+                    Map.of(
+                            "path",
+                            target.displayPath(),
+                            "type",
+                            isDir ? "DIRECTORY" : "FILE",
+                            "size",
+                            size,
+                            "contentHash",
+                            hash));
+        } catch (IOException e) {
+            throw new WorkspaceFileException(WorkspaceFileErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
+        }
     }
 
     private ToolResult read(WorkspaceId workspaceId, Map<String, Object> values) {
-        WorkspacePath path = path(workspaceId, values, "path", WorkspaceRootPermission.READ_ONLY);
-        String pathText = path.projectPath().toString();
+        String pathStr = string(values, "path");
+        ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_ONLY);
+        String pathText = target.displayPath();
         ReadCursor cursor = decodeCursor(optionalString(values, "cursor"), pathText);
         int maxBytes = boundedInteger(values, "maxBytes", DEFAULT_READ_BYTES, MAX_READ_BYTES);
         int maxLines = boundedInteger(values, "maxLines", DEFAULT_READ_LINES, MAX_READ_LINES);
-        var content =
-                files.read(path, new ReadOptions(cursor.offset(), maxBytes, maxBytes, StandardCharsets.UTF_8, true));
-        if (cursor.sourceVersion() != null && !cursor.sourceVersion().equals(content.sourceVersion())) {
+
+        if (target.isMain()) {
+            var content = files.read(
+                    target.workspacePath(),
+                    new ReadOptions(cursor.offset(), maxBytes, maxBytes, StandardCharsets.UTF_8, true));
+            if (cursor.sourceVersion() != null && !cursor.sourceVersion().equals(content.sourceVersion())) {
+                throw new WorkspaceFileException(
+                        WorkspaceFileErrorCode.FILE_CURSOR_STALE,
+                        target.workspacePath(),
+                        "file changed after the read cursor was issued");
+            }
+            String visible = firstLines(content.text(), maxLines);
+            long visibleBytes = visible.getBytes(StandardCharsets.UTF_8).length;
+            long nextOffset = content.offset() + visibleBytes;
+            boolean hasMore = nextOffset < content.totalByteCount();
+            int nextLine = cursor.startLine() + lineBreaks(visible);
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("path", pathText);
+            data.put("content", visible);
+            data.put("startLine", cursor.startLine());
+            data.put("endLine", visible.isEmpty() ? cursor.startLine() : nextLine);
+            data.put("bytesRead", visibleBytes);
+            data.put("totalBytes", content.totalByteCount());
+            data.put("contentVersion", content.sourceVersion());
+            data.put("hasMore", hasMore);
+            data.put("truncated", hasMore);
+            if (hasMore) {
+                data.put("nextCursor", encodeCursor(nextOffset, nextLine, content.sourceVersion(), pathText));
+            }
+            return success("Read " + pathText, Map.copyOf(data));
+        }
+
+        Path file = target.hostPath();
+        if (!Files.exists(file)) {
             throw new WorkspaceFileException(
-                    WorkspaceFileErrorCode.FILE_CURSOR_STALE, path, "file changed after the read cursor was issued");
+                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
+                    target.workspacePath(),
+                    "file not found: " + target.displayPath());
         }
-        String visible = firstLines(content.text(), maxLines);
-        long visibleBytes = visible.getBytes(StandardCharsets.UTF_8).length;
-        long nextOffset = content.offset() + visibleBytes;
-        boolean hasMore = nextOffset < content.totalByteCount();
-        int nextLine = cursor.startLine() + lineBreaks(visible);
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("path", pathText);
-        data.put("content", visible);
-        data.put("startLine", cursor.startLine());
-        data.put("endLine", visible.isEmpty() ? cursor.startLine() : nextLine);
-        data.put("bytesRead", visibleBytes);
-        data.put("totalBytes", content.totalByteCount());
-        data.put("contentVersion", content.sourceVersion());
-        data.put("hasMore", hasMore);
-        data.put("truncated", hasMore);
-        if (hasMore) {
-            data.put("nextCursor", encodeCursor(nextOffset, nextLine, content.sourceVersion(), pathText));
+        if (Files.isDirectory(file)) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.WRONG_FILE_TYPE,
+                    target.workspacePath(),
+                    "path is a directory: " + target.displayPath());
         }
-        return success("Read " + pathText, Map.copyOf(data));
+
+        try {
+            byte[] allBytes = Files.readAllBytes(file);
+            String contentVersion = "sha256:" + digest(allBytes);
+            if (cursor.sourceVersion() != null && !cursor.sourceVersion().equals(contentVersion)) {
+                throw new WorkspaceFileException(
+                        WorkspaceFileErrorCode.FILE_CURSOR_STALE,
+                        target.workspacePath(),
+                        "file changed after the read cursor was issued");
+            }
+            int offset = (int) Math.min(cursor.offset(), allBytes.length);
+            int length = Math.min(maxBytes, allBytes.length - offset);
+            String text = new String(allBytes, offset, length, StandardCharsets.UTF_8);
+
+            String visible = firstLines(text, maxLines);
+            long visibleBytes = visible.getBytes(StandardCharsets.UTF_8).length;
+            long nextOffset = offset + visibleBytes;
+            boolean hasMore = nextOffset < allBytes.length;
+            int nextLine = cursor.startLine() + lineBreaks(visible);
+
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("path", pathText);
+            data.put("content", visible);
+            data.put("startLine", cursor.startLine());
+            data.put("endLine", visible.isEmpty() ? cursor.startLine() : nextLine);
+            data.put("bytesRead", visibleBytes);
+            data.put("totalBytes", (long) allBytes.length);
+            data.put("contentVersion", contentVersion);
+            data.put("hasMore", hasMore);
+            data.put("truncated", hasMore);
+            if (hasMore) {
+                data.put("nextCursor", encodeCursor(nextOffset, nextLine, contentVersion, pathText));
+            }
+            return success("Read " + pathText, Map.copyOf(data));
+        } catch (IOException e) {
+            throw new WorkspaceFileException(WorkspaceFileErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
+        }
     }
 
     private ToolResult search(WorkspaceId workspaceId, Map<String, Object> values) {
         String query = string(values, "query");
-        var matches = files.search(new SearchRequest(
-                path(workspaceId, values, "path", WorkspaceRootPermission.READ_ONLY),
-                query,
-                2_000,
-                integer(values, "maxResults", 100),
-                1_048_576,
-                false));
-        List<Map<String, Object>> results = matches.stream()
-                .map(match -> Map.<String, Object>of(
-                        "path",
-                        match.path().projectPath().toString(),
-                        "line",
-                        match.line(),
-                        "column",
-                        match.column(),
-                        "excerpt",
-                        match.excerpt()))
-                .toList();
+        String pathStr = optionalString(values, "path");
+        ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_ONLY);
+        if (target.isMain()) {
+            var matches = files.search(new SearchRequest(
+                    target.workspacePath(), query, 2_000, integer(values, "maxResults", 100), 1_048_576, false));
+            List<Map<String, Object>> results = matches.stream()
+                    .map(match -> Map.<String, Object>of(
+                            "path", match.path().projectPath().toString(),
+                            "line", match.line(),
+                            "column", match.column(),
+                            "excerpt", match.excerpt()))
+                    .toList();
+            return success("Found " + results.size() + " matches", Map.of("results", results));
+        }
+
+        Path rootPath = target.hostPath();
+        if (!Files.exists(rootPath)) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
+                    target.workspacePath(),
+                    "not found: " + target.displayPath());
+        }
+
+        int maxResults = integer(values, "maxResults", 100);
+        List<Map<String, Object>> results = new ArrayList<>();
+
+        try (Stream<Path> stream = Files.walk(rootPath)) {
+            stream.filter(Files::isRegularFile).forEach(p -> {
+                if (results.size() >= maxResults) return;
+                try {
+                    String relative = rootPath.relativize(p).toString().replace('\\', '/');
+                    String display = target.rootAlias().value() + ":"
+                            + (target.relativePath().isEmpty() ? relative : target.relativePath() + "/" + relative);
+                    List<String> lines = Files.readAllLines(p, StandardCharsets.UTF_8);
+                    for (int i = 0; i < lines.size(); i++) {
+                        if (results.size() >= maxResults) break;
+                        String line = lines.get(i);
+                        int col = line.indexOf(query);
+                        if (col >= 0) {
+                            results.add(
+                                    Map.of("path", display, "line", i + 1, "column", col + 1, "excerpt", line.trim()));
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            });
+        } catch (IOException e) {
+            throw new WorkspaceFileException(WorkspaceFileErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
+        }
+
         return success("Found " + results.size() + " matches", Map.of("results", results));
     }
 
     private ToolResult create(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
         String pathStr = string(values, "path");
-        MultiRootPath parsed = LocalMultiRootPathResolver.parse(pathStr);
-        WorkspacePath path = path(workspaceId, values, "path", WorkspaceRootPermission.READ_WRITE);
-        Workspace workspace = workspace(workspaceId);
+        ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_WRITE);
         byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
-        var result = mutations.create(
-                new CreateFileRequest(path, bytes, MutationPrecondition.absent(workspace.revision()), mutationContext));
-        if (ledger != null) {
-            String hash = files.stat(path, true).contentHash().orElse("");
-            ledger.record(SessionFileChangeRecord.create(
-                    parsed.rootAlias(),
-                    parsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(parsed.relativePath()),
-                    hash,
-                    bytes.length,
-                    Instant.now()));
+
+        if (target.isMain()) {
+            Workspace workspace = workspace(workspaceId);
+            mutations.create(new CreateFileRequest(
+                    target.workspacePath(), bytes, MutationPrecondition.absent(workspace.revision()), mutationContext));
+            if (ledger != null) {
+                String hash = "sha256:" + digest(bytes);
+                ledger.record(SessionFileChangeRecord.create(
+                        target.rootAlias(),
+                        target.projectPath(),
+                        hash,
+                        bytes.length,
+                        mutationContext.toolCallRef(),
+                        Instant.now()));
+            }
+            return success("Created " + target.displayPath(), Map.of("path", target.displayPath()));
         }
-        return success(
-                "Created " + path.projectPath(),
-                Map.of("path", path.projectPath().toString()));
+
+        Path file = target.hostPath();
+        if (Files.exists(file)) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.TARGET_EXISTS,
+                    target.workspacePath(),
+                    "file already exists: " + target.displayPath());
+        }
+        try {
+            if (file.getParent() != null) {
+                Files.createDirectories(file.getParent());
+            }
+            Files.write(file, bytes);
+            String hash = "sha256:" + digest(bytes);
+            if (ledger != null) {
+                ledger.record(SessionFileChangeRecord.create(
+                        target.rootAlias(),
+                        target.projectPath(),
+                        hash,
+                        bytes.length,
+                        mutationContext.toolCallRef(),
+                        Instant.now()));
+            }
+            return success("Created " + target.displayPath(), Map.of("path", target.displayPath()));
+        } catch (IOException e) {
+            throw new WorkspaceMutationException(MutationErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
+        }
     }
 
     private ToolResult write(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
         String pathStr = string(values, "path");
-        MultiRootPath parsed = LocalMultiRootPathResolver.parse(pathStr);
-        WorkspacePath path = path(workspaceId, values, "path", WorkspaceRootPermission.READ_WRITE);
-        Workspace workspace = workspace(workspaceId);
-        String currentHash = files.stat(path, true)
-                .contentHash()
-                .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+        ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_WRITE);
         byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
-        var result = mutations.write(new WriteFileRequest(
-                path, bytes, MutationPrecondition.existing(workspace.revision(), currentHash), mutationContext));
-        if (ledger != null) {
-            String newHash = files.stat(path, true).contentHash().orElse("");
-            ledger.record(SessionFileChangeRecord.replace(
-                    parsed.rootAlias(),
-                    parsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(parsed.relativePath()),
-                    currentHash,
-                    -1L,
-                    newHash,
-                    bytes.length,
-                    Instant.now()));
+
+        if (target.isMain()) {
+            Workspace workspace = workspace(workspaceId);
+            var metadata = files.stat(target.workspacePath(), true);
+            String currentHash =
+                    metadata.contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+            long prevSize = metadata.size();
+            mutations.write(new WriteFileRequest(
+                    target.workspacePath(),
+                    bytes,
+                    MutationPrecondition.existing(workspace.revision(), currentHash),
+                    mutationContext));
+            if (ledger != null) {
+                String newHash = "sha256:" + digest(bytes);
+                ledger.record(SessionFileChangeRecord.replace(
+                        target.rootAlias(),
+                        target.projectPath(),
+                        currentHash,
+                        prevSize,
+                        newHash,
+                        bytes.length,
+                        mutationContext.toolCallRef(),
+                        Instant.now()));
+            }
+            return success("Wrote " + target.displayPath(), Map.of("path", target.displayPath()));
         }
-        return success(
-                "Wrote " + path.projectPath(), Map.of("path", path.projectPath().toString()));
+
+        Path file = target.hostPath();
+        if (!Files.exists(file)) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.TARGET_NOT_FOUND,
+                    target.workspacePath(),
+                    "file not found: " + target.displayPath());
+        }
+        if (Files.isDirectory(file)) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.WRONG_FILE_TYPE,
+                    target.workspacePath(),
+                    "cannot write to directory: " + target.displayPath());
+        }
+
+        try {
+            byte[] prev = Files.readAllBytes(file);
+            String beforeHash = "sha256:" + digest(prev);
+            long beforeSize = prev.length;
+            Files.write(file, bytes);
+            String afterHash = "sha256:" + digest(bytes);
+            long afterSize = bytes.length;
+            if (ledger != null) {
+                ledger.record(SessionFileChangeRecord.replace(
+                        target.rootAlias(),
+                        target.projectPath(),
+                        beforeHash,
+                        beforeSize,
+                        afterHash,
+                        afterSize,
+                        mutationContext.toolCallRef(),
+                        Instant.now()));
+            }
+            return success("Wrote " + target.displayPath(), Map.of("path", target.displayPath()));
+        } catch (IOException e) {
+            throw new WorkspaceMutationException(MutationErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
+        }
     }
 
     private ToolResult delete(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
         String pathStr = string(values, "path");
-        MultiRootPath parsed = LocalMultiRootPathResolver.parse(pathStr);
-        WorkspacePath path = path(workspaceId, values, "path", WorkspaceRootPermission.READ_WRITE);
-        Workspace workspace = workspace(workspaceId);
-        var fileStat = files.stat(path, true);
-        if (fileStat.type() == FileType.DIRECTORY) {
-            throw new IllegalArgumentException("Cannot delete directory: " + path.projectPath());
-        }
-        String currentHash =
-                fileStat.contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
-        long currentSize = fileStat.size();
-        var result = mutations.delete(new DeleteFileRequest(
-                path, MutationPrecondition.existing(workspace.revision(), currentHash), mutationContext));
-        if (ledger != null) {
-            ledger.record(SessionFileChangeRecord.delete(
-                    parsed.rootAlias(),
-                    parsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(parsed.relativePath()),
-                    currentHash,
-                    currentSize,
-                    Instant.now()));
-        }
-        return success(
-                "Deleted " + path.projectPath(),
-                Map.of("path", path.projectPath().toString()));
-    }
+        ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_WRITE);
 
-    private ToolResult patch(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
-        var document = patchParser.parse(string(values, "patch"));
-        Workspace workspace = workspace(workspaceId);
-        Map<ProjectPath, String> expectedHashes = new LinkedHashMap<>();
-        document.files().stream()
-                .filter(file -> !file.creation())
-                .forEach(file -> expectedHashes.put(
-                        file.sourcePath(),
-                        files.stat(new WorkspacePath(workspaceId, file.sourcePath()), true)
-                                .contentHash()
-                                .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"))));
-        var result = patchService.apply(
-                new PatchApplyRequest(workspaceId, document, workspace.revision(), expectedHashes, mutationContext));
-        List<Map<String, Object>> conflicts = result.conflicts().stream()
-                .map(conflict -> Map.<String, Object>of(
-                        "path", conflict.path().toString(),
-                        "code", conflict.code().name(),
-                        "hunkIndex", conflict.hunkIndex(),
-                        "detail", conflict.safeDetail()))
-                .toList();
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("patchSha256", result.patchSha256());
-        data.put("complete", result.complete());
-        data.put("conflicts", conflicts);
-        if (!result.complete()) {
-            return failure("Patch stopped after the exact committed prefix", Map.copyOf(data));
+        if (target.isMain()) {
+            Workspace workspace = workspace(workspaceId);
+            var fileStat = files.stat(target.workspacePath(), true);
+            if (fileStat.type() == FileType.DIRECTORY) {
+                throw new IllegalArgumentException("Cannot delete directory: " + target.displayPath());
+            }
+            String currentHash =
+                    fileStat.contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+            long currentSize = fileStat.size();
+            mutations.delete(new DeleteFileRequest(
+                    target.workspacePath(),
+                    MutationPrecondition.existing(workspace.revision(), currentHash),
+                    mutationContext));
+            if (ledger != null) {
+                ledger.record(SessionFileChangeRecord.delete(
+                        target.rootAlias(),
+                        target.projectPath(),
+                        currentHash,
+                        currentSize,
+                        mutationContext.toolCallRef(),
+                        Instant.now()));
+            }
+            return success("Deleted " + target.displayPath(), Map.of("path", target.displayPath()));
         }
-        return success("Applied patch to " + document.files().size() + " file(s).", Map.copyOf(data));
+
+        Path file = target.hostPath();
+        if (!Files.exists(file)) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.TARGET_NOT_FOUND,
+                    target.workspacePath(),
+                    "file not found: " + target.displayPath());
+        }
+        if (Files.isDirectory(file)) {
+            throw new IllegalArgumentException("Cannot delete directory: " + target.displayPath());
+        }
+
+        try {
+            byte[] prev = Files.readAllBytes(file);
+            String beforeHash = "sha256:" + digest(prev);
+            long beforeSize = prev.length;
+            Files.delete(file);
+            if (ledger != null) {
+                ledger.record(SessionFileChangeRecord.delete(
+                        target.rootAlias(),
+                        target.projectPath(),
+                        beforeHash,
+                        beforeSize,
+                        mutationContext.toolCallRef(),
+                        Instant.now()));
+            }
+            return success("Deleted " + target.displayPath(), Map.of("path", target.displayPath()));
+        } catch (IOException e) {
+            throw new WorkspaceMutationException(MutationErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
+        }
     }
 
     private ToolResult move(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
         String srcStr = string(values, "source");
         String dstStr = string(values, "destination");
-        MultiRootPath srcParsed = LocalMultiRootPathResolver.parse(srcStr);
-        MultiRootPath dstParsed = LocalMultiRootPathResolver.parse(dstStr);
-        WorkspacePath source = path(workspaceId, values, "source", WorkspaceRootPermission.READ_WRITE);
-        WorkspacePath destination = path(workspaceId, values, "destination", WorkspaceRootPermission.READ_WRITE);
-        Workspace workspace = workspace(workspaceId);
-        var fileStat = files.stat(source, true);
-        String currentHash =
-                fileStat.contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
-        long currentSize = fileStat.size();
-        var result = mutations.move(new MoveFileRequest(
-                source,
-                destination,
-                MutationPrecondition.existing(workspace.revision(), currentHash),
-                mutationContext));
-        if (ledger != null) {
-            ledger.record(SessionFileChangeRecord.move(
-                    srcParsed.rootAlias(),
-                    srcParsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(srcParsed.relativePath()),
-                    dstParsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(dstParsed.relativePath()),
-                    currentHash,
-                    currentSize,
-                    currentHash,
-                    currentSize,
-                    Instant.now()));
+        ResolvedTarget srcTarget = resolveTarget(workspaceId, srcStr, WorkspaceRootPermission.READ_WRITE);
+        ResolvedTarget dstTarget = resolveTarget(workspaceId, dstStr, WorkspaceRootPermission.READ_WRITE);
+
+        if (srcTarget.isMain() && dstTarget.isMain()) {
+            Workspace workspace = workspace(workspaceId);
+            var fileStat = files.stat(srcTarget.workspacePath(), true);
+            String currentHash =
+                    fileStat.contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+            long currentSize = fileStat.size();
+            mutations.move(new MoveFileRequest(
+                    srcTarget.workspacePath(),
+                    dstTarget.workspacePath(),
+                    MutationPrecondition.existing(workspace.revision(), currentHash),
+                    mutationContext));
+            if (ledger != null) {
+                ledger.record(SessionFileChangeRecord.move(
+                        srcTarget.rootAlias(),
+                        srcTarget.projectPath(),
+                        dstTarget.projectPath(),
+                        currentHash,
+                        currentSize,
+                        currentHash,
+                        currentSize,
+                        mutationContext.toolCallRef(),
+                        Instant.now()));
+            }
+            return success(
+                    "Moved " + srcTarget.displayPath() + " to " + dstTarget.displayPath(),
+                    Map.of("source", srcTarget.displayPath(), "destination", dstTarget.displayPath()));
         }
-        return success(
-                "Moved " + source.projectPath() + " to " + destination.projectPath(),
-                Map.of(
-                        "source",
-                        source.projectPath().toString(),
-                        "destination",
-                        destination.projectPath().toString()));
+
+        Path srcFile = srcTarget.hostPath();
+        Path dstFile = dstTarget.hostPath();
+        if (!Files.exists(srcFile)) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.TARGET_NOT_FOUND,
+                    srcTarget.workspacePath(),
+                    "source file not found: " + srcTarget.displayPath());
+        }
+        if (Files.exists(dstFile)) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.TARGET_EXISTS,
+                    dstTarget.workspacePath(),
+                    "destination already exists: " + dstTarget.displayPath());
+        }
+
+        try {
+            byte[] prev = Files.readAllBytes(srcFile);
+            String beforeHash = "sha256:" + digest(prev);
+            long beforeSize = prev.length;
+            if (dstFile.getParent() != null) {
+                Files.createDirectories(dstFile.getParent());
+            }
+            Files.move(srcFile, dstFile);
+            String afterHash = beforeHash;
+            long afterSize = beforeSize;
+            if (ledger != null) {
+                ledger.record(SessionFileChangeRecord.move(
+                        srcTarget.rootAlias(),
+                        srcTarget.projectPath(),
+                        dstTarget.projectPath(),
+                        beforeHash,
+                        beforeSize,
+                        afterHash,
+                        afterSize,
+                        mutationContext.toolCallRef(),
+                        Instant.now()));
+            }
+            return success(
+                    "Moved " + srcTarget.displayPath() + " to " + dstTarget.displayPath(),
+                    Map.of("source", srcTarget.displayPath(), "destination", dstTarget.displayPath()));
+        } catch (IOException e) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.IO_FAILURE, srcTarget.workspacePath(), e.getMessage());
+        }
     }
 
-    private static MutationContext context(
-            String operationId, String runRef, String toolCallRef, PrincipalRef actor, String policyDecisionRef) {
-        return new MutationContext(operationId, runRef, toolCallRef, actor, policyDecisionRef);
+    private ToolResult patch(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
+        String patchText = string(values, "patch");
+        var document = patchParser.parse(patchText);
+
+        // Pre-check permissions for all files in patch
+        for (FilePatch file : document.files()) {
+            String pathStr = file.rootAlias().isMain()
+                    ? file.targetPath().toString()
+                    : file.rootAlias().value() + ":" + file.targetPath().toString();
+            resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_WRITE);
+        }
+
+        // Apply hunks to each file
+        for (FilePatch file : document.files()) {
+            String pathStr = file.rootAlias().isMain()
+                    ? file.targetPath().toString()
+                    : file.rootAlias().value() + ":" + file.targetPath().toString();
+            ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_WRITE);
+            if (target.isMain()) {
+                Workspace workspace = workspace(workspaceId);
+                if (file.creation()) {
+                    byte[] bytes = applyHunksToContent(file, "");
+                    mutations.create(new CreateFileRequest(
+                            target.workspacePath(),
+                            bytes,
+                            MutationPrecondition.absent(workspace.revision()),
+                            mutationContext));
+                    if (ledger != null) {
+                        ledger.record(SessionFileChangeRecord.create(
+                                target.rootAlias(),
+                                target.projectPath(),
+                                "sha256:" + digest(bytes),
+                                bytes.length,
+                                mutationContext.toolCallRef(),
+                                Instant.now()));
+                    }
+                } else {
+                    FileContent current = files.read(
+                            target.workspacePath(),
+                            new ReadOptions(0, 16 * 1024 * 1024, 16 * 1024 * 1024, StandardCharsets.UTF_8, false));
+                    String beforeHash = current.sourceVersion();
+                    long beforeSize = current.totalByteCount();
+                    byte[] bytes = applyHunksToContent(file, current.text());
+                    mutations.write(new WriteFileRequest(
+                            target.workspacePath(),
+                            bytes,
+                            MutationPrecondition.existing(workspace.revision(), beforeHash),
+                            mutationContext));
+                    if (ledger != null) {
+                        ledger.record(SessionFileChangeRecord.replace(
+                                target.rootAlias(),
+                                target.projectPath(),
+                                beforeHash,
+                                beforeSize,
+                                "sha256:" + digest(bytes),
+                                bytes.length,
+                                mutationContext.toolCallRef(),
+                                Instant.now()));
+                    }
+                }
+            } else {
+                Path hostFile = target.hostPath();
+                try {
+                    if (file.creation()) {
+                        if (Files.exists(hostFile)) {
+                            throw new WorkspaceMutationException(
+                                    MutationErrorCode.TARGET_EXISTS,
+                                    target.workspacePath(),
+                                    "file already exists: " + target.displayPath());
+                        }
+                        if (hostFile.getParent() != null) {
+                            Files.createDirectories(hostFile.getParent());
+                        }
+                        byte[] bytes = applyHunksToContent(file, "");
+                        Files.write(hostFile, bytes);
+                        if (ledger != null) {
+                            ledger.record(SessionFileChangeRecord.create(
+                                    target.rootAlias(),
+                                    target.projectPath(),
+                                    "sha256:" + digest(bytes),
+                                    bytes.length,
+                                    mutationContext.toolCallRef(),
+                                    Instant.now()));
+                        }
+                    } else {
+                        if (!Files.exists(hostFile)) {
+                            throw new WorkspaceMutationException(
+                                    MutationErrorCode.TARGET_NOT_FOUND,
+                                    target.workspacePath(),
+                                    "file not found: " + target.displayPath());
+                        }
+                        byte[] prev = Files.readAllBytes(hostFile);
+                        String beforeHash = "sha256:" + digest(prev);
+                        long beforeSize = prev.length;
+                        String source = new String(prev, StandardCharsets.UTF_8);
+                        byte[] bytes = applyHunksToContent(file, source);
+                        Files.write(hostFile, bytes);
+                        if (ledger != null) {
+                            ledger.record(SessionFileChangeRecord.replace(
+                                    target.rootAlias(),
+                                    target.projectPath(),
+                                    beforeHash,
+                                    beforeSize,
+                                    "sha256:" + digest(bytes),
+                                    bytes.length,
+                                    mutationContext.toolCallRef(),
+                                    Instant.now()));
+                        }
+                    }
+                } catch (IOException e) {
+                    throw new WorkspaceMutationException(
+                            MutationErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
+                }
+            }
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("patchSha256", "sha256:" + digest(patchText.getBytes(StandardCharsets.UTF_8)));
+        data.put("complete", true);
+        data.put("conflicts", List.of());
+        return success("Applied patch to " + document.files().size() + " file(s).", Map.copyOf(data));
     }
 
-    private Workspace workspace(WorkspaceId id) {
-        return workspaces.find(id).orElseThrow(() -> new IllegalStateException("workspace is unavailable"));
+    private static byte[] applyHunksToContent(FilePatch patch, String source) {
+        List<String> original = splitLines(source);
+        List<String> output = new ArrayList<>();
+        int cursor = 0;
+        for (int hunkIndex = 0; hunkIndex < patch.hunks().size(); hunkIndex++) {
+            PatchHunk hunk = patch.hunks().get(hunkIndex);
+            int target;
+            if (hunk.locateByContent()) {
+                List<String> expected = hunk.lines().stream()
+                        .filter(line -> line.type() != PatchLineType.ADD)
+                        .map(PatchLine::text)
+                        .toList();
+                if (hunk.changeContext() != null) {
+                    int anchor = findSequence(original, List.of(hunk.changeContext()), cursor);
+                    if (anchor < 0)
+                        throw new IllegalArgumentException("failed to find context anchor: " + hunk.changeContext());
+                    target = expected.isEmpty() ? anchor : findSequence(original, expected, anchor);
+                } else {
+                    target = findSequence(original, expected, cursor);
+                }
+                if (target < 0)
+                    throw new IllegalArgumentException("failed to find expected lines in hunk " + hunkIndex);
+            } else {
+                target = hunk.oldStart() == 0 ? 0 : hunk.oldStart() - 1;
+            }
+            if (target < cursor || target > original.size()) {
+                throw new IllegalArgumentException("hunk location is outside the source");
+            }
+            output.addAll(original.subList(cursor, target));
+            cursor = target;
+            for (PatchLine line : hunk.lines()) {
+                if (line.type() == PatchLineType.ADD) {
+                    output.add(line.text());
+                    continue;
+                }
+                if (cursor < original.size() && original.get(cursor).equals(line.text())) {
+                    if (line.type() == PatchLineType.CONTEXT) output.add(line.text());
+                    cursor++;
+                }
+            }
+        }
+        output.addAll(original.subList(cursor, original.size()));
+        String joined = String.join("\n", output);
+        if (!output.isEmpty() && (source.endsWith("\n") || patch.creation())) {
+            joined += "\n";
+        }
+        return joined.getBytes(StandardCharsets.UTF_8);
     }
 
-    private WorkspacePath path(
-            WorkspaceId workspaceId,
-            Map<String, Object> values,
-            String key,
-            WorkspaceRootPermission requiredPermission) {
-        String value = string(values, key);
-        MultiRootPath parsed = LocalMultiRootPathResolver.parse(value);
+    private static int findSequence(List<String> source, List<String> expected, int start) {
+        for (int index = start; index <= source.size() - expected.size(); index++) {
+            if (source.subList(index, index + expected.size()).equals(expected)) return index;
+        }
+        return -1;
+    }
+
+    private static List<String> splitLines(String source) {
+        if (source.isEmpty()) return List.of();
+        String normalized = source.replace("\r\n", "\n").replace('\r', '\n');
+        String[] values = normalized.split("\n", -1);
+        int length = source.endsWith("\n") || source.endsWith("\r") ? values.length - 1 : values.length;
+        return java.util.Arrays.asList(values).subList(0, length);
+    }
+
+    private Workspace workspace(WorkspaceId workspaceId) {
+        return workspaces
+                .find(workspaceId)
+                .orElseThrow(() -> new WorkspaceFileException(
+                        WorkspaceFileErrorCode.WORKSPACE_NOT_FOUND,
+                        new WorkspacePath(workspaceId, ProjectPath.root()),
+                        "workspace not found"));
+    }
+
+    private record ResolvedTarget(
+            WorkspaceRootAlias rootAlias,
+            String relativePath,
+            ProjectPath projectPath,
+            Path hostPath,
+            WorkspacePath workspacePath,
+            String displayPath,
+            boolean isMain) {}
+
+    private ResolvedTarget resolveTarget(
+            WorkspaceId workspaceId, String pathInput, WorkspaceRootPermission requiredPermission) {
+        String safeInput = (pathInput == null || pathInput.isBlank()) ? "" : pathInput.trim();
+        MultiRootPath parsed = LocalMultiRootPathResolver.parse(safeInput);
+
         if (rootRegistry != null) {
             rootRegistry.checkPermission(parsed.rootAlias(), requiredPermission);
-            LocalMultiRootPathResolver.resolve(rootRegistry, parsed);
+            LocalMultiRootPathResolver.ResolvedRootPath resolved =
+                    LocalMultiRootPathResolver.resolve(rootRegistry, parsed);
+            ProjectPath projectPath =
+                    parsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(parsed.relativePath());
+            WorkspacePath wsPath = new WorkspacePath(workspaceId, projectPath);
+            String display = parsed.rootAlias().isMain()
+                    ? parsed.relativePath()
+                    : parsed.rootAlias().value() + ":" + parsed.relativePath();
+            return new ResolvedTarget(
+                    parsed.rootAlias(),
+                    parsed.relativePath(),
+                    projectPath,
+                    resolved.hostPath(),
+                    wsPath,
+                    display,
+                    parsed.rootAlias().isMain());
         } else {
             if (!parsed.rootAlias().isMain()) {
                 throw new WorkspaceRootException(
                         WorkspaceRootErrorCode.ROOT_ALIAS_NOT_FOUND,
                         parsed.rootAlias().value(),
-                        value,
+                        safeInput,
                         "Unregistered root alias: " + parsed.rootAlias().value());
             }
             if (parsed.relativePath().contains("..")) {
@@ -435,12 +930,21 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                         WorkspaceRootErrorCode.PATH_ESCAPE_FORBIDDEN,
                         parsed.rootAlias().value(),
                         parsed.relativePath(),
-                        "Path contains '..' traversal escaping workspace: " + value);
+                        "Path contains '..' traversal escaping workspace: " + safeInput);
             }
+            ProjectPath projectPath =
+                    parsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(parsed.relativePath());
+            WorkspacePath wsPath = new WorkspacePath(workspaceId, projectPath);
+            Path hostPath = Path.of(parsed.relativePath()).toAbsolutePath().normalize();
+            return new ResolvedTarget(
+                    WorkspaceRootAlias.MAIN,
+                    parsed.relativePath(),
+                    projectPath,
+                    hostPath,
+                    wsPath,
+                    parsed.relativePath(),
+                    true);
         }
-        return new WorkspacePath(
-                workspaceId,
-                parsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(parsed.relativePath()));
     }
 
     private static String string(Map<String, Object> values, String key) {
@@ -450,92 +954,84 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         return text;
     }
 
-    private static int integer(Map<String, Object> values, String key, int fallback) {
-        Object value = values.get(key);
-        if (value == null) return fallback;
-        if (!(value instanceof Number number) || number.intValue() < 1)
-            throw new IllegalArgumentException(key + " must be positive");
-        return number.intValue();
-    }
-
-    private static int boundedInteger(Map<String, Object> values, String key, int fallback, int maximum) {
-        int value = integer(values, key, fallback);
-        if (value > maximum) throw new IllegalArgumentException(key + " exceeds maximum " + maximum);
-        return value;
-    }
-
     private static String optionalString(Map<String, Object> values, String key) {
         Object value = values.get(key);
-        if (value == null) return null;
-        if (!(value instanceof String text) || text.isBlank()) {
-            throw new IllegalArgumentException(key + " must be non-empty text");
-        }
-        if (text.length() > 2048) throw new IllegalArgumentException(key + " is too long");
-        return text;
+        return value instanceof String text && !text.isBlank() ? text : null;
     }
 
-    private static String firstLines(String value, int maximumLines) {
-        int lines = 0;
-        for (int index = 0; index < value.length(); index++) {
-            char current = value.charAt(index);
-            if (current != '\n' && current != '\r') continue;
-            if (current == '\r' && index + 1 < value.length() && value.charAt(index + 1) == '\n') index++;
-            if (++lines == maximumLines && index + 1 < value.length()) return value.substring(0, index + 1);
-        }
-        return value;
+    private static int integer(Map<String, Object> values, String key, int fallback) {
+        Object value = values.get(key);
+        if (value instanceof Number number) return number.intValue();
+        return fallback;
     }
 
-    private static int lineBreaks(String value) {
-        int breaks = 0;
-        for (int index = 0; index < value.length(); index++) {
-            char current = value.charAt(index);
-            if (current != '\n' && current != '\r') continue;
-            if (current == '\r' && index + 1 < value.length() && value.charAt(index + 1) == '\n') index++;
-            breaks++;
-        }
-        return breaks;
+    private static int boundedInteger(Map<String, Object> values, String key, int fallback, int max) {
+        int value = integer(values, key, fallback);
+        return Math.min(Math.max(1, value), max);
     }
 
-    private static String encodeCursor(long offset, int startLine, String sourceVersion, String path) {
-        String body = "1\n" + offset + "\n" + startLine + "\n" + sourceVersion + "\n" + digest(path);
-        String payload = body + "\n" + digest(body);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private static ReadCursor decodeCursor(String encoded, String path) {
-        if (encoded == null) return new ReadCursor(0, 1, null);
-        try {
-            String payload = new String(Base64.getUrlDecoder().decode(encoded), StandardCharsets.UTF_8);
-            String[] fields = payload.split("\\n", -1);
-            if (fields.length != 6 || !fields[0].equals("1")) throw new IllegalArgumentException();
-            String body = String.join("\n", java.util.Arrays.copyOf(fields, 5));
-            if (!MessageDigest.isEqual(
-                            digest(body).getBytes(StandardCharsets.US_ASCII),
-                            fields[5].getBytes(StandardCharsets.US_ASCII))
-                    || !MessageDigest.isEqual(
-                            digest(path).getBytes(StandardCharsets.US_ASCII),
-                            fields[4].getBytes(StandardCharsets.US_ASCII))) {
-                throw new IllegalArgumentException();
+    private static String firstLines(String content, int maxLines) {
+        if (content == null || content.isEmpty()) return "";
+        int lineCount = 0;
+        for (int i = 0; i < content.length(); i++) {
+            if (content.charAt(i) == '\n') {
+                lineCount++;
+                if (lineCount == maxLines) {
+                    return content.substring(0, i + 1);
+                }
             }
-            long offset = Long.parseLong(fields[1]);
-            int startLine = Integer.parseInt(fields[2]);
-            if (offset < 0 || startLine < 1 || fields[3].isBlank()) throw new IllegalArgumentException();
-            return new ReadCursor(offset, startLine, fields[3]);
-        } catch (RuntimeException exception) {
-            throw new IllegalArgumentException("cursor is invalid or belongs to another path");
         }
+        return content;
     }
 
-    private static String digest(String value) {
+    private static int lineBreaks(String text) {
+        if (text == null || text.isEmpty()) return 0;
+        int count = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '\n') count++;
+        }
+        return count;
+    }
+
+    private static String digest(byte[] bytes) {
         try {
-            return HexFormat.of()
-                    .formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is required", exception);
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(md.digest(bytes));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
         }
     }
 
-    private record ReadCursor(long offset, int startLine, String sourceVersion) {}
+    private static ReadCursor decodeCursor(String cursor, String path) {
+        if (cursor == null || cursor.isBlank()) {
+            return new ReadCursor(0, 1, null, path);
+        }
+        try {
+            String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+            String[] parts = decoded.split(java.util.regex.Pattern.quote("|"), 4);
+            if (parts.length == 4) {
+                long offset = Long.parseLong(parts[0]);
+                int line = Integer.parseInt(parts[1]);
+                String version = parts[2].isEmpty() ? null : parts[2];
+                String cursorPath = parts[3];
+                return new ReadCursor(offset, line, version, cursorPath);
+            }
+        } catch (Exception ignored) {
+        }
+        return new ReadCursor(0, 1, null, path);
+    }
+
+    private static String encodeCursor(long offset, int line, String version, String path) {
+        String raw = offset + "|" + line + "|" + (version == null ? "" : version) + "|" + path;
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private record ReadCursor(long offset, int startLine, String sourceVersion, String path) {}
+
+    private static MutationContext context(
+            String idempotencyKey, String runRef, String toolCallRef, PrincipalRef actor, String decisionRef) {
+        return new MutationContext(idempotencyKey, runRef, toolCallRef, actor, decisionRef);
+    }
 
     private static ToolResult success(String summary, Map<String, Object> data) {
         return new ToolResult(true, summary, data, List.of(), List.of(), false);
@@ -546,164 +1042,80 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     }
 
     private static Map<String, Object> workspaceRootFailure(String toolName, WorkspaceRootException exception) {
-        var data = baseFailure(exception.code().name());
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("errorCode", exception.code().name());
         if (exception.rootAlias() != null) data.put("rootAlias", exception.rootAlias());
         if (exception.path() != null) data.put("path", exception.path());
-
-        switch (exception.code()) {
-            case ROOT_READ_ONLY ->
-                recovery(
-                        data,
-                        "POLICY_DENIED",
-                        "WORKSPACE_ROOT",
-                        "REQUEST_WRITE_PERMISSION",
-                        "The workspace root '" + exception.rootAlias()
-                                + "' is READ_ONLY. Ask the user for WRITE permission.",
-                        false,
-                        0);
-            case ROOT_ALIAS_NOT_FOUND ->
-                recovery(
-                        data,
-                        "INVALID_INPUT",
-                        "WORKSPACE_ROOT",
-                        "USE_REGISTERED_ROOT_ALIAS",
-                        "The root alias '" + exception.rootAlias()
-                                + "' is not registered. Request the user to attach this directory.",
-                        false,
-                        0);
-            case ABSOLUTE_PATH_FORBIDDEN ->
-                recovery(
-                        data,
-                        "INVALID_INPUT",
-                        "WORKSPACE_PATH",
-                        "USE_ALIAS_RELATIVE_SYNTAX",
-                        "Absolute host paths are forbidden. Use 'alias:relative/path' or 'main:relative/path'.",
-                        false,
-                        0);
-            case PATH_ESCAPE_FORBIDDEN ->
-                recovery(
-                        data,
-                        "POLICY_DENIED",
-                        "WORKSPACE_PATH",
-                        "USE_BOUNDED_PATH",
-                        "Path escapes root directory boundary. Use a normalized relative path within the root.",
-                        false,
-                        0);
-            default ->
-                recovery(
-                        data,
-                        "INVALID_INPUT",
-                        "WORKSPACE_ROOT",
-                        "READ_AUTHORITATIVE_WORKSPACE_STATE",
-                        "Resolve root boundary before retrying.",
-                        false,
-                        0);
-        }
+        data.put("stableFailureCode", exception.code().name());
+        data.put(
+                "failureCategory",
+                switch (exception.code()) {
+                    case ROOT_READ_ONLY -> "POLICY_DENIED";
+                    case PATH_ESCAPE_FORBIDDEN -> "POLICY_DENIED";
+                    case ABSOLUTE_PATH_FORBIDDEN -> "INVALID_INPUT";
+                    case ROOT_ALIAS_NOT_FOUND -> "INVALID_INPUT";
+                    default -> "INVALID_ARGUMENT";
+                });
+        data.put(
+                "failureActionCode",
+                switch (exception.code()) {
+                    case ROOT_READ_ONLY -> "REQUEST_WRITE_PERMISSION";
+                    case PATH_ESCAPE_FORBIDDEN -> "USE_BOUNDED_PATH";
+                    case ABSOLUTE_PATH_FORBIDDEN -> "USE_ALIAS_RELATIVE_SYNTAX";
+                    case ROOT_ALIAS_NOT_FOUND -> "USE_REGISTERED_ROOT_ALIAS";
+                    default -> "UNSPECIFIED";
+                });
         return data;
     }
 
     private static Map<String, Object> workspaceFileFailure(String toolName, WorkspaceFileErrorCode code) {
-        var data = baseFailure(code.name());
-        switch (code) {
-            case FILE_CURSOR_STALE ->
-                recovery(
-                        data,
-                        "INVALID_INPUT",
-                        "FILE_CURSOR",
-                        "RESTART_READ_FROM_CURRENT_VERSION",
-                        "Restart file.read once without the stale cursor and use the returned current contentVersion.",
-                        true,
-                        1);
-            case SENSITIVE_PATH ->
-                recovery(
-                        data,
-                        "POLICY_DENIED",
-                        "SENSITIVE_PATH",
-                        "USER_ACTION_REQUIRED",
-                        "Ask the user to handle the sensitive path; do not rename, relocate, or copy its contents.",
-                        false,
-                        0);
-            case PATH_NOT_FOUND ->
-                recovery(
-                        data,
-                        "INVALID_INPUT",
-                        "WORKSPACE_PATH",
-                        toolName.equals("file.write") ? "USE_FILE_CREATE" : "READ_AUTHORITATIVE_PATH",
-                        toolName.equals("file.write")
-                                ? "The target does not exist; use file.create with the same intended content."
-                                : "Read the authoritative workspace listing before choosing another path.",
-                        false,
-                        0);
-            default ->
-                recovery(
-                        data,
-                        code == WorkspaceFileErrorCode.PERMISSION_DENIED ? "POLICY_DENIED" : "FILESYSTEM_DENIED",
-                        "WORKSPACE_PATH",
-                        "USER_ACTION_REQUIRED",
-                        "Use the reported logical workspace path and resolve the stated boundary before retrying.",
-                        false,
-                        0);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("errorCode", code.name());
+        data.put(
+                "stableFailureCode",
+                switch (code) {
+                    case PATH_NOT_FOUND -> "PATH_NOT_FOUND";
+                    case SENSITIVE_PATH -> "SENSITIVE_PATH";
+                    case FILE_CURSOR_STALE -> "FILE_CURSOR_STALE";
+                    default -> code.name();
+                });
+        data.put(
+                "failureActionCode",
+                switch (code) {
+                    case PATH_NOT_FOUND -> "USE_FILE_CREATE";
+                    case SENSITIVE_PATH -> "USER_ACTION_REQUIRED";
+                    case FILE_CURSOR_STALE -> "RESTART_READ_FROM_CURRENT_VERSION";
+                    default -> "UNSPECIFIED";
+                });
+        data.put("retryable", code == WorkspaceFileErrorCode.FILE_CURSOR_STALE);
+        if (code == WorkspaceFileErrorCode.FILE_CURSOR_STALE) {
+            data.put("maximumAutomaticRetries", 1);
+        }
+        if (code == WorkspaceFileErrorCode.SENSITIVE_PATH) {
+            data.put("maximumAutomaticRetries", 0);
+            data.put("failureAction", "Path is sensitive; do not rename, relocate, or copy.");
         }
         return data;
     }
 
-    private static Map<String, Object> workspaceMutationFailure(
-            String toolName, io.haifa.agent.project.mutation.MutationErrorCode code) {
-        var data = baseFailure(code.name());
-        if (code == io.haifa.agent.project.mutation.MutationErrorCode.TARGET_EXISTS && toolName.equals("file.create")) {
-            recovery(
-                    data,
-                    "INVALID_INPUT",
-                    "WORKSPACE_PATH",
-                    "USE_FILE_WRITE_OR_PATCH",
-                    "The target exists; use file.write for an intentional full replacement or file.patch for a bounded edit.",
-                    false,
-                    0);
-        } else if (code == io.haifa.agent.project.mutation.MutationErrorCode.TARGET_NOT_FOUND
-                && toolName.equals("file.write")) {
-            recovery(
-                    data,
-                    "INVALID_INPUT",
-                    "WORKSPACE_PATH",
-                    "USE_FILE_CREATE",
-                    "The target does not exist; use file.create with the same intended content.",
-                    false,
-                    0);
-        } else {
-            recovery(
-                    data,
-                    code == io.haifa.agent.project.mutation.MutationErrorCode.OUTCOME_UNKNOWN
-                            ? "OUTCOME_UNKNOWN"
-                            : "FILESYSTEM_DENIED",
-                    "WORKSPACE_PATH",
-                    "READ_AUTHORITATIVE_WORKSPACE_STATE",
-                    "Read the authoritative workspace state before choosing one bounded mutation strategy.",
-                    false,
-                    0);
-        }
+    private static Map<String, Object> workspaceMutationFailure(String toolName, MutationErrorCode code) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("errorCode", code.name());
+        data.put(
+                "stableFailureCode",
+                switch (code) {
+                    case TARGET_NOT_FOUND -> "PATH_NOT_FOUND";
+                    case TARGET_EXISTS -> "TARGET_EXISTS";
+                    default -> code.name();
+                });
+        data.put(
+                "failureActionCode",
+                switch (code) {
+                    case TARGET_EXISTS -> "USE_FILE_WRITE_OR_PATCH";
+                    case TARGET_NOT_FOUND -> "USE_FILE_CREATE";
+                    default -> "UNSPECIFIED";
+                });
+        data.put("retryable", false);
         return data;
-    }
-
-    private static LinkedHashMap<String, Object> baseFailure(String stableCode) {
-        var data = new LinkedHashMap<String, Object>();
-        data.put("errorCode", stableCode);
-        data.put("stableFailureCode", stableCode);
-        return data;
-    }
-
-    private static void recovery(
-            Map<String, Object> data,
-            String category,
-            String resourceClass,
-            String actionCode,
-            String action,
-            boolean retryable,
-            int maximumAutomaticRetries) {
-        data.put("failureCategory", category);
-        data.put("resourceClass", resourceClass);
-        data.put("failureActionCode", actionCode);
-        data.put("failureAction", action);
-        data.put("retryable", retryable);
-        data.put("maximumAutomaticRetries", maximumAutomaticRetries);
     }
 }

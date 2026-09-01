@@ -86,7 +86,6 @@ class GitAdapterTest {
                 now.plusMillis(1),
                 out,
                 err,
-                null,
                 "session",
                 new ResourceUsageSummary(Duration.ofMillis(1), 1),
                 exitCode == 0 ? null : new ExecutionFailure("EXIT", "non-zero"),

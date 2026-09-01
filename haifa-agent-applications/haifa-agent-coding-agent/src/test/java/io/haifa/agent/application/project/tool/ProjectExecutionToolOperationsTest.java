@@ -120,7 +120,6 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("exitCode", 7)
                 .containsEntry("truncated", true)
                 .containsEntry("outputRef", "stdout-asset")
-                .containsEntry("fileChangeSetId", "changes-1")
                 .containsEntry("failureCode", "PROCESS_EXIT_NONZERO")
                 .containsEntry("operationFamily", "TEST")
                 .containsEntry("failureCategory", "COMMAND_FAILED")
@@ -1452,7 +1451,6 @@ class ProjectExecutionToolOperationsTest {
                 NOW.plusSeconds(1),
                 new ExecutionOutput("stored stdout", asset, 13, "sha-stdout", false, false),
                 new ExecutionOutput("", null, 0, "sha-stderr", false, false),
-                "changes-1",
                 "session-1",
                 new ResourceUsageSummary(Duration.ofSeconds(1), 1),
                 status == ExecutionStatus.FAILED
@@ -1471,7 +1469,6 @@ class ProjectExecutionToolOperationsTest {
                 base.endedAt(),
                 base.stdout(),
                 base.stderr(),
-                null,
                 base.sandboxSessionRef(),
                 base.resourceUsage(),
                 base.failure(),
@@ -1488,7 +1485,6 @@ class ProjectExecutionToolOperationsTest {
                 base.endedAt(),
                 base.stdout(),
                 base.stderr(),
-                base.fileChangeSetId(),
                 base.sandboxSessionRef(),
                 base.resourceUsage(),
                 failure,

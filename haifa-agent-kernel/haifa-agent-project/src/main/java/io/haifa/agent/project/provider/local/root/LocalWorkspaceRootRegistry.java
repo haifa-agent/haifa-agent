@@ -37,6 +37,15 @@ public final class LocalWorkspaceRootRegistry {
         return new LocalWorkspaceRootRegistry(Map.of(WorkspaceRootAlias.MAIN, mainRoot));
     }
 
+    public static LocalWorkspaceRootRegistry of(List<LocalWorkspaceRoot> roots) {
+        Objects.requireNonNull(roots, "roots must not be null");
+        Builder builder = builder();
+        for (LocalWorkspaceRoot root : roots) {
+            builder.addRoot(root);
+        }
+        return builder.build();
+    }
+
     public LocalWorkspaceRoot mainRoot() {
         return mainRoot;
     }

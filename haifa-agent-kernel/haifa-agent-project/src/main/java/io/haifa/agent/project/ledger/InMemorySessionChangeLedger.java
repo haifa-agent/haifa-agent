@@ -13,14 +13,36 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 public final class InMemorySessionChangeLedger implements SessionChangeLedger {
 
+    public static final int DEFAULT_MAX_CAPACITY = 1000;
+    private final int maxCapacity;
+
     private final ConcurrentHashMap<WorkspaceRootAlias, CopyOnWriteArrayList<SessionFileChangeRecord>> entries =
             new ConcurrentHashMap<>();
+
+    public InMemorySessionChangeLedger() {
+        this(DEFAULT_MAX_CAPACITY);
+    }
+
+    public InMemorySessionChangeLedger(int maxCapacity) {
+        if (maxCapacity <= 0) {
+            throw new IllegalArgumentException("maxCapacity must be greater than 0");
+        }
+        this.maxCapacity = maxCapacity;
+    }
 
     @Override
     public void record(SessionFileChangeRecord change) {
         Objects.requireNonNull(change, "change must not be null");
-        entries.computeIfAbsent(change.rootAlias(), k -> new CopyOnWriteArrayList<>())
-                .add(change);
+        entries.compute(change.rootAlias(), (k, list) -> {
+            if (list == null) {
+                list = new CopyOnWriteArrayList<>();
+            }
+            if (list.size() >= maxCapacity) {
+                list.remove(0);
+            }
+            list.add(change);
+            return list;
+        });
     }
 
     @Override
@@ -57,6 +79,7 @@ public final class InMemorySessionChangeLedger implements SessionChangeLedger {
                                         targetPath,
                                         change.afterHash(),
                                         change.afterSize(),
+                                        change.toolCallId(),
                                         change.timestamp()));
                     } else {
                         stateMap.put(
@@ -70,6 +93,7 @@ public final class InMemorySessionChangeLedger implements SessionChangeLedger {
                                         existing.beforeSize(),
                                         change.afterHash(),
                                         change.afterSize(),
+                                        change.toolCallId(),
                                         change.timestamp()));
                     }
                 }
@@ -88,6 +112,7 @@ public final class InMemorySessionChangeLedger implements SessionChangeLedger {
                                         origSource,
                                         existing.beforeHash(),
                                         existing.beforeSize(),
+                                        change.toolCallId(),
                                         change.timestamp()));
                     } else {
                         stateMap.put(targetPath, change);
@@ -104,6 +129,7 @@ public final class InMemorySessionChangeLedger implements SessionChangeLedger {
                                         targetPath,
                                         change.afterHash(),
                                         change.afterSize(),
+                                        change.toolCallId(),
                                         change.timestamp()));
                     } else if (existingSrc != null) {
                         ProjectPath originalOrigin = existingSrc.sourcePath() != null ? existingSrc.sourcePath() : src;
@@ -117,6 +143,7 @@ public final class InMemorySessionChangeLedger implements SessionChangeLedger {
                                         existingSrc.beforeSize(),
                                         change.afterHash(),
                                         change.afterSize(),
+                                        change.toolCallId(),
                                         change.timestamp()));
                     } else {
                         stateMap.put(targetPath, change);

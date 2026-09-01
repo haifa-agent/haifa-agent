@@ -504,7 +504,6 @@ class TrustedScriptExecutionToolProviderTest {
                 NOW.plusMillis(10),
                 output,
                 empty,
-                null,
                 "sandbox-session",
                 new ResourceUsageSummary(Duration.ofMillis(10), 1),
                 null,

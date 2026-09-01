@@ -644,9 +644,6 @@ public final class ProjectExecutionToolOperations {
         data.put("scratchSpecDigest", scratchSpace.canonicalDigest());
         data.put("scratchProvisioned", result.scratchProvisioned());
         data.put("scratchCleanupFailed", result.scratchCleanupFailed());
-        result.optionalFileChangeSetId().ifPresent(value -> {
-            data.put("fileChangeSetId", value);
-        });
         CodingValidationAttemptFactory.create(
                         operationFamily,
                         command,
