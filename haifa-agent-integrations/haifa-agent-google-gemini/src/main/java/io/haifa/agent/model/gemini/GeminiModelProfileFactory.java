@@ -25,6 +25,8 @@ public final class GeminiModelProfileFactory {
     public static ModelBindingProfile fromSnapshot(ResolvedModelSnapshot snapshot, LocalDate verifiedOn) {
         Optional<GeminiBindingRegistry.AdmittedBinding> admission = GeminiBindingRegistry.find(snapshot);
         boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
+        ModelIoProfile fallbackIoProfile =
+                snapshot.imageInput().map(ModelIoProfile::withImage).orElseGet(ModelIoProfile::textOnly);
 
         if (admission.isEmpty()) {
             return ModelBindingProfile.create(
@@ -45,7 +47,7 @@ public final class GeminiModelProfileFactory {
                             snapshot.nativeStreaming(),
                             snapshot.nativeStreaming() && reasoning,
                             ModelPartialOutputFailureBehavior.NON_RETRYABLE),
-                    ModelIoProfile.textOnly(),
+                    fallbackIoProfile,
                     ModelProfileStatus.UNVERIFIED,
                     verifiedOn);
         }

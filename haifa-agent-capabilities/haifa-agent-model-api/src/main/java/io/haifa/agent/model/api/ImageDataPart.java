@@ -8,7 +8,8 @@ import java.util.Set;
 /** Ephemeral image bytes resolved immediately before a provider call. The bytes are never a persisted message value. */
 public final class ImageDataPart implements ModelImagePart {
     public static final int MAXIMUM_BYTES = 10 * 1024 * 1024;
-    private static final Set<String> MEDIA_TYPES = Set.of("image/png", "image/jpeg", "image/webp", "image/gif");
+    private static final Set<String> MEDIA_TYPES =
+            Set.of("image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf");
 
     private final String mediaType;
     private final byte[] bytes;

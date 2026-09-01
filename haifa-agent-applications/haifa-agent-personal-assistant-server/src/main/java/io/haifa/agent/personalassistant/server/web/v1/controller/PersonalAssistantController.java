@@ -221,7 +221,7 @@ public final class PersonalAssistantController {
 
     @PostMapping(
             value = "/images",
-            consumes = {"image/png", "image/jpeg", "image/webp", "image/gif"})
+            consumes = {"image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"})
     ResponseEntity<PersonalApiDtos.UploadedImage> uploadImage(
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestHeader(HttpHeaders.CONTENT_TYPE) String mediaType,
@@ -240,7 +240,7 @@ public final class PersonalAssistantController {
 
     @GetMapping(
             value = "/images/{imageId}",
-            produces = {"image/png", "image/jpeg", "image/webp", "image/gif"})
+            produces = {"image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"})
     ResponseEntity<byte[]> image(@PathVariable String imageId) {
         var image = imageStore.read(imageId);
         byte[] bytes = image.bytes();

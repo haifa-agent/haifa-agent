@@ -26,6 +26,8 @@ public final class AnthropicModelProfileFactory {
         Optional<AnthropicMessagesBindingRegistry.AdmittedBinding> admission =
                 AnthropicMessagesBindingRegistry.find(snapshot);
         boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
+        ModelIoProfile fallbackIoProfile =
+                snapshot.imageInput().map(ModelIoProfile::withImage).orElseGet(ModelIoProfile::textOnly);
 
         if (admission.isEmpty()) {
             return ModelBindingProfile.create(
@@ -42,7 +44,7 @@ public final class AnthropicModelProfileFactory {
                     limits(snapshot),
                     false,
                     streaming(snapshot),
-                    ModelIoProfile.textOnly(),
+                    fallbackIoProfile,
                     ModelProfileStatus.UNVERIFIED,
                     verifiedOn);
         }

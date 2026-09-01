@@ -1,5 +1,6 @@
 package io.haifa.agent.model.api;
 
+import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
