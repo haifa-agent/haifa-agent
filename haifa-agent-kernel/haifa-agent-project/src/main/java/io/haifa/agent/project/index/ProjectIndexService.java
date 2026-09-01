@@ -1,8 +1,8 @@
 package io.haifa.agent.project.index;
 
 import io.haifa.agent.common.time.TimeProvider;
-import io.haifa.agent.project.changeset.FileChangeSet;
-import io.haifa.agent.project.changeset.FileChangeSetStatus;
+import io.haifa.agent.project.changeset.FileChange;
+import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.filesystem.FileListRequest;
 import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.filesystem.ReadOptions;
@@ -97,27 +97,26 @@ public final class ProjectIndexService {
         }
     }
 
-    public IndexGeneration apply(FileChangeSet changeSet) {
-        Objects.requireNonNull(changeSet, "changeSet must not be null");
-        if (changeSet.status() != FileChangeSetStatus.APPLIED && changeSet.status() != FileChangeSetStatus.RECONCILED) {
-            throw new IllegalArgumentException("only complete change sets may update the index");
-        }
-        AtomicReference<Snapshot> reference = snapshots.get(changeSet.workspaceId());
-        if (reference == null || reference.get() == null) return rebuild(changeSet.workspaceId());
+    public IndexGeneration apply(WorkspaceId workspaceId, ProjectId projectId, List<FileChange> changes) {
+        Objects.requireNonNull(workspaceId, "workspaceId must not be null");
+        Objects.requireNonNull(projectId, "projectId must not be null");
+        Objects.requireNonNull(changes, "changes must not be null");
+        AtomicReference<Snapshot> reference = snapshots.get(workspaceId);
+        if (reference == null || reference.get() == null) return rebuild(workspaceId);
         synchronized (reference) {
             Snapshot current = reference.get();
             IndexGeneration next = current.generation().next();
             Map<ProjectPath, FileIndexEntry> entries = new HashMap<>(current.files());
             Map<ProjectPath, List<SymbolRecord>> symbols = new HashMap<>(current.symbols());
             Map<ProjectPath, List<DocumentNode>> documents = new HashMap<>(current.documents());
-            for (var change : changeSet.changes()) {
+            for (var change : changes) {
                 remove(change.path(), entries, symbols, documents);
                 ProjectPath target = change.optionalDestination().orElse(change.path());
                 if (change.optionalAfter().isPresent()) {
-                    if (change.after().type() == FileType.DIRECTORY) return rebuild(changeSet.workspaceId());
-                    WorkspacePath path = new WorkspacePath(changeSet.workspaceId(), target);
+                    if (change.after().type() == FileType.DIRECTORY) return rebuild(workspaceId);
+                    WorkspacePath path = new WorkspacePath(workspaceId, target);
                     try {
-                        FileIndexEntry entry = entry(changeSet.projectId(), path, next.value());
+                        FileIndexEntry entry = entry(projectId, path, next.value());
                         entries.put(target, entry);
                         indexContent(path, entry, next, symbols, documents);
                     } catch (WorkspaceFileException unavailable) {
@@ -126,13 +125,6 @@ public final class ProjectIndexService {
                     }
                 }
             }
-            entries.replaceAll((path, entry) -> withGeneration(entry, next.value()));
-            symbols.replaceAll((path, values) -> values.stream()
-                    .map(value -> withGeneration(value, next.value()))
-                    .toList());
-            documents.replaceAll((path, values) -> values.stream()
-                    .map(value -> withGeneration(value, next.value()))
-                    .toList());
             reference.set(new Snapshot(next, IndexStatus.READY, entries, symbols, documents, time.now()));
             return next;
         }

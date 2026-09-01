@@ -12,11 +12,8 @@ import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.changeset.FileChange;
-import io.haifa.agent.project.changeset.FileChangeSetId;
-import io.haifa.agent.project.changeset.FileChangeSetStatus;
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.changeset.FileVersion;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
@@ -143,7 +140,6 @@ class MultiRootWorkspaceSimplificationE2ETest {
                 .activate(now));
 
         var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var changeSets = new InMemoryFileChangeSetStore();
 
         WorkspaceMutationProvider mutationProvider = new WorkspaceMutationProvider() {
             @Override
@@ -167,8 +163,6 @@ class MultiRootWorkspaceSimplificationE2ETest {
                             workspaces.find(workspaceId).orElseThrow().revision();
                     WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:create-result");
                     return new MutationResult(
-                            new FileChangeSetId("cs-1"),
-                            FileChangeSetStatus.APPLIED,
                             before,
                             after,
                             List.of(new FileChange(
@@ -194,8 +188,6 @@ class MultiRootWorkspaceSimplificationE2ETest {
                             workspaces.find(workspaceId).orElseThrow().revision();
                     WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:write-result");
                     return new MutationResult(
-                            new FileChangeSetId("cs-1"),
-                            FileChangeSetStatus.APPLIED,
                             before,
                             after,
                             List.of(new FileChange(
@@ -221,8 +213,6 @@ class MultiRootWorkspaceSimplificationE2ETest {
                             workspaces.find(workspaceId).orElseThrow().revision();
                     WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:delete-result");
                     return new MutationResult(
-                            new FileChangeSetId("cs-1"),
-                            FileChangeSetStatus.APPLIED,
                             before,
                             after,
                             List.of(new FileChange(
@@ -249,22 +239,14 @@ class MultiRootWorkspaceSimplificationE2ETest {
                     WorkspaceRevision before =
                             workspaces.find(workspaceId).orElseThrow().revision();
                     WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:move-result");
-                    return new MutationResult(
-                            new FileChangeSetId("cs-1"),
-                            FileChangeSetStatus.APPLIED,
-                            before,
-                            after,
-                            List.of(),
-                            true,
-                            false);
+                    return new MutationResult(before, after, List.of(), true, false);
                 } catch (Exception e) {
                     throw new AssertionError(e);
                 }
             }
         };
 
-        operations = new LocalFileToolOperations(
-                workspaces, files, mutationProvider, () -> "id-1", changeSets, registry, ledger);
+        operations = new LocalFileToolOperations(workspaces, files, mutationProvider, () -> "id-1", registry, ledger);
     }
 
     @Test

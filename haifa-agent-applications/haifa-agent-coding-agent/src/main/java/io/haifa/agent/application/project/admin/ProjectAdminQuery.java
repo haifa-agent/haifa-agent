@@ -4,7 +4,6 @@ import io.haifa.agent.artifact.ArtifactStore;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionStore;
-import io.haifa.agent.project.changeset.FileChangeSetStore;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.snapshot.WorkspaceSnapshotStore;
@@ -29,7 +28,6 @@ public final class ProjectAdminQuery {
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
     private final WorkspaceSnapshotStore snapshots;
-    private final FileChangeSetStore changeSets;
     private final ArtifactStore artifacts;
     private final ExecutionStore executions;
     private final AdminAuthorizer authorizer;
@@ -39,7 +37,6 @@ public final class ProjectAdminQuery {
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
             WorkspaceSnapshotStore snapshots,
-            FileChangeSetStore changeSets,
             ArtifactStore artifacts,
             ExecutionStore executions,
             AdminAuthorizer authorizer) {
@@ -47,7 +44,6 @@ public final class ProjectAdminQuery {
         this.workspaces = Objects.requireNonNull(workspaces);
         this.bindings = Objects.requireNonNull(bindings);
         this.snapshots = Objects.requireNonNull(snapshots);
-        this.changeSets = Objects.requireNonNull(changeSets);
         this.artifacts = Objects.requireNonNull(artifacts);
         this.executions = Objects.requireNonNull(executions);
         this.authorizer = Objects.requireNonNull(authorizer);
@@ -113,28 +109,6 @@ public final class ProjectAdminQuery {
         return page(values, offset, limit);
     }
 
-    public AdminPage<FileChangeSetView> changeSets(
-            PrincipalRef actor, ProjectId projectId, WorkspaceId workspaceId, int offset, int limit) {
-        requireAccess(actor, projectId);
-        List<FileChangeSetView> values = changeSets.findByWorkspace(workspaceId).stream()
-                .filter(value -> value.projectId().equals(projectId))
-                .sorted(Comparator.comparing(io.haifa.agent.project.changeset.FileChangeSet::createdAt)
-                        .thenComparing(value -> value.id().value()))
-                .map(value -> new FileChangeSetView(
-                        value.id().value(),
-                        value.workspaceId().value(),
-                        value.status().name(),
-                        value.baseRevision().sequence(),
-                        value.optionalResultRevision()
-                                .map(revision -> revision.sequence())
-                                .orElse(null),
-                        value.changes().size(),
-                        value.runRef(),
-                        value.createdAt()))
-                .toList();
-        return page(values, offset, limit);
-    }
-
     public AdminPage<ArtifactView> artifacts(PrincipalRef actor, ProjectId projectId, int offset, int limit) {
         requireAccess(actor, projectId);
         List<ArtifactView> values = artifacts.findByProject(projectId.value()).stream()
@@ -161,7 +135,7 @@ public final class ProjectAdminQuery {
                         value.id().value(),
                         value.status().name(),
                         value.exitCode(),
-                        value.optionalFileChangeSetId().map(id -> id.value()).orElse(null),
+                        value.optionalFileChangeSetId().orElse(null),
                         value.optionalFailure().map(failure -> failure.code()).orElse(null),
                         value.startedAt(),
                         value.endedAt()));

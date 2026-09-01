@@ -9,8 +9,6 @@ import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.changeset.FileChange;
-import io.haifa.agent.project.changeset.FileChangeSet;
-import io.haifa.agent.project.changeset.FileChangeSetId;
 import io.haifa.agent.project.changeset.FileVersion;
 import io.haifa.agent.project.configuration.InMemoryProjectConfigurationStore;
 import io.haifa.agent.project.configuration.ProjectConfiguration;
@@ -98,43 +96,30 @@ class ProjectIndexTest {
                         true)
                 .contentHash()
                 .orElseThrow();
-        WorkspaceRevision revision = new WorkspaceRevision(1, "index-change");
-        FileChangeSet changes = FileChangeSet.pending(
-                        new FileChangeSetId("changes-1"),
-                        fixture.workspace.projectId(),
-                        fixture.workspace.id(),
-                        "operation-1",
-                        "run-1",
-                        "tool-1",
-                        fixture.workspace.revision(),
-                        new PrincipalRef("actor", "user"),
-                        "allow-1",
-                        NOW)
-                .applied(
-                        revision,
-                        List.of(
-                                new FileChange(
-                                        io.haifa.agent.project.changeset.FileChangeType.DELETE,
-                                        ProjectPath.of("src/App.java"),
-                                        null,
-                                        new FileVersion(FileType.FILE, 57, appHash),
-                                        null),
-                                new FileChange(
-                                        io.haifa.agent.project.changeset.FileChangeType.CREATE,
-                                        ProjectPath.of("src/NewType.java"),
-                                        null,
-                                        null,
-                                        new FileVersion(FileType.FILE, 50, newHash)),
-                                new FileChange(
-                                        io.haifa.agent.project.changeset.FileChangeType.MOVE,
-                                        ProjectPath.of("README.md"),
-                                        ProjectPath.of("GUIDE.md"),
-                                        new FileVersion(FileType.FILE, 58, markdownHash),
-                                        new FileVersion(FileType.FILE, 58, markdownHash))),
-                        true,
-                        NOW);
+        List<FileChange> changes = List.of(
+                new FileChange(
+                        io.haifa.agent.project.changeset.FileChangeType.DELETE,
+                        ProjectPath.of("src/App.java"),
+                        null,
+                        new FileVersion(FileType.FILE, 57, appHash),
+                        null),
+                new FileChange(
+                        io.haifa.agent.project.changeset.FileChangeType.CREATE,
+                        ProjectPath.of("src/NewType.java"),
+                        null,
+                        null,
+                        new FileVersion(FileType.FILE, 50, newHash)),
+                new FileChange(
+                        io.haifa.agent.project.changeset.FileChangeType.MOVE,
+                        ProjectPath.of("README.md"),
+                        ProjectPath.of("GUIDE.md"),
+                        new FileVersion(FileType.FILE, 58, markdownHash),
+                        new FileVersion(FileType.FILE, 58, markdownHash)));
 
-        assertThat(fixture.index.apply(changes).value()).isEqualTo(2);
+        assertThat(fixture.index
+                        .apply(fixture.workspace.id(), fixture.workspace.projectId(), changes)
+                        .value())
+                .isEqualTo(2);
         assertThat(fixture.index.querySymbols(fixture.workspace.id(), "NewType", 10))
                 .extracting(symbol -> symbol.name())
                 .contains("NewType");

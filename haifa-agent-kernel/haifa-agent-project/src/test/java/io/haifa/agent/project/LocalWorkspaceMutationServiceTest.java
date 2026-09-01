@@ -8,9 +8,6 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.changeset.FileChangeSetService;
-import io.haifa.agent.project.changeset.FileChangeSetStatus;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
 import io.haifa.agent.project.diff.DiffFile;
 import io.haifa.agent.project.diff.DiffRequest;
 import io.haifa.agent.project.diff.DiffService;
@@ -34,11 +31,9 @@ import io.haifa.agent.project.patch.PatchValidationService;
 import io.haifa.agent.project.patch.UnifiedPatchParser;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.LocalMutationOutcomeProbe;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
 import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.reconciliation.MutationProbeStatus;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -79,36 +74,11 @@ class LocalWorkspaceMutationServiceTest {
                         bytes("bravo\n"),
                         MutationPrecondition.absent(initial),
                         context("create")));
-        assertThat(created.status()).isEqualTo(FileChangeSetStatus.APPLIED);
         assertThat(created.atomic()).isTrue();
         assertThat(fixture.local().capabilities().atomicMoveAttempted()).isTrue();
         assertThat(fixture.local().capabilities().durableFileFlush()).isTrue();
         assertThat(Files.readString(root.resolve("b.txt"))).isEqualTo("bravo\n");
-        Files.writeString(root.resolve(".haifa-write-orphan.tmp"), "managed temporary");
-        var probe =
-                new LocalMutationOutcomeProbe(fixture.workspaceStore(), fixture.bindingStore(), fixture.locations());
-        assertThat(probe.probe(fixture.changeSets().find(created.changeSetId()).orElseThrow())
-                        .status())
-                .isEqualTo(MutationProbeStatus.CONFIRMED);
-        assertThat(Files.exists(root.resolve(".haifa-write-orphan.tmp"))).isFalse();
-
-        var replayed = fixture.authorized()
-                .create(new CreateFileRequest(
-                        fixture.path("b.txt"),
-                        bytes("bravo\n"),
-                        MutationPrecondition.absent(initial),
-                        context("create")));
-        assertThat(replayed.changeSetId()).isEqualTo(created.changeSetId());
-        assertThat(replayed.replayed()).isTrue();
-        assertThat(Files.readString(root.resolve("b.txt"))).isEqualTo("bravo\n");
-        assertThatThrownBy(() -> fixture.authorized()
-                        .create(new CreateFileRequest(
-                                fixture.path("b.txt"),
-                                bytes("different"),
-                                MutationPrecondition.absent(initial),
-                                context("create"))))
-                .isInstanceOfSatisfying(WorkspaceMutationException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(MutationErrorCode.CONCURRENT_MODIFICATION));
+        assertThat(created.resultRevision().sequence()).isGreaterThan(initial.sequence());
 
         WorkspaceRevision revision = fixture.workspace().revision();
         var written = fixture.authorized()
@@ -457,8 +427,6 @@ class LocalWorkspaceMutationServiceTest {
         var identifiers = new AtomicInteger();
         var idGenerator =
                 (io.haifa.agent.common.id.IdentifierGenerator) () -> "phase2-" + identifiers.incrementAndGet();
-        var changeSets = new InMemoryFileChangeSetStore();
-        var changeSetService = new FileChangeSetService(changeSets, idGenerator, () -> NOW);
         var leases = new InMemoryWorkspaceWriteLeaseManager();
         var local = new LocalWorkspaceMutationService(
                 workspaceStore,
@@ -466,15 +434,12 @@ class LocalWorkspaceMutationServiceTest {
                 locations,
                 SensitivePathPolicy.defaults(),
                 leases,
-                changeSets,
-                changeSetService,
                 idGenerator,
                 () -> NOW);
         var authorized = new AuthorizedWorkspaceMutationService(workspaceStore, bindingStore, local);
         var files = new io.haifa.agent.project.provider.local.LocalWorkspaceFileService(
                 workspaceStore, bindingStore, locations, SensitivePathPolicy.defaults());
-        return new Fixture(
-                workspaceId, workspaceStore, bindingStore, locations, local, authorized, files, changeSets, leases);
+        return new Fixture(workspaceId, workspaceStore, bindingStore, locations, local, authorized, files, leases);
     }
 
     private static MutationContext context(String operationId) {
@@ -512,7 +477,6 @@ class LocalWorkspaceMutationServiceTest {
             LocalWorkspaceMutationService local,
             AuthorizedWorkspaceMutationService authorized,
             io.haifa.agent.project.provider.local.LocalWorkspaceFileService files,
-            InMemoryFileChangeSetStore changeSets,
             InMemoryWorkspaceWriteLeaseManager leases) {
         private Workspace workspace() {
             return workspaceStore.find(workspaceId).orElseThrow();

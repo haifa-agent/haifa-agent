@@ -9,12 +9,8 @@ import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.changeset.FileChange;
-import io.haifa.agent.project.changeset.FileChangeSet;
-import io.haifa.agent.project.changeset.FileChangeSetId;
-import io.haifa.agent.project.changeset.FileChangeSetStatus;
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.changeset.FileVersion;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
@@ -46,7 +42,6 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
-import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -189,7 +184,7 @@ class LocalFileToolOperationsTest {
     }
 
     @Test
-    void bindsFileMutationToTheToolCallAndReconcilesMatchingContentWithoutAnotherWrite() throws Exception {
+    void bindsFileMutationToTheToolCallAndWritesMatchingContent() throws Exception {
         Files.writeString(root.resolve("tracked.txt"), "before", StandardCharsets.UTF_8);
         Fixture fixture = fixture();
         ToolArguments arguments = arguments(Map.of("path", "tracked.txt", "content", "after"));
@@ -203,27 +198,8 @@ class LocalFileToolOperationsTest {
                 "idempotency-reconcile",
                 "policy-reconcile",
                 arguments);
-        var changeSet = fixture.changeSets
-                .findByOperation(fixture.workspaceId, "idempotency-reconcile")
-                .orElseThrow();
-        var reconciliation = fixture.operations.reconcile(
-                "file.write",
-                fixture.workspaceId,
-                new PrincipalRef("operator", "user"),
-                "run-reconcile",
-                "tool-call-reconcile",
-                "idempotency-reconcile",
-                arguments);
 
         assertThat(result.successful()).isTrue();
-        assertThat(changeSet.toolCallRef()).isEqualTo("tool-call-reconcile");
-        assertThat(changeSet.runRef()).isEqualTo("run-reconcile");
-        assertThat(changeSet.actor()).isEqualTo(new PrincipalRef("operator", "user"));
-        assertThat(reconciliation.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
-        assertThat(reconciliation.reasonCode()).isEqualTo("FILE_CONTENT_AND_CHANGE_SET_CONFIRMED");
-        assertThat(reconciliation.result()).hasValueSatisfying(reconciled -> assertThat(reconciled.structuredData())
-                .containsEntry("changeSetId", changeSet.id().value())
-                .containsEntry("replayAllowed", false));
         assertThat(Files.readString(root.resolve("tracked.txt"))).isEqualTo("after");
     }
 
@@ -264,16 +240,14 @@ class LocalFileToolOperationsTest {
                         now)
                 .activate(now));
         var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var changeSets = new InMemoryFileChangeSetStore();
         var operations = new LocalFileToolOperations(
                 workspaces,
                 files,
-                testMutations(workspaces, workspaceId, changeSets, new ProjectId("project-file-read")),
+                testMutations(workspaces, workspaceId, new ProjectId("project-file-read")),
                 () -> "id-1",
-                changeSets,
                 registry,
                 ledger);
-        return new Fixture(workspaceId, operations, changeSets);
+        return new Fixture(workspaceId, operations);
     }
 
     private static ToolArguments arguments(Map<String, Object> values) {
@@ -281,10 +255,7 @@ class LocalFileToolOperationsTest {
     }
 
     private WorkspaceMutationProvider testMutations(
-            InMemoryWorkspaceStore workspaces,
-            WorkspaceId workspaceId,
-            InMemoryFileChangeSetStore changeSets,
-            ProjectId projectId) {
+            InMemoryWorkspaceStore workspaces, WorkspaceId workspaceId, ProjectId projectId) {
         return new WorkspaceMutationProvider() {
             @Override
             public String providerId() {
@@ -316,14 +287,7 @@ class LocalFileToolOperationsTest {
                             null,
                             null,
                             new FileVersion(FileType.FILE, request.content().length, "sha256:" + "a".repeat(64)));
-                    return new MutationResult(
-                            new FileChangeSetId("change-set-test"),
-                            FileChangeSetStatus.APPLIED,
-                            before,
-                            after,
-                            java.util.List.of(change),
-                            true,
-                            false);
+                    return new MutationResult(before, after, java.util.List.of(change), true, false);
                 } catch (java.io.IOException exception) {
                     throw new AssertionError(exception);
                 }
@@ -344,27 +308,8 @@ class LocalFileToolOperationsTest {
                             null,
                             new FileVersion(FileType.FILE, request.content().length, "sha256:" + "a".repeat(64)),
                             new FileVersion(FileType.FILE, request.content().length, "sha256:" + "b".repeat(64)));
-                    FileChangeSet changeSet = FileChangeSet.pending(
-                                    new FileChangeSetId("change-set-test"),
-                                    projectId,
-                                    workspaceId,
-                                    request.context().operationId(),
-                                    request.context().runRef(),
-                                    request.context().toolCallRef(),
-                                    before,
-                                    request.context().actor(),
-                                    request.context().securityDecisionRef(),
-                                    Instant.parse("2026-08-05T00:00:00Z"))
-                            .applied(after, java.util.List.of(change), true, Instant.parse("2026-08-05T00:00:01Z"));
-                    changeSets.create(changeSet);
-                    return new MutationResult(
-                            new FileChangeSetId("change-set-test"),
-                            FileChangeSetStatus.APPLIED,
-                            before,
-                            after,
-                            java.util.List.of(change),
-                            true,
-                            false);
+
+                    return new MutationResult(before, after, java.util.List.of(change), true, false);
                 } catch (java.io.IOException exception) {
                     throw new AssertionError(exception);
                 }
@@ -384,14 +329,7 @@ class LocalFileToolOperationsTest {
                             null,
                             new FileVersion(FileType.FILE, 0, "sha256:zero"),
                             null);
-                    return new MutationResult(
-                            new FileChangeSetId("change-set-test"),
-                            FileChangeSetStatus.APPLIED,
-                            before,
-                            after,
-                            java.util.List.of(change),
-                            true,
-                            false);
+                    return new MutationResult(before, after, java.util.List.of(change), true, false);
                 } catch (java.io.IOException exception) {
                     throw new AssertionError(exception);
                 }
@@ -406,14 +344,7 @@ class LocalFileToolOperationsTest {
                     WorkspaceRevision before =
                             workspaces.find(workspaceId).orElseThrow().revision();
                     WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:move-test");
-                    return new MutationResult(
-                            new FileChangeSetId("change-set-test"),
-                            FileChangeSetStatus.APPLIED,
-                            before,
-                            after,
-                            java.util.List.of(),
-                            true,
-                            false);
+                    return new MutationResult(before, after, java.util.List.of(), true, false);
                 } catch (java.io.IOException exception) {
                     throw new AssertionError(exception);
                 }
@@ -421,8 +352,7 @@ class LocalFileToolOperationsTest {
         };
     }
 
-    private record Fixture(
-            WorkspaceId workspaceId, LocalFileToolOperations operations, InMemoryFileChangeSetStore changeSets) {}
+    private record Fixture(WorkspaceId workspaceId, LocalFileToolOperations operations) {}
 
     @Test
     void rejectsWriteToReadOnlyAttachedRoot() {

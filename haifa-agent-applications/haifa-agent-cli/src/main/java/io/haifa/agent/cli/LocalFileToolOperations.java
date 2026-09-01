@@ -5,8 +5,6 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.project.changeset.FileChangeSetStatus;
-import io.haifa.agent.project.changeset.FileChangeSetStore;
 import io.haifa.agent.project.filesystem.FileListRequest;
 import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.filesystem.ReadOptions;
@@ -64,7 +62,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private final IdentifierGenerator identifiers;
     private final ApplyPatchParser patchParser;
     private final PatchService patchService;
-    private final FileChangeSetStore changeSets;
     private final LocalWorkspaceRootRegistry rootRegistry;
     private final SessionChangeLedger ledger;
 
@@ -73,7 +70,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             LocalWorkspaceFileService files,
             WorkspaceMutationProvider mutations,
             IdentifierGenerator identifiers) {
-        this(workspaces, files, mutations, identifiers, null, null, null);
+        this(workspaces, files, mutations, identifiers, null, null);
     }
 
     LocalFileToolOperations(
@@ -81,18 +78,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             LocalWorkspaceFileService files,
             WorkspaceMutationProvider mutations,
             IdentifierGenerator identifiers,
-            FileChangeSetStore changeSets) {
-        this(workspaces, files, mutations, identifiers, changeSets, null, null);
-    }
-
-    LocalFileToolOperations(
-            WorkspaceStore workspaces,
-            LocalWorkspaceFileService files,
-            WorkspaceMutationProvider mutations,
-            IdentifierGenerator identifiers,
-            FileChangeSetStore changeSets,
             LocalWorkspaceRootRegistry rootRegistry) {
-        this(workspaces, files, mutations, identifiers, changeSets, rootRegistry, null);
+        this(workspaces, files, mutations, identifiers, rootRegistry, null);
     }
 
     LocalFileToolOperations(
@@ -100,7 +87,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             LocalWorkspaceFileService files,
             WorkspaceMutationProvider mutations,
             IdentifierGenerator identifiers,
-            FileChangeSetStore changeSets,
             LocalWorkspaceRootRegistry rootRegistry,
             SessionChangeLedger ledger) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
@@ -110,7 +96,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         this.patchParser = new ApplyPatchParser(100, 1_000, 20_000, 4 * 1024 * 1024);
         this.patchService = new PatchService(
                 this.workspaces, this.files, this.mutations, new PatchValidationService(100, 1_000, 20_000));
-        this.changeSets = changeSets;
         this.rootRegistry = rootRegistry;
         this.ledger = ledger;
     }
@@ -188,46 +173,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             String toolCallRef,
             String idempotencyKey,
             ToolArguments arguments) {
-        if ((!toolName.equals("file.create") && !toolName.equals("file.write")) || changeSets == null) {
-            return ToolReconciliation.unsupported();
-        }
-        var changeSet = changeSets.findByOperation(workspaceId, idempotencyKey).orElse(null);
-        if (changeSet == null) return ToolReconciliation.stillUnknown("FILE_CHANGE_SET_MISSING");
-        if (!Objects.equals(changeSet.runRef(), runRef) || !changeSet.actor().equals(actor)) {
-            return ToolReconciliation.stillUnknown("FILE_CHANGE_SET_CONTEXT_MISMATCH");
-        }
-        if (!Objects.equals(changeSet.toolCallRef(), toolCallRef)) {
-            return ToolReconciliation.stillUnknown("FILE_CHANGE_SET_CALL_MISMATCH");
-        }
-        if (changeSet.status() != FileChangeSetStatus.APPLIED && changeSet.status() != FileChangeSetStatus.RECONCILED) {
-            return ToolReconciliation.stillUnknown("FILE_CHANGE_SET_NOT_TERMINAL");
-        }
-        try {
-            WorkspacePath path = path(workspaceId, arguments.values(), "path", WorkspaceRootPermission.READ_ONLY);
-            String expectedHash = "sha256:" + digest(string(arguments.values(), "content"));
-            String actualHash = files.stat(path, true).contentHash().orElse("");
-            if (!MessageDigest.isEqual(
-                    expectedHash.getBytes(StandardCharsets.US_ASCII), actualHash.getBytes(StandardCharsets.US_ASCII))) {
-                return ToolReconciliation.stillUnknown("FILE_CONTENT_DIGEST_MISMATCH");
-            }
-            return ToolReconciliation.resolved(
-                    success(
-                            "Reconciled " + path.projectPath() + " without replay",
-                            Map.of(
-                                    "changeSetId",
-                                    changeSet.id().value(),
-                                    "contentHash",
-                                    actualHash,
-                                    "reconcileStatus",
-                                    "RESOLVED",
-                                    "reconcileReason",
-                                    "FILE_CONTENT_AND_CHANGE_SET_CONFIRMED",
-                                    "replayAllowed",
-                                    false)),
-                    "FILE_CONTENT_AND_CHANGE_SET_CONFIRMED");
-        } catch (WorkspaceFileException | WorkspaceRootException | IllegalArgumentException failure) {
-            return ToolReconciliation.stillUnknown("FILE_RECONCILIATION_EVIDENCE_UNAVAILABLE");
-        }
+        return ToolReconciliation.unsupported();
     }
 
     private ToolResult list(WorkspaceId workspaceId, Map<String, Object> values) {

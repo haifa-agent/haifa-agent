@@ -33,9 +33,6 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.changeset.FileChangeSetService;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
-import io.haifa.agent.project.changeset.ObservedFileChangeService;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
@@ -105,19 +102,12 @@ class ExecutionCoreTest {
         var result = broker.execute(request);
 
         assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
-        assertThat(result.optionalFileChangeSetId()).isPresent();
         assertThat(result.stdout().summary()).doesNotContain("secret-token", "remote-secret");
         assertThat(result.stdout().optionalAssetRef()).isPresent();
         byte[] stored = fixture.outputs.load(result.stdout().assetRef()).orElseThrow();
         assertThat(new String(stored, StandardCharsets.UTF_8))
                 .doesNotContain("secret-token", "remote-secret")
                 .contains("***", "https://***@github.example/repo.git");
-        assertThat(fixture.changeSets
-                        .find(result.fileChangeSetId())
-                        .orElseThrow()
-                        .changes())
-                .extracting(change -> change.path().value())
-                .contains("created.txt");
         assertThat(broker.execute(request).replayed()).isTrue();
         assertThat(policyCalls).hasValue(2);
 
@@ -513,19 +503,7 @@ class ExecutionCoreTest {
                 new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
         var manifests = new WorkspaceManifestService(
                 workspaces, fileService, new ManifestBudget(100, 1024 * 1024, 1024 * 1024), "test-v1");
-        var changeSets = new InMemoryFileChangeSetStore();
-        var ids = new AtomicInteger();
-        var changeSetService = new FileChangeSetService(changeSets, () -> "change-" + ids.incrementAndGet(), () -> NOW);
-        var observed = new ObservedFileChangeService(workspaces, changeSets, changeSetService, () -> NOW);
-        return new Fixture(
-                workspaceId,
-                root,
-                workspaces,
-                bindings,
-                manifests,
-                changeSets,
-                observed,
-                new InMemoryExecutionOutputStore());
+        return new Fixture(workspaceId, root, workspaces, bindings, manifests, new InMemoryExecutionOutputStore());
     }
 
     private static SandboxProvider fakeProvider(Runnable effect, byte[] stdout) {
@@ -701,8 +679,6 @@ class ExecutionCoreTest {
             InMemoryWorkspaceStore workspaces,
             InMemoryWorkspaceBindingStore bindings,
             WorkspaceManifestService manifests,
-            InMemoryFileChangeSetStore changeSets,
-            ObservedFileChangeService observed,
             InMemoryExecutionOutputStore outputs) {
         DefaultExecutionBroker broker(SandboxProvider provider, ExecutionPolicy policy) {
             return broker(provider, policy, profile(provider));
@@ -753,8 +729,7 @@ class ExecutionCoreTest {
                     ignored -> provider,
                     workspaces,
                     bindings,
-                    new LocalIncrementalWorkspaceChangeObserver(workspaceId, root, WorkspaceChangeIgnorePolicy.none()),
-                    observed);
+                    new LocalIncrementalWorkspaceChangeObserver(workspaceId, root, WorkspaceChangeIgnorePolicy.none()));
         }
 
         DefaultExecutionBroker broker(
@@ -771,8 +746,7 @@ class ExecutionCoreTest {
                     ignored -> provider,
                     workspaces,
                     bindings,
-                    workspaceChanges,
-                    observed);
+                    workspaceChanges);
         }
 
         ExecutionRequest request(String id, String key, Set<String> capabilities, List<String> argv) {
