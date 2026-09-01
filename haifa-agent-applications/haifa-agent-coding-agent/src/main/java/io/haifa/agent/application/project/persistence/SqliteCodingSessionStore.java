@@ -341,6 +341,12 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
     }
 
     @Override
+    public Optional<CodingFollowUp> findFollowUpByDispatchedRunId(AgentRunId runId) {
+        return unitOfWork.execute(() -> Optional.ofNullable(mapper().findFollowUpByDispatchedRunId(runId.value()))
+                .map(this::followUp));
+    }
+
+    @Override
     public List<CodingFollowUp> listRestorableFollowUps(AgentSessionId sessionId, int limit) {
         if (limit < 1 || limit > 100) throw new IllegalArgumentException("limit must be between 1 and 100");
         return unitOfWork.execute(() -> mapper().listRestorableFollowUps(sessionId.value(), limit).stream()

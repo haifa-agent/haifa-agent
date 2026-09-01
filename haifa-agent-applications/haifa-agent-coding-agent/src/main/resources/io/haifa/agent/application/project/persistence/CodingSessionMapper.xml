@@ -236,6 +236,10 @@
         SELECT * FROM coding_follow_up WHERE dispatch_key = #{dispatchKey}
     </select>
 
+    <select id="findFollowUpByDispatchedRunId" resultMap="followUpRow">
+        SELECT * FROM coding_follow_up WHERE dispatched_run_id = #{runId}
+    </select>
+
     <select id="listRestorableFollowUps" resultMap="followUpRow">
         SELECT * FROM coding_follow_up
         WHERE session_id = #{sessionId} AND status = 'PENDING'

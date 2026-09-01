@@ -630,6 +630,7 @@ public final class CodingSessionService {
         Optional<RunEventCursor> cursor = active.flatMap(
                 value -> codingSessions.findEventCursor(activity.sessionId()).filter(stored -> stored.runId()
                         .equals(value.runId())));
+        Optional<String> activeRunTaskSummary = active.flatMap(this::activeRunTaskSummary);
         return new CodingSessionView(
                 summary,
                 active,
@@ -637,7 +638,16 @@ public final class CodingSessionService {
                 cursor,
                 product.configurationDigest(),
                 product.productProfileRef(),
-                modelSelection(activity.sessionId(), callers.current()));
+                modelSelection(activity.sessionId(), callers.current()),
+                activeRunTaskSummary);
+    }
+
+    private Optional<String> activeRunTaskSummary(AgentRunSnapshot run) {
+        return codingSessions
+                .findCommandByRunId(run.runId())
+                .map(CodingCommandBinding::message)
+                .or(() -> codingSessions.findFollowUpByDispatchedRunId(run.runId()).map(CodingFollowUp::message))
+                .map(CodingSessionService::displayName);
     }
 
     private CodingModelSelection modelSelection(AgentSessionId sessionId, TrustedProductCaller caller) {
