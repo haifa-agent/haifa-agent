@@ -50,6 +50,11 @@ import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
 import io.haifa.agent.project.root.WorkspaceRootAlias;
 import io.haifa.agent.project.root.WorkspaceRootPermission;
 import io.haifa.agent.project.root.WorkspaceRootStrategy;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
+import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
+import io.haifa.agent.project.ledger.SessionFileChangeRecord;
+import io.haifa.agent.project.root.WorkspaceRootAlias;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -231,6 +236,10 @@ class LocalFileToolOperationsTest {
     }
 
     private Fixture fixture(LocalWorkspaceRootRegistry registry) {
+        return fixture(registry, null);
+    }
+
+    private Fixture fixture(LocalWorkspaceRootRegistry registry, InMemorySessionChangeLedger ledger) {
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         WorkspaceId workspaceId = new WorkspaceId("workspace-file-read");
         WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-file-read");
@@ -242,10 +251,10 @@ class LocalFileToolOperationsTest {
         WorkspaceBinding binding = WorkspaceBinding.provision(
                         bindingId,
                         locationRef,
-                        WorkspaceBindingMode.READ_ONLY,
+                        WorkspaceBindingMode.DIRECT,
                         new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.readOnlyFiles(),
-                        WorkspacePermissionSet.readOnly(),
+                        WorkspaceCapabilitySet.readWriteFiles(),
+                        WorkspacePermissionSet.readWrite(),
                         LocalWorkspaceLocationStore.fingerprintFor(root),
                         now)
                 .activate(now);
@@ -266,7 +275,8 @@ class LocalFileToolOperationsTest {
                 testMutations(workspaces, workspaceId, changeSets, new ProjectId("project-file-read")),
                 () -> "id-1",
                 changeSets,
-                registry);
+                registry,
+                ledger);
         return new Fixture(workspaceId, operations, changeSets);
     }
 
@@ -292,8 +302,35 @@ class LocalFileToolOperationsTest {
 
             @Override
             public MutationResult create(CreateFileRequest request) {
-                throw new WorkspaceMutationException(
-                        MutationErrorCode.TARGET_EXISTS, request.path(), "logical target already exists");
+                if ("existing.txt".equals(request.path().projectPath().value())) {
+                    throw new WorkspaceMutationException(
+                            MutationErrorCode.TARGET_EXISTS, request.path(), "logical target already exists");
+                }
+                try {
+                    Path target = root;
+                    for (String segment : request.path().projectPath().segments()) target = target.resolve(segment);
+                    if (target.getParent() != null) Files.createDirectories(target.getParent());
+                    Files.write(target, request.content());
+                    WorkspaceRevision before =
+                            workspaces.find(workspaceId).orElseThrow().revision();
+                    WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:test-create-result");
+                    FileChange change = new FileChange(
+                            FileChangeType.CREATE,
+                            request.path().projectPath(),
+                            null,
+                            null,
+                            new FileVersion(FileType.FILE, request.content().length, "sha256:" + "a".repeat(64)));
+                    return new MutationResult(
+                            new FileChangeSetId("change-set-test"),
+                            FileChangeSetStatus.APPLIED,
+                            before,
+                            after,
+                            java.util.List.of(change),
+                            true,
+                            false);
+                } catch (java.io.IOException exception) {
+                    throw new AssertionError(exception);
+                }
             }
 
             @Override
@@ -491,5 +528,25 @@ class LocalFileToolOperationsTest {
                 .containsEntry("path", "trash.txt")
                 .doesNotContainKeys("quarantineToken", "changeSetId", "changeReviewArtifact");
         assertThat(Files.exists(root.resolve("trash.txt"))).isFalse();
+    }
+    @Test
+    void recordsChangesIntoSessionLedger() {
+        var ledger = new InMemorySessionChangeLedger();
+        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(root, WorkspaceRootStrategy.GIT, false);
+        LocalWorkspaceRootRegistry registry = LocalWorkspaceRootRegistry.singleMain(mainRoot);
+        Fixture f = fixture(registry, ledger);
+
+        var createRes = f.operations.execute(
+                "file.create",
+                f.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "hello.txt", "content", "hello world")));
+
+        assertThat(createRes.successful()).isTrue();
+        assertThat(ledger.compactedChanges(WorkspaceRootAlias.MAIN)).hasSize(1);
+        SessionFileChangeRecord record = ledger.compactedChanges(WorkspaceRootAlias.MAIN).get(0);
+        assertThat(record.path().value()).isEqualTo("hello.txt");
     }
 }
