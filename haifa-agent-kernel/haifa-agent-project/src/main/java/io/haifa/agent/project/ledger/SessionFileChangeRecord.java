@@ -28,11 +28,7 @@ public record SessionFileChangeRecord(
     }
 
     public static SessionFileChangeRecord create(
-            WorkspaceRootAlias rootAlias,
-            ProjectPath path,
-            String afterHash,
-            long afterSize,
-            Instant timestamp) {
+            WorkspaceRootAlias rootAlias, ProjectPath path, String afterHash, long afterSize, Instant timestamp) {
         return new SessionFileChangeRecord(
                 rootAlias, path, null, FileChangeType.CREATE, null, -1L, afterHash, afterSize, timestamp);
     }
@@ -50,11 +46,7 @@ public record SessionFileChangeRecord(
     }
 
     public static SessionFileChangeRecord delete(
-            WorkspaceRootAlias rootAlias,
-            ProjectPath path,
-            String beforeHash,
-            long beforeSize,
-            Instant timestamp) {
+            WorkspaceRootAlias rootAlias, ProjectPath path, String beforeHash, long beforeSize, Instant timestamp) {
         return new SessionFileChangeRecord(
                 rootAlias, path, null, FileChangeType.DELETE, beforeHash, beforeSize, null, -1L, timestamp);
     }

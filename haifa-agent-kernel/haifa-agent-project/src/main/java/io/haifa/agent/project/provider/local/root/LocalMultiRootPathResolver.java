@@ -96,9 +96,8 @@ public final class LocalMultiRootPathResolver {
         LocalWorkspaceRoot root = registry.require(path.rootAlias());
         Path hostRoot = root.hostPath().toAbsolutePath().normalize();
 
-        Path resolved = path.isRoot()
-                ? hostRoot
-                : hostRoot.resolve(path.relativePath()).normalize();
+        Path resolved =
+                path.isRoot() ? hostRoot : hostRoot.resolve(path.relativePath()).normalize();
 
         // Check logical containment
         if (!resolved.startsWith(hostRoot)) {
@@ -116,10 +115,10 @@ public final class LocalMultiRootPathResolver {
                 Path realRoot = hostRoot.toRealPath();
                 if (!realResolved.startsWith(realRoot)) {
                     throw new WorkspaceRootException(
-                        WorkspaceRootErrorCode.PATH_ESCAPE_FORBIDDEN,
-                        path.rootAlias().value(),
-                        path.relativePath(),
-                        "Physical path escapes root directory via symlink/reparse-point: " + path);
+                            WorkspaceRootErrorCode.PATH_ESCAPE_FORBIDDEN,
+                            path.rootAlias().value(),
+                            path.relativePath(),
+                            "Physical path escapes root directory via symlink/reparse-point: " + path);
                 }
             } catch (IOException e) {
                 // If real path fails due to IO, we fallback to resolved normalize check

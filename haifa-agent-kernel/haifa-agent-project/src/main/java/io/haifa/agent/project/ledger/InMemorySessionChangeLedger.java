@@ -3,7 +3,6 @@ package io.haifa.agent.project.ledger;
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.root.WorkspaceRootAlias;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;

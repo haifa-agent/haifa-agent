@@ -53,8 +53,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-public final class LocalWorkspaceMutationService
-        implements WorkspaceMutationProvider, StreamingPatchMutationService {
+public final class LocalWorkspaceMutationService implements WorkspaceMutationProvider, StreamingPatchMutationService {
     private static final int MAX_CONTENT_BYTES = 16 * 1024 * 1024;
 
     private final WorkspaceStore workspaces;
@@ -279,7 +278,10 @@ public final class LocalWorkspaceMutationService
                 try {
                     Files.delete(source);
                 } catch (IOException exception) {
-                    throw failure(MutationErrorCode.IO_FAILURE, request.path(), "failed to delete file: " + exception.getMessage());
+                    throw failure(
+                            MutationErrorCode.IO_FAILURE,
+                            request.path(),
+                            "failed to delete file: " + exception.getMessage());
                 }
                 return completeOrUnknown(
                         access.workspace(),

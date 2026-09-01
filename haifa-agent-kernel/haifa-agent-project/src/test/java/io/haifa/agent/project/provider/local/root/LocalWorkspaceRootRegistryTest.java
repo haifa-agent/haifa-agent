@@ -34,11 +34,22 @@ class LocalWorkspaceRootRegistryTest {
         Path dir2 = tempDir.resolve("d2");
 
         assertThatThrownBy(() -> LocalWorkspaceRootRegistry.builder()
-                .addRoot(LocalWorkspaceRoot.of(WorkspaceRootAlias.MAIN, dir1, WorkspaceRootPermission.READ_WRITE, WorkspaceRootStrategy.GIT, false))
-                .addRoot(LocalWorkspaceRoot.of(WorkspaceRootAlias.MAIN, dir2, WorkspaceRootPermission.READ_WRITE, WorkspaceRootStrategy.GIT, false))
-                .build())
+                        .addRoot(LocalWorkspaceRoot.of(
+                                WorkspaceRootAlias.MAIN,
+                                dir1,
+                                WorkspaceRootPermission.READ_WRITE,
+                                WorkspaceRootStrategy.GIT,
+                                false))
+                        .addRoot(LocalWorkspaceRoot.of(
+                                WorkspaceRootAlias.MAIN,
+                                dir2,
+                                WorkspaceRootPermission.READ_WRITE,
+                                WorkspaceRootStrategy.GIT,
+                                false))
+                        .build())
                 .isInstanceOf(WorkspaceRootException.class)
-                .satisfies(e -> assertThat(((WorkspaceRootException) e).code()).isEqualTo(WorkspaceRootErrorCode.DUPLICATE_ROOT_ALIAS));
+                .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
+                        .isEqualTo(WorkspaceRootErrorCode.DUPLICATE_ROOT_ALIAS));
     }
 
     @Test
@@ -47,8 +58,18 @@ class LocalWorkspaceRootRegistryTest {
         Path docsPath = tempDir.resolve("docs");
 
         LocalWorkspaceRootRegistry registry = LocalWorkspaceRootRegistry.builder()
-                .addRoot(LocalWorkspaceRoot.of(WorkspaceRootAlias.MAIN, mainPath, WorkspaceRootPermission.READ_WRITE, WorkspaceRootStrategy.GIT, false))
-                .addRoot(LocalWorkspaceRoot.of(WorkspaceRootAlias.of("docs"), docsPath, WorkspaceRootPermission.READ_ONLY, WorkspaceRootStrategy.PLAIN, false))
+                .addRoot(LocalWorkspaceRoot.of(
+                        WorkspaceRootAlias.MAIN,
+                        mainPath,
+                        WorkspaceRootPermission.READ_WRITE,
+                        WorkspaceRootStrategy.GIT,
+                        false))
+                .addRoot(LocalWorkspaceRoot.of(
+                        WorkspaceRootAlias.of("docs"),
+                        docsPath,
+                        WorkspaceRootPermission.READ_ONLY,
+                        WorkspaceRootStrategy.PLAIN,
+                        false))
                 .build();
 
         // Main allows read and write
@@ -57,8 +78,10 @@ class LocalWorkspaceRootRegistryTest {
 
         // Docs allows read but denies write
         registry.checkPermission(WorkspaceRootAlias.of("docs"), WorkspaceRootPermission.READ_ONLY);
-        assertThatThrownBy(() -> registry.checkPermission(WorkspaceRootAlias.of("docs"), WorkspaceRootPermission.READ_WRITE))
+        assertThatThrownBy(() ->
+                        registry.checkPermission(WorkspaceRootAlias.of("docs"), WorkspaceRootPermission.READ_WRITE))
                 .isInstanceOf(WorkspaceRootException.class)
-                .satisfies(e -> assertThat(((WorkspaceRootException) e).code()).isEqualTo(WorkspaceRootErrorCode.ROOT_READ_ONLY));
+                .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
+                        .isEqualTo(WorkspaceRootErrorCode.ROOT_READ_ONLY));
     }
 }

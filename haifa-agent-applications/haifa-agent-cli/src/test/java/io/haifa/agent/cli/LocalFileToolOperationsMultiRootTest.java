@@ -223,7 +223,9 @@ class LocalFileToolOperationsMultiRootTest {
                 "policy-1",
                 arguments(Map.of("path", "config:app.yml", "content", "env: prod")));
         assertThat(createRes.successful()).isTrue();
-        assertThat(createRes.structuredData()).containsEntry("path", "app.yml").doesNotContainKeys("changeSetId", "quarantineToken", "changeReviewArtifact");
+        assertThat(createRes.structuredData())
+                .containsEntry("path", "app.yml")
+                .doesNotContainKeys("changeSetId", "quarantineToken", "changeReviewArtifact");
     }
 
     @Test
@@ -306,7 +308,8 @@ class LocalFileToolOperationsMultiRootTest {
 
             @Override
             public MutationResult create(CreateFileRequest request) {
-                WorkspaceRevision before = workspaces.find(workspaceId).orElseThrow().revision();
+                WorkspaceRevision before =
+                        workspaces.find(workspaceId).orElseThrow().revision();
                 WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:create-result");
                 FileChange change = new FileChange(
                         FileChangeType.CREATE,
@@ -339,7 +342,8 @@ class LocalFileToolOperationsMultiRootTest {
 
             @Override
             public MutationResult write(WriteFileRequest request) {
-                WorkspaceRevision before = workspaces.find(workspaceId).orElseThrow().revision();
+                WorkspaceRevision before =
+                        workspaces.find(workspaceId).orElseThrow().revision();
                 WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:write-result");
                 return new MutationResult(
                         new FileChangeSetId("change-set-test"),
@@ -353,7 +357,8 @@ class LocalFileToolOperationsMultiRootTest {
 
             @Override
             public MutationResult delete(DeleteFileRequest request) {
-                WorkspaceRevision before = workspaces.find(workspaceId).orElseThrow().revision();
+                WorkspaceRevision before =
+                        workspaces.find(workspaceId).orElseThrow().revision();
                 WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:del-result");
                 return new MutationResult(
                         new FileChangeSetId("change-set-test"),
@@ -367,7 +372,8 @@ class LocalFileToolOperationsMultiRootTest {
 
             @Override
             public MutationResult move(MoveFileRequest request) {
-                WorkspaceRevision before = workspaces.find(workspaceId).orElseThrow().revision();
+                WorkspaceRevision before =
+                        workspaces.find(workspaceId).orElseThrow().revision();
                 WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:move-result");
                 return new MutationResult(
                         new FileChangeSetId("change-set-test"),

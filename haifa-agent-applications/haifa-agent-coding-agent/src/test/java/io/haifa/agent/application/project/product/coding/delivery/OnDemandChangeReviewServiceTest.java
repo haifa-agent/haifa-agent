@@ -2,7 +2,6 @@ package io.haifa.agent.application.project.product.coding.delivery;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
 import io.haifa.agent.project.path.ProjectPath;
@@ -52,9 +51,19 @@ class OnDemandChangeReviewServiceTest {
     @Test
     void generatesReviewAcrossGitAndPlainRoots() {
         ledger.record(SessionFileChangeRecord.create(
-                WorkspaceRootAlias.MAIN, ProjectPath.of("src/App.java"), "sha256:0000000000000000000000000000000000000000000000000000000000000001", 100, now));
+                WorkspaceRootAlias.MAIN,
+                ProjectPath.of("src/App.java"),
+                "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+                100,
+                now));
         ledger.record(SessionFileChangeRecord.replace(
-                WorkspaceRootAlias.of("docs"), ProjectPath.of("manual.md"), "sha256:0000000000000000000000000000000000000000000000000000000000000002", 50, "sha256:0000000000000000000000000000000000000000000000000000000000000003", 60, now));
+                WorkspaceRootAlias.of("docs"),
+                ProjectPath.of("manual.md"),
+                "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+                50,
+                "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+                60,
+                now));
 
         Optional<CodingChangeReviewArtifact> artifactOpt = service.generateReview(
                 "run-test",
