@@ -26,7 +26,7 @@ corrupt signatures fail closed even if a gateway would repair them.
 
 `GeminiModelProfileFactory` derives profiles strictly for 4-tuple bindings registered in `GeminiBindingRegistry`:
 - `google-antigravity` + `gemini-3.6-flash` + `google-gemini-generate-content` + `antigravity-direct`
-- `google-antigravity` + `gemini-3.7-flash` + `google-gemini-generate-content` + `antigravity-direct`
+- `google-antigravity` + `gemini-3-flash` + `google-gemini-generate-content` + `antigravity-direct`
 
 The `standard` dialect currently lacks independent live compatibility evidence and remains `UNVERIFIED`.
 Unknown `providerModelId` values, unadmitted dialects, or mutated identity dimensions fail closed as `UNVERIFIED`

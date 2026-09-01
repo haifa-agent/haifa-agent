@@ -138,6 +138,17 @@
           AND active_run_id IS NULL
     </update>
 
+    <update id="releasePendingDispatch">
+        UPDATE sdk_conversation
+        SET active_dispatch_key = NULL,
+            last_activity_at = #{at},
+            revision = revision + 1
+        WHERE session_id = #{sessionId}
+          AND revision = #{expectedRevision}
+          AND active_dispatch_key = #{dispatchKey}
+          AND active_run_id IS NULL
+    </update>
+
     <update id="clearActive">
         UPDATE sdk_conversation
         SET active_run_id = NULL,

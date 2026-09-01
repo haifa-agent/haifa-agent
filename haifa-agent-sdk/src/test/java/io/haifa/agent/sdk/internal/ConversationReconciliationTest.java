@@ -117,5 +117,42 @@ class ConversationReconciliationTest {
         assertThat(conversations.findCommand(dispatchKey).orElseThrow().completed())
                 .isTrue();
         assertThat(scheduler.pending()).isEqualTo(1);
+
+        AgentSessionId orphanSessionId = new AgentSessionId("orphan-pending-session");
+        String orphanDispatchKey = "sdk:submit:orphan-pending";
+        persistence
+                .runtimePersistence()
+                .sessions()
+                .insert(AgentSession.open(
+                        orphanSessionId, caller.tenant(), caller.principal(), null, SessionScope.USER, now, Map.of()));
+        conversations.reserveCommand(new ConversationCommandBinding(
+                "caller-digest",
+                "submit",
+                "orphan-key-digest",
+                "orphan-request-digest",
+                orphanDispatchKey,
+                orphanSessionId,
+                Optional.empty(),
+                false,
+                OptionalLong.empty(),
+                now));
+        conversations.create(new ConversationRecord(
+                orphanSessionId,
+                caller.tenant(),
+                caller.principal(),
+                "Orphan pending",
+                ConversationStatus.ACTIVE,
+                Optional.empty(),
+                OptionalLong.empty(),
+                Optional.of(orphanDispatchKey),
+                now,
+                now,
+                0));
+
+        ConversationRecord released = service.find(orphanSessionId).orElseThrow();
+
+        assertThat(released.activeRunId()).isEmpty();
+        assertThat(released.activeDispatchKey()).isEmpty();
+        assertThat(conversations.findCommand(orphanDispatchKey).orElseThrow().completed()).isFalse();
     }
 }
