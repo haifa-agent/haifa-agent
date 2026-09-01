@@ -23,7 +23,6 @@ import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutco
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionMiddleware;
 import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionService;
-import io.haifa.agent.application.project.product.coding.delivery.OnDemandChangeReviewService;
 import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileMiddleware;
@@ -530,7 +529,6 @@ final class LocalCodingAgent implements AutoCloseable {
             rootsList.add(mainRoot);
             LocalWorkspaceRootRegistry rootRegistry = LocalWorkspaceRootRegistry.of(rootsList);
             var sessionLedger = new InMemorySessionChangeLedger();
-            var onDemandReview = new OnDemandChangeReviewService(rootRegistry, sessionLedger);
             var mutations = new LocalWorkspaceMutationService(
                     workspaces,
                     bindings,
@@ -659,6 +657,10 @@ final class LocalCodingAgent implements AutoCloseable {
                     .skillPlatform(skillPlatform.catalog(), skillPlatform.contentLoader())
                     .toolApprovalPrompts((binding, call, reauthentication) -> {
                         String toolName = binding.definition().name().value();
+                        if (toolName.equals("workspace.attach")) {
+                            return workspaceAttachmentApprovalPrompt(
+                                    call.arguments().values());
+                        }
                         if (!toolName.equals("execution.run")
                                 && !toolName.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
                             return io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter
@@ -1026,6 +1028,24 @@ final class LocalCodingAgent implements AutoCloseable {
             }
         });
         return safe.toString();
+    }
+
+    static String workspaceAttachmentApprovalPrompt(Map<String, Object> arguments) {
+        return "Attach additional workspace directory\nAlias: "
+                + attachmentApprovalArgument(arguments, "alias")
+                + "\nPath: "
+                + attachmentApprovalArgument(arguments, "path")
+                + "\nPermission: "
+                + attachmentApprovalArgument(arguments, "permission")
+                + "\nScope: this local agent session only; it is not persisted or shared with other sessions.";
+    }
+
+    private static String attachmentApprovalArgument(Map<String, Object> arguments, String name) {
+        Object value = arguments.get(name);
+        if (!(value instanceof String text) || text.isBlank()) return "<missing>";
+        if (text.length() > 4096) return "<too long>";
+        String safe = safeApprovalText(text);
+        return safe.indexOf('\n') >= 0 || safe.indexOf('\r') >= 0 || safe.indexOf('\t') >= 0 ? "<invalid>" : safe;
     }
 
     private static boolean openBrowser(URI uri) {

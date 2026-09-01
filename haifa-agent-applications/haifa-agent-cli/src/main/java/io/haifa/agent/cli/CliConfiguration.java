@@ -43,6 +43,7 @@ record CliConfiguration(
             "file.patch",
             "file.delete",
             "file.move",
+            "workspace.attach",
             "execution.run");
     private static final Set<String> OPTIONAL_TOOLS = Set.of("file.search", "web.search", "web.fetch");
     private static final Set<String> SUPPORTED_TOOLS = java.util.stream.Stream.concat(

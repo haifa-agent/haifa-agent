@@ -59,7 +59,6 @@ public final class StandaloneCodingAgents {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
-                List.of(),
                 false,
                 false,
                 false);

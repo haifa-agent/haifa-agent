@@ -129,9 +129,6 @@ public final class CodingDeliveryEvidenceLedger {
         String status = String.valueOf(data.getOrDefault("status", "UNKNOWN"));
         String semanticOutcome = String.valueOf(data.getOrDefault("semanticOutcome", "UNKNOWN"));
         boolean trustedReadOnly = trustedReadOnlyClassification(data);
-        if (data.containsKey("fileChangeSetId")) {
-            facts.add(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
-        }
         if (("INSPECT".equals(evidenceFamily) || "DIFF".equals(evidenceFamily))
                 && trustedReadOnly
                 && trustedOperationFamily(data, evidenceFamily)) {
@@ -176,7 +173,6 @@ public final class CodingDeliveryEvidenceLedger {
             CodingChangeReviewArtifact review, Map<String, Object> data) {
         Set<String> resultRefs = new java.util.LinkedHashSet<>();
         addString(data.get("changeSetId"), resultRefs);
-        addString(data.get("fileChangeSetId"), resultRefs);
         if (data.get("changeSetIds") instanceof List<?> values) values.forEach(value -> addString(value, resultRefs));
         return !resultRefs.isEmpty() && resultRefs.equals(new java.util.LinkedHashSet<>(review.changeSetIds()));
     }

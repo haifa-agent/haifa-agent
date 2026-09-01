@@ -223,6 +223,121 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
+    void attachesUserApprovedDirectoryForThisAgentAndUsesItsAlias() throws IOException {
+        Path extraDir = tempDir.resolve("extra-repo");
+        Files.createDirectories(extraDir);
+
+        var attached = operations.execute(
+                "workspace.attach",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of(
+                        "alias", "extra",
+                        "path", extraDir.toString(),
+                        "permission", "read-write")));
+        var created = operations.execute(
+                "file.create",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "extra:note.txt", "content", "attached")));
+
+        assertThat(attached.successful()).isTrue();
+        assertThat(attached.structuredData()).containsEntry("alias", "extra").containsEntry("permission", "READ_WRITE");
+        assertThat(registry.find(WorkspaceRootAlias.of("extra"))).isPresent();
+        assertThat(created.successful()).isTrue();
+        assertThat(Files.readString(extraDir.resolve("note.txt"))).isEqualTo("attached");
+    }
+
+    @Test
+    void rejectsAttachmentThatOverlapsTheMainDirectory() {
+        var result = operations.execute(
+                "workspace.attach",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of(
+                        "alias", "duplicate",
+                        "path", mainDir.toString(),
+                        "permission", "read-only")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
+        assertThat(registry.find(WorkspaceRootAlias.of("duplicate"))).isEmpty();
+    }
+
+    @Test
+    void rejectsCrossRootMoveWithoutChangingEitherDirectory() throws IOException {
+        Files.writeString(configDir.resolve("move.txt"), "source", StandardCharsets.UTF_8);
+
+        var result = operations.execute(
+                "file.move",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("source", "config:move.txt", "destination", "main:moved.txt")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
+        assertThat(Files.readString(configDir.resolve("move.txt"))).isEqualTo("source");
+        assertThat(Files.exists(mainDir.resolve("moved.txt"))).isFalse();
+    }
+
+    @Test
+    void rejectsDeletePatchBeforeChangingTheTargetFile() throws IOException {
+        Files.writeString(configDir.resolve("keep.yml"), "keep: true\n", StandardCharsets.UTF_8);
+        String patch =
+                """
+                *** Begin Patch
+                *** Delete File: config:keep.yml
+                *** End Patch
+                """;
+
+        var result = operations.execute(
+                "file.patch",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("patch", patch)));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
+        assertThat(Files.readString(configDir.resolve("keep.yml"))).isEqualTo("keep: true\n");
+    }
+
+    @Test
+    void rejectsMultiFilePatchBeforeChangingEitherTarget() {
+        String patch =
+                """
+                *** Begin Patch
+                *** Add File: first.txt
+                +first
+                *** Add File: second.txt
+                +second
+                *** End Patch
+                """;
+
+        var result = operations.execute(
+                "file.patch",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("patch", patch)));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
+        assertThat(Files.exists(mainDir.resolve("first.txt"))).isFalse();
+        assertThat(Files.exists(mainDir.resolve("second.txt"))).isFalse();
+    }
+
+    @Test
     void rejectsUnregisteredRootAlias() {
         var res = operations.execute(
                 "file.read",

@@ -84,4 +84,25 @@ class LocalWorkspaceRootRegistryTest {
                 .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
                         .isEqualTo(WorkspaceRootErrorCode.ROOT_READ_ONLY));
     }
+
+    @Test
+    void attachesOneAdditionalRootWithoutReplacingMain() {
+        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(tempDir, WorkspaceRootStrategy.GIT, false);
+        LocalWorkspaceRootRegistry registry = LocalWorkspaceRootRegistry.singleMain(mainRoot);
+        LocalWorkspaceRoot docsRoot = LocalWorkspaceRoot.of(
+                WorkspaceRootAlias.of("docs"),
+                tempDir.resolve("docs"),
+                WorkspaceRootPermission.READ_ONLY,
+                WorkspaceRootStrategy.PLAIN,
+                false);
+
+        registry.attach(docsRoot);
+
+        assertThat(registry.allRoots()).containsExactly(mainRoot, docsRoot);
+        assertThat(registry.find(WorkspaceRootAlias.of("docs"))).contains(docsRoot);
+        assertThatThrownBy(() -> registry.attach(docsRoot))
+                .isInstanceOf(WorkspaceRootException.class)
+                .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
+                        .isEqualTo(WorkspaceRootErrorCode.DUPLICATE_ROOT_ALIAS));
+    }
 }

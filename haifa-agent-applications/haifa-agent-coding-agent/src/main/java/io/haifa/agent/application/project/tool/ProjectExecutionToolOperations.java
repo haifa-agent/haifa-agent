@@ -382,10 +382,6 @@ public final class ProjectExecutionToolOperations {
                     reconciledResult(observed, "EXECUTION_TERMINAL_AND_WORKSPACE_OBSERVATION_CONFIRMED"),
                     "EXECUTION_TERMINAL_AND_WORKSPACE_OBSERVATION_CONFIRMED");
         }
-        if (data.get("fileChangeSetId") instanceof String changeSetId && !changeSetId.isBlank()) {
-            return ToolReconciliation.resolved(
-                    reconciledResult(observed, "WORKSPACE_CHANGE_SET_CONFIRMED"), "WORKSPACE_CHANGE_SET_CONFIRMED");
-        }
         return ToolReconciliation.stillUnknown("LOCAL_SIDE_EFFECT_EVIDENCE_MISSING");
     }
 

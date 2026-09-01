@@ -139,7 +139,11 @@ public final class LocalMultiRootPathResolver {
                 }
             }
         } catch (IOException e) {
-            // Fallback to logical normalization check if real path resolution fails
+            throw new WorkspaceRootException(
+                    WorkspaceRootErrorCode.PATH_ESCAPE_FORBIDDEN,
+                    path.rootAlias().value(),
+                    path.relativePath(),
+                    "Cannot verify physical root containment: " + path);
         }
 
         return new ResolvedRootPath(root, path, resolved);

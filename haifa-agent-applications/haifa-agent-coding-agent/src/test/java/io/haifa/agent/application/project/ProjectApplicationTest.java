@@ -219,7 +219,7 @@ class ProjectApplicationTest {
                 executionProfile("host-guarded", NetworkPolicy.ALLOW, "two"));
 
         assertThat(frozen.snapshot().bindings())
-                .hasSize(12)
+                .hasSize(13)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
                         "execution_run",
@@ -233,7 +233,8 @@ class ProjectApplicationTest {
                         "file_search",
                         "file_stat",
                         "file_write",
-                        "request_permissions");
+                        "request_permissions",
+                        "workspace_attach");
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
             assertThat(binding.definition().inputSchema().document()).containsKey("$schema");
             assertThat(binding.definition().outputSchema().document()).containsKey("$schema");
@@ -257,6 +258,16 @@ class ProjectApplicationTest {
                                     .get("required")
                                     .toString())
                             .contains("priorToolCallId", "requestedPermission", "justification");
+                });
+        assertThat(frozen.snapshot().bindings())
+                .filteredOn(binding -> binding.alias().value().equals("workspace_attach"))
+                .singleElement()
+                .satisfies(binding -> {
+                    assertThat(binding.definition().approvalRequirement())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.ALWAYS);
+                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
+                    assertThat(binding.definition().sideEffects())
+                            .contains(io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
                 });
     }
 

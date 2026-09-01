@@ -73,6 +73,21 @@ class LocalCodingProductAssemblyTest {
     }
 
     @Test
+    void rendersExactWorkspaceAttachmentDetailsForApproval() {
+        String prompt = LocalCodingAgent.workspaceAttachmentApprovalPrompt(Map.of(
+                "alias", "docs",
+                "path", "D:\\workspace\\haifa-agent-docs",
+                "permission", "read-write"));
+
+        assertThat(prompt)
+                .contains("Attach additional workspace directory")
+                .contains("Alias: docs")
+                .contains("Path: D:\\workspace\\haifa-agent-docs")
+                .contains("Permission: read-write")
+                .contains("not persisted or shared");
+    }
+
+    @Test
     void nonInteractiveTerminalFailsBeforeTheProductRuntimeIsAssembled() throws Exception {
         Path workspace = Files.createDirectory(root.resolve("non-interactive-workspace"));
         AtomicInteger assemblyCalls = new AtomicInteger();

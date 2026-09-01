@@ -968,8 +968,7 @@ public final class ToolPipeline {
                 "deliveryRepositoryScopeDigest",
                 "failureActionCode",
                 "failureCode",
-                "status",
-                "fileChangeSetId")) {
+                "status")) {
             Object value = result.structuredData().get(key);
             if (value instanceof String text && !text.isBlank() && text.length() <= 256) {
                 attributes.put(key, text);
