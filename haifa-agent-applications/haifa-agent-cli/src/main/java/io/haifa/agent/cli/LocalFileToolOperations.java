@@ -1,6 +1,5 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.tool.ProjectToolOperations;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
@@ -9,6 +8,7 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.project.changeset.FileChangeSetStatus;
 import io.haifa.agent.project.changeset.FileChangeSetStore;
 import io.haifa.agent.project.filesystem.FileListRequest;
+import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.filesystem.ReadOptions;
 import io.haifa.agent.project.filesystem.SearchRequest;
 import io.haifa.agent.project.filesystem.WorkspaceFileErrorCode;
@@ -54,10 +54,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private static final int MAX_READ_BYTES = 256 * 1024;
     private static final int DEFAULT_READ_LINES = 400;
     private static final int MAX_READ_LINES = 2_000;
-    private static final String POST_MUTATION_REVIEW =
-            " Before validation, inspect every changed classification and counter branch against the authoritative "
-                    + "contract, then exercise one mixed scenario with exact counts. Differently named outcomes stay "
-                    + "disjoint unless the contract defines overlap; an item ignored only as a duplicate is not invalid.";
 
     private final WorkspaceStore workspaces;
     private final LocalWorkspaceFileService files;
@@ -66,7 +62,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private final ApplyPatchParser patchParser;
     private final PatchService patchService;
     private final FileChangeSetStore changeSets;
-    private final CodingChangeReviewArtifactFactory changeReviews;
     private final LocalWorkspaceRootRegistry rootRegistry;
 
     LocalFileToolOperations(
@@ -74,7 +69,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             LocalWorkspaceFileService files,
             WorkspaceMutationProvider mutations,
             IdentifierGenerator identifiers) {
-        this(workspaces, files, mutations, identifiers, null, null, null);
+        this(workspaces, files, mutations, identifiers, null, null);
     }
 
     LocalFileToolOperations(
@@ -83,7 +78,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             WorkspaceMutationProvider mutations,
             IdentifierGenerator identifiers,
             FileChangeSetStore changeSets) {
-        this(workspaces, files, mutations, identifiers, changeSets, (LocalWorkspaceRootRegistry) null);
+        this(workspaces, files, mutations, identifiers, changeSets, null);
     }
 
     LocalFileToolOperations(
@@ -92,37 +87,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             WorkspaceMutationProvider mutations,
             IdentifierGenerator identifiers,
             FileChangeSetStore changeSets,
-            LocalWorkspaceRootRegistry rootRegistry) {
-        this(
-                workspaces,
-                files,
-                mutations,
-                identifiers,
-                changeSets,
-                changeSets == null
-                        ? null
-                        : new io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory(
-                                changeSets, new LocalCodingChangeContentClassifier(files), 512 * 1024),
-                rootRegistry);
-    }
-
-    LocalFileToolOperations(
-            WorkspaceStore workspaces,
-            LocalWorkspaceFileService files,
-            WorkspaceMutationProvider mutations,
-            IdentifierGenerator identifiers,
-            FileChangeSetStore changeSets,
-            CodingChangeReviewArtifactFactory changeReviews) {
-        this(workspaces, files, mutations, identifiers, changeSets, changeReviews, null);
-    }
-
-    LocalFileToolOperations(
-            WorkspaceStore workspaces,
-            LocalWorkspaceFileService files,
-            WorkspaceMutationProvider mutations,
-            IdentifierGenerator identifiers,
-            FileChangeSetStore changeSets,
-            CodingChangeReviewArtifactFactory changeReviews,
             LocalWorkspaceRootRegistry rootRegistry) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.files = Objects.requireNonNull(files, "files must not be null");
@@ -132,7 +96,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         this.patchService = new PatchService(
                 this.workspaces, this.files, this.mutations, new PatchValidationService(100, 1_000, 20_000));
         this.changeSets = changeSets;
-        this.changeReviews = changeReviews;
         this.rootRegistry = rootRegistry;
     }
 
@@ -232,22 +195,19 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 return ToolReconciliation.stillUnknown("FILE_CONTENT_DIGEST_MISMATCH");
             }
             return ToolReconciliation.resolved(
-                    withReview(
-                            success(
-                                    "Reconciled " + path.projectPath() + " without replay",
-                                    Map.of(
-                                            "changeSetId",
-                                            changeSet.id().value(),
-                                            "contentHash",
-                                            actualHash,
-                                            "reconcileStatus",
-                                            "RESOLVED",
-                                            "reconcileReason",
-                                            "FILE_CONTENT_AND_CHANGE_SET_CONFIRMED",
-                                            "replayAllowed",
-                                            false)),
-                            runRef,
-                            List.of(changeSet.id().value())),
+                    success(
+                            "Reconciled " + path.projectPath() + " without replay",
+                            Map.of(
+                                    "changeSetId",
+                                    changeSet.id().value(),
+                                    "contentHash",
+                                    actualHash,
+                                    "reconcileStatus",
+                                    "RESOLVED",
+                                    "reconcileReason",
+                                    "FILE_CONTENT_AND_CHANGE_SET_CONFIRMED",
+                                    "replayAllowed",
+                                    false)),
                     "FILE_CONTENT_AND_CHANGE_SET_CONFIRMED");
         } catch (WorkspaceFileException | WorkspaceRootException | IllegalArgumentException failure) {
             return ToolReconciliation.stillUnknown("FILE_RECONCILIATION_EVIDENCE_UNAVAILABLE");
@@ -341,12 +301,9 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 string(values, "content").getBytes(StandardCharsets.UTF_8),
                 MutationPrecondition.absent(workspace.revision()),
                 mutationContext));
-        return withReview(
-                success(
-                        "Created " + path.projectPath() + "." + POST_MUTATION_REVIEW,
-                        Map.of("changeSetId", result.changeSetId().value())),
-                mutationContext.runRef(),
-                List.of(result.changeSetId().value()));
+        return success(
+                "Created " + path.projectPath(),
+                Map.of("path", path.projectPath().toString()));
     }
 
     private ToolResult write(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
@@ -360,28 +317,26 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 string(values, "content").getBytes(StandardCharsets.UTF_8),
                 MutationPrecondition.existing(workspace.revision(), currentHash),
                 mutationContext));
-        return withReview(
-                success(
-                        "Wrote " + path.projectPath() + "." + POST_MUTATION_REVIEW,
-                        Map.of("changeSetId", result.changeSetId().value())),
-                mutationContext.runRef(),
-                List.of(result.changeSetId().value()));
+        return success(
+                "Wrote " + path.projectPath(),
+                Map.of("path", path.projectPath().toString()));
     }
 
     private ToolResult delete(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
         WorkspacePath path = path(workspaceId, values, "path", WorkspaceRootPermission.READ_WRITE);
         Workspace workspace = workspace(workspaceId);
-        String currentHash = files.stat(path, true)
+        var fileStat = files.stat(path, true);
+        if (fileStat.type() == FileType.DIRECTORY) {
+            throw new IllegalArgumentException("Cannot delete directory: " + path.projectPath());
+        }
+        String currentHash = fileStat
                 .contentHash()
                 .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
         var result = mutations.delete(new DeleteFileRequest(
                 path, MutationPrecondition.existing(workspace.revision(), currentHash), mutationContext));
-        return withReview(
-                success(
-                        "Deleted " + path.projectPath(),
-                        Map.of("changeSetId", result.changeSetId().value())),
-                mutationContext.runRef(),
-                List.of(result.changeSetId().value()));
+        return success(
+                "Deleted " + path.projectPath(),
+                Map.of("path", path.projectPath().toString()));
     }
 
     private ToolResult patch(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
@@ -407,28 +362,13 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("patchSha256", result.patchSha256());
         data.put("complete", result.complete());
-        data.put(
-                "changeSetIds",
-                result.appliedMutations().stream()
-                        .map(mutation -> mutation.changeSetId().value())
-                        .toList());
         data.put("conflicts", conflicts);
         if (!result.complete()) {
-            return withReview(
-                    failure("Patch stopped after the exact committed prefix", Map.copyOf(data)),
-                    mutationContext.runRef(),
-                    result.appliedMutations().stream()
-                            .map(mutation -> mutation.changeSetId().value())
-                            .toList());
+            return failure("Patch stopped after the exact committed prefix", Map.copyOf(data));
         }
-        return withReview(
-                success(
-                        "Applied patch to " + document.files().size() + " file(s)." + POST_MUTATION_REVIEW,
-                        Map.copyOf(data)),
-                mutationContext.runRef(),
-                result.appliedMutations().stream()
-                        .map(mutation -> mutation.changeSetId().value())
-                        .toList());
+        return success(
+                "Applied patch to " + document.files().size() + " file(s).",
+                Map.copyOf(data));
     }
 
     private ToolResult move(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
@@ -443,12 +383,9 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 destination,
                 MutationPrecondition.existing(workspace.revision(), currentHash),
                 mutationContext));
-        return withReview(
-                success(
-                        "Moved " + source.projectPath() + " to " + destination.projectPath(),
-                        Map.of("changeSetId", result.changeSetId().value())),
-                mutationContext.runRef(),
-                List.of(result.changeSetId().value()));
+        return success(
+                "Moved " + source.projectPath() + " to " + destination.projectPath(),
+                Map.of("source", source.projectPath().toString(), "destination", destination.projectPath().toString()));
     }
 
     private static MutationContext context(
@@ -589,26 +526,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private static ToolResult failure(String summary, Map<String, Object> data) {
         return new ToolResult(false, summary, data, List.of(), List.of(), false);
-    }
-
-    private ToolResult withReview(ToolResult result, String runRef, List<String> changeSetIds) {
-        if (changeReviews == null || runRef == null || changeSetIds.isEmpty()) return result;
-        return changeReviews
-                .create(runRef, changeSetIds)
-                .map(review -> {
-                    Map<String, Object> data = new LinkedHashMap<>(result.structuredData());
-                    data.put("changeReviewArtifact", review.toStructuredData());
-                    data.put("changeReviewArtifactRef", review.artifactRef());
-                    data.put("artifactRef", review.artifactRef());
-                    return new ToolResult(
-                            result.successful(),
-                            result.summary(),
-                            Map.copyOf(data),
-                            result.assets(),
-                            result.artifacts(),
-                            result.truncated());
-                })
-                .orElse(result);
     }
 
     private static Map<String, Object> workspaceRootFailure(

@@ -223,7 +223,7 @@ class LocalFileToolOperationsMultiRootTest {
                 "policy-1",
                 arguments(Map.of("path", "config:app.yml", "content", "env: prod")));
         assertThat(createRes.successful()).isTrue();
-        assertThat(createRes.structuredData()).containsKey("changeSetId");
+        assertThat(createRes.structuredData()).containsEntry("path", "app.yml").doesNotContainKeys("changeSetId", "quarantineToken", "changeReviewArtifact");
     }
 
     @Test
