@@ -68,7 +68,7 @@ class LocalWorkspaceMutationServiceTest {
     Path root;
 
     @Test
-    void createsWritesMovesQuarantinesRestoresAndReplaysWithStableChangeSets() throws Exception {
+    void createsWritesMovesDeletesAndReplaysWithStableVersions() throws Exception {
         Files.writeString(root.resolve("a.txt"), "alpha\n", StandardCharsets.UTF_8);
         Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
         WorkspaceRevision initial = fixture.workspace().revision();
