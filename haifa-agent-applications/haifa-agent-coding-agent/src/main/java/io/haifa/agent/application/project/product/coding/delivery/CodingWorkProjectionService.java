@@ -169,7 +169,6 @@ public final class CodingWorkProjectionService {
                     reference("read", text(data, "path", call.toolName()), text(data, "contentVersion", "unknown")));
         }
         addChange(data.get("changeSetId"), refs.get(RefKind.WORKSPACE_CHANGE));
-        addChange(data.get("fileChangeSetId"), refs.get(RefKind.WORKSPACE_CHANGE));
         if (data.get("changeSetIds") instanceof List<?> values) {
             values.stream()
                     .limit(CodingWorkProjection.MAXIMUM_REFERENCES_PER_KIND)

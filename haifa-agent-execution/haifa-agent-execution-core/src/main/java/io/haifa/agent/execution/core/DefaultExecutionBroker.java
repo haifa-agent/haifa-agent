@@ -127,8 +127,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             ExecutionStatus status = map(process.status(), process.exitCode());
             ExecutionFailure failure = failure(status, process.processTreeTerminated());
             try {
-                var changes = changeObservation.complete();
-                // No observed changeSet recording needed
+                changeObservation.complete();
             } catch (RuntimeException observationFailure) {
                 status = ExecutionStatus.UNKNOWN;
                 failure = new ExecutionFailure(
@@ -376,8 +375,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             ExecutionStatus status = processExit.status();
             ExecutionFailure executionFailure = failure(status, processExit.processTreeTerminated());
             try {
-                var changes = changeObservation.complete();
-                // No observed changeSet recording needed
+                changeObservation.complete();
             } catch (RuntimeException observationFailure) {
                 status = ExecutionStatus.UNKNOWN;
                 executionFailure = new ExecutionFailure(

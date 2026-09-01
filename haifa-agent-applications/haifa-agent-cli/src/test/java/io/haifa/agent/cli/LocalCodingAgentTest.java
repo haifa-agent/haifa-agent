@@ -370,9 +370,10 @@ class LocalCodingAgentTest {
     }
 
     @Test
-    void sqliteAskPersistsApprovalAndContinuesAfterHumanRejection() throws Exception {
+    void sqliteAskShowsWorkspaceAttachmentDetailsBeforeHumanRejection() throws Exception {
         Path database = configuredSkillRoot.resolve("approval-runtime.db");
         Path transcripts = Files.createDirectory(configuredSkillRoot.resolve("approval-transcripts"));
+        Path attachedDirectory = configuredSkillRoot.resolve("approval-attached");
         CliConfiguration defaults = CliConfiguration.defaults();
         var configuration = new CliConfiguration(
                 defaults.model(),
@@ -398,8 +399,11 @@ class LocalCodingAgentTest {
                         "",
                         List.of(new ModelToolCall(
                                 new ProviderToolCallCorrelationId("approval-tool-call-1"),
-                                "file_write",
-                                Map.of("path", "must-not-exist.txt", "content", "rejected"))),
+                                "workspace_attach",
+                                Map.of(
+                                        "alias", "attached",
+                                        "path", attachedDirectory.toString(),
+                                        "permission", "read-only"))),
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unpriced(5, 2),
                         "stub",
@@ -431,11 +435,17 @@ class LocalCodingAgentTest {
                 traces::add,
                 new AesGcmModelContinuationProtector(
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
-            var accepted = agent.start("Try a write and honor a rejection.");
+            var accepted = agent.start("Attach another directory and honor a rejection.");
             runId = accepted.runId();
             var request = awaitPendingInteraction(agent, accepted.runId(), Duration.ofSeconds(60));
             assertThat(agent.runtime().find(accepted.runId()).orElseThrow().status())
                     .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            assertThat(request.prompt())
+                    .contains("Attach additional workspace directory")
+                    .contains("Alias: attached")
+                    .contains("Path: " + attachedDirectory)
+                    .contains("Permission: read-only")
+                    .contains("this local agent session only");
             awaitCondition(
                     () -> agent.executionSettled(accepted.runId()),
                     Duration.ofSeconds(60),
@@ -458,7 +468,7 @@ class LocalCodingAgentTest {
             assertThat(completed.output()).contains("rejection respected");
         }
 
-        assertThat(workspace.resolve("must-not-exist.txt")).doesNotExist();
+        assertThat(attachedDirectory).doesNotExist();
         assertThat(calls).hasValue(2);
         assertThat(traces).noneMatch(event -> event.operation().equals("runtime.error"));
         assertThat(new JsonlTranscriptReader(transcripts).read(runId.value()).events())
@@ -530,7 +540,7 @@ class LocalCodingAgentTest {
                 assertThat(request.messages())
                         .anyMatch(message -> message.role() == ModelMessageRole.TOOL
                                 && "SUCCEEDED".equals(message.toolResultData().get("status"))
-                                && message.toolResultData().containsKey("fileChangeSetId"));
+                                && !message.toolResultData().containsKey("fileChangeSetId"));
                 return toolResponse(
                         "shell-test",
                         "execution_run",

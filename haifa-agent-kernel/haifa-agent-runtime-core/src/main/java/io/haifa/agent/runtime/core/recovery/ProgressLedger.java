@@ -26,7 +26,7 @@ public final class ProgressLedger {
             Map<String, Object> data = result.structuredData();
             changed |= addWorkspaceReference(
                     ProgressEvidence.Type.WORKSPACE_CHANGE,
-                    firstText(data, "path", "patchSha256", "mutationId", "source", "changeSetId", "fileChangeSetId"));
+                    firstText(data, "path", "patchSha256", "mutationId", "source", "changeSetId"));
             changed |= addWorkspaceReferences(data.get("changeSetIds"));
             for (var artifact : result.artifacts()) {
                 changed |= add(ProgressEvidence.Type.ARTIFACT_CHANGE, artifact.artifactId());
@@ -42,8 +42,7 @@ public final class ProgressLedger {
             Map<String, Object> attributes =
                     call.error().map(value -> value.error().details()).orElse(Map.of());
             changed |= addWorkspaceReference(
-                    ProgressEvidence.Type.WORKSPACE_CHANGE,
-                    firstText(attributes, "path", "source", "changeSetId", "fileChangeSetId"));
+                    ProgressEvidence.Type.WORKSPACE_CHANGE, firstText(attributes, "path", "source", "changeSetId"));
         }
         return changed;
     }

@@ -18,7 +18,7 @@ public final class LocalWorkspaceRootRegistry {
     private final LocalWorkspaceRoot mainRoot;
 
     private LocalWorkspaceRootRegistry(Map<WorkspaceRootAlias, LocalWorkspaceRoot> roots) {
-        this.roots = Map.copyOf(Objects.requireNonNull(roots, "roots must not be null"));
+        this.roots = new LinkedHashMap<>(Objects.requireNonNull(roots, "roots must not be null"));
         LocalWorkspaceRoot main = roots.get(WorkspaceRootAlias.MAIN);
         if (main == null) {
             throw new IllegalArgumentException("registry must contain a 'main' root");
@@ -50,7 +50,7 @@ public final class LocalWorkspaceRootRegistry {
         return mainRoot;
     }
 
-    public Optional<LocalWorkspaceRoot> find(WorkspaceRootAlias alias) {
+    public synchronized Optional<LocalWorkspaceRoot> find(WorkspaceRootAlias alias) {
         return Optional.ofNullable(roots.get(alias));
     }
 
@@ -63,7 +63,7 @@ public final class LocalWorkspaceRootRegistry {
         }
     }
 
-    public LocalWorkspaceRoot require(WorkspaceRootAlias alias) {
+    public synchronized LocalWorkspaceRoot require(WorkspaceRootAlias alias) {
         LocalWorkspaceRoot root = roots.get(alias);
         if (root == null) {
             throw new WorkspaceRootException(
@@ -75,15 +75,35 @@ public final class LocalWorkspaceRootRegistry {
         return root;
     }
 
-    public boolean contains(WorkspaceRootAlias alias) {
+    public synchronized boolean contains(WorkspaceRootAlias alias) {
         return roots.containsKey(alias);
     }
 
-    public List<LocalWorkspaceRoot> allRoots() {
+    public synchronized List<LocalWorkspaceRoot> allRoots() {
         return List.copyOf(roots.values());
     }
 
-    public void checkPermission(WorkspaceRootAlias alias, WorkspaceRootPermission required) {
+    /** Adds one user-approved root for the lifetime of this local agent process. */
+    public synchronized void attach(LocalWorkspaceRoot root) {
+        Objects.requireNonNull(root, "root must not be null");
+        if (root.alias().isMain()) {
+            throw new WorkspaceRootException(
+                    WorkspaceRootErrorCode.DUPLICATE_ROOT_ALIAS,
+                    root.alias().value(),
+                    root.hostPath().toString(),
+                    "The main root cannot be attached again");
+        }
+        if (roots.containsKey(root.alias())) {
+            throw new WorkspaceRootException(
+                    WorkspaceRootErrorCode.DUPLICATE_ROOT_ALIAS,
+                    root.alias().value(),
+                    root.hostPath().toString(),
+                    "Workspace root alias is already attached: " + root.alias().value());
+        }
+        roots.put(root.alias(), root);
+    }
+
+    public synchronized void checkPermission(WorkspaceRootAlias alias, WorkspaceRootPermission required) {
         LocalWorkspaceRoot root = require(alias);
         if (required == WorkspaceRootPermission.READ_WRITE && !root.permission().canWrite()) {
             throw new WorkspaceRootException(

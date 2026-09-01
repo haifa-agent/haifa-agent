@@ -135,4 +135,15 @@ class LocalMultiRootPathResolverTest {
                 .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
                         .isEqualTo(WorkspaceRootErrorCode.ROOT_ALIAS_NOT_FOUND));
     }
+
+    @Test
+    void rejectsPathWhenPhysicalContainmentCannotBeVerified() {
+        LocalWorkspaceRootRegistry missingRootRegistry = LocalWorkspaceRootRegistry.singleMain(
+                LocalWorkspaceRoot.main(tempDir.resolve("missing-root"), WorkspaceRootStrategy.PLAIN, false));
+
+        assertThatThrownBy(() -> LocalMultiRootPathResolver.resolve(missingRootRegistry, "file.txt"))
+                .isInstanceOf(WorkspaceRootException.class)
+                .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
+                        .isEqualTo(WorkspaceRootErrorCode.PATH_ESCAPE_FORBIDDEN));
+    }
 }

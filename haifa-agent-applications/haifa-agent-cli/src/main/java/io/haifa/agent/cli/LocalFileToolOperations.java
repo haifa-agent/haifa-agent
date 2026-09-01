@@ -32,7 +32,9 @@ import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.root.LocalMultiRootPathResolver;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootStrategyDetector;
 import io.haifa.agent.project.root.MultiRootPath;
 import io.haifa.agent.project.root.WorkspaceRootAlias;
 import io.haifa.agent.project.root.WorkspaceRootErrorCode;
@@ -105,7 +107,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         this.files = Objects.requireNonNull(files, "files must not be null");
         this.mutations = Objects.requireNonNull(mutations, "mutations must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
-        this.patchParser = new ApplyPatchParser(100, 1_000, 20_000, 4 * 1024 * 1024);
+        this.patchParser = new ApplyPatchParser(1, 1_000, 20_000, 4 * 1024 * 1024);
         this.rootRegistry = rootRegistry;
         this.ledger = ledger;
     }
@@ -144,6 +146,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 case "file.patch" -> patch(workspaceId, mutationContext, arguments.values());
                 case "file.delete" -> delete(workspaceId, mutationContext, arguments.values());
                 case "file.move" -> move(workspaceId, mutationContext, arguments.values());
+                case "workspace.attach" -> attach(arguments.values());
                 default -> throw new IllegalStateException("CLI does not support tool: " + toolName);
             };
         } catch (WorkspaceRootException exception) {
@@ -614,6 +617,10 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         String dstStr = string(values, "destination");
         ResolvedTarget srcTarget = resolveTarget(workspaceId, srcStr, WorkspaceRootPermission.READ_WRITE);
         ResolvedTarget dstTarget = resolveTarget(workspaceId, dstStr, WorkspaceRootPermission.READ_WRITE);
+        if (!srcTarget.rootAlias().equals(dstTarget.rootAlias())) {
+            throw new IllegalArgumentException(
+                    "cross-root file.move is not supported; use file.create and file.delete explicitly");
+        }
 
         if (srcTarget.isMain() && dstTarget.isMain()) {
             Workspace workspace = workspace(workspaceId);
@@ -692,6 +699,15 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private ToolResult patch(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
         String patchText = string(values, "patch");
         var document = patchParser.parse(patchText);
+        if (document.files().size() != 1) {
+            throw new IllegalArgumentException(
+                    "file.patch accepts exactly one file; use separate tool calls for each file");
+        }
+        FilePatch onlyFile = document.files().getFirst();
+        if (onlyFile.deletion() || onlyFile.move()) {
+            throw new IllegalArgumentException(
+                    "file.patch supports only Add File and Update File; use file.delete or file.move");
+        }
 
         // Pre-check permissions for all files in patch
         for (FilePatch file : document.files()) {
@@ -883,6 +899,56 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                         WorkspaceFileErrorCode.WORKSPACE_NOT_FOUND,
                         new WorkspacePath(workspaceId, ProjectPath.root()),
                         "workspace not found"));
+    }
+
+    private ToolResult attach(Map<String, Object> values) {
+        if (rootRegistry == null) {
+            throw new IllegalStateException("workspace.attach requires a local root registry");
+        }
+        WorkspaceRootAlias alias = WorkspaceRootAlias.of(string(values, "alias"));
+        if (alias.isMain()) {
+            throw new IllegalArgumentException("workspace.attach cannot replace the main root");
+        }
+        String requestedPath = string(values, "path");
+        Path requested = Path.of(requestedPath);
+        if (!requested.isAbsolute()) {
+            throw new IllegalArgumentException("workspace.attach path must be an absolute host directory");
+        }
+        WorkspaceRootPermission permission =
+                switch (string(values, "permission")) {
+                    case "read-only" -> WorkspaceRootPermission.READ_ONLY;
+                    case "read-write" -> WorkspaceRootPermission.READ_WRITE;
+                    default -> throw new IllegalArgumentException("permission must be read-only or read-write");
+                };
+        try {
+            Path normalizedPath = requested.toAbsolutePath().normalize();
+            Path realPath = normalizedPath.toRealPath();
+            if (!Files.isDirectory(realPath)) {
+                throw new IllegalArgumentException("workspace.attach path must be an existing directory");
+            }
+            if (!realPath.equals(normalizedPath)) {
+                throw new IllegalArgumentException(
+                        "workspace.attach path must not traverse a symbolic link or reparse point");
+            }
+            for (LocalWorkspaceRoot existing : rootRegistry.allRoots()) {
+                Path existingRealPath = existing.hostPath().toRealPath();
+                if (realPath.startsWith(existingRealPath) || existingRealPath.startsWith(realPath)) {
+                    throw new IllegalArgumentException("workspace.attach path overlaps an existing root");
+                }
+            }
+            var detection = new LocalWorkspaceRootStrategyDetector().detect(realPath);
+            rootRegistry.attach(
+                    LocalWorkspaceRoot.of(alias, realPath, permission, detection.strategy(), detection.initialDirty()));
+            return success(
+                    "Attached " + alias.value() + " as " + permission.name(),
+                    Map.of(
+                            "alias", alias.value(),
+                            "path", realPath.toString(),
+                            "permission", permission.name(),
+                            "strategy", detection.strategy().name()));
+        } catch (IOException e) {
+            throw new IllegalArgumentException("workspace.attach path cannot be accessed");
+        }
     }
 
     private record ResolvedTarget(

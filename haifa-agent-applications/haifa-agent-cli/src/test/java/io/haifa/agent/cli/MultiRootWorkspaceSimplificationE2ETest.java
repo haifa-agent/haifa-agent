@@ -2,8 +2,6 @@ package io.haifa.agent.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifact;
-import io.haifa.agent.application.project.product.coding.delivery.OnDemandChangeReviewService;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolResult;
@@ -47,7 +45,6 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -55,7 +52,7 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * End-to-End verification of Multi-Root Workspace Simplification:
  * Authoritative physical routing, strict permission isolation, anti-escape defense,
- * and on-demand review generation.
+ * and explicit file-operation behavior.
  */
 class MultiRootWorkspaceSimplificationE2ETest {
 
@@ -70,7 +67,6 @@ class MultiRootWorkspaceSimplificationE2ETest {
     private LocalWorkspaceRootRegistry registry;
     private InMemorySessionChangeLedger ledger;
     private LocalFileToolOperations operations;
-    private OnDemandChangeReviewService reviewService;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -110,7 +106,6 @@ class MultiRootWorkspaceSimplificationE2ETest {
                 .build();
 
         ledger = new InMemorySessionChangeLedger();
-        reviewService = new OnDemandChangeReviewService(registry, ledger);
 
         workspaceId = new WorkspaceId("ws-e2e");
         WorkspaceBindingId bindingId = new WorkspaceBindingId("bind-e2e");
@@ -367,29 +362,6 @@ class MultiRootWorkspaceSimplificationE2ETest {
                 "p-1",
                 new ToolArguments("file.delete", "1.0", Map.of("path", "config:ephemeral.txt")));
         assertThat(ledger.compactedChanges(WorkspaceRootAlias.of("config"))).hasSize(1);
-    }
-
-    @Test
-    void e2e05_onDemandReviewArtifactGeneration() {
-        operations.execute(
-                "file.write",
-                workspaceId,
-                new PrincipalRef("op", "user"),
-                "run-1",
-                "p-1",
-                new ToolArguments("file.write", "1.0", Map.of("path", "config:app.yml", "content", "port: 7070")));
-
-        Optional<CodingChangeReviewArtifact> artifact = reviewService.generateReview(
-                "run-1",
-                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-                "sha256:1111111111111111111111111111111111111111111111111111111111111111");
-
-        assertThat(artifact).isPresent();
-        CodingChangeReviewArtifact review = artifact.get();
-        assertThat(review.totalFileCount()).isEqualTo(1);
-        assertThat(review.fileSummaries().getFirst().path()).isEqualTo("config:app.yml");
-        assertThat(review.fileSummaries().getFirst().changeType()).isEqualTo(FileChangeType.REPLACE);
-        assertThat(review.counts()).containsEntry("replaced", 1);
     }
 
     @Test

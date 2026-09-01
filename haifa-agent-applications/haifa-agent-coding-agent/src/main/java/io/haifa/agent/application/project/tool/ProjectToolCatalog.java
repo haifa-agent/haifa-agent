@@ -40,6 +40,7 @@ public final class ProjectToolCatalog {
             Map.entry("file.move", "file.write"),
             Map.entry("file.diff", "file.read"),
             Map.entry("file.patch", "file.write"),
+            Map.entry("workspace.attach", "file.read"),
             Map.entry("execution.run", "execution.run"),
             Map.entry(ProjectPermissionRequestOperations.TOOL_NAME, "execution.run"));
     private static final Set<String> WRITES =
@@ -256,12 +257,17 @@ public final class ProjectToolCatalog {
         if (execution && executionProfile == null) {
             throw new IllegalArgumentException(name + " requires a frozen sandbox profile");
         }
+        boolean attach = name.equals("workspace.attach");
         boolean write = WRITES.contains(name);
-        ToolRisk risk = execution ? ToolRisk.HIGH : write ? ToolRisk.MEDIUM : ToolRisk.LOW;
-        ToolIdempotency idempotency = execution || write ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.PURE;
-        Set<ToolSideEffect> effects = executionEffects(executionProfile, permissionRequest, execution, write);
-        ToolApprovalRequirement approval =
-                execution || write ? ToolApprovalRequirement.POLICY : ToolApprovalRequirement.NEVER;
+        ToolRisk risk = execution || attach ? ToolRisk.HIGH : write ? ToolRisk.MEDIUM : ToolRisk.LOW;
+        ToolIdempotency idempotency =
+                execution || write || attach ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.PURE;
+        Set<ToolSideEffect> effects = attach
+                ? Set.of(ToolSideEffect.FILE_READ, ToolSideEffect.PERMISSION_ELEVATION)
+                : executionEffects(executionProfile, permissionRequest, execution, write);
+        ToolApprovalRequirement approval = attach
+                ? ToolApprovalRequirement.ALWAYS
+                : execution || write ? ToolApprovalRequirement.POLICY : ToolApprovalRequirement.NEVER;
         ToolResourceRequirements resources = new ToolResourceRequirements(
                 Set.of(REQUIRED_CAPABILITY.get(name)),
                 execution && executionProfile.networkPolicy() == NetworkPolicy.ALLOW
@@ -291,7 +297,7 @@ public final class ProjectToolCatalog {
                 execution ? ToolExecutionMode.HOST_PROCESS : ToolExecutionMode.IN_PROCESS,
                 true,
                 execution ? Duration.ofMinutes(30) : Duration.ofSeconds(30),
-                write ? "per-workspace-write" : "per-workspace-read",
+                write || attach ? "per-workspace-write" : "per-workspace-read",
                 idempotency,
                 risk,
                 effects,
@@ -326,6 +332,7 @@ public final class ProjectToolCatalog {
             case "file.move" -> "Move workspace path";
             case "file.diff" -> "Preview file diff";
             case "file.patch" -> "Apply workspace patch";
+            case "workspace.attach" -> "Attach a user-approved directory";
             case "execution.run" -> "Run a local shell command";
             case ProjectPermissionRequestOperations.TOOL_NAME -> "Request permission for one failed command";
             default -> throw new IllegalArgumentException("unknown project tool " + name);
@@ -372,10 +379,14 @@ public final class ProjectToolCatalog {
                     + "If the target is absent, use file.create; prefer file.patch for bounded edits.";
         }
         if (name.equals("file.patch")) {
-            return "Apply a bounded context patch to one or more workspace files. Use *** Begin Patch / "
-                    + "*** End Patch with Add File, Delete File, or Update File sections; Update File supports "
-                    + "optional Move to and @@ context hunks. Existing files are matched exactly, large files are "
-                    + "transformed as streams, and failures report the exact committed prefix.";
+            return "Apply one bounded context patch using exactly one Add File or Update File section. Use "
+                    + "file.delete and file.move for those operations; do not combine multiple files in one patch.";
+        }
+        if (name.equals("workspace.attach")) {
+            return "Request one additional existing local directory for this Coding Agent process only. Supply a "
+                    + "unique alias, absolute host path, and explicit read-only or read-write permission. The user "
+                    + "must approve the exact directory and permission before it becomes available as alias:path; "
+                    + "attachments are not persisted or restored.";
         }
         if (WRITES.contains(name)) {
             return title(name)
@@ -442,6 +453,24 @@ public final class ProjectToolCatalog {
                                 "description",
                                 "Context patch beginning with *** Begin Patch and ending with *** End Patch."));
                 required.add("patch");
+            }
+            case "workspace.attach" -> {
+                properties.put("alias", Map.of("type", "string", "minLength", 1, "maxLength", 64));
+                properties.put(
+                        "path",
+                        Map.of(
+                                "type",
+                                "string",
+                                "minLength",
+                                1,
+                                "maxLength",
+                                4096,
+                                "description",
+                                "Absolute path of the user-requested existing local directory."));
+                properties.put("permission", Map.of("type", "string", "enum", List.of("read-only", "read-write")));
+                required.add("alias");
+                required.add("path");
+                required.add("permission");
             }
             case "execution.run", ProjectPermissionRequestOperations.TOOL_NAME -> {
                 properties.put(
@@ -553,7 +582,6 @@ public final class ProjectToolCatalog {
             properties.put("truncated", Map.of("type", "boolean"));
             properties.put("outputRef", Map.of("type", "string"));
             properties.put("outputRefs", Map.of("type", "array", "items", Map.of("type", "string")));
-            properties.put("fileChangeSetId", Map.of("type", "string"));
             properties.put("durationMillis", Map.of("type", "integer", "minimum", 0));
             properties.put("observedProcessCount", Map.of("type", "integer", "minimum", 0));
             properties.put("failureCode", Map.of("type", "string"));
