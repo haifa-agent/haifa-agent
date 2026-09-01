@@ -29,10 +29,6 @@ import io.haifa.agent.project.patch.PatchTransformException;
 import io.haifa.agent.project.patch.StreamingPatchMutationService;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.quarantine.QuarantineEntry;
-import io.haifa.agent.project.quarantine.QuarantineRestoreRequest;
-import io.haifa.agent.project.quarantine.QuarantineService;
-import io.haifa.agent.project.quarantine.QuarantineStore;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -58,9 +54,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 public final class LocalWorkspaceMutationService
-        implements WorkspaceMutationProvider, StreamingPatchMutationService, QuarantineService {
+        implements WorkspaceMutationProvider, StreamingPatchMutationService {
     private static final int MAX_CONTENT_BYTES = 16 * 1024 * 1024;
-    private static final String QUARANTINE_DIRECTORY = ".haifa-quarantine";
 
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
@@ -69,7 +64,6 @@ public final class LocalWorkspaceMutationService
     private final WorkspaceWriteLeaseManager leases;
     private final FileChangeSetStore changeSets;
     private final FileChangeSetService changeSetService;
-    private final QuarantineStore quarantine;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
 
@@ -81,7 +75,6 @@ public final class LocalWorkspaceMutationService
             WorkspaceWriteLeaseManager leases,
             FileChangeSetStore changeSets,
             FileChangeSetService changeSetService,
-            QuarantineStore quarantine,
             IdentifierGenerator identifiers,
             TimeProvider time) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
@@ -91,7 +84,6 @@ public final class LocalWorkspaceMutationService
         this.leases = Objects.requireNonNull(leases, "leases must not be null");
         this.changeSets = Objects.requireNonNull(changeSets, "changeSets must not be null");
         this.changeSetService = Objects.requireNonNull(changeSetService, "changeSetService must not be null");
-        this.quarantine = Objects.requireNonNull(quarantine, "quarantine must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
     }
@@ -350,71 +342,6 @@ public final class LocalWorkspaceMutationService
         }
     }
 
-    @Override
-    public MutationResult restore(QuarantineRestoreRequest request) {
-        Objects.requireNonNull(request, "request must not be null");
-        QuarantineEntry entry = quarantine
-                .find(request.token())
-                .orElseThrow(() -> failure(
-                        MutationErrorCode.TARGET_NOT_FOUND, request.destination(), "quarantine entry not found"));
-        if (!entry.workspaceId().equals(request.destination().workspaceId())) {
-            throw failure(
-                    MutationErrorCode.CROSS_PROVIDER_MOVE_UNSUPPORTED,
-                    request.destination(),
-                    "quarantine restore cannot cross workspaces");
-        }
-        access(request.destination(), WorkspacePermission.WRITE);
-        Optional<MutationResult> replay = replay(
-                request.destination(),
-                request.context().operationId(),
-                FileChangeType.CREATE,
-                null,
-                entry.version().contentHash());
-        if (replay.isPresent()) return replay.orElseThrow();
-        try (WorkspaceWriteLease ignored = leases.acquire(
-                request.destination().workspaceId(), request.context().operationId())) {
-            Access access = access(request.destination(), WorkspacePermission.WRITE);
-            Path destination = resolveAbsent(access, request.destination());
-            Path source = quarantineDirectory(access, request.destination()).resolve(entry.token());
-            if (!Files.exists(source, LinkOption.NOFOLLOW_LINKS) || isLinkOrReparse(source)) {
-                throw failure(
-                        MutationErrorCode.OUTCOME_UNKNOWN, request.destination(), "quarantined content is unavailable");
-            }
-            FileChangeSet pending = begin(access.workspace(), request.context());
-            try {
-                if (!version(source, request.destination()).equals(entry.version())) {
-                    throw failure(
-                            MutationErrorCode.CONCURRENT_MODIFICATION,
-                            request.destination(),
-                            "quarantined content changed");
-                }
-                boolean atomic = movePath(
-                        source,
-                        destination,
-                        false,
-                        request.destination(),
-                        () -> requireStillAbsent(access, request.destination(), destination));
-                FileVersion after = version(destination, request.destination());
-                if (!after.equals(entry.version())) {
-                    throw failure(
-                            MutationErrorCode.CONCURRENT_MODIFICATION,
-                            request.destination(),
-                            "quarantined content changed");
-                }
-                quarantine.remove(entry.token());
-                return completeOrUnknown(
-                        access.workspace(),
-                        pending,
-                        List.of(new FileChange(
-                                FileChangeType.CREATE, request.destination().projectPath(), null, null, after)),
-                        atomic);
-            } catch (WorkspaceMutationException exception) {
-                fail(pending, exception.getMessage());
-                throw exception;
-            }
-        }
-    }
-
     private Access access(WorkspacePath path, WorkspacePermission permission) {
         Workspace workspace = workspaces
                 .find(path.workspaceId())
@@ -626,20 +553,6 @@ public final class LocalWorkspaceMutationService
             }
         } catch (IOException exception) {
             throw failure(MutationErrorCode.IO_FAILURE, logical, "unable to commit guarded file move");
-        }
-    }
-
-    private Path quarantineDirectory(Access access, WorkspacePath logical) {
-        Path directory = access.root().resolve(QUARANTINE_DIRECTORY).normalize();
-        verifyContained(access, logical, directory);
-        try {
-            Files.createDirectories(directory);
-            if (isLinkOrReparse(directory)) {
-                throw failure(MutationErrorCode.PATH_DENIED, logical, "managed quarantine is unsafe");
-            }
-            return directory;
-        } catch (IOException exception) {
-            throw failure(MutationErrorCode.IO_FAILURE, logical, "managed quarantine is unavailable");
         }
     }
 

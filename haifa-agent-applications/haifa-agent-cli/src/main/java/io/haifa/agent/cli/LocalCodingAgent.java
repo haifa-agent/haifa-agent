@@ -95,7 +95,11 @@ import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
 import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.quarantine.InMemoryQuarantineStore;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootStrategyDetector;
+import io.haifa.agent.project.root.WorkspaceRootAlias;
+import io.haifa.agent.project.root.WorkspaceRootPermission;
 import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
@@ -519,6 +523,11 @@ final class LocalCodingAgent implements AutoCloseable {
             var changeReviews = new CodingChangeReviewArtifactFactory(
                     changeSets, new LocalCodingChangeContentClassifier(files), 512 * 1024);
             var changeSetService = new FileChangeSetService(changeSets, identifiers, time);
+            LocalWorkspaceRoot mainRoot = LocalWorkspaceRootStrategyDetector.detect(
+                    WorkspaceRootAlias.MAIN,
+                    workspaceRoot,
+                    WorkspaceRootPermission.READ_WRITE);
+            LocalWorkspaceRootRegistry rootRegistry = LocalWorkspaceRootRegistry.singleMain(mainRoot);
             var mutations = new LocalWorkspaceMutationService(
                     workspaces,
                     bindings,
@@ -527,11 +536,10 @@ final class LocalCodingAgent implements AutoCloseable {
                     new InMemoryWorkspaceWriteLeaseManager(),
                     changeSets,
                     changeSetService,
-                    new InMemoryQuarantineStore(),
                     identifiers,
                     time);
             var operations =
-                    new LocalFileToolOperations(workspaces, files, mutations, identifiers, changeSets, changeReviews);
+                    new LocalFileToolOperations(workspaces, files, mutations, identifiers, changeSets, rootRegistry);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
             CliExecutionPlatform executionPlatform = executionEnabled
