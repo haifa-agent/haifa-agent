@@ -62,6 +62,8 @@ public interface CodingSessionStore {
 
     Optional<CodingFollowUp> findFollowUpByDispatchKey(String dispatchKey);
 
+    Optional<CodingFollowUp> findFollowUpByDispatchedRunId(AgentRunId runId);
+
     List<CodingFollowUp> listRestorableFollowUps(AgentSessionId sessionId, int limit);
 
     Optional<CodingDispatchClaim> claimNextForDispatch(

@@ -35,7 +35,11 @@ final class ProjectApplicationMigrations {
             new ApplicationMigration(
                     1_005,
                     "coding_delivery_intent",
-                    "/io/haifa/agent/application/project/persistence/V1005__coding_delivery_intent.sql"));
+                    "/io/haifa/agent/application/project/persistence/V1005__coding_delivery_intent.sql"),
+            new ApplicationMigration(
+                    1_006,
+                    "coding_follow_up_dispatched_run_index",
+                    "/io/haifa/agent/application/project/persistence/V1006__coding_follow_up_dispatched_run_index.sql"));
 
     private ProjectApplicationMigrations() {}
 

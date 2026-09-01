@@ -39,7 +39,9 @@ public final class TerminalUiReducer {
             var footer = new TerminalFooter(
                     state.footer().project(),
                     state.footer().gitBranch(),
-                    view.summary().displayName(),
+                    active.isPresent()
+                            ? "task: " + view.activeRunTaskSummary().orElse("description unavailable")
+                            : "session: " + view.summary().displayName(),
                     "queue: " + view.summary().queuedCount(),
                     view.model().model().providerDisplayName(),
                     modelFooterSummary(view),

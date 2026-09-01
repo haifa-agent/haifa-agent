@@ -287,6 +287,13 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
     }
 
     @Override
+    public synchronized Optional<CodingFollowUp> findFollowUpByDispatchedRunId(AgentRunId runId) {
+        return followUps.values().stream()
+                .filter(value -> value.dispatchedRunId().filter(runId::equals).isPresent())
+                .findFirst();
+    }
+
+    @Override
     public synchronized List<CodingFollowUp> listRestorableFollowUps(AgentSessionId sessionId, int limit) {
         if (limit < 1 || limit > 100) throw new IllegalArgumentException("limit must be between 1 and 100");
         return followUps.values().stream()
