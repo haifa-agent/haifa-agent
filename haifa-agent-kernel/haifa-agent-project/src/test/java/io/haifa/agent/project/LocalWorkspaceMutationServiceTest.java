@@ -38,8 +38,6 @@ import io.haifa.agent.project.provider.local.LocalMutationOutcomeProbe;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
 import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.quarantine.InMemoryQuarantineStore;
-import io.haifa.agent.project.quarantine.QuarantineRestoreRequest;
 import io.haifa.agent.project.reconciliation.MutationProbeStatus;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
@@ -461,7 +459,6 @@ class LocalWorkspaceMutationServiceTest {
                 (io.haifa.agent.common.id.IdentifierGenerator) () -> "phase2-" + identifiers.incrementAndGet();
         var changeSets = new InMemoryFileChangeSetStore();
         var changeSetService = new FileChangeSetService(changeSets, idGenerator, () -> NOW);
-        var quarantine = new InMemoryQuarantineStore();
         var leases = new InMemoryWorkspaceWriteLeaseManager();
         var local = new LocalWorkspaceMutationService(
                 workspaceStore,
@@ -471,7 +468,6 @@ class LocalWorkspaceMutationServiceTest {
                 leases,
                 changeSets,
                 changeSetService,
-                quarantine,
                 idGenerator,
                 () -> NOW);
         var authorized = new AuthorizedWorkspaceMutationService(workspaceStore, bindingStore, local);
@@ -486,7 +482,6 @@ class LocalWorkspaceMutationServiceTest {
                 authorized,
                 files,
                 changeSets,
-                quarantine,
                 leases);
     }
 
@@ -526,7 +521,6 @@ class LocalWorkspaceMutationServiceTest {
             AuthorizedWorkspaceMutationService authorized,
             io.haifa.agent.project.provider.local.LocalWorkspaceFileService files,
             InMemoryFileChangeSetStore changeSets,
-            InMemoryQuarantineStore quarantine,
             InMemoryWorkspaceWriteLeaseManager leases) {
         private Workspace workspace() {
             return workspaceStore.find(workspaceId).orElseThrow();
