@@ -9,13 +9,14 @@
 - `DIRECT`、`READ_ONLY` Binding 下受保护的 `list/stat/read/search`；
 - 仅使用 `WorkspacePath` 的 `create/write/delete/move`，并由 Service 与 Local Provider 双层校验只读模式、能力和权限；
 - Workspace 级写租约、WorkspaceRevision 与强内容 Hash 前置条件；
-- 同目录临时文件、durable flush、原子移动尝试，以及可识别的非原子降级结果；
-- 带幂等 operation key 的 `FileChangeSet`、受控 Quarantine 删除/恢复和未知结果 Reconciliation；
-- 有界文本 Unified Diff 生成、严格 Parser、Patch 预校验、精确 Hunk 应用与结构化部分失败。
+- 同目录临时文件与原子移动替换，保证不暴露半写文件；
+- 受保护的普通文件直接删除与移动，严格校验根目录边界与只读授权；
+- 有界文本 Unified Diff 生成、严格 Parser、Patch 预校验、精确 Hunk 应用与结构化部分失败；
+- 平台已收敛为安全原子替换，不再维护 Agent 自研文件恢复事务（ChangeSet）、回收站（Quarantine）与跨重启调和（Reconciliation）。
 
 `COPY_ON_WRITE`、`EPHEMERAL_COPY`、命令执行和 Git 已由 Execution/Sandbox/Git 模块实现；Project 模块不反向依赖这些高层实现。
 
-`ProjectIndexService` 提供 generation 原子切换的文件、Java 语法级 Symbol 和 Markdown heading 索引。索引只保存逻辑路径和有界派生元数据，可全量重建，也可由完整 `FileChangeSet` 精确更新；查询结果在返回前仍通过当前文件服务重新授权。外部漂移只把 generation 标记为 `SUSPECT`，不会伪造 ChangeSet。
+`ProjectIndexService` 提供 generation 原子切换的文件、Java 语法级 Symbol 和 Markdown heading 索引。索引只保存逻辑路径和有界派生元数据，支持全量重建；查询结果在返回前仍通过当前文件服务重新授权。外部漂移只把 generation 标记为 `SUSPECT`。
 
 `ProjectConfiguration` 是不可变、内容寻址的可信配置版本，冻结默认 Workspace、Product Profile、能力、Context Source、Tool 与安全策略引用；不保存 Host Path 或 Credential。
 
