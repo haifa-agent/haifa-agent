@@ -474,15 +474,7 @@ class LocalWorkspaceMutationServiceTest {
         var files = new io.haifa.agent.project.provider.local.LocalWorkspaceFileService(
                 workspaceStore, bindingStore, locations, SensitivePathPolicy.defaults());
         return new Fixture(
-                workspaceId,
-                workspaceStore,
-                bindingStore,
-                locations,
-                local,
-                authorized,
-                files,
-                changeSets,
-                leases);
+                workspaceId, workspaceStore, bindingStore, locations, local, authorized, files, changeSets, leases);
     }
 
     private static MutationContext context(String operationId) {

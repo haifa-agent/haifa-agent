@@ -15,8 +15,7 @@ public record WorkspaceRootAlias(String value) {
         Objects.requireNonNull(value, "value must not be null");
         String trimmed = value.trim();
         if (!ALIAS_PATTERN.matcher(trimmed).matches()) {
-            throw new IllegalArgumentException(
-                    "root alias must match pattern ^[a-zA-Z0-9_-]{1,32}$, got: " + value);
+            throw new IllegalArgumentException("root alias must match pattern ^[a-zA-Z0-9_-]{1,32}$, got: " + value);
         }
         value = trimmed;
     }

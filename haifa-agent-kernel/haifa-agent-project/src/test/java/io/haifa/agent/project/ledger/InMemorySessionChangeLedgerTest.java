@@ -46,7 +46,8 @@ class InMemorySessionChangeLedgerTest {
     void createFollowedByWriteKeepsCreateTypeWithLatestContent() {
         ProjectPath path = ProjectPath.of("README.md");
         ledger.record(SessionFileChangeRecord.create(mainAlias, path, "hash-init", 5, now));
-        ledger.record(SessionFileChangeRecord.replace(mainAlias, path, "hash-init", 5, "hash-final", 12, now.plusSeconds(1)));
+        ledger.record(
+                SessionFileChangeRecord.replace(mainAlias, path, "hash-init", 5, "hash-final", 12, now.plusSeconds(1)));
 
         List<SessionFileChangeRecord> compacted = ledger.compactedChanges(mainAlias);
         assertThat(compacted).hasSize(1);

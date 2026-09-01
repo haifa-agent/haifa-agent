@@ -6,9 +6,6 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.project.changeset.FileChangeSetStatus;
-import io.haifa.agent.project.ledger.SessionChangeLedger;
-import io.haifa.agent.project.ledger.SessionFileChangeRecord;
-import java.time.Instant;
 import io.haifa.agent.project.changeset.FileChangeSetStore;
 import io.haifa.agent.project.filesystem.FileListRequest;
 import io.haifa.agent.project.filesystem.FileType;
@@ -16,6 +13,8 @@ import io.haifa.agent.project.filesystem.ReadOptions;
 import io.haifa.agent.project.filesystem.SearchRequest;
 import io.haifa.agent.project.filesystem.WorkspaceFileErrorCode;
 import io.haifa.agent.project.filesystem.WorkspaceFileException;
+import io.haifa.agent.project.ledger.SessionChangeLedger;
+import io.haifa.agent.project.ledger.SessionFileChangeRecord;
 import io.haifa.agent.project.mutation.CreateFileRequest;
 import io.haifa.agent.project.mutation.DeleteFileRequest;
 import io.haifa.agent.project.mutation.MoveFileRequest;
@@ -44,6 +43,7 @@ import io.haifa.agent.tool.api.ToolReconciliation;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -153,8 +153,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             };
         } catch (WorkspaceRootException exception) {
             Map<String, Object> data = workspaceRootFailure(toolName, exception);
-            String summary = "Multi-root workspace error: "
-                    + exception.code().name() + (exception.path() == null ? "" : " (path=" + exception.path() + ")");
+            String summary = "Multi-root workspace error: " + exception.code().name()
+                    + (exception.path() == null ? "" : " (path=" + exception.path() + ")");
             return failure(summary, data);
         } catch (WorkspaceFileException exception) {
             Map<String, Object> data = workspaceFileFailure(toolName, exception.code());
@@ -231,7 +231,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     }
 
     private ToolResult list(WorkspaceId workspaceId, Map<String, Object> values) {
-        var page = files.list(new FileListRequest(path(workspaceId, values, "path", WorkspaceRootPermission.READ_ONLY), 0, 500));
+        var page = files.list(
+                new FileListRequest(path(workspaceId, values, "path", WorkspaceRootPermission.READ_ONLY), 0, 500));
         List<Map<String, Object>> entries = page.entries().stream()
                 .map(entry -> Map.<String, Object>of(
                         "path", entry.metadata().path().projectPath().toString(),
@@ -294,7 +295,12 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private ToolResult search(WorkspaceId workspaceId, Map<String, Object> values) {
         String query = string(values, "query");
         var matches = files.search(new SearchRequest(
-                path(workspaceId, values, "path", WorkspaceRootPermission.READ_ONLY), query, 2_000, integer(values, "maxResults", 100), 1_048_576, false));
+                path(workspaceId, values, "path", WorkspaceRootPermission.READ_ONLY),
+                query,
+                2_000,
+                integer(values, "maxResults", 100),
+                1_048_576,
+                false));
         List<Map<String, Object>> results = matches.stream()
                 .map(match -> Map.<String, Object>of(
                         "path",
@@ -315,11 +321,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         WorkspacePath path = path(workspaceId, values, "path", WorkspaceRootPermission.READ_WRITE);
         Workspace workspace = workspace(workspaceId);
         byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
-        var result = mutations.create(new CreateFileRequest(
-                path,
-                bytes,
-                MutationPrecondition.absent(workspace.revision()),
-                mutationContext));
+        var result = mutations.create(
+                new CreateFileRequest(path, bytes, MutationPrecondition.absent(workspace.revision()), mutationContext));
         if (ledger != null) {
             String hash = files.stat(path, true).contentHash().orElse("");
             ledger.record(SessionFileChangeRecord.create(
@@ -344,10 +347,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
         byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
         var result = mutations.write(new WriteFileRequest(
-                path,
-                bytes,
-                MutationPrecondition.existing(workspace.revision(), currentHash),
-                mutationContext));
+                path, bytes, MutationPrecondition.existing(workspace.revision(), currentHash), mutationContext));
         if (ledger != null) {
             String newHash = files.stat(path, true).contentHash().orElse("");
             ledger.record(SessionFileChangeRecord.replace(
@@ -360,8 +360,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                     Instant.now()));
         }
         return success(
-                "Wrote " + path.projectPath(),
-                Map.of("path", path.projectPath().toString()));
+                "Wrote " + path.projectPath(), Map.of("path", path.projectPath().toString()));
     }
 
     private ToolResult delete(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
@@ -373,9 +372,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         if (fileStat.type() == FileType.DIRECTORY) {
             throw new IllegalArgumentException("Cannot delete directory: " + path.projectPath());
         }
-        String currentHash = fileStat
-                .contentHash()
-                .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+        String currentHash =
+                fileStat.contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
         long currentSize = fileStat.size();
         var result = mutations.delete(new DeleteFileRequest(
                 path, MutationPrecondition.existing(workspace.revision(), currentHash), mutationContext));
@@ -419,9 +417,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         if (!result.complete()) {
             return failure("Patch stopped after the exact committed prefix", Map.copyOf(data));
         }
-        return success(
-                "Applied patch to " + document.files().size() + " file(s).",
-                Map.copyOf(data));
+        return success("Applied patch to " + document.files().size() + " file(s).", Map.copyOf(data));
     }
 
     private ToolResult move(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
@@ -433,9 +429,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         WorkspacePath destination = path(workspaceId, values, "destination", WorkspaceRootPermission.READ_WRITE);
         Workspace workspace = workspace(workspaceId);
         var fileStat = files.stat(source, true);
-        String currentHash = fileStat
-                .contentHash()
-                .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+        String currentHash =
+                fileStat.contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
         long currentSize = fileStat.size();
         var result = mutations.move(new MoveFileRequest(
                 source,
@@ -455,7 +450,11 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         }
         return success(
                 "Moved " + source.projectPath() + " to " + destination.projectPath(),
-                Map.of("source", source.projectPath().toString(), "destination", destination.projectPath().toString()));
+                Map.of(
+                        "source",
+                        source.projectPath().toString(),
+                        "destination",
+                        destination.projectPath().toString()));
     }
 
     private static MutationContext context(
@@ -493,7 +492,9 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                         "Path contains '..' traversal escaping workspace: " + value);
             }
         }
-        return new WorkspacePath(workspaceId, parsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(parsed.relativePath()));
+        return new WorkspacePath(
+                workspaceId,
+                parsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(parsed.relativePath()));
     }
 
     private static String string(Map<String, Object> values, String key) {
@@ -598,53 +599,59 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         return new ToolResult(false, summary, data, List.of(), List.of(), false);
     }
 
-    private static Map<String, Object> workspaceRootFailure(
-            String toolName, WorkspaceRootException exception) {
+    private static Map<String, Object> workspaceRootFailure(String toolName, WorkspaceRootException exception) {
         var data = baseFailure(exception.code().name());
         if (exception.rootAlias() != null) data.put("rootAlias", exception.rootAlias());
         if (exception.path() != null) data.put("path", exception.path());
 
         switch (exception.code()) {
-            case ROOT_READ_ONLY -> recovery(
-                    data,
-                    "POLICY_DENIED",
-                    "WORKSPACE_ROOT",
-                    "REQUEST_WRITE_PERMISSION",
-                    "The workspace root '" + exception.rootAlias() + "' is READ_ONLY. Ask the user for WRITE permission.",
-                    false,
-                    0);
-            case ROOT_ALIAS_NOT_FOUND -> recovery(
-                    data,
-                    "INVALID_INPUT",
-                    "WORKSPACE_ROOT",
-                    "USE_REGISTERED_ROOT_ALIAS",
-                    "The root alias '" + exception.rootAlias() + "' is not registered. Request the user to attach this directory.",
-                    false,
-                    0);
-            case ABSOLUTE_PATH_FORBIDDEN -> recovery(
-                    data,
-                    "INVALID_INPUT",
-                    "WORKSPACE_PATH",
-                    "USE_ALIAS_RELATIVE_SYNTAX",
-                    "Absolute host paths are forbidden. Use 'alias:relative/path' or 'main:relative/path'.",
-                    false,
-                    0);
-            case PATH_ESCAPE_FORBIDDEN -> recovery(
-                    data,
-                    "POLICY_DENIED",
-                    "WORKSPACE_PATH",
-                    "USE_BOUNDED_PATH",
-                    "Path escapes root directory boundary. Use a normalized relative path within the root.",
-                    false,
-                    0);
-            default -> recovery(
-                    data,
-                    "INVALID_INPUT",
-                    "WORKSPACE_ROOT",
-                    "READ_AUTHORITATIVE_WORKSPACE_STATE",
-                    "Resolve root boundary before retrying.",
-                    false,
-                    0);
+            case ROOT_READ_ONLY ->
+                recovery(
+                        data,
+                        "POLICY_DENIED",
+                        "WORKSPACE_ROOT",
+                        "REQUEST_WRITE_PERMISSION",
+                        "The workspace root '" + exception.rootAlias()
+                                + "' is READ_ONLY. Ask the user for WRITE permission.",
+                        false,
+                        0);
+            case ROOT_ALIAS_NOT_FOUND ->
+                recovery(
+                        data,
+                        "INVALID_INPUT",
+                        "WORKSPACE_ROOT",
+                        "USE_REGISTERED_ROOT_ALIAS",
+                        "The root alias '" + exception.rootAlias()
+                                + "' is not registered. Request the user to attach this directory.",
+                        false,
+                        0);
+            case ABSOLUTE_PATH_FORBIDDEN ->
+                recovery(
+                        data,
+                        "INVALID_INPUT",
+                        "WORKSPACE_PATH",
+                        "USE_ALIAS_RELATIVE_SYNTAX",
+                        "Absolute host paths are forbidden. Use 'alias:relative/path' or 'main:relative/path'.",
+                        false,
+                        0);
+            case PATH_ESCAPE_FORBIDDEN ->
+                recovery(
+                        data,
+                        "POLICY_DENIED",
+                        "WORKSPACE_PATH",
+                        "USE_BOUNDED_PATH",
+                        "Path escapes root directory boundary. Use a normalized relative path within the root.",
+                        false,
+                        0);
+            default ->
+                recovery(
+                        data,
+                        "INVALID_INPUT",
+                        "WORKSPACE_ROOT",
+                        "READ_AUTHORITATIVE_WORKSPACE_STATE",
+                        "Resolve root boundary before retrying.",
+                        false,
+                        0);
         }
         return data;
     }

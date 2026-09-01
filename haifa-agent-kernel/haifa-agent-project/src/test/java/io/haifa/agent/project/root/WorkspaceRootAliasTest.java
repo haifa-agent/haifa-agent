@@ -27,16 +27,21 @@ class WorkspaceRootAliasTest {
 
     @Test
     void invalidAliasesAreRejected() {
-        List<String> invalid = List.of("", "   ", "docs/sub", "a:b", "a.b", "@special", "this-alias-is-way-too-long-exceeding-thirty-two-chars");
+        List<String> invalid = List.of(
+                "",
+                "   ",
+                "docs/sub",
+                "a:b",
+                "a.b",
+                "@special",
+                "this-alias-is-way-too-long-exceeding-thirty-two-chars");
         for (String value : invalid) {
-            assertThatThrownBy(() -> WorkspaceRootAlias.of(value))
-                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> WorkspaceRootAlias.of(value)).isInstanceOf(IllegalArgumentException.class);
         }
     }
 
     @Test
     void nullAliasIsRejected() {
-        assertThatThrownBy(() -> new WorkspaceRootAlias(null))
-                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new WorkspaceRootAlias(null)).isInstanceOf(NullPointerException.class);
     }
 }

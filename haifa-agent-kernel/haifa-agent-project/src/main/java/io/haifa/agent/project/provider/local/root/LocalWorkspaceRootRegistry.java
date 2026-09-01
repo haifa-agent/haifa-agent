@@ -4,8 +4,6 @@ import io.haifa.agent.project.root.WorkspaceRootAlias;
 import io.haifa.agent.project.root.WorkspaceRootErrorCode;
 import io.haifa.agent.project.root.WorkspaceRootException;
 import io.haifa.agent.project.root.WorkspaceRootPermission;
-import java.nio.file.Path;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;

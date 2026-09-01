@@ -17,6 +17,8 @@ import io.haifa.agent.project.changeset.FileVersion;
 import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.filesystem.FileType;
+import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
+import io.haifa.agent.project.ledger.SessionFileChangeRecord;
 import io.haifa.agent.project.mutation.CreateFileRequest;
 import io.haifa.agent.project.mutation.DeleteFileRequest;
 import io.haifa.agent.project.mutation.MoveFileRequest;
@@ -30,6 +32,11 @@ import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.provider.local.SensitivePathPolicy;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
+import io.haifa.agent.project.root.WorkspaceRootAlias;
+import io.haifa.agent.project.root.WorkspaceRootPermission;
+import io.haifa.agent.project.root.WorkspaceRootStrategy;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -45,17 +52,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Map;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
-import io.haifa.agent.project.root.WorkspaceRootAlias;
-import io.haifa.agent.project.root.WorkspaceRootPermission;
-import io.haifa.agent.project.root.WorkspaceRootStrategy;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
-import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
-import io.haifa.agent.project.ledger.SessionFileChangeRecord;
-import io.haifa.agent.project.root.WorkspaceRootAlias;
-
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -377,8 +373,10 @@ class LocalFileToolOperationsTest {
             @Override
             public MutationResult delete(DeleteFileRequest request) {
                 try {
-                    Files.deleteIfExists(root.resolve(request.path().projectPath().toString()));
-                    WorkspaceRevision before = workspaces.find(workspaceId).orElseThrow().revision();
+                    Files.deleteIfExists(
+                            root.resolve(request.path().projectPath().toString()));
+                    WorkspaceRevision before =
+                            workspaces.find(workspaceId).orElseThrow().revision();
                     WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:delete-test");
                     FileChange change = new FileChange(
                             FileChangeType.DELETE,
@@ -405,7 +403,8 @@ class LocalFileToolOperationsTest {
                     Files.move(
                             root.resolve(request.source().projectPath().toString()),
                             root.resolve(request.destination().projectPath().toString()));
-                    WorkspaceRevision before = workspaces.find(workspaceId).orElseThrow().revision();
+                    WorkspaceRevision before =
+                            workspaces.find(workspaceId).orElseThrow().revision();
                     WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:move-test");
                     return new MutationResult(
                             new FileChangeSetId("change-set-test"),
@@ -529,6 +528,7 @@ class LocalFileToolOperationsTest {
                 .doesNotContainKeys("quarantineToken", "changeSetId", "changeReviewArtifact");
         assertThat(Files.exists(root.resolve("trash.txt"))).isFalse();
     }
+
     @Test
     void recordsChangesIntoSessionLedger() {
         var ledger = new InMemorySessionChangeLedger();
@@ -546,7 +546,8 @@ class LocalFileToolOperationsTest {
 
         assertThat(createRes.successful()).isTrue();
         assertThat(ledger.compactedChanges(WorkspaceRootAlias.MAIN)).hasSize(1);
-        SessionFileChangeRecord record = ledger.compactedChanges(WorkspaceRootAlias.MAIN).get(0);
+        SessionFileChangeRecord record =
+                ledger.compactedChanges(WorkspaceRootAlias.MAIN).get(0);
         assertThat(record.path().value()).isEqualTo("hello.txt");
     }
 }

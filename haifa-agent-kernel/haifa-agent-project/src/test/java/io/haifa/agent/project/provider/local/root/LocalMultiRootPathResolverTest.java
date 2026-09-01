@@ -93,39 +93,46 @@ class LocalMultiRootPathResolverTest {
     void rejectsInvalidAliasSyntax() {
         assertThatThrownBy(() -> LocalMultiRootPathResolver.parse(":path/only"))
                 .isInstanceOf(WorkspaceRootException.class)
-                .satisfies(e -> assertThat(((WorkspaceRootException) e).code()).isEqualTo(WorkspaceRootErrorCode.INVALID_ROOT_ALIAS));
+                .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
+                        .isEqualTo(WorkspaceRootErrorCode.INVALID_ROOT_ALIAS));
 
         assertThatThrownBy(() -> LocalMultiRootPathResolver.parse("invalid@alias:path"))
                 .isInstanceOf(WorkspaceRootException.class)
-                .satisfies(e -> assertThat(((WorkspaceRootException) e).code()).isEqualTo(WorkspaceRootErrorCode.INVALID_ROOT_ALIAS));
+                .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
+                        .isEqualTo(WorkspaceRootErrorCode.INVALID_ROOT_ALIAS));
     }
 
     @Test
     void resolvesValidPathsUnderRoots() {
         var resolvedMain = LocalMultiRootPathResolver.resolve(registry, "main:src/App.java");
         assertThat(resolvedMain.root().alias()).isEqualTo(WorkspaceRootAlias.MAIN);
-        assertThat(resolvedMain.hostPath()).isEqualTo(mainDir.resolve("src/App.java").normalize());
+        assertThat(resolvedMain.hostPath())
+                .isEqualTo(mainDir.resolve("src/App.java").normalize());
 
         var resolvedDocs = LocalMultiRootPathResolver.resolve(registry, "docs:overview.md");
         assertThat(resolvedDocs.root().alias()).isEqualTo(WorkspaceRootAlias.of("docs"));
-        assertThat(resolvedDocs.hostPath()).isEqualTo(docsDir.resolve("overview.md").normalize());
+        assertThat(resolvedDocs.hostPath())
+                .isEqualTo(docsDir.resolve("overview.md").normalize());
     }
 
     @Test
     void rejectsDirectoryTraversalEscape() {
         assertThatThrownBy(() -> LocalMultiRootPathResolver.resolve(registry, "main:../../etc/passwd"))
                 .isInstanceOf(WorkspaceRootException.class)
-                .satisfies(e -> assertThat(((WorkspaceRootException) e).code()).isEqualTo(WorkspaceRootErrorCode.PATH_ESCAPE_FORBIDDEN));
+                .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
+                        .isEqualTo(WorkspaceRootErrorCode.PATH_ESCAPE_FORBIDDEN));
 
         assertThatThrownBy(() -> LocalMultiRootPathResolver.resolve(registry, "docs:../secret.txt"))
                 .isInstanceOf(WorkspaceRootException.class)
-                .satisfies(e -> assertThat(((WorkspaceRootException) e).code()).isEqualTo(WorkspaceRootErrorCode.PATH_ESCAPE_FORBIDDEN));
+                .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
+                        .isEqualTo(WorkspaceRootErrorCode.PATH_ESCAPE_FORBIDDEN));
     }
 
     @Test
     void rejectsUnknownRootAlias() {
         assertThatThrownBy(() -> LocalMultiRootPathResolver.resolve(registry, "unknown:file.txt"))
                 .isInstanceOf(WorkspaceRootException.class)
-                .satisfies(e -> assertThat(((WorkspaceRootException) e).code()).isEqualTo(WorkspaceRootErrorCode.ROOT_ALIAS_NOT_FOUND));
+                .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
+                        .isEqualTo(WorkspaceRootErrorCode.ROOT_ALIAS_NOT_FOUND));
     }
 }
