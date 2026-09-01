@@ -3,8 +3,6 @@ package io.haifa.agent.application.project.tool;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.application.project.product.coding.delivery.CodingChangeContentKind;
-import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
@@ -43,17 +41,7 @@ import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.policy.api.PolicyDigest;
-import io.haifa.agent.project.changeset.FileChange;
-import io.haifa.agent.project.changeset.FileChangeSet;
-import io.haifa.agent.project.changeset.FileChangeSetId;
-import io.haifa.agent.project.changeset.FileChangeType;
-import io.haifa.agent.project.changeset.FileVersion;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
-import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.filesystem.FileType;
-import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
@@ -182,7 +170,7 @@ class ProjectExecutionToolOperationsTest {
                 new CodingVerificationProfile(List.of(candidate), List.of()));
         ToolInvocationRequest invocation =
                 invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false);
-        var operations = operations(broker, 4096, 100, null, ignored -> configuration);
+        var operations = operations(broker, 4096, 100, ignored -> configuration);
         ToolResult result = operations.execute(invocation, access());
         String expectedValidationAttemptRef = io.haifa.agent.policy.api.PolicyDigest.sha256Fields(List.of(
                 "coding-validation-evidence/2",
@@ -235,151 +223,6 @@ class ProjectExecutionToolOperationsTest {
                             .valid())
                     .isTrue();
         });
-    }
-
-    @Test
-    void attachesDeterministicReviewArtifactToObservedExecutionChangeSet() {
-        var changeSets = new InMemoryFileChangeSetStore();
-        FileChangeSet pending = FileChangeSet.pending(
-                new FileChangeSetId("changes-1"),
-                new ProjectId("project-1"),
-                WORKSPACE_ID,
-                "execution:execution-1",
-                "run-1",
-                "execution-1",
-                new WorkspaceRevision(1, "sha256:" + "a".repeat(64)),
-                new PrincipalRef("operator", "user"),
-                "policy-1",
-                NOW);
-        changeSets.create(pending.applied(
-                new WorkspaceRevision(2, "sha256:" + "b".repeat(64)),
-                List.of(new FileChange(
-                        FileChangeType.CREATE,
-                        ProjectPath.of("generated/result.bin"),
-                        null,
-                        null,
-                        new FileVersion(FileType.FILE, 12, "sha256:" + "c".repeat(64)))),
-                true,
-                NOW.plusSeconds(1)));
-        AtomicReference<ExecutionResult> completed = new AtomicReference<>();
-        ExecutionBroker broker = new StubBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                ExecutionResult result = result(request.id(), ExecutionStatus.SUCCEEDED, 0);
-                completed.set(result);
-                return result;
-            }
-
-            @Override
-            public Optional<ExecutionResult> findByIdempotencyKey(String idempotencyKey) {
-                return Optional.ofNullable(completed.get());
-            }
-        };
-
-        ToolInvocationRequest invocation =
-                invocation(Map.of("command", "generate result", "operationFamily", "MUTATE"), () -> false);
-        var operations = operations(
-                broker,
-                4096,
-                100,
-                new CodingChangeReviewArtifactFactory(
-                        changeSets, (set, change) -> CodingChangeContentKind.BINARY, 1024));
-        ToolResult result = operations.execute(invocation, access());
-
-        assertThat(result.structuredData()).containsKeys("changeReviewArtifactRef", "artifactRef");
-        var validator = new JsonSchema202012Validator();
-        assertThat(validator
-                        .validate(invocation.binding().definition().outputSchema(), result.structuredData())
-                        .valid())
-                .isTrue();
-        assertThat(result.structuredData().get("changeReviewArtifact")).isInstanceOfSatisfying(Map.class, review -> {
-            assertThat(review).containsEntry("complete", true).containsEntry("totalFileCount", 1);
-            assertThat(review.get("counts")).isInstanceOfSatisfying(Map.class, counts -> assertThat(counts)
-                    .containsEntry("created", 1)
-                    .containsEntry("binary", 1));
-        });
-
-        var reconciled = operations.reconcile(
-                new ToolReconciliationRequest(
-                        invocation.binding(),
-                        invocation.toolCallId(),
-                        invocation.runId(),
-                        invocation.tenant(),
-                        invocation.principal(),
-                        invocation.arguments(),
-                        invocation.idempotencyKey().orElseThrow(),
-                        Optional.of(new ToolDispatchEvidence(
-                                completed.get().id().value(),
-                                OptionalLong.of(991),
-                                PolicyDigest.sha256Fields(
-                                        List.of("execution-working-directory-v1", WORKSPACE_ID.value(), ".")))),
-                        Optional.of(result)),
-                access());
-
-        assertThat(reconciled.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
-        assertThat(reconciled.result()).hasValueSatisfying(reconciledResult -> {
-            assertThat(reconciledResult.structuredData())
-                    .containsEntry("reconcileStatus", "RESOLVED")
-                    .containsEntry("replayAllowed", false)
-                    .containsKeys("changeReviewArtifactRef", "artifactRef");
-            assertThat(validator
-                            .validate(
-                                    invocation.binding().definition().outputSchema(), reconciledResult.structuredData())
-                            .valid())
-                    .isTrue();
-        });
-    }
-
-    @Test
-    void preservesAuthoritativeExecutionWhenDerivedChangeReviewProjectionFails() {
-        var changeSets = new InMemoryFileChangeSetStore();
-        FileChangeSet pending = FileChangeSet.pending(
-                new FileChangeSetId("changes-1"),
-                new ProjectId("project-1"),
-                WORKSPACE_ID,
-                "execution:execution-1",
-                "run-1",
-                "execution-1",
-                new WorkspaceRevision(1, "sha256:" + "a".repeat(64)),
-                new PrincipalRef("operator", "user"),
-                "policy-1",
-                NOW);
-        changeSets.create(pending.applied(
-                new WorkspaceRevision(2, "sha256:" + "b".repeat(64)),
-                List.of(new FileChange(
-                        FileChangeType.CREATE,
-                        ProjectPath.of("target/generated.bin"),
-                        null,
-                        null,
-                        new FileVersion(FileType.FILE, 12, "sha256:" + "c".repeat(64)))),
-                true,
-                NOW.plusSeconds(1)));
-        ExecutionBroker broker = new StubBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
-            }
-        };
-
-        ToolResult result = operations(
-                        broker,
-                        4096,
-                        100,
-                        new CodingChangeReviewArtifactFactory(
-                                changeSets,
-                                (set, change) -> {
-                                    throw new IllegalStateException("simulated derived projection failure");
-                                },
-                                1024))
-                .execute(invocation(Map.of("command", "mvn test", "operationFamily", "TEST"), () -> false), access());
-
-        assertThat(result.successful()).isTrue();
-        assertThat(result.structuredData())
-                .containsEntry("status", "SUCCEEDED")
-                .containsEntry("fileChangeSetId", "changes-1")
-                .containsEntry("changeReviewStatus", "UNAVAILABLE")
-                .containsEntry("changeReviewReasonCode", "CHANGE_REVIEW_PROJECTION_FAILED")
-                .doesNotContainKeys("runtimeOutcome", "changeReviewArtifact", "changeReviewArtifactRef");
     }
 
     @Test
@@ -1432,27 +1275,13 @@ class ProjectExecutionToolOperationsTest {
 
     private static ProjectExecutionToolOperations operations(
             ExecutionBroker broker, int maximumOutputBytes, int maximumOutputLines) {
-        return operations(broker, maximumOutputBytes, maximumOutputLines, null);
+        return operations(broker, maximumOutputBytes, maximumOutputLines, CodingVerificationProfileProvider.empty());
     }
 
     private static ProjectExecutionToolOperations operations(
             ExecutionBroker broker,
             int maximumOutputBytes,
             int maximumOutputLines,
-            CodingChangeReviewArtifactFactory changeReviews) {
-        return operations(
-                broker,
-                maximumOutputBytes,
-                maximumOutputLines,
-                changeReviews,
-                CodingVerificationProfileProvider.empty());
-    }
-
-    private static ProjectExecutionToolOperations operations(
-            ExecutionBroker broker,
-            int maximumOutputBytes,
-            int maximumOutputLines,
-            CodingChangeReviewArtifactFactory changeReviews,
             CodingVerificationProfileProvider verificationProfiles) {
         return new ProjectExecutionToolOperations(
                 broker,
@@ -1469,7 +1298,6 @@ class ProjectExecutionToolOperationsTest {
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 java.util.function.UnaryOperator.identity(),
-                changeReviews,
                 verificationProfiles);
     }
 
@@ -1624,7 +1452,7 @@ class ProjectExecutionToolOperationsTest {
                 NOW.plusSeconds(1),
                 new ExecutionOutput("stored stdout", asset, 13, "sha-stdout", false, false),
                 new ExecutionOutput("", null, 0, "sha-stderr", false, false),
-                new FileChangeSetId("changes-1"),
+                "changes-1",
                 "session-1",
                 new ResourceUsageSummary(Duration.ofSeconds(1), 1),
                 status == ExecutionStatus.FAILED

@@ -291,7 +291,7 @@ class SqliteExtendedRuntimeStateTest {
                 8_192,
                 1_024,
                 Map.of(),
-                Map.of("test.max_bytes", 10_485_760L));
+                Map.of());
         return new RuntimeConfigurationSnapshot(
                 new RunConfigurationSnapshotRef("configuration-2", "sha256:configuration-2"),
                 new AgentDefinitionId("agent"),

@@ -1,7 +1,6 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
-import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
@@ -18,9 +17,6 @@ import io.haifa.agent.execution.core.change.LocalIncrementalWorkspaceChangeObser
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.policy.api.PolicyDigest;
-import io.haifa.agent.project.changeset.FileChangeSetService;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
-import io.haifa.agent.project.changeset.ObservedFileChangeService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
@@ -82,8 +78,6 @@ final class CliExecutionPlatform implements AutoCloseable {
             WorkspaceBindingStore bindings,
             LocalWorkspaceLocationStore locations,
             LocalWorkspaceFileService files,
-            InMemoryFileChangeSetStore changeSets,
-            FileChangeSetService changeSetService,
             IdentifierGenerator identifiers,
             TimeProvider time,
             Clock clock,
@@ -97,8 +91,6 @@ final class CliExecutionPlatform implements AutoCloseable {
                 bindings,
                 locations,
                 files,
-                changeSets,
-                changeSetService,
                 identifiers,
                 time,
                 clock,
@@ -115,8 +107,6 @@ final class CliExecutionPlatform implements AutoCloseable {
             WorkspaceBindingStore bindings,
             LocalWorkspaceLocationStore locations,
             LocalWorkspaceFileService files,
-            InMemoryFileChangeSetStore changeSets,
-            FileChangeSetService changeSetService,
             IdentifierGenerator identifiers,
             TimeProvider time,
             Clock clock,
@@ -131,8 +121,6 @@ final class CliExecutionPlatform implements AutoCloseable {
                 bindings,
                 locations,
                 files,
-                changeSets,
-                changeSetService,
                 identifiers,
                 time,
                 clock,
@@ -150,8 +138,6 @@ final class CliExecutionPlatform implements AutoCloseable {
             WorkspaceBindingStore bindings,
             LocalWorkspaceLocationStore locations,
             LocalWorkspaceFileService files,
-            InMemoryFileChangeSetStore changeSets,
-            FileChangeSetService changeSetService,
             IdentifierGenerator identifiers,
             TimeProvider time,
             Clock clock,
@@ -225,7 +211,6 @@ final class CliExecutionPlatform implements AutoCloseable {
         ExecutionEnvironmentRef permissionEnvironmentRef = new ExecutionEnvironmentRef(
                 List.of("cli-execution-" + permissionProfile.contentDigest().value()));
         var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(workspaceId, workspaceRoot, ignorePolicy);
-        var observedChanges = new ObservedFileChangeService(workspaces, changeSets, changeSetService, time);
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
@@ -238,11 +223,8 @@ final class CliExecutionPlatform implements AutoCloseable {
                 providerRegistry,
                 workspaces,
                 bindings,
-                workspaceChanges,
-                observedChanges);
+                workspaceChanges);
         ExecutionOutputObserver observer = new CliOutputObserver(output);
-        var changeReviews = new CodingChangeReviewArtifactFactory(
-                changeSets, new LocalCodingChangeContentClassifier(files), 512 * 1024);
         var operations = new ProjectExecutionToolOperations(
                 broker,
                 identifiers,
@@ -258,7 +240,6 @@ final class CliExecutionPlatform implements AutoCloseable {
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 workspaceWorkdirNormalizer(workspaceRoot),
-                changeReviews,
                 verificationProfiles);
         var permissionOperations = new ProjectExecutionToolOperations(
                 broker,
@@ -275,7 +256,6 @@ final class CliExecutionPlatform implements AutoCloseable {
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 workspaceWorkdirNormalizer(workspaceRoot),
-                changeReviews,
                 verificationProfiles);
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);

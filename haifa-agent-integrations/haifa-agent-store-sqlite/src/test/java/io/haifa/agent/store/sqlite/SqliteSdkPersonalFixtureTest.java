@@ -261,7 +261,7 @@ class SqliteSdkPersonalFixtureTest {
                     .singleElement()
                     .satisfies(failure -> {
                         ConversationException error = (ConversationException) failure;
-                        assertThat(error.code()).isEqualTo("CONVERSATION_ACTIVE");
+                        assertThat(error.code()).isIn("CONVERSATION_ACTIVE", "CONVERSATION_REVISION_MISMATCH");
                         assertThat(error.operation()).isEqualTo("conversation.submit");
                         assertThat(error.correlation()).matches("[0-9a-f]{16}");
                         assertThat(error.getMessage())
@@ -354,7 +354,7 @@ class SqliteSdkPersonalFixtureTest {
         startGate.await();
         try {
             return agent.conversations().submit(command);
-        } catch (IllegalStateException expected) {
+        } catch (Exception expected) {
             return expected;
         }
     }

@@ -29,9 +29,6 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.changeset.FileChangeSetService;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
-import io.haifa.agent.project.changeset.ObservedFileChangeService;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
@@ -131,10 +128,7 @@ class HostStdioMcpComponentTest {
                         WorkspaceRevision.initial(binding.rootFingerprint()),
                         NOW)
                 .activate(NOW));
-        var changeSets = new InMemoryFileChangeSetStore();
         var ids = new AtomicInteger();
-        var changeSetService = new FileChangeSetService(changeSets, () -> "change-" + ids.incrementAndGet(), () -> NOW);
-        var observed = new ObservedFileChangeService(workspaces, changeSets, changeSetService, () -> NOW);
         var host = new HostGuardedSandboxProvider(
                 workspaces, bindings, locations, () -> "host-session-" + ids.incrementAndGet(), Instant::now);
         var profile = SandboxProfile.hostGuarded(
@@ -156,8 +150,7 @@ class HostStdioMcpComponentTest {
                 ignored -> host,
                 workspaces,
                 bindings,
-                ignoredWorkspace -> java.util.List::of,
-                observed);
+                ignoredWorkspace -> java.util.List::of);
         return new Fixture(workspaceId, broker);
     }
 

@@ -6,16 +6,12 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceBindingStatus;
 import io.haifa.agent.project.changeset.FileChange;
-import io.haifa.agent.project.changeset.FileChangeSet;
-import io.haifa.agent.project.changeset.FileChangeSetService;
-import io.haifa.agent.project.changeset.FileChangeSetStore;
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.changeset.FileVersion;
 import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.mutation.CreateFileRequest;
 import io.haifa.agent.project.mutation.DeleteFileRequest;
 import io.haifa.agent.project.mutation.MoveFileRequest;
-import io.haifa.agent.project.mutation.MutationContext;
 import io.haifa.agent.project.mutation.MutationErrorCode;
 import io.haifa.agent.project.mutation.MutationPrecondition;
 import io.haifa.agent.project.mutation.MutationResult;
@@ -27,7 +23,6 @@ import io.haifa.agent.project.mutation.WorkspaceWriteLeaseManager;
 import io.haifa.agent.project.patch.PatchFileMutationRequest;
 import io.haifa.agent.project.patch.PatchTransformException;
 import io.haifa.agent.project.patch.StreamingPatchMutationService;
-import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
@@ -51,7 +46,6 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 public final class LocalWorkspaceMutationService implements WorkspaceMutationProvider, StreamingPatchMutationService {
     private static final int MAX_CONTENT_BYTES = 16 * 1024 * 1024;
@@ -61,8 +55,6 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
     private final LocalWorkspaceLocationStore locations;
     private final SensitivePathPolicy sensitivePaths;
     private final WorkspaceWriteLeaseManager leases;
-    private final FileChangeSetStore changeSets;
-    private final FileChangeSetService changeSetService;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
 
@@ -72,8 +64,6 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
             LocalWorkspaceLocationStore locations,
             SensitivePathPolicy sensitivePaths,
             WorkspaceWriteLeaseManager leases,
-            FileChangeSetStore changeSets,
-            FileChangeSetService changeSetService,
             IdentifierGenerator identifiers,
             TimeProvider time) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
@@ -81,8 +71,6 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
         this.locations = Objects.requireNonNull(locations, "locations must not be null");
         this.sensitivePaths = Objects.requireNonNull(sensitivePaths, "sensitivePaths must not be null");
         this.leases = Objects.requireNonNull(leases, "leases must not be null");
-        this.changeSets = Objects.requireNonNull(changeSets, "changeSets must not be null");
-        this.changeSetService = Objects.requireNonNull(changeSetService, "changeSetService must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
     }
@@ -106,37 +94,22 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
         Objects.requireNonNull(request, "request must not be null");
         ensureContentBudget(request.path(), request.content());
         access(request.path(), WorkspacePermission.WRITE);
-        Optional<MutationResult> replay = replay(
-                request.path(),
-                request.context().operationId(),
-                FileChangeType.CREATE,
-                null,
-                "sha256:" + hash(request.content()));
-        if (replay.isPresent()) return replay.orElseThrow();
         try (WorkspaceWriteLease ignored =
                 leases.acquire(request.path().workspaceId(), request.context().operationId())) {
             Access access = access(request.path(), WorkspacePermission.WRITE);
             validateRevision(access.workspace(), request.precondition(), request.path());
             Path target = resolveAbsent(access, request.path());
-            FileChangeSet pending = begin(access.workspace(), request.context());
-            try {
-                boolean atomic = writeAtomically(
-                        target,
-                        request.content(),
-                        false,
-                        request.path(),
-                        () -> requireStillAbsent(access, request.path(), target));
-                FileVersion after = version(target, request.path());
-                return completeOrUnknown(
-                        access.workspace(),
-                        pending,
-                        List.of(new FileChange(
-                                FileChangeType.CREATE, request.path().projectPath(), null, null, after)),
-                        atomic);
-            } catch (WorkspaceMutationException exception) {
-                fail(pending, exception.getMessage());
-                throw exception;
-            }
+            boolean atomic = writeAtomically(
+                    target,
+                    request.content(),
+                    false,
+                    request.path(),
+                    () -> requireStillAbsent(access, request.path(), target));
+            FileVersion after = version(target, request.path());
+            return advanceWorkspaceRevision(
+                    access.workspace(),
+                    List.of(new FileChange(FileChangeType.CREATE, request.path().projectPath(), null, null, after)),
+                    atomic);
         }
     }
 
@@ -145,13 +118,6 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
         Objects.requireNonNull(request, "request must not be null");
         ensureContentBudget(request.path(), request.content());
         access(request.path(), WorkspacePermission.WRITE);
-        Optional<MutationResult> replay = replay(
-                request.path(),
-                request.context().operationId(),
-                FileChangeType.REPLACE,
-                null,
-                "sha256:" + hash(request.content()));
-        if (replay.isPresent()) return replay.orElseThrow();
         try (WorkspaceWriteLease ignored =
                 leases.acquire(request.path().workspaceId(), request.context().operationId())) {
             Access access = access(request.path(), WorkspacePermission.WRITE);
@@ -159,28 +125,21 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
             Path target = resolveExisting(access, request.path());
             FileVersion before = requireRegularVersion(target, request.path());
             validateHash(before, request.precondition(), request.path());
-            FileChangeSet pending = begin(access.workspace(), request.context());
-            try {
-                boolean atomic = writeAtomically(
-                        target,
-                        request.content(),
-                        true,
-                        request.path(),
-                        () -> validateHash(
-                                requireRegularVersion(resolveExisting(access, request.path()), request.path()),
-                                request.precondition(),
-                                request.path()));
-                FileVersion after = requireRegularVersion(resolveExisting(access, request.path()), request.path());
-                return completeOrUnknown(
-                        access.workspace(),
-                        pending,
-                        List.of(new FileChange(
-                                FileChangeType.REPLACE, request.path().projectPath(), null, before, after)),
-                        atomic);
-            } catch (WorkspaceMutationException exception) {
-                fail(pending, exception.getMessage());
-                throw exception;
-            }
+            boolean atomic = writeAtomically(
+                    target,
+                    request.content(),
+                    true,
+                    request.path(),
+                    () -> validateHash(
+                            requireRegularVersion(resolveExisting(access, request.path()), request.path()),
+                            request.precondition(),
+                            request.path()));
+            FileVersion after = requireRegularVersion(resolveExisting(access, request.path()), request.path());
+            return advanceWorkspaceRevision(
+                    access.workspace(),
+                    List.of(new FileChange(
+                            FileChangeType.REPLACE, request.path().projectPath(), null, before, after)),
+                    atomic);
         }
     }
 
@@ -188,8 +147,6 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
     public MutationResult patch(PatchFileMutationRequest request) {
         Objects.requireNonNull(request, "request must not be null");
         access(request.path(), WorkspacePermission.WRITE);
-        Optional<MutationResult> replay = replayPatch(request);
-        if (replay.isPresent()) return replay.orElseThrow();
         try (WorkspaceWriteLease ignored =
                 leases.acquire(request.path().workspaceId(), request.context().operationId())) {
             Access access = access(request.path(), WorkspacePermission.WRITE);
@@ -197,7 +154,6 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
             Path target = resolveExisting(access, request.path());
             FileVersion before = requireRegularVersion(target, request.path());
             validateHash(before, request.precondition(), request.path());
-            FileChangeSet pending = begin(access.workspace(), request.context());
             Path temporary = null;
             try {
                 temporary = Files.createTempFile(target.getParent(), ".haifa-patch-", ".tmp");
@@ -227,29 +183,23 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
                 boolean atomic = replacePreparedFile(temporary, target, request.path());
                 temporary = null;
                 FileVersion after = requireRegularVersion(resolveExisting(access, request.path()), request.path());
-                return completeOrUnknown(
+                return advanceWorkspaceRevision(
                         access.workspace(),
-                        pending,
                         List.of(new FileChange(
                                 FileChangeType.REPLACE, request.path().projectPath(), null, before, after)),
                         atomic);
             } catch (PatchTransformException exception) {
-                fail(pending, exception.getMessage());
                 throw exception;
             } catch (WorkspaceMutationException exception) {
-                fail(pending, exception.getMessage());
                 throw exception;
             } catch (IOException exception) {
-                WorkspaceMutationException failure =
-                        failure(MutationErrorCode.IO_FAILURE, request.path(), "unable to apply streaming patch");
-                fail(pending, failure.getMessage());
-                throw failure;
+                throw failure(MutationErrorCode.IO_FAILURE, request.path(), "unable to apply streaming patch");
             } finally {
                 if (temporary != null) {
                     try {
                         Files.deleteIfExists(temporary);
                     } catch (IOException ignoredDelete) {
-                        // A managed temporary file is harmless and can be reconciled later.
+                        // A managed temporary file is harmless.
                     }
                 }
             }
@@ -260,9 +210,6 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
     public MutationResult delete(DeleteFileRequest request) {
         Objects.requireNonNull(request, "request must not be null");
         access(request.path(), WorkspacePermission.DELETE);
-        Optional<MutationResult> replay =
-                replay(request.path(), request.context().operationId(), FileChangeType.DELETE, null, null);
-        if (replay.isPresent()) return replay.orElseThrow();
         try (WorkspaceWriteLease ignored =
                 leases.acquire(request.path().workspaceId(), request.context().operationId())) {
             Access access = access(request.path(), WorkspacePermission.DELETE);
@@ -273,26 +220,18 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
             if (before.type() == FileType.DIRECTORY) {
                 throw failure(MutationErrorCode.PATH_DENIED, request.path(), "cannot delete directory");
             }
-            FileChangeSet pending = begin(access.workspace(), request.context());
             try {
-                try {
-                    Files.delete(source);
-                } catch (IOException exception) {
-                    throw failure(
-                            MutationErrorCode.IO_FAILURE,
-                            request.path(),
-                            "failed to delete file: " + exception.getMessage());
-                }
-                return completeOrUnknown(
-                        access.workspace(),
-                        pending,
-                        List.of(new FileChange(
-                                FileChangeType.DELETE, request.path().projectPath(), null, before, null)),
-                        true);
-            } catch (WorkspaceMutationException exception) {
-                fail(pending, exception.getMessage());
-                throw exception;
+                Files.delete(source);
+            } catch (IOException exception) {
+                throw failure(
+                        MutationErrorCode.IO_FAILURE,
+                        request.path(),
+                        "failed to delete file: " + exception.getMessage());
             }
+            return advanceWorkspaceRevision(
+                    access.workspace(),
+                    List.of(new FileChange(FileChangeType.DELETE, request.path().projectPath(), null, before, null)),
+                    true);
         }
     }
 
@@ -301,13 +240,6 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
         Objects.requireNonNull(request, "request must not be null");
         access(request.source(), WorkspacePermission.WRITE);
         access(request.destination(), WorkspacePermission.WRITE);
-        Optional<MutationResult> replay = replay(
-                request.source(),
-                request.context().operationId(),
-                FileChangeType.MOVE,
-                request.destination().projectPath(),
-                null);
-        if (replay.isPresent()) return replay.orElseThrow();
         try (WorkspaceWriteLease ignored =
                 leases.acquire(request.source().workspaceId(), request.context().operationId())) {
             Access access = access(request.source(), WorkspacePermission.WRITE);
@@ -317,30 +249,23 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
             Path destination = resolveAbsent(access, request.destination());
             FileVersion before = version(source, request.source());
             validateHash(before, request.sourcePrecondition(), request.source());
-            FileChangeSet pending = begin(access.workspace(), request.context());
-            try {
-                boolean atomic = movePath(source, destination, false, request.source(), () -> {
-                    validateHash(
-                            version(resolveExisting(access, request.source()), request.source()),
-                            request.sourcePrecondition(),
-                            request.source());
-                    requireStillAbsent(access, request.destination(), destination);
-                });
-                FileVersion after = version(resolveExisting(access, request.destination()), request.destination());
-                return completeOrUnknown(
-                        access.workspace(),
-                        pending,
-                        List.of(new FileChange(
-                                FileChangeType.MOVE,
-                                request.source().projectPath(),
-                                request.destination().projectPath(),
-                                before,
-                                after)),
-                        atomic);
-            } catch (WorkspaceMutationException exception) {
-                fail(pending, exception.getMessage());
-                throw exception;
-            }
+            boolean atomic = movePath(source, destination, false, request.source(), () -> {
+                validateHash(
+                        version(resolveExisting(access, request.source()), request.source()),
+                        request.sourcePrecondition(),
+                        request.source());
+                requireStillAbsent(access, request.destination(), destination);
+            });
+            FileVersion after = version(resolveExisting(access, request.destination()), request.destination());
+            return advanceWorkspaceRevision(
+                    access.workspace(),
+                    List.of(new FileChange(
+                            FileChangeType.MOVE,
+                            request.source().projectPath(),
+                            request.destination().projectPath(),
+                            before,
+                            after)),
+                    atomic);
         }
     }
 
@@ -516,7 +441,7 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
                 try {
                     Files.deleteIfExists(temporary);
                 } catch (IOException ignored) {
-                    // The reconciliation path can identify a residual managed temporary file.
+                    // Ignored.
                 }
             }
         }
@@ -558,105 +483,15 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
         }
     }
 
-    private FileChangeSet begin(Workspace workspace, MutationContext context) {
-        return changeSetService.begin(
-                workspace,
-                context.operationId(),
-                context.runRef(),
-                context.toolCallRef(),
-                context.actor(),
-                context.securityDecisionRef());
-    }
-
-    private MutationResult complete(
-            Workspace workspace, FileChangeSet pending, List<FileChange> changes, boolean atomic) {
+    private MutationResult advanceWorkspaceRevision(Workspace workspace, List<FileChange> changes, boolean atomic) {
         Instant now = time.now();
+        WorkspaceRevision before = workspace.revision();
         WorkspaceRevision nextRevision = new WorkspaceRevision(
-                workspace.revision().sequence() + 1,
-                "sha256:"
-                        + hash((workspace.revision().digest() + "|"
-                                        + pending.id().value() + "|" + changes)
-                                .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                before.sequence() + 1,
+                "sha256:" + hash((before.digest() + "|" + changes).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         Workspace advanced = workspace.advanceRevision(nextRevision, now);
         workspaces.save(advanced, workspace.version());
-        FileChangeSet applied = pending.applied(nextRevision, changes, atomic, now);
-        changeSets.save(applied, pending.version());
-        return result(applied, false);
-    }
-
-    private MutationResult completeOrUnknown(
-            Workspace workspace, FileChangeSet pending, List<FileChange> changes, boolean atomic) {
-        try {
-            return complete(workspace, pending, changes, atomic);
-        } catch (RuntimeException finalizationFailure) {
-            FileChangeSet unknown =
-                    changeSetService.markUnknown(pending, changes, "physical post-state requires reconciliation");
-            return result(unknown, false);
-        }
-    }
-
-    private void fail(FileChangeSet pending, String detail) {
-        FileChangeSet failed = pending.failed(detail, time.now());
-        changeSets.save(failed, pending.version());
-    }
-
-    private Optional<MutationResult> replay(
-            WorkspacePath path,
-            String operationId,
-            FileChangeType type,
-            ProjectPath destination,
-            String expectedAfterHash) {
-        return changeSets.findByOperation(path.workspaceId(), operationId).map(existing -> {
-            if (!existing.changes().isEmpty()) {
-                FileChange first = existing.changes().get(0);
-                if (first.type() != type
-                        || !first.path().equals(path.projectPath())
-                        || !Objects.equals(first.destination(), destination)
-                        || (expectedAfterHash != null
-                                && first.optionalAfter()
-                                        .map(FileVersion::contentHash)
-                                        .filter(expectedAfterHash::equals)
-                                        .isEmpty())) {
-                    throw failure(
-                            MutationErrorCode.CONCURRENT_MODIFICATION,
-                            path,
-                            "operation id is already bound to a different mutation");
-                }
-            }
-            return result(existing, true);
-        });
-    }
-
-    private Optional<MutationResult> replayPatch(PatchFileMutationRequest request) {
-        return changeSets
-                .findByOperation(request.path().workspaceId(), request.context().operationId())
-                .map(existing -> {
-                    if (existing.changes().size() != 1) {
-                        throw failure(
-                                MutationErrorCode.CONCURRENT_MODIFICATION,
-                                request.path(),
-                                "operation id is already bound to a different mutation");
-                    }
-                    FileChange change = existing.changes().get(0);
-                    String expectedBefore = request.precondition()
-                            .optionalContentHash()
-                            .orElseThrow(() -> failure(
-                                    MutationErrorCode.PRECONDITION_REQUIRED,
-                                    request.path(),
-                                    "content hash precondition is required"));
-                    if (change.type() != FileChangeType.REPLACE
-                            || !change.path().equals(request.path().projectPath())
-                            || change.optionalBefore()
-                                    .map(FileVersion::contentHash)
-                                    .filter(expectedBefore::equals)
-                                    .isEmpty()) {
-                        throw failure(
-                                MutationErrorCode.CONCURRENT_MODIFICATION,
-                                request.path(),
-                                "operation id is already bound to a different mutation");
-                    }
-                    return result(existing, true);
-                });
+        return new MutationResult(before, nextRevision, changes, atomic, false);
     }
 
     private static void requireStillAbsent(Access access, WorkspacePath logical, Path expectedTarget) {
@@ -687,29 +522,6 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
         return target;
     }
 
-    private static MutationResult result(FileChangeSet changeSet, boolean replayed) {
-        return new MutationResult(
-                changeSet.id(),
-                changeSet.status(),
-                changeSet.baseRevision(),
-                changeSet.resultRevision(),
-                changeSet.changes(),
-                changeSet.atomic(),
-                replayed);
-    }
-
-    private static void requireEmptyDirectory(Path directory, WorkspacePath logical) {
-        try (var entries = Files.list(directory)) {
-            if (entries.findAny().isPresent()) {
-                throw failure(MutationErrorCode.WRONG_FILE_TYPE, logical, "only an empty directory may be deleted");
-            }
-        } catch (WorkspaceMutationException exception) {
-            throw exception;
-        } catch (IOException exception) {
-            throw failure(MutationErrorCode.IO_FAILURE, logical, "unable to inspect logical directory");
-        }
-    }
-
     private static void ensureContentBudget(WorkspacePath path, byte[] content) {
         if (content.length > MAX_CONTENT_BYTES) {
             throw failure(MutationErrorCode.CONTENT_TOO_LARGE, path, "content exceeds mutation budget");
@@ -730,11 +542,6 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
         } catch (IOException | UnsupportedOperationException | IllegalArgumentException ignored) {
             return false;
         }
-    }
-
-    private static String safeToken(String value) {
-        return hash(Objects.requireNonNull(value, "identifier value must not be null")
-                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private static String hash(byte[] bytes) {

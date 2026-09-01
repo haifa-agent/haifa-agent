@@ -1,7 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
 import io.haifa.agent.application.project.policy.CodingExecutionRiskResolver;
-import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandSemantics;
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationAttemptFactory;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
@@ -72,7 +71,6 @@ public final class ProjectExecutionToolOperations {
     private final UnaryOperator<String> outputSanitizer;
     private final ExecutionScratchSpaceSpec scratchSpace;
     private final UnaryOperator<String> workdirNormalizer;
-    private final CodingChangeReviewArtifactFactory changeReviews;
     private final CodingVerificationProfileProvider verificationProfiles;
 
     public ProjectExecutionToolOperations(
@@ -195,41 +193,6 @@ public final class ProjectExecutionToolOperations {
                 outputSanitizer,
                 scratchSpace,
                 workdirNormalizer,
-                null);
-    }
-
-    public ProjectExecutionToolOperations(
-            ExecutionBroker broker,
-            IdentifierGenerator identifiers,
-            TimeProvider time,
-            ExecutionEnvironmentRef environmentRef,
-            SandboxProfileRef sandboxProfileRef,
-            Duration defaultTimeout,
-            Duration maximumTimeout,
-            int maximumModelOutputBytes,
-            int maximumModelOutputLines,
-            int maximumProcesses,
-            ExecutionOutputObserver outputObserver,
-            UnaryOperator<String> outputSanitizer,
-            ExecutionScratchSpaceSpec scratchSpace,
-            UnaryOperator<String> workdirNormalizer,
-            CodingChangeReviewArtifactFactory changeReviews) {
-        this(
-                broker,
-                identifiers,
-                time,
-                environmentRef,
-                sandboxProfileRef,
-                defaultTimeout,
-                maximumTimeout,
-                maximumModelOutputBytes,
-                maximumModelOutputLines,
-                maximumProcesses,
-                outputObserver,
-                outputSanitizer,
-                scratchSpace,
-                workdirNormalizer,
-                changeReviews,
                 CodingVerificationProfileProvider.empty());
     }
 
@@ -248,7 +211,6 @@ public final class ProjectExecutionToolOperations {
             UnaryOperator<String> outputSanitizer,
             ExecutionScratchSpaceSpec scratchSpace,
             UnaryOperator<String> workdirNormalizer,
-            CodingChangeReviewArtifactFactory changeReviews,
             CodingVerificationProfileProvider verificationProfiles) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
@@ -279,7 +241,6 @@ public final class ProjectExecutionToolOperations {
         this.outputSanitizer = Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
         this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
         this.workdirNormalizer = Objects.requireNonNull(workdirNormalizer, "workdirNormalizer must not be null");
-        this.changeReviews = changeReviews;
         this.verificationProfiles =
                 Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
     }
@@ -684,19 +645,7 @@ public final class ProjectExecutionToolOperations {
         data.put("scratchProvisioned", result.scratchProvisioned());
         data.put("scratchCleanupFailed", result.scratchCleanupFailed());
         result.optionalFileChangeSetId().ifPresent(value -> {
-            data.put("fileChangeSetId", value.value());
-            if (changeReviews != null && reviewToolCallRef != null) {
-                try {
-                    changeReviews.create(runRef, List.of(value.value())).ifPresent(review -> {
-                        data.put("changeReviewArtifact", review.toStructuredData());
-                        data.put("changeReviewArtifactRef", review.artifactRef());
-                        data.put("artifactRef", review.artifactRef());
-                    });
-                } catch (RuntimeException ignored) {
-                    data.put("changeReviewStatus", "UNAVAILABLE");
-                    data.put("changeReviewReasonCode", "CHANGE_REVIEW_PROJECTION_FAILED");
-                }
-            }
+            data.put("fileChangeSetId", value);
         });
         CodingValidationAttemptFactory.create(
                         operationFamily,

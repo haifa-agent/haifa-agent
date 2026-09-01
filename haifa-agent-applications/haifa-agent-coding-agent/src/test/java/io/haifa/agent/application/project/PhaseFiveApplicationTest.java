@@ -3,7 +3,6 @@ package io.haifa.agent.application.project;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.application.project.admin.ArtifactView;
-import io.haifa.agent.application.project.admin.FileChangeSetView;
 import io.haifa.agent.application.project.admin.WorkspaceAdminView;
 import io.haifa.agent.application.project.admin.WorkspaceBindingView;
 import io.haifa.agent.application.project.admin.WorkspaceSnapshotView;
@@ -137,7 +136,6 @@ class PhaseFiveApplicationTest {
                 WorkspaceAdminView.class,
                 WorkspaceBindingView.class,
                 WorkspaceSnapshotView.class,
-                FileChangeSetView.class,
                 ArtifactView.class)) {
             assertThat(view.getRecordComponents())
                     .extracting(RecordComponent::getType)

@@ -9,12 +9,8 @@ import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.changeset.FileChange;
-import io.haifa.agent.project.changeset.FileChangeSet;
-import io.haifa.agent.project.changeset.FileChangeSetId;
-import io.haifa.agent.project.changeset.FileChangeSetStatus;
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.changeset.FileVersion;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.mutation.CreateFileRequest;
@@ -127,14 +123,12 @@ class LocalFileToolOperationsMultiRootTest {
                 .activate(now));
 
         var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var changeSets = new InMemoryFileChangeSetStore();
 
         operations = new LocalFileToolOperations(
                 workspaces,
                 files,
-                testMutations(workspaces, workspaceId, changeSets, new ProjectId("proj-multiroot")),
+                testMutations(workspaces, workspaceId, new ProjectId("proj-multiroot")),
                 () -> "id-1",
-                changeSets,
                 registry);
     }
 
@@ -291,10 +285,7 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     private WorkspaceMutationProvider testMutations(
-            InMemoryWorkspaceStore workspaces,
-            WorkspaceId workspaceId,
-            InMemoryFileChangeSetStore changeSets,
-            ProjectId projectId) {
+            InMemoryWorkspaceStore workspaces, WorkspaceId workspaceId, ProjectId projectId) {
         return new WorkspaceMutationProvider() {
             @Override
             public String providerId() {
@@ -317,27 +308,8 @@ class LocalFileToolOperationsMultiRootTest {
                         null,
                         null,
                         new FileVersion(FileType.FILE, request.content().length, "sha256:hash-val"));
-                FileChangeSet changeSet = FileChangeSet.pending(
-                                new FileChangeSetId("change-set-test"),
-                                projectId,
-                                workspaceId,
-                                request.context().operationId(),
-                                request.context().runRef(),
-                                request.context().toolCallRef(),
-                                before,
-                                request.context().actor(),
-                                request.context().securityDecisionRef(),
-                                Instant.parse("2026-08-05T00:00:00Z"))
-                        .applied(after, List.of(change), true, Instant.parse("2026-08-05T00:00:01Z"));
-                changeSets.create(changeSet);
-                return new MutationResult(
-                        new FileChangeSetId("change-set-test"),
-                        FileChangeSetStatus.APPLIED,
-                        before,
-                        after,
-                        List.of(change),
-                        true,
-                        false);
+
+                return new MutationResult(before, after, List.of(change), true, false);
             }
 
             @Override
@@ -345,14 +317,7 @@ class LocalFileToolOperationsMultiRootTest {
                 WorkspaceRevision before =
                         workspaces.find(workspaceId).orElseThrow().revision();
                 WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:write-result");
-                return new MutationResult(
-                        new FileChangeSetId("change-set-test"),
-                        FileChangeSetStatus.APPLIED,
-                        before,
-                        after,
-                        List.of(),
-                        true,
-                        false);
+                return new MutationResult(before, after, List.of(), true, false);
             }
 
             @Override
@@ -360,14 +325,7 @@ class LocalFileToolOperationsMultiRootTest {
                 WorkspaceRevision before =
                         workspaces.find(workspaceId).orElseThrow().revision();
                 WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:del-result");
-                return new MutationResult(
-                        new FileChangeSetId("change-set-test"),
-                        FileChangeSetStatus.APPLIED,
-                        before,
-                        after,
-                        List.of(),
-                        true,
-                        false);
+                return new MutationResult(before, after, List.of(), true, false);
             }
 
             @Override
@@ -375,14 +333,7 @@ class LocalFileToolOperationsMultiRootTest {
                 WorkspaceRevision before =
                         workspaces.find(workspaceId).orElseThrow().revision();
                 WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:move-result");
-                return new MutationResult(
-                        new FileChangeSetId("change-set-test"),
-                        FileChangeSetStatus.APPLIED,
-                        before,
-                        after,
-                        List.of(),
-                        true,
-                        false);
+                return new MutationResult(before, after, List.of(), true, false);
             }
         };
     }

@@ -17,7 +17,6 @@ import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.core.change.WorkspaceChangeObservation;
 import io.haifa.agent.execution.core.change.WorkspaceChangeObserver;
 import io.haifa.agent.execution.core.change.WorkspaceChangeObserverException;
-import io.haifa.agent.project.changeset.ObservedFileChangeService;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.WorkspacePermission;
@@ -50,7 +49,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
     private final WorkspaceChangeObserver workspaceChanges;
-    private final ObservedFileChangeService observedChanges;
     private final ConcurrentHashMap<ExecutionId, SandboxSession> active = new ConcurrentHashMap<>();
 
     public DefaultExecutionBroker(
@@ -62,8 +60,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             SandboxProviderResolver providers,
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            WorkspaceChangeObserver workspaceChanges,
-            ObservedFileChangeService observedChanges) {
+            WorkspaceChangeObserver workspaceChanges) {
         this.executions = Objects.requireNonNull(executions, "executions must not be null");
         this.outputs = Objects.requireNonNull(outputs, "outputs must not be null");
         this.environments = Objects.requireNonNull(environments, "environments must not be null");
@@ -73,7 +70,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
         this.workspaceChanges = Objects.requireNonNull(workspaceChanges, "workspaceChanges must not be null");
-        this.observedChanges = Objects.requireNonNull(observedChanges, "observedChanges must not be null");
     }
 
     @Override
@@ -128,24 +124,12 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                     request.id(), ExecutionOutputChannel.STDOUT, stdoutBytes, 4096, process.stdoutTruncated());
             var stderr = outputs.store(
                     request.id(), ExecutionOutputChannel.STDERR, stderrBytes, 4096, process.stderrTruncated());
-            io.haifa.agent.project.changeset.FileChangeSetId changeSetId = null;
+            String changeSetId = null;
             ExecutionStatus status = map(process.status(), process.exitCode());
             ExecutionFailure failure = failure(status, process.processTreeTerminated());
             try {
                 var changes = changeObservation.complete();
-                if (!changes.isEmpty()) {
-                    var workspace = workspaces.find(request.workspaceId()).orElseThrow();
-                    changeSetId = observedChanges
-                            .record(
-                                    workspace,
-                                    "execution:" + request.id().value(),
-                                    request.context().runRef(),
-                                    request.id().value(),
-                                    request.context().actor(),
-                                    request.context().policyDecisionRef(),
-                                    changes)
-                            .id();
-                }
+                // No observed changeSet recording needed
             } catch (RuntimeException observationFailure) {
                 status = ExecutionStatus.UNKNOWN;
                 failure = new ExecutionFailure(
@@ -391,24 +375,12 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             }
             var storedStdout = outputs.store(request.id(), ExecutionOutputChannel.STDOUT, stdoutBytes, 4096, false);
             var storedStderr = outputs.store(request.id(), ExecutionOutputChannel.STDERR, stderrBytes, 4096, false);
-            io.haifa.agent.project.changeset.FileChangeSetId changeSetId = null;
+            String changeSetId = null;
             ExecutionStatus status = processExit.status();
             ExecutionFailure executionFailure = failure(status, processExit.processTreeTerminated());
             try {
                 var changes = changeObservation.complete();
-                if (!changes.isEmpty()) {
-                    var workspace = workspaces.find(request.workspaceId()).orElseThrow();
-                    changeSetId = observedChanges
-                            .record(
-                                    workspace,
-                                    "managed-execution:" + request.id().value(),
-                                    request.context().runRef(),
-                                    request.id().value(),
-                                    request.context().actor(),
-                                    request.context().policyDecisionRef(),
-                                    changes)
-                            .id();
-                }
+                // No observed changeSet recording needed
             } catch (RuntimeException observationFailure) {
                 status = ExecutionStatus.UNKNOWN;
                 executionFailure = new ExecutionFailure(

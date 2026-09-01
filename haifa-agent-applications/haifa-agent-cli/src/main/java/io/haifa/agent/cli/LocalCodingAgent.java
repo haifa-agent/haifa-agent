@@ -14,7 +14,6 @@ import io.haifa.agent.application.project.product.coding.CodingSessionHistorySer
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
-import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntentResolver;
@@ -81,8 +80,6 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.changeset.FileChangeSetService;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
 import io.haifa.agent.project.configuration.InMemoryProjectConfigurationStore;
 import io.haifa.agent.project.configuration.ProjectConfiguration;
 import io.haifa.agent.project.configuration.ProjectConfigurationService;
@@ -521,10 +518,6 @@ final class LocalCodingAgent implements AutoCloseable {
 
             SensitivePathPolicy sensitivePaths = SensitivePathPolicy.defaults();
             var files = new LocalWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
-            var changeSets = new InMemoryFileChangeSetStore();
-            var changeReviews = new CodingChangeReviewArtifactFactory(
-                    changeSets, new LocalCodingChangeContentClassifier(files), 512 * 1024);
-            var changeSetService = new FileChangeSetService(changeSets, identifiers, time);
             var detector = new LocalWorkspaceRootStrategyDetector();
             var detection = detector.detect(workspaceRoot);
             LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.of(
@@ -542,12 +535,10 @@ final class LocalCodingAgent implements AutoCloseable {
                     locations,
                     sensitivePaths,
                     new InMemoryWorkspaceWriteLeaseManager(),
-                    changeSets,
-                    changeSetService,
                     identifiers,
                     time);
-            var operations = new LocalFileToolOperations(
-                    workspaces, files, mutations, identifiers, changeSets, rootRegistry, sessionLedger);
+            var operations =
+                    new LocalFileToolOperations(workspaces, files, mutations, identifiers, rootRegistry, sessionLedger);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
             CliExecutionPlatform executionPlatform = executionEnabled
@@ -557,8 +548,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             bindings,
                             locations,
                             files,
-                            changeSets,
-                            changeSetService,
                             identifiers,
                             time,
                             clock,
