@@ -614,10 +614,56 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         PersonalSelectionCompatibility compatibility = models.selectionCompatibility(
                 preference.modelBindingId(), preference.preferenceSchemaVersion(), preference.userPreferences());
         PersonalModelOption value = models.optionById(preference.modelBindingId())
-                .orElseThrow(() -> new IllegalStateException("MODEL_SELECTION_REQUIRED"));
+                .orElseGet(() -> unavailableModelOption(preference.modelBindingId()));
         boolean available = "AVAILABLE".equals(value.availability());
         return new ModelSelectionView(
                 value, preference.userPreferences(), preference.revision(), available, compatibility);
+    }
+
+    private static PersonalModelOption unavailableModelOption(String modelId) {
+        return new PersonalModelOption(
+                modelId,
+                "unavailable:" + modelId,
+                modelId,
+                modelId + " (Unavailable)",
+                "unavailable",
+                "Unavailable Provider",
+                "unavailable",
+                "Unavailable",
+                "UNAVAILABLE",
+                "Configured model is no longer available in the catalog",
+                Set.of(),
+                131072,
+                8192,
+                "1.0",
+                "unavailable",
+                "unavailable",
+                io.haifa.agent.model.api.ModelProfileStatus.UNVERIFIED,
+                java.time.LocalDate.EPOCH,
+                new PersonalModelControls(
+                        new PersonalModelControls.ResponseModeControl(
+                                "responseMode",
+                                false,
+                                true,
+                                List.of(PersonalResponseMode.RECOMMENDED),
+                                PersonalResponseMode.RECOMMENDED,
+                                "",
+                                ""),
+                        new PersonalModelControls.ReasoningEffortControl(
+                                "reasoningEffort", false, true, List.of(), null, "", ""),
+                        new PersonalModelControls.ResponseLengthControl(
+                                "responseLength",
+                                false,
+                                true,
+                                List.of(PersonalResponseLength.RECOMMENDED),
+                                PersonalResponseLength.RECOMMENDED,
+                                "",
+                                ""),
+                        new PersonalModelControls.ApiStyleControl(
+                                "apiStyle", false, true, List.of(modelId), modelId, "", "")),
+                new PersonalModelPreferences(
+                        PersonalResponseMode.RECOMMENDED, Optional.empty(), PersonalResponseLength.RECOMMENDED),
+                Optional.empty());
     }
 
     private PersonalModelPreference requirePreference(String conversationId) {
