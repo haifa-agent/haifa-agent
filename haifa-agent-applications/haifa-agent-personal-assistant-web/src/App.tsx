@@ -12,6 +12,7 @@ import {
   Copy,
   Cpu,
   Database,
+  FileText,
   Image as ImageIcon,
   KeyRound,
   Menu,
@@ -163,9 +164,16 @@ function imageHost(url: string): string {
   }
 }
 
+function isPdfMedia(media: { mediaType?: string | null; originalFilename?: string | null; label?: string | null }): boolean {
+  if (media.mediaType === "application/pdf") return true;
+  const name = (media.originalFilename ?? media.label ?? "").toLowerCase();
+  return name.endsWith(".pdf");
+}
+
 function uploadedImageLabel(image: TurnImage, index: number): string {
   const filename = image.originalFilename?.trim();
-  return filename && !opaqueImageFilename.test(filename) ? filename : `已上传图片 ${index + 1}`;
+  if (filename && !opaqueImageFilename.test(filename)) return filename;
+  return isPdfMedia(image) ? `已上传 PDF ${index + 1}` : `已上传图片 ${index + 1}`;
 }
 
 function uploadedAudioLabel(audio: TurnAudio, index: number): string {
@@ -177,6 +185,22 @@ function TurnImages({ images }: { images: TurnImage[] }) {
   return (
     <div className="turn-images" aria-label={`消息包含 ${images.length} 张图片`}>
       {images.map((image, index) => {
+        if (isPdfMedia(image)) {
+          const source = image.kind === "upload" && image.imageId ? uploadedImageUrl(image.imageId) : (image.url ?? undefined);
+          return (
+            <a
+              className="turn-image turn-image-file turn-pdf-file"
+              href={source}
+              key={`${image.imageId ?? image.url}-${index}`}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`打开第 ${index + 1} 个已上传 PDF: ${uploadedImageLabel(image, index)}`}
+            >
+              <div><FileText size={22} aria-hidden="true" /></div>
+              <span><b>{index + 1}</b>{uploadedImageLabel(image, index)}</span>
+            </a>
+          );
+        }
         if (image.kind === "url" && image.url) {
           return (
             <a
@@ -3084,6 +3108,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const previousFocus = useRef<HTMLElement | null>(null);
   const interactionRequestGeneration = useRef(0);
   const recommendationRequestGeneration = useRef(0);
+  const messageSubmissionInFlight = useRef(false);
   const [recommendedQuestions, setRecommendedQuestions] =
     useState<RecommendedQuestionState | null>(null);
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
@@ -3378,6 +3403,17 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     [],
   );
 
+  const startNewConversation = () => {
+    pendingImages.forEach((image) => revokePreview(image.previewUrl));
+    setPendingImages([]);
+    setPendingAudios([]);
+    setComposerMode("CHAT");
+    dispatch({ type: "setComposer", value: "" });
+    closeSlashMenu(false);
+    closeImageTools();
+    selectConversation(null);
+  };
+
   const loadConversation = useCallback(async (conversationId: string, signal?: AbortSignal) => {
     const [conversation, turns] = await Promise.all([
       client.conversation(conversationId, signal),
@@ -3588,7 +3624,13 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             : audioCount === 1
               ? "请转写并分析这段音频"
               : "");
-    if (!message || state.pending || state.selectedConversation?.activeRunId) return;
+    if (
+      !message ||
+      state.pending ||
+      state.selectedConversation?.activeRunId ||
+      messageSubmissionInFlight.current
+    ) return;
+    messageSubmissionInFlight.current = true;
     const key = crypto.randomUUID();
     const sentImages = pendingImages.map((image) => ({ ...image }));
     const sentAudios = pendingAudios.map((audio) => ({ ...audio }));
@@ -3609,23 +3651,15 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       const initialModelSelection = initialModel && newModelPreferences
         ? { model: initialModel, preferences: newModelPreferences }
         : undefined;
-      const conversation = state.selectedConversation
-        ? audios.length
-          ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key }, images, audios)
-          : images.length
-            ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key }, images)
-          : await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key })
-        : audios.length
-          ? await client.createConversation(
-              message.slice(0, 32),
-              message,
-              { idempotencyKey: key },
-              newModelId || state.bootstrap?.defaultModelId,
-              images,
-              initialModelSelection,
-              audios,
-            )
-          : images.length
+      let conversation: Conversation;
+      try {
+        conversation = state.selectedConversation
+          ? audios.length
+            ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key }, images, audios)
+            : images.length
+              ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key }, images)
+              : await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key })
+          : audios.length
             ? await client.createConversation(
                 message.slice(0, 32),
                 message,
@@ -3633,15 +3667,39 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 newModelId || state.bootstrap?.defaultModelId,
                 images,
                 initialModelSelection,
+                audios,
               )
-          : await client.createConversation(
-              message.slice(0, 32),
-              message,
-              { idempotencyKey: key },
-              newModelId || state.bootstrap?.defaultModelId,
-              [],
-              initialModelSelection,
-            );
+            : images.length
+              ? await client.createConversation(
+                  message.slice(0, 32),
+                  message,
+                  { idempotencyKey: key },
+                  newModelId || state.bootstrap?.defaultModelId,
+                  images,
+                  initialModelSelection,
+                )
+              : await client.createConversation(
+                  message.slice(0, 32),
+                  message,
+                  { idempotencyKey: key },
+                  newModelId || state.bootstrap?.defaultModelId,
+                  [],
+                  initialModelSelection,
+                );
+      } catch (error) {
+        if (!(error instanceof PersonalAssistantApiError) || error.code !== "CONVERSATION_ACTIVE") throw error;
+        const conversationId = state.selectedConversationId;
+        if (conversationId) {
+          await Promise.allSettled([loadConversation(conversationId), loadConversations()]);
+        } else {
+          await loadConversations().catch(() => undefined);
+        }
+        dispatch({
+          type: "error",
+          message: "当前会话已有任务在运行，已同步最新状态。请等待任务完成后再发送。",
+        });
+        return;
+      }
       if (!retryImages && !retryAudios) {
         dispatch({ type: "setComposer", value: "" });
         sentImages.forEach((image) => revokePreview(image.previewUrl));
@@ -3656,6 +3714,8 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         await loadConversation(conversation.id);
       }
       await loadConversations();
+    }).finally(() => {
+      messageSubmissionInFlight.current = false;
     });
   };
 
@@ -3749,15 +3809,20 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     if (!imageUploadCapable || !client.uploadImage || uploadingImage) return;
     const selected = Array.from(files).slice(0, Math.max(0, imageMaxCount - pendingImages.length));
     if (!selected.length) return;
-    if (selected.some((file) => !imageMediaTypes.has(file.type) || file.size < 1 || file.size > imageMaxBytesPerItem)) {
-      dispatch({ type: "error", message: "图片格式或单张大小不符合当前模型的图片输入限制。" });
+    if (selected.some((file) => {
+      const type = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "");
+      return !imageMediaTypes.has(type) || file.size < 1 || file.size > imageMaxBytesPerItem;
+    })) {
+      dispatch({ type: "error", message: imageMediaTypes.has("application/pdf") ? "文件格式或单文件大小不符合当前模型的输入限制。" : "图片格式或单张大小不符合当前模型的图片输入限制。" });
       return;
     }
     setUploadingImage(true);
     const uploaded: PendingImage[] = [];
     try {
       for (const file of selected) {
-        const result = await client.uploadImage(file, { idempotencyKey: crypto.randomUUID() });
+        const result = await client.uploadImage(file, {
+          idempotencyKey: crypto.randomUUID(),
+        });
         const previewUrl = typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : undefined;
         if (previewUrl) pendingImagePreviews.current.add(previewUrl);
         uploaded.push({
@@ -3772,7 +3837,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       closeImageTools();
     } catch (error) {
       uploaded.forEach((image) => revokePreview(image.previewUrl));
-      dispatch({ type: "error", message: safeError(error) || "图片上传失败。" });
+      dispatch({ type: "error", message: safeError(error) || (imageMediaTypes.has("application/pdf") ? "文件上传失败。" : "图片上传失败。") });
     } finally {
       setUploadingImage(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -3832,10 +3897,19 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
 
   const explainPendingImages = () => {
     if (!pendingImages.length) return;
-    dispatch({
-      type: "setComposer",
-      value: pendingImages.length > 1 ? "请分别解释这些图片" : "请解释这张图片",
-    });
+    const hasPdf = pendingImages.some(isPdfMedia);
+    const hasImg = pendingImages.some((img) => !isPdfMedia(img));
+    if (hasPdf && !hasImg) {
+      dispatch({
+        type: "setComposer",
+        value: "请概述下PDF主要内容 观点 证据",
+      });
+    } else {
+      dispatch({
+        type: "setComposer",
+        value: pendingImages.length > 1 ? "请分别解释这些图片内容" : "解释下图片内容",
+      });
+    }
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   };
   const slashQuery = slashMenu?.stage === "commands"
@@ -4141,7 +4215,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           open={state.sidebarOpen}
           onSearch={(value) => dispatch({ type: "setSearch", value })}
           onSelect={(conversationId) => selectConversation(conversationId)}
-          onNew={() => selectConversation(null)}
+          onNew={startNewConversation}
           onToggleArchived={() => dispatch({ type: "toggleArchived" })}
           onRename={setRenameTarget}
           onArchive={archive}
@@ -4493,7 +4567,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               ref={fileInputRef}
               className="sr-only"
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
+              accept={Array.from(imageMediaTypes).map((t) => (t === "application/pdf" ? ".pdf,application/pdf" : t)).join(",")}
               multiple
               onChange={(event) => event.target.files && void uploadFiles(event.target.files)}
             />
@@ -4505,49 +4579,90 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               multiple
               onChange={(event) => event.target.files && void uploadAudioFiles(event.target.files)}
             />
-            {pendingMediaCount > 0 && (
-              <section className="image-attachment-stage" aria-label={pendingAudios.length ? "待发送媒体" : "待发送图片"}>
-                <div className="image-attachment-row">
-                  {pendingImages.map((image, index) => (
-                    <figure key={image.key} className="image-attachment">
-                      {image.url || image.previewUrl
-                        ? <img src={image.url ?? image.previewUrl} alt={`待发送图片 ${index + 1}`} />
-                        : <span className="image-file-icon"><ImageIcon size={22} aria-hidden="true" /></span>}
-                      <figcaption>{image.label}</figcaption>
+            {pendingMediaCount > 0 && (() => {
+              const hasPdf = pendingImages.some(isPdfMedia);
+              const hasImg = pendingImages.some((img) => !isPdfMedia(img));
+              const hasAudio = pendingAudios.length > 0;
+              return (
+                <section className="image-attachment-stage" aria-label={hasPdf ? "待发送文件" : pendingAudios.length ? "待发送媒体" : "待发送图片"}>
+                  <div className="image-attachment-row">
+                    {pendingImages.map((image, index) => {
+                      const isPdf = isPdfMedia(image);
+                      return (
+                        <figure key={image.key} className={isPdf ? "image-attachment pdf-attachment" : "image-attachment"}>
+                          {isPdf ? (
+                            <span className="image-file-icon pdf-file-icon"><FileText size={22} aria-hidden="true" /></span>
+                          ) : image.url || image.previewUrl ? (
+                            <img src={image.url ?? image.previewUrl} alt={`待发送图片 ${index + 1}`} />
+                          ) : (
+                            <span className="image-file-icon"><ImageIcon size={22} aria-hidden="true" /></span>
+                          )}
+                          <figcaption>{image.label}</figcaption>
+                          <button
+                            type="button"
+                            aria-label={isPdf ? `移除 PDF ${image.label}` : `移除图片 ${image.label}`}
+                            onClick={() => removePendingImage(image.key)}
+                          ><X size={13} /></button>
+                        </figure>
+                      );
+                    })}
+                    {pendingAudios.map((audio, index) => (
+                      <div key={audio.key} className="audio-attachment">
+                        <AudioLines size={22} aria-hidden="true" />
+                        <span><b>{index + 1}</b>{audio.label}</span>
+                        <button
+                          type="button"
+                          aria-label={`移除音频 ${audio.label}`}
+                          onClick={() => removePendingAudio(audio.key)}
+                        ><X size={13} /></button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="explain-image-actions">
+                    {hasPdf && !hasImg && !hasAudio ? (
                       <button
+                        className="explain-image-action"
                         type="button"
-                        aria-label={`移除图片 ${image.label}`}
-                        onClick={() => removePendingImage(image.key)}
-                      ><X size={13} /></button>
-                    </figure>
-                  ))}
-                  {pendingAudios.map((audio, index) => (
-                    <div key={audio.key} className="audio-attachment">
-                      <AudioLines size={22} aria-hidden="true" />
-                      <span><b>{index + 1}</b>{audio.label}</span>
+                        onClick={() => {
+                          dispatch({
+                            type: "setComposer",
+                            value: "请概述下PDF主要内容 观点 证据",
+                          });
+                          window.requestAnimationFrame(() => textareaRef.current?.focus());
+                        }}
+                      >
+                        <Sparkles size={14} />请概述下PDF主要内容 观点 证据 <span>→</span>
+                      </button>
+                    ) : hasImg && !hasPdf && !hasAudio ? (
                       <button
+                        className="explain-image-action"
                         type="button"
-                        aria-label={`移除音频 ${audio.label}`}
-                        onClick={() => removePendingAudio(audio.key)}
-                      ><X size={13} /></button>
-                    </div>
-                  ))}
-                </div>
-                <button className="explain-image-action" type="button" onClick={() => {
-                  if (pendingImages.length && !pendingAudios.length) explainPendingImages();
-                  else {
-                    dispatch({
-                      type: "setComposer",
-                      value: pendingImages.length ? "请分析这些图片和音频" : pendingAudios.length > 1 ? "请分别分析这些音频" : "请转写并分析这段音频",
-                    });
-                    window.requestAnimationFrame(() => textareaRef.current?.focus());
-                  }
-                }}>
-                  <Sparkles size={14} />分析媒体 <span>→</span>
-                </button>
-                <span className="image-attachment-count">{pendingMediaCount}/4</span>
-              </section>
-            )}
+                        onClick={explainPendingImages}
+                      >
+                        <Sparkles size={14} />解释下图片内容 <span>→</span>
+                      </button>
+                    ) : (
+                      <button
+                        className="explain-image-action"
+                        type="button"
+                        onClick={() => {
+                          dispatch({
+                            type: "setComposer",
+                            value: hasAudio && !hasImg && !hasPdf
+                              ? (pendingAudios.length > 1 ? "请分别分析这些音频" : "请转写并分析这段音频")
+                              : "请分析这些上传的内容",
+                          });
+                          window.requestAnimationFrame(() => textareaRef.current?.focus());
+                        }}
+                      >
+                        <Sparkles size={14} />{hasAudio && !hasImg && !hasPdf ? "转写并分析音频" : "分析媒体"} <span>→</span>
+                      </button>
+                    )}
+                  </div>
+                  <span className="image-attachment-count">{pendingMediaCount}/4</span>
+                </section>
+              );
+            })()}
             <div className="image-add-control" ref={imageToolsRef}>
                 <button
                   type="button"
@@ -4592,7 +4707,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       onClick={() => fileInputRef.current?.click()}
                     >
                       <Paperclip size={17} />
-                      <span><strong>{uploadingImage ? "正在上传…" : "上传图片"}</strong><small>选择或拖放，最多 {imageMaxCount} 张/{imageTotalLabel}</small></span>
+                      <span><strong>{uploadingImage ? "正在上传…" : (imageMediaTypes.has("application/pdf") ? "上传图片或PDF" : "上传图片")}</strong><small>选择或拖放，最多 {imageMaxCount} 个/{imageTotalLabel}</small></span>
                     </button>}
                     {audioCapable && <button
                       type="button"

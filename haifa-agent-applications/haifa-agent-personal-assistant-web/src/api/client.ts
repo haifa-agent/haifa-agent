@@ -390,12 +390,13 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
   }
 
   uploadImage(file: File, options: CommandOptions = {}) {
+    const contentType = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream");
     return this.request<UploadedImage>(
       "/images",
       {
         method: "POST",
         headers: {
-          "Content-Type": file.type,
+          "Content-Type": contentType,
           "X-Haifa-CSRF": "1",
           "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID(),
           "X-Image-Filename": encodeURIComponent(file.name),
