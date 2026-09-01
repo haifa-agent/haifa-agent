@@ -18,7 +18,10 @@ class ModelApiArchitectureTest {
                         "com.openai..",
                         "com.deepseek..",
                         "io.haifa.agent.personalassistant..",
-                        "io.haifa.agent.coding..")
+                        "io.haifa.agent.coding..",
+                        "io.haifa.agent.model.openai..",
+                        "io.haifa.agent.model.anthropic..",
+                        "io.haifa.agent.model.gemini..")
                 .check(classes);
     }
 }

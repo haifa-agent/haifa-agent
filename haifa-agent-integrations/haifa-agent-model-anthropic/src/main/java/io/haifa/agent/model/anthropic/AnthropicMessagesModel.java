@@ -35,7 +35,6 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -82,9 +81,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
 
     @Override
     public AgentChatResponse invoke(AgentChatRequest request) {
-        AnthropicMessagesDialects.Profile profile = validateSelection(request);
+        AnthropicMessagesDialect dialect = validateSelection(request);
         ResolvedCredential credential = credential(request);
-        HttpRequest httpRequest = request(request, profile, credential, false);
+        HttpRequest httpRequest = request(request, dialect, credential, false);
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
             byte[] body;
@@ -101,10 +100,10 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                         exception);
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw httpFailure(request, response.statusCode(), response.headers());
+                throw httpFailure(request, dialect, response.statusCode(), response.headers(), body);
             }
             requireContentType(request, response, "application/json");
-            return parseResponse(request, profile, parseJson(request, body));
+            return parseResponse(request, dialect, parseJson(request, body));
         } catch (HttpTimeoutException exception) {
             throw failure(
                     request, ModelErrorCategory.TIMEOUT, true, 0, "timeout", "model request timed out", exception);
@@ -135,22 +134,24 @@ public final class AnthropicMessagesModel implements AgentChatModel {
     @Override
     public AgentChatResponse invokeStreaming(AgentChatRequest request, ModelStreamSink sink) {
         Objects.requireNonNull(sink, "sink must not be null");
-        AnthropicMessagesDialects.Profile profile = validateSelection(request);
+        AnthropicMessagesDialect dialect = validateSelection(request);
         if (!request.model().nativeStreaming()) return AgentChatModel.super.invokeStreaming(request, sink);
         ResolvedCredential credential = credential(request);
-        HttpRequest httpRequest = request(request, profile, credential, true);
+        HttpRequest httpRequest = request(request, dialect, credential, true);
         ModelStreamObservation observation = new ModelStreamObservation();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                byte[] errorBody;
                 try (InputStream body = response.body()) {
-                    body.readNBytes(maxResponseBytes + 1);
+                    errorBody = body.readNBytes(maxResponseBytes + 1);
                 }
-                throw httpFailure(request, response.statusCode(), response.headers());
+                if (errorBody.length > maxResponseBytes) errorBody = new byte[0];
+                throw httpFailure(request, dialect, response.statusCode(), response.headers(), errorBody);
             }
             requireContentType(request, response, "text/event-stream");
             try (InputStream body = response.body()) {
-                return parseStream(request, profile, body, observation.observe(sink));
+                return parseStream(request, dialect, body, observation.observe(sink));
             }
         } catch (HttpTimeoutException exception) {
             throw failure(
@@ -183,14 +184,13 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         }
     }
 
-    private AnthropicMessagesDialects.Profile validateSelection(AgentChatRequest request) {
+    private AnthropicMessagesDialect validateSelection(AgentChatRequest request) {
         Objects.requireNonNull(request, "request must not be null");
         if (!ADAPTER_TYPE.equals(request.model().adapterType())
                 || !ADAPTER_VERSION.equals(request.model().adapterVersion())) {
             throw new IllegalArgumentException("snapshot selects a different model adapter");
         }
-        AnthropicMessagesDialects.Profile profile =
-                AnthropicMessagesDialects.resolve(request.model(), allowInsecureHttp);
+        AnthropicMessagesDialect dialect = AnthropicMessagesDialects.resolve(request.model(), allowInsecureHttp);
         if (request.messages().stream().anyMatch(message -> !message.images().isEmpty())) {
             throw new IllegalArgumentException("Anthropic Messages image input is not enabled by this adapter profile");
         }
@@ -201,15 +201,17 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                 && !request.model().capabilities().contains(io.haifa.agent.model.api.ModelCapability.TOOL_CALLING)) {
             throw new IllegalArgumentException("selected model does not declare tool calling capability");
         }
-        if (request.structuredOutput().isPresent() && profile == AnthropicMessagesDialects.Profile.DEEPSEEK) {
+        try {
+            dialect.validateRequest(request);
+        } catch (IllegalArgumentException exception) {
             throw failure(
                     request,
                     ModelErrorCategory.INVALID_REQUEST,
                     false,
                     0,
                     "structured_output_unsupported",
-                    "DeepSeek Anthropic Messages structured output is not verified",
-                    null);
+                    exception.getMessage(),
+                    exception);
         }
         if (request.structuredOutput().isPresent()
                 && !request.model()
@@ -224,7 +226,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                     "selected model does not support structured output",
                     null);
         }
-        return profile;
+        return dialect;
     }
 
     private ResolvedCredential credential(AgentChatRequest request) {
@@ -255,13 +257,10 @@ public final class AnthropicMessagesModel implements AgentChatModel {
     }
 
     private HttpRequest request(
-            AgentChatRequest request,
-            AnthropicMessagesDialects.Profile profile,
-            ResolvedCredential credential,
-            boolean stream) {
+            AgentChatRequest request, AnthropicMessagesDialect dialect, ResolvedCredential credential, boolean stream) {
         byte[] body;
         try {
-            body = json.writeValueAsBytes(requestBody(request, profile, stream));
+            body = json.writeValueAsBytes(requestBody(request, dialect, stream));
         } catch (JsonProcessingException | IllegalArgumentException exception) {
             throw failure(
                     request,
@@ -282,18 +281,19 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                     "model request exceeds the configured size limit",
                     null);
         }
-        return HttpRequest.newBuilder(messagesUri(request.model().endpoint()))
+        HttpRequest.Builder builder = HttpRequest.newBuilder(
+                        messagesUri(request.model().endpoint()))
                 .timeout(request.timeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", stream ? "text/event-stream" : "application/json")
-                .header("x-api-key", validateSecret(credential.value()))
                 .header("anthropic-version", ANTHROPIC_VERSION)
-                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+        dialect.decorateHeaders(builder, request, credential.value());
+        return builder.build();
     }
 
     private Map<String, Object> requestBody(
-            AgentChatRequest request, AnthropicMessagesDialects.Profile profile, boolean stream) {
+            AgentChatRequest request, AnthropicMessagesDialect dialect, boolean stream) {
         Map<String, Object> options = options(request);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.model().providerModelId());
@@ -310,7 +310,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         } else if (options.containsKey("tool_choice")) {
             throw new IllegalArgumentException("tool_choice requires at least one tool");
         }
-        configureThinking(body, options, profile);
+        dialect.configureThinking(body, options);
         configureStructuredOutput(body, request);
         if (options.keySet().stream()
                 .anyMatch(key -> !key.equals("thinking")
@@ -341,52 +341,6 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         options.remove(EffectiveModelParameters.MAX_OUTPUT_TOKENS_OPTION);
         options.putAll(request.options());
         return Map.copyOf(options);
-    }
-
-    private void configureThinking(
-            Map<String, Object> body, Map<String, Object> options, AnthropicMessagesDialects.Profile profile) {
-        Object configured = options.get("thinking");
-        if (configured == null) return;
-        String mode = String.valueOf(configured);
-        if ("disabled".equals(mode)) {
-            if (options.containsKey("reasoning_token_budget") || options.containsKey("reasoning_effort")) {
-                throw new IllegalArgumentException("disabled thinking cannot configure budget or effort");
-            }
-            body.put("thinking", Map.of("type", "disabled"));
-            return;
-        }
-        if ("adaptive".equals(mode) && profile == AnthropicMessagesDialects.Profile.ZHIPU) {
-            mode = "enabled";
-        }
-        if (!"enabled".equals(mode)) throw new IllegalArgumentException("Anthropic thinking mode is unsupported");
-        Map<String, Object> thinking = new LinkedHashMap<>();
-        thinking.put("type", "enabled");
-        Object budget = options.get("reasoning_token_budget");
-        if (profile == AnthropicMessagesDialects.Profile.STANDARD) {
-            long value = positiveLong(budget, "reasoning_token_budget");
-            thinking.put("budget_tokens", value);
-        } else if (budget != null) {
-            positiveLong(budget, "reasoning_token_budget");
-        }
-        body.put("thinking", Map.copyOf(thinking));
-        Object effort = options.get("reasoning_effort");
-        if (effort != null) {
-            String value = String.valueOf(effort);
-            List<String> allowed = profile == AnthropicMessagesDialects.Profile.DEEPSEEK
-                            || profile == AnthropicMessagesDialects.Profile.ZHIPU
-                    ? List.of("high", "max")
-                    : List.of("low", "medium", "high", "max");
-            if (!allowed.contains(value))
-                throw new IllegalArgumentException("Anthropic reasoning effort is unsupported");
-            body.put("output_config", Map.of("effort", value));
-        }
-        Object choice = options.get("tool_choice");
-        if (choice != null) {
-            String type = toolChoiceType(toolChoice(choice));
-            if (!"auto".equals(type) && !"none".equals(type)) {
-                throw new IllegalArgumentException("forced Anthropic tool choice is incompatible with thinking");
-            }
-        }
     }
 
     private static long positiveLong(Object value, String field) {
@@ -503,10 +457,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                 .collect(java.util.stream.Collectors.joining("\n\n"));
     }
 
-    private AgentChatResponse parseResponse(
-            AgentChatRequest request, AnthropicMessagesDialects.Profile profile, JsonNode root) {
+    private AgentChatResponse parseResponse(AgentChatRequest request, AnthropicMessagesDialect dialect, JsonNode root) {
         try {
-            return parseResponseValue(request, profile, root);
+            return parseResponseValue(request, dialect, root);
         } catch (ModelInvocationException exception) {
             throw exception;
         } catch (IllegalArgumentException exception) {
@@ -515,13 +468,13 @@ public final class AnthropicMessagesModel implements AgentChatModel {
     }
 
     private AgentChatResponse parseResponseValue(
-            AgentChatRequest request, AnthropicMessagesDialects.Profile profile, JsonNode root) {
+            AgentChatRequest request, AnthropicMessagesDialect dialect, JsonNode root) {
         if (!"message".equals(text(root, "type", true)) || !"assistant".equals(text(root, "role", true))) {
             throw malformed(request, "provider response is not an assistant Message");
         }
         JsonNode content = root.path("content");
         if (!content.isArray()) throw malformed(request, "Anthropic Message content must be an array");
-        ParsedContent parsed = parseContent(request, profile, content);
+        ParsedContent parsed = parseContent(request, dialect, content);
         String stopReason = text(root, "stop_reason", true);
         ModelFinishReason finish = finishReason(request, stopReason, parsed.calls());
         return response(
@@ -534,8 +487,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                 stopReason);
     }
 
-    private ParsedContent parseContent(
-            AgentChatRequest request, AnthropicMessagesDialects.Profile profile, JsonNode values) {
+    private ParsedContent parseContent(AgentChatRequest request, AnthropicMessagesDialect dialect, JsonNode values) {
         StringBuilder text = new StringBuilder();
         List<ModelToolCall> calls = new ArrayList<>();
         List<Map<String, Object>> reasoning = new ArrayList<>();
@@ -556,8 +508,10 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                     reasoning.add(Map.of("type", "thinking", "thinking", thinking, "signature", signature));
                 }
                 case "redacted_thinking" -> {
-                    if (profile == AnthropicMessagesDialects.Profile.DEEPSEEK) {
-                        throw malformed(request, "DeepSeek returned unsupported redacted thinking");
+                    try {
+                        dialect.validateContentBlock("redacted_thinking", block);
+                    } catch (IllegalArgumentException exception) {
+                        throw malformed(request, exception.getMessage());
                     }
                     reasoning.add(Map.of("type", "redacted_thinking", "data", text(block, "data", true)));
                 }
@@ -623,7 +577,8 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         }
     }
 
-    private ModelFinishReason finishReason(AgentChatRequest request, String stopReason, List<ModelToolCall> calls) {
+    private static ModelFinishReason finishReason(
+            AgentChatRequest request, String stopReason, List<ModelToolCall> calls) {
         return switch (stopReason) {
             case "tool_use" -> {
                 if (calls.isEmpty()) throw malformed(request, "tool_use stop reason contains no tool call");
@@ -637,7 +592,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         };
     }
 
-    private ModelUsage usage(AgentChatRequest request, JsonNode usage) {
+    private static ModelUsage usage(AgentChatRequest request, JsonNode usage) {
         if (!usage.isObject()) return ModelUsage.unpriced(0, 0);
         long input = nonNegativeLong(request, usage, "input_tokens");
         long output = nonNegativeLong(request, usage, "output_tokens");
@@ -646,12 +601,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
     }
 
     private AgentChatResponse parseStream(
-            AgentChatRequest request,
-            AnthropicMessagesDialects.Profile profile,
-            InputStream stream,
-            ModelStreamSink sink)
+            AgentChatRequest request, AnthropicMessagesDialect dialect, InputStream stream, ModelStreamSink sink)
             throws IOException {
-        StreamState state = new StreamState(request, profile, sink);
+        StreamState state = new StreamState(request, dialect, sink);
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
             String eventName = "";
             StringBuilder data = new StringBuilder();
@@ -684,7 +636,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
 
     private final class StreamState {
         private final AgentChatRequest request;
-        private final AnthropicMessagesDialects.Profile profile;
+        private final AnthropicMessagesDialect dialect;
         private final ModelStreamSink sink;
         private final Map<Integer, BlockState> blocks = new LinkedHashMap<>();
         private long emittedIndex;
@@ -699,9 +651,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         private long outputTokens;
         private long cacheReadTokens;
 
-        private StreamState(AgentChatRequest request, AnthropicMessagesDialects.Profile profile, ModelStreamSink sink) {
+        private StreamState(AgentChatRequest request, AnthropicMessagesDialect dialect, ModelStreamSink sink) {
             this.request = request;
-            this.profile = profile;
+            this.dialect = dialect;
             this.sink = sink;
         }
 
@@ -758,8 +710,10 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                         case "thinking" ->
                             BlockState.thinking(index, text(block, "thinking", false), text(block, "signature", false));
                         case "redacted_thinking" -> {
-                            if (profile == AnthropicMessagesDialects.Profile.DEEPSEEK) {
-                                throw malformed(request, "DeepSeek returned unsupported redacted thinking");
+                            try {
+                                dialect.validateContentBlock("redacted_thinking", block);
+                            } catch (IllegalArgumentException exception) {
+                                throw malformed(request, exception.getMessage());
                             }
                             yield BlockState.redacted(index, text(block, "data", true));
                         }
@@ -1087,30 +1041,29 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         return value.isEmpty() ? fallback : value;
     }
 
-    private static ModelInvocationException httpFailure(
-            AgentChatRequest request, int status, java.net.http.HttpHeaders headers) {
-        ModelErrorCategory category =
-                switch (status) {
-                    case 400, 413, 422 -> ModelErrorCategory.INVALID_REQUEST;
-                    case 401 -> ModelErrorCategory.AUTHENTICATION_FAILED;
-                    case 403 -> ModelErrorCategory.PERMISSION_DENIED;
-                    case 404 -> ModelErrorCategory.MODEL_NOT_FOUND;
-                    case 408, 504 -> ModelErrorCategory.TIMEOUT;
-                    case 429 -> ModelErrorCategory.RATE_LIMITED;
-                    case 500, 502, 503, 529 -> ModelErrorCategory.SERVER_ERROR;
-                    default -> ModelErrorCategory.UNKNOWN_PROVIDER_ERROR;
-                };
-        boolean retryable = status == 408 || status == 429 || status == 504 || status == 529 || status >= 500;
-        Duration retryAfter = RetryAfterParser.parse(headers, Instant.now()).orElse(null);
+    private ModelInvocationException httpFailure(
+            AgentChatRequest request,
+            AnthropicMessagesDialect dialect,
+            int status,
+            java.net.http.HttpHeaders headers,
+            byte[] body) {
+        JsonNode errorRoot = null;
+        if (body != null && body.length > 0) {
+            try {
+                errorRoot = json.readTree(body);
+            } catch (Exception ignored) {
+            }
+        }
+        DialectErrorMapping mapping = dialect.classifyError(status, headers, body, errorRoot);
         return failure(
                 request,
-                category,
-                retryable,
+                mapping.category(),
+                mapping.retryable(),
                 status,
-                "http_" + status,
-                "model provider rejected the request",
+                mapping.providerCode(),
+                mapping.safeMessage(),
                 null,
-                retryAfter,
+                mapping.retryAfter().orElse(null),
                 false);
     }
 

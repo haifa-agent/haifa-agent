@@ -18,10 +18,12 @@ import org.junit.jupiter.api.Test;
 class DeepSeekAnthropicCompatibilityTest {
     @Test
     void acceptsOnlyExplicitDeepSeekProfilesAtTheCanonicalBindingEndpoint() {
-        assertThat(AnthropicMessagesDialects.resolve(deepSeek("deepseek-v4-flash"), false))
-                .isEqualTo(AnthropicMessagesDialects.Profile.DEEPSEEK);
-        assertThat(AnthropicMessagesDialects.resolve(deepSeek("deepseek-v4-pro"), false))
-                .isEqualTo(AnthropicMessagesDialects.Profile.DEEPSEEK);
+        assertThat(AnthropicMessagesDialects.resolve(deepSeek("deepseek-v4-flash"), false)
+                        .id())
+                .isEqualTo(AnthropicMessagesDialects.DEEPSEEK);
+        assertThat(AnthropicMessagesDialects.resolve(deepSeek("deepseek-v4-pro"), false)
+                        .id())
+                .isEqualTo(AnthropicMessagesDialects.DEEPSEEK);
     }
 
     @Test
@@ -43,12 +45,13 @@ class DeepSeekAnthropicCompatibilityTest {
                 .hasMessageContaining("https://api.deepseek.com/anthropic");
 
         assertThat(AnthropicMessagesDialects.resolve(
-                        snapshot(
-                                "vendor-model",
-                                AnthropicMessagesDialects.STANDARD,
-                                URI.create("https://messages.example.com")),
-                        false))
-                .isEqualTo(AnthropicMessagesDialects.Profile.STANDARD);
+                                snapshot(
+                                        "vendor-model",
+                                        AnthropicMessagesDialects.STANDARD,
+                                        URI.create("https://messages.example.com")),
+                                false)
+                        .id())
+                .isEqualTo(AnthropicMessagesDialects.STANDARD);
     }
 
     @Test
@@ -67,13 +70,14 @@ class DeepSeekAnthropicCompatibilityTest {
     @Test
     void acceptsOnlyGlm52AtTheDocumentedZhipuAnthropicEndpoint() {
         assertThat(AnthropicMessagesDialects.resolve(
-                        snapshot(
-                                "zhipu",
-                                "glm-5.2",
-                                AnthropicMessagesDialects.ZHIPU,
-                                URI.create("https://open.bigmodel.cn/api/anthropic")),
-                        false))
-                .isEqualTo(AnthropicMessagesDialects.Profile.ZHIPU);
+                                snapshot(
+                                        "zhipu",
+                                        "glm-5.2",
+                                        AnthropicMessagesDialects.ZHIPU,
+                                        URI.create("https://open.bigmodel.cn/api/anthropic")),
+                                false)
+                        .id())
+                .isEqualTo(AnthropicMessagesDialects.ZHIPU);
         assertThatThrownBy(() -> AnthropicMessagesDialects.resolve(
                         snapshot(
                                 "zhipu",

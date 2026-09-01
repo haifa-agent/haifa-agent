@@ -1,8 +1,7 @@
 # Google Gemini Integration
 
 Pure Java adapter for the official Gemini `generateContent` protocol. The `standard` binding accepts only Google's
-official HTTPS endpoint and `x-goog-api-key`; the `cliproxyapi-antigravity` dialect accepts only explicitly enabled
-loopback HTTP and a Bearer downstream credential; the `antigravity-direct` dialect accepts the governed CloudCode PA API
+official HTTPS endpoint and `x-goog-api-key`; the `antigravity-direct` dialect accepts the governed CloudCode PA API
 Prod or Daily endpoint (`https://cloudcode-pa.googleapis.com/v1internal` or
 `https://daily-cloudcode-pa.googleapis.com/v1internal`) using direct Google OAuth Bearer credentials and Antigravity
 headers. The Coding Agent local-compatibility catalog defaults to Daily; endpoint choice is frozen per Run and never
@@ -26,8 +25,8 @@ corrupt signatures fail closed even if a gateway would repair them.
 ## Profile factory and admission
 
 `GeminiModelProfileFactory` derives profiles strictly for 4-tuple bindings registered in `GeminiBindingRegistry`:
-- `cliproxyapi-antigravity` + `gemini-3-flash` + `google-gemini-generate-content` + `cliproxyapi-antigravity`
-- `google-antigravity` + `gemini-3-flash` + `google-gemini-generate-content` + `antigravity-direct`
+- `google-antigravity` + `gemini-3.6-flash` + `google-gemini-generate-content` + `antigravity-direct`
+- `google-antigravity` + `gemini-3.7-flash` + `google-gemini-generate-content` + `antigravity-direct`
 
 The `standard` dialect currently lacks independent live compatibility evidence and remains `UNVERIFIED`.
 Unknown `providerModelId` values, unadmitted dialects, or mutated identity dimensions fail closed as `UNVERIFIED`

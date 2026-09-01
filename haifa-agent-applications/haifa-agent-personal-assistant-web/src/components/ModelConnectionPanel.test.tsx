@@ -87,7 +87,7 @@ describe("ModelConnectionPanel", () => {
       startModelBrowserLogin,
     } as unknown as PersonalAssistantClient;
 
-    render(<ModelConnectionPanel client={client} open providerId="cliproxyapi-antigravity" onClose={() => undefined} />);
+    render(<ModelConnectionPanel client={client} open providerId="openai-codex" onClose={() => undefined} />);
 
     const signedIn = await screen.findByRole("button", { name: "已登录" });
     expect((signedIn as HTMLButtonElement).disabled).toBe(true);

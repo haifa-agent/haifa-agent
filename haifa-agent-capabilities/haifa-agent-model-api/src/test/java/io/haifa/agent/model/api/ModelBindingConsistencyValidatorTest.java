@@ -121,9 +121,9 @@ class ModelBindingConsistencyValidatorTest {
     @Test
     void validGeminiUploadOnlyDefinitionAndProfilePassValidation() {
         ModelDefinition definition = createDefinition(
-                "gemini-3-flash",
-                "cliproxyapi-antigravity",
-                "gemini-3-flash",
+                "gemini-3.7-flash",
+                "google-antigravity",
+                "gemini-3.7-flash",
                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
                 Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.IMAGE_UPLOAD_INPUT),
                 1048576,
@@ -131,7 +131,7 @@ class ModelBindingConsistencyValidatorTest {
 
         ImageInputProfile imageInput = ImageInputProfile.standard(Set.of(ModelImageSource.UPLOAD), false);
         ModelBindingProfile profile = ModelBindingProfile.create(
-                new ModelDefinitionId("gemini-3-flash"),
+                new ModelDefinitionId("gemini-3.7-flash"),
                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
                 "2.0",
                 Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.IMAGE_UPLOAD_INPUT),

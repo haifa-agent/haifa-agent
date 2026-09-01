@@ -572,6 +572,7 @@
             <properties>
                 <skipITs>true</skipITs>
                 <skipUnitTests>false</skipUnitTests>
+                <haifa.cli.shade.skip>true</haifa.cli.shade.skip>
             </properties>
             <build>
                 <plugins>

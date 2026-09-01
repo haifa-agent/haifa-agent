@@ -646,7 +646,9 @@ public final class CodingSessionService {
         return codingSessions
                 .findCommandByRunId(run.runId())
                 .map(CodingCommandBinding::message)
-                .or(() -> codingSessions.findFollowUpByDispatchedRunId(run.runId()).map(CodingFollowUp::message))
+                .or(() -> codingSessions
+                        .findFollowUpByDispatchedRunId(run.runId())
+                        .map(CodingFollowUp::message))
                 .map(CodingSessionService::displayName);
     }
 

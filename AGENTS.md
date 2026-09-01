@@ -50,8 +50,10 @@
 - Run 创建时冻结 Definition 版本和不可变配置快照。`AgentRunSnapshot` 是运行视图，`AgentRunResult`
   是最终结果，`AgentRunHandle` 只是便利层。公共 `AgentRunRequest` 不得注入 Tenant、Principal 或快照引用。
 - Tool Call/Result 必须保留关联 ID；有副作用且结果不确定的工具不得盲目自动重放。
-- Thinking/reasoning 必须遵守 `HAIFA-ADR-023` 及当前产品 Binding；原文不得进入公共 DTO、日志、
-  Activity、Admin、测试输出或浏览器。
+- Thinking/reasoning 必须遵守 `HAIFA-ADR-023` 及当前产品 Binding；签名、密文、opaque reference 和
+  `PROTECTED_CONTINUATION` 不得进入公共 DTO、日志、Activity、Admin、测试输出或浏览器。ADR-023 精确矩阵
+  允许 Adapter 从 DeepSeek 可读 CoT 或厂商明确生成的 summary 复制独立 display lane；它必须经精确 Binding 和
+  Contract Test，不能复用、解密、替代或从 display lane 重建 continuation。
 - 测试、异常和日志不得输出 API Key、完整 Prompt、凭据明文或原始供应商响应。
 - 新增依赖前确定归属纯 Java BOM 还是 Spring BOM，并确认没有破坏模块边界。
 
