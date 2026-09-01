@@ -32,7 +32,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
@@ -51,10 +50,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/** Official Gemini generateContent adapter with bounded CLIProxyAPI and direct Antigravity CloudCode PA dialects. */
+/** Official Gemini generateContent adapter with direct Antigravity CloudCode PA dialect. */
 public final class GeminiGenerateContentModel implements AgentChatModel {
     public static final String ADAPTER_VERSION = "1.0.0";
-    public static final String CLIPROXY_CREDENTIAL_REF = "env://HAIFA_CLIPROXYAPI_API_KEY";
     private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private static final int MAX_SSE_LINE_CHARS = 1024 * 1024;
     private static final int MAX_INLINE_MEDIA_BYTES = 12 * 1024 * 1024;
@@ -130,10 +128,10 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
     @Override
     public AgentChatResponse invoke(AgentChatRequest request) {
         Objects.requireNonNull(request, "request must not be null");
-        validateSelection(request);
+        GeminiDialect dialect = validateSelection(request);
         ResolvedCredential credential = resolveCredential(request);
-        byte[] body = serializeRequest(request);
-        HttpRequest httpRequest = requestBuilder(request, credential, false)
+        byte[] body = serializeRequest(request, dialect);
+        HttpRequest httpRequest = dialect.requestBuilder(request, credential, false)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                 .build();
         try {
@@ -153,10 +151,10 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                         null);
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw httpFailure(request, response.statusCode(), responseBody, response.headers());
+                throw httpFailure(request, dialect, response.statusCode(), responseBody, response.headers());
             }
             requireContentType(request, response.headers(), "application/json", response.statusCode());
-            return parseResponse(request, responseBody);
+            return parseResponse(request, dialect, responseBody);
         } catch (HttpTimeoutException exception) {
             throw failure(
                     request, ModelErrorCategory.TIMEOUT, true, 0, "timeout", "model request timed out", exception);
@@ -188,11 +186,11 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
     public AgentChatResponse invokeStreaming(AgentChatRequest request, ModelStreamSink sink) {
         Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(sink, "sink must not be null");
-        validateSelection(request);
+        GeminiDialect dialect = validateSelection(request);
         if (!request.model().nativeStreaming()) return AgentChatModel.super.invokeStreaming(request, sink);
         ResolvedCredential credential = resolveCredential(request);
-        HttpRequest httpRequest = requestBuilder(request, credential, true)
-                .POST(HttpRequest.BodyPublishers.ofByteArray(serializeRequest(request)))
+        HttpRequest httpRequest = dialect.requestBuilder(request, credential, true)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(serializeRequest(request, dialect)))
                 .build();
         boolean outputObserved = false;
         try {
@@ -204,6 +202,7 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                 }
                 throw httpFailure(
                         request,
+                        dialect,
                         response.statusCode(),
                         error.length > maxResponseBytes ? new byte[0] : error,
                         response.headers());
@@ -242,7 +241,20 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                     String data = line.substring(5).trim();
                     if (data.isEmpty() || "[DONE]".equals(data)) continue;
                     JsonNode frame = parseJson(request, data.getBytes(StandardCharsets.UTF_8));
-                    StreamDelta delta = aggregate.accept(providerResponsePayload(request, frame));
+                    JsonNode unwrapped;
+                    try {
+                        unwrapped = dialect.unwrapResponsePayload(request, frame);
+                    } catch (IllegalArgumentException exception) {
+                        throw failure(
+                                request,
+                                ModelErrorCategory.MALFORMED_RESPONSE,
+                                false,
+                                200,
+                                "invalid_antigravity_response_envelope",
+                                exception.getMessage(),
+                                exception);
+                    }
+                    StreamDelta delta = aggregate.accept(unwrapped);
                     if (!delta.text().isEmpty()) {
                         outputObserved = true;
                         if (sink.emit(new ModelStreamEvent.ContentDelta(request.callId(), event++, delta.text()))
@@ -303,37 +315,18 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
         }
     }
 
-    private HttpRequest.Builder requestBuilder(
-            AgentChatRequest request, ResolvedCredential credential, boolean streaming) {
-        HttpRequest.Builder builder = HttpRequest.newBuilder(invocationUri(request, streaming))
-                .timeout(request.timeout())
-                .header("Content-Type", "application/json")
-                .header("Accept", streaming ? "text/event-stream" : "application/json");
-        String secret = validateSecret(credential.value());
-        if (GeminiDialects.CLIPROXYAPI_ANTIGRAVITY.equals(request.model().dialect())) {
-            builder.header("Authorization", "Bearer " + secret);
-        } else if (GeminiDialects.ANTIGRAVITY_DIRECT.equals(request.model().dialect())) {
-            builder.header("Authorization", "Bearer " + secret).header("User-Agent", "Antigravity");
-        } else {
-            builder.header("x-goog-api-key", secret);
-        }
-        return builder;
-    }
-
-    private URI invocationUri(AgentChatRequest request, boolean streaming) {
-        if (GeminiDialects.ANTIGRAVITY_DIRECT.equals(request.model().dialect())) {
-            String suffix = streaming ? ":streamGenerateContent?alt=sse" : ":generateContent";
-            return URI.create(request.model().endpoint().toString() + suffix);
-        }
-        String model = URLEncoder.encode(request.model().providerModelId(), StandardCharsets.UTF_8)
-                .replace("+", "%20");
-        String suffix = "/models/" + model + (streaming ? ":streamGenerateContent?alt=sse" : ":generateContent");
-        return URI.create(request.model().endpoint().toString() + suffix);
-    }
-
-    private byte[] serializeRequest(AgentChatRequest request) {
+    private byte[] serializeRequest(AgentChatRequest request, GeminiDialect dialect) {
         try {
-            return json.writeValueAsBytes(requestBody(request));
+            return json.writeValueAsBytes(requestBody(request, dialect));
+        } catch (DialectValidationException exception) {
+            throw failure(
+                    request,
+                    exception.category(),
+                    false,
+                    0,
+                    exception.providerCode(),
+                    exception.getMessage(),
+                    exception);
         } catch (JsonProcessingException | IllegalArgumentException exception) {
             throw failure(
                     request,
@@ -346,74 +339,9 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
         }
     }
 
-    private Map<String, Object> requestBody(AgentChatRequest request) {
+    private Map<String, Object> requestBody(AgentChatRequest request, GeminiDialect dialect) {
         Map<String, Object> innerBody = buildInnerRequestBody(request);
-        if (GeminiDialects.ANTIGRAVITY_DIRECT.equals(request.model().dialect())) {
-            innerBody.put("sessionId", antigravitySessionId(request));
-            if (innerBody.get("generationConfig") instanceof Map<?, ?> generation) {
-                generation.remove("maxOutputTokens");
-            }
-            Map<String, Object> directBody = new LinkedHashMap<>();
-            String project = resolveProject(request);
-            directBody.put("project", project);
-            directBody.put("model", request.model().providerModelId());
-            directBody.put("userAgent", "antigravity");
-            directBody.put("requestType", "agent");
-            directBody.put("requestId", "agent-" + request.callId().value());
-            directBody.put("request", innerBody);
-            return directBody;
-        }
-        return innerBody;
-    }
-
-    private static String antigravitySessionId(AgentChatRequest request) {
-        long hash = 0xcbf29ce484222325L;
-        String runId = request.runId().value();
-        for (int index = 0; index < runId.length(); index++) {
-            hash ^= runId.charAt(index);
-            hash *= 0x100000001b3L;
-        }
-        return "-" + Long.toUnsignedString(hash & Long.MAX_VALUE);
-    }
-
-    private String resolveProject(AgentChatRequest request) {
-        if (request.options().containsKey("project")
-                || request.model().invocationOptions().containsKey("project")
-                || request.model().providerOptions().containsKey("project")) {
-            throw failure(
-                    request,
-                    ModelErrorCategory.INVALID_REQUEST,
-                    false,
-                    0,
-                    "project_injection_forbidden",
-                    "Antigravity project injection via request or model options is forbidden",
-                    null);
-        }
-        String resolved = trustedProjectResolver
-                .resolveProject(request.model().credentialRef())
-                .orElseThrow(() -> failure(
-                        request,
-                        ModelErrorCategory.AUTHENTICATION_FAILED,
-                        false,
-                        0,
-                        "antigravity_project_unavailable",
-                        "trusted Antigravity project is unavailable for the selected credential",
-                        null));
-        if (resolved == null
-                || resolved.isBlank()
-                || resolved.indexOf('\r') >= 0
-                || resolved.indexOf('\n') >= 0
-                || resolved.indexOf('\0') >= 0) {
-            throw failure(
-                    request,
-                    ModelErrorCategory.AUTHENTICATION_FAILED,
-                    false,
-                    0,
-                    "antigravity_project_invalid",
-                    "trusted Antigravity project is invalid",
-                    null);
-        }
-        return resolved.trim();
+        return dialect.customizeRequestBody(request, innerBody, trustedProjectResolver);
     }
 
     private Map<String, Object> buildInnerRequestBody(AgentChatRequest request) {
@@ -505,9 +433,7 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
         generation.put("maxOutputTokens", request.maxOutputTokens());
         request.structuredOutput().ifPresent(requirement -> addStructuredOutput(generation, requirement));
         body.put("generationConfig", generation);
-        if (GeminiDialects.CLIPROXYAPI_ANTIGRAVITY.equals(request.model().dialect())) {
-            body.put("safetySettings", safetySettings());
-        }
+
         return body;
     }
 
@@ -686,18 +612,6 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
         generation.put("responseJsonSchema", requirement.jsonSchema());
     }
 
-    private static List<Map<String, String>> safetySettings() {
-        return List.of(
-                        "HARM_CATEGORY_HARASSMENT",
-                        "HARM_CATEGORY_HATE_SPEECH",
-                        "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                        "HARM_CATEGORY_DANGEROUS_CONTENT",
-                        "HARM_CATEGORY_CIVIC_INTEGRITY")
-                .stream()
-                .map(category -> Map.of("category", category, "threshold", "BLOCK_MEDIUM_AND_ABOVE"))
-                .toList();
-    }
-
     private static Map<String, Object> content(String role, List<Map<String, Object>> parts) {
         return Map.of("role", role, "parts", parts);
     }
@@ -708,24 +622,22 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                 Map.of("mimeType", mediaType, "data", Base64.getEncoder().encodeToString(bytes)));
     }
 
-    private AgentChatResponse parseResponse(AgentChatRequest request, byte[] body) {
-        JsonNode root = providerResponsePayload(request, parseJson(request, body));
+    private AgentChatResponse parseResponse(AgentChatRequest request, GeminiDialect dialect, byte[] body) {
+        JsonNode root;
+        try {
+            root = dialect.unwrapResponsePayload(request, parseJson(request, body));
+        } catch (DialectValidationException exception) {
+            throw failure(
+                    request,
+                    exception.category(),
+                    false,
+                    200,
+                    exception.providerCode(),
+                    exception.getMessage(),
+                    exception);
+        }
         ParsedCandidate parsed = parseCandidate(request, root, true);
         return response(request, root, parsed);
-    }
-
-    private JsonNode providerResponsePayload(AgentChatRequest request, JsonNode root) {
-        if (!GeminiDialects.ANTIGRAVITY_DIRECT.equals(request.model().dialect())) return root;
-        JsonNode response = root.path("response");
-        if (response.isObject()) return response;
-        throw failure(
-                request,
-                ModelErrorCategory.MALFORMED_RESPONSE,
-                false,
-                200,
-                "invalid_antigravity_response_envelope",
-                "Antigravity response envelope has no response object",
-                null);
     }
 
     private AgentChatResponse response(AgentChatRequest request, JsonNode root, ParsedCandidate parsed) {
@@ -914,7 +826,7 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
         };
     }
 
-    private void validateSelection(AgentChatRequest request) {
+    private GeminiDialect validateSelection(AgentChatRequest request) {
         if (!ModelApiStyles.GOOGLE_GEMINI_ADAPTER.equals(request.model().adapterType())
                 || !ADAPTER_VERSION.equals(request.model().adapterVersion())
                 || !ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(
@@ -928,92 +840,34 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                     "frozen model snapshot requires another adapter binding",
                     null);
         }
-        URI endpoint = request.model().endpoint();
-        String dialect = request.model().dialect();
-        if (GeminiDialects.STANDARD.equals(dialect)) {
-            boolean official = "https".equalsIgnoreCase(endpoint.getScheme())
-                    && "generativelanguage.googleapis.com".equalsIgnoreCase(endpoint.getHost())
-                    && "/v1beta".equals(endpoint.getPath())
-                    && endpoint.getPort() == -1;
-            boolean localStub = allowStandardLoopbackStub
-                    && "http".equalsIgnoreCase(endpoint.getScheme())
-                    && isLoopback(endpoint)
-                    && "/v1beta".equals(endpoint.getPath());
-            if ((!official && !localStub)
-                    || endpoint.getUserInfo() != null
-                    || endpoint.getQuery() != null
-                    || endpoint.getFragment() != null) {
-                throw failure(
-                        request,
-                        ModelErrorCategory.INVALID_REQUEST,
-                        false,
-                        0,
-                        "invalid_standard_endpoint",
-                        "official Gemini binding requires the governed Google HTTPS endpoint",
-                        null);
-            }
-        } else if (GeminiDialects.CLIPROXYAPI_ANTIGRAVITY.equals(dialect)) {
-            if (!allowInsecureLoopback
-                    || !"http".equalsIgnoreCase(endpoint.getScheme())
-                    || !isLoopback(endpoint)
-                    || !"/v1beta".equals(endpoint.getPath())
-                    || endpoint.getUserInfo() != null
-                    || endpoint.getQuery() != null
-                    || endpoint.getFragment() != null
-                    || !CLIPROXY_CREDENTIAL_REF.equals(
-                            request.model().credentialRef().value())) {
-                throw failure(
-                        request,
-                        ModelErrorCategory.INVALID_REQUEST,
-                        false,
-                        0,
-                        "invalid_cliproxy_binding",
-                        "CLIProxyAPI dialect requires the governed loopback endpoint and credential reference",
-                        null);
-            }
-        } else if (GeminiDialects.ANTIGRAVITY_DIRECT.equals(dialect)) {
-            boolean official = isGovernedAntigravityDirectEndpoint(endpoint);
-            boolean localStub = allowStandardLoopbackStub
-                    && "http".equalsIgnoreCase(endpoint.getScheme())
-                    && isLoopback(endpoint)
-                    && "/v1internal".equals(endpoint.getPath());
-            if ((!official && !localStub)
-                    || endpoint.getUserInfo() != null
-                    || endpoint.getQuery() != null
-                    || endpoint.getFragment() != null
-                    || !"model-auth://google-antigravity/default"
-                            .equals(request.model().credentialRef().value())) {
-                throw failure(
-                        request,
-                        ModelErrorCategory.INVALID_REQUEST,
-                        false,
-                        0,
-                        "invalid_antigravity_direct_endpoint",
-                        "official Antigravity direct binding requires the governed CloudCode PA API endpoint",
-                        null);
-            }
-        } else {
+        try {
+            GeminiDialect dialect =
+                    GeminiDialects.resolve(request.model(), allowInsecureLoopback, allowStandardLoopbackStub);
+            dialect.validateRequest(request);
+            return dialect;
+        } catch (DialectValidationException exception) {
+            throw failure(
+                    request,
+                    exception.category(),
+                    false,
+                    0,
+                    exception.providerCode(),
+                    exception.getMessage(),
+                    exception);
+        } catch (IllegalArgumentException exception) {
             throw failure(
                     request,
                     ModelErrorCategory.INVALID_REQUEST,
                     false,
                     0,
                     "unsupported_dialect",
-                    "frozen Gemini dialect is unsupported",
-                    null);
+                    exception.getMessage(),
+                    exception);
         }
     }
 
     static boolean isGovernedAntigravityDirectEndpoint(URI endpoint) {
-        String host = endpoint.getHost();
-        return "https".equalsIgnoreCase(endpoint.getScheme())
-                && host != null
-                && ANTIGRAVITY_DIRECT_HOSTS.contains(host.toLowerCase(Locale.ROOT))
-                && "/v1internal".equals(endpoint.getPath())
-                && endpoint.getPort() == -1
-                && endpoint.getUserInfo() == null
-                && endpoint.getQuery() == null
-                && endpoint.getFragment() == null;
+        return AntigravityDirectGeminiDialect.isGovernedAntigravityDirectEndpoint(endpoint);
     }
 
     private static boolean isLoopback(URI endpoint) {
@@ -1067,70 +921,24 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
     }
 
     private ModelInvocationException httpFailure(
-            AgentChatRequest request, int status, byte[] body, HttpHeaders headers) {
-        ModelErrorCategory category =
-                switch (status) {
-                    case 400 -> ModelErrorCategory.INVALID_REQUEST;
-                    case 401 -> ModelErrorCategory.AUTHENTICATION_FAILED;
-                    case 403 -> ModelErrorCategory.PERMISSION_DENIED;
-                    case 404 -> ModelErrorCategory.MODEL_NOT_FOUND;
-                    case 408 -> ModelErrorCategory.TIMEOUT;
-                    case 429 -> ModelErrorCategory.RATE_LIMITED;
-                    default ->
-                        status >= 500 ? ModelErrorCategory.SERVER_ERROR : ModelErrorCategory.UNKNOWN_PROVIDER_ERROR;
-                };
-        boolean retryable = status == 408 || status == 429 || status >= 500;
-        String code = "http_" + status;
-        try {
-            JsonNode root = json.readTree(body);
-            JsonNode error = root.path("error");
-            if (error.isObject() && !error.path("status").asText().isBlank()) {
-                code = safeCode(error.path("status").asText());
-                JsonNode details = error.path("details");
-                if (details.isArray()) {
-                    for (JsonNode detail : details) {
-                        String reason = detail.path("reason").asText("");
-                        if ("QUOTA_EXHAUSTED".equalsIgnoreCase(reason)
-                                || "INSUFFICIENT_G1_CREDITS_BALANCE".equalsIgnoreCase(reason)) {
-                            code = safeCode(reason);
-                            category = ModelErrorCategory.RATE_LIMITED;
-                            retryable = false;
-                            break;
-                        } else if ("RATE_LIMIT_EXCEEDED".equalsIgnoreCase(reason)) {
-                            code = safeCode(reason);
-                            category = ModelErrorCategory.RATE_LIMITED;
-                            retryable = true;
-                            break;
-                        }
-                    }
-                }
-            } else if (error.isTextual()) {
-                code = "cliproxy_error";
+            AgentChatRequest request, GeminiDialect dialect, int status, byte[] body, HttpHeaders headers) {
+        JsonNode errorRoot = null;
+        if (body != null && body.length > 0) {
+            try {
+                errorRoot = json.readTree(body);
+            } catch (Exception ignored) {
             }
-            if (status == 429 && retryable) {
-                String bodyStr = new String(body, StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
-                if (bodyStr.contains("quota_exhausted")
-                        || bodyStr.contains("quota exhausted")
-                        || bodyStr.contains("insufficient_g1_credits_balance")) {
-                    retryable = false;
-                    category = ModelErrorCategory.RATE_LIMITED;
-                    code = "quota_exhausted";
-                }
-            }
-        } catch (Exception ignored) {
         }
-        Duration retryAfter = headers.firstValue("Retry-After")
-                .flatMap(GeminiGenerateContentModel::parseRetryAfter)
-                .orElse(null);
+        DialectErrorMapping mapping = dialect.classifyError(status, headers, body, errorRoot);
         return failure(
                 request,
-                category,
-                retryable,
+                mapping.category(),
+                mapping.retryable(),
                 status,
-                code,
-                "model provider rejected the request",
+                mapping.providerCode(),
+                mapping.safeMessage(),
                 null,
-                retryAfter,
+                mapping.retryAfter().orElse(null),
                 false);
     }
 

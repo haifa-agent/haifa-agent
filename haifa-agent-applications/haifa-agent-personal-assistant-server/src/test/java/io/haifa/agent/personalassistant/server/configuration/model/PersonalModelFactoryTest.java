@@ -83,7 +83,7 @@ class PersonalModelFactoryTest {
                         List.of(model(
                                 "antigravity-gemini",
                                 "Gemini via Antigravity Direct",
-                                "gemini-3-flash",
+                                "gemini-3.7-flash",
                                 "google-gemini-generate-content"))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("model-auth://google-antigravity/default");

@@ -34,7 +34,6 @@ EXPECTED_SERVER_START_CLASS = (
 BACKEND_LAUNCH_MODES = ("jar", "classpath")
 DEVELOPMENT_CLASSPATH_ENVIRONMENT = "HAIFA_PERSONAL_DEV_CLASSPATH"
 BAILIAN_DEFAULT_MODEL_ID = "qwen3.7-max-2026-05-17"
-CLIPROXY_GEMINI_MODEL_ID = "gemini-cliproxy-flash"
 ANTIGRAVITY_DIRECT_MODEL_ID = "antigravity-gemini"
 SILICONFLOW_MODEL_ID = "siliconflow-deepseek-v4-flash"
 CODEX_MODEL_IDS = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
@@ -60,7 +59,6 @@ SUPPORTED_DEFAULT_MODEL_IDS = (
     "glm-5-chat",
     *CODEX_MODEL_IDS,
     SILICONFLOW_MODEL_ID,
-    CLIPROXY_GEMINI_MODEL_ID,
     ANTIGRAVITY_DIRECT_MODEL_ID,
 )
 ALLOWED_MCP_TOOLS = ",".join(
@@ -190,13 +188,6 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--siliconflow-key-file",
         default=os.getenv("HAIFA_SILICONFLOW_KEY_FILE", str(workspace / "ss-siliconflow.txt")),
-    )
-    result.add_argument(
-        "--cliproxy-config-file",
-        default=os.getenv(
-            "HAIFA_CLIPROXYAPI_CONFIG_FILE",
-            str(software / "CLIProxyAPI-runtime/config.yaml"),
-        ),
     )
     result.add_argument(
         "--aliyun-iqs-key-file",
@@ -491,25 +482,6 @@ def optional_openai_environment(environment: Mapping[str, str] | None = None) ->
     return values["OPENAI_BASE_URL"], values["OPENAI_API_KEY"], values["OPENAI_MODEL_ID"]
 
 
-def optional_cliproxy_environment(
-    environment: Mapping[str, str] | None = None,
-    config_file: str | None = None,
-) -> tuple[str, str] | None:
-    api_key = environment_value("HAIFA_CLIPROXYAPI_API_KEY") if environment is None else environment.get(
-        "HAIFA_CLIPROXYAPI_API_KEY", ""
-    ).strip()
-    if not api_key and config_file:
-        api_key = optional_cliproxy_downstream_key(config_file)
-    if not api_key:
-        return None
-    provider_model_id = (
-        environment_value("HAIFA_CLIPROXYAPI_MODEL_ID")
-        if environment is None
-        else environment.get("HAIFA_CLIPROXYAPI_MODEL_ID", "").strip()
-    ) or "gemini-3-flash"
-    return api_key, provider_model_id
-
-
 def antigravity_configuration(
     environment: Mapping[str, str] | None = None,
 ) -> AntigravityConfiguration:
@@ -520,31 +492,10 @@ def antigravity_configuration(
             "https://daily-cloudcode-pa.googleapis.com/v1internal",
         ).strip()
         or "https://daily-cloudcode-pa.googleapis.com/v1internal",
-        source.get("HAIFA_ANTIGRAVITY_MODEL", "gemini-3-flash").strip() or "gemini-3-flash",
+        source.get("HAIFA_ANTIGRAVITY_MODEL", "gemini-3.7-flash").strip() or "gemini-3.7-flash",
         source.get("HAIFA_ANTIGRAVITY_PROXY_URL", "http://127.0.0.1:2081").strip()
         or "http://127.0.0.1:2081",
     )
-
-
-def optional_cliproxy_downstream_key(value: str) -> str:
-    path = Path(value).expanduser()
-    if not path.exists():
-        return ""
-    if not path.is_file():
-        fail(f"CLIProxyAPI config is not a file: {path}")
-    in_api_keys = False
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        if re.match(r"^api-keys\s*:\s*(?:#.*)?$", raw_line):
-            in_api_keys = True
-            continue
-        if in_api_keys and raw_line and not raw_line[0].isspace():
-            break
-        if not in_api_keys:
-            continue
-        match = re.match(r'^\s*-\s*["\']?(haifa-local-[a-f0-9]+)["\']?\s*(?:#.*)?$', raw_line)
-        if match:
-            return match.group(1)
-    fail(f"CLIProxyAPI config does not contain a supported local downstream API key: {path}")
 
 
 def optional_bailian_configuration(
@@ -920,7 +871,6 @@ def backend_environment(
     tavily_key: str | None = None,
     web_search_provider: str = "tavily",
     web_fetch_provider: str = "tavily",
-    cliproxy: tuple[str, str] | None = None,
     siliconflow_key: str | None = None,
     antigravity: AntigravityConfiguration | None = None,
 ) -> dict[str, str]:
@@ -1313,36 +1263,6 @@ def backend_environment(
             }
         )
         next_provider_index += 1
-    if cliproxy is not None:
-        cliproxy_key, provider_model_id = cliproxy
-        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
-        environment.update(
-            {
-                "HAIFA_CLIPROXYAPI_API_KEY": cliproxy_key,
-                f"{prefix}_ID": "cliproxyapi-antigravity",
-                f"{prefix}_DISPLAYNAME": "Gemini via CLIProxyAPI",
-                f"{prefix}_MODE": "remote",
-                f"{prefix}_ALLOWDETERMINISTIC": "false",
-                f"{prefix}_NATIVESTREAMING": "true",
-                f"{prefix}_ENDPOINT": "http://127.0.0.1:8317/v1beta",
-                f"{prefix}_CREDENTIALREFERENCE": "env://HAIFA_CLIPROXYAPI_API_KEY",
-                f"{prefix}_APIBINDINGS_0_STYLE": "google-gemini-generate-content",
-                f"{prefix}_APIBINDINGS_0_DIALECT": "cliproxyapi-antigravity",
-                f"{prefix}_MODELS_0_ID": CLIPROXY_GEMINI_MODEL_ID,
-                f"{prefix}_MODELS_0_DISPLAYNAME": "Gemini Flash · CLIProxyAPI Antigravity",
-                f"{prefix}_MODELS_0_MODELDISPLAYNAME": "Gemini Flash",
-                f"{prefix}_MODELS_0_PROVIDERMODELID": provider_model_id,
-                f"{prefix}_MODELS_0_STYLE": "google-gemini-generate-content",
-                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
-                f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
-                f"{prefix}_MODELS_0_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-                f"{prefix}_MODELS_0_CAPABILITIES_3": "IMAGE_UPLOAD_INPUT",
-                f"{prefix}_MODELS_0_CAPABILITIES_4": "AUDIO_INPUT",
-                f"{prefix}_MODELS_0_CONTEXTWINDOW": "1048576",
-                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "65536",
-            }
-        )
-        next_provider_index += 1
     if antigravity is not None:
         prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
         environment.update(
@@ -1379,7 +1299,6 @@ def resolve_default_model_id(
     bailian: tuple[str, str, str] | None,
     kimi_key: str | None = None,
     bigmodel_key: str | None = None,
-    cliproxy: tuple[str, str] | None = None,
     siliconflow_key: str | None = None,
     antigravity: AntigravityConfiguration | None = None,
 ) -> str:
@@ -1390,8 +1309,6 @@ def resolve_default_model_id(
         fail("A Kimi default model requires a Kimi API key.")
     if selected.startswith("glm") and bigmodel_key is None:
         fail("A GLM default model requires a BigModel API key.")
-    if selected == CLIPROXY_GEMINI_MODEL_ID and cliproxy is None:
-        fail("The CLIProxyAPI Gemini default model requires HAIFA_CLIPROXYAPI_API_KEY.")
     if selected == SILICONFLOW_MODEL_ID and siliconflow_key is None:
         fail("The SiliconFlow default model requires a SiliconFlow API key.")
     if selected == ANTIGRAVITY_DIRECT_MODEL_ID and antigravity is None:
@@ -1523,14 +1440,12 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     siliconflow_key = optional_secret_file(
         args.siliconflow_key_file, "SiliconFlow", "SILICONFLOW_API_KEY"
     )
-    cliproxy = optional_cliproxy_environment(config_file=args.cliproxy_config_file)
     antigravity = antigravity_configuration()
     default_model_id = resolve_default_model_id(
         args.default_model_id,
         bailian,
         kimi_key,
         bigmodel_key,
-        cliproxy,
         siliconflow_key,
         antigravity,
     )
@@ -1608,7 +1523,6 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         tavily_key,
         args.web_search_provider,
         args.web_fetch_provider,
-        cliproxy=cliproxy,
         siliconflow_key=siliconflow_key,
         antigravity=antigravity,
     )

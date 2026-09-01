@@ -139,3 +139,31 @@ macOS / Linux：
 公共控制逻辑位于 `scripts/java_language_server.py`，只依赖 Python 3 标准库。暂停状态写入被 Git 忽略的
 `local-tmp/java-language-server-control.json`；重复执行 `stop`/`start` 是幂等的。PowerShell 与 Shell
 入口使用相同的小写位置动作和 `--kebab-case` 长参数。
+
+## 代码库统计
+
+`scripts/codebase_stats.py` 提供只读的代码库规模统计，PowerShell 与 Shell 入口原样透传参数：
+
+```powershell
+.\build-support\scripts\codebase-stats.ps1
+.\build-support\scripts\codebase-stats.ps1 modules
+.\build-support\scripts\codebase-stats.ps1 scripts --script-dirs build-support/scripts scripts
+.\build-support\scripts\codebase-stats.ps1 docs
+```
+
+```bash
+./build-support/scripts/codebase-stats.sh
+./build-support/scripts/codebase-stats.sh modules
+./build-support/scripts/codebase-stats.sh docs
+```
+
+动作均为小写位置参数：`stats`（默认，输出全部三部分）、`modules`、`scripts`、`docs`。默认统计：
+
+- Maven 模块总数：从根 POM 沿 `<modules>` 递归发现全部模块（含聚合模块），并分别输出每个模块
+  `src/main` 与 `src/test` 的文件数和行数；
+- 脚本目录 `build-support/scripts`、`scripts`、`test-config/scripts` 中 `.py`/`.sh`/`.ps1`
+  的文件数与行数（可多次传 `--script-dirs` 覆盖默认目录）；
+- `docs/` 的 Markdown 按根目录与一级子目录分组统计文件数、总行数与平均行数。
+
+行数按换行符统计；递归扫描跳过 `.git`、`node_modules`、`target`、`__pycache__` 等生成/依赖目录。
+脚本不修改任何文件，仅读取 POM 与源码做统计。

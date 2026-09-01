@@ -255,8 +255,7 @@ public record ResolvedModelSnapshot(
             return java.util.Optional.empty();
         }
         boolean isGemini = ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(apiStyle)
-                || "google-antigravity".equals(providerId.value())
-                || "cliproxyapi-antigravity".equals(providerId.value());
+                || "google-antigravity".equals(providerId.value());
         return java.util.Optional.of(
                 isGemini
                         ? ImageInputProfile.gemini(sources)

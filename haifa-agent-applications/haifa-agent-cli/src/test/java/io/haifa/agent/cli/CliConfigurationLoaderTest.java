@@ -192,8 +192,7 @@ class CliConfigurationLoaderTest {
                         "deepseek-chat-pro",
                         "deepseek-responses-flash",
                         "deepseek-anthropic-flash",
-                        "local-openai-responses",
-                        "cliproxyapi-gemini");
+                        "local-openai-responses");
         assertThat(result.availableModels())
                 .filteredOn(model -> model.id().equals("gpt-5.6-sol"))
                 .singleElement()
@@ -206,17 +205,6 @@ class CliConfigurationLoaderTest {
                     assertThat(model.dialect()).isEqualTo("openai-codex-responses");
                     assertThat(model.originator()).isEqualTo("pi");
                     assertThat(model.userAgent()).isEqualTo("haifa-agent-local-compat/1");
-                });
-        assertThat(result.availableModels())
-                .filteredOn(model -> model.id().equals("cliproxyapi-gemini"))
-                .singleElement()
-                .satisfies(model -> {
-                    assertThat(model.providerId()).isEqualTo("cliproxyapi-antigravity");
-                    assertThat(model.modelId()).isEqualTo("gemini-3-flash");
-                    assertThat(model.endpoint()).hasToString("http://127.0.0.1:8317/v1beta");
-                    assertThat(model.credentialRef()).isEqualTo("env://HAIFA_CLIPROXYAPI_API_KEY");
-                    assertThat(model.style()).isEqualTo(ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT);
-                    assertThat(model.dialect()).isEqualTo("cliproxyapi-antigravity");
                 });
         CliConfiguration antigravityEnabled = new CliConfigurationLoader(name -> switch (name) {
                     case "HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST" -> "true";

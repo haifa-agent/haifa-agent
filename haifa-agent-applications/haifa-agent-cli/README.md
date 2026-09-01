@@ -106,27 +106,9 @@ credential readiness remains a separate `/account` concern and does not remove m
 originator, user agent, redirect registration, and Client ID remain deployment inputs governed by the OpenAI/Haifa
 contract; the example does not claim an approved production registration.
 
-## Local CLIProxyAPI Antigravity Gemini dialect
+## Google Antigravity Direct Gemini dialect
 
-The packaged static catalog contains `cliproxyapi-gemini`, displayed as **Gemini via Local CLIProxyAPI Antigravity
-Dialect**. It uses the native Gemini `generateContent` protocol at
-`http://127.0.0.1:8317/v1beta`, not the gateway's OpenAI-compatible bridge. Running it requires all of:
-
-```powershell
-$env:HAIFA_MODEL_ID = 'cliproxyapi-gemini'
-$env:HAIFA_CLIPROXYAPI_API_KEY = '<local downstream key>'
-$env:HAIFA_CLIPROXYAPI_ENDPOINT = 'http://127.0.0.1:8317/v1beta'
-$env:HAIFA_CLIPROXYAPI_MODEL = 'gemini-3-flash'
-$env:HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL = 'true'
-```
-
-This is an unofficial personal-development connection. CLIProxyAPI owns Antigravity login and token refresh; Haifa
-does not read its OAuth files, keyring, cookies, or upstream tokens. Only a loopback endpoint and the fixed
-`env://HAIFA_CLIPROXYAPI_API_KEY` reference are accepted. Files, Cache, Batch, Embedding, Live API, Interactions,
-dynamic model discovery, account routing, and fallback remain disabled. The adapter independently enforces the exact
-Tool declaration set and rejects missing/corrupt Thought Signatures even when the gateway would repair them.
-
-The packaged catalog also contains `antigravity-gemini`, but the loader hides it unless
+The packaged catalog contains `antigravity-gemini`, but the loader hides it unless
 `HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true`. Direct login additionally requires externally injected
 `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_ID` and `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_SECRET`; no registration is compiled into the
 distribution. With that registration enabled, the Terminal's `Connect a model` selector includes
