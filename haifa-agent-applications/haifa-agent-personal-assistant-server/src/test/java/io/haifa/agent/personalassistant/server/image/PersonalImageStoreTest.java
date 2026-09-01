@@ -78,6 +78,23 @@ class PersonalImageStoreTest {
                 .hasMessage("animated GIF images are not supported");
     }
 
+    @Test
+    void storesPdfDocumentAndResolvesVerifiedBytes() {
+        var store = new PersonalImageStore(temporaryDirectory);
+        byte[] pdf = "%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
+                .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+
+        var saved = store.save(pdf, "application/pdf", "document.pdf");
+        var reloaded = store.reference(saved.imageId());
+
+        assertThat(saved.storeId()).isEqualTo(PersonalImageStore.STORE_ID);
+        assertThat(saved.originalFilename()).isEqualTo("document.pdf");
+        assertThat(saved.mediaType()).isEqualTo("application/pdf");
+        assertThat(reloaded.sha256()).isEqualTo(saved.sha256());
+        assertThat(store.resolve(saved).bytes()).containsExactly(pdf);
+        assertThat(store.read(saved.imageId()).bytes()).containsExactly(pdf);
+    }
+
     private static int indexOf(byte[] bytes, byte value) {
         for (int index = 0; index < bytes.length; index++) {
             if (bytes[index] == value) return index;

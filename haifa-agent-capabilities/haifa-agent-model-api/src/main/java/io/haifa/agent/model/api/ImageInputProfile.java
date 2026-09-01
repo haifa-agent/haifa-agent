@@ -19,6 +19,8 @@ public record ImageInputProfile(
         Set<ModelImageDetail> allowedDetails) {
 
     public static final Set<String> STANDARD_MEDIA_TYPES = Set.of("image/png", "image/jpeg", "image/webp", "image/gif");
+    public static final Set<String> GEMINI_MEDIA_TYPES =
+            Set.of("image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf");
     public static final int DEFAULT_MAX_IMAGES = 4;
     public static final long DEFAULT_MAX_BYTES_PER_ITEM = 10 * 1024 * 1024L;
     public static final long DEFAULT_MAX_TOTAL_BYTES = 20 * 1024 * 1024L;
@@ -74,7 +76,7 @@ public record ImageInputProfile(
     public static ImageInputProfile gemini(Set<ModelImageSource> sources) {
         return new ImageInputProfile(
                 sources,
-                STANDARD_MEDIA_TYPES,
+                GEMINI_MEDIA_TYPES,
                 DEFAULT_MAX_IMAGES,
                 DEFAULT_MAX_BYTES_PER_ITEM,
                 12 * 1024 * 1024L,

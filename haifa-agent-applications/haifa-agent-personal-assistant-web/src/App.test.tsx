@@ -547,6 +547,104 @@ describe("Personal Assistant application", () => {
     expect(api.createMission).not.toHaveBeenCalled();
   });
 
+  it("submits a message only once when send is triggered twice before React rerenders", async () => {
+    let resolveSubmission: ((value: Conversation) => void) | undefined;
+    const api = {
+      ...client(),
+      submitMessage: vi.fn(() => new Promise<Conversation>((resolve) => {
+        resolveSubmission = resolve;
+      })),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    await screen.findByText("每日计划");
+    const composer = await screen.findByRole("textbox", { name: "给个人助理发送消息" });
+    fireEvent.change(composer, { target: { value: "请帮我整理今天的待办" } });
+    const form = composer.closest("form")!;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+
+    await waitFor(() => expect(api.submitMessage).toHaveBeenCalledTimes(1));
+    await act(async () => resolveSubmission?.(conversation));
+    await waitFor(() => expect((composer as HTMLTextAreaElement).disabled).toBe(false));
+  });
+
+  it("refreshes the conversation and explains an active-run conflict without exposing the raw API error", async () => {
+    const activeConversation = { ...conversation, activeRunId: "run-active" };
+    const activeRun = { ...run, id: "run-active", status: "RUNNING" as const };
+    const api = client();
+    vi.mocked(api.conversation)
+      .mockResolvedValueOnce(conversation)
+      .mockResolvedValue(activeConversation);
+    vi.mocked(api.conversations).mockResolvedValue([activeConversation]);
+    vi.mocked(api.run).mockResolvedValue(activeRun);
+    vi.mocked(api.activities).mockResolvedValue([]);
+    api.streamRun = vi.fn((_runId, _handlers, signal) => new Promise<void>((resolve) => {
+      signal?.addEventListener("abort", resolve, { once: true });
+    }));
+    vi.mocked(api.submitMessage).mockRejectedValue(new PersonalAssistantApiError(
+      409,
+      "CONVERSATION_ACTIVE",
+      "Conversation already has an active run",
+      "835822e67421dbc2",
+    ));
+
+    render(<App client={api} />);
+    await screen.findByText("每日计划");
+    const composer = await screen.findByRole("textbox", { name: "给个人助理发送消息" });
+    fireEvent.change(composer, { target: { value: "继续刚才的任务" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    expect(await screen.findByText("当前会话已有任务在运行，已同步最新状态。请等待任务完成后再发送。")).toBeTruthy();
+    expect(screen.queryByText("Conversation already has an active run")).toBeNull();
+    await waitFor(() => expect((composer as HTMLTextAreaElement).disabled).toBe(true));
+  });
+
+  it("clears unsent PDF and text when the user starts a new conversation", async () => {
+    const pdfModel = {
+      ...model,
+      id: "gemini-3.7-flash",
+      capabilities: ["TEXT_CHAT", "IMAGE_UPLOAD_INPUT"],
+      imageInput: {
+        allowedSources: ["UPLOAD" as const],
+        supportedMediaTypes: ["image/png", "application/pdf"],
+        maxImagesPerRequest: 4,
+        maxBytesPerItem: 10 * 1024 * 1024,
+        maxTotalBytes: 20 * 1024 * 1024,
+        maxUrlCharacters: 2048,
+        detailSupported: false,
+        allowedDetails: [],
+      },
+    };
+    const pdfConversation = { ...conversation, model: { ...conversation.model, model: pdfModel } };
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({ ...bootstrap, defaultModelId: pdfModel.id, models: [pdfModel] });
+    vi.mocked(api.conversations).mockResolvedValue([pdfConversation]);
+    vi.mocked(api.conversation).mockResolvedValue(pdfConversation);
+    api.uploadImage = vi.fn(async () => ({
+      imageId: "44444444-4444-4444-8444-444444444444",
+      mediaType: "application/pdf",
+      sizeBytes: 100,
+      originalFilename: "draft.pdf",
+      sha256: `sha256:${"d".repeat(64)}`,
+    }));
+
+    const { container } = render(<App client={api} />);
+    await screen.findByText("每日计划");
+    const composer = screen.getByRole("textbox", { name: "给个人助理发送消息" });
+    fireEvent.change(composer, { target: { value: "请分析这个 PDF" } });
+    const pdfFile = new File([new TextEncoder().encode("%PDF-1.7")], "draft.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [pdfFile] } });
+    expect(await screen.findByText("draft.pdf")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+
+    expect((composer as HTMLTextAreaElement).value).toBe("");
+    expect(screen.queryByText("draft.pdf")).toBeNull();
+  });
+
   it("keeps an unavailable Deep Research draft cost-free and explains the missing Web capability", async () => {
     const api = {
       ...client(),
@@ -1554,17 +1652,79 @@ describe("Personal Assistant application", () => {
       target: { value: "https://images.example.test/architecture.png" },
     });
     fireEvent.click(within(secondDialog).getByRole("button", { name: "确认添加图片 URL" }));
-    fireEvent.click(screen.getByRole("button", { name: /^分析媒体/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^解释下图片内容/ }));
     expect((screen.getByRole("textbox", { name: "给个人助理发送消息" }) as HTMLTextAreaElement).value)
-      .toBe("请解释这张图片");
+      .toBe("解释下图片内容");
     fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
 
     await waitFor(() => expect(api.submitMessage).toHaveBeenNthCalledWith(
       2,
       imageConversation,
-      "请解释这张图片",
+      "解释下图片内容",
       expect.objectContaining({ idempotencyKey: expect.any(String) }),
       [{ kind: "url", url: "https://images.example.test/architecture.png", imageId: undefined }],
+    ));
+  });
+
+  it("uploads PDF document for Gemini model and provides PDF quick actions", async () => {
+    const geminiPdfModel = {
+      ...model,
+      id: "gemini-3.7-flash",
+      capabilities: ["TEXT_CHAT", "IMAGE_UPLOAD_INPUT"],
+      imageInput: {
+        allowedSources: ["UPLOAD" as const],
+        supportedMediaTypes: ["image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"],
+        maxImagesPerRequest: 4,
+        maxBytesPerItem: 10 * 1024 * 1024,
+        maxTotalBytes: 20 * 1024 * 1024,
+        maxUrlCharacters: 2048,
+        detailSupported: false,
+        allowedDetails: [],
+      },
+    };
+    const pdfConversation = {
+      ...conversation,
+      model: { ...conversation.model, model: geminiPdfModel },
+    };
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({ ...bootstrap, defaultModelId: geminiPdfModel.id, models: [geminiPdfModel] });
+    vi.mocked(api.conversations).mockResolvedValue([pdfConversation]);
+    vi.mocked(api.conversation).mockResolvedValue(pdfConversation);
+    vi.mocked(api.submitMessage).mockResolvedValue(pdfConversation);
+    api.uploadImage = vi.fn(async () => ({
+      imageId: "33333333-3333-4333-8333-333333333333",
+      mediaType: "application/pdf",
+      sizeBytes: 100,
+      originalFilename: "report.pdf",
+      sha256: `sha256:${"c".repeat(64)}`,
+    }));
+    const { container } = render(<App client={api} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "更多功能" }));
+    const menu = screen.getByRole("dialog", { name: "更多功能" });
+    expect(within(menu).getByRole("button", { name: /^上传图片或PDF/ })).toBeTruthy();
+    fireEvent.click(within(menu).getByRole("button", { name: "关闭更多功能" }));
+
+    const pdfFile = new File([new TextEncoder().encode("%PDF-1.7 ...")], "report.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [pdfFile] } });
+    expect(await screen.findByText("report.pdf")).toBeTruthy();
+
+    const outlineAction = screen.getByRole("button", { name: /^请概述下PDF主要内容 观点 证据/ });
+    expect(outlineAction).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^请提取PDF文件内容到markdown/ })).toBeNull();
+
+    fireEvent.click(outlineAction);
+    expect((screen.getByRole("textbox", { name: "给个人助理发送消息" }) as HTMLTextAreaElement).value)
+      .toBe("请概述下PDF主要内容 观点 证据");
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+
+    await waitFor(() => expect(api.submitMessage).toHaveBeenCalledWith(
+      pdfConversation,
+      "请概述下PDF主要内容 观点 证据",
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+      [{ kind: "upload", url: undefined, imageId: "33333333-3333-4333-8333-333333333333" }],
     ));
   });
 

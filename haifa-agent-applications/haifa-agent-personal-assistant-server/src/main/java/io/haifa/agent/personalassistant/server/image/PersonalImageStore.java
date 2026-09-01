@@ -22,7 +22,7 @@ public final class PersonalImageStore implements ModelImageResolver {
     public static final String STORE_ID = "personal-local";
     public static final int MAXIMUM_IMAGE_BYTES = 10 * 1024 * 1024;
     private static final long MAXIMUM_STORE_BYTES = 1024L * 1024 * 1024;
-    private static final List<String> EXTENSIONS = List.of("png", "jpg", "webp", "gif");
+    private static final List<String> EXTENSIONS = List.of("png", "jpg", "webp", "gif", "pdf");
 
     private final Path root;
 
@@ -183,7 +183,8 @@ public final class PersonalImageStore implements ModelImageResolver {
                 return "image/gif";
             }
         }
-        throw new IllegalArgumentException("file content is not a supported image");
+        if (starts(bytes, new int[] {0x25, 0x50, 0x44, 0x46, 0x2d})) return "application/pdf";
+        throw new IllegalArgumentException("file content is not a supported image or document");
     }
 
     private static int gifFrames(byte[] bytes) {
@@ -239,6 +240,7 @@ public final class PersonalImageStore implements ModelImageResolver {
             case "image/jpeg" -> "jpg";
             case "image/webp" -> "webp";
             case "image/gif" -> "gif";
+            case "application/pdf" -> "pdf";
             default -> throw new IllegalArgumentException("unsupported image media type");
         };
     }

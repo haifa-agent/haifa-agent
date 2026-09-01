@@ -1088,6 +1088,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .audio-attachment:hover > button,
 .audio-attachment:focus-within > button { opacity: 1; }
+.explain-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
 .explain-image-action {
   min-height: 24px;
   display: inline-flex;
@@ -1104,6 +1110,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .explain-image-action:hover { background: #e3e9ff; }
 .explain-image-action span { margin-left: 2px; font-size: 14px; }
+.pdf-attachment .pdf-file-icon {
+  color: #dc2626;
+  background: #fef2f2;
+}
+.turn-image-file.turn-pdf-file > div {
+  color: #dc2626;
+  background: #fef2f2;
+}
 .image-attachment-count {
   position: absolute;
   top: 4px;

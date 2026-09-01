@@ -64,11 +64,11 @@ permanent mode switch.
 
 ## Native media composer behavior
 
-For models that declare `IMAGE_UPLOAD_INPUT`, the composer exposes file upload and drag-and-drop. It exposes HTTPS
+For models that declare `IMAGE_UPLOAD_INPUT`, the composer exposes file upload (images and supported documents like PDF) and drag-and-drop. It exposes HTTPS
 image URLs independently for models that declare `IMAGE_URL_INPUT`. Pending images render as compact thumbnails inside the
-composer with a quick `分析媒体` action. Models that declare `AUDIO_INPUT` also accept WAV, MP3,
-AIFF, AAC, OGG Vorbis, and FLAC uploads through the same menu and drag-and-drop surface. Image and
-audio attachments share a maximum of four items per turn. The URL entry can be dismissed with its close button,
+composer with a quick `解释下图片内容` action, while PDF documents render with dedicated document badges and a quick
+`请概述下PDF主要内容 观点 证据` action. Models that declare `AUDIO_INPUT` also accept WAV, MP3,
+AIFF, AAC, OGG Vorbis, and FLAC uploads through the same menu and drag-and-drop surface. Media attachments share a maximum of four items per turn. The URL entry can be dismissed with its close button,
 `Escape`, or an outside pointer action. Attachments belong only to the turn being submitted and
 are cleared after a successful request, so a later turn never silently reuses them.
 

@@ -26,6 +26,8 @@ public final class OpenAiCompatibleModelProfileFactory {
     public static ModelBindingProfile fromSnapshot(ResolvedModelSnapshot snapshot, LocalDate verifiedOn) {
         Optional<AdmittedBindingSpec> admission = findAdmission(snapshot);
         boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
+        ModelIoProfile fallbackIoProfile =
+                snapshot.imageInput().map(ModelIoProfile::withImage).orElseGet(ModelIoProfile::textOnly);
 
         if (admission.isEmpty()) {
             return ModelBindingProfile.create(
@@ -42,7 +44,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                     limits(snapshot),
                     false,
                     streaming(snapshot),
-                    ModelIoProfile.textOnly(),
+                    fallbackIoProfile,
                     ModelProfileStatus.UNVERIFIED,
                     verifiedOn);
         }
