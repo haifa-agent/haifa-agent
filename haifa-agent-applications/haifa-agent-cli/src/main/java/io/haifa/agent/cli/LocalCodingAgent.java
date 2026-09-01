@@ -95,6 +95,8 @@ import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
 import io.haifa.agent.project.provider.local.SensitivePathPolicy;
+import io.haifa.agent.application.project.product.coding.delivery.OnDemandChangeReviewService;
+import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootStrategyDetector;
@@ -523,11 +525,17 @@ final class LocalCodingAgent implements AutoCloseable {
             var changeReviews = new CodingChangeReviewArtifactFactory(
                     changeSets, new LocalCodingChangeContentClassifier(files), 512 * 1024);
             var changeSetService = new FileChangeSetService(changeSets, identifiers, time);
-            LocalWorkspaceRoot mainRoot = LocalWorkspaceRootStrategyDetector.detect(
+            var detector = new LocalWorkspaceRootStrategyDetector();
+            var detection = detector.detect(workspaceRoot);
+            LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.of(
                     WorkspaceRootAlias.MAIN,
                     workspaceRoot,
-                    WorkspaceRootPermission.READ_WRITE);
+                    WorkspaceRootPermission.READ_WRITE,
+                    detection.strategy(),
+                    detection.initialDirty());
             LocalWorkspaceRootRegistry rootRegistry = LocalWorkspaceRootRegistry.singleMain(mainRoot);
+            var sessionLedger = new InMemorySessionChangeLedger();
+            var onDemandReview = new OnDemandChangeReviewService(rootRegistry, sessionLedger);
             var mutations = new LocalWorkspaceMutationService(
                     workspaces,
                     bindings,
@@ -539,7 +547,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     identifiers,
                     time);
             var operations =
-                    new LocalFileToolOperations(workspaces, files, mutations, identifiers, changeSets, rootRegistry);
+                    new LocalFileToolOperations(workspaces, files, mutations, identifiers, changeSets, rootRegistry, sessionLedger);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
             CliExecutionPlatform executionPlatform = executionEnabled

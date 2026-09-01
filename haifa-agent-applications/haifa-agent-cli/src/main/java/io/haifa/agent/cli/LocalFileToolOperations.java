@@ -6,6 +6,9 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.project.changeset.FileChangeSetStatus;
+import io.haifa.agent.project.ledger.SessionChangeLedger;
+import io.haifa.agent.project.ledger.SessionFileChangeRecord;
+import java.time.Instant;
 import io.haifa.agent.project.changeset.FileChangeSetStore;
 import io.haifa.agent.project.filesystem.FileListRequest;
 import io.haifa.agent.project.filesystem.FileType;
@@ -63,13 +66,14 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private final PatchService patchService;
     private final FileChangeSetStore changeSets;
     private final LocalWorkspaceRootRegistry rootRegistry;
+    private final SessionChangeLedger ledger;
 
     LocalFileToolOperations(
             WorkspaceStore workspaces,
             LocalWorkspaceFileService files,
             WorkspaceMutationProvider mutations,
             IdentifierGenerator identifiers) {
-        this(workspaces, files, mutations, identifiers, null, null);
+        this(workspaces, files, mutations, identifiers, null, null, null);
     }
 
     LocalFileToolOperations(
@@ -78,7 +82,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             WorkspaceMutationProvider mutations,
             IdentifierGenerator identifiers,
             FileChangeSetStore changeSets) {
-        this(workspaces, files, mutations, identifiers, changeSets, null);
+        this(workspaces, files, mutations, identifiers, changeSets, null, null);
     }
 
     LocalFileToolOperations(
@@ -88,6 +92,17 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             IdentifierGenerator identifiers,
             FileChangeSetStore changeSets,
             LocalWorkspaceRootRegistry rootRegistry) {
+        this(workspaces, files, mutations, identifiers, changeSets, rootRegistry, null);
+    }
+
+    LocalFileToolOperations(
+            WorkspaceStore workspaces,
+            LocalWorkspaceFileService files,
+            WorkspaceMutationProvider mutations,
+            IdentifierGenerator identifiers,
+            FileChangeSetStore changeSets,
+            LocalWorkspaceRootRegistry rootRegistry,
+            SessionChangeLedger ledger) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.files = Objects.requireNonNull(files, "files must not be null");
         this.mutations = Objects.requireNonNull(mutations, "mutations must not be null");
@@ -97,6 +112,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 this.workspaces, this.files, this.mutations, new PatchValidationService(100, 1_000, 20_000));
         this.changeSets = changeSets;
         this.rootRegistry = rootRegistry;
+        this.ledger = ledger;
     }
 
     @Override
@@ -294,35 +310,63 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     }
 
     private ToolResult create(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
+        String pathStr = string(values, "path");
+        MultiRootPath parsed = LocalMultiRootPathResolver.parse(pathStr);
         WorkspacePath path = path(workspaceId, values, "path", WorkspaceRootPermission.READ_WRITE);
         Workspace workspace = workspace(workspaceId);
+        byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
         var result = mutations.create(new CreateFileRequest(
                 path,
-                string(values, "content").getBytes(StandardCharsets.UTF_8),
+                bytes,
                 MutationPrecondition.absent(workspace.revision()),
                 mutationContext));
+        if (ledger != null) {
+            String hash = files.stat(path, true).contentHash().orElse("");
+            ledger.record(SessionFileChangeRecord.create(
+                    parsed.rootAlias(),
+                    parsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(parsed.relativePath()),
+                    hash,
+                    bytes.length,
+                    Instant.now()));
+        }
         return success(
                 "Created " + path.projectPath(),
                 Map.of("path", path.projectPath().toString()));
     }
 
     private ToolResult write(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
+        String pathStr = string(values, "path");
+        MultiRootPath parsed = LocalMultiRootPathResolver.parse(pathStr);
         WorkspacePath path = path(workspaceId, values, "path", WorkspaceRootPermission.READ_WRITE);
         Workspace workspace = workspace(workspaceId);
         String currentHash = files.stat(path, true)
                 .contentHash()
                 .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+        byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
         var result = mutations.write(new WriteFileRequest(
                 path,
-                string(values, "content").getBytes(StandardCharsets.UTF_8),
+                bytes,
                 MutationPrecondition.existing(workspace.revision(), currentHash),
                 mutationContext));
+        if (ledger != null) {
+            String newHash = files.stat(path, true).contentHash().orElse("");
+            ledger.record(SessionFileChangeRecord.replace(
+                    parsed.rootAlias(),
+                    parsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(parsed.relativePath()),
+                    currentHash,
+                    -1L,
+                    newHash,
+                    bytes.length,
+                    Instant.now()));
+        }
         return success(
                 "Wrote " + path.projectPath(),
                 Map.of("path", path.projectPath().toString()));
     }
 
     private ToolResult delete(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
+        String pathStr = string(values, "path");
+        MultiRootPath parsed = LocalMultiRootPathResolver.parse(pathStr);
         WorkspacePath path = path(workspaceId, values, "path", WorkspaceRootPermission.READ_WRITE);
         Workspace workspace = workspace(workspaceId);
         var fileStat = files.stat(path, true);
@@ -332,8 +376,17 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         String currentHash = fileStat
                 .contentHash()
                 .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+        long currentSize = fileStat.size();
         var result = mutations.delete(new DeleteFileRequest(
                 path, MutationPrecondition.existing(workspace.revision(), currentHash), mutationContext));
+        if (ledger != null) {
+            ledger.record(SessionFileChangeRecord.delete(
+                    parsed.rootAlias(),
+                    parsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(parsed.relativePath()),
+                    currentHash,
+                    currentSize,
+                    Instant.now()));
+        }
         return success(
                 "Deleted " + path.projectPath(),
                 Map.of("path", path.projectPath().toString()));
@@ -372,17 +425,34 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     }
 
     private ToolResult move(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
+        String srcStr = string(values, "source");
+        String dstStr = string(values, "destination");
+        MultiRootPath srcParsed = LocalMultiRootPathResolver.parse(srcStr);
+        MultiRootPath dstParsed = LocalMultiRootPathResolver.parse(dstStr);
         WorkspacePath source = path(workspaceId, values, "source", WorkspaceRootPermission.READ_WRITE);
         WorkspacePath destination = path(workspaceId, values, "destination", WorkspaceRootPermission.READ_WRITE);
         Workspace workspace = workspace(workspaceId);
-        String currentHash = files.stat(source, true)
+        var fileStat = files.stat(source, true);
+        String currentHash = fileStat
                 .contentHash()
                 .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+        long currentSize = fileStat.size();
         var result = mutations.move(new MoveFileRequest(
                 source,
                 destination,
                 MutationPrecondition.existing(workspace.revision(), currentHash),
                 mutationContext));
+        if (ledger != null) {
+            ledger.record(SessionFileChangeRecord.move(
+                    srcParsed.rootAlias(),
+                    srcParsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(srcParsed.relativePath()),
+                    dstParsed.relativePath().isEmpty() ? ProjectPath.root() : ProjectPath.of(dstParsed.relativePath()),
+                    currentHash,
+                    currentSize,
+                    currentHash,
+                    currentSize,
+                    Instant.now()));
+        }
         return success(
                 "Moved " + source.projectPath() + " to " + destination.projectPath(),
                 Map.of("source", source.projectPath().toString(), "destination", destination.projectPath().toString()));
