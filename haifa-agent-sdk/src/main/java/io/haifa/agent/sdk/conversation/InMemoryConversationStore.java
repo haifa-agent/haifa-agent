@@ -157,6 +157,28 @@ public final class InMemoryConversationStore implements ConversationStore {
     }
 
     @Override
+    public synchronized ConversationRecord releasePendingDispatch(
+            AgentSessionId sessionId, String dispatchKey, long expectedRevision, Instant at) {
+        ConversationRecord current = requireConversation(sessionId, expectedRevision);
+        if (current.activeRunId().isPresent()
+                || current.activeDispatchKey().filter(dispatchKey::equals).isEmpty()) {
+            throw conflict("CONVERSATION_DISPATCH_STALE");
+        }
+        return save(new ConversationRecord(
+                current.sessionId(),
+                current.tenant(),
+                current.principal(),
+                current.displayName(),
+                current.status(),
+                Optional.empty(),
+                OptionalLong.empty(),
+                Optional.empty(),
+                current.createdAt(),
+                at,
+                current.revision() + 1));
+    }
+
+    @Override
     public synchronized ConversationRecord clearActive(
             AgentSessionId sessionId, AgentRunId runId, long expectedRevision, Instant at) {
         ConversationRecord current = requireConversation(sessionId, expectedRevision);

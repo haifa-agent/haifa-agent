@@ -8,7 +8,8 @@ import java.util.Set;
 public record StoredImageContentPart(
         String storeId, String imageId, String mediaType, long sizeBytes, String sha256, String originalFilename)
         implements ContentPart {
-    private static final Set<String> MEDIA_TYPES = Set.of("image/png", "image/jpeg", "image/webp", "image/gif");
+    private static final Set<String> MEDIA_TYPES =
+            Set.of("image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf");
 
     public StoredImageContentPart {
         storeId = text(storeId, "storeId", 128);

@@ -199,7 +199,7 @@ class ModelBindingProfileTest {
                 .isEqualTo(
                         "model-binding-profile-v3|gemini-3.7-flash|google-gemini-generate-content|2.0|"
                                 + "[IMAGE_UPLOAD_INPUT, TEXT_CHAT, TOOL_CALLING]|NONE|[DISABLED]|[]|none|1048576|1|65536|false|true|true|false|NON_RETRYABLE|"
-                                + "[IMAGE, TEXT]|[TEXT]|[UPLOAD]|[9:image/gif,10:image/jpeg,9:image/png,10:image/webp]|4|10485760|12582912|2048|false|[]|VERIFIED|2026-08-31");
+                                + "[IMAGE, TEXT]|[TEXT]|[UPLOAD]|[15:application/pdf,9:image/gif,10:image/jpeg,9:image/png,10:image/webp]|4|10485760|12582912|2048|false|[]|VERIFIED|2026-08-31");
     }
 
     @Test

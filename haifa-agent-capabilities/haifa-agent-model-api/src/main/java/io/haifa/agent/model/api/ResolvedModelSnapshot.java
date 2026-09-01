@@ -79,7 +79,27 @@ public record ResolvedModelSnapshot(
                 maxOutputTokens,
                 providerOptions,
                 invocationOptions);
-        if (!expected.equals(configurationDigest)) {
+        if (!expected.equals(configurationDigest)
+                && !legacyDigest(
+                                schemaVersion,
+                                providerId,
+                                providerVersion,
+                                modelId,
+                                modelVersion,
+                                providerModelId,
+                                adapterType,
+                                adapterVersion,
+                                apiStyle,
+                                dialect,
+                                endpoint,
+                                credentialRef,
+                                nativeStreaming,
+                                capabilities,
+                                contextWindow,
+                                maxOutputTokens,
+                                providerOptions,
+                                invocationOptions)
+                        .equals(configurationDigest)) {
             throw new IllegalArgumentException("model snapshot configuration digest does not match frozen fields");
         }
     }
@@ -195,6 +215,11 @@ public record ResolvedModelSnapshot(
     }
 
     /** Returns the frozen image input constraints if image input is active for this model. */
+    public java.util.Optional<ImageInputProfile> imageInput() {
+        return frozenImageInputProfile();
+    }
+
+    /** Returns the frozen image input constraints if image input is active for this model. */
     public java.util.Optional<ImageInputProfile> frozenImageInputProfile() {
         if (invocationOptions.containsKey(EffectiveModelParameters.IMAGE_INPUT_MAX_IMAGES_OPTION)) {
             try {
@@ -292,6 +317,89 @@ public record ResolvedModelSnapshot(
             int maxOutputTokens,
             Map<String, Object> providerOptions,
             Map<String, Object> invocationOptions) {
+        return digest(
+                schemaVersion,
+                providerId,
+                providerVersion,
+                modelId,
+                modelVersion,
+                providerModelId,
+                adapterType,
+                adapterVersion,
+                apiStyle,
+                dialect,
+                endpoint,
+                credentialRef,
+                nativeStreaming,
+                capabilities,
+                contextWindow,
+                maxOutputTokens,
+                providerOptions,
+                invocationOptions,
+                false);
+    }
+
+    private static String legacyDigest(
+            String schemaVersion,
+            ModelProviderId providerId,
+            String providerVersion,
+            ModelDefinitionId modelId,
+            String modelVersion,
+            String providerModelId,
+            String adapterType,
+            String adapterVersion,
+            ApiStyleId apiStyle,
+            String dialect,
+            URI endpoint,
+            CredentialRef credentialRef,
+            boolean nativeStreaming,
+            Set<ModelCapability> capabilities,
+            int contextWindow,
+            int maxOutputTokens,
+            Map<String, Object> providerOptions,
+            Map<String, Object> invocationOptions) {
+        return digest(
+                schemaVersion,
+                providerId,
+                providerVersion,
+                modelId,
+                modelVersion,
+                providerModelId,
+                adapterType,
+                adapterVersion,
+                apiStyle,
+                dialect,
+                endpoint,
+                credentialRef,
+                nativeStreaming,
+                capabilities,
+                contextWindow,
+                maxOutputTokens,
+                providerOptions,
+                invocationOptions,
+                true);
+    }
+
+    private static String digest(
+            String schemaVersion,
+            ModelProviderId providerId,
+            String providerVersion,
+            ModelDefinitionId modelId,
+            String modelVersion,
+            String providerModelId,
+            String adapterType,
+            String adapterVersion,
+            ApiStyleId apiStyle,
+            String dialect,
+            URI endpoint,
+            CredentialRef credentialRef,
+            boolean nativeStreaming,
+            Set<ModelCapability> capabilities,
+            int contextWindow,
+            int maxOutputTokens,
+            Map<String, Object> providerOptions,
+            Map<String, Object> invocationOptions,
+            boolean legacyNumberTypes) {
         String canonical = String.join(
                 "|",
                 schemaVersion,
@@ -310,8 +418,8 @@ public record ResolvedModelSnapshot(
                 capabilities.stream().map(Enum::name).sorted().toList().toString(),
                 Integer.toString(contextWindow),
                 Integer.toString(maxOutputTokens),
-                canonicalMap(providerOptions),
-                canonicalMap(invocationOptions));
+                canonicalMap(providerOptions, legacyNumberTypes),
+                canonicalMap(invocationOptions, legacyNumberTypes));
         return sha256(canonical);
     }
 
@@ -324,17 +432,22 @@ public record ResolvedModelSnapshot(
         }
     }
 
-    private static String canonicalMap(Map<String, Object> values) {
+    private static String canonicalMap(Map<String, Object> values, boolean legacyNumberTypes) {
         List<String> entries = new ArrayList<>();
         values.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> entries.add(entry.getKey() + "=" + canonicalValue(entry.getValue())));
+                .forEach(entry ->
+                        entries.add(entry.getKey() + "=" + canonicalValue(entry.getValue(), legacyNumberTypes)));
         return "{" + String.join(",", entries) + "}";
     }
 
-    private static String canonicalValue(Object value) {
+    private static String canonicalValue(Object value, boolean legacyNumberTypes) {
+        if (value instanceof Number number) {
+            return legacyNumberTypes
+                    ? value.getClass().getName() + ":" + value
+                    : Number.class.getName() + ":" + canonicalNumber(number);
+        }
         if (value instanceof String
-                || value instanceof Number
                 || value instanceof Boolean
                 || value instanceof Enum<?>
                 || value instanceof URI
@@ -345,23 +458,37 @@ public record ResolvedModelSnapshot(
             List<Map.Entry<?, ?>> entries = new ArrayList<>(map.entrySet());
             entries.sort(Comparator.comparing(entry -> String.valueOf(entry.getKey())));
             return entries.stream()
-                    .map(entry -> String.valueOf(entry.getKey()) + "=" + canonicalValue(entry.getValue()))
+                    .map(entry ->
+                            String.valueOf(entry.getKey()) + "=" + canonicalValue(entry.getValue(), legacyNumberTypes))
                     .toList()
                     .toString();
         }
         if (value instanceof Set<?> set) {
             return set.stream()
-                    .map(ResolvedModelSnapshot::canonicalValue)
+                    .map(item -> canonicalValue(item, legacyNumberTypes))
                     .sorted()
                     .toList()
                     .toString();
         }
         if (value instanceof Iterable<?> iterable) {
             List<String> items = new ArrayList<>();
-            iterable.forEach(item -> items.add(canonicalValue(item)));
+            iterable.forEach(item -> items.add(canonicalValue(item, legacyNumberTypes)));
             return items.toString();
         }
         throw new IllegalArgumentException(
                 "unsupported frozen model option type: " + value.getClass().getName());
+    }
+
+    private static String canonicalNumber(Number value) {
+        try {
+            return new java.math.BigDecimal(value.toString())
+                    .stripTrailingZeros()
+                    .toPlainString();
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(
+                    "unsupported frozen model option number: "
+                            + value.getClass().getName(),
+                    exception);
+        }
     }
 }

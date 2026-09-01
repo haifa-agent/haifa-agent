@@ -61,10 +61,18 @@ class InMemoryConversationStoreTest {
         assertThatThrownBy(() -> store.reserveActive(sessionId, reserved.revision(), "dispatch-other", now))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("CONVERSATION_ACTIVE");
-        ConversationRecord active = store.activateRun(sessionId, "dispatch", new AgentRunId("run-1"), 2, now);
+        ConversationRecord released =
+                store.releasePendingDispatch(sessionId, "dispatch", reserved.revision(), now.plusSeconds(1));
+        assertThat(released.activeRunId()).isEmpty();
+        assertThat(released.activeDispatchKey()).isEmpty();
+        ConversationRecord reservedAgain =
+                store.reserveActive(sessionId, released.revision(), "dispatch", now.plusSeconds(2));
+        ConversationRecord active =
+                store.activateRun(sessionId, "dispatch", new AgentRunId("run-1"), 2, now.plusSeconds(3));
         ConversationCommandBinding completed =
                 store.completeCommand("dispatch", Optional.of(new AgentRunId("run-1")), active.revision());
 
+        assertThat(reservedAgain.activeDispatchKey()).contains("dispatch");
         assertThat(completed.completed()).isTrue();
         assertThat(store.findCommand("dispatch")).contains(completed);
         assertThatThrownBy(() -> store.rename(sessionId, 0, "stale", now))

@@ -273,7 +273,7 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertEqual(
             real_environment.AntigravityConfiguration(
                 "https://daily-cloudcode-pa.googleapis.com/v1internal",
-                "gemini-3.7-flash",
+                "gemini-3-flash",
                 "http://127.0.0.1:2081",
             ),
             configuration,
@@ -302,7 +302,7 @@ class RealEnvironmentTest(unittest.TestCase):
             real_environment.ANTIGRAVITY_DIRECT_MODEL_ID,
             environment[f"{prefix}_MODELS_0_ID"],
         )
-        self.assertEqual("gemini-3.7-flash", environment[f"{prefix}_MODELS_0_PROVIDERMODELID"])
+        self.assertEqual("gemini-3-flash", environment[f"{prefix}_MODELS_0_PROVIDERMODELID"])
         self.assertEqual("REASONING", environment[f"{prefix}_MODELS_0_CAPABILITIES_3"])
         self.assertEqual("IMAGE_UPLOAD_INPUT", environment[f"{prefix}_MODELS_0_CAPABILITIES_4"])
         self.assertFalse(any(name.startswith(f"{prefix}_MODELS_1_") for name in environment))

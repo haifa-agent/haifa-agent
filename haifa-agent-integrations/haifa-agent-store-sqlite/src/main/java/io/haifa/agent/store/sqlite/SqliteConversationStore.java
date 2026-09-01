@@ -144,6 +144,16 @@ public final class SqliteConversationStore implements ConversationStore {
     }
 
     @Override
+    public ConversationRecord releasePendingDispatch(
+            AgentSessionId sessionId, String dispatchKey, long expectedRevision, Instant at) {
+        Objects.requireNonNull(dispatchKey, "dispatchKey must not be null");
+        return update(
+                sessionId,
+                mapper -> mapper.releasePendingDispatch(sessionId.value(), dispatchKey, expectedRevision, at),
+                "CONVERSATION_DISPATCH_STALE");
+    }
+
+    @Override
     public ConversationRecord clearActive(
             AgentSessionId sessionId, AgentRunId runId, long expectedRevision, Instant at) {
         Objects.requireNonNull(runId, "runId must not be null");

@@ -22,7 +22,7 @@ class GeminiModelProfileFactoryTest {
     @Test
     void verifiesAllRegisteredGovernedGeminiAdmissions() {
         var admissions = GeminiBindingRegistry.admissions();
-        assertThat(admissions).hasSize(2);
+        assertThat(admissions).hasSize(3);
 
         for (var admission : admissions) {
             ResolvedModelSnapshot reasoningSnapshot = ResolvedModelSnapshot.create(

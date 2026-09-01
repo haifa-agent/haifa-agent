@@ -48,12 +48,18 @@ class SqliteConversationStoreTest {
             ConversationRecord created = store.create(conversation(sessionId));
             ConversationRecord reserved =
                     store.reserveActive(sessionId, created.revision(), "dispatch-1", NOW.plusSeconds(1));
+            ConversationRecord released =
+                    store.releasePendingDispatch(sessionId, "dispatch-1", reserved.revision(), NOW.plusSeconds(2));
+            ConversationRecord reservedAgain =
+                    store.reserveActive(sessionId, released.revision(), "dispatch-1", NOW.plusSeconds(3));
             ConversationRecord active =
-                    store.activateRun(sessionId, "dispatch-1", new AgentRunId("run-1"), 3, NOW.plusSeconds(2));
+                    store.activateRun(sessionId, "dispatch-1", new AgentRunId("run-1"), 3, NOW.plusSeconds(4));
             ConversationCommandBinding completed =
                     store.completeCommand("dispatch-1", Optional.of(new AgentRunId("run-1")), active.revision());
 
             assertThat(reserved.activeDispatchKey()).contains("dispatch-1");
+            assertThat(released.activeDispatchKey()).isEmpty();
+            assertThat(reservedAgain.activeDispatchKey()).contains("dispatch-1");
             assertThat(active.activeRunId()).contains(new AgentRunId("run-1"));
             assertThat(completed.completed()).isTrue();
             assertThat(store.list(TENANT, PRINCIPAL, ConversationQuery.active(10)))
