@@ -153,6 +153,7 @@ class ConversationReconciliationTest {
 
         assertThat(released.activeRunId()).isEmpty();
         assertThat(released.activeDispatchKey()).isEmpty();
-        assertThat(conversations.findCommand(orphanDispatchKey).orElseThrow().completed()).isFalse();
+        assertThat(conversations.findCommand(orphanDispatchKey).orElseThrow().completed())
+                .isFalse();
     }
 }
