@@ -936,9 +936,6 @@ public final class ToolPipeline {
                 event.put("chunkOrRef", executionOutput(data));
                 event.put("truncated", Boolean.TRUE.equals(data.get("truncated")));
                 if (data.get("exitCode") instanceof Number exitCode) event.put("exitCode", exitCode.intValue());
-                if (data.get("fileChangeSetId") instanceof String changeSet) {
-                    event.put("fileChangeSetRef", changeSet);
-                }
                 events.append(
                         run.id(),
                         result.successful()
@@ -949,9 +946,6 @@ public final class ToolPipeline {
                                 },
                         Map.copyOf(event),
                         time.now());
-                if (data.get("fileChangeSetId") instanceof String changeSet) {
-                    appendResource(run, changeSet, "workspace-change-set", "Workspace changes", "AVAILABLE");
-                }
             }
         }
         result.artifacts()

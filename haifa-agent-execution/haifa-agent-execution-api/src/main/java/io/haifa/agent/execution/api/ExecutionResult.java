@@ -12,7 +12,6 @@ public record ExecutionResult(
         Instant endedAt,
         ExecutionOutput stdout,
         ExecutionOutput stderr,
-        String fileChangeSetId,
         String sandboxSessionRef,
         ResourceUsageSummary resourceUsage,
         ExecutionFailure failure,
@@ -27,7 +26,6 @@ public record ExecutionResult(
             Instant endedAt,
             ExecutionOutput stdout,
             ExecutionOutput stderr,
-            String fileChangeSetId,
             String sandboxSessionRef,
             ResourceUsageSummary resourceUsage,
             ExecutionFailure failure,
@@ -40,7 +38,6 @@ public record ExecutionResult(
                 endedAt,
                 stdout,
                 stderr,
-                fileChangeSetId,
                 sandboxSessionRef,
                 resourceUsage,
                 failure,
@@ -65,10 +62,6 @@ public record ExecutionResult(
         return Optional.ofNullable(exitCode);
     }
 
-    public Optional<String> optionalFileChangeSetId() {
-        return Optional.ofNullable(fileChangeSetId);
-    }
-
     public Optional<ExecutionFailure> optionalFailure() {
         return Optional.ofNullable(failure);
     }
@@ -82,7 +75,6 @@ public record ExecutionResult(
                 endedAt,
                 stdout,
                 stderr,
-                fileChangeSetId,
                 sandboxSessionRef,
                 resourceUsage,
                 failure,

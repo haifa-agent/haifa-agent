@@ -526,7 +526,9 @@ final class LocalCodingAgent implements AutoCloseable {
                     WorkspaceRootPermission.READ_WRITE,
                     detection.strategy(),
                     detection.initialDirty());
-            LocalWorkspaceRootRegistry rootRegistry = LocalWorkspaceRootRegistry.singleMain(mainRoot);
+            List<LocalWorkspaceRoot> rootsList = new ArrayList<>();
+            rootsList.add(mainRoot);
+            LocalWorkspaceRootRegistry rootRegistry = LocalWorkspaceRootRegistry.of(rootsList);
             var sessionLedger = new InMemorySessionChangeLedger();
             var onDemandReview = new OnDemandChangeReviewService(rootRegistry, sessionLedger);
             var mutations = new LocalWorkspaceMutationService(

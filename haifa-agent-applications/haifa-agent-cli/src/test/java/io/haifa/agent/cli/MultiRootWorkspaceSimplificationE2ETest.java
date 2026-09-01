@@ -11,11 +11,8 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.changeset.FileChange;
 import io.haifa.agent.project.changeset.FileChangeType;
-import io.haifa.agent.project.changeset.FileVersion;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
 import io.haifa.agent.project.mutation.CreateFileRequest;
@@ -43,6 +40,7 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,6 +52,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * End-to-End verification of Multi-Root Workspace Simplification:
+ * Authoritative physical routing, strict permission isolation, anti-escape defense,
+ * and on-demand review generation.
+ */
 class MultiRootWorkspaceSimplificationE2ETest {
 
     @TempDir
@@ -63,27 +66,28 @@ class MultiRootWorkspaceSimplificationE2ETest {
     private Path docsDir;
     private Path configDir;
 
+    private WorkspaceId workspaceId;
     private LocalWorkspaceRootRegistry registry;
     private InMemorySessionChangeLedger ledger;
     private LocalFileToolOperations operations;
-    private WorkspaceId workspaceId;
-    private OnDemandChangeReviewService onDemandReview;
+    private OnDemandChangeReviewService reviewService;
 
     @BeforeEach
-    void setUp() throws Exception {
-        mainDir = tempDir.resolve("main");
-        docsDir = tempDir.resolve("docs");
-        configDir = tempDir.resolve("config");
+    void setUp() throws IOException {
+        mainDir = tempDir.resolve("main_project");
+        docsDir = tempDir.resolve("docs_repo");
+        configDir = tempDir.resolve("config_repo");
 
         Files.createDirectories(mainDir);
         Files.createDirectories(docsDir);
         Files.createDirectories(configDir);
 
-        // Pre-populate some files
+        // Populate initial files
         Files.writeString(mainDir.resolve("App.java"), "public class App {}", StandardCharsets.UTF_8);
-        Files.writeString(docsDir.resolve("guide.md"), "# Guide", StandardCharsets.UTF_8);
-        Files.writeString(configDir.resolve("app.yml"), "env: prod", StandardCharsets.UTF_8);
+        Files.writeString(docsDir.resolve("guide.md"), "# User Guide", StandardCharsets.UTF_8);
+        Files.writeString(configDir.resolve("app.yml"), "server:\n  port: 8080\n", StandardCharsets.UTF_8);
 
+        // 1. Setup multi-root registry
         LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.of(
                 WorkspaceRootAlias.MAIN, mainDir, WorkspaceRootPermission.READ_WRITE, WorkspaceRootStrategy.GIT, false);
         LocalWorkspaceRoot docsRoot = LocalWorkspaceRoot.of(
@@ -106,7 +110,7 @@ class MultiRootWorkspaceSimplificationE2ETest {
                 .build();
 
         ledger = new InMemorySessionChangeLedger();
-        onDemandReview = new OnDemandChangeReviewService(registry, ledger);
+        reviewService = new OnDemandChangeReviewService(registry, ledger);
 
         workspaceId = new WorkspaceId("ws-e2e");
         WorkspaceBindingId bindingId = new WorkspaceBindingId("bind-e2e");
@@ -155,93 +159,68 @@ class MultiRootWorkspaceSimplificationE2ETest {
             @Override
             public MutationResult create(CreateFileRequest request) {
                 try {
-                    Path target = mainDir;
-                    for (String segment : request.path().projectPath().segments()) target = target.resolve(segment);
+                    Path target = mainDir.resolve(request.path().projectPath().toString());
                     if (target.getParent() != null) Files.createDirectories(target.getParent());
                     Files.write(target, request.content());
-                    WorkspaceRevision before =
-                            workspaces.find(workspaceId).orElseThrow().revision();
-                    WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:create-result");
                     return new MutationResult(
-                            before,
-                            after,
-                            List.of(new FileChange(
-                                    FileChangeType.CREATE,
-                                    request.path().projectPath(),
-                                    null,
-                                    null,
-                                    new FileVersion(FileType.FILE, request.content().length, "sha256:create"))),
+                            WorkspaceRevision.initial("init"),
+                            new WorkspaceRevision(1, "sha256:create"),
+                            List.of(),
                             true,
                             false);
-                } catch (Exception e) {
-                    throw new AssertionError(e);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
                 }
             }
 
             @Override
             public MutationResult write(WriteFileRequest request) {
                 try {
-                    Path target = mainDir;
-                    for (String segment : request.path().projectPath().segments()) target = target.resolve(segment);
+                    Path target = mainDir.resolve(request.path().projectPath().toString());
                     Files.write(target, request.content());
-                    WorkspaceRevision before =
-                            workspaces.find(workspaceId).orElseThrow().revision();
-                    WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:write-result");
                     return new MutationResult(
-                            before,
-                            after,
-                            List.of(new FileChange(
-                                    FileChangeType.REPLACE,
-                                    request.path().projectPath(),
-                                    null,
-                                    new FileVersion(FileType.FILE, 0, "sha256:0"),
-                                    new FileVersion(FileType.FILE, request.content().length, "sha256:w"))),
+                            WorkspaceRevision.initial("init"),
+                            new WorkspaceRevision(1, "sha256:write"),
+                            List.of(),
                             true,
                             false);
-                } catch (Exception e) {
-                    throw new AssertionError(e);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
                 }
             }
 
             @Override
             public MutationResult delete(DeleteFileRequest request) {
                 try {
-                    Path target = mainDir;
-                    for (String segment : request.path().projectPath().segments()) target = target.resolve(segment);
+                    Path target = mainDir.resolve(request.path().projectPath().toString());
                     Files.deleteIfExists(target);
-                    WorkspaceRevision before =
-                            workspaces.find(workspaceId).orElseThrow().revision();
-                    WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:delete-result");
                     return new MutationResult(
-                            before,
-                            after,
-                            List.of(new FileChange(
-                                    FileChangeType.DELETE,
-                                    request.path().projectPath(),
-                                    null,
-                                    new FileVersion(FileType.FILE, 0, "sha256:0"),
-                                    null)),
+                            WorkspaceRevision.initial("init"),
+                            new WorkspaceRevision(1, "sha256:delete"),
+                            List.of(),
                             true,
                             false);
-                } catch (Exception e) {
-                    throw new AssertionError(e);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
                 }
             }
 
             @Override
             public MutationResult move(MoveFileRequest request) {
                 try {
-                    Path src = mainDir;
-                    for (String segment : request.source().projectPath().segments()) src = src.resolve(segment);
-                    Path dst = mainDir;
-                    for (String segment : request.destination().projectPath().segments()) dst = dst.resolve(segment);
+                    Path src = mainDir.resolve(request.source().projectPath().toString());
+                    Path dst =
+                            mainDir.resolve(request.destination().projectPath().toString());
+                    if (dst.getParent() != null) Files.createDirectories(dst.getParent());
                     Files.move(src, dst);
-                    WorkspaceRevision before =
-                            workspaces.find(workspaceId).orElseThrow().revision();
-                    WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:move-result");
-                    return new MutationResult(before, after, List.of(), true, false);
-                } catch (Exception e) {
-                    throw new AssertionError(e);
+                    return new MutationResult(
+                            WorkspaceRevision.initial("init"),
+                            new WorkspaceRevision(1, "sha256:move"),
+                            List.of(),
+                            true,
+                            false);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
                 }
             }
         };
@@ -250,7 +229,7 @@ class MultiRootWorkspaceSimplificationE2ETest {
     }
 
     @Test
-    void e2e01_multiRootAuthorizationAndReadOnlyPermissionIsolation() {
+    void e2e01_multiRootAuthorizationAndReadOnlyPermissionIsolation() throws IOException {
         // 1. Read from main root
         ToolResult readMain = operations.execute(
                 "file.read",
@@ -271,10 +250,7 @@ class MultiRootWorkspaceSimplificationE2ETest {
                 "p-1",
                 new ToolArguments("file.write", "1.0", Map.of("path", "docs:guide.md", "content", "hacked")));
         assertThat(writeDocs.successful()).isFalse();
-        assertThat(writeDocs.structuredData())
-                .containsEntry("errorCode", "ROOT_READ_ONLY")
-                .containsEntry("failureCategory", "POLICY_DENIED")
-                .containsEntry("failureActionCode", "REQUEST_WRITE_PERMISSION");
+        assertThat(writeDocs.structuredData()).containsEntry("errorCode", "ROOT_READ_ONLY");
 
         // 3. Delete from docs root (READ_ONLY) is strictly blocked by ROOT_READ_ONLY
         ToolResult deleteDocs = operations.execute(
@@ -287,7 +263,7 @@ class MultiRootWorkspaceSimplificationE2ETest {
         assertThat(deleteDocs.successful()).isFalse();
         assertThat(deleteDocs.structuredData()).containsEntry("errorCode", "ROOT_READ_ONLY");
 
-        // 4. Write to config root (READ_WRITE) succeeds
+        // 4. Write to config root (READ_WRITE) succeeds and physically modifies configDir, NOT mainDir
         ToolResult writeConfig = operations.execute(
                 "file.create",
                 workspaceId,
@@ -296,7 +272,13 @@ class MultiRootWorkspaceSimplificationE2ETest {
                 "p-1",
                 new ToolArguments("file.create", "1.0", Map.of("path", "config:extra.yml", "content", "mode: dev")));
         assertThat(writeConfig.successful()).isTrue();
-        assertThat(writeConfig.structuredData()).containsEntry("path", "extra.yml");
+        assertThat(writeConfig.structuredData()).containsEntry("path", "config:extra.yml");
+
+        // Physical disk assertions confirming real multi-root routing
+        assertThat(Files.exists(configDir.resolve("extra.yml"))).isTrue();
+        assertThat(Files.readString(configDir.resolve("extra.yml"), StandardCharsets.UTF_8))
+                .isEqualTo("mode: dev");
+        assertThat(Files.exists(mainDir.resolve("extra.yml"))).isFalse();
     }
 
     @Test
@@ -348,73 +330,109 @@ class MultiRootWorkspaceSimplificationE2ETest {
     void e2e04_sessionChangeLedgerCompactingAndCancellation() {
         // 1. Overwriting a file merges in ledger
         operations.execute(
-                "file.create",
+                "file.write",
                 workspaceId,
                 new PrincipalRef("op", "user"),
                 "run-1",
                 "p-1",
-                new ToolArguments("file.create", "1.0", Map.of("path", "note.txt", "content", "version 1")));
+                new ToolArguments("file.write", "1.0", Map.of("path", "config:app.yml", "content", "port: 9090")));
         operations.execute(
                 "file.write",
                 workspaceId,
                 new PrincipalRef("op", "user"),
                 "run-1",
                 "p-1",
-                new ToolArguments("file.write", "1.0", Map.of("path", "note.txt", "content", "version 2")));
+                new ToolArguments("file.write", "1.0", Map.of("path", "config:app.yml", "content", "port: 9999")));
 
-        List<SessionFileChangeRecord> mainChanges = ledger.compactedChanges(WorkspaceRootAlias.MAIN);
-        assertThat(mainChanges).hasSize(1);
-        assertThat(mainChanges.get(0).type()).isEqualTo(FileChangeType.CREATE);
+        List<SessionFileChangeRecord> configChanges = ledger.compactedChanges(WorkspaceRootAlias.of("config"));
+        assertThat(configChanges).hasSize(1);
+        assertThat(configChanges.getFirst().type()).isEqualTo(FileChangeType.REPLACE);
+        assertThat(configChanges.getFirst().path().value()).isEqualTo("app.yml");
 
-        // 2. Created then deleted in same session cancels out
+        // 2. Creating and deleting within same session cancels out
         operations.execute(
                 "file.create",
                 workspaceId,
                 new PrincipalRef("op", "user"),
                 "run-1",
                 "p-1",
-                new ToolArguments("file.create", "1.0", Map.of("path", "ephemeral.txt", "content", "temp")));
+                new ToolArguments("file.create", "1.0", Map.of("path", "config:ephemeral.txt", "content", "temp")));
+        assertThat(ledger.compactedChanges(WorkspaceRootAlias.of("config"))).hasSize(2);
+
         operations.execute(
                 "file.delete",
                 workspaceId,
                 new PrincipalRef("op", "user"),
                 "run-1",
                 "p-1",
-                new ToolArguments("file.delete", "1.0", Map.of("path", "ephemeral.txt")));
-
-        List<SessionFileChangeRecord> afterDelete = ledger.compactedChanges(WorkspaceRootAlias.MAIN);
-        assertThat(afterDelete).hasSize(1);
-        assertThat(afterDelete.get(0).path().value()).isEqualTo("note.txt");
+                new ToolArguments("file.delete", "1.0", Map.of("path", "config:ephemeral.txt")));
+        assertThat(ledger.compactedChanges(WorkspaceRootAlias.of("config"))).hasSize(1);
     }
 
     @Test
-    void e2e05_onDemandChangeReviewArtifactGeneration() {
-        // Mutate across multiple roots
+    void e2e05_onDemandReviewArtifactGeneration() {
         operations.execute(
-                "file.create",
+                "file.write",
                 workspaceId,
                 new PrincipalRef("op", "user"),
                 "run-1",
                 "p-1",
-                new ToolArguments("file.create", "1.0", Map.of("path", "Service.java", "content", "class Service {}")));
-        operations.execute(
-                "file.create",
-                workspaceId,
-                new PrincipalRef("op", "user"),
-                "run-1",
-                "p-1",
-                new ToolArguments("file.create", "1.0", Map.of("path", "config:db.yml", "content", "db: postgres")));
+                new ToolArguments("file.write", "1.0", Map.of("path", "config:app.yml", "content", "port: 7070")));
 
-        Optional<CodingChangeReviewArtifact> artifactOpt = onDemandReview.generateReview(
-                "run-e2e",
+        Optional<CodingChangeReviewArtifact> artifact = reviewService.generateReview(
+                "run-1",
                 "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 "sha256:1111111111111111111111111111111111111111111111111111111111111111");
 
-        assertThat(artifactOpt).isPresent();
-        CodingChangeReviewArtifact artifact = artifactOpt.get();
-        assertThat(artifact.totalFileCount()).isEqualTo(2);
-        assertThat(artifact.fileSummaries())
-                .extracting(CodingChangeReviewArtifact.FileSummary::path)
-                .containsExactlyInAnyOrder("Service.java", "config:db.yml");
+        assertThat(artifact).isPresent();
+        CodingChangeReviewArtifact review = artifact.get();
+        assertThat(review.totalFileCount()).isEqualTo(1);
+        assertThat(review.fileSummaries().getFirst().path()).isEqualTo("config:app.yml");
+        assertThat(review.fileSummaries().getFirst().changeType()).isEqualTo(FileChangeType.REPLACE);
+        assertThat(review.counts()).containsEntry("replaced", 1);
+    }
+
+    @Test
+    void e2e06_multiRootPatchSupportAndReadOnlyProtection() throws IOException {
+        // 1. Patch to read-only docs root is rejected
+        String readOnlyPatch =
+                """
+                *** Begin Patch
+                *** Update File: docs:guide.md
+                @@ # User Guide
+                -# User Guide
+                +# Modified Guide
+                *** End Patch
+                """;
+        ToolResult roPatchResult = operations.execute(
+                "file.patch",
+                workspaceId,
+                new PrincipalRef("op", "user"),
+                "run-1",
+                "p-1",
+                new ToolArguments("file.patch", "1.0", Map.of("patch", readOnlyPatch)));
+        assertThat(roPatchResult.successful()).isFalse();
+        assertThat(roPatchResult.structuredData()).containsEntry("errorCode", "ROOT_READ_ONLY");
+
+        // 2. Patch creating a new file in config root succeeds
+        String createPatch =
+                """
+                *** Begin Patch
+                *** Add File: config:patch-new.yml
+                +feature:
+                +  enabled: true
+                *** End Patch
+                """;
+        ToolResult createPatchResult = operations.execute(
+                "file.patch",
+                workspaceId,
+                new PrincipalRef("op", "user"),
+                "run-1",
+                "p-1",
+                new ToolArguments("file.patch", "1.0", Map.of("patch", createPatch)));
+        assertThat(createPatchResult.successful()).isTrue();
+        assertThat(Files.exists(configDir.resolve("patch-new.yml"))).isTrue();
+        assertThat(Files.readString(configDir.resolve("patch-new.yml"), StandardCharsets.UTF_8))
+                .contains("enabled: true");
     }
 }

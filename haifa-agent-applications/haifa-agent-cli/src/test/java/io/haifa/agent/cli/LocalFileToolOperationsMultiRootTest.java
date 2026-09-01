@@ -218,7 +218,7 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("path", "config:app.yml", "content", "env: prod")));
         assertThat(createRes.successful()).isTrue();
         assertThat(createRes.structuredData())
-                .containsEntry("path", "app.yml")
+                .containsEntry("path", "config:app.yml")
                 .doesNotContainKeys("changeSetId", "quarantineToken", "changeReviewArtifact");
     }
 

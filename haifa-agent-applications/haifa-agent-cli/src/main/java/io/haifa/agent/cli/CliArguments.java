@@ -1,5 +1,6 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.project.root.WorkspaceRootPermission;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -17,9 +18,13 @@ record CliArguments(
         Optional<Duration> timeout,
         Optional<CliTraceMode> trace,
         Optional<Path> traceFile,
+        List<AttachedRootSpec> attachedRoots,
         boolean terminal,
         boolean verbose,
         boolean help) {
+
+    public record AttachedRootSpec(String alias, Path path, WorkspaceRootPermission permission) {}
+
     static CliArguments parse(String[] arguments) {
         Objects.requireNonNull(arguments, "arguments must not be null");
         String message = null;
@@ -36,6 +41,7 @@ record CliArguments(
         boolean resumeCommand = false;
         boolean resumeLast = false;
         boolean promptOnly = false;
+        List<AttachedRootSpec> attachedRoots = new ArrayList<>();
         List<String> resumeValues = new ArrayList<>();
         List<String> values = new ArrayList<>(List.of(arguments));
         for (int index = 0; index < values.size(); index++) {
@@ -56,6 +62,10 @@ record CliArguments(
                 case "--timeout" -> timeout = Duration.parse(requireValue(values, ++index, value));
                 case "--trace" -> trace = CliTraceMode.parse(requireValue(values, ++index, value));
                 case "--trace-file" -> traceFile = Path.of(requireValue(values, ++index, value));
+                case "--attach" -> {
+                    String spec = requireValue(values, ++index, value);
+                    attachedRoots.add(parseAttachedRoot(spec));
+                }
                 case "resume" -> {
                     if (resumeCommand) throw new IllegalArgumentException("resume command may only be specified once");
                     resumeCommand = true;
@@ -102,6 +112,7 @@ record CliArguments(
                 Optional.ofNullable(timeout),
                 Optional.ofNullable(trace),
                 Optional.ofNullable(traceFile),
+                List.copyOf(attachedRoots),
                 terminal,
                 verbose,
                 help);
@@ -130,5 +141,24 @@ record CliArguments(
 
     private static Optional<String> optionalText(String value) {
         return value == null ? Optional.empty() : Optional.of(value.trim()).filter(text -> !text.isEmpty());
+    }
+
+    private static AttachedRootSpec parseAttachedRoot(String spec) {
+        if (spec == null || spec.isBlank()) throw new IllegalArgumentException("--attach argument must not be empty");
+        int eqIdx = spec.indexOf('=');
+        if (eqIdx <= 0)
+            throw new IllegalArgumentException(
+                    "Invalid --attach format, expected <alias>=<path>[:ro|:rw] but got: " + spec);
+        String alias = spec.substring(0, eqIdx).trim();
+        String rest = spec.substring(eqIdx + 1).trim();
+        WorkspaceRootPermission perm = WorkspaceRootPermission.READ_WRITE;
+        if (rest.endsWith(":ro")) {
+            perm = WorkspaceRootPermission.READ_ONLY;
+            rest = rest.substring(0, rest.length() - 3);
+        } else if (rest.endsWith(":rw")) {
+            perm = WorkspaceRootPermission.READ_WRITE;
+            rest = rest.substring(0, rest.length() - 3);
+        }
+        return new AttachedRootSpec(alias, Path.of(rest), perm);
     }
 }

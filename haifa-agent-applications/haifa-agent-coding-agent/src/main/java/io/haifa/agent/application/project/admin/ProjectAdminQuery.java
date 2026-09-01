@@ -135,7 +135,6 @@ public final class ProjectAdminQuery {
                         value.id().value(),
                         value.status().name(),
                         value.exitCode(),
-                        value.optionalFileChangeSetId().orElse(null),
                         value.optionalFailure().map(failure -> failure.code()).orElse(null),
                         value.startedAt(),
                         value.endedAt()));

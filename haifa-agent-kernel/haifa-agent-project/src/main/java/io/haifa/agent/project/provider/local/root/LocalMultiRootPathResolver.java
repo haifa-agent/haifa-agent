@@ -108,11 +108,11 @@ public final class LocalMultiRootPathResolver {
                     "Path escapes root directory boundary: " + path);
         }
 
-        // Check physical real path if existing (symlink / reparse-point defense)
-        if (Files.exists(resolved)) {
-            try {
+        // Check physical real path (symlink / reparse-point defense)
+        try {
+            Path realRoot = hostRoot.toRealPath();
+            if (Files.exists(resolved)) {
                 Path realResolved = resolved.toRealPath();
-                Path realRoot = hostRoot.toRealPath();
                 if (!realResolved.startsWith(realRoot)) {
                     throw new WorkspaceRootException(
                             WorkspaceRootErrorCode.PATH_ESCAPE_FORBIDDEN,
@@ -120,9 +120,26 @@ public final class LocalMultiRootPathResolver {
                             path.relativePath(),
                             "Physical path escapes root directory via symlink/reparse-point: " + path);
                 }
-            } catch (IOException e) {
-                // If real path fails due to IO, we fallback to resolved normalize check
+            } else {
+                // If target does not exist, check nearest existing ancestor to prevent escaping via intermediate
+                // symlink
+                Path current = resolved.getParent();
+                while (current != null && !Files.exists(current)) {
+                    current = current.getParent();
+                }
+                if (current != null && Files.exists(current)) {
+                    Path realAncestor = current.toRealPath();
+                    if (!realAncestor.startsWith(realRoot)) {
+                        throw new WorkspaceRootException(
+                                WorkspaceRootErrorCode.PATH_ESCAPE_FORBIDDEN,
+                                path.rootAlias().value(),
+                                path.relativePath(),
+                                "Ancestor directory escapes root directory via symlink/reparse-point: " + path);
+                    }
+                }
             }
+        } catch (IOException e) {
+            // Fallback to logical normalization check if real path resolution fails
         }
 
         return new ResolvedRootPath(root, path, resolved);

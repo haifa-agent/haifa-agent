@@ -233,7 +233,8 @@ class SqliteSdkPersonalFixtureTest {
             assertThat(startedBySecond.sessionId()).isEqualTo(startedByFirst.sessionId());
             assertThat(startedBySecond.activeRunId()).isEqualTo(startedByFirst.activeRunId());
             waitUntilTerminal(first, startedByFirst.activeRunId().orElseThrow());
-            var idle = first.conversations().find(startedByFirst.sessionId()).orElseThrow();
+            waitUntilTerminal(second, startedByFirst.activeRunId().orElseThrow());
+            var idle = waitUntilIdle(first, startedByFirst.sessionId());
             assertThat(idle.activeRunId()).isEmpty();
 
             CountDownLatch submitGate = new CountDownLatch(1);
@@ -252,7 +253,8 @@ class SqliteSdkPersonalFixtureTest {
             });
             submitGate.countDown();
             List<Object> submitResults = List.of(firstSubmit.get(), secondSubmit.get());
-            assertThat(racingReconciler.get()).isPresent();
+            java.util.Optional<io.haifa.agent.sdk.conversation.ConversationRecord> reconciled = racingReconciler.get();
+            assertThat(reconciled).isPresent();
 
             assertThat(submitResults.stream()
                             .filter(io.haifa.agent.sdk.conversation.ConversationRecord.class::isInstance))
@@ -366,6 +368,16 @@ class SqliteSdkPersonalFixtureTest {
             Thread.sleep(10);
         }
         throw new AssertionError("Run did not become terminal");
+    }
+
+    private static io.haifa.agent.sdk.conversation.ConversationRecord waitUntilIdle(
+            HaifaAgent agent, io.haifa.agent.core.session.AgentSessionId sessionId) throws Exception {
+        for (int attempt = 0; attempt < 200; attempt++) {
+            var conv = agent.conversations().find(sessionId).orElseThrow();
+            if (conv.activeRunId().isEmpty()) return conv;
+            Thread.sleep(10);
+        }
+        throw new AssertionError("Conversation did not become idle");
     }
 
     private static ModelContribution modelContribution() {
