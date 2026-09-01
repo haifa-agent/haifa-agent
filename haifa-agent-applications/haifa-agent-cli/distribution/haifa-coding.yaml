@@ -105,7 +105,7 @@ models:
       models:
         - id: antigravity-gemini
           displayName: Gemini via Antigravity Direct (UNOFFICIAL_LOCAL_COMPAT)
-          providerModelId: ${HAIFA_ANTIGRAVITY_MODEL:gemini-3.7-flash}
+          providerModelId: ${HAIFA_ANTIGRAVITY_MODEL:gemini-3-flash}
           style: google-gemini-generate-content
           capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING, IMAGE_UPLOAD_INPUT]
           contextWindow: 131072

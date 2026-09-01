@@ -46,6 +46,12 @@ public interface SdkConversationMapper {
             @Param("runVersion") long runVersion,
             @Param("at") Instant at);
 
+    int releasePendingDispatch(
+            @Param("sessionId") String sessionId,
+            @Param("dispatchKey") String dispatchKey,
+            @Param("expectedRevision") long expectedRevision,
+            @Param("at") Instant at);
+
     int clearActive(
             @Param("sessionId") String sessionId,
             @Param("runId") String runId,

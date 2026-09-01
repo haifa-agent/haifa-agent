@@ -220,6 +220,7 @@ class CliConfigurationLoaderTest {
                 .singleElement()
                 .satisfies(model -> {
                     assertThat(model.providerId()).isEqualTo("google-antigravity");
+                    assertThat(model.modelId()).isEqualTo("gemini-3-flash");
                     assertThat(model.endpoint()).hasToString("https://daily-cloudcode-pa.googleapis.com/v1internal");
                     assertThat(model.credentialRef()).isEqualTo("model-auth://google-antigravity/default");
                     assertThat(model.dialect()).isEqualTo("antigravity-direct");

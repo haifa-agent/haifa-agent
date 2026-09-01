@@ -348,7 +348,7 @@ public final class DefaultConversationService implements ConversationService {
         ConversationCommandBinding binding =
                 conversations.findCommand(dispatchKey).orElse(null);
         if (binding == null || !binding.sessionId().equals(conversation.sessionId())) {
-            return conversation;
+            return releasePendingDispatch(conversation, dispatchKey);
         }
         Optional<io.haifa.agent.core.run.AgentRunId> recovered = binding.runId();
         if (recovered.isEmpty()) {
@@ -359,7 +359,7 @@ public final class DefaultConversationService implements ConversationService {
                     + conversation.principal().principalId();
             recovered = persistence.runtimePersistence().idempotency().findRun(runtimeScope, "start", dispatchKey);
         }
-        if (recovered.isEmpty()) return conversation;
+        if (recovered.isEmpty()) return releasePendingDispatch(conversation, dispatchKey);
         AgentRunSnapshot snapshot = runtime.find(recovered.orElseThrow()).orElse(null);
         if (snapshot == null) return conversation;
         ConversationRecord pending = conversation;
@@ -372,6 +372,15 @@ public final class DefaultConversationService implements ConversationService {
             });
         } catch (IllegalStateException stale) {
             return conversations.find(pending.sessionId()).orElseThrow();
+        }
+    }
+
+    private ConversationRecord releasePendingDispatch(ConversationRecord conversation, String dispatchKey) {
+        try {
+            return persistence.inTransaction(() -> conversations.releasePendingDispatch(
+                    conversation.sessionId(), dispatchKey, conversation.revision(), time.now()));
+        } catch (IllegalStateException stale) {
+            return conversations.find(conversation.sessionId()).orElseThrow();
         }
     }
 

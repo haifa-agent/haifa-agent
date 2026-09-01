@@ -86,6 +86,13 @@ final class GeminiBindingRegistry {
                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
                 GeminiDialects.ANTIGRAVITY_DIRECT);
 
+        // gemini-3-flash (verified on Antigravity Daily; supports hybrid thinking, low/medium/high effort)
+        var direct3Key = new AdmissionKey(
+                "google-antigravity",
+                "gemini-3-flash",
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                GeminiDialects.ANTIGRAVITY_DIRECT);
+
         // gemini-3.7-flash (supports hybrid thinking, low/medium/high effort)
         var direct37Key = new AdmissionKey(
                 "google-antigravity",
@@ -104,6 +111,9 @@ final class GeminiBindingRegistry {
                                 modes,
                                 Set.of(ModelReasoningEffort.HIGH),
                                 geminiIoProfile),
+                direct3Key,
+                        new AdmittedBinding(
+                                direct3Key, ModelReasoningBehavior.OPTIONAL, modes, efforts37, geminiIoProfile),
                 direct37Key,
                         new AdmittedBinding(
                                 direct37Key, ModelReasoningBehavior.OPTIONAL, modes, efforts37, geminiIoProfile));

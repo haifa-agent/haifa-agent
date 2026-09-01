@@ -492,7 +492,7 @@ def antigravity_configuration(
             "https://daily-cloudcode-pa.googleapis.com/v1internal",
         ).strip()
         or "https://daily-cloudcode-pa.googleapis.com/v1internal",
-        source.get("HAIFA_ANTIGRAVITY_MODEL", "gemini-3.7-flash").strip() or "gemini-3.7-flash",
+        source.get("HAIFA_ANTIGRAVITY_MODEL", "gemini-3-flash").strip() or "gemini-3-flash",
         source.get("HAIFA_ANTIGRAVITY_PROXY_URL", "http://127.0.0.1:2081").strip()
         or "http://127.0.0.1:2081",
     )
