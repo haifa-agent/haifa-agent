@@ -29,7 +29,7 @@ class PersonalAssistantConfigurationTest {
                         "antigravity-gemini",
                         "Gemini via Antigravity Direct",
                         "Gemini Flash",
-                        "gemini-3-flash",
+                        "gemini-3.7-flash",
                         "google-gemini-generate-content",
                         Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
                         ModelReasoningMode.DISABLED,

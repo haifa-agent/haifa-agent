@@ -85,20 +85,19 @@ class GeminiGenerateContentModelTest {
     }
 
     @Test
-    void dialectSendsBearerExactToolAllowlistAndExplicitSafety() throws Exception {
+    void standardSendsApiKeyAndExactToolAllowlist() throws Exception {
         AtomicReference<HttpExchange> exchange = new AtomicReference<>();
         AtomicReference<JsonNode> requestBody = new AtomicReference<>();
         start(exchange, requestBody, List.of(Response.json(200, toolResponse(true))));
 
         var response = model(true)
                 .invoke(request(
-                        dialectSnapshot(),
+                        standardSnapshot(),
                         List.of(ModelMessage.text(ModelMessageRole.USER, "use tool")),
                         List.of(tool("get_alpha"))));
 
-        assertThat(exchange.get().getRequestHeaders().getFirst("Authorization")).isEqualTo("Bearer secret-value");
         assertThat(exchange.get().getRequestHeaders().getFirst("x-goog-api-key"))
-                .isNull();
+                .isEqualTo("secret-value");
         assertThat(requestBody
                         .get()
                         .path("toolConfig")
@@ -107,7 +106,6 @@ class GeminiGenerateContentModelTest {
                         .get(0)
                         .asText())
                 .isEqualTo("get_alpha");
-        assertThat(requestBody.get().path("safetySettings")).hasSize(5);
         assertThat(response.toolCalls()).hasSize(1);
         assertThat(response.reasoning()).isPresent();
         assertThat(response.reasoning().orElseThrow().toString()).doesNotContain("signature-secret");
@@ -225,7 +223,7 @@ class GeminiGenerateContentModelTest {
 
         var response = model(true)
                 .invoke(request(
-                        dialectSnapshot(),
+                        standardSnapshot(),
                         List.of(ModelMessage.user(
                                 "inspect media",
                                 List.of(new ImageDataPart("image/png", image)),
@@ -258,7 +256,7 @@ class GeminiGenerateContentModelTest {
                         new io.haifa.agent.core.run.AgentRunId("run-url"),
                         1,
                         1,
-                        dialectSnapshot(),
+                        standardSnapshot(),
                         List.of(message),
                         List.of(),
                         1024,
@@ -277,9 +275,9 @@ class GeminiGenerateContentModelTest {
                 ModelApiStyles.GOOGLE_GEMINI_ADAPTER,
                 GeminiGenerateContentModel.ADAPTER_VERSION,
                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
-                GeminiDialects.CLIPROXYAPI_ANTIGRAVITY,
+                GeminiDialects.STANDARD,
                 URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1beta"),
-                new CredentialRef(GeminiGenerateContentModel.CLIPROXY_CREDENTIAL_REF),
+                new CredentialRef("env://GEMINI_API_KEY"),
                 true,
                 java.util.Set.of(
                         ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.IMAGE_URL_INPUT),
@@ -304,7 +302,7 @@ class GeminiGenerateContentModelTest {
         start(exchange, requestBody, responses);
         var model = model(true);
         var first = model.invoke(request(
-                dialectSnapshot(),
+                standardSnapshot(),
                 List.of(ModelMessage.text(ModelMessageRole.USER, "use tool")),
                 List.of(tool("get_alpha"))));
         var firstCall = first.toolCalls().getFirst();
@@ -316,7 +314,7 @@ class GeminiGenerateContentModelTest {
                 first.toolCalls().getFirst().providerCorrelationId(), "ok", Map.of("value", 7), false);
 
         var second = model.invoke(request(
-                dialectSnapshot(),
+                standardSnapshot(),
                 List.of(ModelMessage.text(ModelMessageRole.USER, "use tool"), assistant, toolResult),
                 List.of(tool("get_alpha"))));
 
@@ -336,7 +334,7 @@ class GeminiGenerateContentModelTest {
 
         assertThatThrownBy(() -> model(true)
                         .invoke(request(
-                                dialectSnapshot(),
+                                standardSnapshot(),
                                 List.of(ModelMessage.text(ModelMessageRole.USER, "use tool")),
                                 List.of(tool("get_alpha")))))
                 .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
@@ -350,7 +348,9 @@ class GeminiGenerateContentModelTest {
         start(new AtomicReference<>(), new AtomicReference<>(), List.of(Response.json(200, "")));
         assertThatThrownBy(() -> model(true)
                         .invoke(request(
-                                dialectSnapshot(), List.of(ModelMessage.text(ModelMessageRole.USER, "hi")), List.of())))
+                                standardSnapshot(),
+                                List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                                List.of())))
                 .isInstanceOfSatisfying(ModelInvocationException.class, failure -> assertThat(failure.category())
                         .isEqualTo(ModelErrorCategory.MALFORMED_RESPONSE));
     }
@@ -549,11 +549,13 @@ class GeminiGenerateContentModelTest {
     @Test
     void rejectsUnapprovedDialectCredentialReferenceBeforeNetwork() {
         ResolvedModelSnapshot invalid = snapshot(
-                GeminiDialects.CLIPROXYAPI_ANTIGRAVITY, URI.create("http://127.0.0.1:8317/v1beta"), "env://OTHER");
+                GeminiDialects.ANTIGRAVITY_DIRECT,
+                URI.create("https://daily-cloudcode-pa.googleapis.com/v1internal"),
+                "env://OTHER");
         assertThatThrownBy(() -> model(true)
                         .invoke(request(invalid, List.of(ModelMessage.text(ModelMessageRole.USER, "hi")), List.of())))
                 .isInstanceOfSatisfying(ModelInvocationException.class, failure -> assertThat(failure.providerCode())
-                        .isEqualTo("invalid_cliproxy_binding"));
+                        .isEqualTo("invalid_antigravity_binding"));
     }
 
     @Test
@@ -566,7 +568,7 @@ class GeminiGenerateContentModelTest {
 
         var response = model(true)
                 .invokeStreaming(
-                        request(dialectSnapshot(), List.of(ModelMessage.text(ModelMessageRole.USER, "hi")), List.of()),
+                        request(standardSnapshot(), List.of(ModelMessage.text(ModelMessageRole.USER, "hi")), List.of()),
                         event -> {
                             events.add(event);
                             return ModelStreamControl.CONTINUE;
@@ -609,13 +611,15 @@ class GeminiGenerateContentModelTest {
                 .hasSize(2);
     }
 
-    private GeminiGenerateContentModel model(boolean allowLoopback) {
+    private GeminiGenerateContentModel model(boolean allowStandardLoopbackStub) {
         return new GeminiGenerateContentModel(
                 HttpClient.newHttpClient(),
                 json,
                 ignored -> new ResolvedCredential("secret-value"),
-                allowLoopback,
-                1024 * 1024);
+                false,
+                1024 * 1024,
+                allowStandardLoopbackStub,
+                ref -> java.util.Optional.of("my-custom-project"));
     }
 
     @Test
@@ -737,14 +741,6 @@ class GeminiGenerateContentModelTest {
         int port = server == null ? 8080 : server.getAddress().getPort();
         return snapshot(
                 GeminiDialects.STANDARD, URI.create("http://127.0.0.1:" + port + "/v1beta"), "env://GEMINI_API_KEY");
-    }
-
-    private ResolvedModelSnapshot dialectSnapshot() {
-        int port = server == null ? 8080 : server.getAddress().getPort();
-        return snapshot(
-                GeminiDialects.CLIPROXYAPI_ANTIGRAVITY,
-                URI.create("http://127.0.0.1:" + port + "/v1beta"),
-                GeminiGenerateContentModel.CLIPROXY_CREDENTIAL_REF);
     }
 
     private ResolvedModelSnapshot antigravityDirectSnapshot() {

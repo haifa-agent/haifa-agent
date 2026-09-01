@@ -400,6 +400,7 @@ class ProjectPersistenceAssemblyTest {
 
             assertThat(retried.summary().sessionId()).isEqualTo(sessionId);
             assertThat(retried.activeRun().orElseThrow().runId()).isEqualTo(firstRunId);
+            assertThat(retried.activeRunTaskSummary()).contains("inspect the project");
             assertThat(coding.listSessions(fixture.projectId, CodingSessionQuery.firstPage(10))
                             .items())
                     .extracting(value -> value.sessionId())
@@ -423,6 +424,7 @@ class ProjectPersistenceAssemblyTest {
             var reconciled = coding.reconcileSession(sessionId);
             assertThat(reconciled.activeRun()).isPresent();
             assertThat(reconciled.activeRun().orElseThrow().runId()).isNotEqualTo(firstRunId);
+            assertThat(reconciled.activeRunTaskSummary()).contains("then update the docs");
             assertThat(reconciled.summary().queuedCount()).isZero();
 
             RuntimeCommandResult aborted = coding.abortActiveRun(sessionId, "abort-key");

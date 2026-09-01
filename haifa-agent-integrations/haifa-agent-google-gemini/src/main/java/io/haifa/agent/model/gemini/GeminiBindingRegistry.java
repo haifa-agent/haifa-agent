@@ -1,9 +1,18 @@
 package io.haifa.agent.model.gemini;
 
 import io.haifa.agent.model.api.ApiStyleId;
+import io.haifa.agent.model.api.ImageInputProfile;
 import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelImageSource;
+import io.haifa.agent.model.api.ModelIoProfile;
+import io.haifa.agent.model.api.ModelReasoningBehavior;
+import io.haifa.agent.model.api.ModelReasoningEffort;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import java.util.Collection;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -20,29 +29,37 @@ final class GeminiBindingRegistry {
         }
     }
 
-    record AdmittedBinding(AdmissionKey key, io.haifa.agent.model.api.ModelIoProfile ioProfile) {
+    record AdmittedBinding(
+            AdmissionKey key,
+            ModelReasoningBehavior reasoningBehavior,
+            Set<ModelReasoningMode> allowedReasoningModes,
+            Set<ModelReasoningEffort> allowedReasoningEfforts,
+            ModelIoProfile ioProfile) {
         AdmittedBinding {
             Objects.requireNonNull(key, "key must not be null");
-            ioProfile = Objects.requireNonNullElse(ioProfile, io.haifa.agent.model.api.ModelIoProfile.textOnly());
+            reasoningBehavior = Objects.requireNonNullElse(reasoningBehavior, ModelReasoningBehavior.NONE);
+            allowedReasoningModes =
+                    Objects.requireNonNullElse(allowedReasoningModes, Set.of(ModelReasoningMode.DISABLED));
+            allowedReasoningEfforts = Objects.requireNonNullElse(allowedReasoningEfforts, Set.of());
+            ioProfile = Objects.requireNonNullElse(ioProfile, ModelIoProfile.textOnly());
         }
     }
 
-    private static final java.util.Map<AdmissionKey, AdmittedBinding> ADMISSIONS = buildAdmissions();
+    private static final Map<AdmissionKey, AdmittedBinding> ADMISSIONS = buildAdmissions();
 
     private GeminiBindingRegistry() {}
 
-    static java.util.Optional<AdmittedBinding> find(
+    static Optional<AdmittedBinding> find(
             String providerId, String providerModelId, ApiStyleId apiStyle, String dialect) {
         if (providerId == null || providerModelId == null || apiStyle == null || dialect == null) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
-        return java.util.Optional.ofNullable(
-                ADMISSIONS.get(new AdmissionKey(providerId, providerModelId, apiStyle, dialect)));
+        return Optional.ofNullable(ADMISSIONS.get(new AdmissionKey(providerId, providerModelId, apiStyle, dialect)));
     }
 
-    static java.util.Optional<AdmittedBinding> find(ResolvedModelSnapshot snapshot) {
+    static Optional<AdmittedBinding> find(ResolvedModelSnapshot snapshot) {
         if (snapshot == null || snapshot.providerId() == null) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         return find(snapshot.providerId().value(), snapshot.providerModelId(), snapshot.apiStyle(), snapshot.dialect());
     }
@@ -55,26 +72,40 @@ final class GeminiBindingRegistry {
         return find(snapshot).isPresent();
     }
 
-    static java.util.Collection<AdmittedBinding> admissions() {
+    static Collection<AdmittedBinding> admissions() {
         return ADMISSIONS.values();
     }
 
-    private static java.util.Map<AdmissionKey, AdmittedBinding> buildAdmissions() {
-        var geminiIoProfile =
-                io.haifa.agent.model.api.ModelIoProfile.withImage(io.haifa.agent.model.api.ImageInputProfile.gemini(
-                        Set.of(io.haifa.agent.model.api.ModelImageSource.UPLOAD)));
-        var keyCliproxy = new AdmissionKey(
-                "cliproxyapi-antigravity",
-                "gemini-3-flash",
-                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
-                GeminiDialects.CLIPROXYAPI_ANTIGRAVITY);
-        var keyDirect = new AdmissionKey(
+    private static Map<AdmissionKey, AdmittedBinding> buildAdmissions() {
+        var geminiIoProfile = ModelIoProfile.withImage(ImageInputProfile.gemini(Set.of(ModelImageSource.UPLOAD)));
+
+        // gemini-3.6-flash (supports thinking, high effort)
+        var direct36Key = new AdmissionKey(
                 "google-antigravity",
-                "gemini-3-flash",
+                "gemini-3.6-flash",
                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
                 GeminiDialects.ANTIGRAVITY_DIRECT);
-        return java.util.Map.of(
-                keyCliproxy, new AdmittedBinding(keyCliproxy, geminiIoProfile),
-                keyDirect, new AdmittedBinding(keyDirect, geminiIoProfile));
+
+        // gemini-3.7-flash (supports hybrid thinking, low/medium/high effort)
+        var direct37Key = new AdmissionKey(
+                "google-antigravity",
+                "gemini-3.7-flash",
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                GeminiDialects.ANTIGRAVITY_DIRECT);
+
+        var efforts37 = Set.of(ModelReasoningEffort.LOW, ModelReasoningEffort.MEDIUM, ModelReasoningEffort.HIGH);
+        var modes = Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED);
+
+        return Map.of(
+                direct36Key,
+                        new AdmittedBinding(
+                                direct36Key,
+                                ModelReasoningBehavior.OPTIONAL,
+                                modes,
+                                Set.of(ModelReasoningEffort.HIGH),
+                                geminiIoProfile),
+                direct37Key,
+                        new AdmittedBinding(
+                                direct37Key, ModelReasoningBehavior.OPTIONAL, modes, efforts37, geminiIoProfile));
     }
 }

@@ -26,7 +26,6 @@ import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
 import io.haifa.agent.model.openai.ModelStreamObservation;
-import io.haifa.agent.model.openai.RetryAfterParser;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -38,7 +37,6 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -46,7 +44,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 /** Bounded OpenAI Responses adapter with an Item-aware synchronous and SSE parser. */
 public final class OpenAiResponsesModel implements AgentChatModel {
@@ -104,9 +101,9 @@ public final class OpenAiResponsesModel implements AgentChatModel {
 
     @Override
     public AgentChatResponse invoke(AgentChatRequest request) {
-        OpenAiResponsesDialects.Profile profile = validateSelection(request);
+        OpenAiResponsesDialect dialect = validateSelection(request);
         ResolvedCredential credential = credential(request);
-        HttpRequest httpRequest = request(request, profile, credential, false);
+        HttpRequest httpRequest = request(request, dialect, credential, false);
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
             byte[] body;
@@ -123,10 +120,10 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                         exception);
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw httpFailure(request, profile, response.statusCode(), response.headers(), body);
+                throw httpFailure(request, dialect, response.statusCode(), response.headers(), body);
             }
-            requireContentType(request, profile, response, "application/json");
-            return parseResponse(request, parseJson(request, body));
+            requireContentType(request, dialect, response, "application/json");
+            return parseResponse(request, dialect, parseJson(request, body));
         } catch (HttpTimeoutException exception) {
             throw failure(
                     request, ModelErrorCategory.TIMEOUT, true, 0, "timeout", "model request timed out", exception);
@@ -157,10 +154,10 @@ public final class OpenAiResponsesModel implements AgentChatModel {
     @Override
     public AgentChatResponse invokeStreaming(AgentChatRequest request, ModelStreamSink sink) {
         Objects.requireNonNull(sink, "sink must not be null");
-        OpenAiResponsesDialects.Profile profile = validateSelection(request);
+        OpenAiResponsesDialect dialect = validateSelection(request);
         if (!request.model().nativeStreaming()) return AgentChatModel.super.invokeStreaming(request, sink);
         ResolvedCredential credential = credential(request);
-        HttpRequest httpRequest = request(request, profile, credential, true);
+        HttpRequest httpRequest = request(request, dialect, credential, true);
         ModelStreamObservation observation = new ModelStreamObservation();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
@@ -170,11 +167,11 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                     errorBody = body.readNBytes(maxResponseBytes + 1);
                 }
                 if (errorBody.length > maxResponseBytes) errorBody = new byte[0];
-                throw httpFailure(request, profile, response.statusCode(), response.headers(), errorBody);
+                throw httpFailure(request, dialect, response.statusCode(), response.headers(), errorBody);
             }
-            requireContentType(request, profile, response, "text/event-stream");
+            requireContentType(request, dialect, response, "text/event-stream");
             try (InputStream body = response.body()) {
-                return parseStream(request, profile, body, observation.observe(sink));
+                return parseStream(request, dialect, body, observation.observe(sink));
             }
         } catch (HttpTimeoutException exception) {
             throw failure(
@@ -207,21 +204,17 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         }
     }
 
-    private OpenAiResponsesDialects.Profile validateSelection(AgentChatRequest request) {
+    private OpenAiResponsesDialect validateSelection(AgentChatRequest request) {
         Objects.requireNonNull(request, "request must not be null");
         if (!ADAPTER_TYPE.equals(request.model().adapterType())
                 || !ADAPTER_VERSION.equals(request.model().adapterVersion())) {
             throw new IllegalArgumentException("snapshot selects a different model adapter");
         }
-        OpenAiResponsesDialects.Profile profile = OpenAiResponsesDialects.resolve(request.model(), allowInsecureHttp);
+        OpenAiResponsesDialect dialect = OpenAiResponsesDialects.resolve(request.model(), allowInsecureHttp);
         if (request.messages().stream().anyMatch(message -> !message.audios().isEmpty())) {
             throw new IllegalArgumentException("audio input is not enabled by this Responses adapter profile");
         }
-        if (profile == OpenAiResponsesDialects.Profile.DEEPSEEK
-                && request.messages().stream()
-                        .anyMatch(message -> !message.images().isEmpty())) {
-            throw new IllegalArgumentException("DeepSeek Responses image input is not verified");
-        }
+        dialect.validateRequest(request);
         if (!request.tools().isEmpty()
                 && !request.model().capabilities().contains(io.haifa.agent.model.api.ModelCapability.TOOL_CALLING)) {
             throw new IllegalArgumentException("selected model does not declare tool calling capability");
@@ -239,7 +232,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                     "selected model does not support structured output",
                     null);
         }
-        return profile;
+        return dialect;
     }
 
     private ResolvedCredential credential(AgentChatRequest request) {
@@ -260,13 +253,10 @@ public final class OpenAiResponsesModel implements AgentChatModel {
     }
 
     private HttpRequest request(
-            AgentChatRequest request,
-            OpenAiResponsesDialects.Profile profile,
-            ResolvedCredential credential,
-            boolean stream) {
+            AgentChatRequest request, OpenAiResponsesDialect dialect, ResolvedCredential credential, boolean stream) {
         byte[] body;
         try {
-            body = json.writeValueAsBytes(requestBody(request, profile, stream));
+            body = json.writeValueAsBytes(requestBody(request, dialect, stream));
         } catch (JsonProcessingException | IllegalArgumentException exception) {
             throw failure(
                     request,
@@ -283,38 +273,27 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                 .header("Content-Type", "application/json")
                 .header("Accept", stream ? "text/event-stream" : "application/json")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body));
-        if (profile == OpenAiResponsesDialects.Profile.OPENAI_CODEX) {
-            try {
-                CodexAccountIdentity identity = codexAccountResolver
-                        .resolve(request.model().credentialRef())
-                        .orElseThrow(() -> new IllegalArgumentException("Codex account identity missing"));
-                OpenAiCodexAuthentication.apply(builder, request.model(), credential.value(), identity);
-            } catch (RuntimeException exception) {
-                throw failure(
-                        request,
-                        ModelErrorCategory.AUTHENTICATION_FAILED,
-                        false,
-                        0,
-                        "codex_account_identity_invalid",
-                        "Codex account identity is unavailable",
-                        null);
-            }
-        } else {
-            String secret = OpenAiCodexAuthentication.validateHeaderValue(credential.value(), "model credential");
-            builder.header("Authorization", "Bearer " + secret);
+        try {
+            dialect.decorateHeaders(builder, request, credential.value(), codexAccountResolver);
+        } catch (DialectAuthenticationException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.AUTHENTICATION_FAILED,
+                    false,
+                    0,
+                    exception.providerCode(),
+                    exception.getMessage(),
+                    exception);
         }
         return builder.build();
     }
 
-    private Map<String, Object> requestBody(
-            AgentChatRequest request, OpenAiResponsesDialects.Profile profile, boolean stream) {
+    private Map<String, Object> requestBody(AgentChatRequest request, OpenAiResponsesDialect dialect, boolean stream) {
         Map<String, Object> options = invocationOptions(request);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.model().providerModelId());
-        body.put("input", inputItems(request, profile));
-        if (profile != OpenAiResponsesDialects.Profile.OPENAI_CODEX) {
-            body.put("max_output_tokens", request.maxOutputTokens());
-        }
+        body.put("input", inputItems(request, dialect));
+        dialect.customizeRequestBody(request, body);
         body.put("stream", stream);
         body.put("store", false);
         String instructions = instructions(request.messages());
@@ -322,9 +301,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         if (!request.tools().isEmpty()) {
             body.put("tools", request.tools().stream().map(this::tool).toList());
             Object toolChoice = options.getOrDefault("tool_choice", "auto");
-            if (profile == OpenAiResponsesDialects.Profile.DEEPSEEK && !"auto".equals(toolChoice)) {
-                throw new IllegalArgumentException("DeepSeek Responses supports only automatic function selection");
-            }
+            dialect.validateToolChoice(toolChoice);
             body.put("tool_choice", toolChoice);
         }
         if (request.structuredOutput().isPresent() && options.containsKey("response_format")) {
@@ -366,7 +343,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         if (source.containsKey(key)) target.put(key, source.get(key));
     }
 
-    private List<Map<String, Object>> inputItems(AgentChatRequest request, OpenAiResponsesDialects.Profile profile) {
+    private List<Map<String, Object>> inputItems(AgentChatRequest request, OpenAiResponsesDialect dialect) {
         List<Map<String, Object>> items = new ArrayList<>();
         for (ModelMessage message : request.messages()) {
             if (message.role() == ModelMessageRole.SYSTEM || message.role() == ModelMessageRole.DEVELOPER) continue;
@@ -383,17 +360,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             if (!message.content().isEmpty() || !message.images().isEmpty()) items.add(messageItem(message));
             if (message.role() == ModelMessageRole.ASSISTANT) {
                 if (message.reasoning().isPresent()) {
-                    if (profile != OpenAiResponsesDialects.Profile.DEEPSEEK) {
-                        throw new IllegalArgumentException(
-                                "standard Responses reasoning continuation requires a protected opaque item");
-                    }
-                    items.add(message.reasoning()
-                            .orElseThrow()
-                            .use(value -> Map.of(
-                                    "type",
-                                    "reasoning",
-                                    "content",
-                                    List.of(Map.of("type", "reasoning_text", "text", value)))));
+                    items.add(dialect.customizeReasoningInputItem(message).orElseThrow());
                 }
                 for (ModelToolCall call : message.toolCalls()) {
                     items.add(Map.of(
@@ -480,7 +447,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         return value;
     }
 
-    private AgentChatResponse parseResponse(AgentChatRequest request, JsonNode root) {
+    private AgentChatResponse parseResponse(AgentChatRequest request, OpenAiResponsesDialect dialect, JsonNode root) {
         return parseResponse(request, root, "", List.of());
     }
 
@@ -615,9 +582,9 @@ public final class OpenAiResponsesModel implements AgentChatModel {
     }
 
     private AgentChatResponse parseStream(
-            AgentChatRequest request, OpenAiResponsesDialects.Profile profile, InputStream stream, ModelStreamSink sink)
+            AgentChatRequest request, OpenAiResponsesDialect dialect, InputStream stream, ModelStreamSink sink)
             throws IOException {
-        StreamState state = new StreamState(request, profile, sink);
+        StreamState state = new StreamState(request, dialect, sink);
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
             StringBuilder data = new StringBuilder();
             String line;
@@ -644,7 +611,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
 
     private final class StreamState {
         private final AgentChatRequest request;
-        private final OpenAiResponsesDialects.Profile profile;
+        private final OpenAiResponsesDialect dialect;
         private final ModelStreamSink sink;
         private long emittedIndex;
         private long eventCount;
@@ -656,9 +623,9 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         private final StringBuilder content = new StringBuilder();
         private final Map<Integer, FunctionItem> functions = new LinkedHashMap<>();
 
-        private StreamState(AgentChatRequest request, OpenAiResponsesDialects.Profile profile, ModelStreamSink sink) {
+        private StreamState(AgentChatRequest request, OpenAiResponsesDialect dialect, ModelStreamSink sink) {
             this.request = request;
-            this.profile = profile;
+            this.dialect = dialect;
             this.sink = sink;
         }
 
@@ -708,11 +675,8 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         }
 
         private void validateSequence(JsonNode event) {
+            dialect.validateEventSequence(event);
             JsonNode configured = event.get("sequence_number");
-            if (profile == OpenAiResponsesDialects.Profile.DEEPSEEK
-                    && (configured == null || !configured.canConvertToLong())) {
-                throw malformed(request, "DeepSeek Responses event is missing sequence_number");
-            }
             if (configured == null) return;
             long current = configured.longValue();
             if (sequence != Long.MIN_VALUE && current <= sequence) {
@@ -886,12 +850,11 @@ public final class OpenAiResponsesModel implements AgentChatModel {
     }
 
     private static void requireContentType(
-            AgentChatRequest request,
-            OpenAiResponsesDialects.Profile profile,
-            HttpResponse<?> response,
-            String expected) {
+            AgentChatRequest request, OpenAiResponsesDialect dialect, HttpResponse<?> response, String expected) {
         String contentType = response.headers().firstValue("Content-Type").orElse("");
-        if (contentType.isBlank() && profile == OpenAiResponsesDialects.Profile.OPENAI_CODEX) return;
+        if (dialect.allowsEmptyContentType() && contentType.isBlank()) {
+            return;
+        }
         if (!contentType.toLowerCase(Locale.ROOT).contains(expected)) {
             String mediaType = contentType.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
             String code = mediaType.isEmpty()
@@ -954,81 +917,29 @@ public final class OpenAiResponsesModel implements AgentChatModel {
 
     private ModelInvocationException httpFailure(
             AgentChatRequest request,
-            OpenAiResponsesDialects.Profile profile,
+            OpenAiResponsesDialect dialect,
             int status,
             java.net.http.HttpHeaders headers,
             byte[] body) {
-        ModelErrorCategory category =
-                switch (status) {
-                    case 400, 422 -> ModelErrorCategory.INVALID_REQUEST;
-                    case 401 -> ModelErrorCategory.AUTHENTICATION_FAILED;
-                    case 403 -> ModelErrorCategory.PERMISSION_DENIED;
-                    case 404 -> ModelErrorCategory.MODEL_NOT_FOUND;
-                    case 408 -> ModelErrorCategory.TIMEOUT;
-                    case 429 -> ModelErrorCategory.RATE_LIMITED;
-                    case 500, 502, 503, 504 -> ModelErrorCategory.SERVER_ERROR;
-                    default -> ModelErrorCategory.UNKNOWN_PROVIDER_ERROR;
-                };
-        String providerCode = "http_" + status;
-        String safeMessage = "model provider rejected the request";
-        boolean retryable = status == 408 || status == 429 || status >= 500;
-        Duration retryAfter = RetryAfterParser.parse(headers, Instant.now()).orElse(null);
-        if (profile == OpenAiResponsesDialects.Profile.OPENAI_CODEX) {
-            String codexProviderCode = codexProviderCode(body);
-            if (codexProviderCode != null) providerCode = codexProviderCode;
-        }
-        if (profile == OpenAiResponsesDialects.Profile.OPENAI_CODEX && status == 429) {
-            CodexRateLimit rateLimit = codexRateLimit(body);
-            if (rateLimit != null) {
-                providerCode = rateLimit.code();
-                retryable = "rate_limit_exceeded".equals(providerCode);
-                if (retryAfter == null && rateLimit.resetsAtEpochSeconds() != null) {
-                    long seconds = Math.max(
-                            0, rateLimit.resetsAtEpochSeconds() - Instant.now().getEpochSecond());
-                    retryAfter = Duration.ofSeconds(seconds);
-                }
-                safeMessage = rateLimit.planType() == null
-                        ? "ChatGPT Codex usage limit reached"
-                        : "ChatGPT Codex usage limit reached for the " + rateLimit.planType() + " plan";
+        JsonNode errorRoot = null;
+        if (body != null && body.length > 0) {
+            try {
+                errorRoot = json.readTree(body);
+            } catch (Exception ignored) {
             }
         }
-        return failure(request, category, retryable, status, providerCode, safeMessage, null, retryAfter, false);
+        DialectErrorMapping mapping = dialect.classifyError(status, headers, body, errorRoot);
+        return failure(
+                request,
+                mapping.category(),
+                mapping.retryable(),
+                status,
+                mapping.providerCode(),
+                mapping.safeMessage(),
+                null,
+                mapping.retryAfter().orElse(null),
+                false);
     }
-
-    private String codexProviderCode(byte[] body) {
-        if (body == null || body.length == 0) return null;
-        try {
-            JsonNode error = json.readTree(body).path("error");
-            String code = optionalText(error, "code", optionalText(error, "type", ""));
-            if (!code.matches("[A-Za-z0-9_.-]{1,64}")) return null;
-            String parameter = optionalText(error, "param", "");
-            return parameter.matches("[A-Za-z0-9_.-]{1,64}") ? code + ":" + parameter : code;
-        } catch (IOException | RuntimeException ignored) {
-            return null;
-        }
-    }
-
-    private CodexRateLimit codexRateLimit(byte[] body) {
-        if (body == null || body.length == 0) return null;
-        try {
-            JsonNode error = json.readTree(body).path("error");
-            String code = optionalText(error, "code", optionalText(error, "type", ""));
-            if (!Set.of("usage_limit_reached", "usage_not_included", "rate_limit_exceeded")
-                    .contains(code)) {
-                return null;
-            }
-            String plan = optionalText(error, "plan_type", "").toLowerCase(Locale.ROOT);
-            if (plan.isEmpty() || !plan.matches("[a-z0-9_-]{1,32}")) plan = null;
-            JsonNode reset = error.get("resets_at");
-            Long resetsAt =
-                    reset != null && reset.canConvertToLong() && reset.longValue() >= 0 ? reset.longValue() : null;
-            return new CodexRateLimit(code, plan, resetsAt);
-        } catch (IOException | RuntimeException ignored) {
-            return null;
-        }
-    }
-
-    private record CodexRateLimit(String code, String planType, Long resetsAtEpochSeconds) {}
 
     private static ModelInvocationException malformed(AgentChatRequest request, String message) {
         return failure(request, ModelErrorCategory.MALFORMED_RESPONSE, false, 0, "malformed_response", message, null);

@@ -81,6 +81,8 @@ public interface CodingSessionMapper {
 
     CodingFollowUpRow findFollowUpByDispatchKey(@Param("dispatchKey") String dispatchKey);
 
+    CodingFollowUpRow findFollowUpByDispatchedRunId(@Param("runId") String runId);
+
     List<CodingFollowUpRow> listRestorableFollowUps(@Param("sessionId") String sessionId, @Param("limit") int limit);
 
     CodingFollowUpRow findFollowUpByIdempotency(

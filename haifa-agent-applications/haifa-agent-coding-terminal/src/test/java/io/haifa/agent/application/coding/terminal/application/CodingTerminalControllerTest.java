@@ -874,6 +874,15 @@ class CodingTerminalControllerTest {
     }
 
     @Test
+    void activeRunFooterShowsTheCurrentRunTaskRatherThanTheSessionName() {
+        TerminalUiState state = new TerminalUiReducer()
+                .reduce(TerminalUiState.initial(120, 40), new TerminalUiAction.SessionLoaded(activeView(), List.of()));
+
+        assertThat(state.footer().runStatus()).isEqualTo("RUNNING");
+        assertThat(state.footer().session()).isEqualTo("task: latest active task");
+    }
+
+    @Test
     void escapeReconcilesAStaleIdleViewBeforeCancellingTheActiveRun() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         client.reconciledView = activeView();
@@ -1133,7 +1142,18 @@ class CodingTerminalControllerTest {
                 Optional.empty(),
                 Optional.empty(),
                 "sha256:configuration",
-                "cli-coding@1.0.0");
+                "cli-coding@1.0.0",
+                new io.haifa.agent.application.project.product.coding.CodingModelSelection(
+                        new io.haifa.agent.application.project.product.coding.CodingModelOption(
+                                "cli-coding@1.0.0",
+                                "cli-coding@1.0.0",
+                                "configured",
+                                "Configured",
+                                java.util.Set.of(),
+                                1),
+                        0,
+                        true),
+                Optional.of("latest active task"));
     }
 
     private static TerminalInput input(TerminalInput.Kind kind, String text) {

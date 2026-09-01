@@ -51,13 +51,9 @@ SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 pr
 Bootstrap 仅在 `web_search` 与 `web_fetch` 均完成受信注册时发布 `web-research` 能力，供 Web 在创建
 Deep Research 计划前做确定性可用性检查；该标记不包含 Provider、Endpoint 或凭据细节。
 
-Personal 的受信 `model-providers` 也可显式装配 `google-gemini-generate-content`。本机方言的 Provider ID
-必须是 `cliproxyapi-antigravity`，Dialect 必须是 `cliproxyapi-antigravity`，CredentialRef 必须是
-`env://HAIFA_CLIPROXYAPI_API_KEY`，HTTP Endpoint 必须在启用 `allow-insecure-loopback-model` 后仍通过
-loopback 校验。该连接只复用 CLIProxyAPI 的下游 Key，不提供或包装 Antigravity OAuth 登录。
+Personal 的受信 `model-providers` 也可显式装配 `google-gemini-generate-content`。
 Direct 方言必须使用固定 Provider ID `google-antigravity`、Dialect `antigravity-direct` 和
-`model-auth://google-antigravity/default`；它只支持原生 Gemini API Style，与 CLIProxyAPI Binding
-保持独立。
+`model-auth://google-antigravity/default`；它只支持原生 Gemini API Style。
 
 Server 在应用就绪时扫描 ACTIVE Conversation：旧实例遗留的 `RUNNING/SUSPENDING` Run 通过公共
 `AgentRuns.recover` 接管并继续执行；`WAITING_APPROVAL/WAITING_INTERACTION` 只恢复事件观察，不会
@@ -174,13 +170,6 @@ Workspace ID 和 region；Kimi、智谱与硅基流动分别使用 `env://KIMI_A
 实际 Provider Model ID 与完整 Snapshot 不返回浏览器。检测到可选 Provider 时只扩展目录，默认仍是
 `deepseek-chat-flash`；只有显式传入 `--default-model-id` 才改变默认 Binding。
 
-真实环境优先读取 `HAIFA_CLIPROXYAPI_API_KEY`，未设置时只从 `--cliproxy-config-file` 指向的
-CLIProxyAPI `config.yaml` 提取首个 `haifa-local-*` 下游 Key，然后装配 loopback
-`cliproxyapi-antigravity` Provider；它不读取 `auths/`、OAuth Token 或系统 Keyring。
-`HAIFA_CLIPROXYAPI_MODEL_ID` 默认是 `gemini-3-flash`。显式选择
-`--default-model-id gemini-cliproxy-flash` 才将它设为默认模型。该 Binding 声明文本、Tool、结构化输出、
-图片和音频输入能力，且只把下游 Key 传入 PA 子进程，不读取 CLIProxyAPI 的 OAuth、Token 或 Keyring。
-
 真实环境脚本固定装配独立的 `google-antigravity` Provider 与 `antigravity-gemini` Binding；
 `HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true` 只控制能否发起新的本地兼容 OAuth 登录。该 Binding 使用
 已登录的共享本地认证引用，默认
@@ -192,7 +181,7 @@ OpenAI Chat，并仅为 GLM-5.2 提供通过 Contract 的 Anthropic Messages 高
 推荐值、允许值和只读状态由后端精确 Binding Profile 驱动；UI 不包含 Provider/Model 条件分支。
 
 `IMAGE_UPLOAD_INPUT`、`IMAGE_URL_INPUT` 与 `AUDIO_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。
-Gemini CLIProxyAPI Binding 只声明图片上传能力；不会因此扫描既有会话或为历史 URL 添加兼容性提示。
+Antigravity Gemini Binding 只声明图片上传能力；不会因此扫描既有会话或为历史 URL 添加兼容性提示。
 Conversation 每条消息合计最多携带四个媒体输入；图片使用 `{kind: url|upload}`，外部 URL 只接受受限 HTTPS，上传通过 `POST /api/v1/images`
 写入 `<data-directory>/images`，单文件上限 10 MiB、目录上限 1 GiB，类型限 PNG/JPEG/WEBP/非动画
 GIF。音频只接受上传，通过 `POST /api/v1/audios` 写入独立的 `<data-directory>/audio` Store，采用同样的
