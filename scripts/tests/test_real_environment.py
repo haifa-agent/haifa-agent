@@ -242,80 +242,6 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertEqual("gpt-5.6-luna", environment[f"{prefix}_MODELS_2_ID"])
         self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_2_") for name in environment))
 
-    def test_cliproxy_configuration_adds_gemini_native_media_capabilities(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            repository=root,
-            server=root / "server",
-            web=root / "web",
-            runtime=root / "runtime",
-            data=root / "runtime/data",
-            logs=root / "runtime/logs",
-            state=root / "runtime/last-start.json",
-            stop_state=root / "runtime/last-stop.json",
-            maven_wrapper=root / "mvnw",
-        )
-
-        environment = real_environment.backend_environment(
-            "deepseek-secret",
-            real_environment.CLIPROXY_GEMINI_MODEL_ID,
-            None,
-            "aliyun-secret",
-            "continuation-secret",
-            paths,
-            root / "skills",
-            None,
-            tavily_key="tavily-secret",
-            cliproxy=("cliproxy-secret", "gemini-3-flash"),
-        )
-
-        prefix = "HAIFA_PERSONAL_MODELPROVIDERS_2"
-        self.assertEqual("cliproxyapi-antigravity", environment[f"{prefix}_ID"])
-        self.assertEqual("http://127.0.0.1:8317/v1beta", environment[f"{prefix}_ENDPOINT"])
-        self.assertEqual("google-gemini-generate-content", environment[f"{prefix}_APIBINDINGS_0_STYLE"])
-        self.assertEqual("cliproxyapi-antigravity", environment[f"{prefix}_APIBINDINGS_0_DIALECT"])
-        self.assertEqual("gemini-3-flash", environment[f"{prefix}_MODELS_0_PROVIDERMODELID"])
-        self.assertEqual("IMAGE_UPLOAD_INPUT", environment[f"{prefix}_MODELS_0_CAPABILITIES_3"])
-        self.assertEqual("AUDIO_INPUT", environment[f"{prefix}_MODELS_0_CAPABILITIES_4"])
-        self.assertNotIn(
-            "IMAGE_URL_INPUT",
-            [
-                value
-                for name, value in environment.items()
-                if name.startswith(f"{prefix}_MODELS_0_CAPABILITIES_")
-            ],
-        )
-        self.assertEqual("env://HAIFA_CLIPROXYAPI_API_KEY", environment[f"{prefix}_CREDENTIALREFERENCE"])
-        self.assertNotIn("cliproxy-secret", json.dumps(list(environment)))
-
-        self.assertEqual(
-            ("cliproxy-secret", "gemini-3-flash"),
-            real_environment.optional_cliproxy_environment(
-                {
-                    "HAIFA_CLIPROXYAPI_API_KEY": "cliproxy-secret",
-                    "HAIFA_CLIPROXYAPI_MODEL_ID": "gemini-3-flash",
-                }
-            ),
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "config.yaml"
-            config.write_text(
-                "host: 127.0.0.1\n"
-                "api-keys:\n"
-                '  - "haifa-local-abc123"\n'
-                "proxy-url: http://127.0.0.1:2081\n",
-                encoding="utf-8",
-            )
-            self.assertEqual(
-                ("haifa-local-abc123", "gemini-3-flash"),
-                real_environment.optional_cliproxy_environment({}, str(config)),
-            )
-        with self.assertRaisesRegex(RuntimeError, "requires HAIFA_CLIPROXYAPI_API_KEY"):
-            real_environment.resolve_default_model_id(
-                real_environment.CLIPROXY_GEMINI_MODEL_ID,
-                None,
-            )
-
     def test_antigravity_local_compatibility_adds_a_distinct_direct_model(self) -> None:
         root = Path("repository")
         paths = real_environment.Paths(
@@ -347,7 +273,7 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertEqual(
             real_environment.AntigravityConfiguration(
                 "https://daily-cloudcode-pa.googleapis.com/v1internal",
-                "gemini-3-flash",
+                "gemini-3.7-flash",
                 "http://127.0.0.1:2081",
             ),
             configuration,
@@ -376,7 +302,7 @@ class RealEnvironmentTest(unittest.TestCase):
             real_environment.ANTIGRAVITY_DIRECT_MODEL_ID,
             environment[f"{prefix}_MODELS_0_ID"],
         )
-        self.assertEqual("gemini-3-flash", environment[f"{prefix}_MODELS_0_PROVIDERMODELID"])
+        self.assertEqual("gemini-3.7-flash", environment[f"{prefix}_MODELS_0_PROVIDERMODELID"])
         self.assertEqual("REASONING", environment[f"{prefix}_MODELS_0_CAPABILITIES_3"])
         self.assertEqual("IMAGE_UPLOAD_INPUT", environment[f"{prefix}_MODELS_0_CAPABILITIES_4"])
         self.assertFalse(any(name.startswith(f"{prefix}_MODELS_1_") for name in environment))

@@ -1,5 +1,6 @@
 package io.haifa.agent.model.openai;
 
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
@@ -18,5 +19,23 @@ class OpenAiCompatibleArchitectureTest {
                         "io.haifa.agent.model.anthropic..",
                         "io.haifa.agent.model.gemini..")
                 .check(new ClassFileImporter().importPackages("io.haifa.agent.model.openai"));
+    }
+
+    @Test
+    void responsesDialectTypesArePackagePrivate() {
+        classes()
+                .that()
+                .haveSimpleNameEndingWith("Dialect")
+                .and()
+                .doNotHaveSimpleName("OpenAiResponsesDialects")
+                .or()
+                .haveSimpleName("DialectErrorMapping")
+                .or()
+                .haveSimpleNameEndingWith("DialectSupport")
+                .or()
+                .haveSimpleName("DialectAuthenticationException")
+                .should()
+                .bePackagePrivate()
+                .check(new ClassFileImporter().importPackages("io.haifa.agent.model.openai.responses"));
     }
 }

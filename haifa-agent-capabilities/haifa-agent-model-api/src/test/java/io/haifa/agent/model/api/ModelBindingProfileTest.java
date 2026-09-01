@@ -180,7 +180,7 @@ class ModelBindingProfileTest {
         ModelIoProfile ioProfile = ModelIoProfile.withImage(imageInput);
 
         ModelBindingProfile profile = ModelBindingProfile.create(
-                new ModelDefinitionId("gemini-3-flash"),
+                new ModelDefinitionId("gemini-3.7-flash"),
                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
                 "2.0",
                 Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.IMAGE_UPLOAD_INPUT),
@@ -197,7 +197,7 @@ class ModelBindingProfileTest {
 
         assertThat(profile.canonicalString())
                 .isEqualTo(
-                        "model-binding-profile-v3|gemini-3-flash|google-gemini-generate-content|2.0|"
+                        "model-binding-profile-v3|gemini-3.7-flash|google-gemini-generate-content|2.0|"
                                 + "[IMAGE_UPLOAD_INPUT, TEXT_CHAT, TOOL_CALLING]|NONE|[DISABLED]|[]|none|1048576|1|65536|false|true|true|false|NON_RETRYABLE|"
                                 + "[IMAGE, TEXT]|[TEXT]|[UPLOAD]|[9:image/gif,10:image/jpeg,9:image/png,10:image/webp]|4|10485760|12582912|2048|false|[]|VERIFIED|2026-08-31");
     }

@@ -12,6 +12,7 @@ import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ModelStreamingProfile;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.time.LocalDate;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 
@@ -22,16 +23,64 @@ public final class GeminiModelProfileFactory {
     private GeminiModelProfileFactory() {}
 
     public static ModelBindingProfile fromSnapshot(ResolvedModelSnapshot snapshot, LocalDate verifiedOn) {
-        boolean governed = GeminiBindingRegistry.isAdmitted(snapshot);
+        Optional<GeminiBindingRegistry.AdmittedBinding> admission = GeminiBindingRegistry.find(snapshot);
         boolean reasoning = snapshot.capabilities().contains(ModelCapability.REASONING);
+
+        if (admission.isEmpty()) {
+            return ModelBindingProfile.create(
+                    snapshot.modelId(),
+                    snapshot.apiStyle(),
+                    CURRENT_PROFILE_VERSION,
+                    snapshot.capabilities(),
+                    reasoning ? ModelReasoningBehavior.OPTIONAL : ModelReasoningBehavior.NONE,
+                    reasoning
+                            ? Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED)
+                            : Set.of(ModelReasoningMode.DISABLED),
+                    reasoning ? Set.of(ModelReasoningEffort.HIGH) : Set.of(),
+                    OptionalLong.empty(),
+                    new ModelExecutionLimits(snapshot.contextWindow(), 1, snapshot.maxOutputTokens()),
+                    reasoning,
+                    new ModelStreamingProfile(
+                            snapshot.nativeStreaming(),
+                            snapshot.nativeStreaming(),
+                            snapshot.nativeStreaming() && reasoning,
+                            ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                    ModelIoProfile.textOnly(),
+                    ModelProfileStatus.UNVERIFIED,
+                    verifiedOn);
+        }
+
+        GeminiBindingRegistry.AdmittedBinding binding = admission.get();
+        if (!reasoning) {
+            return ModelBindingProfile.create(
+                    snapshot.modelId(),
+                    snapshot.apiStyle(),
+                    CURRENT_PROFILE_VERSION,
+                    snapshot.capabilities(),
+                    ModelReasoningBehavior.NONE,
+                    Set.of(ModelReasoningMode.DISABLED),
+                    Set.of(),
+                    OptionalLong.empty(),
+                    new ModelExecutionLimits(snapshot.contextWindow(), 1, snapshot.maxOutputTokens()),
+                    false,
+                    new ModelStreamingProfile(
+                            snapshot.nativeStreaming(),
+                            snapshot.nativeStreaming(),
+                            false,
+                            ModelPartialOutputFailureBehavior.NON_RETRYABLE),
+                    binding.ioProfile(),
+                    ModelProfileStatus.VERIFIED,
+                    verifiedOn);
+        }
+
         return ModelBindingProfile.create(
                 snapshot.modelId(),
                 snapshot.apiStyle(),
                 CURRENT_PROFILE_VERSION,
                 snapshot.capabilities(),
-                reasoning ? ModelReasoningBehavior.ALWAYS : ModelReasoningBehavior.NONE,
-                reasoning ? Set.of(ModelReasoningMode.ENABLED) : Set.of(ModelReasoningMode.DISABLED),
-                reasoning ? Set.of(ModelReasoningEffort.HIGH) : Set.of(),
+                binding.reasoningBehavior(),
+                binding.allowedReasoningModes(),
+                binding.allowedReasoningEfforts(),
                 OptionalLong.empty(),
                 new ModelExecutionLimits(snapshot.contextWindow(), 1, snapshot.maxOutputTokens()),
                 reasoning,
@@ -40,14 +89,8 @@ public final class GeminiModelProfileFactory {
                         snapshot.nativeStreaming(),
                         false,
                         ModelPartialOutputFailureBehavior.NON_RETRYABLE),
-                ioProfile(snapshot),
-                governed ? ModelProfileStatus.VERIFIED : ModelProfileStatus.UNVERIFIED,
+                binding.ioProfile(),
+                ModelProfileStatus.VERIFIED,
                 verifiedOn);
-    }
-
-    private static ModelIoProfile ioProfile(ResolvedModelSnapshot snapshot) {
-        return GeminiBindingRegistry.find(snapshot)
-                .map(GeminiBindingRegistry.AdmittedBinding::ioProfile)
-                .orElse(ModelIoProfile.textOnly());
     }
 }

@@ -296,19 +296,7 @@ public record PersonalAssistantProperties(
             if (codex && !"openai-codex".equals(id)) {
                 throw new IllegalArgumentException("Codex Responses provider id must be openai-codex");
             }
-            boolean cliproxy =
-                    apiBindings.stream().anyMatch(binding -> "cliproxyapi-antigravity".equals(binding.dialect()));
-            if (cliproxy && !"cliproxyapi-antigravity".equals(id)) {
-                throw new IllegalArgumentException("CLIProxyAPI Antigravity dialect provider id is fixed");
-            }
-            if (cliproxy && !"env://HAIFA_CLIPROXYAPI_API_KEY".equals(credentialReference)) {
-                throw new IllegalArgumentException("CLIProxyAPI Antigravity dialect credential reference is fixed");
-            }
-            if (cliproxy
-                    && apiBindings.stream()
-                            .anyMatch(binding -> !"google-gemini-generate-content".equals(binding.style()))) {
-                throw new IllegalArgumentException("CLIProxyAPI Antigravity dialect only supports native Gemini style");
-            }
+
             boolean antigravityDirect =
                     apiBindings.stream().anyMatch(binding -> "antigravity-direct".equals(binding.dialect()));
             if (antigravityDirect && !"google-antigravity".equals(id)) {

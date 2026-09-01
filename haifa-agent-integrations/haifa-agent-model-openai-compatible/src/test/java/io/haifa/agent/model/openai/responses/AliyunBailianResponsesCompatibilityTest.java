@@ -17,8 +17,9 @@ import org.junit.jupiter.api.Test;
 class AliyunBailianResponsesCompatibilityTest {
     @Test
     void acceptsOnlyReviewedQwenModelsAtWorkspaceScopedEndpoints() {
-        assertThat(OpenAiResponsesDialects.resolve(snapshot("qwen3.7-plus", endpoint()), false))
-                .isEqualTo(OpenAiResponsesDialects.Profile.ALIYUN_BAILIAN);
+        assertThat(OpenAiResponsesDialects.resolve(snapshot("qwen3.7-plus", endpoint()), false)
+                        .id())
+                .isEqualTo(OpenAiResponsesDialects.ALIYUN_BAILIAN);
         assertThatThrownBy(() -> OpenAiResponsesDialects.resolve(snapshot("future-qwen", endpoint()), false))
                 .hasMessageContaining("not verified");
         assertThatThrownBy(() ->
