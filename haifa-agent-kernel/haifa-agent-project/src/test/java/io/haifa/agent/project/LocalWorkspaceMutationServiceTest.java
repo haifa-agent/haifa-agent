@@ -137,22 +137,6 @@ class LocalWorkspaceMutationServiceTest {
                         MutationPrecondition.existing(revision, hash("bravo\n")),
                         context("delete")));
         assertThat(Files.exists(root.resolve("c.txt"))).isFalse();
-        assertThat(fixture.quarantine().findByWorkspace(fixture.workspaceId())).hasSize(1);
-        assertThat(fixture.files().list(WorkspacePath.root(fixture.workspaceId()), 20))
-                .extracting(entry -> entry.metadata().path().projectPath().value())
-                .doesNotContain(".haifa-quarantine");
-
-        String token = fixture.quarantine()
-                .findByWorkspace(fixture.workspaceId())
-                .get(0)
-                .token();
-        var restored = fixture.local()
-                .restore(new QuarantineRestoreRequest(token, fixture.path("restored.txt"), context("restore")));
-        assertThat(restored.resultRevision().sequence()).isEqualTo(initial.sequence() + 5);
-        assertThat(Files.readString(root.resolve("restored.txt"))).isEqualTo("bravo\n");
-        assertThat(fixture.changeSets().findByWorkspace(fixture.workspaceId()))
-                .extracting(value -> value.status())
-                .containsOnly(FileChangeSetStatus.APPLIED);
         assertThat(deleted.changes()).hasSize(1);
     }
 

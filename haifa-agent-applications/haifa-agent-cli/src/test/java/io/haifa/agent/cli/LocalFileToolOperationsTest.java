@@ -130,11 +130,7 @@ class LocalFileToolOperationsTest {
         assertThat(result.successful()).isTrue();
         assertThat(result.structuredData())
                 .containsEntry("complete", true)
-                .containsKeys("changeReviewArtifactRef", "artifactRef");
-        assertThat(result.structuredData().get("changeReviewArtifact"))
-                .isInstanceOfSatisfying(Map.class, review -> assertThat(review)
-                        .containsEntry("complete", true)
-                        .containsEntry("totalFileCount", 1));
+                .doesNotContainKeys("changeReviewArtifactRef", "artifactRef", "changeReviewArtifact", "changeSetIds");
         assertThat(Files.readString(root.resolve("source.txt"))).isEqualTo("anchor\nnew\n");
     }
 
@@ -343,12 +339,48 @@ class LocalFileToolOperationsTest {
 
             @Override
             public MutationResult delete(DeleteFileRequest request) {
-                throw new AssertionError("not used");
+                try {
+                    Files.deleteIfExists(root.resolve(request.path().projectPath().toString()));
+                    WorkspaceRevision before = workspaces.find(workspaceId).orElseThrow().revision();
+                    WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:delete-test");
+                    FileChange change = new FileChange(
+                            FileChangeType.DELETE,
+                            request.path().projectPath(),
+                            null,
+                            new FileVersion(FileType.FILE, 0, "sha256:zero"),
+                            null);
+                    return new MutationResult(
+                            new FileChangeSetId("change-set-test"),
+                            FileChangeSetStatus.APPLIED,
+                            before,
+                            after,
+                            java.util.List.of(change),
+                            true,
+                            false);
+                } catch (java.io.IOException exception) {
+                    throw new AssertionError(exception);
+                }
             }
 
             @Override
             public MutationResult move(MoveFileRequest request) {
-                throw new AssertionError("not used");
+                try {
+                    Files.move(
+                            root.resolve(request.source().projectPath().toString()),
+                            root.resolve(request.destination().projectPath().toString()));
+                    WorkspaceRevision before = workspaces.find(workspaceId).orElseThrow().revision();
+                    WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:move-test");
+                    return new MutationResult(
+                            new FileChangeSetId("change-set-test"),
+                            FileChangeSetStatus.APPLIED,
+                            before,
+                            after,
+                            java.util.List.of(),
+                            true,
+                            false);
+                } catch (java.io.IOException exception) {
+                    throw new AssertionError(exception);
+                }
             }
         };
     }
@@ -424,4 +456,40 @@ class LocalFileToolOperationsTest {
                 .containsEntry("failureActionCode", "USE_ALIAS_RELATIVE_SYNTAX");
     }
 
+    @Test
+    void rejectsDeletingDirectory() throws Exception {
+        Files.createDirectories(root.resolve("testdir"));
+        Fixture fixture = fixture();
+
+        var result = fixture.operations.execute(
+                "file.delete",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "testdir")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(Files.exists(root.resolve("testdir"))).isTrue();
+    }
+
+    @Test
+    void deletesRegularFileDirectlyWithoutQuarantineToken() throws Exception {
+        Files.writeString(root.resolve("trash.txt"), "delete me", StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+
+        var result = fixture.operations.execute(
+                "file.delete",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "trash.txt")));
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("path", "trash.txt")
+                .doesNotContainKeys("quarantineToken", "changeSetId", "changeReviewArtifact");
+        assertThat(Files.exists(root.resolve("trash.txt"))).isFalse();
+    }
 }

@@ -279,36 +279,22 @@ public final class LocalWorkspaceMutationService
             Path source = resolveExisting(access, request.path());
             FileVersion before = version(source, request.path());
             validateHash(before, request.precondition(), request.path());
-            if (before.type() == FileType.DIRECTORY) requireEmptyDirectory(source, request.path());
+            if (before.type() == FileType.DIRECTORY) {
+                throw failure(MutationErrorCode.PATH_DENIED, request.path(), "cannot delete directory");
+            }
             FileChangeSet pending = begin(access.workspace(), request.context());
-            String token = safeToken(identifiers.nextValue());
             try {
-                Path quarantineDirectory = quarantineDirectory(access, request.path());
-                Path destination = quarantineDirectory.resolve(token);
-                boolean atomic = movePath(
-                        source,
-                        destination,
-                        false,
-                        request.path(),
-                        () -> validateHash(
-                                version(resolveExisting(access, request.path()), request.path()),
-                                request.precondition(),
-                                request.path()));
-                Instant quarantinedAt = time.now();
-                quarantine.create(new QuarantineEntry(
-                        token,
-                        access.workspace().id(),
-                        request.context().operationId(),
-                        request.path().projectPath(),
-                        before,
-                        quarantinedAt,
-                        quarantinedAt.plus(java.time.Duration.ofDays(30))));
+                try {
+                    Files.delete(source);
+                } catch (IOException exception) {
+                    throw failure(MutationErrorCode.IO_FAILURE, request.path(), "failed to delete file: " + exception.getMessage());
+                }
                 return completeOrUnknown(
                         access.workspace(),
                         pending,
                         List.of(new FileChange(
                                 FileChangeType.DELETE, request.path().projectPath(), null, before, null)),
-                        atomic);
+                        true);
             } catch (WorkspaceMutationException exception) {
                 fail(pending, exception.getMessage());
                 throw exception;
