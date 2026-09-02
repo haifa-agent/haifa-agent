@@ -1,7 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
@@ -45,7 +44,6 @@ import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
-import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
@@ -1082,7 +1080,7 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void mapsPreExecutionObserverFailureAsKnownNotDispatchedFailure() {
+    void mapsPreExecutionObserverFailureAsFailedToolResult() {
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
@@ -1093,17 +1091,18 @@ class ProjectExecutionToolOperationsTest {
             }
         };
 
-        assertThatThrownBy(() -> operations(broker, 1024, 2000)
-                        .execute(invocation(Map.of("command", "representative command"), () -> false), access()))
-                .isInstanceOfSatisfying(ToolInvocationException.class, exception -> {
-                    assertThat(exception.failureCode()).isEqualTo("WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE");
-                    assertThat(exception.dispatchState())
-                            .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
-                });
+        var result = operations(broker, 1024, 2000)
+                .execute(invocation(Map.of("command", "representative command"), () -> false), access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData().get("status")).isEqualTo("FAILED");
+        assertThat(result.structuredData().get("failureCode")).isEqualTo("WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE");
+        assertThat(result.structuredData().get("output").toString())
+                .contains("workspace change observation could not be established before execution");
     }
 
     @Test
-    void preservesStableSandboxFailureCodeBeforeProcessDispatch() {
+    void preservesStableSandboxFailureCodeAsFailedToolResult() {
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
@@ -1111,13 +1110,32 @@ class ProjectExecutionToolOperationsTest {
             }
         };
 
-        assertThatThrownBy(() -> operations(broker, 1024, 2000)
-                        .execute(invocation(Map.of("command", "git status --short"), () -> false), access()))
-                .isInstanceOfSatisfying(ToolInvocationException.class, exception -> {
-                    assertThat(exception.failureCode()).isEqualTo("SANDBOX_PROVISION_FAILED");
-                    assertThat(exception.dispatchState())
-                            .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
-                });
+        var result = operations(broker, 1024, 2000)
+                .execute(invocation(Map.of("command", "git status --short"), () -> false), access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData().get("status")).isEqualTo("FAILED");
+        assertThat(result.structuredData().get("failureCode")).isEqualTo("SANDBOX_PROVISION_FAILED");
+        assertThat(result.structuredData().get("output").toString()).contains("sandbox setup failed");
+    }
+
+    @Test
+    void handlesTimeoutWithClearDiagnosticMessage() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                return result(request.id(), ExecutionStatus.TIMED_OUT, null);
+            }
+        };
+
+        var result = operations(broker, 1024, 2000)
+                .execute(invocation(Map.of("command", "go test ./..."), () -> false), access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData().get("status")).isEqualTo("TIMED_OUT");
+        assertThat(result.structuredData().get("semanticOutcome")).isEqualTo("COMMAND_FAILED");
+        assertThat(result.summary()).contains("Command timed out");
+        assertThat(result.structuredData().get("output").toString()).contains("Command timed out");
     }
 
     @Test
