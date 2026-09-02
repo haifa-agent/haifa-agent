@@ -315,35 +315,32 @@ class ExternalModelRuntimeTest {
         AtomicInteger calls = new AtomicInteger();
         List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
         var runtime = new RuntimeCoreBuilder()
-                .registerChatModel(
-                        "openai-compatible",
-                        "1.0.0",
-                        request -> {
-                            int call = calls.incrementAndGet();
-                            if (call == 1) {
-                                return new AgentChatResponse(
-                                        "response-unknown-tool",
-                                        "deepseek-v4-pro",
-                                        "",
-                                        List.of(new ModelToolCall(
-                                                new ProviderToolCallCorrelationId("provider-call-transient"),
-                                                "hallucinated_tool",
-                                                Map.of())),
-                                        ModelFinishReason.TOOL_CALLS,
-                                        ModelUsage.unpriced(1, 1),
-                                        "",
-                                        Map.of());
-                            }
-                            return new AgentChatResponse(
-                                    "response-recovered",
-                                    "deepseek-v4-pro",
-                                    "done after retry",
-                                    List.of(),
-                                    ModelFinishReason.STOP,
-                                    ModelUsage.unpriced(5, 2),
-                                    "",
-                                    Map.of());
-                        })
+                .registerChatModel("openai-compatible", "1.0.0", request -> {
+                    int call = calls.incrementAndGet();
+                    if (call == 1) {
+                        return new AgentChatResponse(
+                                "response-unknown-tool",
+                                "deepseek-v4-pro",
+                                "",
+                                List.of(new ModelToolCall(
+                                        new ProviderToolCallCorrelationId("provider-call-transient"),
+                                        "hallucinated_tool",
+                                        Map.of())),
+                                ModelFinishReason.TOOL_CALLS,
+                                ModelUsage.unpriced(1, 1),
+                                "",
+                                Map.of());
+                    }
+                    return new AgentChatResponse(
+                            "response-recovered",
+                            "deepseek-v4-pro",
+                            "done after retry",
+                            List.of(),
+                            ModelFinishReason.STOP,
+                            ModelUsage.unpriced(5, 2),
+                            "",
+                            Map.of());
+                })
                 .scheduler(scheduler)
                 .persistence(RuntimePersistencePorts.inMemory(store))
                 .identifierGenerator(() -> "transient-tool-id-" + ids.incrementAndGet())
