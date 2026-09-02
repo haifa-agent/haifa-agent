@@ -25,7 +25,8 @@ final class AutonomousDeliveryProgressReporter {
         emit("case=" + caseId + " repetition=" + repetition + " status=STARTED");
     }
 
-    void caseCompleted(String caseId, int repetition, boolean acceptancePassed, boolean gatePassed, long elapsedMillis) {
+    void caseCompleted(
+            String caseId, int repetition, boolean acceptancePassed, boolean gatePassed, long elapsedMillis) {
         emit("case="
                 + caseId
                 + " repetition="
