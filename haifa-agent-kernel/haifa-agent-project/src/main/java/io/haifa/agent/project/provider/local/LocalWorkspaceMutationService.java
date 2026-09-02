@@ -558,19 +558,7 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
     }
 
     private static boolean isLinkOrReparse(Path path) {
-        if (Files.isSymbolicLink(path)) return true;
-        try {
-            BasicFileAttributes attributes =
-                    Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-            if (attributes.isOther()) return true;
-        } catch (IOException exception) {
-            return true;
-        }
-        try {
-            return Boolean.TRUE.equals(Files.getAttribute(path, "dos:reparsePoint", LinkOption.NOFOLLOW_LINKS));
-        } catch (IOException | UnsupportedOperationException | IllegalArgumentException ignored) {
-            return false;
-        }
+        return LocalWorkspacePathSafety.isUnsafeNode(path);
     }
 
     private static String hash(byte[] bytes) {

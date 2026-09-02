@@ -309,7 +309,7 @@ class MultiRootWorkspaceSimplificationE2ETest {
                 .doesNotContainKeys("quarantineToken", "changeSetId", "changeReviewArtifact");
         assertThat(Files.exists(mainDir.resolve("temp.txt"))).isFalse();
 
-        // 2. Directory deletion is strictly rejected
+        // 2. Empty directory deletion is supported without recursive mode
         ToolResult deleteDir = operations.execute(
                 "file.delete",
                 workspaceId,
@@ -317,8 +317,8 @@ class MultiRootWorkspaceSimplificationE2ETest {
                 "run-1",
                 "p-1",
                 new ToolArguments("file.delete", "1.0", Map.of("path", "folder")));
-        assertThat(deleteDir.successful()).isFalse();
-        assertThat(Files.exists(mainDir.resolve("folder"))).isTrue();
+        assertThat(deleteDir.successful()).isTrue();
+        assertThat(Files.exists(mainDir.resolve("folder"))).isFalse();
     }
 
     @Test

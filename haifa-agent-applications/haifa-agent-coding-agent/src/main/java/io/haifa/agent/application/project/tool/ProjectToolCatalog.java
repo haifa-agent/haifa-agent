@@ -379,9 +379,11 @@ public final class ProjectToolCatalog {
                     + "If the target is absent, use file.create; prefer file.patch for bounded edits.";
         }
         if (name.equals("file.patch")) {
-            return "Apply a bounded context patch to up to 100 workspace files. Use *** Begin Patch / *** End Patch "
-                    + "with Add File or Update File sections; use file.delete and file.move for those operations. "
-                    + "Existing files are matched exactly and failures report the committed prefix.";
+            return "Apply a bounded, non-atomic context patch to up to 100 files in one workspace root. Use "
+                    + "*** Begin Patch / *** End Patch with Add File or Update File sections; use file.delete and "
+                    + "file.move for those operations. All files are preflighted with optimistic checks before the "
+                    + "first write. Cross-root patches are rejected. A commit-time failure reports its committed prefix "
+                    + "and requires a fresh read before regenerating the patch.";
         }
         if (name.equals("workspace.attach")) {
             return "Request one additional existing local directory for this Coding Agent process only. Supply a "

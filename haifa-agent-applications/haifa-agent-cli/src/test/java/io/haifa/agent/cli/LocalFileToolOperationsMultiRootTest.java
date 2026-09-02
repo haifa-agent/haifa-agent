@@ -44,7 +44,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -332,9 +334,109 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("patch", patch)));
 
         assertThat(result.successful()).isTrue();
-        assertThat(result.structuredData()).containsEntry("complete", true);
+        assertThat(result.structuredData())
+                .containsEntry("complete", true)
+                .containsEntry("atomic", false)
+                .containsEntry("appliedPaths", List.of("config:first.txt", "config:second.txt"));
         assertThat(Files.readString(configDir.resolve("first.txt"))).isEqualTo("first\n");
         assertThat(Files.readString(configDir.resolve("second.txt"))).isEqualTo("second\n");
+    }
+
+    @Test
+    void rejectsCrossRootPatchBeforeChangingEitherRoot() {
+        String patch =
+                """
+                *** Begin Patch
+                *** Add File: config:first.txt
+                +first
+                *** Add File: main:second.txt
+                +second
+                *** End Patch
+                """;
+
+        var result = operations.execute(
+                "file.patch",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("patch", patch)));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "CROSS_ROOT_PATCH_FORBIDDEN")
+                .containsEntry("complete", false)
+                .containsEntry("appliedPaths", List.of());
+        assertThat(configDir.resolve("first.txt")).doesNotExist();
+        assertThat(mainDir.resolve("second.txt")).doesNotExist();
+    }
+
+    @Test
+    void rejectsConflictingMultiFilePatchBeforeWritingAnyFile() throws IOException {
+        Files.writeString(configDir.resolve("first.txt"), "first\n");
+        Files.writeString(configDir.resolve("second.txt"), "second\n");
+        String patch =
+                """
+                *** Begin Patch
+                *** Update File: config:first.txt
+                @@ first
+                -first
+                +FIRST
+                *** Update File: config:second.txt
+                @@ missing
+                -missing
+                +SECOND
+                *** End Patch
+                """;
+
+        var result = operations.execute(
+                "file.patch",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("patch", patch)));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "PATCH_CONFLICT")
+                .containsEntry("complete", false)
+                .containsEntry("appliedPaths", List.of())
+                .containsEntry("reconciliationRequired", false);
+        assertThat(Files.readString(configDir.resolve("first.txt"))).isEqualTo("first\n");
+        assertThat(Files.readString(configDir.resolve("second.txt"))).isEqualTo("second\n");
+    }
+
+    @Test
+    void reportsCommittedPrefixWhenAFileFailsDuringPatchCommit() throws IOException {
+        Files.writeString(configDir.resolve("blocked"), "not a directory");
+        String patch =
+                """
+                *** Begin Patch
+                *** Add File: config:first.txt
+                +first
+                *** Add File: config:blocked/second.txt
+                +second
+                *** End Patch
+                """;
+
+        var result = operations.execute(
+                "file.patch",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("patch", patch)));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("complete", false)
+                .containsEntry("atomic", false)
+                .containsEntry("appliedPaths", List.of("config:first.txt"))
+                .containsEntry("failedPath", "config:blocked/second.txt")
+                .containsEntry("errorCode", "IO_FAILURE")
+                .containsEntry("reconciliationRequired", true);
+        assertThat(Files.readString(configDir.resolve("first.txt"))).isEqualTo("first\n");
     }
 
     @Test
@@ -352,6 +454,7 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("path", "config:generated", "recursive", false)));
 
         assertThat(rejected.successful()).isFalse();
+        assertThat(rejected.structuredData()).containsEntry("errorCode", "PATH_DENIED");
         assertThat(generated).exists();
 
         var deleted = operations.execute(
@@ -364,6 +467,45 @@ class LocalFileToolOperationsMultiRootTest {
 
         assertThat(deleted.successful()).isTrue();
         assertThat(generated).doesNotExist();
+    }
+
+    @Test
+    void reportsPathNotFoundForAnAbsentAttachedDeleteTarget() {
+        var result = operations.execute(
+                "file.delete",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "config:missing.txt")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("errorCode", "PATH_NOT_FOUND");
+    }
+
+    @Test
+    void rejectsFifoInsideAttachedDirectoryBeforeDeletingAnyEntry() throws Exception {
+        Assumptions.assumeFalse(
+                System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win"),
+                "mkfifo is unavailable on Windows");
+        Path generated = configDir.resolve("generated");
+        Files.createDirectories(generated);
+        Path fifo = generated.resolve("events.fifo");
+        assertThat(new ProcessBuilder("mkfifo", fifo.toString()).start().waitFor())
+                .isZero();
+
+        var result = operations.execute(
+                "file.delete",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "config:generated", "recursive", true)));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("errorCode", "PATH_DENIED");
+        assertThat(generated).exists();
+        assertThat(fifo).exists();
     }
 
     @Test
