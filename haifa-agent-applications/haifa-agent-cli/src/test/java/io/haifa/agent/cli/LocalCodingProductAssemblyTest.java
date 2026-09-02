@@ -37,9 +37,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+@Tag("slow")
 class LocalCodingProductAssemblyTest {
     @TempDir
     Path root;
@@ -70,6 +72,21 @@ class LocalCodingProductAssemblyTest {
         assertThat(snapshot.nativeStreaming()).isTrue();
         assertThat(snapshot.dialect()).isEqualTo(io.haifa.agent.model.openai.OpenAiCompatibleDialects.SILICONFLOW);
         assertThat(snapshot.providerOptions()).containsEntry("endpoint_host", "api.siliconflow.cn");
+    }
+
+    @Test
+    void rendersExactWorkspaceAttachmentDetailsForApproval() {
+        String prompt = LocalCodingAgent.workspaceAttachmentApprovalPrompt(Map.of(
+                "alias", "docs",
+                "path", "D:\\workspace\\haifa-agent-docs",
+                "permission", "read-write"));
+
+        assertThat(prompt)
+                .contains("Attach additional workspace directory")
+                .contains("Alias: docs")
+                .contains("Path: D:\\workspace\\haifa-agent-docs")
+                .contains("Permission: read-write")
+                .contains("not persisted or shared");
     }
 
     @Test

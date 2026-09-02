@@ -11,9 +11,9 @@ class CodingAgentPromptTest {
         CodingAgentPrompt.Snapshot second = CodingAgentPrompt.current();
 
         assertThat(second).isEqualTo(first);
-        assertThat(first.version()).isEqualTo("1.3.0");
+        assertThat(first.version()).isEqualTo("1.4.0");
         assertThat(first.digest()).matches("sha256:[0-9a-f]{64}");
-        assertThat(first.identity()).startsWith("coding-agent-prompt@1.3.0#sha256:");
+        assertThat(first.identity()).startsWith("coding-agent-prompt@1.4.0#sha256:");
         assertThat(first.text())
                 .contains(
                         "You are Haifa Coding Agent",
@@ -53,7 +53,9 @@ class CodingAgentPromptTest {
                         "every item against final implementation/evidence",
                         "unresolved items are not complete",
                         "result-verification skill",
-                        "checks, skipped checks, and remaining risks")
+                        "checks, skipped checks, and remaining risks",
+                        "request workspace_attach",
+                        "least permission needed")
                 .doesNotContain(
                         "aider/polyglot_",
                         "deduplication",

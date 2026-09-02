@@ -8,8 +8,10 @@ import com.tngtech.archunit.core.importer.ImportOption;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+@Tag("architecture")
 class JsonlStoreArchitectureTest {
     @Test
     void mainCodeHasNoSqliteJdbcFrameworkOrProductDependency() {

@@ -7,8 +7,10 @@ import com.tngtech.archunit.core.domain.JavaModifier;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.ArchRule;
 import java.io.Serializable;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+@Tag("architecture")
 class CoreArchitectureTest {
 
     private static final ArchRule CORE_IS_FRAMEWORK_INDEPENDENT = noClasses()

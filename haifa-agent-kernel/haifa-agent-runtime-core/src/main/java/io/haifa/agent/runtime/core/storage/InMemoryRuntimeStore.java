@@ -647,7 +647,10 @@ public final class InMemoryRuntimeStore
     public synchronized void saveConfiguration(RuntimeConfigurationSnapshot configuration) {
         RuntimeConfigurationSnapshot existing =
                 configurations.putIfAbsent(configuration.reference().snapshotId(), configuration);
-        if (existing != null && !existing.equals(configuration)) {
+        if (existing != null
+                && !existing.reference()
+                        .contentHash()
+                        .equals(configuration.reference().contentHash())) {
             throw new IllegalStateException("configuration snapshot id collision");
         }
     }

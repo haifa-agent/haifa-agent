@@ -65,12 +65,9 @@ TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观�
 Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/REVIEW` 模式；没有可信模式时保持
 `UNKNOWN`，不从普通用户文本的关键词推断意图。模型消息不能改变模式，也不能制造交付证据。
 
-`CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、ChangeSet 和 Execution 状态
+`CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、有界执行事实和按需审查状态
 引用重建工作区修改、确定性 Change Review、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
-修改或验证通过证据。文件 Mutation 与本地进程观察到的 terminal ChangeSet 会生成
-`coding-change-review/1` 内容寻址摘要：只保留 base/result Workspace Digest、文件路径或长路径摘要、
-before/after Digest、大小及 create/replace/delete/move/binary/oversize/opaque 计数，不保存文件正文，
-也不依赖 Git。读取证据时会重新计算 Artifact Ref，并核对 Tool Result 中的 ChangeSet 引用。
+修改或验证通过证据。Issue 29 将文件变更事实从 `FileChangeSet` 事务收敛为成功的 Mutation ToolCall 与按需审查（Git 目录使用 Git 工作树状态，Plain 目录使用会话内有界记录 `SessionChangeLedger`），移除每次写操作同步生成 `coding-change-review/1` 的开销。
 
 `CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限 No-change、最后一次修改之后的验证尝试，
 以及覆盖最后一次修改的确定性 Review；`DIFF_INSPECTION` 不再作为修改任务完成门禁的兼容 fallback，
@@ -196,11 +193,8 @@ Catalog 保留 `file.search` 供显式配置兼容，但 Coding CLI 默认不冻
 普通手工源码更新优先使用 `file.patch` 1.1：它接受 Codex 风格的上下文 Patch，覆盖新增、删除、更新、
 移动和多文件调用；本地实现流式转换大文件并通过同目录临时文件与提交前哈希复核完成原子替换。
 `file.write` 保留给有意整体替换的小文件，生成代码和机械批量修改继续通过通用 CLI/生成器完成。
-文件 Mutation 现在以 Runtime idempotency key 作为 operation ID，并把权威 Tool Call ID 写入 ChangeSet。
-`file.create`/`file.write` 的只读 reconcile 同时核对 terminal ChangeSet、Tool Call 关联和目标内容摘要；任一
-证据缺失或漂移都保持 outcome-unknown。`execution.run` 会在进程启动时记录 execution ID、PID 和工作目录
-摘要；已得到终态进程结果可直接对账，timeout/cancel 只有在观察到本地 ChangeSet 时才收敛为“不重放的
-已知失败”，否则保持 outcome-unknown。
+文件 Mutation 保证完整原子替换；遇到外部冲突或不确定结果时 fail closed 返回错误，不自动重放或自动对账。`execution.run` 会在进程启动时记录 execution ID、PID 和工作目录
+摘要；已得到终态进程结果可直接对账，未知终止或失败不得自动重放。
 `execution.run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，
 Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一精确 Profile Ref/version。
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于

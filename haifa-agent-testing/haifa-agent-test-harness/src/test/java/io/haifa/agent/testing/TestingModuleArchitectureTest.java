@@ -10,10 +10,12 @@ import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathFactory;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
+@Tag("architecture")
 class TestingModuleArchitectureTest {
     private static final String TESTING_DIRECTORY = "haifa-agent-testing";
 

@@ -3,7 +3,6 @@ package io.haifa.agent.cli;
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeContentClassifier;
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeContentKind;
 import io.haifa.agent.project.changeset.FileChange;
-import io.haifa.agent.project.changeset.FileChangeSet;
 import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.filesystem.ReadOptions;
 import io.haifa.agent.project.filesystem.WorkspaceFileErrorCode;
@@ -23,14 +22,14 @@ final class LocalCodingChangeContentClassifier implements CodingChangeContentCla
     }
 
     @Override
-    public CodingChangeContentKind classify(FileChangeSet changeSet, FileChange change) {
+    public CodingChangeContentKind classify(FileChange change) {
         if (change.after() == null || change.after().type() != FileType.FILE) {
             return CodingChangeContentKind.OPAQUE;
         }
         var logical = change.optionalDestination().orElse(change.path());
         try {
             files.read(
-                    new WorkspacePath(changeSet.workspaceId(), logical),
+                    new WorkspacePath(new io.haifa.agent.project.workspace.WorkspaceId("default"), logical),
                     new ReadOptions(SAMPLE_BYTES, SAMPLE_BYTES, StandardCharsets.UTF_8, true));
             return CodingChangeContentKind.TEXT;
         } catch (WorkspaceFileException exception) {

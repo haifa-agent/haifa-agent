@@ -93,7 +93,8 @@
   -Pci-fast clean verify
 ```
 
-精确测试使用 L1；模块完整测试和全仓增量测试使用 L2；最终门禁使用 L3。不得按本机 CPU 数直接使用
+精确测试使用 L1；模块完整测试和全仓增量测试使用 L2；最终门禁使用 L3。Windows 上 L2/L3 构建成本较高，
+开发过程中优先运行受影响模块的构建与模块验证；仅在最终交付阶段运行 L2/L3，除非用户另行要求提前执行。不得按本机 CPU 数直接使用
 `-T 1C`。慢测、Integration、Release Artifact 和发布验证的命令及前置条件见
 [`build-support/README.md`](build-support/README.md)。`ci-integration-only` 和 `release-artifacts` 不能单独作为代码正确性门禁。
 运行 `-Prelease verify` 或 `-Prelease-artifacts verify` 必须使用 `-pl` 指定受影响模块，禁止全仓直接执行。
