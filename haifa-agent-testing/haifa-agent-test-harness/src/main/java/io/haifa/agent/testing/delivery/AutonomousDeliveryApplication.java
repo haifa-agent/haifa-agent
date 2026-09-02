@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /** Executes one Autonomous Delivery suite through the shared Harness run action. */
 public final class AutonomousDeliveryApplication {
@@ -27,6 +28,15 @@ public final class AutonomousDeliveryApplication {
             ResolvedRunContext.AutonomousDelivery context,
             long approvedMaxCostMinorUnits,
             Map<String, Path> executablePaths)
+            throws Exception {
+        return run(context, approvedMaxCostMinorUnits, executablePaths, ignored -> {});
+    }
+
+    public RunEvidenceWriter.NativeResult run(
+            ResolvedRunContext.AutonomousDelivery context,
+            long approvedMaxCostMinorUnits,
+            Map<String, Path> executablePaths,
+            Consumer<String> progressOutput)
             throws Exception {
         Objects.requireNonNull(context, "context must not be null");
         Map<String, Path> toolchains =
@@ -49,6 +59,6 @@ public final class AutonomousDeliveryApplication {
                         context.productRevision(),
                         context.testConfigRevision());
         return new AutonomousDeliveryGateCoordinator(clock, clientFactory)
-                .run(campaign, context, toolchains, host, approvedMaxCostMinorUnits);
+                .run(campaign, context, toolchains, host, approvedMaxCostMinorUnits, progressOutput);
     }
 }

@@ -46,6 +46,6 @@ public final class TestHarnessMain {
             return 0;
         }
         ExecutionPlanDocument document = JSON.readValue(options.plan().toFile(), ExecutionPlanDocument.class);
-        return new HarnessRunnerService(runnerArtifact).run(document, options.budgetApproval());
+        return new HarnessRunnerService(runnerArtifact).run(document, options.budgetApproval(), System.out::println);
     }
 }

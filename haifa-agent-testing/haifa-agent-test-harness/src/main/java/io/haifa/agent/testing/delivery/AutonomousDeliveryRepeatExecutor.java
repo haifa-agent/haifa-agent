@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.product.coding.client.CodingAgentClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAgentClientFactory;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.InteractionAction;
@@ -64,8 +65,10 @@ final class AutonomousDeliveryRepeatExecutor {
             RepositoryRevision testConfigRevision,
             String executionPlanSha256,
             AutonomousDeliveryPhasePolicy phasePolicy,
-            Collection<String> selectedSecrets)
+            Collection<String> selectedSecrets,
+            AutonomousDeliveryProgressReporter progress)
             throws Exception {
+        progress.caseStarted(testCase.caseId(), repetition);
         Files.createDirectories(repeat.getParent());
         Files.createDirectory(repeat);
         Path immutableCase = repeat.resolve("immutable-case");
@@ -98,7 +101,8 @@ final class AutonomousDeliveryRepeatExecutor {
                 agentProfile,
                 database,
                 transcripts,
-                suite.budget().maxWallTimeMillis());
+                suite.budget().maxWallTimeMillis(),
+                progress);
         long wallTimeMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
 
         String after = workspaceDigest(workspace);
@@ -169,6 +173,8 @@ final class AutonomousDeliveryRepeatExecutor {
                                 phaseThree.passed(),
                                 phaseThree.atomicity()),
                         selectedSecrets);
+        progress.caseCompleted(
+                testCase.caseId(), repetition, grade.passed(), preliminaryGatePassed, wallTimeMillis);
         return collected.summary();
     }
 
@@ -187,7 +193,8 @@ final class AutonomousDeliveryRepeatExecutor {
             ResolvedAgentProfile profile,
             Path database,
             Path transcripts,
-            long maxWallTimeMillis) {
+            long maxWallTimeMillis,
+            AutonomousDeliveryProgressReporter progress) {
         Map<String, String> environment = new HashMap<>(System.getenv());
         environment.put("HAIFA_PERSISTENCE_MODE", "SQLITE_WITH_JSONL");
         environment.put("HAIFA_SQLITE_DATABASE_PATH", database.toString());
@@ -211,8 +218,18 @@ final class AutonomousDeliveryRepeatExecutor {
             var sessionId = created.summary().sessionId();
             AgentRunSnapshot snapshot = created.activeRun().orElseThrow();
             runStarted = true;
+            RunEventCursor progressCursor = RunEventCursor.beforeFirst(snapshot.runId());
+            boolean progressFeedAvailable = true;
             long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(maxWallTimeMillis);
             while (!snapshot.status().isTerminal() && System.nanoTime() < deadline) {
+                if (progressFeedAvailable) {
+                    try {
+                        progressCursor = projectPendingEvents(client, snapshot.runId(), progressCursor, progress);
+                    } catch (RuntimeException exception) {
+                        progress.eventFeedUnavailable();
+                        progressFeedAvailable = false;
+                    }
+                }
                 var pending = client.pendingInteraction(snapshot.runId());
                 if (pending.isPresent()) {
                     client.respond(
@@ -222,6 +239,13 @@ final class AutonomousDeliveryRepeatExecutor {
                 }
                 Thread.sleep(25);
                 snapshot = client.findRun(snapshot.runId()).orElseThrow();
+            }
+            if (progressFeedAvailable) {
+                try {
+                    projectPendingEvents(client, snapshot.runId(), progressCursor, progress);
+                } catch (RuntimeException exception) {
+                    progress.eventFeedUnavailable();
+                }
             }
             completedWithinBudget = snapshot.status().isTerminal();
             if (!completedWithinBudget) {
@@ -271,6 +295,22 @@ final class AutonomousDeliveryRepeatExecutor {
             more = page.hasMore();
         } while (more);
         return List.copyOf(events);
+    }
+
+    private static RunEventCursor projectPendingEvents(
+            CodingSessionClient client,
+            AgentRunId runId,
+            RunEventCursor cursor,
+            AutonomousDeliveryProgressReporter progress) {
+        RunEventCursor next = cursor;
+        boolean more;
+        do {
+            var page = client.events(runId, next, 100);
+            page.items().forEach(progress::project);
+            next = page.nextCursor();
+            more = page.hasMore();
+        } while (more);
+        return next;
     }
 
     private static int maximumIteration(List<AgentRunEvent> events) {
