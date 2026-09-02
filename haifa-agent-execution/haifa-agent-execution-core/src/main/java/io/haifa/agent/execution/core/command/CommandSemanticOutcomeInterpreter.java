@@ -21,12 +21,17 @@ public final class CommandSemanticOutcomeInterpreter {
         if (status == ExecutionStatus.PROCESS_LIMIT_EXCEEDED) {
             return new Interpretation(CommandSemanticOutcome.COMMAND_FAILED, "PROCESS_LIMIT_EXCEEDED");
         }
-        if (status == ExecutionStatus.TIMED_OUT
-                || status == ExecutionStatus.CANCELLED
-                || status == ExecutionStatus.UNKNOWN
-                || status == ExecutionStatus.OUTPUT_LIMIT_EXCEEDED
-                || exitCode == null) {
+        if (status == ExecutionStatus.TIMED_OUT) {
+            return new Interpretation(CommandSemanticOutcome.COMMAND_FAILED, "COMMAND_TIMED_OUT");
+        }
+        if (status == ExecutionStatus.OUTPUT_LIMIT_EXCEEDED) {
+            return new Interpretation(CommandSemanticOutcome.COMMAND_FAILED, "OUTPUT_LIMIT_EXCEEDED");
+        }
+        if (status == ExecutionStatus.CANCELLED || status == ExecutionStatus.UNKNOWN) {
             return new Interpretation(CommandSemanticOutcome.OUTCOME_UNKNOWN, "EXECUTION_OUTCOME_UNKNOWN");
+        }
+        if (exitCode == null) {
+            return new Interpretation(CommandSemanticOutcome.COMMAND_FAILED, "COMMAND_NONZERO_EXIT");
         }
         var classification = SystemGitCliCommandClassifier.classify(command);
         if (exitCode == 1
