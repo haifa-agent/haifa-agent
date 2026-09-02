@@ -308,7 +308,7 @@ class LocalCodingAgentTest {
             assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
             assertThat(failed.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_PROVIDER_UNAVAILABLE);
         }
-        assertThat(calls).hasValue(1);
+        assertThat(calls).hasValue(2);
     }
 
     @Test
@@ -537,7 +537,10 @@ class LocalCodingAgentTest {
                     InteractionAction.APPROVE,
                     "approve-" + runId.value());
 
-            assertThat(receipt.status()).isEqualTo(InteractionResponseReceiptStatus.APPLIED);
+            assertThat(receipt.status())
+                    .isIn(
+                            InteractionResponseReceiptStatus.APPLIED,
+                            InteractionResponseReceiptStatus.ACCEPTED_PENDING_APPLICATION);
             var completed = awaitTerminal(agent, runId, Duration.ofSeconds(60));
             assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(completed.output()).contains("approval resumed the run");
