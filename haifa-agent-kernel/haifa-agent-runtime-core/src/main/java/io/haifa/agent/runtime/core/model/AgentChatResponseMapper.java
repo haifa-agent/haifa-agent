@@ -106,7 +106,7 @@ public final class AgentChatResponseMapper {
         if (specification == null) {
             throw new ModelInvocationException(
                     ModelErrorCategory.MALFORMED_RESPONSE,
-                    false,
+                    true,
                     200,
                     "undisclosed_tool",
                     request.callId(),
