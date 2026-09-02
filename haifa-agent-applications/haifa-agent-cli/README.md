@@ -578,8 +578,9 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 后续窗口通过 `SeekableByteChannel` 从游标字节位置读取，不按文件大小分配内存；游标绑定逻辑路径和版本，
 文件变化会返回 `FILE_CURSOR_STALE` 与 `RESTART_READ_FROM_CURRENT_VERSION`，只允许从当前版本无游标
 确定性重读一次；跨路径复用仍作为无效游标拒绝。敏感路径返回 `USER_ACTION_REQUIRED`，明确要求用户
-调整边界或授权，不建议模型通过随机改名、移动或复制绕过。`file.write` 遇到不存在目标返回
-`USE_FILE_CREATE`，`file.create` 遇到已有目标返回 `USE_FILE_WRITE_OR_PATCH`，二者都不是原样重试信号。
+调整边界或授权，不建议模型通过随机改名、移动或复制绕过。`file.write` 会在目标不存在时原子创建文件；
+目标已存在时仍以版本和内容哈希保护整体替换。`file.create` 遇到已有目标返回
+`USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。
 
 当用户要求读取或修改当前 Workspace 外的目录时，模型只能请求 `workspace_attach`：必须给出新的 alias、
 绝对路径和最小权限（`read-only` 或 `read-write`）。默认 `ask` 模式会向用户展示这三项并等待明确批准；

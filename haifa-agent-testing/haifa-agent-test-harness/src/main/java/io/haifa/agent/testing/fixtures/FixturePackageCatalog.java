@@ -34,7 +34,8 @@ public final class FixturePackageCatalog {
                 requireContainedDirectory(packageRoot, manifest.acceptance(), "acceptance");
                 String digest = digest(packageRoot);
                 if (!digest.equals(manifest.contentSha256())) {
-                    throw new IllegalArgumentException("fixture package digest does not match: " + manifest.id());
+                    throw new IllegalArgumentException("fixture package digest does not match: " + manifest.id()
+                            + ", expected=" + manifest.contentSha256() + ", actual=" + digest);
                 }
                 FixtureReference reference = new FixtureReference(manifest.id(), manifest.version());
                 if (packages.put(reference, new PackageDescriptor(manifest, packageRoot, digest)) != null) {

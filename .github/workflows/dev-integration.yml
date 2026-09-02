@@ -31,7 +31,7 @@ jobs:
         timeout-minutes: 15
         env:
             HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
-            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
+            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-flash-2026-07-15
         steps:
             - uses: actions/checkout@v4
             - name: Require private test-config deploy key
@@ -61,13 +61,21 @@ jobs:
                   $runRoot = Join-Path $env:RUNNER_TEMP 'haifa-test-runs'
                   New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
                   "HAIFA_TEST_RUN_ROOT=$runRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            - name: Plan Nightly Suite (Unix)
+            - name: Plan Critical Path regression suite (Unix)
               if: runner.os != 'Windows'
-              run: bash test-config/scripts/run-suite.sh nightly-v1
-            - name: Plan Nightly Suite (Windows)
+              run: >-
+                  bash test-config/scripts/run-suite.sh plan
+                  --suite critical-path-regression-v1
+                  --mode live
+                  --output "$RUNNER_TEMP/haifa-test-runs/critical-path-regression-plan.json"
+            - name: Plan Critical Path regression suite (Windows)
               if: runner.os == 'Windows'
               shell: pwsh
-              run: .\test-config\scripts\run-suite.ps1 nightly-v1
+              run: >-
+                  .\test-config\scripts\run-suite.ps1 plan
+                  --suite critical-path-regression-v1
+                  --mode live
+                  --output (Join-Path $env:HAIFA_TEST_RUN_ROOT 'critical-path-regression-plan.json')
 
     remote-suite-governance-plan:
         name: Remote plan (${{ matrix.suite }}, ${{ matrix.combination }}, ${{ matrix.os }})
@@ -76,23 +84,27 @@ jobs:
             fail-fast: false
             matrix:
                 include:
-                    - suite: nightly-v1
+                    - suite: critical-path-regression-v1
                       os: ubuntu-latest
                       combination: linux-primary
-                    - suite: nightly-v1
+                      mode: live
+                    - suite: critical-path-regression-v1
                       os: windows-latest
                       combination: windows-primary
+                      mode: live
                     - suite: release-v1
                       os: ubuntu-latest
                       combination: linux-release
+                      mode: release
                     - suite: release-v1
                       os: windows-latest
                       combination: windows-release
+                      mode: release
         runs-on: ${{ matrix.os }}
         timeout-minutes: 15
         env:
             HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
-            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
+            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-flash-2026-07-15
         steps:
             - uses: actions/checkout@v4
             - name: Require private test-config deploy key
@@ -124,11 +136,19 @@ jobs:
                   "HAIFA_TEST_RUN_ROOT=$runRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             - name: Plan Suite (Unix)
               if: runner.os != 'Windows'
-              run: bash test-config/scripts/run-suite.sh ${{ matrix.suite }}
+              run: >-
+                  bash test-config/scripts/run-suite.sh plan
+                  --suite ${{ matrix.suite }}
+                  --mode ${{ matrix.mode }}
+                  --output "$RUNNER_TEMP/haifa-test-runs/${{ matrix.suite }}-plan.json"
             - name: Plan Suite (Windows)
               if: runner.os == 'Windows'
               shell: pwsh
-              run: .\test-config\scripts\run-suite.ps1 ${{ matrix.suite }}
+              run: >-
+                  .\test-config\scripts\run-suite.ps1 plan
+                  --suite ${{ matrix.suite }}
+                  --mode ${{ matrix.mode }}
+                  --output (Join-Path $env:HAIFA_TEST_RUN_ROOT '${{ matrix.suite }}-plan.json')
 
     fast-cross-platform:
         name: Fast verify (${{ matrix.os }})

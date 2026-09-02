@@ -279,7 +279,8 @@ public final class ProjectToolCatalog {
                     case "execution.run" -> "1.7.2";
                     case ProjectPermissionRequestOperations.TOOL_NAME -> "1.6.0";
                     case "file.read" -> "1.2.0";
-                    case "file.create", "file.write", "file.patch" -> "1.2.0";
+                    case "file.write" -> "1.3.0";
+                    case "file.create", "file.patch" -> "1.2.0";
                     case "file.delete", "file.move" -> "1.1.0";
                     default -> "1.0.0";
                 };
@@ -375,8 +376,8 @@ public final class ProjectToolCatalog {
                     + "intentional full replacement or file.patch for a bounded edit.";
         }
         if (name.equals("file.write")) {
-            return "Replace the complete contents of an existing file with revision and content-hash protection. "
-                    + "If the target is absent, use file.create; prefer file.patch for bounded edits.";
+            return "Replace the complete contents of an existing file with revision and content-hash protection; "
+                    + "if the target is absent, creates the file atomically. Prefer file.patch for bounded edits.";
         }
         if (name.equals("file.patch")) {
             return "Apply a bounded, non-atomic context patch to up to 100 files in one workspace root. Use "
