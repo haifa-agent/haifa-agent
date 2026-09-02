@@ -62,7 +62,7 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class SqliteSdkPersonalFixtureTest {
+class SqliteSdkPersonalFixtureIT {
     private static final ProductContributionCoordinate MODEL =
             new ProductContributionCoordinate("model.personal-test", "1.0");
     private static final ProductContributionCoordinate PERSISTENCE =
@@ -86,7 +86,7 @@ class SqliteSdkPersonalFixtureTest {
                 .contribute(first.persistence())
                 .contribute(first.conversation())
                 .contribute(first.memory())
-                .callerProvider(SqliteSdkPersonalFixtureTest::memoryReviewer)
+                .callerProvider(SqliteSdkPersonalFixtureIT::memoryReviewer)
                 .identifierGenerator(() -> "memory-fixture-" + ids.incrementAndGet())
                 .timeProvider(() -> SqliteTestSupport.NOW)
                 .build()) {
@@ -120,7 +120,7 @@ class SqliteSdkPersonalFixtureTest {
                 .contribute(reopenedStore.persistence())
                 .contribute(reopenedStore.conversation())
                 .contribute(reopenedStore.memory())
-                .callerProvider(SqliteSdkPersonalFixtureTest::memoryReviewer)
+                .callerProvider(SqliteSdkPersonalFixtureIT::memoryReviewer)
                 .identifierGenerator(() -> "memory-reopen-" + ids.incrementAndGet())
                 .timeProvider(() -> SqliteTestSupport.NOW)
                 .build()) {

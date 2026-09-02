@@ -49,7 +49,7 @@ import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class SqliteOperationalAdaptersTest {
+class SqliteOperationalAdaptersIT {
     private static final Instant NOW = SqliteAggregateTestData.NOW;
 
     @Test

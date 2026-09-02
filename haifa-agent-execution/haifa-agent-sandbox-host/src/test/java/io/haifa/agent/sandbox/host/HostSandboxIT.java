@@ -54,7 +54,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class HostSandboxTest {
+class HostSandboxIT {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
 
     @TempDir
