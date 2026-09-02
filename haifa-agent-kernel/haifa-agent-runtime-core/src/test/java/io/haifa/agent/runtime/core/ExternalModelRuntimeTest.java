@@ -288,16 +288,78 @@ class ExternalModelRuntimeTest {
                         .containsKeys("exceptionType", "rootExceptionType", "failureTypes"));
         assertThat(outputEvents)
                 .extracting(event -> event.type())
-                .containsExactly(AgentRunOutputEventType.RUN_OUTPUT_STARTED, AgentRunOutputEventType.RUN_OUTPUT_FAILED);
+                .containsExactly(
+                        AgentRunOutputEventType.RUN_OUTPUT_STARTED,
+                        AgentRunOutputEventType.RUN_OUTPUT_FAILED,
+                        AgentRunOutputEventType.RUN_OUTPUT_SUPERSEDED,
+                        AgentRunOutputEventType.RUN_OUTPUT_STARTED,
+                        AgentRunOutputEventType.RUN_OUTPUT_FAILED);
         assertThat(runtime.events(accepted.runId(), RunEventCursor.beforeFirst(accepted.runId()), 100).items().stream()
                         .filter(event -> event.payload() instanceof RunEventPayloads.ModelLifecycle)
                         .map(event -> (RunEventPayloads.ModelLifecycle) event.payload()))
                 .extracting(RunEventPayloads.ModelLifecycle::status, RunEventPayloads.ModelLifecycle::reasonCode)
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple("STARTED", "NONE"),
+                        org.assertj.core.groups.Tuple.tuple("FAILED", "MALFORMED_RESPONSE"),
+                        org.assertj.core.groups.Tuple.tuple("STARTED", "NONE"),
                         org.assertj.core.groups.Tuple.tuple("FAILED", "MALFORMED_RESPONSE"));
         assertThat(store.messages(accepted.runId()))
                 .noneMatch(message -> message.role() == io.haifa.agent.core.message.MessageRole.ASSISTANT);
+    }
+
+    @Test
+    void retriesTransientUndisclosedToolAndRecoversWhenDisclosedToolProvidedOnRetry() {
+        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger ids = new AtomicInteger();
+        AtomicInteger calls = new AtomicInteger();
+        List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
+        var runtime = new RuntimeCoreBuilder()
+                .registerChatModel(
+                        "openai-compatible",
+                        "1.0.0",
+                        request -> {
+                            int call = calls.incrementAndGet();
+                            if (call == 1) {
+                                return new AgentChatResponse(
+                                        "response-unknown-tool",
+                                        "deepseek-v4-pro",
+                                        "",
+                                        List.of(new ModelToolCall(
+                                                new ProviderToolCallCorrelationId("provider-call-transient"),
+                                                "hallucinated_tool",
+                                                Map.of())),
+                                        ModelFinishReason.TOOL_CALLS,
+                                        ModelUsage.unpriced(1, 1),
+                                        "",
+                                        Map.of());
+                            }
+                            return new AgentChatResponse(
+                                    "response-recovered",
+                                    "deepseek-v4-pro",
+                                    "done after retry",
+                                    List.of(),
+                                    ModelFinishReason.STOP,
+                                    ModelUsage.unpriced(5, 2),
+                                    "",
+                                    Map.of());
+                        })
+                .scheduler(scheduler)
+                .persistence(RuntimePersistencePorts.inMemory(store))
+                .identifierGenerator(() -> "transient-tool-id-" + ids.incrementAndGet())
+                .timeProvider(() -> Instant.parse("2026-07-21T00:00:00Z"))
+                .trace(traces::add)
+                .build();
+
+        var accepted = runtime.start(request("transient-tool-run"));
+        scheduler.runAll();
+
+        assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(runtime.find(accepted.runId()).orElseThrow().output()).contains("done after retry");
+        assertThat(calls).hasValue(2);
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("model.error"))
+                .isEmpty();
     }
 
     @Test
