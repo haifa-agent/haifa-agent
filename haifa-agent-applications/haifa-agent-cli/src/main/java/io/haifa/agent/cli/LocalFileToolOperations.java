@@ -921,13 +921,15 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 };
         try {
             Path normalizedPath = requested.toAbsolutePath().normalize();
+            if (Files.isSymbolicLink(normalizedPath)) {
+                throw new IllegalArgumentException("workspace.attach path must not be a symbolic link");
+            }
             Path realPath = normalizedPath.toRealPath();
             if (!Files.isDirectory(realPath)) {
                 throw new IllegalArgumentException("workspace.attach path must be an existing directory");
             }
-            if (!realPath.equals(normalizedPath)) {
-                throw new IllegalArgumentException(
-                        "workspace.attach path must not traverse a symbolic link or reparse point");
+            if (Files.isSymbolicLink(realPath)) {
+                throw new IllegalArgumentException("workspace.attach path must not be a symbolic link");
             }
             for (LocalWorkspaceRoot existing : rootRegistry.allRoots()) {
                 Path existingRealPath = existing.hostPath().toRealPath();
