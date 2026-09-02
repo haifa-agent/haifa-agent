@@ -100,6 +100,9 @@
             <arg column="limit_max_parallel_children" javaType="_int"/>
             <arg column="limit_max_wall_time_millis" javaType="_long"/>
             <arg column="limit_max_idle_time_millis" javaType="_long"/>
+            <arg column="limit_max_tool_calls" javaType="_long"/>
+            <arg column="limit_max_model_calls" javaType="_long"/>
+            <arg column="limit_max_child_runs" javaType="_long"/>
             <arg column="configuration_ref" javaType="java.lang.String"/>
             <arg column="status" javaType="java.lang.String"/>
             <arg column="usage_input_tokens" javaType="_long"/>
@@ -149,6 +152,7 @@
         budget_max_tool_calls, budget_max_model_calls, budget_max_child_runs,
         budget_max_cost_currency, budget_max_cost_minor_units, limit_max_iterations, limit_max_depth,
         limit_max_parallel_children, limit_max_wall_time_millis, limit_max_idle_time_millis,
+        limit_max_tool_calls, limit_max_model_calls, limit_max_child_runs,
         configuration_ref, status, usage_input_tokens, usage_output_tokens, usage_cached_input_tokens,
         usage_model_calls, usage_tool_calls, usage_child_runs, usage_cost_minor_units,
         usage_wall_time_millis, result_schema_version, result_payload, result_hash,
@@ -171,7 +175,9 @@
             #{row.budgetMaxModelCalls}, #{row.budgetMaxChildRuns},
             #{row.budgetMaxCostCurrency}, #{row.budgetMaxCostMinorUnits},
             #{row.limitMaxIterations}, #{row.limitMaxDepth}, #{row.limitMaxParallelChildren},
-            #{row.limitMaxWallTimeMillis}, #{row.limitMaxIdleTimeMillis}, #{row.configurationRef},
+            #{row.limitMaxWallTimeMillis}, #{row.limitMaxIdleTimeMillis},
+            #{row.limitMaxToolCalls}, #{row.limitMaxModelCalls}, #{row.limitMaxChildRuns},
+            #{row.configurationRef},
             #{row.status}, #{row.usageInputTokens}, #{row.usageOutputTokens},
             #{row.usageCachedInputTokens}, #{row.usageModelCalls}, #{row.usageToolCalls},
             #{row.usageChildRuns}, #{row.usageCostMinorUnits}, #{row.usageWallTimeMillis},
@@ -208,6 +214,9 @@
             limit_max_parallel_children = #{row.limitMaxParallelChildren},
             limit_max_wall_time_millis = #{row.limitMaxWallTimeMillis},
             limit_max_idle_time_millis = #{row.limitMaxIdleTimeMillis},
+            limit_max_tool_calls = #{row.limitMaxToolCalls},
+            limit_max_model_calls = #{row.limitMaxModelCalls},
+            limit_max_child_runs = #{row.limitMaxChildRuns},
             configuration_ref = #{row.configurationRef}, status = #{row.status},
             usage_input_tokens = #{row.usageInputTokens},
             usage_output_tokens = #{row.usageOutputTokens},
