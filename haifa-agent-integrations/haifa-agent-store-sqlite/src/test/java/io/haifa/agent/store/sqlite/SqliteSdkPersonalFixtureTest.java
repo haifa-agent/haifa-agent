@@ -258,6 +258,7 @@ class SqliteSdkPersonalFixtureTest {
 
             assertThat(submitResults.stream()
                             .filter(io.haifa.agent.sdk.conversation.ConversationRecord.class::isInstance))
+                    .as("concurrent submit results: %s", submitResultSummary(submitResults))
                     .hasSize(1);
             assertThat(submitResults.stream().filter(ConversationException.class::isInstance))
                     .singleElement()
@@ -359,6 +360,14 @@ class SqliteSdkPersonalFixtureTest {
         } catch (Exception expected) {
             return expected;
         }
+    }
+
+    private static List<String> submitResultSummary(List<Object> results) {
+        return results.stream()
+                .map(value -> value instanceof ConversationException exception
+                        ? "ConversationException:" + exception.code()
+                        : value.getClass().getSimpleName())
+                .toList();
     }
 
     private static void waitUntilTerminal(HaifaAgent agent, io.haifa.agent.core.run.AgentRunId runId) throws Exception {

@@ -194,99 +194,23 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private ToolResult list(WorkspaceId workspaceId, Map<String, Object> values) {
         String pathStr = optionalString(values, "path");
         ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_ONLY);
-        if (target.isMain()) {
-            var page = files.list(new FileListRequest(target.workspacePath(), 0, 500));
-            List<Map<String, Object>> entries = page.entries().stream()
-                    .map(entry -> Map.<String, Object>of(
-                            "path", entry.metadata().path().projectPath().toString(),
-                            "type", entry.metadata().type().name(),
-                            "size", entry.metadata().size()))
-                    .toList();
-            return success(
-                    "Listed " + entries.size() + " workspace entries",
-                    Map.of("entries", entries, "truncated", page.truncated()));
-        }
-
-        Path dir = target.hostPath();
-        if (!Files.exists(dir)) {
-            throw new WorkspaceFileException(
-                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
-                    target.workspacePath(),
-                    "directory not found: " + target.displayPath());
-        }
-        if (!Files.isDirectory(dir)) {
-            throw new WorkspaceFileException(
-                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
-                    target.workspacePath(),
-                    "path is not a directory: " + target.displayPath());
-        }
-
-        List<Map<String, Object>> entries = new ArrayList<>();
-        boolean truncated = false;
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
-            for (Path child : stream) {
-                if (entries.size() >= 500) {
-                    truncated = true;
-                    break;
-                }
-                String childName = child.getFileName().toString();
-                String entryPath = target.rootAlias().value() + ":"
-                        + (target.relativePath().isEmpty() ? childName : target.relativePath() + "/" + childName);
-                boolean isDir = Files.isDirectory(child);
-                long size = isDir ? 0L : Files.size(child);
-                entries.add(Map.of(
-                        "path", entryPath,
-                        "type", isDir ? "DIRECTORY" : "FILE",
-                        "size", size));
-            }
-        } catch (IOException e) {
-            throw new WorkspaceFileException(WorkspaceFileErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
-        }
-
-        entries.sort(Comparator.comparing(m -> String.valueOf(m.get("path"))));
+        TargetListing listing = listEntries(target);
         return success(
-                "Listed " + entries.size() + " workspace entries", Map.of("entries", entries, "truncated", truncated));
+                "Listed " + listing.entries().size() + " workspace entries",
+                Map.of("entries", listing.entries(), "truncated", listing.truncated()));
     }
 
     private ToolResult stat(WorkspaceId workspaceId, Map<String, Object> values) {
         String pathStr = string(values, "path");
         ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_ONLY);
-        if (target.isMain()) {
-            var metadata = files.stat(target.workspacePath(), true);
-            return success(
-                    "Inspected " + metadata.path().projectPath(),
-                    Map.of(
-                            "path", metadata.path().projectPath().toString(),
-                            "type", metadata.type().name(),
-                            "size", metadata.size(),
-                            "contentHash", metadata.contentHash().orElse("")));
-        }
-
-        Path file = target.hostPath();
-        if (!Files.exists(file)) {
-            throw new WorkspaceFileException(
-                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
-                    target.workspacePath(),
-                    "file not found: " + target.displayPath());
-        }
-        boolean isDir = Files.isDirectory(file);
-        try {
-            long size = isDir ? 0L : Files.size(file);
-            String hash = isDir ? "" : "sha256:" + digest(Files.readAllBytes(file));
-            return success(
-                    "Inspected " + target.displayPath(),
-                    Map.of(
-                            "path",
-                            target.displayPath(),
-                            "type",
-                            isDir ? "DIRECTORY" : "FILE",
-                            "size",
-                            size,
-                            "contentHash",
-                            hash));
-        } catch (IOException e) {
-            throw new WorkspaceFileException(WorkspaceFileErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
-        }
+        TargetMetadata metadata = inspectExisting(target);
+        return success(
+                "Inspected " + target.displayPath(),
+                Map.of(
+                        "path", target.displayPath(),
+                        "type", metadata.type().name(),
+                        "size", metadata.size(),
+                        "contentHash", metadata.type() == FileType.DIRECTORY ? "" : metadata.contentHash()));
     }
 
     private ToolResult read(WorkspaceId workspaceId, Map<String, Object> values) {
@@ -296,142 +220,39 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         ReadCursor cursor = decodeCursor(optionalString(values, "cursor"), pathText);
         int maxBytes = boundedInteger(values, "maxBytes", DEFAULT_READ_BYTES, MAX_READ_BYTES);
         int maxLines = boundedInteger(values, "maxLines", DEFAULT_READ_LINES, MAX_READ_LINES);
-
-        if (target.isMain()) {
-            var content = files.read(
-                    target.workspacePath(),
-                    new ReadOptions(cursor.offset(), maxBytes, maxBytes, StandardCharsets.UTF_8, true));
-            if (cursor.sourceVersion() != null && !cursor.sourceVersion().equals(content.sourceVersion())) {
-                throw new WorkspaceFileException(
-                        WorkspaceFileErrorCode.FILE_CURSOR_STALE,
-                        target.workspacePath(),
-                        "file changed after the read cursor was issued");
-            }
-            String visible = firstLines(content.text(), maxLines);
-            long visibleBytes = visible.getBytes(StandardCharsets.UTF_8).length;
-            long nextOffset = content.offset() + visibleBytes;
-            boolean hasMore = nextOffset < content.totalByteCount();
-            int nextLine = cursor.startLine() + lineBreaks(visible);
-            Map<String, Object> data = new LinkedHashMap<>();
-            data.put("path", pathText);
-            data.put("content", visible);
-            data.put("startLine", cursor.startLine());
-            data.put("endLine", visible.isEmpty() ? cursor.startLine() : nextLine);
-            data.put("bytesRead", visibleBytes);
-            data.put("totalBytes", content.totalByteCount());
-            data.put("contentVersion", content.sourceVersion());
-            data.put("hasMore", hasMore);
-            data.put("truncated", hasMore);
-            if (hasMore) {
-                data.put("nextCursor", encodeCursor(nextOffset, nextLine, content.sourceVersion(), pathText));
-            }
-            return success("Read " + pathText, Map.copyOf(data));
-        }
-
-        Path file = target.hostPath();
-        if (!Files.exists(file)) {
+        TargetRead content = readContent(target, cursor.offset(), maxBytes);
+        if (cursor.sourceVersion() != null && !cursor.sourceVersion().equals(content.sourceVersion())) {
             throw new WorkspaceFileException(
-                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
+                    WorkspaceFileErrorCode.FILE_CURSOR_STALE,
                     target.workspacePath(),
-                    "file not found: " + target.displayPath());
+                    "file changed after the read cursor was issued");
         }
-        if (Files.isDirectory(file)) {
-            throw new WorkspaceFileException(
-                    WorkspaceFileErrorCode.WRONG_FILE_TYPE,
-                    target.workspacePath(),
-                    "path is a directory: " + target.displayPath());
+        String visible = firstLines(content.text(), maxLines);
+        long visibleBytes = visible.getBytes(StandardCharsets.UTF_8).length;
+        long nextOffset = content.offset() + visibleBytes;
+        boolean hasMore = nextOffset < content.totalByteCount();
+        int nextLine = cursor.startLine() + lineBreaks(visible);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("path", pathText);
+        data.put("content", visible);
+        data.put("startLine", cursor.startLine());
+        data.put("endLine", visible.isEmpty() ? cursor.startLine() : nextLine);
+        data.put("bytesRead", visibleBytes);
+        data.put("totalBytes", content.totalByteCount());
+        data.put("contentVersion", content.sourceVersion());
+        data.put("hasMore", hasMore);
+        data.put("truncated", hasMore);
+        if (hasMore) {
+            data.put("nextCursor", encodeCursor(nextOffset, nextLine, content.sourceVersion(), pathText));
         }
-
-        try {
-            byte[] allBytes = Files.readAllBytes(file);
-            String contentVersion = "sha256:" + digest(allBytes);
-            if (cursor.sourceVersion() != null && !cursor.sourceVersion().equals(contentVersion)) {
-                throw new WorkspaceFileException(
-                        WorkspaceFileErrorCode.FILE_CURSOR_STALE,
-                        target.workspacePath(),
-                        "file changed after the read cursor was issued");
-            }
-            int offset = (int) Math.min(cursor.offset(), allBytes.length);
-            int length = Math.min(maxBytes, allBytes.length - offset);
-            String text = new String(allBytes, offset, length, StandardCharsets.UTF_8);
-
-            String visible = firstLines(text, maxLines);
-            long visibleBytes = visible.getBytes(StandardCharsets.UTF_8).length;
-            long nextOffset = offset + visibleBytes;
-            boolean hasMore = nextOffset < allBytes.length;
-            int nextLine = cursor.startLine() + lineBreaks(visible);
-
-            Map<String, Object> data = new LinkedHashMap<>();
-            data.put("path", pathText);
-            data.put("content", visible);
-            data.put("startLine", cursor.startLine());
-            data.put("endLine", visible.isEmpty() ? cursor.startLine() : nextLine);
-            data.put("bytesRead", visibleBytes);
-            data.put("totalBytes", (long) allBytes.length);
-            data.put("contentVersion", contentVersion);
-            data.put("hasMore", hasMore);
-            data.put("truncated", hasMore);
-            if (hasMore) {
-                data.put("nextCursor", encodeCursor(nextOffset, nextLine, contentVersion, pathText));
-            }
-            return success("Read " + pathText, Map.copyOf(data));
-        } catch (IOException e) {
-            throw new WorkspaceFileException(WorkspaceFileErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
-        }
+        return success("Read " + pathText, Map.copyOf(data));
     }
 
     private ToolResult search(WorkspaceId workspaceId, Map<String, Object> values) {
         String query = string(values, "query");
         String pathStr = optionalString(values, "path");
         ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_ONLY);
-        if (target.isMain()) {
-            var matches = files.search(new SearchRequest(
-                    target.workspacePath(), query, 2_000, integer(values, "maxResults", 100), 1_048_576, false));
-            List<Map<String, Object>> results = matches.stream()
-                    .map(match -> Map.<String, Object>of(
-                            "path", match.path().projectPath().toString(),
-                            "line", match.line(),
-                            "column", match.column(),
-                            "excerpt", match.excerpt()))
-                    .toList();
-            return success("Found " + results.size() + " matches", Map.of("results", results));
-        }
-
-        Path rootPath = target.hostPath();
-        if (!Files.exists(rootPath)) {
-            throw new WorkspaceFileException(
-                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
-                    target.workspacePath(),
-                    "not found: " + target.displayPath());
-        }
-
-        int maxResults = integer(values, "maxResults", 100);
-        List<Map<String, Object>> results = new ArrayList<>();
-
-        try (Stream<Path> stream = Files.walk(rootPath)) {
-            stream.filter(Files::isRegularFile).forEach(p -> {
-                if (results.size() >= maxResults) return;
-                try {
-                    String relative = rootPath.relativize(p).toString().replace('\\', '/');
-                    String display = target.rootAlias().value() + ":"
-                            + (target.relativePath().isEmpty() ? relative : target.relativePath() + "/" + relative);
-                    List<String> lines = Files.readAllLines(p, StandardCharsets.UTF_8);
-                    for (int i = 0; i < lines.size(); i++) {
-                        if (results.size() >= maxResults) break;
-                        String line = lines.get(i);
-                        int col = line.indexOf(query);
-                        if (col >= 0) {
-                            results.add(
-                                    Map.of("path", display, "line", i + 1, "column", col + 1, "excerpt", line.trim()));
-                        }
-                    }
-                } catch (Exception ignored) {
-                }
-            });
-        } catch (IOException e) {
-            throw new WorkspaceFileException(WorkspaceFileErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
-        }
-
+        List<Map<String, Object>> results = searchEntries(target, query, integer(values, "maxResults", 100));
         return success("Found " + results.size() + " matches", Map.of("results", results));
     }
 
@@ -439,50 +260,10 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         String pathStr = string(values, "path");
         ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_WRITE);
         byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
-
-        if (target.isMain()) {
-            Workspace workspace = workspace(workspaceId);
-            mutations.create(new CreateFileRequest(
-                    target.workspacePath(), bytes, MutationPrecondition.absent(workspace.revision()), mutationContext));
-            if (ledger != null) {
-                String hash = "sha256:" + digest(bytes);
-                ledger.record(SessionFileChangeRecord.create(
-                        target.rootAlias(),
-                        target.projectPath(),
-                        hash,
-                        bytes.length,
-                        mutationContext.toolCallRef(),
-                        Instant.now()));
-            }
-            return success("Created " + target.displayPath(), Map.of("path", target.displayPath()));
-        }
-
-        Path file = target.hostPath();
-        if (Files.exists(file)) {
-            throw new WorkspaceMutationException(
-                    MutationErrorCode.TARGET_EXISTS,
-                    target.workspacePath(),
-                    "file already exists: " + target.displayPath());
-        }
-        try {
-            if (file.getParent() != null) {
-                Files.createDirectories(file.getParent());
-            }
-            Files.write(file, bytes);
-            String hash = "sha256:" + digest(bytes);
-            if (ledger != null) {
-                ledger.record(SessionFileChangeRecord.create(
-                        target.rootAlias(),
-                        target.projectPath(),
-                        hash,
-                        bytes.length,
-                        mutationContext.toolCallRef(),
-                        Instant.now()));
-            }
-            return success("Created " + target.displayPath(), Map.of("path", target.displayPath()));
-        } catch (IOException e) {
-            throw new WorkspaceMutationException(MutationErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
-        }
+        ensureAbsent(target);
+        createTarget(workspaceId, mutationContext, target, bytes);
+        recordCreate(target, bytes, mutationContext);
+        return success("Created " + target.displayPath(), Map.of("path", target.displayPath()));
     }
 
     private ToolResult write(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
@@ -490,68 +271,10 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_WRITE);
         byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
 
-        if (target.isMain()) {
-            Workspace workspace = workspace(workspaceId);
-            var metadata = files.stat(target.workspacePath(), true);
-            String currentHash =
-                    metadata.contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
-            long prevSize = metadata.size();
-            mutations.write(new WriteFileRequest(
-                    target.workspacePath(),
-                    bytes,
-                    MutationPrecondition.existing(workspace.revision(), currentHash),
-                    mutationContext));
-            if (ledger != null) {
-                String newHash = "sha256:" + digest(bytes);
-                ledger.record(SessionFileChangeRecord.replace(
-                        target.rootAlias(),
-                        target.projectPath(),
-                        currentHash,
-                        prevSize,
-                        newHash,
-                        bytes.length,
-                        mutationContext.toolCallRef(),
-                        Instant.now()));
-            }
-            return success("Wrote " + target.displayPath(), Map.of("path", target.displayPath()));
-        }
-
-        Path file = target.hostPath();
-        if (!Files.exists(file)) {
-            throw new WorkspaceMutationException(
-                    MutationErrorCode.TARGET_NOT_FOUND,
-                    target.workspacePath(),
-                    "file not found: " + target.displayPath());
-        }
-        if (Files.isDirectory(file)) {
-            throw new WorkspaceMutationException(
-                    MutationErrorCode.WRONG_FILE_TYPE,
-                    target.workspacePath(),
-                    "cannot write to directory: " + target.displayPath());
-        }
-
-        try {
-            byte[] prev = Files.readAllBytes(file);
-            String beforeHash = "sha256:" + digest(prev);
-            long beforeSize = prev.length;
-            Files.write(file, bytes);
-            String afterHash = "sha256:" + digest(bytes);
-            long afterSize = bytes.length;
-            if (ledger != null) {
-                ledger.record(SessionFileChangeRecord.replace(
-                        target.rootAlias(),
-                        target.projectPath(),
-                        beforeHash,
-                        beforeSize,
-                        afterHash,
-                        afterSize,
-                        mutationContext.toolCallRef(),
-                        Instant.now()));
-            }
-            return success("Wrote " + target.displayPath(), Map.of("path", target.displayPath()));
-        } catch (IOException e) {
-            throw new WorkspaceMutationException(MutationErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
-        }
+        TargetMetadata before = requireRegularFile(target);
+        writeTarget(workspaceId, mutationContext, target, bytes, before.contentHash());
+        recordReplace(target, before, bytes, mutationContext);
+        return success("Wrote " + target.displayPath(), Map.of("path", target.displayPath()));
     }
 
     private ToolResult delete(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
@@ -565,88 +288,15 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         }
         boolean recursive = bool(values, "recursive", false);
 
-        if (target.isMain()) {
-            Workspace workspace = workspace(workspaceId);
-            var fileStat = files.stat(target.workspacePath(), true);
-            if (fileStat.type() == FileType.DIRECTORY) {
-                mutations.delete(new DeleteFileRequest(
-                        target.workspacePath(),
-                        MutationPrecondition.existing(workspace.revision(), "directory:empty"),
-                        mutationContext,
-                        recursive));
-                if (ledger != null) {
-                    ledger.record(SessionFileChangeRecord.delete(
-                            target.rootAlias(),
-                            target.projectPath(),
-                            "directory:empty",
-                            0,
-                            mutationContext.toolCallRef(),
-                            Instant.now()));
-                }
-                return success(
-                        "Deleted directory " + target.displayPath(),
-                        Map.of("path", target.displayPath(), "recursive", recursive));
-            }
-            String currentHash =
-                    fileStat.contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
-            long currentSize = fileStat.size();
-            mutations.delete(new DeleteFileRequest(
-                    target.workspacePath(),
-                    MutationPrecondition.existing(workspace.revision(), currentHash),
-                    mutationContext));
-            if (ledger != null) {
-                ledger.record(SessionFileChangeRecord.delete(
-                        target.rootAlias(),
-                        target.projectPath(),
-                        currentHash,
-                        currentSize,
-                        mutationContext.toolCallRef(),
-                        Instant.now()));
-            }
-            return success("Deleted " + target.displayPath(), Map.of("path", target.displayPath()));
-        }
-
-        Path file = target.hostPath();
-        if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
-            throw new WorkspaceFileException(
-                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
-                    target.workspacePath(),
-                    "file not found: " + target.displayPath());
-        }
-        if (Files.isDirectory(file)) {
-            deleteDirectory(file, recursive, target);
-            if (ledger != null) {
-                ledger.record(SessionFileChangeRecord.delete(
-                        target.rootAlias(),
-                        target.projectPath(),
-                        "directory:empty",
-                        0,
-                        mutationContext.toolCallRef(),
-                        Instant.now()));
-            }
+        TargetMetadata before = inspectExisting(target);
+        deleteTarget(workspaceId, mutationContext, target, before, recursive);
+        recordDelete(target, before, mutationContext);
+        if (before.type() == FileType.DIRECTORY) {
             return success(
                     "Deleted directory " + target.displayPath(),
                     Map.of("path", target.displayPath(), "recursive", recursive));
         }
-
-        try {
-            byte[] prev = Files.readAllBytes(file);
-            String beforeHash = "sha256:" + digest(prev);
-            long beforeSize = prev.length;
-            Files.delete(file);
-            if (ledger != null) {
-                ledger.record(SessionFileChangeRecord.delete(
-                        target.rootAlias(),
-                        target.projectPath(),
-                        beforeHash,
-                        beforeSize,
-                        mutationContext.toolCallRef(),
-                        Instant.now()));
-            }
-            return success("Deleted " + target.displayPath(), Map.of("path", target.displayPath()));
-        } catch (IOException e) {
-            throw new WorkspaceMutationException(MutationErrorCode.IO_FAILURE, target.workspacePath(), e.getMessage());
-        }
+        return success("Deleted " + target.displayPath(), Map.of("path", target.displayPath()));
     }
 
     private ToolResult move(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
@@ -659,78 +309,410 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                     "cross-root file.move is not supported; use file.create and file.delete explicitly");
         }
 
-        if (srcTarget.isMain() && dstTarget.isMain()) {
-            Workspace workspace = workspace(workspaceId);
-            var fileStat = files.stat(srcTarget.workspacePath(), true);
-            String currentHash =
-                    fileStat.contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
-            long currentSize = fileStat.size();
-            mutations.move(new MoveFileRequest(
-                    srcTarget.workspacePath(),
-                    dstTarget.workspacePath(),
-                    MutationPrecondition.existing(workspace.revision(), currentHash),
-                    mutationContext));
-            if (ledger != null) {
-                ledger.record(SessionFileChangeRecord.move(
-                        srcTarget.rootAlias(),
-                        srcTarget.projectPath(),
-                        dstTarget.projectPath(),
-                        currentHash,
-                        currentSize,
-                        currentHash,
-                        currentSize,
-                        mutationContext.toolCallRef(),
-                        Instant.now()));
-            }
-            return success(
-                    "Moved " + srcTarget.displayPath() + " to " + dstTarget.displayPath(),
-                    Map.of("source", srcTarget.displayPath(), "destination", dstTarget.displayPath()));
-        }
+        TargetMetadata before = requireRegularFile(srcTarget);
+        ensureAbsent(dstTarget);
+        moveTarget(workspaceId, mutationContext, srcTarget, dstTarget, before.contentHash());
+        recordMove(srcTarget, dstTarget, before, mutationContext);
+        return success(
+                "Moved " + srcTarget.displayPath() + " to " + dstTarget.displayPath(),
+                Map.of("source", srcTarget.displayPath(), "destination", dstTarget.displayPath()));
+    }
 
-        Path srcFile = srcTarget.hostPath();
-        Path dstFile = dstTarget.hostPath();
-        if (!Files.exists(srcFile)) {
-            throw new WorkspaceMutationException(
-                    MutationErrorCode.TARGET_NOT_FOUND,
-                    srcTarget.workspacePath(),
-                    "source file not found: " + srcTarget.displayPath());
+    private TargetMetadata inspectExisting(ResolvedTarget target) {
+        if (target.isMain()) {
+            var metadata = files.stat(target.workspacePath(), true);
+            return new TargetMetadata(
+                    metadata.type(), metadata.size(), metadata.contentHash().orElse("directory:empty"));
         }
-        if (Files.exists(dstFile)) {
-            throw new WorkspaceMutationException(
-                    MutationErrorCode.TARGET_EXISTS,
-                    dstTarget.workspacePath(),
-                    "destination already exists: " + dstTarget.displayPath());
+        Path file = target.hostPath();
+        if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
+                    target.workspacePath(),
+                    "file not found: " + target.displayPath());
         }
-
+        if (LocalWorkspacePathSafety.isUnsafeNode(file)) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.PATH_DENIED,
+                    target.workspacePath(),
+                    "links, reparse points, and special nodes are denied: " + target.displayPath());
+        }
+        if (Files.isDirectory(file, LinkOption.NOFOLLOW_LINKS)) {
+            return new TargetMetadata(FileType.DIRECTORY, 0, "directory:empty");
+        }
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.WRONG_FILE_TYPE,
+                    target.workspacePath(),
+                    "unsupported file type: " + target.displayPath());
+        }
         try {
-            byte[] prev = Files.readAllBytes(srcFile);
-            String beforeHash = "sha256:" + digest(prev);
-            long beforeSize = prev.length;
-            if (dstFile.getParent() != null) {
-                Files.createDirectories(dstFile.getParent());
-            }
-            Files.move(srcFile, dstFile);
-            String afterHash = beforeHash;
-            long afterSize = beforeSize;
-            if (ledger != null) {
-                ledger.record(SessionFileChangeRecord.move(
-                        srcTarget.rootAlias(),
-                        srcTarget.projectPath(),
-                        dstTarget.projectPath(),
-                        beforeHash,
-                        beforeSize,
-                        afterHash,
-                        afterSize,
-                        mutationContext.toolCallRef(),
-                        Instant.now()));
-            }
-            return success(
-                    "Moved " + srcTarget.displayPath() + " to " + dstTarget.displayPath(),
-                    Map.of("source", srcTarget.displayPath(), "destination", dstTarget.displayPath()));
-        } catch (IOException e) {
+            byte[] content = Files.readAllBytes(file);
+            return new TargetMetadata(FileType.FILE, content.length, "sha256:" + digest(content));
+        } catch (IOException exception) {
             throw new WorkspaceMutationException(
-                    MutationErrorCode.IO_FAILURE, srcTarget.workspacePath(), e.getMessage());
+                    MutationErrorCode.IO_FAILURE, target.workspacePath(), "unable to inspect " + target.displayPath());
         }
+    }
+
+    private TargetMetadata requireRegularFile(ResolvedTarget target) {
+        TargetMetadata metadata = inspectExisting(target);
+        if (metadata.type() != FileType.FILE) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.WRONG_FILE_TYPE,
+                    target.workspacePath(),
+                    "path is not a regular file: " + target.displayPath());
+        }
+        return metadata;
+    }
+
+    private TargetContent readAll(ResolvedTarget target) {
+        if (target.isMain()) {
+            FileContent content = files.read(
+                    target.workspacePath(),
+                    new ReadOptions(0, 16 * 1024 * 1024, 16 * 1024 * 1024, StandardCharsets.UTF_8, false));
+            return new TargetContent(content.text(), content.totalByteCount(), content.sourceVersion());
+        }
+        TargetMetadata metadata = requireRegularFile(target);
+        try {
+            return new TargetContent(
+                    new String(Files.readAllBytes(target.hostPath()), StandardCharsets.UTF_8),
+                    metadata.size(),
+                    metadata.contentHash());
+        } catch (IOException exception) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.IO_FAILURE, target.workspacePath(), "unable to read " + target.displayPath());
+        }
+    }
+
+    private TargetRead readContent(ResolvedTarget target, long requestedOffset, int maxBytes) {
+        if (target.isMain()) {
+            FileContent content = files.read(
+                    target.workspacePath(),
+                    new ReadOptions(requestedOffset, maxBytes, maxBytes, StandardCharsets.UTF_8, true));
+            return new TargetRead(content.text(), content.offset(), content.totalByteCount(), content.sourceVersion());
+        }
+        TargetMetadata metadata = inspectExisting(target);
+        if (metadata.type() != FileType.FILE) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.WRONG_FILE_TYPE,
+                    target.workspacePath(),
+                    "path is a directory: " + target.displayPath());
+        }
+        try {
+            byte[] bytes = Files.readAllBytes(target.hostPath());
+            int offset = (int) Math.min(requestedOffset, bytes.length);
+            int length = Math.min(maxBytes, bytes.length - offset);
+            return new TargetRead(
+                    new String(bytes, offset, length, StandardCharsets.UTF_8),
+                    offset,
+                    bytes.length,
+                    "sha256:" + digest(bytes));
+        } catch (IOException exception) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.IO_FAILURE,
+                    target.workspacePath(),
+                    "unable to read " + target.displayPath());
+        }
+    }
+
+    private TargetListing listEntries(ResolvedTarget target) {
+        if (target.isMain()) {
+            var page = files.list(new FileListRequest(target.workspacePath(), 0, 500));
+            List<Map<String, Object>> entries = page.entries().stream()
+                    .map(entry -> Map.<String, Object>of(
+                            "path", entry.metadata().path().projectPath().toString(),
+                            "type", entry.metadata().type().name(),
+                            "size", entry.metadata().size()))
+                    .toList();
+            return new TargetListing(entries, page.truncated());
+        }
+        TargetMetadata metadata = inspectExisting(target);
+        if (metadata.type() != FileType.DIRECTORY) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.WRONG_FILE_TYPE,
+                    target.workspacePath(),
+                    "path is not a directory: " + target.displayPath());
+        }
+        List<Map<String, Object>> entries = new ArrayList<>();
+        boolean truncated = false;
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(target.hostPath())) {
+            for (Path child : stream) {
+                if (entries.size() >= 500) {
+                    truncated = true;
+                    break;
+                }
+                if (LocalWorkspacePathSafety.isUnsafeNode(child)) continue;
+                String childName = child.getFileName().toString();
+                String entryPath = target.rootAlias().value() + ":"
+                        + (target.relativePath().isEmpty() ? childName : target.relativePath() + "/" + childName);
+                boolean directory = Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS);
+                long size = directory ? 0L : Files.size(child);
+                entries.add(Map.of("path", entryPath, "type", directory ? "DIRECTORY" : "FILE", "size", size));
+            }
+        } catch (IOException exception) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.IO_FAILURE,
+                    target.workspacePath(),
+                    "unable to list " + target.displayPath());
+        }
+        entries.sort(Comparator.comparing(entry -> String.valueOf(entry.get("path"))));
+        return new TargetListing(entries, truncated);
+    }
+
+    private List<Map<String, Object>> searchEntries(ResolvedTarget target, String query, int maxResults) {
+        if (target.isMain()) {
+            return files
+                    .search(new SearchRequest(target.workspacePath(), query, 2_000, maxResults, 1_048_576, false))
+                    .stream()
+                    .map(match -> Map.<String, Object>of(
+                            "path", match.path().projectPath().toString(),
+                            "line", match.line(),
+                            "column", match.column(),
+                            "excerpt", match.excerpt()))
+                    .toList();
+        }
+        TargetMetadata metadata = inspectExisting(target);
+        if (metadata.type() != FileType.DIRECTORY) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.WRONG_FILE_TYPE,
+                    target.workspacePath(),
+                    "path is not a directory: " + target.displayPath());
+        }
+        List<Map<String, Object>> results = new ArrayList<>();
+        try (Stream<Path> stream = Files.walk(target.hostPath())) {
+            stream.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                    .filter(path -> !LocalWorkspacePathSafety.isUnsafeNode(path))
+                    .forEach(path -> appendMatches(target, query, maxResults, results, path));
+        } catch (IOException exception) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.IO_FAILURE,
+                    target.workspacePath(),
+                    "unable to search " + target.displayPath());
+        }
+        return List.copyOf(results);
+    }
+
+    private static void appendMatches(
+            ResolvedTarget target, String query, int maxResults, List<Map<String, Object>> results, Path path) {
+        if (results.size() >= maxResults) return;
+        try {
+            String relative = target.hostPath().relativize(path).toString().replace('\\', '/');
+            String display = target.rootAlias().value() + ":"
+                    + (target.relativePath().isEmpty() ? relative : target.relativePath() + "/" + relative);
+            List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+            for (int index = 0; index < lines.size() && results.size() < maxResults; index++) {
+                String line = lines.get(index);
+                int column = line.indexOf(query);
+                if (column >= 0) {
+                    results.add(
+                            Map.of("path", display, "line", index + 1, "column", column + 1, "excerpt", line.trim()));
+                }
+            }
+        } catch (IOException ignored) {
+            // An unreadable individual file is skipped; the bounded search remains usable.
+        }
+    }
+
+    private void ensureAbsent(ResolvedTarget target) {
+        if (target.isMain()) {
+            try {
+                files.stat(target.workspacePath(), true);
+            } catch (WorkspaceFileException exception) {
+                if (exception.code() == WorkspaceFileErrorCode.PATH_NOT_FOUND) return;
+                throw exception;
+            }
+        } else if (!Files.exists(target.hostPath(), LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        throw new WorkspaceMutationException(
+                MutationErrorCode.TARGET_EXISTS,
+                target.workspacePath(),
+                "file already exists: " + target.displayPath());
+    }
+
+    private void createTarget(
+            WorkspaceId workspaceId, MutationContext mutationContext, ResolvedTarget target, byte[] content) {
+        if (target.isMain()) {
+            Workspace workspace = workspace(workspaceId);
+            mutations.create(new CreateFileRequest(
+                    target.workspacePath(),
+                    content,
+                    MutationPrecondition.absent(workspace.revision()),
+                    mutationContext));
+            return;
+        }
+        try {
+            Path file = target.hostPath();
+            if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
+                throw new WorkspaceMutationException(
+                        MutationErrorCode.CONCURRENT_MODIFICATION,
+                        target.workspacePath(),
+                        "file appeared before create: " + target.displayPath());
+            }
+            if (file.getParent() != null) Files.createDirectories(file.getParent());
+            Files.write(file, content);
+        } catch (WorkspaceMutationException exception) {
+            throw exception;
+        } catch (IOException exception) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.IO_FAILURE, target.workspacePath(), "unable to create " + target.displayPath());
+        }
+    }
+
+    private void writeTarget(
+            WorkspaceId workspaceId,
+            MutationContext mutationContext,
+            ResolvedTarget target,
+            byte[] content,
+            String expectedHash) {
+        if (target.isMain()) {
+            Workspace workspace = workspace(workspaceId);
+            mutations.write(new WriteFileRequest(
+                    target.workspacePath(),
+                    content,
+                    MutationPrecondition.existing(workspace.revision(), expectedHash),
+                    mutationContext));
+            return;
+        }
+        TargetMetadata current = requireRegularFile(target);
+        if (!expectedHash.equals(current.contentHash())) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.CONCURRENT_MODIFICATION,
+                    target.workspacePath(),
+                    "file changed before write: " + target.displayPath());
+        }
+        try {
+            Files.write(target.hostPath(), content);
+        } catch (IOException exception) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.IO_FAILURE, target.workspacePath(), "unable to write " + target.displayPath());
+        }
+    }
+
+    private void deleteTarget(
+            WorkspaceId workspaceId,
+            MutationContext mutationContext,
+            ResolvedTarget target,
+            TargetMetadata before,
+            boolean recursive) {
+        if (target.isMain()) {
+            Workspace workspace = workspace(workspaceId);
+            mutations.delete(new DeleteFileRequest(
+                    target.workspacePath(),
+                    MutationPrecondition.existing(workspace.revision(), before.contentHash()),
+                    mutationContext,
+                    recursive));
+            return;
+        }
+        if (before.type() == FileType.DIRECTORY) {
+            deleteDirectory(target.hostPath(), recursive, target);
+            return;
+        }
+        TargetMetadata current = requireRegularFile(target);
+        if (!before.contentHash().equals(current.contentHash())) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.CONCURRENT_MODIFICATION,
+                    target.workspacePath(),
+                    "file changed before delete: " + target.displayPath());
+        }
+        try {
+            Files.delete(target.hostPath());
+        } catch (IOException exception) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.IO_FAILURE, target.workspacePath(), "unable to delete " + target.displayPath());
+        }
+    }
+
+    private void moveTarget(
+            WorkspaceId workspaceId,
+            MutationContext mutationContext,
+            ResolvedTarget source,
+            ResolvedTarget destination,
+            String expectedHash) {
+        if (source.isMain()) {
+            Workspace workspace = workspace(workspaceId);
+            mutations.move(new MoveFileRequest(
+                    source.workspacePath(),
+                    destination.workspacePath(),
+                    MutationPrecondition.existing(workspace.revision(), expectedHash),
+                    mutationContext));
+            return;
+        }
+        TargetMetadata current = requireRegularFile(source);
+        if (!expectedHash.equals(current.contentHash())) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.CONCURRENT_MODIFICATION,
+                    source.workspacePath(),
+                    "source changed before move: " + source.displayPath());
+        }
+        try {
+            if (Files.exists(destination.hostPath(), LinkOption.NOFOLLOW_LINKS)) {
+                throw new WorkspaceMutationException(
+                        MutationErrorCode.CONCURRENT_MODIFICATION,
+                        destination.workspacePath(),
+                        "destination appeared before move: " + destination.displayPath());
+            }
+            Path parent = destination.hostPath().getParent();
+            if (parent != null) Files.createDirectories(parent);
+            Files.move(source.hostPath(), destination.hostPath());
+        } catch (WorkspaceMutationException exception) {
+            throw exception;
+        } catch (IOException exception) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.IO_FAILURE, source.workspacePath(), "unable to move " + source.displayPath());
+        }
+    }
+
+    private void recordCreate(ResolvedTarget target, byte[] content, MutationContext mutationContext) {
+        if (ledger == null) return;
+        ledger.record(SessionFileChangeRecord.create(
+                target.rootAlias(),
+                target.projectPath(),
+                "sha256:" + digest(content),
+                content.length,
+                mutationContext.toolCallRef(),
+                Instant.now()));
+    }
+
+    private void recordReplace(
+            ResolvedTarget target, TargetMetadata before, byte[] content, MutationContext mutationContext) {
+        if (ledger == null) return;
+        ledger.record(SessionFileChangeRecord.replace(
+                target.rootAlias(),
+                target.projectPath(),
+                before.contentHash(),
+                before.size(),
+                "sha256:" + digest(content),
+                content.length,
+                mutationContext.toolCallRef(),
+                Instant.now()));
+    }
+
+    private void recordDelete(ResolvedTarget target, TargetMetadata before, MutationContext mutationContext) {
+        if (ledger == null) return;
+        ledger.record(SessionFileChangeRecord.delete(
+                target.rootAlias(),
+                target.projectPath(),
+                before.contentHash(),
+                before.size(),
+                mutationContext.toolCallRef(),
+                Instant.now()));
+    }
+
+    private void recordMove(
+            ResolvedTarget source, ResolvedTarget destination, TargetMetadata before, MutationContext mutationContext) {
+        if (ledger == null) return;
+        ledger.record(SessionFileChangeRecord.move(
+                source.rootAlias(),
+                source.projectPath(),
+                destination.projectPath(),
+                before.contentHash(),
+                before.size(),
+                before.contentHash(),
+                before.size(),
+                mutationContext.toolCallRef(),
+                Instant.now()));
     }
 
     private ToolResult patch(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
@@ -813,125 +795,24 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private PatchPlanItem preflightPatchFile(WorkspaceId workspaceId, FilePatch file, ResolvedTarget target) {
         if (file.creation()) {
-            if (Files.exists(target.hostPath(), LinkOption.NOFOLLOW_LINKS)) {
-                throw new WorkspaceMutationException(
-                        MutationErrorCode.TARGET_EXISTS,
-                        target.workspacePath(),
-                        "file already exists: " + target.displayPath());
-            }
+            ensureAbsent(target);
             return new PatchPlanItem(file, target, applyHunksToContent(file, ""), null, 0);
         }
-        if (target.isMain()) {
-            FileContent current = files.read(
-                    target.workspacePath(),
-                    new ReadOptions(0, 16 * 1024 * 1024, 16 * 1024 * 1024, StandardCharsets.UTF_8, false));
-            return new PatchPlanItem(
-                    file,
-                    target,
-                    applyHunksToContent(file, current.text()),
-                    current.sourceVersion(),
-                    current.totalByteCount());
-        }
-        Path hostFile = target.hostPath();
-        if (!Files.exists(hostFile, LinkOption.NOFOLLOW_LINKS)) {
-            throw new WorkspaceFileException(
-                    WorkspaceFileErrorCode.PATH_NOT_FOUND,
-                    target.workspacePath(),
-                    "file not found: " + target.displayPath());
-        }
-        try {
-            byte[] current = Files.readAllBytes(hostFile);
-            return new PatchPlanItem(
-                    file,
-                    target,
-                    applyHunksToContent(file, new String(current, StandardCharsets.UTF_8)),
-                    "sha256:" + digest(current),
-                    current.length);
-        } catch (IOException exception) {
-            throw new WorkspaceMutationException(
-                    MutationErrorCode.IO_FAILURE, target.workspacePath(), "unable to preflight patch target");
-        }
+        TargetContent current = readAll(target);
+        return new PatchPlanItem(
+                file, target, applyHunksToContent(file, current.text()), current.contentHash(), current.size());
     }
 
     private void commitPatchFile(WorkspaceId workspaceId, MutationContext mutationContext, PatchPlanItem item) {
         ResolvedTarget target = item.target();
-        if (target.isMain()) {
-            Workspace workspace = workspace(workspaceId);
-            if (item.file().creation()) {
-                mutations.create(new CreateFileRequest(
-                        target.workspacePath(),
-                        item.content(),
-                        MutationPrecondition.absent(workspace.revision()),
-                        mutationContext));
-                recordPatchCreate(item, mutationContext);
-            } else {
-                mutations.write(new WriteFileRequest(
-                        target.workspacePath(),
-                        item.content(),
-                        MutationPrecondition.existing(workspace.revision(), item.beforeHash()),
-                        mutationContext));
-                recordPatchReplace(item, mutationContext);
-            }
+        if (item.file().creation()) {
+            createTarget(workspaceId, mutationContext, target, item.content());
+            recordCreate(target, item.content(), mutationContext);
             return;
         }
-
-        Path hostFile = target.hostPath();
-        try {
-            if (item.file().creation()) {
-                if (Files.exists(hostFile, LinkOption.NOFOLLOW_LINKS)) {
-                    throw new WorkspaceMutationException(
-                            MutationErrorCode.CONCURRENT_MODIFICATION,
-                            target.workspacePath(),
-                            "file appeared after patch preflight: " + target.displayPath());
-                }
-                if (hostFile.getParent() != null) Files.createDirectories(hostFile.getParent());
-                Files.write(hostFile, item.content());
-                recordPatchCreate(item, mutationContext);
-            } else {
-                if (!Files.exists(hostFile, LinkOption.NOFOLLOW_LINKS)) {
-                    throw new WorkspaceFileException(
-                            WorkspaceFileErrorCode.PATH_NOT_FOUND,
-                            target.workspacePath(),
-                            "file disappeared after patch preflight: " + target.displayPath());
-                }
-                byte[] current = Files.readAllBytes(hostFile);
-                if (!item.beforeHash().equals("sha256:" + digest(current))) {
-                    throw new WorkspaceMutationException(
-                            MutationErrorCode.CONCURRENT_MODIFICATION,
-                            target.workspacePath(),
-                            "file changed after patch preflight: " + target.displayPath());
-                }
-                Files.write(hostFile, item.content());
-                recordPatchReplace(item, mutationContext);
-            }
-        } catch (IOException exception) {
-            throw new WorkspaceMutationException(
-                    MutationErrorCode.IO_FAILURE, target.workspacePath(), "unable to commit patch target");
-        }
-    }
-
-    private void recordPatchCreate(PatchPlanItem item, MutationContext mutationContext) {
-        if (ledger == null) return;
-        ledger.record(SessionFileChangeRecord.create(
-                item.target().rootAlias(),
-                item.target().projectPath(),
-                "sha256:" + digest(item.content()),
-                item.content().length,
-                mutationContext.toolCallRef(),
-                Instant.now()));
-    }
-
-    private void recordPatchReplace(PatchPlanItem item, MutationContext mutationContext) {
-        if (ledger == null) return;
-        ledger.record(SessionFileChangeRecord.replace(
-                item.target().rootAlias(),
-                item.target().projectPath(),
-                item.beforeHash(),
-                item.beforeSize(),
-                "sha256:" + digest(item.content()),
-                item.content().length,
-                mutationContext.toolCallRef(),
-                Instant.now()));
+        TargetMetadata before = new TargetMetadata(FileType.FILE, item.beforeSize(), item.beforeHash());
+        writeTarget(workspaceId, mutationContext, target, item.content(), before.contentHash());
+        recordReplace(target, before, item.content(), mutationContext);
     }
 
     private static ToolResult patchFailure(
@@ -1088,6 +969,14 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private record PatchPlanItem(
             FilePatch file, ResolvedTarget target, byte[] content, String beforeHash, long beforeSize) {}
+
+    private record TargetMetadata(FileType type, long size, String contentHash) {}
+
+    private record TargetContent(String text, long size, String contentHash) {}
+
+    private record TargetRead(String text, long offset, long totalByteCount, String sourceVersion) {}
+
+    private record TargetListing(List<Map<String, Object>> entries, boolean truncated) {}
 
     private ResolvedTarget resolveTarget(
             WorkspaceId workspaceId, String pathInput, WorkspaceRootPermission requiredPermission) {

@@ -46,10 +46,13 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 class LocalFileToolOperationsMultiRootTest {
 
@@ -127,11 +130,7 @@ class LocalFileToolOperationsMultiRootTest {
         var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
 
         operations = new LocalFileToolOperations(
-                workspaces,
-                files,
-                testMutations(workspaces, workspaceId, new ProjectId("proj-multiroot")),
-                () -> "id-1",
-                registry);
+                workspaces, files, testMutations(workspaces, workspaceId), () -> "id-1", registry);
     }
 
     @Test
@@ -209,19 +208,52 @@ class LocalFileToolOperationsMultiRootTest {
         assertThat(deleteRes.structuredData()).containsEntry("errorCode", "ROOT_READ_ONLY");
     }
 
-    @Test
-    void allowsWriteToReadWriteAttachedRoot() {
-        var createRes = operations.execute(
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("writableFilePaths")
+    void writableRootsShareCreateWriteAndDeleteContract(String path) throws IOException {
+        var created = operations.execute(
                 "file.create",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "config:app.yml", "content", "env: prod")));
-        assertThat(createRes.successful()).isTrue();
-        assertThat(createRes.structuredData())
-                .containsEntry("path", "config:app.yml")
-                .doesNotContainKeys("changeSetId", "quarantineToken", "changeReviewArtifact");
+                arguments(Map.of("path", path, "content", "first")));
+        assertThat(created.successful()).isTrue();
+        assertThat(created.structuredData()).containsEntry("path", displayPath(path));
+        assertThat(Files.readString(target(path))).isEqualTo("first");
+
+        var written = operations.execute(
+                "file.write",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", path, "content", "second")));
+        assertThat(written.successful()).isTrue();
+        assertThat(Files.readString(target(path))).isEqualTo("second");
+
+        var deleted = operations.execute(
+                "file.delete",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", path)));
+        assertThat(deleted.successful()).isTrue();
+        assertThat(target(path)).doesNotExist();
+    }
+
+    private static Stream<String> writableFilePaths() {
+        return Stream.of("main:contract.txt", "config:contract.txt");
+    }
+
+    private Path target(String path) {
+        if (path.startsWith("main:")) return mainDir.resolve(path.substring("main:".length()));
+        return configDir.resolve(path.substring("config:".length()));
+    }
+
+    private static String displayPath(String path) {
+        return path.startsWith("main:") ? path.substring("main:".length()) : path;
     }
 
     @Test
@@ -570,8 +602,7 @@ class LocalFileToolOperationsMultiRootTest {
         return new ToolArguments("haifa.file.test", "1.1.0", values);
     }
 
-    private WorkspaceMutationProvider testMutations(
-            InMemoryWorkspaceStore workspaces, WorkspaceId workspaceId, ProjectId projectId) {
+    private WorkspaceMutationProvider testMutations(InMemoryWorkspaceStore workspaces, WorkspaceId workspaceId) {
         return new WorkspaceMutationProvider() {
             @Override
             public String providerId() {
@@ -585,6 +616,7 @@ class LocalFileToolOperationsMultiRootTest {
 
             @Override
             public MutationResult create(CreateFileRequest request) {
+                writeMain(request.path().projectPath(), request.content());
                 WorkspaceRevision before =
                         workspaces.find(workspaceId).orElseThrow().revision();
                 WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:create-result");
@@ -600,6 +632,7 @@ class LocalFileToolOperationsMultiRootTest {
 
             @Override
             public MutationResult write(WriteFileRequest request) {
+                writeMain(request.path().projectPath(), request.content());
                 WorkspaceRevision before =
                         workspaces.find(workspaceId).orElseThrow().revision();
                 WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:write-result");
@@ -608,6 +641,12 @@ class LocalFileToolOperationsMultiRootTest {
 
             @Override
             public MutationResult delete(DeleteFileRequest request) {
+                try {
+                    Files.deleteIfExists(
+                            mainDir.resolve(request.path().projectPath().value()));
+                } catch (IOException exception) {
+                    throw new AssertionError(exception);
+                }
                 WorkspaceRevision before =
                         workspaces.find(workspaceId).orElseThrow().revision();
                 WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:del-result");
@@ -616,11 +655,29 @@ class LocalFileToolOperationsMultiRootTest {
 
             @Override
             public MutationResult move(MoveFileRequest request) {
+                try {
+                    Path destination =
+                            mainDir.resolve(request.destination().projectPath().value());
+                    if (destination.getParent() != null) Files.createDirectories(destination.getParent());
+                    Files.move(mainDir.resolve(request.source().projectPath().value()), destination);
+                } catch (IOException exception) {
+                    throw new AssertionError(exception);
+                }
                 WorkspaceRevision before =
                         workspaces.find(workspaceId).orElseThrow().revision();
                 WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:move-result");
                 return new MutationResult(before, after, List.of(), true, false);
             }
         };
+    }
+
+    private void writeMain(ProjectPath path, byte[] content) {
+        try {
+            Path target = mainDir.resolve(path.value());
+            if (target.getParent() != null) Files.createDirectories(target.getParent());
+            Files.write(target, content);
+        } catch (IOException exception) {
+            throw new AssertionError(exception);
+        }
     }
 }

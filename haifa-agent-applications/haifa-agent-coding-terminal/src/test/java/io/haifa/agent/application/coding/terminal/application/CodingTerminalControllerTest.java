@@ -525,6 +525,27 @@ class CodingTerminalControllerTest {
     }
 
     @Test
+    void sessionNotFoundWhenRespondingDoesNotReopenTheStaleApproval() {
+        FakeClient client = new FakeClient(view(Optional.of(approval())));
+        client.responseFailure = new ProjectProductException("SESSION_NOT_FOUND", "Session unavailable");
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(client.respondedActions).containsExactly(InteractionAction.APPROVE);
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().recoverableError()).contains("SESSION_NOT_FOUND");
+
+        client.summaries = List.of(view(Optional.empty()).summary());
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/resume"));
+
+        assertThat(controller.state().selector())
+                .hasValueSatisfying(selector -> assertThat(selector.kind()).isEqualTo("resume"));
+    }
+
+    @Test
     void approvalImmediatelyUpdatesUiWhileRuntimeResponseRemainsInBackground() {
         InteractionView interaction = approval();
         FakeClient client = new FakeClient(view(Optional.of(interaction)));
@@ -1186,6 +1207,7 @@ class CodingTerminalControllerTest {
         private List<CodingModelOption> models = List.of();
         private CodingSessionCreateOptions createOptions = CodingSessionCreateOptions.defaults();
         private ProjectProductException submitFailure;
+        private ProjectProductException responseFailure;
         private int submitAttempts;
         private int listLimit;
         private final List<String> submittedMessages = new ArrayList<>();
@@ -1302,6 +1324,11 @@ class CodingTerminalControllerTest {
         public InteractionResponseReceipt respond(
                 InteractionView interaction, InteractionAction action, String idempotencyKey) {
             respondedActions.add(action);
+            if (responseFailure != null) {
+                ProjectProductException failure = responseFailure;
+                responseFailure = null;
+                throw failure;
+            }
             return new InteractionResponseReceipt(
                     new InteractionResponseId("response-1"),
                     interaction.requestId(),
