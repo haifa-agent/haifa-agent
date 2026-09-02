@@ -489,7 +489,7 @@ models:
           contextWindow: 131072
           maxOutputTokens: 8192
 tools:
-  enabled: [file.list, file.stat, file.read, file.create, file.write, file.delete, file.move, workspace.attach, execution.run]
+  enabled: [file.list, file.stat, file.read, file.create, file.write, file.patch, file.delete, file.move, workspace.attach, execution.run]
 skills:
   allowed: [task-planning, result-verification, my-test-skill]
   localDirectories:
@@ -587,11 +587,11 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 `alias:relative/path`；主目录仍使用原有相对路径。附加目录不得与既有目录重叠，无法确认物理路径边界时
 拒绝操作。
 
-`file.patch` 只接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，且只支持一个文件的新增或更新。
-删除和移动必须分别调用保留的 `file.delete`、`file.move`，跨目录根的移动明确拒绝。更新使用 `@@` 精确
-上下文定位；本地 Provider 以流方式读取源文件，写入同目录临时文件，提交前再次校验内容哈希，再以原子
-替换（文件系统不支持时明确降级并记录）提交。因此普通源码编辑不需要全量读取或重写大文件；
-`file.write` 仅用于有意整体替换的小文件。
+`file.patch` 接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，最多包含 100 个文件的新增或更新。
+删除和移动仍分别调用 `file.delete`、`file.move`，跨目录根的移动明确拒绝。`file.delete` 可删除文件或空目录；
+删除非空目录必须显式传入 `recursive: true`。更新使用 `@@` 精确上下文定位；本地 Provider 以流方式读取源文件，
+写入同目录临时文件，提交前再次校验内容哈希，再以原子替换（文件系统不支持时明确降级并记录）提交。
+因此普通源码编辑不需要全量读取或重写大文件；`file.write` 仅用于有意整体替换的小文件。
 
 `execution.provider` 只接受 `local-native` 或 `host-guarded`，`execution.network` 只接受 `deny`
 或 `allow`。macOS、Linux、Windows 缺省值统一为 `host-guarded + allow + shell auto`，面向用户已经

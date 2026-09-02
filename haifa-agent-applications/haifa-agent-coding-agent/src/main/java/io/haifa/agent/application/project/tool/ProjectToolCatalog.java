@@ -379,8 +379,9 @@ public final class ProjectToolCatalog {
                     + "If the target is absent, use file.create; prefer file.patch for bounded edits.";
         }
         if (name.equals("file.patch")) {
-            return "Apply one bounded context patch using exactly one Add File or Update File section. Use "
-                    + "file.delete and file.move for those operations; do not combine multiple files in one patch.";
+            return "Apply a bounded context patch to up to 100 workspace files. Use *** Begin Patch / *** End Patch "
+                    + "with Add File or Update File sections; use file.delete and file.move for those operations. "
+                    + "Existing files are matched exactly and failures report the committed prefix.";
         }
         if (name.equals("workspace.attach")) {
             return "Request one additional existing local directory for this Coding Agent process only. Supply a "
@@ -409,7 +410,17 @@ public final class ProjectToolCatalog {
                 properties.put("recursive", Map.of("type", "boolean"));
                 properties.put("maxDepth", Map.of("type", "integer", "minimum", 1, "maximum", 32));
             }
-            case "file.stat", "file.delete" -> path(properties, required, "path");
+            case "file.stat" -> path(properties, required, "path");
+            case "file.delete" -> {
+                path(properties, required, "path");
+                properties.put(
+                        "recursive",
+                        Map.of(
+                                "type",
+                                "boolean",
+                                "description",
+                                "Delete a non-empty directory recursively. Defaults to false."));
+            }
             case "file.read" -> {
                 path(properties, required, "path");
                 properties.put(

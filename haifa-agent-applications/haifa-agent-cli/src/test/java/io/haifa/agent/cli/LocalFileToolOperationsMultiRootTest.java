@@ -312,13 +312,13 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
-    void rejectsMultiFilePatchBeforeChangingEitherTarget() {
+    void appliesMultiFilePatchInOneToolCall() throws IOException {
         String patch =
                 """
                 *** Begin Patch
-                *** Add File: first.txt
+                *** Add File: config:first.txt
                 +first
-                *** Add File: second.txt
+                *** Add File: config:second.txt
                 +second
                 *** End Patch
                 """;
@@ -331,10 +331,39 @@ class LocalFileToolOperationsMultiRootTest {
                 "policy-1",
                 arguments(Map.of("patch", patch)));
 
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
-        assertThat(Files.exists(mainDir.resolve("first.txt"))).isFalse();
-        assertThat(Files.exists(mainDir.resolve("second.txt"))).isFalse();
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData()).containsEntry("complete", true);
+        assertThat(Files.readString(configDir.resolve("first.txt"))).isEqualTo("first\n");
+        assertThat(Files.readString(configDir.resolve("second.txt"))).isEqualTo("second\n");
+    }
+
+    @Test
+    void deletesAttachedDirectoryOnlyWhenRecursiveIsExplicit() throws IOException {
+        Path generated = configDir.resolve("generated");
+        Files.createDirectories(generated);
+        Files.writeString(generated.resolve("artifact.txt"), "temporary");
+
+        var rejected = operations.execute(
+                "file.delete",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "config:generated", "recursive", false)));
+
+        assertThat(rejected.successful()).isFalse();
+        assertThat(generated).exists();
+
+        var deleted = operations.execute(
+                "file.delete",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "config:generated", "recursive", true)));
+
+        assertThat(deleted.successful()).isTrue();
+        assertThat(generated).doesNotExist();
     }
 
     @Test

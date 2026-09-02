@@ -109,6 +109,34 @@ class LocalWorkspaceMutationServiceTest {
     }
 
     @Test
+    void deletesNonEmptyDirectoryOnlyWhenRecursiveIsExplicit() throws Exception {
+        Path generated = root.resolve("generated");
+        Files.createDirectories(generated.resolve("nested"));
+        Files.writeString(generated.resolve("nested/artifact.txt"), "temporary");
+        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
+        WorkspaceRevision revision = fixture.workspace().revision();
+
+        assertThatThrownBy(() -> fixture.authorized()
+                        .delete(new DeleteFileRequest(
+                                fixture.path("generated"),
+                                MutationPrecondition.existing(revision, "directory:empty"),
+                                context("delete-directory"))))
+                .isInstanceOfSatisfying(WorkspaceMutationException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(MutationErrorCode.PATH_DENIED));
+        assertThat(generated).exists();
+
+        var deleted = fixture.authorized()
+                .delete(new DeleteFileRequest(
+                        fixture.path("generated"),
+                        MutationPrecondition.existing(revision, "directory:empty"),
+                        context("delete-directory"),
+                        true));
+
+        assertThat(deleted.changes()).hasSize(1);
+        assertThat(generated).doesNotExist();
+    }
+
+    @Test
     void rejectsWrongHashReadOnlyAndConcurrentLeaseWithoutOverwriting() throws Exception {
         Files.writeString(root.resolve("a.txt"), "alpha", StandardCharsets.UTF_8);
         Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
