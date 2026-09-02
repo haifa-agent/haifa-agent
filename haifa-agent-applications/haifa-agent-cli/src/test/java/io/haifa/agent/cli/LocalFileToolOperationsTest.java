@@ -152,7 +152,7 @@ class LocalFileToolOperationsTest {
     }
 
     @Test
-    void givesDeterministicCreateWriteAndSensitivePathRecoveryActions() {
+    void writesMissingTargetAndKeepsSensitivePathRecoveryActions() throws Exception {
         Fixture fixture = fixture();
 
         var missingWrite = fixture.operations.execute(
@@ -170,10 +170,10 @@ class LocalFileToolOperationsTest {
                 "policy-1",
                 arguments(Map.of("path", ".env")));
 
-        assertThat(missingWrite.structuredData())
-                .containsEntry("stableFailureCode", "PATH_NOT_FOUND")
-                .containsEntry("failureActionCode", "USE_FILE_CREATE")
-                .containsEntry("retryable", false);
+        assertThat(missingWrite.successful()).isTrue();
+        assertThat(missingWrite.summary()).isEqualTo("Created missing.txt");
+        assertThat(missingWrite.structuredData()).containsEntry("path", "missing.txt");
+        assertThat(Files.readString(root.resolve("missing.txt"))).isEqualTo("new");
         assertThat(sensitiveRead.structuredData())
                 .containsEntry("stableFailureCode", "SENSITIVE_PATH")
                 .containsEntry("failureActionCode", "USER_ACTION_REQUIRED")

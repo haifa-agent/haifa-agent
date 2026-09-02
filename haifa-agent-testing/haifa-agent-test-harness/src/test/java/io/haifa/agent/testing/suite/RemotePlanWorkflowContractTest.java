@@ -19,7 +19,7 @@ class RemotePlanWorkflowContractTest {
     private final ObjectMapper yaml = new ObjectMapper(new YAMLFactory());
 
     @Test
-    void manualDispatchRunsOnlyCrossPlatformNightlyAndReleasePlans() throws Exception {
+    void manualDispatchRunsOnlyCrossPlatformRegressionAndReleasePlans() throws Exception {
         JsonNode workflow = yaml.readTree(findRepositoryRoot()
                 .resolve(".github/workflows/dev-integration.yml")
                 .toFile());
@@ -31,10 +31,10 @@ class RemotePlanWorkflowContractTest {
                 remotePlan.path("if").asText());
         assertEquals(
                 Set.of(
-                        "nightly-v1|ubuntu-latest|linux-primary",
-                        "nightly-v1|windows-latest|windows-primary",
-                        "release-v1|ubuntu-latest|linux-release",
-                        "release-v1|windows-latest|windows-release"),
+                        "critical-path-regression-v1|ubuntu-latest|linux-primary|live",
+                        "critical-path-regression-v1|windows-latest|windows-primary|live",
+                        "release-v1|ubuntu-latest|linux-release|release",
+                        "release-v1|windows-latest|windows-release|release"),
                 matrixEntries(remotePlan));
 
         String remotePlanDefinition = remotePlan.toString();
@@ -100,7 +100,8 @@ class RemotePlanWorkflowContractTest {
                         "|",
                         entry.path("suite").asText(),
                         entry.path("os").asText(),
-                        entry.path("combination").asText()))
+                        entry.path("combination").asText(),
+                        entry.path("mode").asText()))
                 .collect(Collectors.toSet());
     }
 
