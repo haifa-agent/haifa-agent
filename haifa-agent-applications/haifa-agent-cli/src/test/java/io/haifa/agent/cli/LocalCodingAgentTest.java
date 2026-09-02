@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
+import io.haifa.agent.application.project.product.coding.client.LocalCodingSessionClient;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
@@ -15,8 +16,10 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
+import io.haifa.agent.runtime.api.InteractionResponseReceiptStatus;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
@@ -480,6 +483,66 @@ class LocalCodingAgentTest {
                         "approval.target.validated",
                         "approval.responded",
                         "run.completed");
+    }
+
+    @Test
+    void sqliteSessionClientApprovalResumesAnExecutionRun() throws Exception {
+        Path database = configuredSkillRoot.resolve("session-client-approval.db");
+        Path transcripts = Files.createDirectory(configuredSkillRoot.resolve("session-client-approval-transcripts"));
+        CliConfiguration defaults = CliConfiguration.defaults();
+        var configuration = new CliConfiguration(
+                defaults.model(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                defaults.web(),
+                defaults.skills(),
+                hostExecution(defaults.execution()),
+                ApprovalMode.ASK,
+                Duration.ofSeconds(60),
+                defaults.maxIterations(),
+                defaults.maxToolCalls(),
+                ProjectPersistenceConfiguration.sqliteWithJsonl(
+                        database, transcripts, "env://HAIFA_TEST_CONTINUATION_KEY"));
+        AtomicInteger calls = new AtomicInteger();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> calls.incrementAndGet() == 1
+                ? toolResponse(
+                        "session-client-approval-execution",
+                        "execution_run",
+                        Map.of(
+                                "command", "rg --files",
+                                "workdir", ".",
+                                "timeoutMillis", 5000,
+                                "description", "List workspace files",
+                                "operationFamily", "INSPECT"))
+                : answer("session-client-approval-complete", "approval resumed the run");
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model,
+                ignored -> {},
+                new AesGcmModelContinuationProtector(
+                        new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
+            LocalCodingSessionClient client = sessionClient(agent);
+            var session = client.create(agent.projectId(), "List the workspace files.", "session-client-approval");
+            var runId = session.activeRun().orElseThrow().runId();
+            awaitCondition(
+                    () -> client.pendingInteraction(runId).isPresent(),
+                    Duration.ofSeconds(60),
+                    () -> "interaction did not become pending: "
+                            + agent.runtime().find(runId).orElseThrow());
+            var receipt = client.respond(
+                    client.pendingInteraction(runId).orElseThrow(),
+                    InteractionAction.APPROVE,
+                    "approve-" + runId.value());
+
+            assertThat(receipt.status()).isEqualTo(InteractionResponseReceiptStatus.APPLIED);
+            var completed = awaitTerminal(agent, runId, Duration.ofSeconds(60));
+            assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(completed.output()).contains("approval resumed the run");
+        }
+        assertThat(calls).hasValue(2);
     }
 
     @Test
@@ -1337,6 +1400,22 @@ class LocalCodingAgentTest {
                 execution.maxProcesses(),
                 execution.inheritEnvironment(),
                 List.of());
+    }
+
+    private static LocalCodingSessionClient sessionClient(LocalCodingAgent agent) {
+        return new LocalCodingSessionClient(
+                agent.projectId(),
+                agent.codingSessions(),
+                agent.sessionHistory(),
+                agent.runtime(),
+                agent.identifiers(),
+                agent.time(),
+                List::of,
+                agent::loadedResources,
+                agent::reloadResources,
+                agent.shell(),
+                agent.exporter(),
+                agent.outcomes());
     }
 
     private static CliConfiguration.Execution localNativeExecution(CliConfiguration.Execution execution) {
