@@ -15,11 +15,13 @@ import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
+import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunInputId;
 import io.haifa.agent.runtime.api.RunInputReceipt;
@@ -39,12 +41,15 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Coding product façade. Product queue/read-model state is kept separate from the authoritative
  * Core Session and Runtime Run lifecycle.
  */
 public final class CodingSessionService {
+    private static final Logger LOGGER = LoggerFactory.getLogger(CodingSessionService.class);
     private static final String CREATE = "create-session";
     private static final String SUBMIT = "submit-turn";
     private static final String STEER = "steer";
@@ -568,6 +573,17 @@ public final class CodingSessionService {
             AgentRunId runId = current.activeRunId().orElseThrow();
             AgentRunSnapshot snapshot = runtime.find(runId)
                     .orElseThrow(() -> conflict("ACTIVE_RUN_UNAVAILABLE", "Active Run is unavailable"));
+            if (isWaitingWithoutPendingInteraction(snapshot)) {
+                try {
+                    snapshot = runtime.resume(new ResumeAgentRunRequest(
+                            "reconcile-resume:" + current.sessionId().value() + ":" + runId.value(), runId, List.of()));
+                } catch (RuntimeException exception) {
+                    LOGGER.warn(
+                            "Failed to resume stuck run {} during session reconcile: {}",
+                            runId.value(),
+                            exception.getMessage());
+                }
+            }
             if (!snapshot.status().isTerminal()) return current;
             current = codingSessions.clearActive(current.sessionId(), runId, current.revision(), now());
         }
@@ -620,6 +636,14 @@ public final class CodingSessionService {
                 : codingSessions.markDispatched(claimed.followUpId(), claimed.revision(), run.runId(), now());
         return codingSessions.activateRun(
                 followUp.sessionId(), followUp.dispatchKey(), run.runId(), run.version(), now());
+    }
+
+    private boolean isWaitingWithoutPendingInteraction(AgentRunSnapshot snapshot) {
+        if (snapshot.status() != AgentRunStatus.WAITING_APPROVAL
+                && snapshot.status() != AgentRunStatus.WAITING_INTERACTION) {
+            return false;
+        }
+        return runtime.pendingInteraction(snapshot.runId()).isEmpty();
     }
 
     private CodingSessionView view(CodingSessionActivity activity, ProjectProductSession product) {

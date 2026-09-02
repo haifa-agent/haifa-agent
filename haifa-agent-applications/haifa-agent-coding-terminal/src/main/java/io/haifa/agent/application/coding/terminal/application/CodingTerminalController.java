@@ -47,9 +47,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Single-threaded application controller. Runtime callbacks only enqueue actions. */
 public final class CodingTerminalController implements AutoCloseable {
+    private static final Logger LOGGER = LoggerFactory.getLogger(CodingTerminalController.class);
     private static final int PAGE_SIZE = 200;
     private static final int HISTORY_LIMIT = 100;
     private static final int MAX_REPLAY_EVENTS = 2_000;
@@ -483,14 +486,18 @@ public final class CodingTerminalController implements AutoCloseable {
                 try {
                     completion = Objects.requireNonNull(work.get(), "effect completion must not be null");
                 } catch (ProjectProductException exception) {
+                    LOGGER.warn("Terminal effect failed with product error: {}", exception.getMessage(), exception);
                     completion = () -> failure.accept(exception.code());
                 } catch (IllegalArgumentException
                         | IllegalStateException
                         | SecurityException
                         | UnsupportedOperationException exception) {
+                    LOGGER.warn(
+                            "Terminal effect failed with client/state error: {}", exception.getMessage(), exception);
                     String code = safeFailureCode(exception);
                     completion = () -> failure.accept(code);
                 } catch (RuntimeException exception) {
+                    LOGGER.warn("Terminal effect failed with unexpected error: {}", exception.getMessage(), exception);
                     completion = () -> failure.accept("OPERATION_REJECTED");
                 }
                 enqueueCompletion(completionQueue, completion);

@@ -37,8 +37,11 @@ import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
+import io.haifa.agent.runtime.api.InteractionResponseReceipt;
+import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
 import io.haifa.agent.runtime.api.RunInputId;
@@ -1683,6 +1686,109 @@ class RuntimeCoreTest {
         assertThat(resumedModelRequest.get().messages())
                 .extracting(message -> message.role())
                 .containsSequence(ModelMessageRole.ASSISTANT, ModelMessageRole.TOOL);
+    }
+
+    @Test
+    void approvedToolApprovalSubmissionResumesRunAndExecutesTool() {
+        AtomicInteger toolCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> resumedModelRequest = new AtomicReference<>();
+        Queue<io.haifa.agent.runtime.core.decision.AgentDecision> decisions = new ArrayDeque<>(List.of(
+                new ToolCallDecision(List.of(toolRequest(
+                        "approved", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of("value", "ok"))))),
+                finalDecision("completed after approval")));
+        AgentChatModel approvalModel = request -> {
+            if (request.iteration() == 2) resumedModelRequest.set(request);
+            return response(decisions.remove());
+        };
+        Fixture fixture = fixture(
+                approvalModel,
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        request -> {
+                            toolCalls.incrementAndGet();
+                            return new ToolResult(
+                                    true, "write executed", Map.of("status", "ok"), List.of(), List.of(), false);
+                        }));
+        var accepted = fixture.runtime.start(request("submission-approve"));
+        fixture.scheduler.runAll();
+        var interaction = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        var submission = new InteractionResponseSubmission(
+                new InteractionResponseId("approve-sub-1"),
+                interaction.id(),
+                accepted.runId(),
+                0L,
+                InteractionAction.APPROVE,
+                List.of(),
+                "approve-sub-key",
+                Instant.parse("2026-07-21T00:00:00Z"));
+
+        InteractionResponseReceipt receipt = fixture.runtime.respond(submission);
+        assertThat(receipt.status().name()).contains("ACCEPTED");
+        fixture.scheduler.runAll();
+
+        var run = fixture.runtime.find(accepted.runId()).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(toolCalls).hasValue(1);
+        assertThat(fixture.store.toolCalls(accepted.runId()).getFirst().status().name())
+                .isEqualTo("COMPLETED");
+
+        // Duplicate submission should be idempotent
+        InteractionResponseReceipt duplicateReceipt = fixture.runtime.respond(submission);
+        assertThat(duplicateReceipt.status().name()).contains("DUPLICATE");
+    }
+
+    @Test
+    void rejectedToolApprovalSubmissionResumesRunAndDoesNotCancelRun() {
+        AtomicInteger toolCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> resumedModelRequest = new AtomicReference<>();
+        Queue<io.haifa.agent.runtime.core.decision.AgentDecision> decisions = new ArrayDeque<>(List.of(
+                new ToolCallDecision(List.of(toolRequest(
+                        "rejected-sub", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of())))),
+                finalDecision("handled rejection gracefully")));
+        AgentChatModel approvalModel = request -> {
+            if (request.iteration() == 2) resumedModelRequest.set(request);
+            return response(decisions.remove());
+        };
+        Fixture fixture = fixture(
+                approvalModel,
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        request -> {
+                            toolCalls.incrementAndGet();
+                            return new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false);
+                        }));
+        var accepted = fixture.runtime.start(request("submission-reject"));
+        fixture.scheduler.runAll();
+        var interaction = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        var submission = new InteractionResponseSubmission(
+                new InteractionResponseId("reject-sub-1"),
+                interaction.id(),
+                accepted.runId(),
+                0L,
+                InteractionAction.REJECT,
+                List.of(),
+                "reject-sub-key",
+                Instant.parse("2026-07-21T00:00:00Z"));
+
+        InteractionResponseReceipt receipt = fixture.runtime.respond(submission);
+        assertThat(receipt.status().name()).contains("ACCEPTED");
+        fixture.scheduler.runAll();
+
+        var run = fixture.runtime.find(accepted.runId()).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(toolCalls).hasValue(0);
+        assertThat(fixture.store.toolCalls(accepted.runId()).getFirst().status().name())
+                .isEqualTo("DENIED");
     }
 
     @Test

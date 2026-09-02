@@ -274,9 +274,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                         io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_VERSION_CONFLICT,
                         "The expected Run version is stale");
             }
-            if (resumable.status() != AgentRunStatus.SUSPENDED
-                    && resumable.status() != AgentRunStatus.WAITING_INTERACTION
-                    && resumable.status() != AgentRunStatus.WAITING_APPROVAL) {
+            if (!isResumableStatus(resumable.status())) {
                 throw new IllegalStateException("run is not resumable from " + resumable.status());
             }
             resumeCoordinator.validate(resumable, request, caller);
@@ -327,8 +325,10 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         ResponseOutcome outcome = unitOfWork.execute(() -> recordResponse(response));
         AgentRun run = outcome.run();
         if (outcome.toolApproval()) {
-            return resume(new ResumeAgentRunRequest(
-                    "tool-approval-response:" + response.idempotencyKey(), run.id(), List.of()));
+            return isResumableStatus(run.status())
+                    ? resume(new ResumeAgentRunRequest(
+                            "tool-approval-response:" + response.idempotencyKey(), run.id(), List.of()))
+                    : snapshot(run.id());
         }
         if (response.type() == InteractionResponseType.REJECT) {
             if (!run.status().isTerminal()) {
@@ -339,8 +339,10 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             interactions.markResolutionApplied(response.requestId());
             return snapshot(run.id());
         }
-        AgentRunSnapshot resumed = resume(
-                new ResumeAgentRunRequest("interaction-response:" + response.idempotencyKey(), run.id(), List.of()));
+        AgentRunSnapshot resumed = isResumableStatus(run.status())
+                ? resume(new ResumeAgentRunRequest(
+                        "interaction-response:" + response.idempotencyKey(), run.id(), List.of()))
+                : snapshot(run.id());
         interactions.markResolutionApplied(response.requestId());
         return resumed;
     }
@@ -350,12 +352,15 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         Objects.requireNonNull(response, "response must not be null");
         SubmissionOutcome outcome = unitOfWork.execute(() -> recordSubmission(response));
         AgentRun run = outcome.run();
-        if (outcome.newlyRecorded()) {
-            if (outcome.toolApproval()) {
+        boolean resumable = isResumableStatus(run.status());
+        if (outcome.toolApproval()) {
+            if (resumable) {
                 resume(new ResumeAgentRunRequest(
                         "tool-approval-response:" + response.idempotencyKey(), run.id(), List.of()));
-            } else if (response.action().equals(InteractionAction.REJECT)
-                    || response.action().equals(InteractionAction.CANCEL)) {
+            }
+        } else if (response.action().equals(InteractionAction.REJECT)
+                || response.action().equals(InteractionAction.CANCEL)) {
+            if (outcome.newlyRecorded()) {
                 if (!run.status().isTerminal()) {
                     transitions.cancelled(
                             run,
@@ -363,7 +368,9 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                                     "INTERACTION_REJECTED", "Interaction was rejected by the operator"));
                 }
                 interactions.markResolutionApplied(response.requestId());
-            } else {
+            }
+        } else {
+            if (resumable) {
                 resume(new ResumeAgentRunRequest(
                         "interaction-response:" + response.idempotencyKey(), run.id(), List.of()));
                 interactions.markResolutionApplied(response.requestId());
@@ -384,6 +391,12 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 current.state(),
                 current.revision(),
                 snapshot.version());
+    }
+
+    private static boolean isResumableStatus(AgentRunStatus status) {
+        return status == AgentRunStatus.SUSPENDED
+                || status == AgentRunStatus.WAITING_INTERACTION
+                || status == AgentRunStatus.WAITING_APPROVAL;
     }
 
     private ResponseOutcome recordResponse(InteractionResponse response) {
