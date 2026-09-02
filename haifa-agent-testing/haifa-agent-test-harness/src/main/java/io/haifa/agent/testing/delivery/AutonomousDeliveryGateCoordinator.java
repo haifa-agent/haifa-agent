@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /** Coordinates serial, repository-external Autonomous Delivery Phase 1/2/3 gates. */
 final class AutonomousDeliveryGateCoordinator {
@@ -38,12 +39,15 @@ final class AutonomousDeliveryGateCoordinator {
             ResolvedRunContext.AutonomousDelivery context,
             Map<String, Path> executablePaths,
             DeliveryHostProfile hostProfile,
-            long approvedMaxCostMinorUnits)
+            long approvedMaxCostMinorUnits,
+            Consumer<String> progressOutput)
             throws Exception {
         Objects.requireNonNull(context, "context must not be null");
         AutonomousDeliverySuiteManifest suite = context.suite();
+        AutonomousDeliveryProgressReporter progress = new AutonomousDeliveryProgressReporter(progressOutput);
         AutonomousDeliveryPhasePolicy phasePolicy = AutonomousDeliveryPhasePolicy.resolve(suite);
         int phaseNumber = phasePolicy.phaseNumber();
+        progress.phaseStarted(suite.phase());
         DeliveryToolchainSet toolchains = DeliveryToolchainSet.validate(executablePaths);
         validateHostProfile(hostProfile, context.platform());
         AutonomousDeliveryLiveBudget.Authorization liveBudget =
@@ -99,7 +103,8 @@ final class AutonomousDeliveryGateCoordinator {
                         context.testConfigRevision(),
                         context.nativePlan().sha256(),
                         phasePolicy,
-                        selectedSecrets);
+                        selectedSecrets,
+                        progress);
                 results.add(result);
                 if (selection.blocking() && !Boolean.TRUE.equals(result.get("gatePassed"))) {
                     successful = false;
@@ -119,6 +124,7 @@ final class AutonomousDeliveryGateCoordinator {
                         deterministicReplay,
                         results,
                         liveBudgetEvidence);
+        progress.phaseCompleted(suite.phase(), nativeResult.successful());
         return new RunEvidenceWriter.NativeResult(
                 gate,
                 startedAt,
