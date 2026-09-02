@@ -35,14 +35,12 @@ class OnDemandChangeReviewServiceTest {
                         WorkspaceRootAlias.MAIN,
                         tempDir.resolve("main"),
                         WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.GIT,
-                        false))
+                        WorkspaceRootStrategy.GIT))
                 .addRoot(LocalWorkspaceRoot.of(
                         WorkspaceRootAlias.of("docs"),
                         tempDir.resolve("docs"),
                         WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.PLAIN,
-                        false))
+                        WorkspaceRootStrategy.PLAIN))
                 .build();
         service = new OnDemandChangeReviewService(rootRegistry, ledger);
         now = Instant.parse("2026-09-01T12:00:00Z");
