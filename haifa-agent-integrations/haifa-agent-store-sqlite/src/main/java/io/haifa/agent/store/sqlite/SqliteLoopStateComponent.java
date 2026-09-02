@@ -147,8 +147,7 @@ final class SqliteLoopStateComponent {
             ConfigurationRow current =
                     mapper.findConfiguration(configuration.reference().snapshotId());
             if (current != null) {
-                RuntimeConfigurationSnapshot restored = configuration(current);
-                if (!restored.equals(configuration)) {
+                if (!current.contentHash().equals(configuration.reference().contentHash())) {
                     throw new IllegalStateException("configuration snapshot id collision");
                 }
                 return null;
@@ -170,7 +169,9 @@ final class SqliteLoopStateComponent {
             mapper.insertConfiguration(row);
             ConfigurationRow stored =
                     mapper.findConfiguration(configuration.reference().snapshotId());
-            if (stored == null || !configuration(stored).equals(configuration)) {
+            if (stored == null
+                    || !stored.contentHash().equals(configuration.reference().contentHash())
+                    || !stored.contentPayloadHash().equals(content.hash())) {
                 throw new IllegalStateException("configuration snapshot collision");
             }
             return null;
