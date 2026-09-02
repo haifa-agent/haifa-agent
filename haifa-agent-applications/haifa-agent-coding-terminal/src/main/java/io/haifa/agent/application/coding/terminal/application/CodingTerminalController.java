@@ -4,6 +4,7 @@ import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
+import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
@@ -1511,11 +1512,18 @@ public final class CodingTerminalController implements AutoCloseable {
                                 }
                             };
                         },
-                        code -> {
-                            openInteractionSelector(interaction);
-                            apply(new TerminalUiAction.RecoverableFailure(code));
-                        });
+                        code -> handleInteractionResponseFailure(code));
             }
+        }
+    }
+
+    private void handleInteractionResponseFailure(String code) {
+        activeInteraction = null;
+        interactionHydrationInFlight = null;
+        apply(new TerminalUiAction.RecoverableFailure(code));
+        if (TerminalRecovery.fromCode(code).category() == TerminalRecovery.Category.RETRYABLE
+                && state.session().isPresent()) {
+            scheduleReconcile();
         }
     }
 
