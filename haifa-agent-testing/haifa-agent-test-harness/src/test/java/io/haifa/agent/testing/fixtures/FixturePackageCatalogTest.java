@@ -45,6 +45,13 @@ class FixturePackageCatalogTest {
         assertThrows(IllegalArgumentException.class, () -> new FixturePackageCatalog().scan(temporaryDirectory));
     }
 
+    @Test
+    void verifiesRealAutonomousDeliveryFixturePackage() throws Exception {
+        Path root = Path.of("../haifa-agent-test-fixtures/src/main/resources/fixtures");
+        var packages = new FixturePackageCatalog().scan(root);
+        assertEquals(1, packages.size());
+    }
+
     private static String manifest(String digest) {
         return """
                 schemaVersion: 1

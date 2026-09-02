@@ -205,6 +205,23 @@ class LocalFileToolOperationsMultiRootTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("writableFilePaths")
+    void writableRootsCreateMissingTargetsThroughFileWrite(String path) throws IOException {
+        var written = operations.execute(
+                "file.write",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", path, "content", "created by write")));
+
+        assertThat(written.successful()).isTrue();
+        assertThat(written.summary()).isEqualTo("Created " + displayPath(path));
+        assertThat(written.structuredData()).containsEntry("path", displayPath(path));
+        assertThat(Files.readString(target(path))).isEqualTo("created by write");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("writableFilePaths")
     void writableRootsShareCreateWriteAndDeleteContract(String path) throws IOException {
         var created = operations.execute(
                 "file.create",

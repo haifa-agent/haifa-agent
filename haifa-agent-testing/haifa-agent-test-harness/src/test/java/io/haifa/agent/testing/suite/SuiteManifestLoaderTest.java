@@ -18,10 +18,10 @@ class SuiteManifestLoaderTest {
         Files.createDirectories(temporaryDirectory.resolve("matrices"));
         Files.writeString(temporaryDirectory.resolve("matrices/primary-v1.yaml"), "schemaVersion: 1\n");
         Files.writeString(
-                temporaryDirectory.resolve("suites/pr-real-v1.yaml"),
+                temporaryDirectory.resolve("suites/critical-path-smoke-v1.yaml"),
                 """
                 schemaVersion: 1
-                suiteId: pr-real-v1
+                suiteId: critical-path-smoke-v1
                 matrixRef: primary-v1
                 budget:
                   maxWallTimeMinutes: 30
@@ -33,9 +33,9 @@ class SuiteManifestLoaderTest {
                     blocking: true
                 """);
 
-        SuiteManifest value = new SuiteManifestLoader().load(temporaryDirectory, "pr-real-v1");
+        SuiteManifest value = new SuiteManifestLoader().load(temporaryDirectory, "critical-path-smoke-v1");
 
-        assertEquals("pr-real-v1", value.suiteId());
+        assertEquals("critical-path-smoke-v1", value.suiteId());
         assertEquals("CP-01", value.cases().getFirst().caseId());
     }
 
@@ -45,10 +45,10 @@ class SuiteManifestLoaderTest {
         Files.createDirectories(temporaryDirectory.resolve("matrices"));
         Files.writeString(temporaryDirectory.resolve("matrices/primary-v1.yaml"), "schemaVersion: 1\n");
         Files.writeString(
-                temporaryDirectory.resolve("suites/pr-real-v1.yaml"),
+                temporaryDirectory.resolve("suites/critical-path-smoke-v1.yaml"),
                 """
                 schemaVersion: 1
-                suiteId: pr-real-v1
+                suiteId: critical-path-smoke-v1
                 matrixRef: primary-v1
                 budget:
                   maxWallTimeMinutes: 30
@@ -60,7 +60,7 @@ class SuiteManifestLoaderTest {
                     blocking: true
                 """);
 
-        assertThrows(
-                IllegalArgumentException.class, () -> new SuiteManifestLoader().load(temporaryDirectory, "pr-real-v1"));
+        assertThrows(IllegalArgumentException.class, () -> new SuiteManifestLoader()
+                .load(temporaryDirectory, "critical-path-smoke-v1"));
     }
 }

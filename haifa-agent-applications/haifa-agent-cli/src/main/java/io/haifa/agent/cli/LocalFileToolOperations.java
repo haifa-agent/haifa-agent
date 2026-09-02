@@ -271,7 +271,15 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_WRITE);
         byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
 
-        TargetMetadata before = requireRegularFile(target);
+        TargetMetadata before;
+        try {
+            before = requireRegularFile(target);
+        } catch (WorkspaceFileException exception) {
+            if (exception.code() != WorkspaceFileErrorCode.PATH_NOT_FOUND) throw exception;
+            createTarget(workspaceId, mutationContext, target, bytes);
+            recordCreate(target, bytes, mutationContext);
+            return success("Created " + target.displayPath(), Map.of("path", target.displayPath()));
+        }
         writeTarget(workspaceId, mutationContext, target, bytes, before.contentHash());
         recordReplace(target, before, bytes, mutationContext);
         return success("Wrote " + target.displayPath(), Map.of("path", target.displayPath()));

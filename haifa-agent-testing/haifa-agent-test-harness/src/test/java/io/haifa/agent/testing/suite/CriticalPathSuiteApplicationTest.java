@@ -94,10 +94,10 @@ class CriticalPathSuiteApplicationTest {
         Files.createDirectories(configRoot.resolve("environments/cli"));
         Files.writeString(configRoot.resolve("matrices/primary-v1.yaml"), matrix());
         Files.writeString(
-                configRoot.resolve("suites/pr-real-v1.yaml"),
+                configRoot.resolve("suites/critical-path-smoke-v1.yaml"),
                 """
                 schemaVersion: 1
-                suiteId: pr-real-v1
+                suiteId: critical-path-smoke-v1
                 matrixRef: primary-v1
                 budget:
                   maxWallTimeMinutes: 30
@@ -132,10 +132,10 @@ class CriticalPathSuiteApplicationTest {
         Files.createDirectories(configRoot.resolve("matrices"));
         Files.writeString(configRoot.resolve("matrices/primary-v1.yaml"), matrix());
         Files.writeString(
-                configRoot.resolve("suites/pr-real-v1.yaml"),
+                configRoot.resolve("suites/critical-path-smoke-v1.yaml"),
                 """
                 schemaVersion: 1
-                suiteId: pr-real-v1
+                suiteId: critical-path-smoke-v1
                 matrixRef: primary-v1
                 budget:
                   maxWallTimeMinutes: 30
@@ -168,10 +168,10 @@ class CriticalPathSuiteApplicationTest {
         Files.createDirectories(configRoot.resolve("matrices"));
         Files.writeString(configRoot.resolve("matrices/primary-v1.yaml"), matrix());
         Files.writeString(
-                configRoot.resolve("suites/pr-real-v1.yaml"),
+                configRoot.resolve("suites/critical-path-smoke-v1.yaml"),
                 """
                 schemaVersion: 1
-                suiteId: pr-real-v1
+                suiteId: critical-path-smoke-v1
                 matrixRef: primary-v1
                 budget:
                   maxWallTimeMinutes: 30
@@ -203,10 +203,10 @@ class CriticalPathSuiteApplicationTest {
         Files.createDirectories(configRoot.resolve("matrices"));
         Files.writeString(configRoot.resolve("matrices/primary-v1.yaml"), matrix());
         Files.writeString(
-                configRoot.resolve("suites/pr-real-v1.yaml"),
+                configRoot.resolve("suites/critical-path-smoke-v1.yaml"),
                 """
                 schemaVersion: 1
-                suiteId: pr-real-v1
+                suiteId: critical-path-smoke-v1
                 matrixRef: primary-v1
                 budget:
                   maxWallTimeMinutes: 30
@@ -242,7 +242,7 @@ class CriticalPathSuiteApplicationTest {
                 projectRoot,
                 configRoot,
                 runRoot,
-                "pr-real-v1",
+                "critical-path-smoke-v1",
                 "coding-primary",
                 currentPlatform() + "-primary",
                 RunMode.LIVE);

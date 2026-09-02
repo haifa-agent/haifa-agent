@@ -192,7 +192,7 @@ Catalog 保留 `file.search` 供显式配置兼容，但 Coding CLI 默认不冻
 替代命令。应用不增加搜索专用 Executor、不解析搜索意图，也不在 Java 中拼接命令选项。
 普通手工源码更新优先使用 `file.patch` 1.1：它接受 Codex 风格的上下文 Patch，覆盖新增、删除、更新、
 移动和多文件调用；本地实现流式转换大文件并通过同目录临时文件与提交前哈希复核完成原子替换。
-`file.write` 保留给有意整体替换的小文件，生成代码和机械批量修改继续通过通用 CLI/生成器完成。
+`file.write` 保留给有意整体替换的小文件；目标不存在时会原子创建，生成代码和机械批量修改继续通过通用 CLI/生成器完成。
 文件 Mutation 保证完整原子替换；遇到外部冲突或不确定结果时 fail closed 返回错误，不自动重放或自动对账。`execution.run` 会在进程启动时记录 execution ID、PID 和工作目录
 摘要；已得到终态进程结果可直接对账，未知终止或失败不得自动重放。
 `execution.run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，

@@ -69,7 +69,7 @@ class CriticalPathPlanResolverTest {
     private static SuiteManifest manifest(double cost, int repetitions) {
         return new SuiteManifest(
                 1,
-                "nightly-provider-smoke-v1",
+                "critical-path-smoke-v1",
                 "primary-v1",
                 new SuiteManifest.Budget(20, cost, 1),
                 List.of(new SuiteManifest.CaseSelection("CP-01", repetitions, true)));
