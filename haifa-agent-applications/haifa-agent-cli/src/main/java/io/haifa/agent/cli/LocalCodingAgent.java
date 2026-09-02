@@ -520,11 +520,7 @@ final class LocalCodingAgent implements AutoCloseable {
             var detector = new LocalWorkspaceRootStrategyDetector();
             var detection = detector.detect(workspaceRoot);
             LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.of(
-                    WorkspaceRootAlias.MAIN,
-                    workspaceRoot,
-                    WorkspaceRootPermission.READ_WRITE,
-                    detection.strategy(),
-                    detection.initialDirty());
+                    WorkspaceRootAlias.MAIN, workspaceRoot, WorkspaceRootPermission.READ_WRITE, detection.strategy());
             List<LocalWorkspaceRoot> rootsList = new ArrayList<>();
             rootsList.add(mainRoot);
             LocalWorkspaceRootRegistry rootRegistry = LocalWorkspaceRootRegistry.of(rootsList);

@@ -44,10 +44,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -80,20 +78,17 @@ class LocalFileToolOperationsMultiRootTest {
                         WorkspaceRootAlias.MAIN,
                         mainDir,
                         WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.GIT,
-                        false))
+                        WorkspaceRootStrategy.GIT))
                 .addRoot(LocalWorkspaceRoot.of(
                         WorkspaceRootAlias.of("docs"),
                         docsDir,
                         WorkspaceRootPermission.READ_ONLY,
-                        WorkspaceRootStrategy.PLAIN,
-                        false))
+                        WorkspaceRootStrategy.PLAIN))
                 .addRoot(LocalWorkspaceRoot.of(
                         WorkspaceRootAlias.of("config"),
                         configDir,
                         WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.PLAIN,
-                        false))
+                        WorkspaceRootStrategy.PLAIN))
                 .build();
 
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
@@ -472,10 +467,10 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
-    void deletesAttachedDirectoryOnlyWhenRecursiveIsExplicit() throws IOException {
+    void rejectsNonEmptyDirectoryDelete() throws Exception {
         Path generated = configDir.resolve("generated");
         Files.createDirectories(generated);
-        Files.writeString(generated.resolve("artifact.txt"), "temporary");
+        Files.writeString(generated.resolve("temp.log"), "sample");
 
         var rejected = operations.execute(
                 "file.delete",
@@ -483,22 +478,11 @@ class LocalFileToolOperationsMultiRootTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "config:generated", "recursive", false)));
+                arguments(Map.of("path", "config:generated")));
 
         assertThat(rejected.successful()).isFalse();
         assertThat(rejected.structuredData()).containsEntry("errorCode", "PATH_DENIED");
         assertThat(generated).exists();
-
-        var deleted = operations.execute(
-                "file.delete",
-                workspaceId,
-                new PrincipalRef("operator", "user"),
-                "run-1",
-                "policy-1",
-                arguments(Map.of("path", "config:generated", "recursive", true)));
-
-        assertThat(deleted.successful()).isTrue();
-        assertThat(generated).doesNotExist();
     }
 
     @Test
@@ -513,31 +497,6 @@ class LocalFileToolOperationsMultiRootTest {
 
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData()).containsEntry("errorCode", "PATH_NOT_FOUND");
-    }
-
-    @Test
-    void rejectsFifoInsideAttachedDirectoryBeforeDeletingAnyEntry() throws Exception {
-        Assumptions.assumeFalse(
-                System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win"),
-                "mkfifo is unavailable on Windows");
-        Path generated = configDir.resolve("generated");
-        Files.createDirectories(generated);
-        Path fifo = generated.resolve("events.fifo");
-        assertThat(new ProcessBuilder("mkfifo", fifo.toString()).start().waitFor())
-                .isZero();
-
-        var result = operations.execute(
-                "file.delete",
-                workspaceId,
-                new PrincipalRef("operator", "user"),
-                "run-1",
-                "policy-1",
-                arguments(Map.of("path", "config:generated", "recursive", true)));
-
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData()).containsEntry("errorCode", "PATH_DENIED");
-        assertThat(generated).exists();
-        assertThat(fifo).exists();
     }
 
     @Test

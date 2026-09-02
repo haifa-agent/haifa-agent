@@ -10,11 +10,7 @@ import java.util.Objects;
  * Concrete local workspace root backed by a host filesystem directory.
  */
 public record LocalWorkspaceRoot(
-        WorkspaceRootAlias alias,
-        Path hostPath,
-        WorkspaceRootPermission permission,
-        WorkspaceRootStrategy strategy,
-        boolean initialDirty) {
+        WorkspaceRootAlias alias, Path hostPath, WorkspaceRootPermission permission, WorkspaceRootStrategy strategy) {
 
     public LocalWorkspaceRoot {
         Objects.requireNonNull(alias, "alias must not be null");
@@ -31,13 +27,11 @@ public record LocalWorkspaceRoot(
             WorkspaceRootAlias alias,
             Path hostPath,
             WorkspaceRootPermission permission,
-            WorkspaceRootStrategy strategy,
-            boolean initialDirty) {
-        return new LocalWorkspaceRoot(alias, hostPath, permission, strategy, initialDirty);
+            WorkspaceRootStrategy strategy) {
+        return new LocalWorkspaceRoot(alias, hostPath, permission, strategy);
     }
 
-    public static LocalWorkspaceRoot main(Path hostPath, WorkspaceRootStrategy strategy, boolean initialDirty) {
-        return new LocalWorkspaceRoot(
-                WorkspaceRootAlias.MAIN, hostPath, WorkspaceRootPermission.READ_WRITE, strategy, initialDirty);
+    public static LocalWorkspaceRoot main(Path hostPath, WorkspaceRootStrategy strategy) {
+        return new LocalWorkspaceRoot(WorkspaceRootAlias.MAIN, hostPath, WorkspaceRootPermission.READ_WRITE, strategy);
     }
 }

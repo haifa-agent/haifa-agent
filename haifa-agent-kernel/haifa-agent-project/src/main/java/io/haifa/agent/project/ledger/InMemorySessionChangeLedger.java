@@ -4,160 +4,136 @@ import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.root.WorkspaceRootAlias;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 
+/**
+ * In-memory, in-place delta tracking of session file mutations.
+ * Maintains O(N) unique changed files with immediate net-state compaction.
+ */
 public final class InMemorySessionChangeLedger implements SessionChangeLedger {
 
-    public static final int DEFAULT_MAX_CAPACITY = 1000;
-    private final int maxCapacity;
-
-    private final ConcurrentHashMap<WorkspaceRootAlias, CopyOnWriteArrayList<SessionFileChangeRecord>> entries =
+    private final ConcurrentHashMap<WorkspaceRootAlias, ConcurrentHashMap<ProjectPath, SessionFileChangeRecord>> state =
             new ConcurrentHashMap<>();
 
-    public InMemorySessionChangeLedger() {
-        this(DEFAULT_MAX_CAPACITY);
-    }
-
-    public InMemorySessionChangeLedger(int maxCapacity) {
-        if (maxCapacity <= 0) {
-            throw new IllegalArgumentException("maxCapacity must be greater than 0");
-        }
-        this.maxCapacity = maxCapacity;
-    }
+    public InMemorySessionChangeLedger() {}
 
     @Override
     public void record(SessionFileChangeRecord change) {
         Objects.requireNonNull(change, "change must not be null");
-        entries.compute(change.rootAlias(), (k, list) -> {
-            if (list == null) {
-                list = new CopyOnWriteArrayList<>();
+        ConcurrentHashMap<ProjectPath, SessionFileChangeRecord> rootMap =
+                state.computeIfAbsent(change.rootAlias(), k -> new ConcurrentHashMap<>());
+
+        if (change.type() == FileChangeType.MOVE) {
+            ProjectPath src = change.sourcePath();
+            SessionFileChangeRecord existingSrc = rootMap.remove(src);
+            rootMap.compute(change.path(), (targetPath, existingDst) -> {
+                if (existingSrc != null && existingSrc.type() == FileChangeType.CREATE) {
+                    return SessionFileChangeRecord.create(
+                            change.rootAlias(),
+                            targetPath,
+                            change.afterHash(),
+                            change.afterSize(),
+                            change.toolCallId(),
+                            change.timestamp());
+                }
+                if (existingSrc != null) {
+                    ProjectPath originalOrigin = existingSrc.sourcePath() != null ? existingSrc.sourcePath() : src;
+                    return SessionFileChangeRecord.move(
+                            change.rootAlias(),
+                            originalOrigin,
+                            targetPath,
+                            existingSrc.beforeHash(),
+                            existingSrc.beforeSize(),
+                            change.afterHash(),
+                            change.afterSize(),
+                            change.toolCallId(),
+                            change.timestamp());
+                }
+                return change;
+            });
+            return;
+        }
+
+        rootMap.compute(change.path(), (targetPath, existing) -> {
+            switch (change.type()) {
+                case CREATE -> {
+                    return change;
+                }
+                case REPLACE -> {
+                    if (existing == null) {
+                        return change;
+                    }
+                    if (existing.type() == FileChangeType.CREATE) {
+                        return SessionFileChangeRecord.create(
+                                change.rootAlias(),
+                                targetPath,
+                                change.afterHash(),
+                                change.afterSize(),
+                                change.toolCallId(),
+                                change.timestamp());
+                    }
+                    return new SessionFileChangeRecord(
+                            change.rootAlias(),
+                            targetPath,
+                            existing.sourcePath(),
+                            existing.type(),
+                            existing.beforeHash(),
+                            existing.beforeSize(),
+                            change.afterHash(),
+                            change.afterSize(),
+                            change.toolCallId(),
+                            change.timestamp());
+                }
+                case DELETE -> {
+                    if (existing != null && existing.type() == FileChangeType.CREATE) {
+                        // Created and deleted within the same session -> cancels out completely
+                        return null;
+                    }
+                    if (existing != null) {
+                        ProjectPath origSource = existing.sourcePath() != null ? existing.sourcePath() : targetPath;
+                        return SessionFileChangeRecord.delete(
+                                change.rootAlias(),
+                                origSource,
+                                existing.beforeHash(),
+                                existing.beforeSize(),
+                                change.toolCallId(),
+                                change.timestamp());
+                    }
+                    return change;
+                }
+                default -> {
+                    return change;
+                }
             }
-            if (list.size() >= maxCapacity) {
-                list.remove(0);
-            }
-            list.add(change);
-            return list;
         });
     }
 
     @Override
     public List<SessionFileChangeRecord> rawChanges(WorkspaceRootAlias rootAlias) {
-        Objects.requireNonNull(rootAlias, "rootAlias must not be null");
-        List<SessionFileChangeRecord> list = entries.get(rootAlias);
-        return list == null ? List.of() : List.copyOf(list);
+        return compactedChanges(rootAlias);
     }
 
     @Override
     public List<SessionFileChangeRecord> compactedChanges(WorkspaceRootAlias rootAlias) {
         Objects.requireNonNull(rootAlias, "rootAlias must not be null");
-        List<SessionFileChangeRecord> raw = entries.get(rootAlias);
-        if (raw == null || raw.isEmpty()) {
+        ConcurrentHashMap<ProjectPath, SessionFileChangeRecord> rootMap = state.get(rootAlias);
+        if (rootMap == null || rootMap.isEmpty()) {
             return List.of();
         }
-
-        Map<ProjectPath, SessionFileChangeRecord> stateMap = new LinkedHashMap<>();
-        for (SessionFileChangeRecord change : raw) {
-            ProjectPath targetPath = change.path();
-            switch (change.type()) {
-                case CREATE -> {
-                    stateMap.put(targetPath, change);
-                }
-                case REPLACE -> {
-                    SessionFileChangeRecord existing = stateMap.get(targetPath);
-                    if (existing == null) {
-                        stateMap.put(targetPath, change);
-                    } else if (existing.type() == FileChangeType.CREATE) {
-                        stateMap.put(
-                                targetPath,
-                                SessionFileChangeRecord.create(
-                                        rootAlias,
-                                        targetPath,
-                                        change.afterHash(),
-                                        change.afterSize(),
-                                        change.toolCallId(),
-                                        change.timestamp()));
-                    } else {
-                        stateMap.put(
-                                targetPath,
-                                new SessionFileChangeRecord(
-                                        rootAlias,
-                                        targetPath,
-                                        existing.sourcePath(),
-                                        existing.type(),
-                                        existing.beforeHash(),
-                                        existing.beforeSize(),
-                                        change.afterHash(),
-                                        change.afterSize(),
-                                        change.toolCallId(),
-                                        change.timestamp()));
-                    }
-                }
-                case DELETE -> {
-                    SessionFileChangeRecord existing = stateMap.get(targetPath);
-                    if (existing != null && existing.type() == FileChangeType.CREATE) {
-                        // Created and deleted within the same session -> cancels out
-                        stateMap.remove(targetPath);
-                    } else if (existing != null) {
-                        ProjectPath origSource = existing.sourcePath() != null ? existing.sourcePath() : targetPath;
-                        stateMap.remove(targetPath);
-                        stateMap.put(
-                                origSource,
-                                SessionFileChangeRecord.delete(
-                                        rootAlias,
-                                        origSource,
-                                        existing.beforeHash(),
-                                        existing.beforeSize(),
-                                        change.toolCallId(),
-                                        change.timestamp()));
-                    } else {
-                        stateMap.put(targetPath, change);
-                    }
-                }
-                case MOVE -> {
-                    ProjectPath src = change.sourcePath();
-                    SessionFileChangeRecord existingSrc = stateMap.remove(src);
-                    if (existingSrc != null && existingSrc.type() == FileChangeType.CREATE) {
-                        stateMap.put(
-                                targetPath,
-                                SessionFileChangeRecord.create(
-                                        rootAlias,
-                                        targetPath,
-                                        change.afterHash(),
-                                        change.afterSize(),
-                                        change.toolCallId(),
-                                        change.timestamp()));
-                    } else if (existingSrc != null) {
-                        ProjectPath originalOrigin = existingSrc.sourcePath() != null ? existingSrc.sourcePath() : src;
-                        stateMap.put(
-                                targetPath,
-                                SessionFileChangeRecord.move(
-                                        rootAlias,
-                                        originalOrigin,
-                                        targetPath,
-                                        existingSrc.beforeHash(),
-                                        existingSrc.beforeSize(),
-                                        change.afterHash(),
-                                        change.afterSize(),
-                                        change.toolCallId(),
-                                        change.timestamp()));
-                    } else {
-                        stateMap.put(targetPath, change);
-                    }
-                }
-            }
-        }
-        return List.copyOf(stateMap.values());
+        return rootMap.values().stream()
+                .sorted(Comparator.comparing(SessionFileChangeRecord::path))
+                .toList();
     }
 
     @Override
     public Map<WorkspaceRootAlias, List<SessionFileChangeRecord>> allCompactedChanges() {
         Map<WorkspaceRootAlias, List<SessionFileChangeRecord>> result = new LinkedHashMap<>();
-        for (WorkspaceRootAlias alias : entries.keySet()) {
+        for (WorkspaceRootAlias alias : state.keySet()) {
             List<SessionFileChangeRecord> compacted = compactedChanges(alias);
             if (!compacted.isEmpty()) {
                 result.put(alias, compacted);
@@ -168,6 +144,6 @@ public final class InMemorySessionChangeLedger implements SessionChangeLedger {
 
     @Override
     public void clear() {
-        entries.clear();
+        state.clear();
     }
 }

@@ -99,12 +99,11 @@ public final class CodingDeliveryEvidenceLedger {
             facts.add(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION);
             facts.add(CodingDeliveryEvidenceKind.BLOCKER_CONFIRMED);
         }
-        if (MUTATION_TOOLS.contains(call.toolName()) && hasChangeSetReference(data)) {
+        if (call.status() == ToolCallStatus.COMPLETED && MUTATION_TOOLS.contains(call.toolName())) {
             facts.add(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
         }
         CodingChangeReviewArtifact.fromStructuredData(data.get("changeReviewArtifact"))
                 .filter(CodingChangeReviewArtifact::complete)
-                .filter(review -> reviewReferencesResultChangeSets(review, data))
                 .ifPresent(review -> facts.add(CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW));
         if (call.status() == ToolCallStatus.COMPLETED && DIFF_TOOLS.contains(call.toolName())) {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
@@ -167,24 +166,6 @@ public final class CodingDeliveryEvidenceLedger {
         return CodingValidationAttemptEvidence.unavailable(
                 "SUCCEEDED".equals(status) ? CodingValidationStatus.PASSED : CodingValidationStatus.FAILED,
                 "LEGACY_TOOL_RESULT");
-    }
-
-    private static boolean reviewReferencesResultChangeSets(
-            CodingChangeReviewArtifact review, Map<String, Object> data) {
-        Set<String> resultRefs = new java.util.LinkedHashSet<>();
-        addString(data.get("changeSetId"), resultRefs);
-        if (data.get("changeSetIds") instanceof List<?> values) values.forEach(value -> addString(value, resultRefs));
-        return !resultRefs.isEmpty() && resultRefs.equals(new java.util.LinkedHashSet<>(review.changeSetIds()));
-    }
-
-    private static void addString(Object value, Set<String> target) {
-        if (value instanceof String text && !text.isBlank()) target.add(text);
-    }
-
-    private static boolean hasChangeSetReference(Map<String, Object> data) {
-        if (data.get("changeSetId") instanceof String value && !value.isBlank()) return true;
-        if (!(data.get("changeSetIds") instanceof List<?> values)) return false;
-        return values.stream().anyMatch(value -> value instanceof String text && !text.isBlank());
     }
 
     private static boolean trustedReadOnlyClassification(Map<String, Object> data) {

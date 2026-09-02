@@ -38,14 +38,12 @@ class LocalMultiRootPathResolverTest {
                         WorkspaceRootAlias.MAIN,
                         mainDir,
                         WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.GIT,
-                        false))
+                        WorkspaceRootStrategy.GIT))
                 .addRoot(LocalWorkspaceRoot.of(
                         WorkspaceRootAlias.of("docs"),
                         docsDir,
                         WorkspaceRootPermission.READ_ONLY,
-                        WorkspaceRootStrategy.PLAIN,
-                        false))
+                        WorkspaceRootStrategy.PLAIN))
                 .build();
     }
 
@@ -139,7 +137,7 @@ class LocalMultiRootPathResolverTest {
     @Test
     void rejectsPathWhenPhysicalContainmentCannotBeVerified() {
         LocalWorkspaceRootRegistry missingRootRegistry = LocalWorkspaceRootRegistry.singleMain(
-                LocalWorkspaceRoot.main(tempDir.resolve("missing-root"), WorkspaceRootStrategy.PLAIN, false));
+                LocalWorkspaceRoot.main(tempDir.resolve("missing-root"), WorkspaceRootStrategy.PLAIN));
 
         assertThatThrownBy(() -> LocalMultiRootPathResolver.resolve(missingRootRegistry, "file.txt"))
                 .isInstanceOf(WorkspaceRootException.class)
