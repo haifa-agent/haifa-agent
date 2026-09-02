@@ -37,9 +37,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+@Tag("slow")
 class LocalCodingProductAssemblyTest {
     @TempDir
     Path root;

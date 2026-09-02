@@ -3,8 +3,10 @@ package io.haifa.agent.personalassistant.server;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+@Tag("architecture")
 class PersonalAssistantServerArchitectureTest {
     private final com.tngtech.archunit.core.domain.JavaClasses classes =
             new ClassFileImporter().importPackages("io.haifa.agent.personalassistant.server");

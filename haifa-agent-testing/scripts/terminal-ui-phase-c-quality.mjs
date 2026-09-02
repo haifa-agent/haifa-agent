@@ -70,6 +70,7 @@ const mavenArguments = [
   ":haifa-agent-coding-terminal,:haifa-agent-cli",
   "-am",
   "-Dtest=TerminalTextCursorTest,Tui4jCodingTerminalModelTest,Tui4jTerminalIoTest,Tui4jTerminalThemeTest,Tui4jTerminalViewTest,Tui4jTerminalSpikeTest,LocalCodingProductAssemblyTest",
+  "-Dhaifa.surefire.excludedGroups=",
   "-Dsurefire.failIfNoSpecifiedTests=false",
   "test",
 ];

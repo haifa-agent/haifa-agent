@@ -84,10 +84,11 @@ import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import javax.crypto.spec.SecretKeySpec;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+@Tag("slow")
 class ProjectPersistenceAssemblyTest {
     private static final Instant NOW = Instant.parse("2026-07-25T08:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);

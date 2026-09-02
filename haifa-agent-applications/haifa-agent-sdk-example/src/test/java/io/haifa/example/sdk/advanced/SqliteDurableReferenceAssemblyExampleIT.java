@@ -10,7 +10,7 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class SqliteDurableReferenceAssemblyExampleTest {
+class SqliteDurableReferenceAssemblyExampleIT {
     @Test
     void persistsAndReopensConversationState(@TempDir Path directory) throws Exception {
         var key = new SecretKeySpec(new byte[32], "AES");

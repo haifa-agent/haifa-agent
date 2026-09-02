@@ -7,8 +7,10 @@ import java.lang.reflect.Executable;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.Set;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+@Tag("architecture")
 class SdkArchitectureTest {
     private static final Set<String> EXPORTED_PACKAGES = Set.of(
             "io.haifa.agent.sdk.api",

@@ -9,8 +9,10 @@ import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.core.DefaultModelParameterResolver;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.util.Arrays;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+@Tag("architecture")
 class ProjectApplicationArchitectureTest {
     @Test
     void applicationDoesNotExecuteProcessesOrDependOnConcreteProviders() {

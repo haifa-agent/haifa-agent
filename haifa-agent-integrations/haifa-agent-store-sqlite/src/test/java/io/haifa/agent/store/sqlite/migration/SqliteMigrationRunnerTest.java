@@ -36,7 +36,7 @@ class SqliteMigrationRunnerTest {
     }
 
     @Test
-    void upgradesAnExistingV3DatabaseToV10WithoutReapplyingHistory() throws Exception {
+    void upgradesAnExistingV3DatabaseToCurrentSchemaWithoutReapplyingHistory() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
 
@@ -83,8 +83,9 @@ class SqliteMigrationRunnerTest {
             assertThat(queryLong(
                             connection,
                             "SELECT COUNT(*) FROM pragma_table_info('run') WHERE name IN "
-                                    + "('accumulated_human_wait_millis', 'human_wait_started_at')"))
-                    .isEqualTo(2);
+                                    + "('accumulated_human_wait_millis', 'human_wait_started_at', "
+                                    + "'limit_max_tool_calls', 'limit_max_model_calls', 'limit_max_child_runs')"))
+                    .isEqualTo(5);
         }
     }
 
@@ -174,6 +175,66 @@ class SqliteMigrationRunnerTest {
                     .isEqualTo(2000);
             assertThat(queryLong(connection, "SELECT accumulated_human_wait_millis FROM run WHERE run_id = 'run-1'"))
                     .isZero();
+        }
+    }
+
+    @Test
+    void separatesRunLimitsAndRestoresFrozenBudgetFromConfigurationSnapshot() throws Exception {
+        SqliteConnectionFactory connections = initializedConnections();
+        SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
+        runner.migrate(RuntimeStoreMigrations.all().subList(0, 10));
+        try (Connection connection = connections.openConnection();
+                Statement statement = connection.createStatement()) {
+            statement.execute("PRAGMA foreign_keys = OFF");
+            statement.executeUpdate(
+                    """
+                    INSERT INTO configuration_snapshot (
+                        configuration_ref, schema_version, definition_id, definition_version, profile_id,
+                        profile_version, run_type, content_schema_version, content_payload, content_hash, created_at
+                    ) VALUES (
+                        'config-1', '1', 'agent', '1.0.0', 'profile', '1', 'chat', '1',
+                        CAST('{"budget":{"maxToolCalls":0,"maxModelCalls":0,"maxChildRuns":0}}' AS BLOB),
+                        'hash', 1000
+                    )
+                    """);
+            statement.executeUpdate(
+                    """
+                    INSERT INTO run (
+                        run_id, schema_version, root_run_id, session_id, tenant_id, principal_id,
+                        principal_type, agent_definition_id, agent_definition_version,
+                        product_profile_id, product_profile_version, run_type, invocation_mode,
+                        depth, objective, budget_max_input_tokens, budget_max_output_tokens,
+                        budget_max_cached_input_tokens, budget_max_tool_calls, budget_max_model_calls,
+                        budget_max_child_runs, budget_max_cost_currency, budget_max_cost_minor_units,
+                        limit_max_iterations, limit_max_depth, limit_max_parallel_children,
+                        limit_max_wall_time_millis, limit_max_idle_time_millis, configuration_ref,
+                        status, usage_input_tokens, usage_output_tokens, usage_cached_input_tokens,
+                        usage_model_calls, usage_tool_calls, usage_child_runs, usage_cost_minor_units,
+                        usage_wall_time_millis, created_at, updated_at, version
+                    ) VALUES (
+                        'run-1', '1', 'run-1', 'session-1', 'tenant', 'principal', 'user',
+                        'agent', '1.0.0', 'profile', '1', 'chat', 'ROOT', 0, 'objective',
+                        0, 0, 0, 32, 64, 8, 'USD', 0, 10, 1, 1, 60000, 10000,
+                        'config-1', 'WAITING_APPROVAL', 0, 0, 0, 0, 0, 0, 0, 0, 1000, 1000, 1
+                    )
+                    """);
+        }
+
+        runner.migrate(RuntimeStoreMigrations.all());
+
+        try (Connection connection = connections.openConnection()) {
+            assertThat(queryLong(connection, "SELECT budget_max_tool_calls FROM run WHERE run_id = 'run-1'"))
+                    .isZero();
+            assertThat(queryLong(connection, "SELECT budget_max_model_calls FROM run WHERE run_id = 'run-1'"))
+                    .isZero();
+            assertThat(queryLong(connection, "SELECT budget_max_child_runs FROM run WHERE run_id = 'run-1'"))
+                    .isZero();
+            assertThat(queryLong(connection, "SELECT limit_max_tool_calls FROM run WHERE run_id = 'run-1'"))
+                    .isEqualTo(32);
+            assertThat(queryLong(connection, "SELECT limit_max_model_calls FROM run WHERE run_id = 'run-1'"))
+                    .isEqualTo(64);
+            assertThat(queryLong(connection, "SELECT limit_max_child_runs FROM run WHERE run_id = 'run-1'"))
+                    .isEqualTo(8);
         }
     }
 

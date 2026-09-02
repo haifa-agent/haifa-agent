@@ -38,7 +38,7 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class JsonlSqliteProjectionIntegrationTest {
+class JsonlSqliteProjectionIT {
     private static final Instant NOW = Instant.parse("2026-07-25T08:00:00Z");
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
     private static final TimeProvider TIME = () -> NOW;

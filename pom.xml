@@ -62,7 +62,7 @@
         <skipITs>true</skipITs>
         <skipUnitTests>false</skipUnitTests>
         <haifa.surefire.groups></haifa.surefire.groups>
-        <haifa.surefire.excludedGroups>slow</haifa.surefire.excludedGroups>
+        <haifa.surefire.excludedGroups>slow,architecture</haifa.surefire.excludedGroups>
         <haifa.surefire.reportsDirectory>${project.build.directory}/surefire-reports</haifa.surefire.reportsDirectory>
         <haifa.failsafe.reportsDirectory>${project.build.directory}/failsafe-reports</haifa.failsafe.reportsDirectory>
     </properties>
@@ -570,10 +570,20 @@
             </properties>
         </profile>
         <profile>
+            <id>architecture-tests</id>
+            <properties>
+                <skipITs>true</skipITs>
+                <skipUnitTests>false</skipUnitTests>
+                <haifa.surefire.groups>architecture</haifa.surefire.groups>
+                <haifa.surefire.excludedGroups></haifa.surefire.excludedGroups>
+            </properties>
+        </profile>
+        <profile>
             <id>ci-fast</id>
             <properties>
                 <skipITs>true</skipITs>
                 <skipUnitTests>false</skipUnitTests>
+                <haifa.surefire.excludedGroups>slow</haifa.surefire.excludedGroups>
                 <haifa.cli.shade.skip>true</haifa.cli.shade.skip>
             </properties>
             <build>

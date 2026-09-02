@@ -9,8 +9,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+@Tag("architecture")
 class ExecutionArchitectureTest {
     @Test
     void onlyConcreteLocalSandboxProvidersCreateProcesses() {

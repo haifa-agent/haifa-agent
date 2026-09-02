@@ -3,8 +3,10 @@ package io.haifa.agent.auth.localmodel.codex;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+@Tag("architecture")
 class CodexLocalCompatArchitectureTest {
     @Test
     void codexLocalCompatDoesNotDependOnAntigravityAdaptersProductsRuntimeSpringOrSqlite() {
