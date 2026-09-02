@@ -423,7 +423,7 @@ class LocalFileToolOperationsTest {
     }
 
     @Test
-    void rejectsDeletingDirectory() throws Exception {
+    void deletesEmptyDirectory() throws Exception {
         Files.createDirectories(root.resolve("testdir"));
         Fixture fixture = fixture();
 
@@ -435,8 +435,8 @@ class LocalFileToolOperationsTest {
                 "policy-1",
                 arguments(Map.of("path", "testdir")));
 
-        assertThat(result.successful()).isFalse();
-        assertThat(Files.exists(root.resolve("testdir"))).isTrue();
+        assertThat(result.successful()).isTrue();
+        assertThat(Files.exists(root.resolve("testdir"))).isFalse();
     }
 
     @Test
