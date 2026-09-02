@@ -34,7 +34,7 @@ jobs:
         timeout-minutes: 15
         env:
             HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
-            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
+            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-flash-2026-07-15
         steps:
             - uses: actions/checkout@v4
             - name: Require private test-config deploy key
@@ -66,11 +66,19 @@ jobs:
                   "HAIFA_TEST_RUN_ROOT=$runRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             - name: Plan Release Suite (Unix)
               if: runner.os != 'Windows'
-              run: bash test-config/scripts/run-suite.sh release-v1
+              run: >-
+                  bash test-config/scripts/run-suite.sh plan
+                  --suite release-v1
+                  --mode release
+                  --output "$RUNNER_TEMP/haifa-test-runs/release-plan.json"
             - name: Plan Release Suite (Windows)
               if: runner.os == 'Windows'
               shell: pwsh
-              run: .\test-config\scripts\run-suite.ps1 release-v1
+              run: >-
+                  .\test-config\scripts\run-suite.ps1 plan
+                  --suite release-v1
+                  --mode release
+                  --output (Join-Path $env:HAIFA_TEST_RUN_ROOT 'release-plan.json')
 
     release-unit:
         name: Release unit gate

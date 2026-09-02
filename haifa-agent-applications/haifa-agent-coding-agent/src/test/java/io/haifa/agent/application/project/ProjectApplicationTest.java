@@ -269,6 +269,13 @@ class ProjectApplicationTest {
                     assertThat(binding.definition().sideEffects())
                             .contains(io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
                 });
+        assertThat(frozen.snapshot().bindings())
+                .filteredOn(binding -> binding.alias().value().equals("file_write"))
+                .singleElement()
+                .satisfies(binding -> {
+                    assertThat(binding.definition().version().value()).isEqualTo("1.3.0");
+                    assertThat(binding.definition().description()).contains("creates the file atomically");
+                });
     }
 
     @Test

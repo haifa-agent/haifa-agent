@@ -1,5 +1,7 @@
 # Changelog
 
+- `file.write` 在读写授权的 Workspace 根中遇到不存在的目标时改为原子创建并记录 Create；已有目标仍以
+  revision/content-hash 保护整体替换，目录、敏感路径、只读根和并发冲突继续 fail closed。
 - 新增原生 Google Gemini `generateContent` Integration，并严格区分官方 Standard 与个人本机
   CLIProxyAPI Antigravity 方言；Coding/Personal composition root 使用静态模型目录、精确 loopback/Bearer
   门禁、Tool allowlist 和 fail-closed Thought Signature continuation，不读取 Antigravity OAuth 或网关 Auth 文件。

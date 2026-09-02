@@ -38,7 +38,7 @@ jobs:
               run: .\mvnw.cmd --batch-mode --no-transfer-progress -T 2 -Pslow-tests test
 
     suite-governance-plan:
-        name: Nightly Suite plan
+        name: Critical Path regression plan
         runs-on: ubuntu-latest
         timeout-minutes: 15
         steps:
@@ -61,28 +61,30 @@ jobs:
                   cache: maven
             - name: Prepare external run root
               run: mkdir -p "$RUNNER_TEMP/haifa-test-runs"
-            - name: Plan Nightly Suite without external calls
+            - name: Plan Critical Path regression suite without external calls
               env:
                   HAIFA_TEST_RUN_ROOT: ${{ runner.temp }}/haifa-test-runs
                   HAIFA_TEST_MATRIX_COMBINATION: linux-primary
-                  HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
-              run: bash test-config/scripts/run-suite.sh nightly-v1
+                  HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-flash-2026-07-15
+              run: >-
+                  bash test-config/scripts/run-suite.sh plan
+                  --suite critical-path-regression-v1
+                  --mode live
+                  --output "$RUNNER_TEMP/haifa-test-runs/critical-path-regression-plan.json"
 
     configured-provider-live-smoke:
         name: Configured provider live smoke suite
         needs: suite-governance-plan
         runs-on: ubuntu-latest
-        timeout-minutes: 30
+        timeout-minutes: 45
         environment: ai-live-test
         env:
             DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
             ALIYUN_IQS_API_KEY: ${{ secrets.ALIYUN_IQS_API_KEY }}
             BAILIAN_WORKSPACE_ID: ${{ secrets.BAILIAN_WORKSPACE_ID }}
             BAILIAN_ENDPOINT: ${{ secrets.BAILIAN_ENDPOINT }}
-            HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD: "3.0"
-            HAIFA_TEST_APPROVED_PLAN_SHA256: ${{ vars.HAIFA_NIGHTLY_PROVIDER_SMOKE_PLAN_SHA256 }}
             HAIFA_TEST_MATRIX_COMBINATION: linux-primary
-            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
+            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-flash-2026-07-15
         steps:
             - uses: actions/checkout@v4
               with:
@@ -107,13 +109,22 @@ jobs:
               run: |
                   echo "HAIFA_TEST_RUN_ROOT=$RUNNER_TEMP/haifa-test-runs" >> "$GITHUB_ENV"
                   mkdir -p "$RUNNER_TEMP/haifa-test-runs"
-            - name: Execute reviewed provider smoke suite
-              run: bash test-config/scripts/run-suite.sh nightly-provider-smoke-v1 --execute
+            - name: Plan reviewed Critical Path smoke suite
+              run: >-
+                  bash test-config/scripts/run-suite.sh plan
+                  --suite critical-path-smoke-v1
+                  --mode live
+                  --output "$RUNNER_TEMP/haifa-test-runs/critical-path-smoke-plan.json"
+            - name: Execute approved Critical Path smoke suite
+              run: >-
+                  bash test-config/scripts/run-suite.sh run
+                  --plan "$RUNNER_TEMP/haifa-test-runs/critical-path-smoke-plan.json"
+                  --approve-budget 5.0
             - name: Upload redacted suite evidence
               if: always()
               uses: actions/upload-artifact@v4
               with:
-                  name: nightly-provider-smoke-evidence
+                  name: critical-path-smoke-evidence
                   path: ${{ runner.temp }}/haifa-test-runs
                   if-no-files-found: warn
                   retention-days: 7
