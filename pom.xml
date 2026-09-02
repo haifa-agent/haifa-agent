@@ -56,6 +56,7 @@
         <maven.source.plugin.version>3.3.1</maven.source.plugin.version>
         <jacoco.version>0.8.13</jacoco.version>
         <spotless.version>2.46.1</spotless.version>
+        <spotless.ratchetFrom>origin/dev</spotless.ratchetFrom>
         <flatten.version>1.7.1</flatten.version>
 
         <skipITs>true</skipITs>
@@ -462,6 +463,7 @@
                     <artifactId>spotless-maven-plugin</artifactId>
                     <version>${spotless.version}</version>
                     <configuration>
+                        <ratchetFrom>${spotless.ratchetFrom}</ratchetFrom>
                         <formats>
                             <format>
                                 <includes>
