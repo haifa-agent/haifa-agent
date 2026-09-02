@@ -3,7 +3,12 @@ package io.haifa.agent.project.mutation;
 import io.haifa.agent.project.path.WorkspacePath;
 import java.util.Objects;
 
-public record DeleteFileRequest(WorkspacePath path, MutationPrecondition precondition, MutationContext context) {
+public record DeleteFileRequest(
+        WorkspacePath path, MutationPrecondition precondition, MutationContext context, boolean recursive) {
+    public DeleteFileRequest(WorkspacePath path, MutationPrecondition precondition, MutationContext context) {
+        this(path, precondition, context, false);
+    }
+
     public DeleteFileRequest {
         path = Objects.requireNonNull(path, "path must not be null");
         precondition = Objects.requireNonNull(precondition, "precondition must not be null");

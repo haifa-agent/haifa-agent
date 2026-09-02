@@ -107,7 +107,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         this.files = Objects.requireNonNull(files, "files must not be null");
         this.mutations = Objects.requireNonNull(mutations, "mutations must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
-        this.patchParser = new ApplyPatchParser(1, 1_000, 20_000, 4 * 1024 * 1024);
+        this.patchParser = new ApplyPatchParser(100, 1_000, 20_000, 4 * 1024 * 1024);
         this.rootRegistry = rootRegistry;
         this.ledger = ledger;
     }
@@ -555,12 +555,32 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private ToolResult delete(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
         String pathStr = string(values, "path");
         ResolvedTarget target = resolveTarget(workspaceId, pathStr, WorkspaceRootPermission.READ_WRITE);
+        if (target.projectPath().isRoot()) {
+            throw new IllegalArgumentException("Cannot delete workspace root: " + target.displayPath());
+        }
+        boolean recursive = bool(values, "recursive", false);
 
         if (target.isMain()) {
             Workspace workspace = workspace(workspaceId);
             var fileStat = files.stat(target.workspacePath(), true);
             if (fileStat.type() == FileType.DIRECTORY) {
-                throw new IllegalArgumentException("Cannot delete directory: " + target.displayPath());
+                mutations.delete(new DeleteFileRequest(
+                        target.workspacePath(),
+                        MutationPrecondition.existing(workspace.revision(), "directory:empty"),
+                        mutationContext,
+                        recursive));
+                if (ledger != null) {
+                    ledger.record(SessionFileChangeRecord.delete(
+                            target.rootAlias(),
+                            target.projectPath(),
+                            "directory:empty",
+                            0,
+                            mutationContext.toolCallRef(),
+                            Instant.now()));
+                }
+                return success(
+                        "Deleted directory " + target.displayPath(),
+                        Map.of("path", target.displayPath(), "recursive", recursive));
             }
             String currentHash =
                     fileStat.contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
@@ -589,7 +609,19 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                     "file not found: " + target.displayPath());
         }
         if (Files.isDirectory(file)) {
-            throw new IllegalArgumentException("Cannot delete directory: " + target.displayPath());
+            deleteDirectory(file, recursive, target);
+            if (ledger != null) {
+                ledger.record(SessionFileChangeRecord.delete(
+                        target.rootAlias(),
+                        target.projectPath(),
+                        "directory:empty",
+                        0,
+                        mutationContext.toolCallRef(),
+                        Instant.now()));
+            }
+            return success(
+                    "Deleted directory " + target.displayPath(),
+                    Map.of("path", target.displayPath(), "recursive", recursive));
         }
 
         try {
@@ -699,16 +731,10 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private ToolResult patch(WorkspaceId workspaceId, MutationContext mutationContext, Map<String, Object> values) {
         String patchText = string(values, "patch");
         var document = patchParser.parse(patchText);
-        if (document.files().size() != 1) {
+        if (document.files().stream().anyMatch(file -> file.deletion() || file.move())) {
             throw new IllegalArgumentException(
-                    "file.patch accepts exactly one file; use separate tool calls for each file");
+                    "file.patch supports Add and Update only; use file.delete or file.move for Delete and Move");
         }
-        FilePatch onlyFile = document.files().getFirst();
-        if (onlyFile.deletion() || onlyFile.move()) {
-            throw new IllegalArgumentException(
-                    "file.patch supports only Add File and Update File; use file.delete or file.move");
-        }
-
         // Pre-check permissions for all files in patch
         for (FilePatch file : document.files()) {
             String pathStr = file.rootAlias().isMain()
@@ -1029,6 +1055,51 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         Object value = values.get(key);
         if (value instanceof Number number) return number.intValue();
         return fallback;
+    }
+
+    private static boolean bool(Map<String, Object> values, String key, boolean fallback) {
+        Object value = values.get(key);
+        if (value == null) return fallback;
+        if (value instanceof Boolean flag) return flag;
+        throw new IllegalArgumentException(key + " must be boolean");
+    }
+
+    private static void deleteDirectory(Path directory, boolean recursive, ResolvedTarget target) {
+        List<Path> paths;
+        try (var walk = Files.walk(directory)) {
+            paths = walk.toList();
+        } catch (IOException exception) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.IO_FAILURE, target.workspacePath(), "unable to inspect directory for deletion");
+        }
+        if (!recursive && paths.size() > 1) {
+            throw new IllegalArgumentException(
+                    "directory is not empty; set recursive=true to delete: " + target.displayPath());
+        }
+        try {
+            for (Path path : paths.stream().sorted(Comparator.reverseOrder()).toList()) {
+                if (Files.isSymbolicLink(path) || isReparsePoint(path)) {
+                    throw new IllegalArgumentException("directory contains a symbolic link or reparse point");
+                }
+            }
+            for (Path path : paths.stream().sorted(Comparator.reverseOrder()).toList()) {
+                Files.delete(path);
+            }
+        } catch (IOException exception) {
+            throw new WorkspaceMutationException(
+                    MutationErrorCode.IO_FAILURE,
+                    target.workspacePath(),
+                    "failed to delete directory: " + exception.getMessage());
+        }
+    }
+
+    private static boolean isReparsePoint(Path path) {
+        try {
+            return Boolean.TRUE.equals(
+                    Files.getAttribute(path, "dos:reparsePoint", java.nio.file.LinkOption.NOFOLLOW_LINKS));
+        } catch (IOException | UnsupportedOperationException | IllegalArgumentException ignored) {
+            return false;
+        }
     }
 
     private static int boundedInteger(Map<String, Object> values, String key, int fallback, int max) {

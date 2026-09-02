@@ -43,6 +43,7 @@ import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -214,19 +215,23 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
                 leases.acquire(request.path().workspaceId(), request.context().operationId())) {
             Access access = access(request.path(), WorkspacePermission.DELETE);
             validateRevision(access.workspace(), request.precondition(), request.path());
+            if (request.path().projectPath().isRoot()) {
+                throw failure(MutationErrorCode.PATH_DENIED, request.path(), "cannot delete workspace root");
+            }
             Path source = resolveExisting(access, request.path());
             FileVersion before = version(source, request.path());
             validateHash(before, request.precondition(), request.path());
             if (before.type() == FileType.DIRECTORY) {
-                throw failure(MutationErrorCode.PATH_DENIED, request.path(), "cannot delete directory");
-            }
-            try {
-                Files.delete(source);
-            } catch (IOException exception) {
-                throw failure(
-                        MutationErrorCode.IO_FAILURE,
-                        request.path(),
-                        "failed to delete file: " + exception.getMessage());
+                deleteDirectory(source, request.recursive(), request.path());
+            } else {
+                try {
+                    Files.delete(source);
+                } catch (IOException exception) {
+                    throw failure(
+                            MutationErrorCode.IO_FAILURE,
+                            request.path(),
+                            "failed to delete file: " + exception.getMessage());
+                }
             }
             return advanceWorkspaceRevision(
                     access.workspace(),
@@ -406,6 +411,30 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
                         MutationErrorCode.PRECONDITION_REQUIRED, path, "content hash precondition is required"));
         if (!expected.equals(actual.contentHash())) {
             throw failure(MutationErrorCode.CONTENT_HASH_CONFLICT, path, "content hash precondition failed");
+        }
+    }
+
+    private static void deleteDirectory(Path directory, boolean recursive, WorkspacePath logical) {
+        List<Path> paths;
+        try (var walk = Files.walk(directory)) {
+            paths = walk.toList();
+        } catch (IOException exception) {
+            throw failure(MutationErrorCode.IO_FAILURE, logical, "unable to inspect directory for deletion");
+        }
+        if (!recursive && paths.size() > 1) {
+            throw failure(
+                    MutationErrorCode.PATH_DENIED, logical, "directory is not empty; recursive deletion is required");
+        }
+        if (paths.stream().anyMatch(LocalWorkspaceMutationService::isLinkOrReparse)) {
+            throw failure(MutationErrorCode.PATH_DENIED, logical, "directory contains links or reparse points");
+        }
+        try {
+            for (Path path : paths.stream().sorted(Comparator.reverseOrder()).toList()) {
+                Files.delete(path);
+            }
+        } catch (IOException exception) {
+            throw failure(
+                    MutationErrorCode.IO_FAILURE, logical, "failed to delete directory: " + exception.getMessage());
         }
     }
 
