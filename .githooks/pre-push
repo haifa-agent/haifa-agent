@@ -3,4 +3,4 @@ set -eu
 
 ROOT_DIR=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-exec "$ROOT_DIR/build-support/scripts/spotless-format.sh" --staged "$@"
+exec "$ROOT_DIR/build-support/scripts/spotless-format.sh" --push "$@"

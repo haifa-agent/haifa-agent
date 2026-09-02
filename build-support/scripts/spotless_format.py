@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Spotless formatting on changed or staged files targeting only affected submodules."""
+"""Run Spotless formatting or verification targeting only affected submodules."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
 SPOTLESS_EXTENSIONS = {".java", ".xml", ".md", ".yml", ".yaml"}
-IGNORED_ROOTS = {".git", "docs", "test-config", "local-tmp", "target", ".idea", ".vscode"}
+IGNORED_DIRS = {".git", "docs", "test-config", "local-tmp", "target", "node_modules", ".idea", ".vscode"}
 
 
 def repository_root() -> Path:
@@ -26,21 +26,27 @@ def direct_text(element: ET.Element, name: str) -> str | None:
 
 
 def discover_modules(root: Path) -> dict[str, str]:
-    """Return map of artifactId -> relative module directory path."""
+    """Fast discovery of Maven artifactId -> relative directory path."""
     modules: dict[str, str] = {}
-    for pom in root.rglob("pom.xml"):
-        relative = pom.relative_to(root)
-        if any(part in IGNORED_ROOTS for part in relative.parts[:-1]):
-            continue
-        try:
-            project = ET.parse(pom).getroot()
-        except (ET.ParseError, OSError):
-            continue
-        artifact_id = direct_text(project, "artifactId")
-        if not artifact_id:
-            continue
-        module_path = relative.parent.as_posix()
-        modules[artifact_id] = module_path
+
+    def scan_dir(current: Path, depth: int) -> None:
+        if depth > 3:
+            return
+        pom = current / "pom.xml"
+        if pom.is_file():
+            try:
+                project = ET.parse(pom).getroot()
+                artifact_id = direct_text(project, "artifactId")
+                if artifact_id:
+                    rel = current.relative_to(root).as_posix()
+                    modules[artifact_id] = rel
+            except (ET.ParseError, OSError):
+                pass
+        for item in current.iterdir():
+            if item.is_dir() and item.name not in IGNORED_DIRS and not item.name.startswith("."):
+                scan_dir(item, depth + 1)
+
+    scan_dir(root, 0)
     return modules
 
 
@@ -56,55 +62,111 @@ def module_for_path(path: str, modules: dict[str, str]) -> str | None:
     return max(matches, key=lambda art: len(PurePosixPath(modules[art]).parts))
 
 
-def get_git_files(root: Path, staged_only: bool) -> list[str]:
-    """Get list of modified/added files from git."""
-    command = ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z"]
-    if staged_only:
-        command.append("--cached")
+def is_spotless_target(path: str) -> bool:
+    posix_path = PurePosixPath(path.replace("\\", "/"))
+    if any(part in IGNORED_DIRS for part in posix_path.parts):
+        return False
+    return posix_path.suffix.lower() in SPOTLESS_EXTENSIONS
+
+
+def get_git_files_for_push(root: Path) -> list[str]:
+    """Inspect files modified in commits being pushed."""
+    # 1. If upstream tracking branch exists, diff only the unpushed commits
     try:
-        result = subprocess.run(
-            command,
+        res = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z", "@{u}...HEAD"],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        return sorted(set(p for p in res.stdout.decode("utf-8", errors="replace").split("\0") if p))
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    # 2. If new branch without upstream, compare against base branch
+    for base in ("origin/dev", "origin/main", "HEAD~1"):
+        try:
+            res = subprocess.run(
+                ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z", f"{base}...HEAD"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=True,
+            )
+            return sorted(set(p for p in res.stdout.decode("utf-8", errors="replace").split("\0") if p))
+        except (subprocess.SubprocessError, OSError):
+            continue
+    return []
+
+
+def get_git_files_staged(root: Path) -> list[str]:
+    try:
+        res = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"],
             cwd=root,
             check=True,
             stdout=subprocess.PIPE,
         )
+        return [p for p in res.stdout.decode("utf-8", errors="replace").split("\0") if p]
     except (subprocess.SubprocessError, OSError):
         return []
 
-    files = [path for path in result.stdout.decode("utf-8", errors="replace").split("\0") if path]
-    return files
 
-
-def is_spotless_target(path: str) -> bool:
-    posix_path = PurePosixPath(path.replace("\\", "/"))
-    if any(part in IGNORED_ROOTS for part in posix_path.parts):
-        return False
-    return posix_path.suffix.lower() in SPOTLESS_EXTENSIONS
+def get_git_files_worktree(root: Path) -> list[str]:
+    try:
+        res = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z", "HEAD"],
+            cwd=root,
+            check=True,
+            stdout=subprocess.PIPE,
+        )
+        return [p for p in res.stdout.decode("utf-8", errors="replace").split("\0") if p]
+    except (subprocess.SubprocessError, OSError):
+        return []
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--push",
+        action="store_true",
+        help="Target files being pushed (default for pre-push hook).",
+    )
+    parser.add_argument(
         "--staged",
         action="store_true",
-        help="Target only git staged files (default for pre-commit hook).",
+        help="Target git staged files.",
+    )
+    parser.add_argument(
+        "--worktree",
+        action="store_true",
+        help="Target all modified files in working tree.",
     )
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Run spotless:check instead of spotless:apply.",
+        help="Run spotless:check (verify without writing changes).",
     )
+    parser.add_argument("git_args", nargs="*", help="Optional git hook arguments (e.g. remote name, remote url)")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     root = repository_root()
-    changed_files = get_git_files(root, staged_only=args.staged)
+
+    if args.push:
+        changed_files = get_git_files_for_push(root)
+    elif args.staged:
+        changed_files = get_git_files_staged(root)
+    else:
+        changed_files = get_git_files_worktree(root)
+
     target_files = [path for path in changed_files if is_spotless_target(path)]
 
     if not target_files:
-        print("[spotless] No matching files to format.")
+        print("[spotless] No affected code files to format/check.")
         return 0
 
     modules = discover_modules(root)
@@ -113,32 +175,44 @@ def main() -> int:
 
     for file_path in target_files:
         artifact = module_for_path(file_path, modules)
-        if artifact:
+        if artifact and artifact != "haifa-agent-parent":
             affected_modules.add(artifact)
         else:
             has_root_files = True
 
     maven_cmd = root / ("mvnw.cmd" if os.name == "nt" else "mvnw")
-    goal = "spotless:check" if args.check else "spotless:apply"
-    maven_args = [str(maven_cmd), "--batch-mode", "--no-transfer-progress", goal]
+    # In pre-push hook or explicit check mode, run spotless:check
+    goal = "spotless:check" if (args.check or args.push) else "spotless:apply"
+    maven_args = [str(maven_cmd), "-o", "--batch-mode", "--no-transfer-progress"]
 
-    if not has_root_files and affected_modules:
-        selectors = ",".join(f":{mod}" for mod in sorted(affected_modules))
-        maven_args.extend(["-pl", selectors])
-        print(f"[spotless] Running {goal} on {len(affected_modules)} module(s): {selectors}")
-    else:
-        print(f"[spotless] Running {goal} on root repository...")
+    if has_root_files:
+        affected_modules.add("haifa-agent-parent")
+
+    if not affected_modules:
+        print("[spotless] No affected code files to format/check.")
+        return 0
+
+    selectors = ",".join(f":{mod}" for mod in sorted(affected_modules))
+    maven_args.extend(["-pl", selectors, goal])
+    print(f"[spotless] Checking {len(affected_modules)} affected module(s): {selectors}")
 
     try:
         completed = subprocess.run(maven_args, cwd=root, check=False)
         if completed.returncode != 0:
+            if args.push:
+                print(
+                    "\n[spotless] ERROR: Unformatted code detected before push!\n"
+                    "  Please run: ./build-support/scripts/spotless-format.sh (or .ps1 on Windows)\n"
+                    "  or: ./mvnw spotless:apply -pl :<affected-module>\n"
+                    "  and commit the formatting changes before pushing.\n",
+                    file=sys.stderr,
+                )
             return completed.returncode
     except OSError as e:
         print(f"[spotless] Failed to invoke Maven wrapper: {e}", file=sys.stderr)
         return 1
 
     if args.staged and not args.check:
-        # Re-stage any files that were modified by spotless
         stage_cmd = ["git", "add", "--", *target_files]
         try:
             subprocess.run(stage_cmd, cwd=root, check=True)
