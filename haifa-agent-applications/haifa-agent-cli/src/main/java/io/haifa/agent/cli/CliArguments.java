@@ -20,6 +20,7 @@ record CliArguments(
         boolean terminal,
         boolean verbose,
         boolean help) {
+
     static CliArguments parse(String[] arguments) {
         Objects.requireNonNull(arguments, "arguments must not be null");
         String message = null;

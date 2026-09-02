@@ -4,8 +4,10 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+@Tag("architecture")
 class LocalNativeArchitectureTest {
     @Test
     void localNativeDependsOnlyOnItsPublishedLowerLevelBoundaries() {

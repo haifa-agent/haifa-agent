@@ -25,9 +25,6 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.changeset.FileChangeSetService;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
-import io.haifa.agent.project.changeset.ObservedFileChangeService;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
@@ -129,8 +126,6 @@ public final class PersonalExecutionRuntime {
                 true);
         host.preflight(profile);
         var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var changeSetStore = new InMemoryFileChangeSetStore();
-        var changeSets = new FileChangeSetService(changeSetStore, identifiers, time);
         var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(
                 workspaceId, workspaceRoot, new PersonalWorkspaceChangeIgnorePolicy());
         var broker = new DefaultExecutionBroker(
@@ -143,8 +138,7 @@ public final class PersonalExecutionRuntime {
                 new ImmutableSandboxProviderRegistry(List.of(host)),
                 workspaces,
                 bindings,
-                workspaceChanges,
-                new ObservedFileChangeService(workspaces, changeSetStore, changeSets, time));
+                workspaceChanges);
         var configuration = new ExecutionToolConfiguration(
                 new ExecutionEnvironmentRef(
                         List.of("personal-execution-" + profile.contentDigest().value())),

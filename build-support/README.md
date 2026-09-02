@@ -24,10 +24,14 @@
 | Spotless | L0 | 串行且记录指标；格式任务不需要模块并发 |
 | `ci-fast clean verify` | L3 | 最终同 SHA 门禁，固定 T2 |
 
-普通 Surefire 运行默认排除类级 `@Tag("slow")`。当前慢测集合只包含
-`PersonalAssistantRestartTest`、`PersonalAssistantWebFluxTest`、`SqliteRuntimeRecoveryTest` 和
-`LocalCodingAgentTest`；它们不会进入 L1/L2 的普通测试、L3 `ci-fast` 或调用 `ci-fast` 的 Fast CI。
-测试源码和断言全部保留，使用 `slow-tests` Profile 显式运行：
+普通 Surefire 运行默认排除类级 `@Tag("slow")` 与 `@Tag("architecture")`。日常 L1/L2 专注于快速单元测试与领域逻辑闭环。
+当前慢测集合包含：
+`PersonalAssistantRestartTest`、`PersonalAssistantWebFluxTest`、`SqliteRuntimeRecoveryTest`、
+`LocalCodingAgentTest`、`LocalCodingProductAssemblyTest`、`ProjectPersistenceAssemblyTest`、
+`CriticalPathSuiteApplicationTest`、`RepositoryRevisionTest` 和 `ProcessTreeCleanupTest`；
+它们不会进入 L1/L2 的普通测试、L3 `ci-fast` 或调用 `ci-fast` 的 Fast CI。
+全仓 40 个 `*ArchitectureTest` 统一标记为 `@Tag("architecture")`，由 L3 `ci-fast` 门禁与 CI 自动放行全量校验，也可通过 `-Parchitecture-tests` 独立执行。
+测试源码和断言全部保留，慢测使用 `slow-tests` Profile 显式运行：
 
 ```powershell
 .\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 '--' `
@@ -39,7 +43,7 @@
   -Pslow-tests test
 ```
 
-精确运行其中一个类时也必须添加 `-Pslow-tests`；仅使用 `-Dtest=<SlowTestClass>` 仍会被默认标签过滤。
+精确运行慢测或架构类时也必须添加对应 Profile（或显式覆盖 `-Dhaifa.surefire.excludedGroups=""`）；仅使用 `-Dtest=<Class>` 仍会被默认标签过滤。
 
 Windows 下 Surefire/Failsafe 的 fork JVM 显式允许 manifest-only JAR 引用不同盘符上的绝对
 classpath。该设置只进入测试 JVM，用于避免系统临时盘与 worktree 分盘时并行 fork 丢失 Reactor 类。
@@ -48,8 +52,9 @@ classpath。该设置只进入测试 JVM，用于避免系统临时盘与 worktr
 
 | Gate | Profile | 测试范围 | 前置条件 |
 | --- | --- | --- | --- |
-| Unit | `ci-fast` | 非 slow 的 Unit、Contract、Architecture；Spotless | 无，必须先执行 |
-| Slow Unit | `slow-tests` | 四个类级 `slow` 测试 | 独立慢测入口，不属于日常门禁 |
+| Unit & Architecture | `ci-fast` | 非 slow 的 Unit、Contract、Architecture；Spotless | 无，必须先执行 |
+| Slow Unit | `slow-tests` | 类级 `slow` 慢测集合 | 独立慢测入口，不属于日常门禁 |
+| Architecture Only | `architecture-tests` | 全仓 40 个 ArchUnit 架构测试 | 独立架构验证入口 |
 | Integration | `ci-integration-only` | Failsafe `*IT`、`*LiveIT`、`*E2E` | 同一 SHA 的 Unit PASS |
 | Artifact | `release-artifacts` | 编译、打包、Source、Javadoc、制品 smoke | 同一 SHA 的 Unit PASS |
 

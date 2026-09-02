@@ -479,6 +479,70 @@ public record ResolvedModelSnapshot(
                 "unsupported frozen model option type: " + value.getClass().getName());
     }
 
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (!(obj instanceof ResolvedModelSnapshot other)) return false;
+        return nativeStreaming == other.nativeStreaming
+                && contextWindow == other.contextWindow
+                && maxOutputTokens == other.maxOutputTokens
+                && Objects.equals(schemaVersion, other.schemaVersion)
+                && Objects.equals(providerId, other.providerId)
+                && Objects.equals(providerVersion, other.providerVersion)
+                && Objects.equals(modelId, other.modelId)
+                && Objects.equals(modelVersion, other.modelVersion)
+                && Objects.equals(providerModelId, other.providerModelId)
+                && Objects.equals(adapterType, other.adapterType)
+                && Objects.equals(adapterVersion, other.adapterVersion)
+                && Objects.equals(apiStyle, other.apiStyle)
+                && Objects.equals(dialect, other.dialect)
+                && Objects.equals(endpoint, other.endpoint)
+                && Objects.equals(credentialRef, other.credentialRef)
+                && Objects.equals(capabilities, other.capabilities)
+                && Objects.equals(configurationDigest, other.configurationDigest)
+                && mapsEqual(providerOptions, other.providerOptions)
+                && mapsEqual(invocationOptions, other.invocationOptions);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(schemaVersion, providerId, modelId, configurationDigest);
+    }
+
+    private static boolean mapsEqual(Map<?, ?> a, Map<?, ?> b) {
+        if (a == b) return true;
+        if (a == null || b == null) return false;
+        if (a.size() != b.size()) return false;
+        for (Map.Entry<?, ?> entry : a.entrySet()) {
+            Object key = entry.getKey();
+            if (!b.containsKey(key)) return false;
+            if (!valuesEqual(entry.getValue(), b.get(key))) return false;
+        }
+        return true;
+    }
+
+    private static boolean valuesEqual(Object a, Object b) {
+        if (Objects.equals(a, b)) return true;
+        if (a instanceof Number na && b instanceof Number nb) {
+            try {
+                return new java.math.BigDecimal(na.toString()).compareTo(new java.math.BigDecimal(nb.toString())) == 0;
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
+        if (a instanceof Map<?, ?> ma && b instanceof Map<?, ?> mb) {
+            return mapsEqual(ma, mb);
+        }
+        if (a instanceof List<?> la && b instanceof List<?> lb) {
+            if (la.size() != lb.size()) return false;
+            for (int i = 0; i < la.size(); i++) {
+                if (!valuesEqual(la.get(i), lb.get(i))) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
     private static String canonicalNumber(Number value) {
         try {
             return new java.math.BigDecimal(value.toString())

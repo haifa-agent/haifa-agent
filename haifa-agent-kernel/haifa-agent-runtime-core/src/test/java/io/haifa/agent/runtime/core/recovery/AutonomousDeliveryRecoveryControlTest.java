@@ -499,8 +499,8 @@ class AutonomousDeliveryRecoveryControlTest {
                         true,
                         "bounded success",
                         Map.of(
-                                "fileChangeSetId",
-                                "change-1",
+                                "path",
+                                "src/verified-output.txt",
                                 "validationAttemptRef",
                                 FailureFingerprint.digest(List.of("trusted-validation"))),
                         List.of(),

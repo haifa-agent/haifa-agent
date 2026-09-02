@@ -1,20 +1,32 @@
 package io.haifa.agent.project.patch;
 
 import io.haifa.agent.project.path.ProjectPath;
+import io.haifa.agent.project.root.WorkspaceRootAlias;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
 public record FilePatch(
+        WorkspaceRootAlias rootAlias,
         ProjectPath oldPath,
         ProjectPath newPath,
         List<PatchHunk> hunks,
         boolean oldEndsWithNewline,
         boolean newEndsWithNewline) {
     public FilePatch {
+        rootAlias = rootAlias == null ? WorkspaceRootAlias.MAIN : rootAlias;
         if (oldPath == null && newPath == null) throw new IllegalArgumentException("file patch requires a path");
         hunks = List.copyOf(Objects.requireNonNull(hunks, "hunks must not be null"));
         if (hunks.isEmpty()) throw new IllegalArgumentException("file patch requires at least one hunk");
+    }
+
+    public FilePatch(
+            ProjectPath oldPath,
+            ProjectPath newPath,
+            List<PatchHunk> hunks,
+            boolean oldEndsWithNewline,
+            boolean newEndsWithNewline) {
+        this(WorkspaceRootAlias.MAIN, oldPath, newPath, hunks, oldEndsWithNewline, newEndsWithNewline);
     }
 
     public ProjectPath targetPath() {

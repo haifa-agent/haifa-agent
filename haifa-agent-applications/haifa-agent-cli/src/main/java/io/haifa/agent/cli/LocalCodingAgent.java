@@ -14,7 +14,6 @@ import io.haifa.agent.application.project.product.coding.CodingSessionHistorySer
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
-import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntentResolver;
@@ -80,8 +79,6 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.changeset.FileChangeSetService;
-import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
 import io.haifa.agent.project.configuration.InMemoryProjectConfigurationStore;
 import io.haifa.agent.project.configuration.ProjectConfiguration;
 import io.haifa.agent.project.configuration.ProjectConfigurationService;
@@ -89,13 +86,18 @@ import io.haifa.agent.project.configuration.ProjectConfigurationVersion;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.mutation.InMemoryWorkspaceWriteLeaseManager;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
 import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.quarantine.InMemoryQuarantineStore;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
+import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootStrategyDetector;
+import io.haifa.agent.project.root.WorkspaceRootAlias;
+import io.haifa.agent.project.root.WorkspaceRootPermission;
 import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
@@ -515,23 +517,24 @@ final class LocalCodingAgent implements AutoCloseable {
 
             SensitivePathPolicy sensitivePaths = SensitivePathPolicy.defaults();
             var files = new LocalWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
-            var changeSets = new InMemoryFileChangeSetStore();
-            var changeReviews = new CodingChangeReviewArtifactFactory(
-                    changeSets, new LocalCodingChangeContentClassifier(files), 512 * 1024);
-            var changeSetService = new FileChangeSetService(changeSets, identifiers, time);
+            var detector = new LocalWorkspaceRootStrategyDetector();
+            var detection = detector.detect(workspaceRoot);
+            LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.of(
+                    WorkspaceRootAlias.MAIN, workspaceRoot, WorkspaceRootPermission.READ_WRITE, detection.strategy());
+            List<LocalWorkspaceRoot> rootsList = new ArrayList<>();
+            rootsList.add(mainRoot);
+            LocalWorkspaceRootRegistry rootRegistry = LocalWorkspaceRootRegistry.of(rootsList);
+            var sessionLedger = new InMemorySessionChangeLedger();
             var mutations = new LocalWorkspaceMutationService(
                     workspaces,
                     bindings,
                     locations,
                     sensitivePaths,
                     new InMemoryWorkspaceWriteLeaseManager(),
-                    changeSets,
-                    changeSetService,
-                    new InMemoryQuarantineStore(),
                     identifiers,
                     time);
             var operations =
-                    new LocalFileToolOperations(workspaces, files, mutations, identifiers, changeSets, changeReviews);
+                    new LocalFileToolOperations(workspaces, files, mutations, identifiers, rootRegistry, sessionLedger);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
             CliExecutionPlatform executionPlatform = executionEnabled
@@ -541,8 +544,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             bindings,
                             locations,
                             files,
-                            changeSets,
-                            changeSetService,
                             identifiers,
                             time,
                             clock,
@@ -652,6 +653,10 @@ final class LocalCodingAgent implements AutoCloseable {
                     .skillPlatform(skillPlatform.catalog(), skillPlatform.contentLoader())
                     .toolApprovalPrompts((binding, call, reauthentication) -> {
                         String toolName = binding.definition().name().value();
+                        if (toolName.equals("workspace.attach")) {
+                            return workspaceAttachmentApprovalPrompt(
+                                    call.arguments().values());
+                        }
                         if (!toolName.equals("execution.run")
                                 && !toolName.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
                             return io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter
@@ -1019,6 +1024,24 @@ final class LocalCodingAgent implements AutoCloseable {
             }
         });
         return safe.toString();
+    }
+
+    static String workspaceAttachmentApprovalPrompt(Map<String, Object> arguments) {
+        return "Attach additional workspace directory\nAlias: "
+                + attachmentApprovalArgument(arguments, "alias")
+                + "\nPath: "
+                + attachmentApprovalArgument(arguments, "path")
+                + "\nPermission: "
+                + attachmentApprovalArgument(arguments, "permission")
+                + "\nScope: this local agent session only; it is not persisted or shared with other sessions.";
+    }
+
+    private static String attachmentApprovalArgument(Map<String, Object> arguments, String name) {
+        Object value = arguments.get(name);
+        if (!(value instanceof String text) || text.isBlank()) return "<missing>";
+        if (text.length() > 4096) return "<too long>";
+        String safe = safeApprovalText(text);
+        return safe.indexOf('\n') >= 0 || safe.indexOf('\r') >= 0 || safe.indexOf('\t') >= 0 ? "<invalid>" : safe;
     }
 
     private static boolean openBrowser(URI uri) {

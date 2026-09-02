@@ -91,52 +91,47 @@ public final class DefaultConversationService implements ConversationService {
                         + structuredOutputSignature(command.structuredOutput()),
                 proposedSession,
                 now);
-        ConversationCommandBinding binding = persistence.inTransaction(() -> {
+        return persistence.inTransaction(() -> {
             ConversationCommandBinding reserved = conversations.reserveCommand(proposal);
             AgentSessionId sessionId = reserved.sessionId();
             Optional<ConversationRecord> existing = conversations.find(sessionId);
             if (existing.isPresent()) {
                 authorize(existing.orElseThrow(), caller);
-                return reserved;
-            }
-            Optional<AgentSession> persistedSession =
-                    persistence.runtimePersistence().sessions().find(sessionId);
-            if (persistedSession.isPresent()) {
-                authorize(persistedSession.orElseThrow(), caller);
             } else {
-                AgentSession session = AgentSession.open(
+                Optional<AgentSession> persistedSession =
+                        persistence.runtimePersistence().sessions().find(sessionId);
+                if (persistedSession.isPresent()) {
+                    authorize(persistedSession.orElseThrow(), caller);
+                } else {
+                    AgentSession session = AgentSession.open(
+                            sessionId,
+                            caller.tenant(),
+                            caller.principal(),
+                            null,
+                            SessionScope.USER,
+                            now,
+                            Map.of("productId", profile.productId().value()));
+                    persistence.runtimePersistence().sessions().insert(session);
+                }
+                conversations.create(new ConversationRecord(
                         sessionId,
                         caller.tenant(),
                         caller.principal(),
-                        null,
-                        SessionScope.USER,
+                        command.displayName(),
+                        ConversationStatus.ACTIVE,
+                        Optional.empty(),
+                        OptionalLong.empty(),
+                        Optional.of(reserved.dispatchKey()),
                         now,
-                        Map.of("productId", profile.productId().value()));
-                persistence.runtimePersistence().sessions().insert(session);
+                        now,
+                        0));
             }
-            conversations.create(new ConversationRecord(
-                    sessionId,
-                    caller.tenant(),
-                    caller.principal(),
-                    command.displayName(),
-                    ConversationStatus.ACTIVE,
-                    Optional.empty(),
-                    OptionalLong.empty(),
-                    Optional.of(reserved.dispatchKey()),
-                    now,
-                    now,
-                    0));
-            return reserved;
-        });
-        if (binding.completed()) {
-            return requireAuthorized(binding.sessionId(), caller);
-        }
-        AgentRunSnapshot run = runtime.start(runRequest(
-                binding, command.message(), command.runProfileId(), command.inputs(), command.structuredOutput()));
-        return persistence.inTransaction(() -> {
+            if (reserved.completed()) return requireAuthorized(reserved.sessionId(), caller);
+            AgentRunSnapshot run = runtime.start(runRequest(
+                    reserved, command.message(), command.runProfileId(), command.inputs(), command.structuredOutput()));
             ConversationRecord activated = conversations.activateRun(
-                    binding.sessionId(), binding.dispatchKey(), run.runId(), run.version(), time.now());
-            conversations.completeCommand(binding.dispatchKey(), Optional.of(run.runId()), activated.revision());
+                    reserved.sessionId(), reserved.dispatchKey(), run.runId(), run.version(), time.now());
+            conversations.completeCommand(reserved.dispatchKey(), Optional.of(run.runId()), activated.revision());
             return activated;
         });
     }
@@ -232,27 +227,23 @@ public final class DefaultConversationService implements ConversationService {
                         + structuredOutputSignature(command.structuredOutput()),
                 command.sessionId(),
                 now);
-        ConversationCommandBinding binding = persistence.inTransaction(() -> {
-            ConversationCommandBinding reserved = conversations.reserveCommand(proposal);
-            if (reserved.completed()) return reserved;
-            ConversationRecord latest = requireAuthorized(command.sessionId(), caller);
-            if (latest.activeDispatchKey()
-                    .filter(reserved.dispatchKey()::equals)
-                    .isEmpty()) {
-                conversations.reserveActive(
-                        command.sessionId(), command.expectedRevision(), reserved.dispatchKey(), now);
-            }
-            return reserved;
-        });
-        if (binding.completed()) {
-            return reconcileTerminalRun(requireAuthorized(command.sessionId(), caller));
-        }
-        AgentRunSnapshot run = runtime.start(runRequest(
-                binding, command.message(), command.runProfileId(), command.inputs(), command.structuredOutput()));
         return persistence.inTransaction(() -> {
+            ConversationCommandBinding reserved = conversations.reserveCommand(proposal);
+            if (!reserved.completed()) {
+                ConversationRecord latest = requireAuthorized(command.sessionId(), caller);
+                if (latest.activeDispatchKey()
+                        .filter(reserved.dispatchKey()::equals)
+                        .isEmpty()) {
+                    conversations.reserveActive(
+                            command.sessionId(), command.expectedRevision(), reserved.dispatchKey(), now);
+                }
+            }
+            if (reserved.completed()) return reconcileTerminalRun(requireAuthorized(command.sessionId(), caller));
+            AgentRunSnapshot run = runtime.start(runRequest(
+                    reserved, command.message(), command.runProfileId(), command.inputs(), command.structuredOutput()));
             ConversationRecord activated = conversations.activateRun(
-                    binding.sessionId(), binding.dispatchKey(), run.runId(), run.version(), time.now());
-            conversations.completeCommand(binding.dispatchKey(), Optional.of(run.runId()), activated.revision());
+                    reserved.sessionId(), reserved.dispatchKey(), run.runId(), run.version(), time.now());
+            conversations.completeCommand(reserved.dispatchKey(), Optional.of(run.runId()), activated.revision());
             return activated;
         });
     }

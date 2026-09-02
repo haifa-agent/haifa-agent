@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public final class RuntimeStoreMigrations {
-    public static final int CURRENT_SCHEMA_VERSION = 10;
+    public static final int CURRENT_SCHEMA_VERSION = 11;
     private static final String V1_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V1__runtime_store.sql";
     private static final String V2_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V2__lossless_runtime_fields.sql";
     private static final String V3_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V3__policy_approval_security.sql";
@@ -22,6 +22,7 @@ public final class RuntimeStoreMigrations {
     private static final String V9_RESOURCE =
             "/io/haifa/agent/store/sqlite/migration/V9__optional_interaction_expiry.sql";
     private static final String V10_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V10__human_wait_timing.sql";
+    private static final String V11_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V11__separate_run_limits.sql";
 
     private RuntimeStoreMigrations() {}
 
@@ -37,7 +38,8 @@ public final class RuntimeStoreMigrations {
                     read(7, "artifact_foundation", V7_RESOURCE),
                     read(8, "tool_reconciliation_evidence", V8_RESOURCE),
                     read(9, "optional_interaction_expiry", V9_RESOURCE),
-                    read(CURRENT_SCHEMA_VERSION, "human_wait_timing", V10_RESOURCE));
+                    read(10, "human_wait_timing", V10_RESOURCE),
+                    read(CURRENT_SCHEMA_VERSION, "separate_run_limits", V11_RESOURCE));
         } catch (IOException exception) {
             throw new SqliteStoreException(
                     SqliteStoreFailure.MIGRATION_FAILED, "Unable to read bundled SQLite migration", exception);

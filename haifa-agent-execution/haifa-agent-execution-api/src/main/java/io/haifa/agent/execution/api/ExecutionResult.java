@@ -1,6 +1,5 @@
 package io.haifa.agent.execution.api;
 
-import io.haifa.agent.project.changeset.FileChangeSetId;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
@@ -13,7 +12,6 @@ public record ExecutionResult(
         Instant endedAt,
         ExecutionOutput stdout,
         ExecutionOutput stderr,
-        FileChangeSetId fileChangeSetId,
         String sandboxSessionRef,
         ResourceUsageSummary resourceUsage,
         ExecutionFailure failure,
@@ -28,7 +26,6 @@ public record ExecutionResult(
             Instant endedAt,
             ExecutionOutput stdout,
             ExecutionOutput stderr,
-            FileChangeSetId fileChangeSetId,
             String sandboxSessionRef,
             ResourceUsageSummary resourceUsage,
             ExecutionFailure failure,
@@ -41,7 +38,6 @@ public record ExecutionResult(
                 endedAt,
                 stdout,
                 stderr,
-                fileChangeSetId,
                 sandboxSessionRef,
                 resourceUsage,
                 failure,
@@ -66,10 +62,6 @@ public record ExecutionResult(
         return Optional.ofNullable(exitCode);
     }
 
-    public Optional<FileChangeSetId> optionalFileChangeSetId() {
-        return Optional.ofNullable(fileChangeSetId);
-    }
-
     public Optional<ExecutionFailure> optionalFailure() {
         return Optional.ofNullable(failure);
     }
@@ -83,7 +75,6 @@ public record ExecutionResult(
                 endedAt,
                 stdout,
                 stderr,
-                fileChangeSetId,
                 sandboxSessionRef,
                 resourceUsage,
                 failure,

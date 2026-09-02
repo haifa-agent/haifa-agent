@@ -266,7 +266,7 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 
 ### Project、Execution 与安全
 
-- 受控 Workspace `list/stat/read/search/write/move/delete`、ChangeSet、Quarantine、Patch、索引与 Snapshot；
+- 受控 Workspace 多根目录授权、安全文件操作、`SessionChangeLedger` 纯内存变更账本、Patch、索引与 Snapshot；
 - 显式 Artifact Export、内容寻址 payload、provenance、完整性校验与 SQLite 单机持久化；
 - `ExecutionBroker`、Sandbox SPI、受控 Host Provider，以及 macOS Seatbelt / Linux bubblewrap
   Local Native Provider；
