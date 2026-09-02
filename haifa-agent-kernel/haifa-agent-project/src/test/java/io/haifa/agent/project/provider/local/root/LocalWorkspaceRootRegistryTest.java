@@ -19,7 +19,7 @@ class LocalWorkspaceRootRegistryTest {
 
     @Test
     void singleMainCreation() {
-        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(tempDir, WorkspaceRootStrategy.GIT, false);
+        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(tempDir, WorkspaceRootStrategy.GIT);
         LocalWorkspaceRootRegistry registry = LocalWorkspaceRootRegistry.singleMain(mainRoot);
 
         assertThat(registry.mainRoot()).isEqualTo(mainRoot);
@@ -38,14 +38,12 @@ class LocalWorkspaceRootRegistryTest {
                                 WorkspaceRootAlias.MAIN,
                                 dir1,
                                 WorkspaceRootPermission.READ_WRITE,
-                                WorkspaceRootStrategy.GIT,
-                                false))
+                                WorkspaceRootStrategy.GIT))
                         .addRoot(LocalWorkspaceRoot.of(
                                 WorkspaceRootAlias.MAIN,
                                 dir2,
                                 WorkspaceRootPermission.READ_WRITE,
-                                WorkspaceRootStrategy.GIT,
-                                false))
+                                WorkspaceRootStrategy.GIT))
                         .build())
                 .isInstanceOf(WorkspaceRootException.class)
                 .satisfies(e -> assertThat(((WorkspaceRootException) e).code())
@@ -62,14 +60,12 @@ class LocalWorkspaceRootRegistryTest {
                         WorkspaceRootAlias.MAIN,
                         mainPath,
                         WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.GIT,
-                        false))
+                        WorkspaceRootStrategy.GIT))
                 .addRoot(LocalWorkspaceRoot.of(
                         WorkspaceRootAlias.of("docs"),
                         docsPath,
                         WorkspaceRootPermission.READ_ONLY,
-                        WorkspaceRootStrategy.PLAIN,
-                        false))
+                        WorkspaceRootStrategy.PLAIN))
                 .build();
 
         // Main allows read and write
@@ -87,14 +83,13 @@ class LocalWorkspaceRootRegistryTest {
 
     @Test
     void attachesOneAdditionalRootWithoutReplacingMain() {
-        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(tempDir, WorkspaceRootStrategy.GIT, false);
+        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(tempDir, WorkspaceRootStrategy.GIT);
         LocalWorkspaceRootRegistry registry = LocalWorkspaceRootRegistry.singleMain(mainRoot);
         LocalWorkspaceRoot docsRoot = LocalWorkspaceRoot.of(
                 WorkspaceRootAlias.of("docs"),
                 tempDir.resolve("docs"),
                 WorkspaceRootPermission.READ_ONLY,
-                WorkspaceRootStrategy.PLAIN,
-                false);
+                WorkspaceRootStrategy.PLAIN);
 
         registry.attach(docsRoot);
 

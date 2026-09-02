@@ -151,16 +151,6 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
                             : "No authoritative validation attempt exists.",
                     "VALIDATION_ATTEMPT"));
         }
-        if (changed
-                && !snapshot.hasAtOrAfter(
-                        CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW,
-                        CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
-            blockers.add(CompletionBlocker.recoverable(
-                    "CHANGE_REVIEW_MISSING",
-                    "Deterministic ChangeSet review evidence is missing; the Coding product must generate it from "
-                            + "the authoritative persisted change before completion.",
-                    "DETERMINISTIC_CHANGE_REVIEW"));
-        }
         boolean latestFailed = snapshot.latestValidationFailed()
                 || (snapshot.validationAttempts().isEmpty()
                         && snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED)

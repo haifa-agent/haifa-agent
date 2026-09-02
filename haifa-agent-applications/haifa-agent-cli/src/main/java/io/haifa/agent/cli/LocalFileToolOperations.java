@@ -286,15 +286,12 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                     target.workspacePath(),
                     "cannot delete workspace root: " + target.displayPath());
         }
-        boolean recursive = bool(values, "recursive", false);
 
         TargetMetadata before = inspectExisting(target);
-        deleteTarget(workspaceId, mutationContext, target, before, recursive);
+        deleteTarget(workspaceId, mutationContext, target, before);
         recordDelete(target, before, mutationContext);
         if (before.type() == FileType.DIRECTORY) {
-            return success(
-                    "Deleted directory " + target.displayPath(),
-                    Map.of("path", target.displayPath(), "recursive", recursive));
+            return success("Deleted directory " + target.displayPath(), Map.of("path", target.displayPath()));
         }
         return success("Deleted " + target.displayPath(), Map.of("path", target.displayPath()));
     }
@@ -591,22 +588,17 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     }
 
     private void deleteTarget(
-            WorkspaceId workspaceId,
-            MutationContext mutationContext,
-            ResolvedTarget target,
-            TargetMetadata before,
-            boolean recursive) {
+            WorkspaceId workspaceId, MutationContext mutationContext, ResolvedTarget target, TargetMetadata before) {
         if (target.isMain()) {
             Workspace workspace = workspace(workspaceId);
             mutations.delete(new DeleteFileRequest(
                     target.workspacePath(),
                     MutationPrecondition.existing(workspace.revision(), before.contentHash()),
-                    mutationContext,
-                    recursive));
+                    mutationContext));
             return;
         }
         if (before.type() == FileType.DIRECTORY) {
-            deleteDirectory(target.hostPath(), recursive, target);
+            deleteDirectory(target.hostPath(), target);
             return;
         }
         TargetMetadata current = requireRegularFile(target);
@@ -944,8 +936,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 }
             }
             var detection = new LocalWorkspaceRootStrategyDetector().detect(realPath);
-            rootRegistry.attach(
-                    LocalWorkspaceRoot.of(alias, realPath, permission, detection.strategy(), detection.initialDirty()));
+            rootRegistry.attach(LocalWorkspaceRoot.of(alias, realPath, permission, detection.strategy()));
             return success(
                     "Attached " + alias.value() + " as " + permission.name(),
                     Map.of(
@@ -1056,7 +1047,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         throw new IllegalArgumentException(key + " must be boolean");
     }
 
-    private static void deleteDirectory(Path directory, boolean recursive, ResolvedTarget target) {
+    private static void deleteDirectory(Path directory, ResolvedTarget target) {
         List<Path> paths;
         try (var walk = Files.walk(directory)) {
             paths = walk.toList();
@@ -1064,27 +1055,19 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             throw new WorkspaceMutationException(
                     MutationErrorCode.IO_FAILURE, target.workspacePath(), "unable to inspect directory for deletion");
         }
-        if (!recursive && paths.size() > 1) {
+        if (paths.size() > 1) {
             throw new WorkspaceMutationException(
                     MutationErrorCode.PATH_DENIED,
                     target.workspacePath(),
-                    "directory is not empty; recursive deletion is required: " + target.displayPath());
+                    "directory is not empty; recursive deletion is not supported: " + target.displayPath());
         }
         try {
-            if (paths.stream().anyMatch(LocalWorkspacePathSafety::isUnsafeNode)) {
-                throw new WorkspaceMutationException(
-                        MutationErrorCode.PATH_DENIED,
-                        target.workspacePath(),
-                        "directory contains a symbolic link, reparse point, or special node");
-            }
-            for (Path path : paths.stream().sorted(Comparator.reverseOrder()).toList()) {
-                Files.delete(path);
-            }
+            Files.delete(directory);
         } catch (IOException exception) {
             throw new WorkspaceMutationException(
                     MutationErrorCode.IO_FAILURE,
                     target.workspacePath(),
-                    "failed to delete directory: " + exception.getMessage());
+                    "failed to delete empty directory: " + exception.getMessage());
         }
     }
 

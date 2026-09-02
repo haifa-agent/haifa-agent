@@ -76,15 +76,12 @@ class CodingDeliveryControlTest {
                 .extracting(blocker -> blocker.code())
                 .containsExactlyInAnyOrder("WORKSPACE_CHANGE_MISSING", "VALIDATION_ATTEMPT_MISSING");
 
-        tool(fixture, "file.write", Map.of("path", "src/First.java"), Map.of("changeSetId", "change-0"));
+        tool(fixture, "file.write", Map.of("path", "src/First.java"), Map.of("path", "src/First.java"));
         assertThat(policy.evaluate(fixture.run(), finalDecision()).blockers())
-                .filteredOn(blocker -> blocker.code().equals("CHANGE_REVIEW_MISSING"))
-                .singleElement()
-                .satisfies(blocker -> assertThat(blocker.safeMessage())
-                        .contains("Deterministic", "ChangeSet")
-                        .doesNotContain("operationFamily=DIFF", "git diff"));
+                .extracting(blocker -> blocker.code())
+                .containsExactly("VALIDATION_ATTEMPT_MISSING");
 
-        changeTool(fixture, "file.write", "change-1");
+        tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("path", "src/Main.java"));
         tool(
                 fixture,
                 "execution.run",
@@ -94,7 +91,7 @@ class CodingDeliveryControlTest {
         var complete = policy.evaluate(fixture.run(), finalDecision());
         assertThat(complete.allowed()).isTrue();
         assertThat(complete.evidenceCodes())
-                .contains("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT", "VALIDATION_PASSED", "DETERMINISTIC_CHANGE_REVIEW")
+                .contains("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT", "VALIDATION_PASSED")
                 .doesNotContain("DIFF_INSPECTION");
     }
 
@@ -127,9 +124,8 @@ class CodingDeliveryControlTest {
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
-                        .blockers())
-                .extracting(blocker -> blocker.code())
-                .contains("CHANGE_REVIEW_MISSING");
+                        .allowed())
+                .isTrue();
 
         tool(
                 fixture,
@@ -151,9 +147,8 @@ class CodingDeliveryControlTest {
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
-                        .blockers())
-                .extracting(blocker -> blocker.code())
-                .contains("CHANGE_REVIEW_MISSING");
+                        .allowed())
+                .isTrue();
         assertThat(new CodingDeliveryEvidenceLedger(fixture.store())
                         .reconstruct(fixture.run().id())
                         .kinds())
@@ -184,9 +179,8 @@ class CodingDeliveryControlTest {
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
-                        .blockers())
-                .extracting(blocker -> blocker.code())
-                .contains("CHANGE_REVIEW_MISSING");
+                        .allowed())
+                .isTrue();
     }
 
     @Test
@@ -225,7 +219,7 @@ class CodingDeliveryControlTest {
                         .evaluate(fixture.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
-                .contains("VALIDATION_NOT_PASSED", "CHANGE_REVIEW_MISSING");
+                .contains("VALIDATION_NOT_PASSED");
     }
 
     @Test
@@ -243,15 +237,14 @@ class CodingDeliveryControlTest {
                         .evaluate(fixture.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
-                .contains("VALIDATION_NOT_PASSED", "CHANGE_REVIEW_MISSING");
+                .contains("VALIDATION_NOT_PASSED");
         assertThat(new CodingCompletionPolicy(
                                 new CodingTaskModeResolver(fixture.store()),
                                 new CodingDeliveryEvidenceLedger(fixture.store()),
                                 new CodingDeliveryProfile(20, 25, 20, true))
                         .evaluate(fixture.run(), finalDecision())
-                        .blockers())
-                .extracting(blocker -> blocker.code())
-                .contains("CHANGE_REVIEW_MISSING");
+                        .allowed())
+                .isTrue();
     }
 
     @Test
@@ -307,7 +300,7 @@ class CodingDeliveryControlTest {
                         .evaluate(changed.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
-                .containsExactlyInAnyOrder("VALIDATION_ATTEMPT_MISSING", "CHANGE_REVIEW_MISSING");
+                .containsExactlyInAnyOrder("VALIDATION_ATTEMPT_MISSING");
     }
 
     @Test
@@ -376,23 +369,18 @@ class CodingDeliveryControlTest {
                         .evaluate(staleValidation.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
-                .contains("VALIDATION_ATTEMPT_MISSING")
-                .doesNotContain("CHANGE_REVIEW_MISSING");
+                .contains("VALIDATION_ATTEMPT_MISSING");
 
         Fixture staleReview = fixture("fix the implementation", trusted("CHANGE"));
-        changeTool(staleReview, "file.write", "change-1");
+        tool(staleReview, "file.write", Map.of("path", "src/Main.java"), Map.of("path", "src/Main.java"));
         validationTool(staleReview, true, 8, 8, 0);
-        tool(staleReview, "file.write", Map.of("path", "src/Other.java"), Map.of("changeSetId", "change-2"));
-        validationTool(staleReview, true, 8, 8, 0);
+        tool(staleReview, "file.write", Map.of("path", "src/Other.java"), Map.of("path", "src/Other.java"));
 
         assertThat(policy(staleReview.store())
                         .evaluate(staleReview.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
-                .contains("CHANGE_REVIEW_MISSING")
-                .doesNotContain("VALIDATION_ATTEMPT_MISSING");
-        assertThat(projection(staleReview.store()).project(staleReview.run()).missingEvidence())
-                .contains("DETERMINISTIC_CHANGE_REVIEW");
+                .contains("VALIDATION_ATTEMPT_MISSING");
     }
 
     @Test

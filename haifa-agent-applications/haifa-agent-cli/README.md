@@ -591,7 +591,7 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 删除和移动仍分别调用 `file.delete`、`file.move`；跨目录根的 patch 和移动明确拒绝。所有文件会在第一次写盘前完成
 路径、Hunk 与内容版本的乐观预检；它不是事务，提交期的 IO 或权限异常可能留下已提交前缀。此时工具返回
 `appliedPaths`、`failedPath` 和 `reconciliationRequired: true`，Coding Agent 必须重新读取实际文件后生成新 patch。
-`file.delete` 可删除文件或空目录；删除非空目录必须显式传入 `recursive: true`。主目录与附加目录对不存在路径统一
+`file.delete` 可删除普通文件或空目录；不支持递归删除非空目录（非空目录清理须经命令审计走 `execution.run`）。主目录与附加目录对不存在路径统一
 返回 `PATH_NOT_FOUND`，对非空目录、链接、reparse point 或特殊节点统一返回 `PATH_DENIED`。
 
 `execution.provider` 只接受 `local-native` 或 `host-guarded`，`execution.network` 只接受 `deny`

@@ -15,7 +15,7 @@ public final class LocalWorkspaceRootStrategyDetector {
         Objects.requireNonNull(directory, "directory must not be null");
         Path normalized = directory.toAbsolutePath().normalize();
         if (!Files.exists(normalized) || !Files.isDirectory(normalized)) {
-            return new DetectionResult(WorkspaceRootStrategy.PLAIN, false);
+            return new DetectionResult(WorkspaceRootStrategy.PLAIN);
         }
 
         Path gitEntry = normalized.resolve(".git");
@@ -24,22 +24,22 @@ public final class LocalWorkspaceRootStrategyDetector {
                 // Standard git repository
                 Path headFile = gitEntry.resolve("HEAD");
                 if (Files.exists(headFile)) {
-                    return new DetectionResult(WorkspaceRootStrategy.GIT, false);
+                    return new DetectionResult(WorkspaceRootStrategy.GIT);
                 }
             } else if (Files.isRegularFile(gitEntry)) {
                 // Submodule or git worktree pointer (contains gitdir: ...)
                 try {
                     String content = Files.readString(gitEntry).trim();
                     if (content.startsWith("gitdir:")) {
-                        return new DetectionResult(WorkspaceRootStrategy.GIT, false);
+                        return new DetectionResult(WorkspaceRootStrategy.GIT);
                     }
                 } catch (IOException ignored) {
                 }
             }
         }
 
-        return new DetectionResult(WorkspaceRootStrategy.PLAIN, false);
+        return new DetectionResult(WorkspaceRootStrategy.PLAIN);
     }
 
-    public record DetectionResult(WorkspaceRootStrategy strategy, boolean initialDirty) {}
+    public record DetectionResult(WorkspaceRootStrategy strategy) {}
 }

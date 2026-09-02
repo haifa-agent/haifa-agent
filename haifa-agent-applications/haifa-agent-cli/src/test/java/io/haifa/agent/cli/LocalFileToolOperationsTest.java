@@ -356,14 +356,13 @@ class LocalFileToolOperationsTest {
 
     @Test
     void rejectsWriteToReadOnlyAttachedRoot() {
-        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(root, WorkspaceRootStrategy.GIT, false);
+        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(root, WorkspaceRootStrategy.GIT);
         Path docsRoot = root.resolve("docs");
         LocalWorkspaceRoot docs = LocalWorkspaceRoot.of(
                 WorkspaceRootAlias.of("docs"),
                 docsRoot,
                 WorkspaceRootPermission.READ_ONLY,
-                WorkspaceRootStrategy.PLAIN,
-                false);
+                WorkspaceRootStrategy.PLAIN);
         LocalWorkspaceRootRegistry registry = LocalWorkspaceRootRegistry.builder()
                 .addRoot(mainRoot)
                 .addRoot(docs)
@@ -462,7 +461,7 @@ class LocalFileToolOperationsTest {
     @Test
     void recordsChangesIntoSessionLedger() {
         var ledger = new InMemorySessionChangeLedger();
-        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(root, WorkspaceRootStrategy.GIT, false);
+        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(root, WorkspaceRootStrategy.GIT);
         LocalWorkspaceRootRegistry registry = LocalWorkspaceRootRegistry.singleMain(mainRoot);
         Fixture f = fixture(registry, ledger);
 

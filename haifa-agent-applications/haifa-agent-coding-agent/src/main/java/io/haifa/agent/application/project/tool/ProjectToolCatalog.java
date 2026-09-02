@@ -412,17 +412,7 @@ public final class ProjectToolCatalog {
                 properties.put("recursive", Map.of("type", "boolean"));
                 properties.put("maxDepth", Map.of("type", "integer", "minimum", 1, "maximum", 32));
             }
-            case "file.stat" -> path(properties, required, "path");
-            case "file.delete" -> {
-                path(properties, required, "path");
-                properties.put(
-                        "recursive",
-                        Map.of(
-                                "type",
-                                "boolean",
-                                "description",
-                                "Delete a non-empty directory recursively. Defaults to false."));
-            }
+            case "file.stat", "file.delete" -> path(properties, required, "path");
             case "file.read" -> {
                 path(properties, required, "path");
                 properties.put(

@@ -50,7 +50,6 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Assumptions;
@@ -110,7 +109,7 @@ class LocalWorkspaceMutationServiceTest {
     }
 
     @Test
-    void deletesNonEmptyDirectoryOnlyWhenRecursiveIsExplicit() throws Exception {
+    void rejectsNonEmptyDirectoryDelete() throws Exception {
         Path generated = root.resolve("generated");
         Files.createDirectories(generated.resolve("nested"));
         Files.writeString(generated.resolve("nested/artifact.txt"), "temporary");
@@ -125,41 +124,6 @@ class LocalWorkspaceMutationServiceTest {
                 .isInstanceOfSatisfying(WorkspaceMutationException.class, exception -> assertThat(exception.code())
                         .isEqualTo(MutationErrorCode.PATH_DENIED));
         assertThat(generated).exists();
-
-        var deleted = fixture.authorized()
-                .delete(new DeleteFileRequest(
-                        fixture.path("generated"),
-                        MutationPrecondition.existing(revision, "directory:empty"),
-                        context("delete-directory"),
-                        true));
-
-        assertThat(deleted.changes()).hasSize(1);
-        assertThat(generated).doesNotExist();
-    }
-
-    @Test
-    void rejectsFifoWhenRecursivelyDeletingDirectory() throws Exception {
-        Assumptions.assumeFalse(
-                System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win"),
-                "mkfifo is unavailable on Windows");
-        Path generated = root.resolve("generated");
-        Files.createDirectories(generated);
-        Path fifo = generated.resolve("events.fifo");
-        assertThat(new ProcessBuilder("mkfifo", fifo.toString()).start().waitFor())
-                .isZero();
-        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
-
-        assertThatThrownBy(() -> fixture.authorized()
-                        .delete(new DeleteFileRequest(
-                                fixture.path("generated"),
-                                MutationPrecondition.existing(
-                                        fixture.workspace().revision(), "directory:empty"),
-                                context("delete-fifo"),
-                                true)))
-                .isInstanceOfSatisfying(WorkspaceMutationException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(MutationErrorCode.PATH_DENIED));
-        assertThat(generated).exists();
-        assertThat(fifo).exists();
     }
 
     @Test
