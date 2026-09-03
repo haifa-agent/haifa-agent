@@ -1,6 +1,10 @@
 package io.haifa.agent.model.core;
 
 import io.haifa.agent.model.api.ModelDefinitionId;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelBindingConsistencyValidator;
+import io.haifa.agent.model.api.ModelDefinition;
+import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelProviderId;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -12,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.ArrayList;
 
 /** Validated, immutable catalog manifest projected from explicitly listed YAML resources. */
 public final class ModelCatalogManifest {
@@ -56,6 +61,64 @@ public final class ModelCatalogManifest {
 
     public String digest() {
         return digest;
+    }
+
+    /**
+     * Combines this immutable catalog with product deployment connection data. The operation is fail-closed: a
+     * deployment cannot add bindings, alter dialects, or select a binding owned by another provider.
+     */
+    public ModelCatalogProjection project(ModelCatalogDeployment deployment) {
+        Objects.requireNonNull(deployment, "deployment must not be null");
+        List<ModelProviderDefinition> projectedProviders = new ArrayList<>();
+        List<ModelCatalogBinding> projectedBindings = new ArrayList<>();
+        for (ModelCatalogDeployment.Provider configured : deployment.providers()) {
+            if (!configured.enabled()) continue;
+            ModelCatalogProvider catalogProvider = providersById.get(configured.id());
+            if (catalogProvider == null) {
+                throw new IllegalArgumentException("deployment provider is not registered in the catalog: " + configured.id());
+            }
+            List<ModelCatalogBinding> selected = catalogProvider.bindings().stream()
+                    .filter(binding -> configured.allowedBindings().contains(binding.definition().id()))
+                    .toList();
+            if (selected.size() != configured.allowedBindings().size()) {
+                ModelDefinitionId unknown = configured.allowedBindings().stream()
+                        .filter(bindingId -> selected.stream().noneMatch(binding -> binding.definition().id().equals(bindingId)))
+                        .findFirst()
+                        .orElseThrow();
+                throw new IllegalArgumentException(
+                        "deployment binding does not belong to provider: " + unknown + "/" + configured.id());
+            }
+            List<ModelApiBindingDefinition> apiBindings = selected.stream()
+                    .map(binding -> new ModelApiBindingDefinition(
+                            binding.apiBinding().style(),
+                            binding.apiBinding().dialect(),
+                            configured.bindingEndpointOverrides().get(binding.definition().id())))
+                    .distinct()
+                    .toList();
+            List<ModelDefinition> definitions = selected.stream().map(ModelCatalogBinding::definition).toList();
+            ModelProviderDefinition provider = new ModelProviderDefinition(
+                    catalogProvider.id(),
+                    catalogProvider.version(),
+                    catalogProvider.displayName(),
+                    configured.endpoint(),
+                    configured.credentialRef(),
+                    configured.nativeStreaming(),
+                    catalogProvider.status(),
+                    apiBindings,
+                    definitions,
+                    Map.of(),
+                    Map.of());
+            ModelBindingConsistencyValidator.validateAll(
+                    provider,
+                    selected.stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                            binding -> binding.definition().id().value(), ModelCatalogBinding::profile)));
+            projectedProviders.add(provider);
+            projectedBindings.addAll(selected);
+        }
+        if (projectedProviders.isEmpty()) {
+            throw new IllegalArgumentException("deployment must enable at least one catalog provider");
+        }
+        return new ModelCatalogProjection(projectedProviders, projectedBindings);
     }
 
     private static String digest(List<ModelCatalogProvider> providers) {

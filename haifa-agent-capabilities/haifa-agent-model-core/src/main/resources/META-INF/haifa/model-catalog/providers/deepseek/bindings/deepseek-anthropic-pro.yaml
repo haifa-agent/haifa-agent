@@ -14,8 +14,8 @@ profile:
   allowedReasoningEfforts: [HIGH]
   maximumReasoningTokens: null
   minimumOutputTokens: 1
-  maximumOutputTokens: 8192
-  contextWindowTokens: 131072
+  maximumOutputTokens: 393216
+  contextWindowTokens: 1048576
   toolReasoningContinuationRequired: true
   nativeStreaming: true
   usageStreaming: true
