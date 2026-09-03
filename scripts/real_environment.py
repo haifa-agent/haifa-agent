@@ -27,53 +27,11 @@ from typing import Iterable, Mapping, Sequence
 FRONTEND_PORT = 20000
 BACKEND_PORT = 20001
 MCP_PORT = 20002
-DEFAULT_MODEL_ID = "deepseek-chat-flash"
 EXPECTED_SERVER_START_CLASS = (
     "io.haifa.agent.personalassistant.server.PersonalAssistantServerApplication"
 )
 BACKEND_LAUNCH_MODES = ("jar", "classpath")
 DEVELOPMENT_CLASSPATH_ENVIRONMENT = "HAIFA_PERSONAL_DEV_CLASSPATH"
-BAILIAN_DEFAULT_MODEL_ID = "qwen3.7-max-2026-05-17"
-ANTIGRAVITY_DIRECT_MODEL_ID = "antigravity-gemini"
-SILICONFLOW_MODEL_IDS = (
-    "siliconflow-deepseek-v4-pro",
-    "siliconflow-deepseek-v4-flash",
-    "siliconflow-qwen3-vl-32b",
-    "siliconflow-qwen3-32b",
-    "siliconflow-kimi-k3",
-    "siliconflow-kimi-k2-6",
-    "siliconflow-glm-5-2",
-    "siliconflow-glm-5-1",
-)
-SILICONFLOW_MODEL_ID = "siliconflow-deepseek-v4-flash"
-CODEX_MODEL_IDS = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
-SUPPORTED_DEFAULT_MODEL_IDS = (
-    "deepseek-chat-pro",
-    "deepseek-chat-flash",
-    "deepseek-responses-flash",
-    "deepseek-anthropic-flash",
-    "deepseek-responses-pro",
-    "deepseek-anthropic-pro",
-    BAILIAN_DEFAULT_MODEL_ID,
-    "qwen3.7-plus",
-    "qwen3.7-flash",
-    "qwen3-vl-plus",
-    "qwen3.7-max-responses",
-    "qwen3.7-plus-responses",
-    "qwen3.8-max-0902",
-    "qwen3.8-max",
-    "qwen3.8-flash",
-    "kimi-k3",
-    "kimi-k2.7-code",
-    "kimi-k2.6",
-    "glm-5.2-chat",
-    "glm-5.2-anthropic",
-    "glm-5.1-chat",
-    "glm-5-chat",
-    *CODEX_MODEL_IDS,
-    *SILICONFLOW_MODEL_IDS,
-    ANTIGRAVITY_DIRECT_MODEL_ID,
-)
 ALLOWED_MCP_TOOLS = ",".join(
     (
         "location_search",
@@ -179,7 +137,6 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument(
         "--default-model-id",
-        choices=SUPPORTED_DEFAULT_MODEL_IDS,
         default=os.getenv("HAIFA_PERSONAL_DEFAULT_MODEL_ID", "").strip() or None,
     )
     result.add_argument(
@@ -887,89 +844,12 @@ def backend_environment(
     siliconflow_key: str | None = None,
     antigravity: AntigravityConfiguration | None = None,
 ) -> dict[str, str]:
+    """Build runtime-only inputs; provider/model facts stay in packaged Catalog and deployment YAML."""
     environment = {
         "DEEPSEEK_API_KEY": deepseek_key,
         "HAIFA_PERSONAL_CONTINUATION_KEY": continuation,
         "HAIFA_PERSONAL_DATA_DIR": str(value.data),
         "HAIFA_PERSONAL_DEFAULT_MODEL_ID": default_model_id,
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_ID": "deepseek",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_DISPLAYNAME": "DeepSeek",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODE": "remote",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_ALLOWDETERMINISTIC": "false",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_NATIVESTREAMING": "true",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_ENDPOINT": "https://api.deepseek.com",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_CREDENTIALREFERENCE": "env://DEEPSEEK_API_KEY",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_0_STYLE": "openai-chat-completions",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_0_DIALECT": "deepseek-openai-chat",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_1_STYLE": "openai-responses",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_1_DIALECT": "deepseek-openai-responses",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_2_STYLE": "anthropic-messages",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_2_DIALECT": "deepseek-anthropic-messages",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_2_ENDPOINT": "https://api.deepseek.com/anthropic",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID": "deepseek-chat-pro",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME": "DeepSeek V4 Pro · Chat Completions",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_MODELDISPLAYNAME": "DeepSeek V4 Pro",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_PROVIDERMODELID": "deepseek-v4-pro",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_STYLE": "openai-chat-completions",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_CAPABILITIES_3": "REASONING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_CONTEXTWINDOW": "1048576",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_MAXOUTPUTTOKENS": "393216",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID": "deepseek-chat-flash",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME": "DeepSeek V4 Flash · Chat Completions",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_MODELDISPLAYNAME": "DeepSeek V4 Flash",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_PROVIDERMODELID": "deepseek-v4-flash",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_STYLE": "openai-chat-completions",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_CAPABILITIES_0": "TEXT_CHAT",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_CAPABILITIES_1": "TOOL_CALLING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_CAPABILITIES_3": "REASONING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_CONTEXTWINDOW": "1048576",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_MAXOUTPUTTOKENS": "393216",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_ID": "deepseek-responses-flash",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_DISPLAYNAME": "DeepSeek V4 Flash · Responses",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_MODELDISPLAYNAME": "DeepSeek V4 Flash",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_PROVIDERMODELID": "deepseek-v4-flash",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_STYLE": "openai-responses",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_CAPABILITIES_0": "TEXT_CHAT",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_CAPABILITIES_1": "TOOL_CALLING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_CAPABILITIES_3": "REASONING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_CONTEXTWINDOW": "1048576",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_MAXOUTPUTTOKENS": "393216",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_ID": "deepseek-anthropic-flash",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_DISPLAYNAME": "DeepSeek V4 Flash · Anthropic Messages",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_MODELDISPLAYNAME": "DeepSeek V4 Flash",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_PROVIDERMODELID": "deepseek-v4-flash",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_STYLE": "anthropic-messages",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_CAPABILITIES_0": "TEXT_CHAT",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_CAPABILITIES_1": "TOOL_CALLING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_CAPABILITIES_2": "REASONING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_CONTEXTWINDOW": "1048576",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_MAXOUTPUTTOKENS": "393216",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_ID": "deepseek-responses-pro",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_DISPLAYNAME": "DeepSeek V4 Pro · Responses",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_MODELDISPLAYNAME": "DeepSeek V4 Pro",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_PROVIDERMODELID": "deepseek-v4-pro",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_STYLE": "openai-responses",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_CAPABILITIES_0": "TEXT_CHAT",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_CAPABILITIES_1": "TOOL_CALLING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_CAPABILITIES_3": "REASONING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_CONTEXTWINDOW": "1048576",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_MAXOUTPUTTOKENS": "393216",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_ID": "deepseek-anthropic-pro",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_DISPLAYNAME": "DeepSeek V4 Pro · Anthropic Messages",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_MODELDISPLAYNAME": "DeepSeek V4 Pro",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_PROVIDERMODELID": "deepseek-v4-pro",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_STYLE": "anthropic-messages",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_CAPABILITIES_0": "TEXT_CHAT",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_CAPABILITIES_1": "TOOL_CALLING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_CAPABILITIES_2": "REASONING",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_CONTEXTWINDOW": "1048576",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_MAXOUTPUTTOKENS": "393216",
         "HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL": "true",
         "HAIFA_PERSONAL_SKILL_ROOT": str(skill_root),
         "HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST": str(trusted_manifest or ""),
@@ -981,378 +861,21 @@ def backend_environment(
         "HAIFA_PERSONAL_MCP_DISPLAY_NAME": "Haifa Utility MCP",
         "HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED": "true",
     }
-    web_provider_specs = {
-        "aliyun": {
-            "secret": aliyun_key,
-            "environment": "ALIYUN_IQS_API_KEY",
-            "search_endpoint": "https://cloud-iqs.aliyuncs.com/search/unified",
-            "fetch_endpoint": "https://cloud-iqs.aliyuncs.com/readpage/basic",
-        },
-        "browserless": {
-            "secret": browserless_token or "",
-            "environment": "BROWSERLESS_TOKEN",
-            "fetch_endpoint": "https://production-sfo.browserless.io/content",
-        },
-        "tavily": {
-            "secret": tavily_key or "",
-            "environment": "TAVILY_API_KEY",
-            "search_endpoint": "https://api.tavily.com/search",
-            "fetch_endpoint": "https://api.tavily.com/extract",
-        },
-    }
-    for operation, provider in (("SEARCH", web_search_provider), ("FETCH", web_fetch_provider)):
-        spec = web_provider_specs.get(provider)
-        endpoint_key = f"{operation.lower()}_endpoint"
-        if spec is None or endpoint_key not in spec:
-            raise ValueError(f"{provider} does not support Personal Web {operation.lower()}")
-        secret = str(spec["secret"])
-        if not secret:
-            raise ValueError(f"{provider} credential is required for Personal Web {operation.lower()}")
-        environment_name = str(spec["environment"])
-        environment[environment_name] = secret
-        prefix = f"HAIFA_PERSONAL_WEB_{operation}"
-        environment.update(
-            {
-                f"{prefix}_ENABLED": "true",
-                f"{prefix}_PROVIDER": provider,
-                f"{prefix}_ENDPOINT": str(spec[endpoint_key]),
-                f"{prefix}_CREDENTIAL": f"env://{environment_name}",
-            }
-        )
-    next_provider_index = 1
-    prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
-    environment.update(
-        {
+    for name, secret in (
+        ("DASHSCOPE_API_KEY", bailian[0] if bailian else None),
+        ("KIMI_API_KEY", kimi_key),
+        ("BIGMODEL_API_KEY", bigmodel_key),
+        ("SILICONFLOW_API_KEY", siliconflow_key),
+        ("TAVILY_API_KEY", tavily_key),
+        ("BROWSERLESS_TOKEN", browserless_token),
+    ):
+        if secret:
+            environment[name] = secret
+    if openai:
+        environment.update({
             "HAIFA_CODEX_ORIGINATOR": environment_value("HAIFA_CODEX_ORIGINATOR") or "haifa",
             "HAIFA_CODEX_USER_AGENT": environment_value("HAIFA_CODEX_USER_AGENT") or "haifa-agent/1",
-            f"{prefix}_ID": "openai-codex",
-            f"{prefix}_DISPLAYNAME": "ChatGPT Codex",
-            f"{prefix}_MODE": "remote",
-            f"{prefix}_ALLOWDETERMINISTIC": "false",
-            f"{prefix}_NATIVESTREAMING": "true",
-            f"{prefix}_ENDPOINT": "https://chatgpt.com/backend-api/codex",
-            f"{prefix}_CREDENTIALREFERENCE": "model-auth://openai-codex/default",
-            f"{prefix}_PROXY": "http://127.0.0.1:2081",
-            f"{prefix}_APIBINDINGS_0_STYLE": "openai-responses",
-            f"{prefix}_APIBINDINGS_0_DIALECT": "openai-codex-responses",
-        }
-    )
-    for model_index, model_id in enumerate(CODEX_MODEL_IDS):
-        model_prefix = f"{prefix}_MODELS_{model_index}"
-        display_name = model_id.removeprefix("gpt-").replace("-", " ").title()
-        environment.update(
-            {
-                f"{model_prefix}_ID": model_id,
-                f"{model_prefix}_DISPLAYNAME": display_name,
-                f"{model_prefix}_MODELDISPLAYNAME": display_name,
-                f"{model_prefix}_PROVIDERMODELID": model_id,
-                f"{model_prefix}_STYLE": "openai-responses",
-                f"{model_prefix}_CAPABILITIES_0": "TEXT_CHAT",
-                f"{model_prefix}_CAPABILITIES_1": "TOOL_CALLING",
-                f"{model_prefix}_CAPABILITIES_2": "REASONING",
-                f"{model_prefix}_CONTEXTWINDOW": "272000",
-                f"{model_prefix}_MAXOUTPUTTOKENS": "128000",
-            }
-        )
-    next_provider_index = 2
-    if bailian is not None:
-        bailian_key, workspace_id, region = bailian
-        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
-        endpoint = f"https://{workspace_id}.{region}.maas.aliyuncs.com/compatible-mode/v1"
-        environment.update(
-            {
-                "DASHSCOPE_API_KEY": bailian_key,
-                f"{prefix}_ID": "aliyun-bailian",
-                f"{prefix}_DISPLAYNAME": "阿里云百炼",
-                f"{prefix}_MODE": "remote",
-                f"{prefix}_ALLOWDETERMINISTIC": "false",
-                f"{prefix}_NATIVESTREAMING": "true",
-                f"{prefix}_ENDPOINT": endpoint,
-                f"{prefix}_CREDENTIALREFERENCE": "env://DASHSCOPE_API_KEY",
-                f"{prefix}_APIBINDINGS_0_STYLE": "openai-chat-completions",
-                f"{prefix}_APIBINDINGS_0_DIALECT": "aliyun-bailian-openai-chat",
-                f"{prefix}_APIBINDINGS_1_STYLE": "openai-responses",
-                f"{prefix}_APIBINDINGS_1_DIALECT": "aliyun-bailian-openai-responses",
-                f"{prefix}_MODELS_0_ID": BAILIAN_DEFAULT_MODEL_ID,
-                f"{prefix}_MODELS_0_DISPLAYNAME": "Qwen3.7 Max (2026-05-17)",
-                f"{prefix}_MODELS_0_PROVIDERMODELID": BAILIAN_DEFAULT_MODEL_ID,
-                f"{prefix}_MODELS_0_STYLE": "openai-chat-completions",
-                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
-                f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
-                f"{prefix}_MODELS_0_CAPABILITIES_2": "REASONING",
-                f"{prefix}_MODELS_0_REASONINGMODE": "ADAPTIVE",
-                f"{prefix}_MODELS_0_CONTEXTWINDOW": "1000000",
-                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "65536",
-                f"{prefix}_MODELS_1_ID": "qwen3.7-plus",
-                f"{prefix}_MODELS_1_DISPLAYNAME": "Qwen3.7 Plus",
-                f"{prefix}_MODELS_1_PROVIDERMODELID": "qwen3.7-plus",
-                f"{prefix}_MODELS_1_STYLE": "openai-chat-completions",
-                f"{prefix}_MODELS_1_CAPABILITIES_0": "TEXT_CHAT",
-                f"{prefix}_MODELS_1_CAPABILITIES_1": "TOOL_CALLING",
-                f"{prefix}_MODELS_1_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-                f"{prefix}_MODELS_1_CAPABILITIES_3": "REASONING",
-                f"{prefix}_MODELS_1_REASONINGMODE": "ADAPTIVE",
-                f"{prefix}_MODELS_1_CONTEXTWINDOW": "1000000",
-                f"{prefix}_MODELS_1_MAXOUTPUTTOKENS": "65536",
-                f"{prefix}_MODELS_2_ID": "qwen3.7-flash",
-                f"{prefix}_MODELS_2_DISPLAYNAME": "Qwen3.7 Flash",
-                f"{prefix}_MODELS_2_PROVIDERMODELID": "qwen3.7-flash",
-                f"{prefix}_MODELS_2_STYLE": "openai-chat-completions",
-                f"{prefix}_MODELS_2_CAPABILITIES_0": "TEXT_CHAT",
-                f"{prefix}_MODELS_2_CAPABILITIES_1": "TOOL_CALLING",
-                f"{prefix}_MODELS_2_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-                f"{prefix}_MODELS_2_CAPABILITIES_3": "REASONING",
-                f"{prefix}_MODELS_2_REASONINGMODE": "ADAPTIVE",
-                f"{prefix}_MODELS_2_CONTEXTWINDOW": "1000000",
-                f"{prefix}_MODELS_2_MAXOUTPUTTOKENS": "65536",
-                f"{prefix}_MODELS_3_ID": "qwen3-vl-plus",
-                f"{prefix}_MODELS_3_DISPLAYNAME": "Qwen3 VL Plus",
-                f"{prefix}_MODELS_3_PROVIDERMODELID": "qwen3-vl-plus",
-                f"{prefix}_MODELS_3_STYLE": "openai-chat-completions",
-                f"{prefix}_MODELS_3_CAPABILITIES_0": "TEXT_CHAT",
-                f"{prefix}_MODELS_3_CAPABILITIES_1": "TOOL_CALLING",
-                f"{prefix}_MODELS_3_CAPABILITIES_2": "IMAGE_UPLOAD_INPUT",
-                f"{prefix}_MODELS_3_CAPABILITIES_3": "IMAGE_URL_INPUT",
-                f"{prefix}_MODELS_3_CONTEXTWINDOW": "131072",
-                f"{prefix}_MODELS_3_MAXOUTPUTTOKENS": "8192",
-                f"{prefix}_MODELS_4_ID": "qwen3.7-max-responses",
-                f"{prefix}_MODELS_4_DISPLAYNAME": "Qwen3.7 Max (2026-05-17) · Responses",
-                f"{prefix}_MODELS_4_MODELDISPLAYNAME": "Qwen3.7 Max (2026-05-17)",
-                f"{prefix}_MODELS_4_PROVIDERMODELID": BAILIAN_DEFAULT_MODEL_ID,
-                f"{prefix}_MODELS_4_STYLE": "openai-responses",
-                f"{prefix}_MODELS_4_CAPABILITIES_0": "TEXT_CHAT",
-                f"{prefix}_MODELS_4_CAPABILITIES_1": "TOOL_CALLING",
-                f"{prefix}_MODELS_4_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-                f"{prefix}_MODELS_4_CAPABILITIES_3": "REASONING",
-                f"{prefix}_MODELS_4_REASONINGMODE": "ADAPTIVE",
-                f"{prefix}_MODELS_4_CONTEXTWINDOW": "1000000",
-                f"{prefix}_MODELS_4_MAXOUTPUTTOKENS": "65536",
-                f"{prefix}_MODELS_5_ID": "qwen3.7-plus-responses",
-                f"{prefix}_MODELS_5_DISPLAYNAME": "Qwen3.7 Plus · Responses",
-                f"{prefix}_MODELS_5_MODELDISPLAYNAME": "Qwen3.7 Plus",
-                f"{prefix}_MODELS_5_PROVIDERMODELID": "qwen3.7-plus",
-                f"{prefix}_MODELS_5_STYLE": "openai-responses",
-                f"{prefix}_MODELS_5_CAPABILITIES_0": "TEXT_CHAT",
-                f"{prefix}_MODELS_5_CAPABILITIES_1": "TOOL_CALLING",
-                f"{prefix}_MODELS_5_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-                f"{prefix}_MODELS_5_CAPABILITIES_3": "REASONING",
-                f"{prefix}_MODELS_5_REASONINGMODE": "ADAPTIVE",
-                f"{prefix}_MODELS_5_CONTEXTWINDOW": "1000000",
-                f"{prefix}_MODELS_5_MAXOUTPUTTOKENS": "65536",
-            }
-        )
-        for model_index, (model_id, display_name) in enumerate(
-            (
-                ("qwen3.8-max-0902", "Qwen3.8 Max 0902"),
-                ("qwen3.8-max", "Qwen3.8 Max"),
-                ("qwen3.8-flash", "Qwen3.8 Flash"),
-            ),
-            start=6,
-        ):
-            model_prefix = f"{prefix}_MODELS_{model_index}"
-            environment.update(
-                {
-                    f"{model_prefix}_ID": model_id,
-                    f"{model_prefix}_DISPLAYNAME": display_name,
-                    f"{model_prefix}_MODELDISPLAYNAME": display_name,
-                    f"{model_prefix}_PROVIDERMODELID": model_id,
-                    f"{model_prefix}_STYLE": "openai-chat-completions",
-                    f"{model_prefix}_CAPABILITIES_0": "TEXT_CHAT",
-                    f"{model_prefix}_CAPABILITIES_1": "TOOL_CALLING",
-                    f"{model_prefix}_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-                    f"{model_prefix}_CAPABILITIES_3": "REASONING",
-                    f"{model_prefix}_REASONINGMODE": "ADAPTIVE",
-                    f"{model_prefix}_CONTEXTWINDOW": "1048576",
-                    f"{model_prefix}_MAXOUTPUTTOKENS": "65536",
-                }
-            )
-    next_provider_index = 3
-    if kimi_key is not None:
-        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
-        environment.update(
-            {
-                "KIMI_API_KEY": kimi_key,
-                f"{prefix}_ID": "kimi",
-                f"{prefix}_DISPLAYNAME": "Kimi",
-                f"{prefix}_MODE": "remote",
-                f"{prefix}_ALLOWDETERMINISTIC": "false",
-                f"{prefix}_NATIVESTREAMING": "true",
-                f"{prefix}_ENDPOINT": "https://api.moonshot.cn/v1",
-                f"{prefix}_CREDENTIALREFERENCE": "env://KIMI_API_KEY",
-                f"{prefix}_APIBINDINGS_0_STYLE": "openai-chat-completions",
-                f"{prefix}_APIBINDINGS_0_DIALECT": "kimi-openai-chat",
-            }
-        )
-        kimi_models = (
-            ("kimi-k3", "Kimi K3", "ENABLED", "1000000"),
-            ("kimi-k2.7-code", "Kimi K2.7 Code", "ENABLED", "262144"),
-            ("kimi-k2.6", "Kimi K2.6", "ENABLED", "262144"),
-        )
-        for model_index, (model_id, display_name, reasoning_mode, context_window) in enumerate(kimi_models):
-            model_prefix = f"{prefix}_MODELS_{model_index}"
-            environment.update(
-                {
-                    f"{model_prefix}_ID": model_id,
-                    f"{model_prefix}_DISPLAYNAME": display_name,
-                    f"{model_prefix}_MODELDISPLAYNAME": display_name,
-                    f"{model_prefix}_PROVIDERMODELID": model_id,
-                    f"{model_prefix}_STYLE": "openai-chat-completions",
-                    f"{model_prefix}_CAPABILITIES_0": "TEXT_CHAT",
-                    f"{model_prefix}_CAPABILITIES_1": "TOOL_CALLING",
-                    f"{model_prefix}_CAPABILITIES_2": "REASONING",
-                    f"{model_prefix}_REASONINGMODE": reasoning_mode,
-                    f"{model_prefix}_CONTEXTWINDOW": context_window,
-                    f"{model_prefix}_MAXOUTPUTTOKENS": "131072",
-                }
-            )
-    next_provider_index = 4
-    if bigmodel_key is not None:
-        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
-        environment.update(
-            {
-                "BIGMODEL_API_KEY": bigmodel_key,
-                f"{prefix}_ID": "zhipu",
-                f"{prefix}_DISPLAYNAME": "智谱 GLM",
-                f"{prefix}_MODE": "remote",
-                f"{prefix}_ALLOWDETERMINISTIC": "false",
-                f"{prefix}_NATIVESTREAMING": "true",
-                f"{prefix}_ENDPOINT": "https://open.bigmodel.cn/api/paas/v4",
-                f"{prefix}_CREDENTIALREFERENCE": "env://BIGMODEL_API_KEY",
-                f"{prefix}_APIBINDINGS_0_STYLE": "openai-chat-completions",
-                f"{prefix}_APIBINDINGS_0_DIALECT": "zhipu-openai-chat",
-                f"{prefix}_APIBINDINGS_1_STYLE": "anthropic-messages",
-                f"{prefix}_APIBINDINGS_1_DIALECT": "zhipu-anthropic-messages",
-                f"{prefix}_APIBINDINGS_1_ENDPOINT": "https://open.bigmodel.cn/api/anthropic",
-            }
-        )
-        zhipu_models = (
-            ("glm-5.2-chat", "GLM-5.2", "glm-5.2", "openai-chat-completions"),
-            ("glm-5.2-anthropic", "GLM-5.2 · Anthropic Messages", "glm-5.2", "anthropic-messages"),
-            ("glm-5.1-chat", "GLM-5.1", "glm-5.1", "openai-chat-completions"),
-            ("glm-5-chat", "GLM-5", "glm-5", "openai-chat-completions"),
-        )
-        for model_index, (binding_id, display_name, provider_model_id, style) in enumerate(zhipu_models):
-            model_prefix = f"{prefix}_MODELS_{model_index}"
-            environment.update(
-                {
-                    f"{model_prefix}_ID": binding_id,
-                    f"{model_prefix}_DISPLAYNAME": display_name,
-                    f"{model_prefix}_MODELDISPLAYNAME": "GLM-5.2" if provider_model_id == "glm-5.2" else display_name,
-                    f"{model_prefix}_PROVIDERMODELID": provider_model_id,
-                    f"{model_prefix}_STYLE": style,
-                    f"{model_prefix}_CAPABILITIES_0": "TEXT_CHAT",
-                    f"{model_prefix}_CAPABILITIES_1": "TOOL_CALLING",
-                    f"{model_prefix}_CAPABILITIES_2": "REASONING",
-                    f"{model_prefix}_REASONINGMODE": "ADAPTIVE",
-                    f"{model_prefix}_CONTEXTWINDOW": "1000000",
-                    f"{model_prefix}_MAXOUTPUTTOKENS": "131072",
-                }
-            )
-    next_provider_index = 5
-    if siliconflow_key is not None:
-        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
-        environment.update(
-            {
-                "SILICONFLOW_API_KEY": siliconflow_key,
-                f"{prefix}_ID": "siliconflow",
-                f"{prefix}_DISPLAYNAME": "硅基流动 SiliconFlow",
-                f"{prefix}_MODE": "remote",
-                f"{prefix}_ALLOWDETERMINISTIC": "false",
-                f"{prefix}_NATIVESTREAMING": "true",
-                f"{prefix}_ENDPOINT": "https://api.siliconflow.cn/v1",
-                f"{prefix}_CREDENTIALREFERENCE": "env://SILICONFLOW_API_KEY",
-                f"{prefix}_APIBINDINGS_0_STYLE": "openai-chat-completions",
-                f"{prefix}_APIBINDINGS_0_DIALECT": "siliconflow-openai-chat",
-                f"{prefix}_MODELS_0_ID": SILICONFLOW_MODEL_ID,
-                f"{prefix}_MODELS_0_DISPLAYNAME": "DeepSeek V4 Flash",
-                f"{prefix}_MODELS_0_MODELDISPLAYNAME": "DeepSeek V4 Flash",
-                f"{prefix}_MODELS_0_PROVIDERMODELID": "deepseek-ai/DeepSeek-V4-Flash",
-                f"{prefix}_MODELS_0_STYLE": "openai-chat-completions",
-                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
-                f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
-                f"{prefix}_MODELS_0_CONTEXTWINDOW": "1000000",
-                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
-            }
-        )
-        siliconflow_models = (
-            ("siliconflow-deepseek-v4-pro", "DeepSeek V4 Pro", "deepseek-ai/DeepSeek-V4-Pro", "1048576", "393216", ("TEXT_CHAT", "TOOL_CALLING", "STRUCTURED_OUTPUT", "REASONING"), "ENABLED"),
-            ("siliconflow-qwen3-vl-32b", "Qwen3 VL 32B Instruct", "Qwen/Qwen3-VL-32B-Instruct", "131072", "8192", ("TEXT_CHAT", "TOOL_CALLING", "STRUCTURED_OUTPUT", "IMAGE_UPLOAD_INPUT"), None),
-            ("siliconflow-qwen3-32b", "Qwen3 32B", "Qwen/Qwen3-32B", "131072", "8192", ("TEXT_CHAT", "TOOL_CALLING", "STRUCTURED_OUTPUT", "REASONING"), "ENABLED"),
-            ("siliconflow-kimi-k3", "Kimi K3", "moonshotai/Kimi-K3", "262144", "32768", ("TEXT_CHAT", "TOOL_CALLING", "REASONING"), "ENABLED"),
-            ("siliconflow-kimi-k2-6", "Kimi K2.6", "moonshotai/Kimi-K2.6", "262144", "32768", ("TEXT_CHAT", "TOOL_CALLING", "REASONING"), "ENABLED"),
-            ("siliconflow-glm-5-2", "GLM-5.2", "zai-org/GLM-5.2", "1048576", "131072", ("TEXT_CHAT", "TOOL_CALLING", "STRUCTURED_OUTPUT", "REASONING"), "ENABLED"),
-            ("siliconflow-glm-5-1", "GLM-5.1", "zai-org/GLM-5.1", "131072", "32768", ("TEXT_CHAT", "TOOL_CALLING", "STRUCTURED_OUTPUT", "REASONING"), "ENABLED"),
-        )
-        for model_index, (model_id, display_name, provider_model_id, context_window, max_output_tokens, capabilities, reasoning_mode) in enumerate(siliconflow_models, start=1):
-            model_prefix = f"{prefix}_MODELS_{model_index}"
-            environment.update(
-                {
-                    f"{model_prefix}_ID": model_id,
-                    f"{model_prefix}_DISPLAYNAME": display_name,
-                    f"{model_prefix}_MODELDISPLAYNAME": display_name,
-                    f"{model_prefix}_PROVIDERMODELID": provider_model_id,
-                    f"{model_prefix}_STYLE": "openai-chat-completions",
-                    f"{model_prefix}_CONTEXTWINDOW": context_window,
-                    f"{model_prefix}_MAXOUTPUTTOKENS": max_output_tokens,
-                    **{f"{model_prefix}_CAPABILITIES_{index}": capability for index, capability in enumerate(capabilities)},
-                    **({f"{model_prefix}_REASONINGMODE": reasoning_mode} if reasoning_mode else {}),
-                }
-            )
-    next_provider_index = 6
-    if openai is not None:
-        openai_base_url, openai_key, openai_model_id = openai
-        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
-        environment.update(
-            {
-                "OPENAI_BASE_URL": openai_base_url,
-                "OPENAI_API_KEY": openai_key,
-                "OPENAI_MODEL_ID": openai_model_id,
-                f"{prefix}_ID": "local-openai",
-                f"{prefix}_DISPLAYNAME": "Local OpenAI Responses Gateway",
-                f"{prefix}_MODE": "remote",
-                f"{prefix}_ALLOWDETERMINISTIC": "false",
-                f"{prefix}_NATIVESTREAMING": "true",
-                f"{prefix}_ENDPOINT": openai_base_url,
-                f"{prefix}_CREDENTIALREFERENCE": "env://OPENAI_API_KEY",
-                f"{prefix}_APIBINDINGS_0_STYLE": "openai-responses",
-                f"{prefix}_MODELS_0_ID": "local-openai-responses",
-                f"{prefix}_MODELS_0_DISPLAYNAME": "Local OpenAI Responses",
-                f"{prefix}_MODELS_0_PROVIDERMODELID": openai_model_id,
-                f"{prefix}_MODELS_0_STYLE": "openai-responses",
-                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
-                f"{prefix}_MODELS_0_CONTEXTWINDOW": "131072",
-                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
-            }
-        )
-        next_provider_index += 1
-    if antigravity is not None:
-        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
-        environment.update(
-            {
-                f"{prefix}_ID": "google-antigravity",
-                f"{prefix}_DISPLAYNAME": "Google Antigravity Direct (Local Compatibility)",
-                f"{prefix}_MODE": "remote",
-                f"{prefix}_ALLOWDETERMINISTIC": "false",
-                f"{prefix}_NATIVESTREAMING": "true",
-                f"{prefix}_ENDPOINT": antigravity.endpoint,
-                f"{prefix}_PROXY": antigravity.proxy,
-                f"{prefix}_CREDENTIALREFERENCE": "model-auth://google-antigravity/default",
-                f"{prefix}_APIBINDINGS_0_STYLE": "google-gemini-generate-content",
-                f"{prefix}_APIBINDINGS_0_DIALECT": "antigravity-direct",
-                f"{prefix}_MODELS_0_ID": ANTIGRAVITY_DIRECT_MODEL_ID,
-                f"{prefix}_MODELS_0_DISPLAYNAME": "Gemini via Antigravity Direct (UNOFFICIAL_LOCAL_COMPAT)",
-                f"{prefix}_MODELS_0_MODELDISPLAYNAME": "Gemini Flash",
-                f"{prefix}_MODELS_0_PROVIDERMODELID": antigravity.provider_model_id,
-                f"{prefix}_MODELS_0_STYLE": "google-gemini-generate-content",
-                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
-                f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
-                f"{prefix}_MODELS_0_CAPABILITIES_2": "STRUCTURED_OUTPUT",
-                f"{prefix}_MODELS_0_CAPABILITIES_3": "REASONING",
-                f"{prefix}_MODELS_0_CAPABILITIES_4": "IMAGE_UPLOAD_INPUT",
-                f"{prefix}_MODELS_0_CONTEXTWINDOW": "131072",
-                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
-            }
-        )
+        })
     return environment
 
 
@@ -1364,17 +887,25 @@ def resolve_default_model_id(
     siliconflow_key: str | None = None,
     antigravity: AntigravityConfiguration | None = None,
 ) -> str:
-    selected = requested or DEFAULT_MODEL_ID
+    deployment = (
+        Path(__file__).resolve().parents[1]
+        / "haifa-agent-applications"
+        / "haifa-agent-personal-assistant-server"
+        / "src"
+        / "main"
+        / "resources"
+        / "application.yml"
+    )
+    match = re.search(r"default-model-id:\s*\$\{[^:}]+:([^}]+)}", deployment.read_text(encoding="utf-8"))
+    selected = requested or (match.group(1).strip() if match else "")
+    if not selected:
+        fail("Personal Assistant deployment must declare a default model Binding.")
     if selected.startswith("qwen") and bailian is None:
         fail("A Qwen default model requires complete Bailian API key, workspace, and region configuration.")
     if selected.startswith("kimi") and kimi_key is None:
         fail("A Kimi default model requires a Kimi API key.")
     if selected.startswith("glm") and bigmodel_key is None:
         fail("A GLM default model requires a BigModel API key.")
-    if selected in SILICONFLOW_MODEL_IDS and siliconflow_key is None:
-        fail("The SiliconFlow default model requires a SiliconFlow API key.")
-    if selected == ANTIGRAVITY_DIRECT_MODEL_ID and antigravity is None:
-        fail("The Antigravity Direct default model requires local compatibility testing to be enabled.")
     return selected
 
 

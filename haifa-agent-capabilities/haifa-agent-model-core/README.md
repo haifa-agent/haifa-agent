@@ -47,4 +47,5 @@ Dialect 与非秘密认证方式；它不包含 Endpoint、`CredentialRef`、Sec
 
 调用方必须显式提供已注册的 API Style/Dialect 和 Provider/认证方式集合。未知字段、YAML anchor/alias/merge、
 非显式 resource 路径、重复 ID、未注册引用、非 `VERIFIED` Profile 或 Definition/Profile 不一致都会 fail closed。
-产品 YAML/Properties 到 Catalog 的完整迁移，以及连接引导，尚不属于 M0。
+产品部署通过 Provider 连接信息与 `allowedBindings` allowlist 投影此 Catalog；展示名、Provider Model ID、
+Style/Dialect、能力与 Token 上限不得在产品 YAML 中重复维护。连接引导仍属于上层产品能力。

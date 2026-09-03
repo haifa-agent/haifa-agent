@@ -43,6 +43,30 @@ import org.springframework.core.io.ClassPathResource;
 
 class PersonalModelFactoryTest {
     @Test
+    void deploymentAllowlistProjectsModelFactsOnlyFromThePackagedCatalog() {
+        var deployment = new PersonalAssistantProperties.ModelProvider(
+                "deepseek",
+                null,
+                "remote",
+                false,
+                true,
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                List.of(),
+                List.of(),
+                null,
+                List.of("deepseek-chat-pro"),
+                Map.of());
+
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(deployment), "deepseek-chat-pro", false, new ObjectMapper(), shell());
+
+        assertThat(platform.catalog().available())
+                .extracting(io.haifa.agent.personalassistant.application.PersonalModelOption::id)
+                .containsExactly("deepseek-chat-pro");
+    }
+
+    @Test
     void modelCredentialsAcceptOnlyEnvironmentOrSharedLocalAuthReferences() {
         assertThatThrownBy(() -> provider(
                         "deepseek",
@@ -147,12 +171,9 @@ class PersonalModelFactoryTest {
         assertThat(providers)
                 .extracting(PersonalAssistantProperties.ModelProvider::id)
                 .containsExactly("deepseek", "openai-codex", "aliyun-bailian", "siliconflow", "kimi", "zhipu");
-        assertThat(providers.get(2).models())
-                .extracting(PersonalAssistantProperties.ProviderModel::id)
+        assertThat(providers.get(2).bindingIds())
                 .contains("qwen3-vl-plus");
-        assertThat(providers.get(3).models())
-                .extracting(PersonalAssistantProperties.ProviderModel::providerModelId)
-                .contains("zai-org/GLM-5.2");
+        assertThat(providers.get(3).bindingIds()).contains("siliconflow-glm-5-2");
     }
 
     @Test
