@@ -83,14 +83,11 @@ public record HostWorkspaceScope(List<AuthorizedHostDirectory> allowedDirectorie
         try {
             candidate = Path.of(trimmed);
         } catch (InvalidPathException exception) {
-            throw HostWorkspaceScopeException.invalidArgument(trimmed, "Input is not a valid host path: " + trimmed);
+            throw HostWorkspaceScopeException.invalidArgument(trimmed, "Input is not a valid absolute host path");
         }
         if (!candidate.isAbsolute()) {
             throw HostWorkspaceScopeException.invalidArgument(
-                    trimmed,
-                    "Relative paths and root aliases such as 'main:' or 'docs:' are not accepted;"
-                            + " pass a host absolute path: "
-                            + trimmed);
+                    trimmed, "Relative paths are not accepted; pass a host absolute path");
         }
         Path normalized = candidate.normalize();
         AuthorizedHostDirectory directory = findEnclosingDirectory(normalized);
