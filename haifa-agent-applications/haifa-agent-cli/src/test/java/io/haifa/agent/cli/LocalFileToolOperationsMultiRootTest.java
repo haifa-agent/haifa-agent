@@ -69,6 +69,7 @@ class LocalFileToolOperationsMultiRootTest {
 
     @BeforeEach
     void setUp() throws IOException {
+        tempDir = tempDir.toRealPath();
         mainDir = tempDir.resolve("main-repo");
         docsDir = tempDir.resolve("docs-repo");
         configDir = tempDir.resolve("config-repo");

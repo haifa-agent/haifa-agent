@@ -43,12 +43,18 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class LocalFileToolOperationsTest {
     @TempDir
     Path root;
+
+    @BeforeEach
+    void canonicalizeTempDirectory() throws IOException {
+        root = root.toRealPath();
+    }
 
     @Test
     void continuesBoundedReadsWithOpaqueVersionedCursor() throws Exception {
