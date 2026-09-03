@@ -5,6 +5,7 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.tool.api.ToolReconciliation;
+import java.util.Objects;
 
 /** Domain operation adapter; Runtime remains responsible for registry, schema, policy, approval, journal and retry. */
 @FunctionalInterface
@@ -16,6 +17,19 @@ public interface ProjectToolOperations {
             String runRef,
             String policyDecisionRef,
             ToolArguments arguments);
+
+    default ToolResult execute(ProjectToolCallContext context, String toolName, ToolArguments arguments) {
+        Objects.requireNonNull(context, "context must not be null");
+        return execute(
+                toolName,
+                context.workspaceId(),
+                context.actor(),
+                context.runRef(),
+                context.toolCallRef(),
+                context.idempotencyKey(),
+                context.policyDecisionRef(),
+                arguments);
+    }
 
     default ToolResult execute(
             String toolName,

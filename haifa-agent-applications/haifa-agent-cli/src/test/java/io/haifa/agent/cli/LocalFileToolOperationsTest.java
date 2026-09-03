@@ -2,9 +2,14 @@ package io.haifa.agent.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.agent.application.project.product.coding.delivery.AttributionStatus;
+import io.haifa.agent.application.project.product.coding.delivery.RepositoryBaseline;
+import io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry;
+import io.haifa.agent.application.project.tool.ProjectToolCallContext;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.git.GitRepositoryRef;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
@@ -13,6 +18,7 @@ import io.haifa.agent.project.configuration.ProjectConfigurationId;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostGitInspectionStatus;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
@@ -217,10 +223,14 @@ class LocalFileToolOperationsTest {
     }
 
     private Fixture fixture() {
-        return fixture(null);
+        return fixture(null, null);
     }
 
     private Fixture fixture(InMemorySessionChangeLedger ledger) {
+        return fixture(ledger, null);
+    }
+
+    private Fixture fixture(InMemorySessionChangeLedger ledger, RunRepositoryBaselineRegistry repositoryBaselines) {
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         WorkspaceId workspaceId = new WorkspaceId("workspace-file-read");
         ProjectId projectId = new ProjectId("project-file-read");
@@ -284,8 +294,8 @@ class LocalFileToolOperationsTest {
                 new InMemoryWorkspaceWriteLeaseManager(),
                 identifiers,
                 () -> now);
-        var operations =
-                new LocalFileToolOperations(workspaces, files, mutations, identifiers, () -> now, provisioning, ledger);
+        var operations = new LocalFileToolOperations(
+                workspaces, files, mutations, identifiers, () -> now, provisioning, ledger, repositoryBaselines);
         return new Fixture(workspaceId, operations);
     }
 
@@ -294,6 +304,91 @@ class LocalFileToolOperationsTest {
     }
 
     private record Fixture(WorkspaceId workspaceId, LocalFileToolOperations operations) {}
+
+    @Test
+    void establishesRepositoryBaselineBeforeFirstPhysicalWrite() {
+        Path target = root.resolve("before-write.txt");
+        AtomicInteger captures = new AtomicInteger();
+        var registry = new RunRepositoryBaselineRegistry(
+                (boundary, candidate) -> candidate.equals(root)
+                        ? HostGitInspectionStatus.WORKTREE_ROOT
+                        : HostGitInspectionStatus.NOT_WORKTREE_ROOT,
+                (context, repository) -> {
+                    assertThat(Files.exists(target)).isFalse();
+                    captures.incrementAndGet();
+                    return cleanBaseline(repository);
+                });
+        Fixture fixture = fixture(null, registry);
+
+        var result = fixture.operations.execute(
+                callContext(fixture.workspaceId, "run-baseline"),
+                "file.create",
+                arguments(Map.of("path", target.toString(), "content", "created")));
+
+        assertThat(result.successful()).isTrue();
+        assertThat(Files.exists(target)).isTrue();
+        assertThat(captures).hasValue(1);
+    }
+
+    @Test
+    void doesNotWriteWhenRepositoryBaselineFails() {
+        Path target = root.resolve("blocked-write.txt");
+        var registry = new RunRepositoryBaselineRegistry(
+                (boundary, candidate) -> candidate.equals(root)
+                        ? HostGitInspectionStatus.WORKTREE_ROOT
+                        : HostGitInspectionStatus.NOT_WORKTREE_ROOT,
+                (context, repository) -> {
+                    throw new IllegalStateException("git unavailable");
+                });
+        Fixture fixture = fixture(null, registry);
+
+        var result = fixture.operations.execute(
+                callContext(fixture.workspaceId, "run-blocked"),
+                "file.create",
+                arguments(Map.of("path", target.toString(), "content", "must not exist")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("errorCode", "REPOSITORY_BASELINE_UNAVAILABLE");
+        assertThat(Files.exists(target)).isFalse();
+    }
+
+    @Test
+    void keepsFileAuthorizationIndependentWhenGitInspectionIsUnavailable() throws Exception {
+        Path target = root.resolve("git-unavailable.txt");
+        var registry = new RunRepositoryBaselineRegistry(
+                (boundary, candidate) -> HostGitInspectionStatus.UNAVAILABLE, (context, repository) -> {
+                    throw new AssertionError("capture must not run without a located repository");
+                });
+        Fixture fixture = fixture(null, registry);
+
+        var result = fixture.operations.execute(
+                callContext(fixture.workspaceId, "run-git-unavailable"),
+                "file.create",
+                arguments(Map.of("path", target.toString(), "content", "authorized")));
+
+        assertThat(result.successful()).isTrue();
+        assertThat(Files.readString(target)).isEqualTo("authorized");
+        assertThat(registry.attributionStatus("run-git-unavailable")).isEqualTo(AttributionStatus.ATTRIBUTION_PARTIAL);
+    }
+
+    private static ProjectToolCallContext callContext(WorkspaceId workspaceId, String runRef) {
+        return new ProjectToolCallContext(
+                new TenantRef("tenant"),
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                runRef,
+                "tool-call",
+                "idempotency",
+                "policy");
+    }
+
+    private static RepositoryBaseline cleanBaseline(GitRepositoryRef repository) {
+        return new RepositoryBaseline(
+                repository,
+                "abc123",
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                AttributionStatus.COMPLETE);
+    }
 
     @Test
     void rejectsRelativePathOrAlias() {

@@ -538,8 +538,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     new InMemoryWorkspaceWriteLeaseManager(),
                     identifiers,
                     time);
-            var operations = new LocalFileToolOperations(
-                    workspaces, files, mutations, identifiers, time, provisioning, sessionLedger);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
             CliExecutionPlatform executionPlatform = executionEnabled
@@ -557,9 +555,21 @@ final class LocalCodingAgent implements AutoCloseable {
                             workspaceRoot,
                             output,
                             resolvedEnvironment,
-                            verificationProfiles)
+                            verificationProfiles,
+                            provisioning)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
+            var repositoryBaselines = executionPlatform == null
+                    ? new io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry(
+                            (boundary, candidate) ->
+                                    io.haifa.agent.project.hostworkspace.HostGitInspectionStatus.UNAVAILABLE,
+                            (context, repository) -> {
+                                throw new IllegalStateException(
+                                        "Git review is unavailable without an execution platform");
+                            })
+                    : executionPlatform.repositoryBaselines();
+            var operations = new LocalFileToolOperations(
+                    workspaces, files, mutations, identifiers, time, provisioning, sessionLedger, repositoryBaselines);
             TrustedWorkspaceEnvironmentCatalog workspaceEnvironment = new TrustedWorkspaceEnvironmentCatalog(
                     workspaceRoot,
                     verificationDiscovery,

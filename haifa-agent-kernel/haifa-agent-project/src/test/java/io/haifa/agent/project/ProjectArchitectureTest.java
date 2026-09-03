@@ -20,6 +20,8 @@ class ProjectArchitectureTest {
                         "org.springframework..",
                         "com.fasterxml.jackson..",
                         "jakarta.persistence..",
+                        "io.haifa.agent.execution..",
+                        "io.haifa.agent.git..",
                         "io.haifa.agent.runtime..",
                         "io.haifa.agent.model..",
                         "io.haifa.agent.product..")

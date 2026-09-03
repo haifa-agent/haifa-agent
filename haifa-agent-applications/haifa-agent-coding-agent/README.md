@@ -67,7 +67,7 @@ Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/R
 
 `CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、有界执行事实和按需审查状态
 引用重建工作区修改、确定性 Change Review、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
-修改或验证通过证据。Issue 29 将文件变更事实从 `FileChangeSet` 事务收敛为成功的 Mutation ToolCall 与按需审查（Git 目录使用 Git 工作树状态，Plain 目录使用会话内有界记录 `SessionChangeLedger`），移除每次写操作同步生成 `coding-change-review/1` 的开销。
+修改或验证通过证据。Issue 29 将文件变更事实从 `FileChangeSet` 事务收敛为成功的 Mutation ToolCall 与按需审查（Git 目录使用 Git 工作树状态，Plain 目录使用会话内有界记录 `SessionChangeLedger`），移除每次写操作同步生成 Review 的开销。Phase 3 以 Run 级 `RepositoryBaseline` 在首次受管写入前冻结各仓 HEAD 与 dirty 摘要，按 nearest repository boundary 分流 Git/Plain Review；`execution.run` 无法证明全部写入归属、初始工作树已脏或证据读取不完整时，`coding-change-review/2` 明确产出 `ATTRIBUTION_PARTIAL`，不会伪装成完整证据。既有 `coding-change-review/1` 仍可确定性读取。
 
 `CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限 No-change、最后一次修改之后的验证尝试，
 以及覆盖最后一次修改的确定性 Review；`DIFF_INSPECTION` 不再作为修改任务完成门禁的兼容 fallback，

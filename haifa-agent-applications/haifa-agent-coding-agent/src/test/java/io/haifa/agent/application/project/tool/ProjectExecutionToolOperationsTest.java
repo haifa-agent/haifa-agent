@@ -3,6 +3,7 @@ package io.haifa.agent.application.project.tool;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
+import io.haifa.agent.application.project.product.coding.delivery.RepositoryBaselineUnavailableException;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCost;
@@ -40,6 +41,7 @@ import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.policy.api.PolicyDigest;
+import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.sandbox.api.SandboxException;
@@ -70,6 +72,65 @@ import org.junit.jupiter.api.Test;
 class ProjectExecutionToolOperationsTest {
     private static final Instant NOW = Instant.parse("2026-07-22T00:00:00Z");
     private static final WorkspaceId WORKSPACE_ID = new WorkspaceId("workspace-execution-tool");
+
+    @Test
+    void establishesExecutionBaselineBeforeDispatchAndInvalidatesAfterCompletion() {
+        List<String> order = new java.util.ArrayList<>();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                order.add("dispatch");
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+        ExecutionRepositoryBaselineObserver baselines = new ExecutionRepositoryBaselineObserver() {
+            @Override
+            public void beforeDispatch(TenantRef tenant, String runRef, PrincipalRef actor, WorkspacePath workdir) {
+                order.add("before");
+            }
+
+            @Override
+            public void afterCompletion(TenantRef tenant, String runRef, PrincipalRef actor, WorkspacePath workdir) {
+                order.add("after");
+            }
+        };
+
+        ToolResult result = operations(broker, 1024, 100, CodingVerificationProfileProvider.empty(), baselines)
+                .execute(invocation(Map.of("command", "echo ok", "workdir", "src"), () -> false), access());
+
+        assertThat(result.successful()).isTrue();
+        assertThat(order).containsExactly("before", "dispatch", "after");
+    }
+
+    @Test
+    void doesNotDispatchExecutionWhenBaselineIsUnavailable() {
+        AtomicBoolean dispatched = new AtomicBoolean();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                dispatched.set(true);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+        ExecutionRepositoryBaselineObserver baselines = new ExecutionRepositoryBaselineObserver() {
+            @Override
+            public void beforeDispatch(TenantRef tenant, String runRef, PrincipalRef actor, WorkspacePath workdir) {
+                throw new RepositoryBaselineUnavailableException("unavailable", new IllegalStateException("git"));
+            }
+
+            @Override
+            public void afterCompletion(TenantRef tenant, String runRef, PrincipalRef actor, WorkspacePath workdir) {
+                throw new AssertionError("completion must not run when dispatch never started");
+            }
+        };
+
+        ToolResult result = operations(broker, 1024, 100, CodingVerificationProfileProvider.empty(), baselines)
+                .execute(invocation(Map.of("command", "echo blocked"), () -> false), access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("errorCode", "REPOSITORY_BASELINE_UNAVAILABLE");
+        assertThat(dispatched).isFalse();
+    }
 
     @Test
     void constructsTrustedShellRequestAndMapsBoundedStructuredResult() {
@@ -1316,6 +1377,31 @@ class ProjectExecutionToolOperationsTest {
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 java.util.function.UnaryOperator.identity(),
                 verificationProfiles);
+    }
+
+    private static ProjectExecutionToolOperations operations(
+            ExecutionBroker broker,
+            int maximumOutputBytes,
+            int maximumOutputLines,
+            CodingVerificationProfileProvider verificationProfiles,
+            ExecutionRepositoryBaselineObserver repositoryBaselines) {
+        return new ProjectExecutionToolOperations(
+                broker,
+                () -> "execution-1",
+                () -> NOW,
+                new ExecutionEnvironmentRef(List.of("environment-1")),
+                new SandboxProfileRef("shell", "1"),
+                Duration.ofMinutes(2),
+                Duration.ofMinutes(30),
+                maximumOutputBytes,
+                maximumOutputLines,
+                8,
+                ExecutionOutputObserver.noop(),
+                java.util.function.UnaryOperator.identity(),
+                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                java.util.function.UnaryOperator.identity(),
+                verificationProfiles,
+                repositoryBaselines);
     }
 
     private static ToolInvocationRequest invocation(
