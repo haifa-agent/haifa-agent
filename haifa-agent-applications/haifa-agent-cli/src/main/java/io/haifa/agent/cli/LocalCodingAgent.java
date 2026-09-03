@@ -86,17 +86,17 @@ import io.haifa.agent.project.configuration.ProjectConfigurationVersion;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
+import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
+import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.mutation.InMemoryWorkspaceWriteLeaseManager;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.provider.local.scope.AuthorizedDirectoryProvisioning;
-import io.haifa.agent.project.provider.local.scope.LocalAllowedDirectory;
-import io.haifa.agent.project.provider.local.scope.LocalDirectoryPermission;
-import io.haifa.agent.project.provider.local.scope.LocalWorkspaceScope;
 import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
@@ -440,7 +440,7 @@ final class LocalCodingAgent implements AutoCloseable {
             var projects = new InMemoryProjectStore();
             var workspaces = new InMemoryWorkspaceStore();
             var bindings = new InMemoryWorkspaceBindingStore();
-            var locations = new LocalWorkspaceLocationStore();
+            var locations = new HostWorkspaceLocationStore();
             WorkspaceId workspaceId = workspaceIdentity.workspaceId();
             var verificationDiscovery = CliVerificationProfileDiscovery.discoverWithSignals(
                     workspaceRoot, System.getProperty("os.name", ""));
@@ -516,7 +516,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     .activate(time.now()));
 
             SensitivePathPolicy sensitivePaths = SensitivePathPolicy.defaults();
-            var files = new LocalWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
+            var files = new HostWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
             WorkspaceService workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, time);
             Path realRoot;
             try {
@@ -524,13 +524,13 @@ final class LocalCodingAgent implements AutoCloseable {
             } catch (IOException e) {
                 realRoot = workspaceRoot.toAbsolutePath().normalize();
             }
-            LocalAllowedDirectory initialDir =
-                    LocalAllowedDirectory.of(workspaceId, realRoot, LocalDirectoryPermission.READ_WRITE);
-            LocalWorkspaceScope initialScope = LocalWorkspaceScope.initial(initialDir);
-            AuthorizedDirectoryProvisioning provisioning = new AuthorizedDirectoryProvisioning(
+            AuthorizedHostDirectory initialDir =
+                    AuthorizedHostDirectory.of(workspaceId, realRoot, HostDirectoryPermission.READ_WRITE);
+            HostWorkspaceScope initialScope = HostWorkspaceScope.initial(initialDir);
+            AuthorizedWorkspaceProvisioning provisioning = new AuthorizedWorkspaceProvisioning(
                     projectId, workspaces, bindings, locations, workspaceService, principal, time, initialScope);
             var sessionLedger = new InMemorySessionChangeLedger();
-            var mutations = new LocalWorkspaceMutationService(
+            var mutations = new HostWorkspaceMutationService(
                     workspaces,
                     bindings,
                     locations,

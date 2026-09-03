@@ -15,17 +15,17 @@ import io.haifa.agent.project.configuration.ProjectConfigurationId;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
+import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
+import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.mutation.InMemoryWorkspaceWriteLeaseManager;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.provider.local.scope.AuthorizedDirectoryProvisioning;
-import io.haifa.agent.project.provider.local.scope.LocalAllowedDirectory;
-import io.haifa.agent.project.provider.local.scope.LocalDirectoryPermission;
-import io.haifa.agent.project.provider.local.scope.LocalWorkspaceScope;
 import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
@@ -64,7 +64,7 @@ class LocalFileToolOperationsMultiRootTest {
     private WorkspaceId workspaceId;
     private InMemoryWorkspaceStore workspaces;
     private InMemoryWorkspaceBindingStore bindings;
-    private LocalWorkspaceLocationStore locations;
+    private HostWorkspaceLocationStore locations;
     private InMemorySessionChangeLedger ledger;
 
     @BeforeEach
@@ -80,16 +80,15 @@ class LocalFileToolOperationsMultiRootTest {
         workspaceId = new WorkspaceId("ws-multiroot");
         bindings = new InMemoryWorkspaceBindingStore();
         workspaces = new InMemoryWorkspaceStore();
-        locations = new LocalWorkspaceLocationStore();
+        locations = new HostWorkspaceLocationStore();
         ProjectId projectId = new ProjectId("proj-multiroot");
         PrincipalRef owner = new PrincipalRef("owner", "user");
-        registerWorkspace(workspaceId, mainDir, LocalDirectoryPermission.READ_WRITE, WorkspacePurpose.PRIMARY, now);
+        registerWorkspace(workspaceId, mainDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.PRIMARY, now);
         WorkspaceId docsWorkspaceId = new WorkspaceId("ws-docs");
-        registerWorkspace(
-                docsWorkspaceId, docsDir, LocalDirectoryPermission.READ_ONLY, WorkspacePurpose.DIRECTORY, now);
+        registerWorkspace(docsWorkspaceId, docsDir, HostDirectoryPermission.READ_ONLY, WorkspacePurpose.DIRECTORY, now);
         WorkspaceId configWorkspaceId = new WorkspaceId("ws-config");
         registerWorkspace(
-                configWorkspaceId, configDir, LocalDirectoryPermission.READ_WRITE, WorkspacePurpose.DIRECTORY, now);
+                configWorkspaceId, configDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.DIRECTORY, now);
 
         var projects = new InMemoryProjectStore();
         projects.create(Project.create(
@@ -106,20 +105,20 @@ class LocalFileToolOperationsMultiRootTest {
         var identifiers =
                 (io.haifa.agent.common.id.IdentifierGenerator) () -> "multi-root-test-" + idSequence.incrementAndGet();
         var workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, () -> now);
-        var scope = new LocalWorkspaceScope(
+        var scope = new HostWorkspaceScope(
                 List.of(
-                        LocalAllowedDirectory.of(
-                                workspaceId, mainDir.toRealPath(), LocalDirectoryPermission.READ_WRITE),
-                        LocalAllowedDirectory.of(
-                                docsWorkspaceId, docsDir.toRealPath(), LocalDirectoryPermission.READ_ONLY),
-                        LocalAllowedDirectory.of(
-                                configWorkspaceId, configDir.toRealPath(), LocalDirectoryPermission.READ_WRITE)),
+                        AuthorizedHostDirectory.of(
+                                workspaceId, mainDir.toRealPath(), HostDirectoryPermission.READ_WRITE),
+                        AuthorizedHostDirectory.of(
+                                docsWorkspaceId, docsDir.toRealPath(), HostDirectoryPermission.READ_ONLY),
+                        AuthorizedHostDirectory.of(
+                                configWorkspaceId, configDir.toRealPath(), HostDirectoryPermission.READ_WRITE)),
                 1L);
-        var provisioning = new AuthorizedDirectoryProvisioning(
+        var provisioning = new AuthorizedWorkspaceProvisioning(
                 projectId, workspaces, bindings, locations, workspaceService, owner, () -> now, scope);
 
-        var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var mutations = new LocalWorkspaceMutationService(
+        var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        var mutations = new HostWorkspaceMutationService(
                 workspaces,
                 bindings,
                 locations,
@@ -134,7 +133,7 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     private void registerWorkspace(
-            WorkspaceId id, Path directory, LocalDirectoryPermission permission, WorkspacePurpose purpose, Instant now)
+            WorkspaceId id, Path directory, HostDirectoryPermission permission, WorkspacePurpose purpose, Instant now)
             throws IOException {
         WorkspaceLocationRef locationRef = new WorkspaceLocationRef("loc-" + id.value());
         WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-" + id.value());
@@ -149,7 +148,7 @@ class LocalFileToolOperationsMultiRootTest {
                                 ? WorkspaceCapabilitySet.readWriteFiles()
                                 : WorkspaceCapabilitySet.readOnlyFiles(),
                         permission.canWrite() ? WorkspacePermissionSet.readWrite() : WorkspacePermissionSet.readOnly(),
-                        LocalWorkspaceLocationStore.fingerprintFor(realPath),
+                        HostWorkspaceLocationStore.fingerprintFor(realPath),
                         now)
                 .activate(now);
         bindings.create(binding);
@@ -487,7 +486,7 @@ class LocalFileToolOperationsMultiRootTest {
         Path extraDir = tempDir.resolve("toctou-extra");
         Files.createDirectories(extraDir);
 
-        LocalWorkspaceScope initialScope = operations.currentScope();
+        HostWorkspaceScope initialScope = operations.currentScope();
         Path file = mainDir.resolve("toctou.txt");
         var resolvedTarget =
                 initialScope.resolve(file.toAbsolutePath().normalize().toString());

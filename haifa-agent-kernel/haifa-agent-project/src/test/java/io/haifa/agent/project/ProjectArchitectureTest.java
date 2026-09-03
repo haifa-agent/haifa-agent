@@ -32,10 +32,10 @@ class ProjectArchitectureTest {
     }
 
     @Test
-    void onlyLocalProviderUsesHostFileApis() {
+    void onlyHostWorkspaceAccessUsesHostFileApis() {
         noClasses()
                 .that()
-                .resideOutsideOfPackage("io.haifa.agent.project.provider.local..")
+                .resideOutsideOfPackage("io.haifa.agent.project.hostworkspace..")
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage("java.nio.file..")
@@ -55,6 +55,23 @@ class ProjectArchitectureTest {
                         || name.equals("LocalWorkspaceRootRegistry")
                         || name.equals("LocalWorkspaceRootStrategyDetector")
                         || name.equals("LocalMultiRootPathResolver"));
+    }
+
+    @Test
+    void legacyLocalWorkspaceAccessNamesAreRemoved() {
+        assertThat(productionClasses().stream().map(javaClass -> javaClass.getSimpleName()))
+                .noneMatch(name -> name.equals("LocalWorkspaceScope")
+                        || name.equals("LocalAllowedDirectory")
+                        || name.equals("LocalDirectoryPermission")
+                        || name.equals("LocalDirectoryIdentity")
+                        || name.equals("LocalScopeErrorCode")
+                        || name.equals("LocalWorkspaceScopeException")
+                        || name.equals("LocalWorkspaceFileService")
+                        || name.equals("LocalWorkspaceMutationService")
+                        || name.equals("LocalWorkspaceLocationStore")
+                        || name.equals("LocalWorkspacePathSafety")
+                        || name.equals("LocalStreamingPatchTransformer")
+                        || name.equals("AuthorizedDirectoryProvisioning"));
     }
 
     private static com.tngtech.archunit.core.domain.JavaClasses productionClasses() {

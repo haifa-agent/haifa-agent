@@ -16,13 +16,13 @@ import io.haifa.agent.project.configuration.ProjectConfigurationId;
 import io.haifa.agent.project.configuration.ProjectConfigurationVersion;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.filesystem.FileType;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.index.IndexStatus;
 import io.haifa.agent.project.index.ProjectIndexService;
 import io.haifa.agent.project.index.file.FileIndexQuery;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -167,7 +167,7 @@ class ProjectIndexTest {
     private Fixture fixture() {
         var workspaces = new InMemoryWorkspaceStore();
         var bindings = new InMemoryWorkspaceBindingStore();
-        var locations = new LocalWorkspaceLocationStore();
+        var locations = new HostWorkspaceLocationStore();
         WorkspaceId workspaceId = new WorkspaceId("workspace-1");
         WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-1");
         WorkspaceLocationRef locationRef = new WorkspaceLocationRef("location-1");
@@ -179,7 +179,7 @@ class ProjectIndexTest {
                         new PrincipalRef("owner", "user"),
                         WorkspaceCapabilitySet.readWriteFiles(),
                         WorkspacePermissionSet.readWrite(),
-                        LocalWorkspaceLocationStore.fingerprintFor(root),
+                        HostWorkspaceLocationStore.fingerprintFor(root),
                         NOW)
                 .activate(NOW);
         bindings.create(binding);
@@ -192,10 +192,9 @@ class ProjectIndexTest {
                         NOW)
                 .activate(NOW);
         workspaces.create(workspace);
-        var fileService =
-                new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        var fileService = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
         return new Fixture(workspace, fileService, new ProjectIndexService(workspaces, fileService, () -> NOW));
     }
 
-    private record Fixture(Workspace workspace, LocalWorkspaceFileService files, ProjectIndexService index) {}
+    private record Fixture(Workspace workspace, HostWorkspaceFileService files, ProjectIndexService index) {}
 }

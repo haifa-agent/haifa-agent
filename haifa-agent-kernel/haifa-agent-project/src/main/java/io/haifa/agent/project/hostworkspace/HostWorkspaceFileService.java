@@ -1,4 +1,4 @@
-package io.haifa.agent.project.provider.local;
+package io.haifa.agent.project.hostworkspace;
 
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingStatus;
@@ -43,16 +43,16 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
-public final class LocalWorkspaceFileService implements WorkspaceProvider {
+public final class HostWorkspaceFileService implements WorkspaceProvider {
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
-    private final LocalWorkspaceLocationStore locations;
+    private final HostWorkspaceLocationStore locations;
     private final SensitivePathPolicy sensitivePaths;
 
-    public LocalWorkspaceFileService(
+    public HostWorkspaceFileService(
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
+            HostWorkspaceLocationStore locations,
             SensitivePathPolicy sensitivePaths) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
@@ -240,7 +240,7 @@ public final class LocalWorkspaceFileService implements WorkspaceProvider {
         } catch (IOException | RuntimeException exception) {
             throw failure(WorkspaceFileErrorCode.BINDING_INACTIVE, path, "workspace location is unavailable");
         }
-        if (!LocalWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint())) {
+        if (!HostWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint())) {
             throw failure(WorkspaceFileErrorCode.BINDING_INACTIVE, path, "workspace root fingerprint changed");
         }
         if (isLinkOrReparse(root)) {

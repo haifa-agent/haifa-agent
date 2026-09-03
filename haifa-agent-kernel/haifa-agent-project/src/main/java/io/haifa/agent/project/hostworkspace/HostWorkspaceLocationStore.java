@@ -1,4 +1,4 @@
-package io.haifa.agent.project.provider.local;
+package io.haifa.agent.project.hostworkspace;
 
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.spi.WorkspaceLocationStore;
@@ -12,7 +12,7 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
-public final class LocalWorkspaceLocationStore implements WorkspaceLocationStore {
+public final class HostWorkspaceLocationStore implements WorkspaceLocationStore {
     private final ConcurrentHashMap<WorkspaceLocationRef, Path> locations = new ConcurrentHashMap<>();
 
     public void register(WorkspaceLocationRef reference, Path hostRoot) {
@@ -74,6 +74,6 @@ public final class LocalWorkspaceLocationStore implements WorkspaceLocationStore
 
     @Override
     public String toString() {
-        return "LocalWorkspaceLocationStore[locations=" + locations.size() + "]";
+        return "HostWorkspaceLocationStore[locations=" + locations.size() + "]";
     }
 }

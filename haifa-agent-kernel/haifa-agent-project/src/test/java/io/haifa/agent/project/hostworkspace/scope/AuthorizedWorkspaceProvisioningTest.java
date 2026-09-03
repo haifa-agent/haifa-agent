@@ -1,4 +1,4 @@
-package io.haifa.agent.project.provider.local.scope;
+package io.haifa.agent.project.hostworkspace.scope;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -15,9 +15,9 @@ import io.haifa.agent.project.configuration.ProjectConfigurationId;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning.ProvisioningResult;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.scope.AuthorizedDirectoryProvisioning.ProvisioningResult;
 import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
@@ -36,7 +36,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class AuthorizedDirectoryProvisioningTest {
+class AuthorizedWorkspaceProvisioningTest {
     private static final Instant NOW = Instant.parse("2026-09-01T12:00:00Z");
 
     @TempDir
@@ -46,12 +46,14 @@ class AuthorizedDirectoryProvisioningTest {
     private Path additionalRoot;
     private Path outsideRoot;
     private ProjectId projectId;
-    private LocalWorkspaceLocationStore locations;
+    private HostWorkspaceLocationStore locations;
     private InMemoryWorkspaceStore workspaceStore;
-    private AuthorizedDirectoryProvisioning provisioning;
+    private AuthorizedWorkspaceProvisioning provisioning;
 
     @BeforeEach
     void setUp() throws IOException {
+        // Keep authorized roots and later tool inputs on one canonical host-path representation.
+        tempDir = tempDir.toRealPath();
         initialRoot = Files.createDirectories(tempDir.resolve("initial"));
         additionalRoot = Files.createDirectories(tempDir.resolve("additional"));
         outsideRoot = Files.createDirectories(tempDir.resolve("outside"));
@@ -60,7 +62,7 @@ class AuthorizedDirectoryProvisioningTest {
         var projectStore = new InMemoryProjectStore();
         workspaceStore = new InMemoryWorkspaceStore();
         var bindingStore = new InMemoryWorkspaceBindingStore();
-        locations = new LocalWorkspaceLocationStore();
+        locations = new HostWorkspaceLocationStore();
 
         TimeProvider time = () -> NOW;
         var owner = new PrincipalRef("owner", "user");
@@ -73,7 +75,7 @@ class AuthorizedDirectoryProvisioningTest {
                         owner,
                         io.haifa.agent.project.workspace.WorkspaceCapabilitySet.readWriteFiles(),
                         io.haifa.agent.project.workspace.WorkspacePermissionSet.readWrite(),
-                        LocalWorkspaceLocationStore.fingerprintFor(initialRoot.toRealPath()),
+                        HostWorkspaceLocationStore.fingerprintFor(initialRoot.toRealPath()),
                         NOW)
                 .activate(NOW);
         bindingStore.create(initialBinding);
@@ -100,22 +102,22 @@ class AuthorizedDirectoryProvisioningTest {
 
         WorkspaceService workspaceService =
                 new WorkspaceService(projectStore, workspaceStore, bindingStore, () -> "generated-id", time);
-        LocalWorkspaceScope initialScope = LocalWorkspaceScope.initial(LocalAllowedDirectory.of(
-                initialWorkspace.id(), initialRoot.toRealPath(), LocalDirectoryPermission.READ_WRITE));
-        provisioning = new AuthorizedDirectoryProvisioning(
+        HostWorkspaceScope initialScope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(
+                initialWorkspace.id(), initialRoot.toRealPath(), HostDirectoryPermission.READ_WRITE));
+        provisioning = new AuthorizedWorkspaceProvisioning(
                 projectId, workspaceStore, bindingStore, locations, workspaceService, owner, time, initialScope);
     }
 
     @Test
     void authorizesApprovedDirectoryAsPeerWorkspace() throws IOException {
-        ProvisioningResult result = provisioning.authorize(additionalRoot, LocalDirectoryPermission.READ_WRITE);
+        ProvisioningResult result = provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_WRITE);
 
         assertThat(result.reusedExistingBoundary()).isFalse();
-        assertThat(result.directory().permission()).isEqualTo(LocalDirectoryPermission.READ_WRITE);
+        assertThat(result.directory().permission()).isEqualTo(HostDirectoryPermission.READ_WRITE);
         assertThat(result.directory().realPath()).isEqualTo(additionalRoot.toRealPath());
         assertThat(result.directory().workspaceId().value()).startsWith("local-directory-ws-v1-");
         assertThat(provisioning.scope().version()).isEqualTo(2L);
-        LocalDirectoryIdentity identity = LocalDirectoryIdentity.resolve(additionalRoot.toRealPath());
+        HostDirectoryIdentity identity = HostDirectoryIdentity.resolve(additionalRoot.toRealPath());
         assertThat(result.directory().workspaceId()).isEqualTo(identity.workspaceId());
         assertThat(locations.contains(identity.locationRef())).isTrue();
     }
@@ -123,7 +125,7 @@ class AuthorizedDirectoryProvisioningTest {
     @Test
     void resolvesAuthorizedDirectoryAfterApproval() throws IOException {
         Files.writeString(additionalRoot.resolve("doc.md"), "content", StandardCharsets.UTF_8);
-        provisioning.authorize(additionalRoot, LocalDirectoryPermission.READ_WRITE);
+        provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_WRITE);
 
         ResolvedAuthorizedPath resolved =
                 provisioning.scope().resolve(additionalRoot.resolve("doc.md").toString());
@@ -134,13 +136,13 @@ class AuthorizedDirectoryProvisioningTest {
 
     @Test
     void recoversSameWorkspaceIdWhenReauthorizedAfterRevocation() {
-        ProvisioningResult first = provisioning.authorize(additionalRoot, LocalDirectoryPermission.READ_WRITE);
+        ProvisioningResult first = provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_WRITE);
         provisioning.revoke(first.directory().workspaceId());
         assertThat(provisioning.scope().allowedDirectories()).hasSize(1);
         assertThatCode(() -> provisioning.scope().resolve(additionalRoot.toString()))
-                .isInstanceOf(LocalWorkspaceScopeException.class);
+                .isInstanceOf(HostWorkspaceScopeException.class);
 
-        ProvisioningResult second = provisioning.authorize(additionalRoot, LocalDirectoryPermission.READ_WRITE);
+        ProvisioningResult second = provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_WRITE);
 
         assertThat(second.directory().workspaceId()).isEqualTo(first.directory().workspaceId());
         assertThat(second.recovered()).isTrue();
@@ -149,10 +151,10 @@ class AuthorizedDirectoryProvisioningTest {
 
     @Test
     void reuseExistingBoundaryWhenCoveredByAuthorizedParent() throws IOException {
-        provisioning.authorize(additionalRoot, LocalDirectoryPermission.READ_WRITE);
+        provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_WRITE);
         Path nested = Files.createDirectories(additionalRoot.resolve("nested"));
 
-        ProvisioningResult result = provisioning.authorize(nested, LocalDirectoryPermission.READ_WRITE);
+        ProvisioningResult result = provisioning.authorize(nested, HostDirectoryPermission.READ_WRITE);
 
         assertThat(result.reusedExistingBoundary()).isTrue();
         assertThat(result.directory().realPath()).isEqualTo(additionalRoot.toRealPath());
@@ -163,22 +165,22 @@ class AuthorizedDirectoryProvisioningTest {
     @Test
     void cannotElevateCoveredDirectoryBeyondEnclosingReadOnlyBoundary() throws IOException {
         Path nested = Files.createDirectories(additionalRoot.resolve("nested"));
-        provisioning.authorize(additionalRoot, LocalDirectoryPermission.READ_ONLY);
+        provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_ONLY);
 
-        assertThatThrownBy(() -> provisioning.authorize(nested, LocalDirectoryPermission.READ_WRITE))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.PERMISSION_DENIED));
+        assertThatThrownBy(() -> provisioning.authorize(nested, HostDirectoryPermission.READ_WRITE))
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.PERMISSION_DENIED));
     }
 
     @Test
     void rejectsDirectoryThatWouldSwallowExistingBoundary() throws IOException {
         Path parent = Files.createDirectories(tempDir.resolve("swallow-parent"));
         Path child = Files.createDirectories(parent.resolve("swallow-child"));
-        provisioning.authorize(child, LocalDirectoryPermission.READ_WRITE);
+        provisioning.authorize(child, HostDirectoryPermission.READ_WRITE);
 
-        assertThatThrownBy(() -> provisioning.authorize(parent, LocalDirectoryPermission.READ_WRITE))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.INVALID_ARGUMENT));
+        assertThatThrownBy(() -> provisioning.authorize(parent, HostDirectoryPermission.READ_WRITE))
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.INVALID_ARGUMENT));
     }
 
     @Test
@@ -192,25 +194,25 @@ class AuthorizedDirectoryProvisioningTest {
             return;
         }
 
-        assertThatThrownBy(() -> provisioning.authorize(link, LocalDirectoryPermission.READ_WRITE))
-                .isInstanceOf(LocalWorkspaceScopeException.class);
+        assertThatThrownBy(() -> provisioning.authorize(link, HostDirectoryPermission.READ_WRITE))
+                .isInstanceOf(HostWorkspaceScopeException.class);
     }
 
     @Test
     void rejectsMissingDirectory() {
         Path missing = tempDir.resolve("does-not-exist");
 
-        assertThatThrownBy(() -> provisioning.authorize(missing, LocalDirectoryPermission.READ_WRITE))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.INVALID_ARGUMENT));
+        assertThatThrownBy(() -> provisioning.authorize(missing, HostDirectoryPermission.READ_WRITE))
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.INVALID_ARGUMENT));
     }
 
     @Test
     void revocationImmediatelyFailsResolutionAndKeepsLogicalFacts() throws IOException {
         Files.writeString(additionalRoot.resolve("file.txt"), "data", StandardCharsets.UTF_8);
-        ProvisioningResult result = provisioning.authorize(additionalRoot, LocalDirectoryPermission.READ_WRITE);
+        ProvisioningResult result = provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_WRITE);
         WorkspaceId workspaceId = result.directory().workspaceId();
-        LocalWorkspaceScope snapshot = provisioning.scope();
+        HostWorkspaceScope snapshot = provisioning.scope();
         ResolvedAuthorizedPath resolved =
                 snapshot.resolve(additionalRoot.resolve("file.txt").toString());
 
@@ -218,23 +220,23 @@ class AuthorizedDirectoryProvisioningTest {
 
         assertThat(Files.exists(additionalRoot.resolve("file.txt"))).isTrue();
         assertThatThrownBy(() -> provisioning.scope().resolve(resolved.absoluteInput()))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.ACCESS_DENIED));
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.ACCESS_DENIED));
         assertThatThrownBy(() -> provisioning.requireUnchanged(snapshot))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.ACCESS_DENIED));
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.ACCESS_DENIED));
     }
 
     @Test
     void requireUnchangedDetectsConcurrentRevocationBeforeWriteIo() {
-        ProvisioningResult result = provisioning.authorize(additionalRoot, LocalDirectoryPermission.READ_WRITE);
-        LocalWorkspaceScope snapshot = provisioning.scope();
+        ProvisioningResult result = provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_WRITE);
+        HostWorkspaceScope snapshot = provisioning.scope();
 
         provisioning.revoke(result.directory().workspaceId());
 
         assertThatThrownBy(() -> provisioning.requireUnchanged(snapshot))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.ACCESS_DENIED));
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.ACCESS_DENIED));
     }
 
     @Test
@@ -245,10 +247,9 @@ class AuthorizedDirectoryProvisioningTest {
 
     @Test
     void workspaceProvisionedWithDirectoryPurpose() throws IOException {
-        provisioning.authorize(additionalRoot, LocalDirectoryPermission.READ_WRITE);
+        provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_WRITE);
         Workspace workspace = workspaceStore
-                .find(LocalDirectoryIdentity.resolve(additionalRoot.toRealPath())
-                        .workspaceId())
+                .find(HostDirectoryIdentity.resolve(additionalRoot.toRealPath()).workspaceId())
                 .orElseThrow();
 
         assertThat(workspace.purpose()).isEqualTo(WorkspacePurpose.DIRECTORY);

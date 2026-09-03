@@ -12,6 +12,9 @@ import io.haifa.agent.project.diff.DiffFile;
 import io.haifa.agent.project.diff.DiffRequest;
 import io.haifa.agent.project.diff.DiffService;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.mutation.AuthorizedWorkspaceMutationService;
 import io.haifa.agent.project.mutation.CreateFileRequest;
 import io.haifa.agent.project.mutation.DeleteFileRequest;
@@ -31,9 +34,6 @@ import io.haifa.agent.project.patch.PatchValidationService;
 import io.haifa.agent.project.patch.UnifiedPatchParser;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -56,7 +56,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class LocalWorkspaceMutationServiceTest {
+class HostWorkspaceMutationServiceTest {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
 
     @TempDir
@@ -421,7 +421,7 @@ class LocalWorkspaceMutationServiceTest {
         WorkspaceLocationRef locationRef = new WorkspaceLocationRef("location-" + workspaceValue);
         var bindingStore = new InMemoryWorkspaceBindingStore();
         var workspaceStore = new InMemoryWorkspaceStore();
-        var locations = new LocalWorkspaceLocationStore();
+        var locations = new HostWorkspaceLocationStore();
         locations.register(locationRef, root);
         WorkspaceBinding binding = WorkspaceBinding.provision(
                         bindingId,
@@ -432,7 +432,7 @@ class LocalWorkspaceMutationServiceTest {
                                 ? WorkspaceCapabilitySet.readOnlyFiles()
                                 : WorkspaceCapabilitySet.readWriteFiles(),
                         permissions,
-                        LocalWorkspaceLocationStore.fingerprintFor(root),
+                        HostWorkspaceLocationStore.fingerprintFor(root),
                         NOW)
                 .activate(NOW);
         bindingStore.create(binding);
@@ -449,7 +449,7 @@ class LocalWorkspaceMutationServiceTest {
         var idGenerator =
                 (io.haifa.agent.common.id.IdentifierGenerator) () -> "phase2-" + identifiers.incrementAndGet();
         var leases = new InMemoryWorkspaceWriteLeaseManager();
-        var local = new LocalWorkspaceMutationService(
+        var local = new HostWorkspaceMutationService(
                 workspaceStore,
                 bindingStore,
                 locations,
@@ -458,7 +458,7 @@ class LocalWorkspaceMutationServiceTest {
                 idGenerator,
                 () -> NOW);
         var authorized = new AuthorizedWorkspaceMutationService(workspaceStore, bindingStore, local);
-        var files = new io.haifa.agent.project.provider.local.LocalWorkspaceFileService(
+        var files = new io.haifa.agent.project.hostworkspace.HostWorkspaceFileService(
                 workspaceStore, bindingStore, locations, SensitivePathPolicy.defaults());
         return new Fixture(workspaceId, workspaceStore, bindingStore, locations, local, authorized, files, leases);
     }
@@ -494,10 +494,10 @@ class LocalWorkspaceMutationServiceTest {
             WorkspaceId workspaceId,
             InMemoryWorkspaceStore workspaceStore,
             InMemoryWorkspaceBindingStore bindingStore,
-            LocalWorkspaceLocationStore locations,
-            LocalWorkspaceMutationService local,
+            HostWorkspaceLocationStore locations,
+            HostWorkspaceMutationService local,
             AuthorizedWorkspaceMutationService authorized,
-            io.haifa.agent.project.provider.local.LocalWorkspaceFileService files,
+            io.haifa.agent.project.hostworkspace.HostWorkspaceFileService files,
             InMemoryWorkspaceWriteLeaseManager leases) {
         private Workspace workspace() {
             return workspaceStore.find(workspaceId).orElseThrow();

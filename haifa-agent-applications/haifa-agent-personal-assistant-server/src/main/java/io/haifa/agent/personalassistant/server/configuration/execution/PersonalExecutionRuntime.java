@@ -26,10 +26,10 @@ import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -73,7 +73,7 @@ public final class PersonalExecutionRuntime {
         TimeProvider time = clock::instant;
         var workspaces = new InMemoryWorkspaceStore();
         var bindings = new InMemoryWorkspaceBindingStore();
-        var locations = new LocalWorkspaceLocationStore();
+        var locations = new HostWorkspaceLocationStore();
         WorkspaceId workspaceId = new WorkspaceId("personal-execution");
         WorkspaceBindingId bindingId = new WorkspaceBindingId("personal-execution-binding");
         WorkspaceLocationRef locationRef = new WorkspaceLocationRef("personal-execution-location");
@@ -85,7 +85,7 @@ public final class PersonalExecutionRuntime {
                         principal,
                         new WorkspaceCapabilitySet(Set.of("execution.run", "workspace.write")),
                         WorkspacePermissionSet.readWriteExecute(),
-                        LocalWorkspaceLocationStore.fingerprintFor(workspaceRoot),
+                        HostWorkspaceLocationStore.fingerprintFor(workspaceRoot),
                         time.now())
                 .activate(time.now()));
         workspaces.create(Workspace.provision(
@@ -125,7 +125,7 @@ public final class PersonalExecutionRuntime {
                 environmentNames,
                 true);
         host.preflight(profile);
-        var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
         var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(
                 workspaceId, workspaceRoot, new PersonalWorkspaceChangeIgnorePolicy());
         var broker = new DefaultExecutionBroker(

@@ -1,11 +1,11 @@
-package io.haifa.agent.project.provider.local.scope;
+package io.haifa.agent.project.hostworkspace.scope;
 
 import io.haifa.agent.project.path.WorkspacePath;
 import java.nio.file.Path;
 import java.util.Objects;
 
 /**
- * Short-lived result of resolving one absolute tool input against the local workspace scope. It is a
+ * Short-lived result of resolving one absolute tool input against the host workspace scope. It is a
  * provider-local value only: it must never enter Core DTOs, persistence records, logs or Admin
  * views, and it does not survive the tool call that produced it.
  *
@@ -13,7 +13,7 @@ import java.util.Objects;
  *     normalized path for targets that do not exist yet
  */
 public record ResolvedAuthorizedPath(
-        String absoluteInput, LocalAllowedDirectory directory, WorkspacePath workspacePath, Path hostPath) {
+        String absoluteInput, AuthorizedHostDirectory directory, WorkspacePath workspacePath, Path hostPath) {
 
     public ResolvedAuthorizedPath {
         Objects.requireNonNull(absoluteInput, "absoluteInput must not be null");

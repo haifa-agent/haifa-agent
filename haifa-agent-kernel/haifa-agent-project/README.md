@@ -2,7 +2,7 @@
 
 纯 Java 的 Project、Workspace 与安全文件系统边界。
 
-本模块保存长期 Project、可选 Workspace、Binding、类型化逻辑路径和 Provider-neutral 文件读取契约。真实主机路径只允许存在于 `provider.local`；Runtime、Product、领域对象和普通 Store 不得接收或返回主机路径。
+本模块保存长期 Project、可选 Workspace、Binding、类型化逻辑路径和 Provider-neutral 文件读取契约。真实主机路径只允许存在于 Host Workspace Access（`io.haifa.agent.project.hostworkspace`）；Runtime、Product、领域对象和普通 Store 不得接收或返回主机路径。
 
 当前支持：
 

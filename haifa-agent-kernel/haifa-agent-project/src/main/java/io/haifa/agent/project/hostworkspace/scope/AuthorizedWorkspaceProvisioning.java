@@ -1,12 +1,12 @@
-package io.haifa.agent.project.provider.local.scope;
+package io.haifa.agent.project.hostworkspace.scope;
 
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.LocalWorkspacePathSafety;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspacePathSafety;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -23,33 +23,33 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Trusted local product boundary that turns an approved directory into a peer member of the
- * {@link LocalWorkspaceScope}. It must only be invoked after the user has approved the directory:
+ * {@link HostWorkspaceScope}. It must only be invoked after the user has approved the directory:
  * it resolves the real path, applies the overlap policy, provisions or recovers the logical
  * workspace and binding, and atomically swaps the scope snapshot. Revocation removes the physical
  * authorization immediately; it never deletes user files, the ledger, or the logical workspace and
  * binding audit facts.
  */
-public final class AuthorizedDirectoryProvisioning {
+public final class AuthorizedWorkspaceProvisioning {
     private static final String SEMANTICS_ID = "local-authorized-directory";
 
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
-    private final LocalWorkspaceLocationStore locations;
+    private final HostWorkspaceLocationStore locations;
     private final WorkspaceService workspaceService;
     private final ProjectId projectId;
     private final PrincipalRef owner;
     private final TimeProvider time;
-    private final AtomicReference<LocalWorkspaceScope> scope;
+    private final AtomicReference<HostWorkspaceScope> scope;
 
-    public AuthorizedDirectoryProvisioning(
+    public AuthorizedWorkspaceProvisioning(
             ProjectId projectId,
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
+            HostWorkspaceLocationStore locations,
             WorkspaceService workspaceService,
             PrincipalRef owner,
             TimeProvider time,
-            LocalWorkspaceScope initialScope) {
+            HostWorkspaceScope initialScope) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
@@ -62,15 +62,15 @@ public final class AuthorizedDirectoryProvisioning {
     }
 
     /** Current scope snapshot. Callers must re-validate the snapshot before physical write I/O. */
-    public LocalWorkspaceScope scope() {
+    public HostWorkspaceScope scope() {
         return scope.get();
     }
 
     /** Fails closed when the scope has changed since the given snapshot was resolved. */
-    public void requireUnchanged(LocalWorkspaceScope resolvedAgainst) {
+    public void requireUnchanged(HostWorkspaceScope resolvedAgainst) {
         Objects.requireNonNull(resolvedAgainst, "resolvedAgainst must not be null");
         if (scope.get().version() != resolvedAgainst.version()) {
-            throw LocalWorkspaceScopeException.accessDenied(
+            throw HostWorkspaceScopeException.accessDenied(
                     null, "Directory authorization changed while the operation was in flight");
         }
     }
@@ -80,15 +80,15 @@ public final class AuthorizedDirectoryProvisioning {
      * authorized boundary, the existing entry is reused with its current permission. If it would
      * swallow an existing boundary, the request is rejected fail closed.
      */
-    public ProvisioningResult authorize(Path directory, LocalDirectoryPermission permission) {
+    public ProvisioningResult authorize(Path directory, HostDirectoryPermission permission) {
         Objects.requireNonNull(directory, "directory must not be null");
         Objects.requireNonNull(permission, "permission must not be null");
         if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
-            throw LocalWorkspaceScopeException.invalidArgument(
+            throw HostWorkspaceScopeException.invalidArgument(
                     directory.toString(), "Authorized directory must be an existing directory");
         }
-        if (LocalWorkspacePathSafety.isUnsafeNode(directory)) {
-            throw LocalWorkspaceScopeException.invalidArgument(
+        if (HostWorkspacePathSafety.isUnsafeNode(directory)) {
+            throw HostWorkspaceScopeException.invalidArgument(
                     directory.toString(),
                     "Authorized directory must not be a symbolic link or reparse point: " + directory);
         }
@@ -96,27 +96,27 @@ public final class AuthorizedDirectoryProvisioning {
         try {
             realPath = directory.toRealPath();
         } catch (IOException exception) {
-            throw LocalWorkspaceScopeException.invalidArgument(
+            throw HostWorkspaceScopeException.invalidArgument(
                     directory.toString(), "Authorized directory must exist and be accessible");
         }
-        if (LocalWorkspacePathSafety.isUnsafeNode(realPath)) {
-            throw LocalWorkspaceScopeException.invalidArgument(
+        if (HostWorkspacePathSafety.isUnsafeNode(realPath)) {
+            throw HostWorkspaceScopeException.invalidArgument(
                     realPath.toString(),
                     "Authorized directory must not be a symbolic link or reparse point: " + realPath);
         }
 
-        LocalWorkspaceScope current = scope.get();
-        for (LocalAllowedDirectory existing : current.allowedDirectories()) {
+        HostWorkspaceScope current = scope.get();
+        for (AuthorizedHostDirectory existing : current.allowedDirectories()) {
             if (existing.encloses(realPath)) {
                 if (permission.canWrite() && !existing.permission().canWrite()) {
-                    throw LocalWorkspaceScopeException.permissionDenied(
+                    throw HostWorkspaceScopeException.permissionDenied(
                             realPath.toString(),
                             "Directory is already authorized as read-only by an enclosing boundary: " + realPath);
                 }
                 return new ProvisioningResult(existing, true, false);
             }
             if (existing.realPath().startsWith(realPath)) {
-                throw LocalWorkspaceScopeException.invalidArgument(
+                throw HostWorkspaceScopeException.invalidArgument(
                         realPath.toString(),
                         "Directory overlaps an existing authorized boundary; choose a non-overlapping"
                                 + " directory: "
@@ -125,10 +125,10 @@ public final class AuthorizedDirectoryProvisioning {
         }
 
         ProvisioningResult result = provisionDirectory(realPath, permission);
-        LocalAllowedDirectory allowed = result.directory();
+        AuthorizedHostDirectory allowed = result.directory();
         while (true) {
             current = scope.get();
-            LocalWorkspaceScope updated = current.withDirectory(allowed);
+            HostWorkspaceScope updated = current.withDirectory(allowed);
             if (scope.compareAndSet(current, updated)) {
                 return result;
             }
@@ -139,8 +139,8 @@ public final class AuthorizedDirectoryProvisioning {
     public void revoke(WorkspaceId workspaceId) {
         Objects.requireNonNull(workspaceId, "workspaceId must not be null");
         while (true) {
-            LocalWorkspaceScope before = scope.get();
-            LocalWorkspaceScope updated = before.withoutDirectory(workspaceId);
+            HostWorkspaceScope before = scope.get();
+            HostWorkspaceScope updated = before.withoutDirectory(workspaceId);
             if (updated == before) {
                 throw new IllegalArgumentException("Directory is not authorized in this scope");
             }
@@ -150,8 +150,8 @@ public final class AuthorizedDirectoryProvisioning {
         }
     }
 
-    private ProvisioningResult provisionDirectory(Path realPath, LocalDirectoryPermission permission) {
-        LocalDirectoryIdentity identity = LocalDirectoryIdentity.resolve(realPath);
+    private ProvisioningResult provisionDirectory(Path realPath, HostDirectoryPermission permission) {
+        HostDirectoryIdentity identity = HostDirectoryIdentity.resolve(realPath);
         boolean recovered = workspaces.find(identity.workspaceId()).isPresent();
         WorkspaceBindingMode mode =
                 permission.canWrite() ? WorkspaceBindingMode.DIRECT : WorkspaceBindingMode.READ_ONLY;
@@ -172,11 +172,12 @@ public final class AuthorizedDirectoryProvisioning {
         if (!locations.contains(identity.locationRef())) {
             locations.register(identity.locationRef(), realPath);
         }
-        return new ProvisioningResult(LocalAllowedDirectory.of(workspace.id(), realPath, permission), false, recovered);
+        return new ProvisioningResult(
+                AuthorizedHostDirectory.of(workspace.id(), realPath, permission), false, recovered);
     }
 
     public record ProvisioningResult(
-            LocalAllowedDirectory directory, boolean reusedExistingBoundary, boolean recovered) {
+            AuthorizedHostDirectory directory, boolean reusedExistingBoundary, boolean recovered) {
         public ProvisioningResult {
             Objects.requireNonNull(directory, "directory must not be null");
         }

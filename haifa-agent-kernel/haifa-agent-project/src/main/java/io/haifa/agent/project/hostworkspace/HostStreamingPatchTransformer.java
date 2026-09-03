@@ -1,4 +1,4 @@
-package io.haifa.agent.project.provider.local;
+package io.haifa.agent.project.hostworkspace;
 
 import io.haifa.agent.project.patch.FilePatch;
 import io.haifa.agent.project.patch.PatchHunk;
@@ -20,7 +20,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 
-final class LocalStreamingPatchTransformer {
+final class HostStreamingPatchTransformer {
     private static final int MAX_LINE_BYTES = 8 * 1024 * 1024;
     private static final byte[] UTF8_BOM = {(byte) 0xef, (byte) 0xbb, (byte) 0xbf};
     private static final byte[] LF = {'\n'};

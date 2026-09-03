@@ -1,4 +1,4 @@
-package io.haifa.agent.project.provider.local.scope;
+package io.haifa.agent.project.hostworkspace.scope;
 
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Immutable snapshot of the peer authorized directories of one local session. Roots must be strictly
+ * Immutable snapshot of the peer authorized directories of one host session. Roots must be strictly
  * disjoint so a target can never match two permissions; overlap between a parent and a child
  * directory is rejected at construction time instead of being resolved by prefix order. Resolution
  * accepts host absolute paths only, verifies physical containment via real paths (symlink and
@@ -23,9 +23,9 @@ import java.util.Objects;
  * snapshot they were resolved against and must re-validate the version before physical I/O so a
  * concurrent revocation fails closed.
  */
-public record LocalWorkspaceScope(List<LocalAllowedDirectory> allowedDirectories, long version) {
+public record HostWorkspaceScope(List<AuthorizedHostDirectory> allowedDirectories, long version) {
 
-    public LocalWorkspaceScope {
+    public HostWorkspaceScope {
         allowedDirectories =
                 List.copyOf(Objects.requireNonNull(allowedDirectories, "allowedDirectories must not be null"));
         if (allowedDirectories.isEmpty()) {
@@ -34,32 +34,32 @@ public record LocalWorkspaceScope(List<LocalAllowedDirectory> allowedDirectories
         validateDisjointRoots(allowedDirectories);
     }
 
-    public static LocalWorkspaceScope initial(LocalAllowedDirectory directory) {
+    public static HostWorkspaceScope initial(AuthorizedHostDirectory directory) {
         Objects.requireNonNull(directory, "directory must not be null");
-        return new LocalWorkspaceScope(List.of(directory), 1L);
+        return new HostWorkspaceScope(List.of(directory), 1L);
     }
 
-    public LocalWorkspaceScope withDirectory(LocalAllowedDirectory directory) {
+    public HostWorkspaceScope withDirectory(AuthorizedHostDirectory directory) {
         Objects.requireNonNull(directory, "directory must not be null");
-        List<LocalAllowedDirectory> next = new ArrayList<>(allowedDirectories.size() + 1);
+        List<AuthorizedHostDirectory> next = new ArrayList<>(allowedDirectories.size() + 1);
         next.addAll(allowedDirectories);
         next.add(directory);
-        return new LocalWorkspaceScope(next, version + 1);
+        return new HostWorkspaceScope(next, version + 1);
     }
 
-    public LocalWorkspaceScope withoutDirectory(WorkspaceId workspaceId) {
+    public HostWorkspaceScope withoutDirectory(WorkspaceId workspaceId) {
         Objects.requireNonNull(workspaceId, "workspaceId must not be null");
-        List<LocalAllowedDirectory> remaining = allowedDirectories.stream()
+        List<AuthorizedHostDirectory> remaining = allowedDirectories.stream()
                 .filter(directory -> !directory.workspaceId().equals(workspaceId))
                 .toList();
         if (remaining.size() == allowedDirectories.size()) {
             return this;
         }
-        return new LocalWorkspaceScope(remaining, version + 1);
+        return new HostWorkspaceScope(remaining, version + 1);
     }
 
-    public LocalAllowedDirectory findEnclosingDirectory(Path candidateRealPath) {
-        for (LocalAllowedDirectory directory : allowedDirectories) {
+    public AuthorizedHostDirectory findEnclosingDirectory(Path candidateRealPath) {
+        for (AuthorizedHostDirectory directory : allowedDirectories) {
             if (directory.encloses(candidateRealPath)) {
                 return directory;
             }
@@ -75,7 +75,7 @@ public record LocalWorkspaceScope(List<LocalAllowedDirectory> allowedDirectories
      */
     public ResolvedAuthorizedPath resolve(String input) {
         if (input == null || input.isBlank()) {
-            throw LocalWorkspaceScopeException.invalidArgument(
+            throw HostWorkspaceScopeException.invalidArgument(
                     input, "Local file tools accept absolute host paths only");
         }
         String trimmed = input.trim();
@@ -83,19 +83,19 @@ public record LocalWorkspaceScope(List<LocalAllowedDirectory> allowedDirectories
         try {
             candidate = Path.of(trimmed);
         } catch (InvalidPathException exception) {
-            throw LocalWorkspaceScopeException.invalidArgument(trimmed, "Input is not a valid host path: " + trimmed);
+            throw HostWorkspaceScopeException.invalidArgument(trimmed, "Input is not a valid host path: " + trimmed);
         }
         if (!candidate.isAbsolute()) {
-            throw LocalWorkspaceScopeException.invalidArgument(
+            throw HostWorkspaceScopeException.invalidArgument(
                     trimmed,
                     "Relative paths and root aliases such as 'main:' or 'docs:' are not accepted;"
                             + " pass a host absolute path: "
                             + trimmed);
         }
         Path normalized = candidate.normalize();
-        LocalAllowedDirectory directory = findEnclosingDirectory(normalized);
+        AuthorizedHostDirectory directory = findEnclosingDirectory(normalized);
         if (directory == null) {
-            throw LocalWorkspaceScopeException.accessDenied(
+            throw HostWorkspaceScopeException.accessDenied(
                     trimmed, "Path is outside every authorized directory: " + normalized);
         }
         Path verified = verifyPhysicalContainment(normalized, directory);
@@ -103,21 +103,21 @@ public record LocalWorkspaceScope(List<LocalAllowedDirectory> allowedDirectories
     }
 
     /** Fails closed when the resolved directory does not allow writes. */
-    public void requireWritable(LocalAllowedDirectory directory) {
+    public void requireWritable(AuthorizedHostDirectory directory) {
         Objects.requireNonNull(directory, "directory must not be null");
         if (!directory.permission().canWrite()) {
-            throw LocalWorkspaceScopeException.permissionDenied(
+            throw HostWorkspaceScopeException.permissionDenied(
                     directory.realPath().toString(), "Authorized directory is read-only: " + directory.realPath());
         }
     }
 
-    private Path verifyPhysicalContainment(Path normalized, LocalAllowedDirectory directory) {
+    private Path verifyPhysicalContainment(Path normalized, AuthorizedHostDirectory directory) {
         Path realRoot = directory.realPath();
         try {
             if (Files.exists(normalized)) {
                 Path realTarget = normalized.toRealPath();
                 if (!realTarget.startsWith(realRoot)) {
-                    throw LocalWorkspaceScopeException.pathEscapeDenied(
+                    throw HostWorkspaceScopeException.pathEscapeDenied(
                             normalized.toString(),
                             "Target escapes the authorized directory via symlink or reparse point: " + normalized);
                 }
@@ -128,37 +128,37 @@ public record LocalWorkspaceScope(List<LocalAllowedDirectory> allowedDirectories
                 current = current.getParent();
             }
             if (current == null) {
-                throw LocalWorkspaceScopeException.pathEscapeDenied(
+                throw HostWorkspaceScopeException.pathEscapeDenied(
                         normalized.toString(),
                         "Target cannot be anchored inside the authorized directory: " + normalized);
             }
             Path realAncestor = current.toRealPath();
             if (!realAncestor.startsWith(realRoot)) {
-                throw LocalWorkspaceScopeException.pathEscapeDenied(
+                throw HostWorkspaceScopeException.pathEscapeDenied(
                         normalized.toString(),
                         "Ancestor directory escapes the authorized directory via symlink or reparse point: "
                                 + normalized);
             }
             return normalized;
         } catch (IOException exception) {
-            throw LocalWorkspaceScopeException.pathEscapeDenied(
+            throw HostWorkspaceScopeException.pathEscapeDenied(
                     normalized.toString(), "Cannot verify physical containment of the target: " + normalized);
         }
     }
 
-    private WorkspacePath toWorkspacePath(LocalAllowedDirectory directory, Path verifiedHostPath) {
+    private WorkspacePath toWorkspacePath(AuthorizedHostDirectory directory, Path verifiedHostPath) {
         String logical =
                 directory.realPath().relativize(verifiedHostPath).toString().replace('\\', '/');
         try {
             return new WorkspacePath(directory.workspaceId(), ProjectPath.of(logical));
         } catch (IllegalArgumentException exception) {
-            throw LocalWorkspaceScopeException.invalidArgument(
+            throw HostWorkspaceScopeException.invalidArgument(
                     verifiedHostPath.toString(),
                     "Path cannot be represented as a logical workspace path: " + exception.getMessage());
         }
     }
 
-    private static void validateDisjointRoots(List<LocalAllowedDirectory> directories) {
+    private static void validateDisjointRoots(List<AuthorizedHostDirectory> directories) {
         for (int i = 0; i < directories.size(); i++) {
             Path first = directories.get(i).realPath();
             for (int j = i + 1; j < directories.size(); j++) {

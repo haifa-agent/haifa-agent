@@ -3,8 +3,8 @@ package io.haifa.agent.sandbox.host;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit;
 public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolationProvider {
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
-    private final LocalWorkspaceLocationStore locations;
+    private final HostWorkspaceLocationStore locations;
     private final Path controlledBase;
     private final String gitExecutable;
     private final TimeProvider time;
@@ -43,7 +43,7 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
     public HostGitWorktreeIsolationProvider(
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
+            HostWorkspaceLocationStore locations,
             Path controlledBase,
             String gitExecutable,
             TimeProvider time) {
@@ -111,7 +111,7 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
                             request.owner(),
                             request.narrowedCapabilities(),
                             request.narrowedPermissions(),
-                            LocalWorkspaceLocationStore.fingerprintFor(target),
+                            HostWorkspaceLocationStore.fingerprintFor(target),
                             now)
                     .activate(now);
             bindings.create(binding);
