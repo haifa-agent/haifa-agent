@@ -282,7 +282,8 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 - `ExecutionBroker`、Sandbox SPI、受控 Host Provider，以及 macOS Seatbelt / Linux bubblewrap
   Local Native Provider；
 - 模型通过受控 `execution.run` 直接调用系统 `git` / `gh`；Java Git Integration 只保留不向模型披露的
-  Worktree、Patch 合并和最小 Revision Probe，不再注册 `git.*` / `github.*` 子命令 Tool；
+  Worktree、Patch 合并、Revision Probe，以及供 Path-local Review 使用的有界仓库检查和只读证据采集，
+  不再注册 `git.*` / `github.*` 子命令 Tool；
 - 请求绑定的 Policy Decision、`DENY > ASK > ALLOW`、Approval Grant、Project Trust、AES-GCM
   本地 Credential Store 与短生命周期 Lease。
 

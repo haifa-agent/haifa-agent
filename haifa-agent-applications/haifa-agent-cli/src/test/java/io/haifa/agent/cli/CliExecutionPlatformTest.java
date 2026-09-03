@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
@@ -135,7 +135,7 @@ class CliExecutionPlatformTest {
         return new HostGuardedSandboxProvider(
                 new InMemoryWorkspaceStore(),
                 new InMemoryWorkspaceBindingStore(),
-                new LocalWorkspaceLocationStore(),
+                new HostWorkspaceLocationStore(),
                 () -> "session",
                 () -> Instant.parse("2026-07-26T00:00:00Z"),
                 HostShell.auto());
@@ -162,7 +162,7 @@ class CliExecutionPlatformTest {
         return new LocalNativeSandboxProvider(
                 new InMemoryWorkspaceStore(),
                 new InMemoryWorkspaceBindingStore(),
-                new LocalWorkspaceLocationStore(),
+                new HostWorkspaceLocationStore(),
                 () -> "session",
                 () -> Instant.parse("2026-07-26T00:00:00Z"),
                 CliExecutionPlatform.localConfiguration(configuration, shell));

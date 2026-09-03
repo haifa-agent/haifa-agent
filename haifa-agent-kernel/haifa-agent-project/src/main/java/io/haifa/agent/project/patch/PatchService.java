@@ -14,7 +14,6 @@ import io.haifa.agent.project.mutation.MutationResult;
 import io.haifa.agent.project.mutation.WorkspaceMutationException;
 import io.haifa.agent.project.mutation.WorkspaceMutationService;
 import io.haifa.agent.project.mutation.WriteFileRequest;
-import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -50,7 +49,7 @@ public final class PatchService {
                 .find(request.workspaceId())
                 .orElseThrow(() -> new IllegalArgumentException("workspace not found"));
         if (!workspace.revision().equals(request.expectedRevision())) {
-            ProjectPath first = request.document().files().get(0).targetPath();
+            WorkspacePath first = request.document().files().get(0).targetPath();
             return conflict(
                     request, first, PatchConflictCode.REVISION_CONFLICT, -1, "workspace revision precondition failed");
         }
@@ -58,6 +57,9 @@ public final class PatchService {
         List<PreparedPatch> prepared = new ArrayList<>();
         List<PatchConflict> conflicts = new ArrayList<>();
         for (FilePatch patch : request.document().files()) {
+            if (!patch.sourcePath().workspaceId().equals(request.workspaceId())) {
+                throw new IllegalArgumentException("patch file belongs to a different logical workspace");
+            }
             prepare(request, patch, conflicts).ifPresent(prepared::add);
         }
         if (!conflicts.isEmpty()) {
@@ -70,8 +72,7 @@ public final class PatchService {
         for (int index = 0; index < prepared.size(); index++) {
             PreparedPatch item = prepared.get(index);
             MutationContext context = childContext(request.context(), index);
-            WorkspacePath path =
-                    new WorkspacePath(request.workspaceId(), item.patch().sourcePath());
+            WorkspacePath path = item.patch().sourcePath();
             try {
                 MutationResult result;
                 if (item.patch().creation()) {
@@ -107,8 +108,7 @@ public final class PatchService {
                             .orElseThrow(() -> new IllegalStateException("patched file hash is unavailable"));
                     MutationResult moved = mutations.move(new io.haifa.agent.project.mutation.MoveFileRequest(
                             path,
-                            new WorkspacePath(
-                                    request.workspaceId(), item.patch().targetPath()),
+                            item.patch().targetPath(),
                             MutationPrecondition.existing(revision, patchedHash),
                             childContext(request.context(), index, "move")));
                     results.add(moved);
@@ -144,7 +144,7 @@ public final class PatchService {
 
     private java.util.Optional<PreparedPatch> prepare(
             PatchApplyRequest request, FilePatch patch, List<PatchConflict> conflicts) {
-        WorkspacePath path = new WorkspacePath(request.workspaceId(), patch.sourcePath());
+        WorkspacePath path = patch.sourcePath();
         if (patch.creation()) {
             try {
                 files.stat(path, false);
@@ -190,7 +190,7 @@ public final class PatchService {
                 return java.util.Optional.empty();
             }
             if (patch.move()) {
-                WorkspacePath destination = new WorkspacePath(request.workspaceId(), patch.targetPath());
+                WorkspacePath destination = patch.targetPath();
                 try {
                     files.stat(destination, false);
                     conflicts.add(new PatchConflict(
@@ -316,7 +316,7 @@ public final class PatchService {
     }
 
     private static PatchApplyResult conflict(
-            PatchApplyRequest request, ProjectPath path, PatchConflictCode code, int hunk, String detail) {
+            PatchApplyRequest request, WorkspacePath path, PatchConflictCode code, int hunk, String detail) {
         return new PatchApplyResult(
                 request.document().sha256(), List.of(), List.of(new PatchConflict(path, code, hunk, detail)), false);
     }
@@ -340,7 +340,7 @@ public final class PatchService {
             this.hunkIndex = hunkIndex;
         }
 
-        private PatchConflict toConflict(ProjectPath path) {
+        private PatchConflict toConflict(WorkspacePath path) {
             return new PatchConflict(path, PatchConflictCode.HUNK_MISMATCH, hunkIndex, getMessage());
         }
     }

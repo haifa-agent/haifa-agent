@@ -1,6 +1,6 @@
 package io.haifa.agent.project.patch;
 
-import io.haifa.agent.project.path.ProjectPath;
+import io.haifa.agent.project.path.WorkspacePath;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -24,7 +24,7 @@ public final class PatchValidationService {
         if (document.files().size() > maxFiles) throw new IllegalArgumentException("patch file budget exceeded");
         int hunks = 0;
         int lines = 0;
-        Set<ProjectPath> paths = new HashSet<>();
+        Set<WorkspacePath> paths = new HashSet<>();
         for (FilePatch file : document.files()) {
             if (!paths.add(file.sourcePath())) throw new IllegalArgumentException("duplicate logical patch path");
             if (file.move() && !paths.add(file.targetPath())) {

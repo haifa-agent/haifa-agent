@@ -3,32 +3,30 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.changeset.FileChange;
 import io.haifa.agent.project.changeset.FileChangeType;
-import io.haifa.agent.project.changeset.FileVersion;
+import io.haifa.agent.project.configuration.ProjectConfigurationId;
+import io.haifa.agent.project.domain.Project;
+import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.filesystem.FileType;
-import io.haifa.agent.project.mutation.CreateFileRequest;
-import io.haifa.agent.project.mutation.DeleteFileRequest;
-import io.haifa.agent.project.mutation.MoveFileRequest;
-import io.haifa.agent.project.mutation.MutationResult;
-import io.haifa.agent.project.mutation.WorkspaceMutationCapabilities;
-import io.haifa.agent.project.mutation.WorkspaceMutationProvider;
-import io.haifa.agent.project.mutation.WriteFileRequest;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
+import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
+import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
+import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
+import io.haifa.agent.project.mutation.InMemoryWorkspaceWriteLeaseManager;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
-import io.haifa.agent.project.root.WorkspaceRootAlias;
-import io.haifa.agent.project.root.WorkspaceRootPermission;
-import io.haifa.agent.project.root.WorkspaceRootStrategy;
+import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -38,6 +36,7 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
+import io.haifa.agent.project.workspace.WorkspaceService;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -45,6 +44,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,90 +57,127 @@ class LocalFileToolOperationsMultiRootTest {
     @TempDir
     Path tempDir;
 
-    private Path mainDir;
+    private Path workspaceDir;
     private Path docsDir;
     private Path configDir;
-    private LocalWorkspaceRootRegistry registry;
     private LocalFileToolOperations operations;
     private WorkspaceId workspaceId;
+    private InMemoryWorkspaceStore workspaces;
+    private InMemoryWorkspaceBindingStore bindings;
+    private HostWorkspaceLocationStore locations;
+    private InMemorySessionChangeLedger ledger;
 
     @BeforeEach
     void setUp() throws IOException {
-        mainDir = tempDir.resolve("main-repo");
+        tempDir = tempDir.toRealPath();
+        workspaceDir = tempDir.resolve("workspace-repo");
         docsDir = tempDir.resolve("docs-repo");
         configDir = tempDir.resolve("config-repo");
-        Files.createDirectories(mainDir);
+        Files.createDirectories(workspaceDir);
         Files.createDirectories(docsDir);
         Files.createDirectories(configDir);
 
-        registry = LocalWorkspaceRootRegistry.builder()
-                .addRoot(LocalWorkspaceRoot.of(
-                        WorkspaceRootAlias.MAIN,
-                        mainDir,
-                        WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.GIT))
-                .addRoot(LocalWorkspaceRoot.of(
-                        WorkspaceRootAlias.of("docs"),
-                        docsDir,
-                        WorkspaceRootPermission.READ_ONLY,
-                        WorkspaceRootStrategy.PLAIN))
-                .addRoot(LocalWorkspaceRoot.of(
-                        WorkspaceRootAlias.of("config"),
-                        configDir,
-                        WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.PLAIN))
-                .build();
-
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         workspaceId = new WorkspaceId("ws-multiroot");
-        WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-multiroot");
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("loc-multiroot");
+        bindings = new InMemoryWorkspaceBindingStore();
+        workspaces = new InMemoryWorkspaceStore();
+        locations = new HostWorkspaceLocationStore();
+        ProjectId projectId = new ProjectId("proj-multiroot");
+        PrincipalRef owner = new PrincipalRef("owner", "user");
+        registerWorkspace(workspaceId, workspaceDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.PRIMARY, now);
+        WorkspaceId docsWorkspaceId = new WorkspaceId("ws-docs");
+        registerWorkspace(docsWorkspaceId, docsDir, HostDirectoryPermission.READ_ONLY, WorkspacePurpose.DIRECTORY, now);
+        WorkspaceId configWorkspaceId = new WorkspaceId("ws-config");
+        registerWorkspace(
+                configWorkspaceId, configDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.DIRECTORY, now);
 
-        var bindings = new InMemoryWorkspaceBindingStore();
-        var workspaces = new InMemoryWorkspaceStore();
-        var locations = new LocalWorkspaceLocationStore();
-        locations.register(locationRef, mainDir);
+        var projects = new InMemoryProjectStore();
+        projects.create(Project.create(
+                        projectId,
+                        new TenantRef("local"),
+                        owner,
+                        "multi-root-test",
+                        "test project",
+                        new ProjectConfigurationRef(new ProjectConfigurationId("config-1").value(), "1.0.0"),
+                        now,
+                        Map.of())
+                .assignDefaultWorkspace(workspaceId, now));
+        var idSequence = new AtomicInteger();
+        var identifiers =
+                (io.haifa.agent.common.id.IdentifierGenerator) () -> "multi-root-test-" + idSequence.incrementAndGet();
+        var workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, () -> now);
+        var scope = new HostWorkspaceScope(
+                List.of(
+                        AuthorizedHostDirectory.of(
+                                workspaceId, workspaceDir.toRealPath(), HostDirectoryPermission.READ_WRITE),
+                        AuthorizedHostDirectory.of(
+                                docsWorkspaceId, docsDir.toRealPath(), HostDirectoryPermission.READ_ONLY),
+                        AuthorizedHostDirectory.of(
+                                configWorkspaceId, configDir.toRealPath(), HostDirectoryPermission.READ_WRITE)),
+                1L);
+        var provisioning = new AuthorizedWorkspaceProvisioning(
+                projectId, workspaces, bindings, locations, workspaceService, owner, () -> now, scope);
 
+        var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        var mutations = new HostWorkspaceMutationService(
+                workspaces,
+                bindings,
+                locations,
+                SensitivePathPolicy.defaults(),
+                new InMemoryWorkspaceWriteLeaseManager(),
+                identifiers,
+                () -> now);
+        ledger = new InMemorySessionChangeLedger();
+
+        operations =
+                new LocalFileToolOperations(workspaces, files, mutations, identifiers, () -> now, provisioning, ledger);
+    }
+
+    private void registerWorkspace(
+            WorkspaceId id, Path directory, HostDirectoryPermission permission, WorkspacePurpose purpose, Instant now)
+            throws IOException {
+        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("loc-" + id.value());
+        WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-" + id.value());
+        Path realPath = directory.toRealPath();
+        locations.register(locationRef, realPath);
         WorkspaceBinding binding = WorkspaceBinding.provision(
                         bindingId,
                         locationRef,
                         WorkspaceBindingMode.DIRECT,
                         new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.readOnlyFiles(),
-                        WorkspacePermissionSet.readOnly(),
-                        LocalWorkspaceLocationStore.fingerprintFor(mainDir),
+                        permission.canWrite()
+                                ? WorkspaceCapabilitySet.readWriteFiles()
+                                : WorkspaceCapabilitySet.readOnlyFiles(),
+                        permission.canWrite() ? WorkspacePermissionSet.readWrite() : WorkspacePermissionSet.readOnly(),
+                        HostWorkspaceLocationStore.fingerprintFor(realPath),
                         now)
                 .activate(now);
         bindings.create(binding);
-
         workspaces.create(Workspace.provision(
-                        workspaceId,
+                        id,
                         new ProjectId("proj-multiroot"),
-                        WorkspacePurpose.PRIMARY,
+                        purpose,
                         new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
                         WorkspaceRevision.initial(binding.rootFingerprint()),
                         now)
                 .activate(now));
-
-        var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-
-        operations = new LocalFileToolOperations(
-                workspaces, files, testMutations(workspaces, workspaceId), () -> "id-1", registry);
     }
 
     @Test
-    void readsFileWithMainPrefixAndImplicitMain() throws IOException {
-        Files.writeString(mainDir.resolve("App.java"), "public class App {}", StandardCharsets.UTF_8);
+    void readsFileWithHostAbsolutePath() throws IOException {
+        Files.writeString(workspaceDir.resolve("App.java"), "public class App {}", StandardCharsets.UTF_8);
+        String hostPath =
+                workspaceDir.resolve("App.java").toAbsolutePath().normalize().toString();
 
-        var resExplicit = operations.execute(
+        var res = operations.execute(
                 "file.read",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "main:App.java")));
-        assertThat(resExplicit.successful()).isTrue();
-        assertThat(resExplicit.structuredData()).containsEntry("content", "public class App {}");
+                arguments(Map.of("path", hostPath)));
+        assertThat(res.successful()).isTrue();
+        assertThat(res.structuredData()).containsEntry("content", "public class App {}");
 
         var resImplicit = operations.execute(
                 "file.read",
@@ -149,36 +186,153 @@ class LocalFileToolOperationsMultiRootTest {
                 "run-1",
                 "policy-1",
                 arguments(Map.of("path", "App.java")));
-        assertThat(resImplicit.successful()).isTrue();
-        assertThat(resImplicit.structuredData()).containsEntry("content", "public class App {}");
+        assertThat(resImplicit.successful()).isFalse();
+        assertThat(resImplicit.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
+
+        var resExplicit = operations.execute(
+                "file.read",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "main:App.java")));
+        assertThat(resExplicit.successful()).isFalse();
+        assertThat(resExplicit.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
     }
 
     @Test
-    void readsFromAttachedReadOnlyDirectory() {
+    void listReadAndSearchReturnHostAbsolutePaths() throws IOException {
+        Path file = workspaceDir.resolve("absolute-result.txt");
+        Files.writeString(file, "search needle", StandardCharsets.UTF_8);
+        String rootPath = workspaceDir.toAbsolutePath().normalize().toString();
+        String filePath = file.toAbsolutePath().normalize().toString();
+
+        var listed = operations.execute(
+                "file.list",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", rootPath)));
+        var read = operations.execute(
+                "file.read",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", filePath)));
+        var searched = operations.execute(
+                "file.search",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", rootPath, "query", "needle")));
+
+        assertThat(listed.successful()).isTrue();
+        assertThat(resultPaths(listed.structuredData().get("entries"))).contains(filePath);
+        assertThat(read.structuredData()).containsEntry("path", filePath);
+        assertThat(resultPaths(searched.structuredData().get("results"))).containsExactly(filePath);
+    }
+
+    @Test
+    void compactsCreateReplaceMoveAndDeleteWithinOneLogicalWorkspace() {
+        String created =
+                workspaceDir.resolve("created.txt").toAbsolutePath().normalize().toString();
+        String moved =
+                workspaceDir.resolve("moved.txt").toAbsolutePath().normalize().toString();
+
+        assertThat(execute("file.create", Map.of("path", created, "content", "one"))
+                        .successful())
+                .isTrue();
+        assertThat(execute("file.write", Map.of("path", created, "content", "two"))
+                        .successful())
+                .isTrue();
+        assertThat(ledger.compactedChanges(workspaceId)).singleElement().satisfies(change -> {
+            assertThat(change.type()).isEqualTo(FileChangeType.CREATE);
+            assertThat(change.path().projectPath()).isEqualTo(ProjectPath.of("created.txt"));
+        });
+
+        assertThat(execute("file.move", Map.of("source", created, "destination", moved))
+                        .successful())
+                .isTrue();
+        assertThat(ledger.compactedChanges(workspaceId)).singleElement().satisfies(change -> {
+            assertThat(change.type()).isEqualTo(FileChangeType.CREATE);
+            assertThat(change.path().projectPath()).isEqualTo(ProjectPath.of("moved.txt"));
+        });
+
+        assertThat(execute("file.delete", Map.of("path", moved)).successful()).isTrue();
+        assertThat(ledger.compactedChanges(workspaceId)).isEmpty();
+    }
+
+    @Test
+    void sameRelativePathInTwoAuthorizedDirectoriesHasDistinctLogicalIdentity() {
+        String mainPath =
+                workspaceDir.resolve("same.txt").toAbsolutePath().normalize().toString();
+        String configPath =
+                configDir.resolve("same.txt").toAbsolutePath().normalize().toString();
+
+        assertThat(execute("file.create", Map.of("path", mainPath, "content", "workspace"))
+                        .successful())
+                .isTrue();
+        assertThat(execute("file.create", Map.of("path", configPath, "content", "config"))
+                        .successful())
+                .isTrue();
+
+        assertThat(ledger.allCompactedChanges()).hasSize(2);
+        assertThat(ledger.allCompactedChanges().values().stream()
+                        .flatMap(List::stream)
+                        .toList())
+                .allSatisfy(change -> assertThat(change.path().projectPath()).isEqualTo(ProjectPath.of("same.txt")))
+                .extracting(change -> change.path().workspaceId())
+                .containsExactlyInAnyOrder(workspaceId, new WorkspaceId("ws-config"));
+    }
+
+    private ToolResult execute(String toolName, Map<String, Object> values) {
+        return operations.execute(
+                toolName,
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-ledger",
+                "policy-1",
+                arguments(values));
+    }
+
+    private static List<Object> resultPaths(Object entries) {
+        return ((List<?>) entries)
+                .stream().map(entry -> (Object) ((Map<?, ?>) entry).get("path")).toList();
+    }
+
+    @Test
+    void readsFromAuthorizedReadOnlyDirectory() throws IOException {
+        Files.writeString(docsDir.resolve("guide.md"), "# Guide", StandardCharsets.UTF_8);
+        String docPath =
+                docsDir.resolve("guide.md").toAbsolutePath().normalize().toString();
         var res = operations.execute(
                 "file.stat",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "docs:guide.md")));
-        // Handled by root resolver without ROOT_ALIAS_NOT_FOUND or ROOT_READ_ONLY
-        assertThat(res.successful()).isFalse(); // Target file does not exist on disk in test fixture
-        assertThat(res.structuredData()).containsEntry("errorCode", "PATH_NOT_FOUND");
+                arguments(Map.of("path", docPath)));
+        assertThat(res.successful()).isTrue();
+        assertThat(res.structuredData()).containsEntry("path", docPath);
     }
 
     @Test
     void deniesWriteToReadOnlyRoot() {
+        String docPath =
+                docsDir.resolve("guide.md").toAbsolutePath().normalize().toString();
         var createRes = operations.execute(
                 "file.create",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "docs:guide.md", "content", "# Guide")));
+                arguments(Map.of("path", docPath, "content", "# Guide")));
         assertThat(createRes.successful()).isFalse();
         assertThat(createRes.structuredData())
-                .containsEntry("errorCode", "ROOT_READ_ONLY")
+                .containsEntry("errorCode", "PERMISSION_DENIED")
                 .containsEntry("failureCategory", "POLICY_DENIED")
                 .containsEntry("failureActionCode", "REQUEST_WRITE_PERMISSION");
 
@@ -188,9 +342,9 @@ class LocalFileToolOperationsMultiRootTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "docs:guide.md", "content", "# Updated")));
+                arguments(Map.of("path", docPath, "content", "# Updated")));
         assertThat(writeRes.successful()).isFalse();
-        assertThat(writeRes.structuredData()).containsEntry("errorCode", "ROOT_READ_ONLY");
+        assertThat(writeRes.structuredData()).containsEntry("errorCode", "PERMISSION_DENIED");
 
         var deleteRes = operations.execute(
                 "file.delete",
@@ -198,14 +352,18 @@ class LocalFileToolOperationsMultiRootTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "docs:guide.md")));
+                arguments(Map.of("path", docPath)));
         assertThat(deleteRes.successful()).isFalse();
-        assertThat(deleteRes.structuredData()).containsEntry("errorCode", "ROOT_READ_ONLY");
+        assertThat(deleteRes.structuredData()).containsEntry("errorCode", "PERMISSION_DENIED");
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("writableFilePaths")
-    void writableRootsCreateMissingTargetsThroughFileWrite(String path) throws IOException {
+    @MethodSource("writableFileRoots")
+    void writableDirectoriesCreateMissingTargetsThroughFileWrite(String targetDirectory) throws IOException {
+        Path target = "workspace".equals(targetDirectory)
+                ? workspaceDir.resolve("contract.txt")
+                : configDir.resolve("contract.txt");
+        String path = target.toAbsolutePath().normalize().toString();
         var written = operations.execute(
                 "file.write",
                 workspaceId,
@@ -215,14 +373,18 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("path", path, "content", "created by write")));
 
         assertThat(written.successful()).isTrue();
-        assertThat(written.summary()).isEqualTo("Created " + displayPath(path));
-        assertThat(written.structuredData()).containsEntry("path", displayPath(path));
-        assertThat(Files.readString(target(path))).isEqualTo("created by write");
+        assertThat(written.summary()).isEqualTo("Created " + path);
+        assertThat(written.structuredData()).containsEntry("path", path);
+        assertThat(Files.readString(target)).isEqualTo("created by write");
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("writableFilePaths")
-    void writableRootsShareCreateWriteAndDeleteContract(String path) throws IOException {
+    @MethodSource("writableFileRoots")
+    void writableDirectoriesShareCreateWriteAndDeleteContract(String targetDirectory) throws IOException {
+        Path target = "workspace".equals(targetDirectory)
+                ? workspaceDir.resolve("contract.txt")
+                : configDir.resolve("contract.txt");
+        String path = target.toAbsolutePath().normalize().toString();
         var created = operations.execute(
                 "file.create",
                 workspaceId,
@@ -231,8 +393,8 @@ class LocalFileToolOperationsMultiRootTest {
                 "policy-1",
                 arguments(Map.of("path", path, "content", "first")));
         assertThat(created.successful()).isTrue();
-        assertThat(created.structuredData()).containsEntry("path", displayPath(path));
-        assertThat(Files.readString(target(path))).isEqualTo("first");
+        assertThat(created.structuredData()).containsEntry("path", path);
+        assertThat(Files.readString(target)).isEqualTo("first");
 
         var written = operations.execute(
                 "file.write",
@@ -242,7 +404,7 @@ class LocalFileToolOperationsMultiRootTest {
                 "policy-1",
                 arguments(Map.of("path", path, "content", "second")));
         assertThat(written.successful()).isTrue();
-        assertThat(Files.readString(target(path))).isEqualTo("second");
+        assertThat(Files.readString(target)).isEqualTo("second");
 
         var deleted = operations.execute(
                 "file.delete",
@@ -252,97 +414,156 @@ class LocalFileToolOperationsMultiRootTest {
                 "policy-1",
                 arguments(Map.of("path", path)));
         assertThat(deleted.successful()).isTrue();
-        assertThat(target(path)).doesNotExist();
+        assertThat(target).doesNotExist();
     }
 
-    private static Stream<String> writableFilePaths() {
-        return Stream.of("main:contract.txt", "config:contract.txt");
-    }
-
-    private Path target(String path) {
-        if (path.startsWith("main:")) return mainDir.resolve(path.substring("main:".length()));
-        return configDir.resolve(path.substring("config:".length()));
-    }
-
-    private static String displayPath(String path) {
-        return path.startsWith("main:") ? path.substring("main:".length()) : path;
+    private static Stream<String> writableFileRoots() {
+        return Stream.of("workspace", "config");
     }
 
     @Test
-    void attachesUserApprovedDirectoryForThisAgentAndUsesItsAlias() throws IOException {
+    void attachesUserApprovedDirectoryForThisAgent() throws IOException {
         Path extraDir = tempDir.resolve("extra-repo");
         Files.createDirectories(extraDir);
 
-        var attached = operations.execute(
+        var authorization = operations.execute(
                 "workspace.attach",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of(
-                        "alias", "extra",
-                        "path", extraDir.toString(),
-                        "permission", "read-write")));
+                arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
+        String notePath =
+                extraDir.resolve("note.txt").toAbsolutePath().normalize().toString();
         var created = operations.execute(
                 "file.create",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "extra:note.txt", "content", "attached")));
+                arguments(Map.of("path", notePath, "content", "authorized")));
 
-        assertThat(attached.successful()).isTrue();
-        assertThat(attached.structuredData()).containsEntry("alias", "extra").containsEntry("permission", "READ_WRITE");
-        assertThat(registry.find(WorkspaceRootAlias.of("extra"))).isPresent();
+        assertThat(authorization.successful()).isTrue();
+        assertThat(authorization.structuredData()).containsEntry("permission", "READ_WRITE");
         assertThat(created.successful()).isTrue();
-        assertThat(Files.readString(extraDir.resolve("note.txt"))).isEqualTo("attached");
+        assertThat(Files.readString(extraDir.resolve("note.txt"))).isEqualTo("authorized");
     }
 
     @Test
-    void rejectsAttachmentThatOverlapsTheMainDirectory() {
+    void usesAuthorizedDirectoryWorkspaceRevisionWhenWriting() throws IOException {
+        Path extraDir = tempDir.resolve("authorized-revision-repo");
+        Files.createDirectories(extraDir);
+
+        var authorization = operations.execute(
+                "workspace.attach",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
+        assertThat(authorization.successful()).isTrue();
+
+        WorkspaceId extraWsId = new WorkspaceId(
+                authorization.structuredData().get("workspaceId").toString());
+        Instant now = Instant.parse("2026-08-05T00:00:00Z");
+        Workspace before = workspaces.find(extraWsId).orElseThrow();
+        Workspace customRevision = before.advanceRevision(
+                new WorkspaceRevision(before.revision().sequence() + 1, "sha256:custom-extra-rev"), now);
+        workspaces.save(customRevision, before.version());
+
+        String notePath =
+                extraDir.resolve("note.txt").toAbsolutePath().normalize().toString();
+        var created = operations.execute(
+                "file.create",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", notePath, "content", "content in extra")));
+
+        assertThat(created.successful()).isTrue();
+        assertThat(Files.readString(extraDir.resolve("note.txt"))).isEqualTo("content in extra");
+        assertThat(workspaces.find(extraWsId).orElseThrow().revision().sequence())
+                .isGreaterThan(customRevision.revision().sequence());
+    }
+
+    @Test
+    void failsClosedIfScopeVersionChangedBetweenResolutionAndIo() throws Exception {
+        Path extraDir = tempDir.resolve("toctou-extra");
+        Files.createDirectories(extraDir);
+
+        HostWorkspaceScope initialScope = operations.currentScope();
+        Path file = workspaceDir.resolve("toctou.txt");
+        var resolvedTarget =
+                initialScope.resolve(file.toAbsolutePath().normalize().toString());
+        assertThat(initialScope.version()).isEqualTo(1L);
+
+        var authorization = operations.execute(
+                "workspace.attach",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
+        assertThat(authorization.successful()).isTrue();
+        assertThat(operations.currentScope().version()).isGreaterThan(initialScope.version());
+        assertThat(initialScope.version())
+                .isNotEqualTo(operations.currentScope().version());
+    }
+
+    @Test
+    void reauthorizingTheDefaultDirectoryDoesNotDuplicateItsBoundary() {
+        int originalDirectoryCount =
+                operations.currentScope().allowedDirectories().size();
         var result = operations.execute(
                 "workspace.attach",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of(
-                        "alias", "duplicate",
-                        "path", mainDir.toString(),
-                        "permission", "read-only")));
+                arguments(Map.of("path", workspaceDir.toString(), "permission", "read-only")));
 
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
-        assertThat(registry.find(WorkspaceRootAlias.of("duplicate"))).isEmpty();
+        assertThat(result.successful()).isTrue();
+        assertThat(operations.currentScope().allowedDirectories()).hasSize(originalDirectoryCount);
     }
 
     @Test
     void rejectsCrossRootMoveWithoutChangingEitherDirectory() throws IOException {
         Files.writeString(configDir.resolve("move.txt"), "source", StandardCharsets.UTF_8);
 
+        String srcPath =
+                configDir.resolve("move.txt").toAbsolutePath().normalize().toString();
+        String dstPath =
+                workspaceDir.resolve("moved.txt").toAbsolutePath().normalize().toString();
         var result = operations.execute(
                 "file.move",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("source", "config:move.txt", "destination", "main:moved.txt")));
+                arguments(Map.of("source", srcPath, "destination", dstPath)));
 
         assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "CROSS_DIRECTORY_MOVE")
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("failureActionCode", "USE_CREATE_AND_DELETE");
         assertThat(Files.readString(configDir.resolve("move.txt"))).isEqualTo("source");
-        assertThat(Files.exists(mainDir.resolve("moved.txt"))).isFalse();
+        assertThat(Files.exists(workspaceDir.resolve("moved.txt"))).isFalse();
     }
 
     @Test
     void rejectsDeletePatchBeforeChangingTheTargetFile() throws IOException {
         Files.writeString(configDir.resolve("keep.yml"), "keep: true\n", StandardCharsets.UTF_8);
+        String targetPath =
+                configDir.resolve("keep.yml").toAbsolutePath().normalize().toString();
         String patch =
                 """
                 *** Begin Patch
-                *** Delete File: config:keep.yml
+                *** Delete File: %s
                 *** End Patch
-                """;
+                """
+                        .formatted(targetPath);
 
         var result = operations.execute(
                 "file.patch",
@@ -359,15 +580,20 @@ class LocalFileToolOperationsMultiRootTest {
 
     @Test
     void appliesMultiFilePatchInOneToolCall() throws IOException {
+        String first =
+                configDir.resolve("first.txt").toAbsolutePath().normalize().toString();
+        String second =
+                configDir.resolve("second.txt").toAbsolutePath().normalize().toString();
         String patch =
                 """
                 *** Begin Patch
-                *** Add File: config:first.txt
+                *** Add File: %s
                 +first
-                *** Add File: config:second.txt
+                *** Add File: %s
                 +second
                 *** End Patch
-                """;
+                """
+                        .formatted(first, second);
 
         var result = operations.execute(
                 "file.patch",
@@ -381,22 +607,27 @@ class LocalFileToolOperationsMultiRootTest {
         assertThat(result.structuredData())
                 .containsEntry("complete", true)
                 .containsEntry("atomic", false)
-                .containsEntry("appliedPaths", List.of("config:first.txt", "config:second.txt"));
+                .containsEntry("appliedPaths", List.of(first, second));
         assertThat(Files.readString(configDir.resolve("first.txt"))).isEqualTo("first\n");
         assertThat(Files.readString(configDir.resolve("second.txt"))).isEqualTo("second\n");
     }
 
     @Test
     void rejectsCrossRootPatchBeforeChangingEitherRoot() {
+        String first =
+                configDir.resolve("first.txt").toAbsolutePath().normalize().toString();
+        String second =
+                workspaceDir.resolve("second.txt").toAbsolutePath().normalize().toString();
         String patch =
                 """
                 *** Begin Patch
-                *** Add File: config:first.txt
+                *** Add File: %s
                 +first
-                *** Add File: main:second.txt
+                *** Add File: %s
                 +second
                 *** End Patch
-                """;
+                """
+                        .formatted(first, second);
 
         var result = operations.execute(
                 "file.patch",
@@ -412,26 +643,31 @@ class LocalFileToolOperationsMultiRootTest {
                 .containsEntry("complete", false)
                 .containsEntry("appliedPaths", List.of());
         assertThat(configDir.resolve("first.txt")).doesNotExist();
-        assertThat(mainDir.resolve("second.txt")).doesNotExist();
+        assertThat(workspaceDir.resolve("second.txt")).doesNotExist();
     }
 
     @Test
     void rejectsConflictingMultiFilePatchBeforeWritingAnyFile() throws IOException {
         Files.writeString(configDir.resolve("first.txt"), "first\n");
         Files.writeString(configDir.resolve("second.txt"), "second\n");
+        String first =
+                configDir.resolve("first.txt").toAbsolutePath().normalize().toString();
+        String second =
+                configDir.resolve("second.txt").toAbsolutePath().normalize().toString();
         String patch =
                 """
                 *** Begin Patch
-                *** Update File: config:first.txt
+                *** Update File: %s
                 @@ first
                 -first
                 +FIRST
-                *** Update File: config:second.txt
+                *** Update File: %s
                 @@ missing
                 -missing
                 +SECOND
                 *** End Patch
-                """;
+                """
+                        .formatted(first, second);
 
         var result = operations.execute(
                 "file.patch",
@@ -454,15 +690,24 @@ class LocalFileToolOperationsMultiRootTest {
     @Test
     void reportsCommittedPrefixWhenAFileFailsDuringPatchCommit() throws IOException {
         Files.writeString(configDir.resolve("blocked"), "not a directory");
+        String first =
+                configDir.resolve("first.txt").toAbsolutePath().normalize().toString();
+        String second = configDir
+                .resolve("blocked")
+                .resolve("second.txt")
+                .toAbsolutePath()
+                .normalize()
+                .toString();
         String patch =
                 """
                 *** Begin Patch
-                *** Add File: config:first.txt
+                *** Add File: %s
                 +first
-                *** Add File: config:blocked/second.txt
+                *** Add File: %s
                 +second
                 *** End Patch
-                """;
+                """
+                        .formatted(first, second);
 
         var result = operations.execute(
                 "file.patch",
@@ -476,9 +721,9 @@ class LocalFileToolOperationsMultiRootTest {
         assertThat(result.structuredData())
                 .containsEntry("complete", false)
                 .containsEntry("atomic", false)
-                .containsEntry("appliedPaths", List.of("config:first.txt"))
-                .containsEntry("failedPath", "config:blocked/second.txt")
-                .containsEntry("errorCode", "IO_FAILURE")
+                .containsEntry("appliedPaths", List.of(first))
+                .containsEntry("failedPath", second)
+                .containsEntry("errorCode", "PATH_DENIED")
                 .containsEntry("reconciliationRequired", true);
         assertThat(Files.readString(configDir.resolve("first.txt"))).isEqualTo("first\n");
     }
@@ -495,7 +740,7 @@ class LocalFileToolOperationsMultiRootTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "config:generated")));
+                arguments(Map.of("path", generated.toAbsolutePath().normalize().toString())));
 
         assertThat(rejected.successful()).isFalse();
         assertThat(rejected.structuredData()).containsEntry("errorCode", "PATH_DENIED");
@@ -503,14 +748,20 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
-    void reportsPathNotFoundForAnAbsentAttachedDeleteTarget() {
+    void reportsPathNotFoundForAnAbsentAuthorizedDirectoryDeleteTarget() {
         var result = operations.execute(
                 "file.delete",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "config:missing.txt")));
+                arguments(Map.of(
+                        "path",
+                        configDir
+                                .resolve("missing.txt")
+                                .toAbsolutePath()
+                                .normalize()
+                                .toString())));
 
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData()).containsEntry("errorCode", "PATH_NOT_FOUND");
@@ -527,35 +778,27 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("path", "unregistered:data.csv")));
         assertThat(res.successful()).isFalse();
         assertThat(res.structuredData())
-                .containsEntry("errorCode", "ROOT_ALIAS_NOT_FOUND")
+                .containsEntry("errorCode", "INVALID_ARGUMENT")
                 .containsEntry("failureCategory", "INVALID_INPUT")
-                .containsEntry("failureActionCode", "USE_REGISTERED_ROOT_ALIAS");
+                .containsEntry("failureActionCode", "USE_ABSOLUTE_HOST_PATH");
     }
 
     @Test
-    void rejectsHostAbsolutePaths() {
-        var resWindows = operations.execute(
+    void rejectsUnauthorizedHostPaths() {
+        Path outside = tempDir.resolveSibling("unauthorized-outside").resolve("secret.txt");
+        String outsidePath = outside.toAbsolutePath().normalize().toString();
+        var res = operations.execute(
                 "file.read",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "D:/workspace/secret.txt")));
-        assertThat(resWindows.successful()).isFalse();
-        assertThat(resWindows.structuredData())
-                .containsEntry("errorCode", "ABSOLUTE_PATH_FORBIDDEN")
-                .containsEntry("failureCategory", "INVALID_INPUT")
-                .containsEntry("failureActionCode", "USE_ALIAS_RELATIVE_SYNTAX");
-
-        var resPosix = operations.execute(
-                "file.read",
-                workspaceId,
-                new PrincipalRef("operator", "user"),
-                "run-1",
-                "policy-1",
-                arguments(Map.of("path", "/etc/shadow")));
-        assertThat(resPosix.successful()).isFalse();
-        assertThat(resPosix.structuredData()).containsEntry("errorCode", "ABSOLUTE_PATH_FORBIDDEN");
+                arguments(Map.of("path", outsidePath)));
+        assertThat(res.successful()).isFalse();
+        assertThat(res.structuredData())
+                .containsEntry("errorCode", "ACCESS_DENIED")
+                .containsEntry("failureCategory", "POLICY_DENIED")
+                .containsEntry("failureActionCode", "REQUEST_DIRECTORY_AUTHORIZATION");
     }
 
     @Test
@@ -569,91 +812,12 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("path", "main:../../etc/passwd")));
         assertThat(res.successful()).isFalse();
         assertThat(res.structuredData())
-                .containsEntry("errorCode", "PATH_ESCAPE_FORBIDDEN")
-                .containsEntry("failureCategory", "POLICY_DENIED")
-                .containsEntry("failureActionCode", "USE_BOUNDED_PATH");
+                .containsEntry("errorCode", "INVALID_ARGUMENT")
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("failureActionCode", "USE_ABSOLUTE_HOST_PATH");
     }
 
     private static ToolArguments arguments(Map<String, Object> values) {
         return new ToolArguments("haifa.file.test", "1.1.0", values);
-    }
-
-    private WorkspaceMutationProvider testMutations(InMemoryWorkspaceStore workspaces, WorkspaceId workspaceId) {
-        return new WorkspaceMutationProvider() {
-            @Override
-            public String providerId() {
-                return "test-mutations";
-            }
-
-            @Override
-            public WorkspaceMutationCapabilities capabilities() {
-                return new WorkspaceMutationCapabilities(false, false, "test");
-            }
-
-            @Override
-            public MutationResult create(CreateFileRequest request) {
-                writeMain(request.path().projectPath(), request.content());
-                WorkspaceRevision before =
-                        workspaces.find(workspaceId).orElseThrow().revision();
-                WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:create-result");
-                FileChange change = new FileChange(
-                        FileChangeType.CREATE,
-                        request.path().projectPath(),
-                        null,
-                        null,
-                        new FileVersion(FileType.FILE, request.content().length, "sha256:hash-val"));
-
-                return new MutationResult(before, after, List.of(change), true, false);
-            }
-
-            @Override
-            public MutationResult write(WriteFileRequest request) {
-                writeMain(request.path().projectPath(), request.content());
-                WorkspaceRevision before =
-                        workspaces.find(workspaceId).orElseThrow().revision();
-                WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:write-result");
-                return new MutationResult(before, after, List.of(), true, false);
-            }
-
-            @Override
-            public MutationResult delete(DeleteFileRequest request) {
-                try {
-                    Files.deleteIfExists(
-                            mainDir.resolve(request.path().projectPath().value()));
-                } catch (IOException exception) {
-                    throw new AssertionError(exception);
-                }
-                WorkspaceRevision before =
-                        workspaces.find(workspaceId).orElseThrow().revision();
-                WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:del-result");
-                return new MutationResult(before, after, List.of(), true, false);
-            }
-
-            @Override
-            public MutationResult move(MoveFileRequest request) {
-                try {
-                    Path destination =
-                            mainDir.resolve(request.destination().projectPath().value());
-                    if (destination.getParent() != null) Files.createDirectories(destination.getParent());
-                    Files.move(mainDir.resolve(request.source().projectPath().value()), destination);
-                } catch (IOException exception) {
-                    throw new AssertionError(exception);
-                }
-                WorkspaceRevision before =
-                        workspaces.find(workspaceId).orElseThrow().revision();
-                WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:move-result");
-                return new MutationResult(before, after, List.of(), true, false);
-            }
-        };
-    }
-
-    private void writeMain(ProjectPath path, byte[] content) {
-        try {
-            Path target = mainDir.resolve(path.value());
-            if (target.getParent() != null) Files.createDirectories(target.getParent());
-            Files.write(target, content);
-        } catch (IOException exception) {
-            throw new AssertionError(exception);
-        }
     }
 }

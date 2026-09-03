@@ -7,17 +7,17 @@ import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.filesystem.ReadOptions;
 import io.haifa.agent.project.filesystem.WorkspaceFileErrorCode;
 import io.haifa.agent.project.filesystem.WorkspaceFileException;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 /** Reads only a bounded post-change sample to distinguish text from binary content. */
 final class LocalCodingChangeContentClassifier implements CodingChangeContentClassifier {
     private static final int SAMPLE_BYTES = 8 * 1024;
-    private final LocalWorkspaceFileService files;
+    private final HostWorkspaceFileService files;
 
-    LocalCodingChangeContentClassifier(LocalWorkspaceFileService files) {
+    LocalCodingChangeContentClassifier(HostWorkspaceFileService files) {
         this.files = Objects.requireNonNull(files, "files must not be null");
     }
 

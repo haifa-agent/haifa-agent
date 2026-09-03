@@ -86,18 +86,17 @@ import io.haifa.agent.project.configuration.ProjectConfigurationVersion;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
+import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
+import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.mutation.InMemoryWorkspaceWriteLeaseManager;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootStrategyDetector;
-import io.haifa.agent.project.root.WorkspaceRootAlias;
-import io.haifa.agent.project.root.WorkspaceRootPermission;
 import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
@@ -108,6 +107,7 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
+import io.haifa.agent.project.workspace.WorkspaceService;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
@@ -440,7 +440,7 @@ final class LocalCodingAgent implements AutoCloseable {
             var projects = new InMemoryProjectStore();
             var workspaces = new InMemoryWorkspaceStore();
             var bindings = new InMemoryWorkspaceBindingStore();
-            var locations = new LocalWorkspaceLocationStore();
+            var locations = new HostWorkspaceLocationStore();
             WorkspaceId workspaceId = workspaceIdentity.workspaceId();
             var verificationDiscovery = CliVerificationProfileDiscovery.discoverWithSignals(
                     workspaceRoot, System.getProperty("os.name", ""));
@@ -516,16 +516,21 @@ final class LocalCodingAgent implements AutoCloseable {
                     .activate(time.now()));
 
             SensitivePathPolicy sensitivePaths = SensitivePathPolicy.defaults();
-            var files = new LocalWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
-            var detector = new LocalWorkspaceRootStrategyDetector();
-            var detection = detector.detect(workspaceRoot);
-            LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.of(
-                    WorkspaceRootAlias.MAIN, workspaceRoot, WorkspaceRootPermission.READ_WRITE, detection.strategy());
-            List<LocalWorkspaceRoot> rootsList = new ArrayList<>();
-            rootsList.add(mainRoot);
-            LocalWorkspaceRootRegistry rootRegistry = LocalWorkspaceRootRegistry.of(rootsList);
+            var files = new HostWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
+            WorkspaceService workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, time);
+            Path realRoot;
+            try {
+                realRoot = workspaceRoot.toRealPath();
+            } catch (IOException e) {
+                realRoot = workspaceRoot.toAbsolutePath().normalize();
+            }
+            AuthorizedHostDirectory initialDir =
+                    AuthorizedHostDirectory.of(workspaceId, realRoot, HostDirectoryPermission.READ_WRITE);
+            HostWorkspaceScope initialScope = HostWorkspaceScope.initial(initialDir);
+            AuthorizedWorkspaceProvisioning provisioning = new AuthorizedWorkspaceProvisioning(
+                    projectId, workspaces, bindings, locations, workspaceService, principal, time, initialScope);
             var sessionLedger = new InMemorySessionChangeLedger();
-            var mutations = new LocalWorkspaceMutationService(
+            var mutations = new HostWorkspaceMutationService(
                     workspaces,
                     bindings,
                     locations,
@@ -533,8 +538,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     new InMemoryWorkspaceWriteLeaseManager(),
                     identifiers,
                     time);
-            var operations =
-                    new LocalFileToolOperations(workspaces, files, mutations, identifiers, rootRegistry, sessionLedger);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
             CliExecutionPlatform executionPlatform = executionEnabled
@@ -552,9 +555,21 @@ final class LocalCodingAgent implements AutoCloseable {
                             workspaceRoot,
                             output,
                             resolvedEnvironment,
-                            verificationProfiles)
+                            verificationProfiles,
+                            provisioning)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
+            var repositoryBaselines = executionPlatform == null
+                    ? new io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry(
+                            (boundary, candidate) ->
+                                    io.haifa.agent.project.hostworkspace.HostGitInspectionStatus.UNAVAILABLE,
+                            (context, repository) -> {
+                                throw new IllegalStateException(
+                                        "Git review is unavailable without an execution platform");
+                            })
+                    : executionPlatform.repositoryBaselines();
+            var operations = new LocalFileToolOperations(
+                    workspaces, files, mutations, identifiers, time, provisioning, sessionLedger, repositoryBaselines);
             TrustedWorkspaceEnvironmentCatalog workspaceEnvironment = new TrustedWorkspaceEnvironmentCatalog(
                     workspaceRoot,
                     verificationDiscovery,
@@ -1027,9 +1042,7 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     static String workspaceAttachmentApprovalPrompt(Map<String, Object> arguments) {
-        return "Attach additional workspace directory\nAlias: "
-                + attachmentApprovalArgument(arguments, "alias")
-                + "\nPath: "
+        return "Attach additional workspace directory\nPath: "
                 + attachmentApprovalArgument(arguments, "path")
                 + "\nPermission: "
                 + attachmentApprovalArgument(arguments, "permission")

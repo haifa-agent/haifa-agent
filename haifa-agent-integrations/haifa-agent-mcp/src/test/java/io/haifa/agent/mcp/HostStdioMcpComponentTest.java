@@ -30,9 +30,9 @@ import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -106,7 +106,7 @@ class HostStdioMcpComponentTest {
         WorkspaceId workspaceId = new WorkspaceId("mcp-host-workspace");
         var workspaces = new InMemoryWorkspaceStore();
         var bindings = new InMemoryWorkspaceBindingStore();
-        var locations = new LocalWorkspaceLocationStore();
+        var locations = new HostWorkspaceLocationStore();
         var location = new WorkspaceLocationRef("mcp-host-location");
         locations.register(location, root);
         var binding = WorkspaceBinding.provision(
@@ -116,7 +116,7 @@ class HostStdioMcpComponentTest {
                         new PrincipalRef("owner", "user"),
                         WorkspaceCapabilitySet.executionFiles(),
                         WorkspacePermissionSet.readWriteExecute(),
-                        LocalWorkspaceLocationStore.fingerprintFor(root),
+                        HostWorkspaceLocationStore.fingerprintFor(root),
                         NOW)
                 .activate(NOW);
         bindings.create(binding);
