@@ -101,12 +101,12 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
 
     @Override
     public boolean codexConnectionSupported() {
-        return configured("model-auth://openai-codex/default");
+        return true;
     }
 
     @Override
     public boolean antigravityConnectionSupported() {
-        return antigravityConnectionSupported && configured("model-auth://google-antigravity/default");
+        return antigravityConnectionSupported;
     }
 
     @Override
@@ -178,10 +178,6 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     @Override
     public void close() {
         authentication.close();
-    }
-
-    private boolean configured(String credentialReference) {
-        return availableCredentialReferences.stream().map(CredentialRef::value).anyMatch(credentialReference::equals);
     }
 
     private CodingAuthenticationView await(
