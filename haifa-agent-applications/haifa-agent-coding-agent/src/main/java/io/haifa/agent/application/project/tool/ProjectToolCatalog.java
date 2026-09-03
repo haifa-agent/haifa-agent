@@ -464,17 +464,6 @@ public final class ProjectToolCatalog {
             }
             case "workspace.attach" -> {
                 properties.put(
-                        "alias",
-                        Map.of(
-                                "type",
-                                "string",
-                                "minLength",
-                                1,
-                                "maxLength",
-                                64,
-                                "description",
-                                "Optional diagnostic alias."));
-                properties.put(
                         "path",
                         Map.of(
                                 "type",

@@ -11,9 +11,9 @@ class CodingAgentPromptTest {
         CodingAgentPrompt.Snapshot second = CodingAgentPrompt.current();
 
         assertThat(second).isEqualTo(first);
-        assertThat(first.version()).isEqualTo("1.4.0");
+        assertThat(first.version()).isEqualTo("1.5.0");
         assertThat(first.digest()).matches("sha256:[0-9a-f]{64}");
-        assertThat(first.identity()).startsWith("coding-agent-prompt@1.4.0#sha256:");
+        assertThat(first.identity()).startsWith("coding-agent-prompt@1.5.0#sha256:");
         assertThat(first.text())
                 .contains(
                         "You are Haifa Coding Agent",
@@ -55,6 +55,9 @@ class CodingAgentPromptTest {
                         "result-verification skill",
                         "checks, skipped checks, and remaining risks",
                         "request workspace_attach",
+                        "Use host absolute paths for every file operation",
+                        "relative paths and root aliases are invalid",
+                        "persisted absolute path is not authorization",
                         "least permission needed")
                 .doesNotContain(
                         "aider/polyglot_",

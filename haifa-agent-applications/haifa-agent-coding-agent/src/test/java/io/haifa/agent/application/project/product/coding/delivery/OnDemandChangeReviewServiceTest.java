@@ -6,25 +6,14 @@ import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
-import io.haifa.agent.project.root.WorkspaceRootAlias;
-import io.haifa.agent.project.root.WorkspaceRootPermission;
-import io.haifa.agent.project.root.WorkspaceRootStrategy;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 class OnDemandChangeReviewServiceTest {
 
-    @TempDir
-    Path tempDir;
-
-    private LocalWorkspaceRootRegistry rootRegistry;
     private InMemorySessionChangeLedger ledger;
     private OnDemandChangeReviewService service;
     private Instant now;
@@ -32,19 +21,7 @@ class OnDemandChangeReviewServiceTest {
     @BeforeEach
     void setUp() {
         ledger = new InMemorySessionChangeLedger();
-        rootRegistry = LocalWorkspaceRootRegistry.builder()
-                .addRoot(LocalWorkspaceRoot.of(
-                        WorkspaceRootAlias.MAIN,
-                        tempDir.resolve("main"),
-                        WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.GIT))
-                .addRoot(LocalWorkspaceRoot.of(
-                        WorkspaceRootAlias.of("docs"),
-                        tempDir.resolve("docs"),
-                        WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.PLAIN))
-                .build();
-        service = new OnDemandChangeReviewService(rootRegistry, ledger);
+        service = new OnDemandChangeReviewService(ledger);
         now = Instant.parse("2026-09-01T12:00:00Z");
     }
 

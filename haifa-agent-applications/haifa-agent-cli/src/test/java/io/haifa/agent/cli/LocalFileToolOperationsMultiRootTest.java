@@ -3,35 +3,30 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.changeset.FileChange;
 import io.haifa.agent.project.changeset.FileChangeType;
-import io.haifa.agent.project.changeset.FileVersion;
+import io.haifa.agent.project.configuration.ProjectConfigurationId;
+import io.haifa.agent.project.domain.Project;
+import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.filesystem.FileType;
-import io.haifa.agent.project.mutation.CreateFileRequest;
-import io.haifa.agent.project.mutation.DeleteFileRequest;
-import io.haifa.agent.project.mutation.MoveFileRequest;
-import io.haifa.agent.project.mutation.MutationErrorCode;
-import io.haifa.agent.project.mutation.MutationResult;
-import io.haifa.agent.project.mutation.WorkspaceMutationCapabilities;
-import io.haifa.agent.project.mutation.WorkspaceMutationException;
-import io.haifa.agent.project.mutation.WorkspaceMutationProvider;
-import io.haifa.agent.project.mutation.WriteFileRequest;
+import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
+import io.haifa.agent.project.mutation.InMemoryWorkspaceWriteLeaseManager;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
+import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
 import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
+import io.haifa.agent.project.provider.local.scope.AuthorizedDirectoryProvisioning;
+import io.haifa.agent.project.provider.local.scope.LocalAllowedDirectory;
+import io.haifa.agent.project.provider.local.scope.LocalDirectoryPermission;
 import io.haifa.agent.project.provider.local.scope.LocalWorkspaceScope;
-import io.haifa.agent.project.root.WorkspaceRootAlias;
-import io.haifa.agent.project.root.WorkspaceRootPermission;
-import io.haifa.agent.project.root.WorkspaceRootStrategy;
+import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -41,6 +36,7 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
+import io.haifa.agent.project.workspace.WorkspaceService;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -48,6 +44,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -63,12 +60,12 @@ class LocalFileToolOperationsMultiRootTest {
     private Path mainDir;
     private Path docsDir;
     private Path configDir;
-    private LocalWorkspaceRootRegistry registry;
     private LocalFileToolOperations operations;
     private WorkspaceId workspaceId;
     private InMemoryWorkspaceStore workspaces;
     private InMemoryWorkspaceBindingStore bindings;
     private LocalWorkspaceLocationStore locations;
+    private InMemorySessionChangeLedger ledger;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -79,59 +76,91 @@ class LocalFileToolOperationsMultiRootTest {
         Files.createDirectories(docsDir);
         Files.createDirectories(configDir);
 
-        registry = LocalWorkspaceRootRegistry.builder()
-                .addRoot(LocalWorkspaceRoot.of(
-                        WorkspaceRootAlias.MAIN,
-                        mainDir,
-                        WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.GIT))
-                .addRoot(LocalWorkspaceRoot.of(
-                        WorkspaceRootAlias.of("docs"),
-                        docsDir,
-                        WorkspaceRootPermission.READ_ONLY,
-                        WorkspaceRootStrategy.PLAIN))
-                .addRoot(LocalWorkspaceRoot.of(
-                        WorkspaceRootAlias.of("config"),
-                        configDir,
-                        WorkspaceRootPermission.READ_WRITE,
-                        WorkspaceRootStrategy.PLAIN))
-                .build();
-
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         workspaceId = new WorkspaceId("ws-multiroot");
-        WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-multiroot");
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("loc-multiroot");
-
         bindings = new InMemoryWorkspaceBindingStore();
         workspaces = new InMemoryWorkspaceStore();
         locations = new LocalWorkspaceLocationStore();
-        locations.register(locationRef, mainDir);
+        ProjectId projectId = new ProjectId("proj-multiroot");
+        PrincipalRef owner = new PrincipalRef("owner", "user");
+        registerWorkspace(workspaceId, mainDir, LocalDirectoryPermission.READ_WRITE, WorkspacePurpose.PRIMARY, now);
+        WorkspaceId docsWorkspaceId = new WorkspaceId("ws-docs");
+        registerWorkspace(
+                docsWorkspaceId, docsDir, LocalDirectoryPermission.READ_ONLY, WorkspacePurpose.DIRECTORY, now);
+        WorkspaceId configWorkspaceId = new WorkspaceId("ws-config");
+        registerWorkspace(
+                configWorkspaceId, configDir, LocalDirectoryPermission.READ_WRITE, WorkspacePurpose.DIRECTORY, now);
 
+        var projects = new InMemoryProjectStore();
+        projects.create(Project.create(
+                        projectId,
+                        new TenantRef("local"),
+                        owner,
+                        "multi-root-test",
+                        "test project",
+                        new ProjectConfigurationRef(new ProjectConfigurationId("config-1").value(), "1.0.0"),
+                        now,
+                        Map.of())
+                .assignDefaultWorkspace(workspaceId, now));
+        var idSequence = new AtomicInteger();
+        var identifiers =
+                (io.haifa.agent.common.id.IdentifierGenerator) () -> "multi-root-test-" + idSequence.incrementAndGet();
+        var workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, () -> now);
+        var scope = new LocalWorkspaceScope(
+                List.of(
+                        LocalAllowedDirectory.of(
+                                workspaceId, mainDir.toRealPath(), LocalDirectoryPermission.READ_WRITE),
+                        LocalAllowedDirectory.of(
+                                docsWorkspaceId, docsDir.toRealPath(), LocalDirectoryPermission.READ_ONLY),
+                        LocalAllowedDirectory.of(
+                                configWorkspaceId, configDir.toRealPath(), LocalDirectoryPermission.READ_WRITE)),
+                1L);
+        var provisioning = new AuthorizedDirectoryProvisioning(
+                projectId, workspaces, bindings, locations, workspaceService, owner, () -> now, scope);
+
+        var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        var mutations = new LocalWorkspaceMutationService(
+                workspaces,
+                bindings,
+                locations,
+                SensitivePathPolicy.defaults(),
+                new InMemoryWorkspaceWriteLeaseManager(),
+                identifiers,
+                () -> now);
+        ledger = new InMemorySessionChangeLedger();
+
+        operations =
+                new LocalFileToolOperations(workspaces, files, mutations, identifiers, () -> now, provisioning, ledger);
+    }
+
+    private void registerWorkspace(
+            WorkspaceId id, Path directory, LocalDirectoryPermission permission, WorkspacePurpose purpose, Instant now)
+            throws IOException {
+        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("loc-" + id.value());
+        WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-" + id.value());
+        Path realPath = directory.toRealPath();
+        locations.register(locationRef, realPath);
         WorkspaceBinding binding = WorkspaceBinding.provision(
                         bindingId,
                         locationRef,
                         WorkspaceBindingMode.DIRECT,
                         new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.readOnlyFiles(),
-                        WorkspacePermissionSet.readOnly(),
-                        LocalWorkspaceLocationStore.fingerprintFor(mainDir),
+                        permission.canWrite()
+                                ? WorkspaceCapabilitySet.readWriteFiles()
+                                : WorkspaceCapabilitySet.readOnlyFiles(),
+                        permission.canWrite() ? WorkspacePermissionSet.readWrite() : WorkspacePermissionSet.readOnly(),
+                        LocalWorkspaceLocationStore.fingerprintFor(realPath),
                         now)
                 .activate(now);
         bindings.create(binding);
-
         workspaces.create(Workspace.provision(
-                        workspaceId,
+                        id,
                         new ProjectId("proj-multiroot"),
-                        WorkspacePurpose.PRIMARY,
+                        purpose,
                         new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
                         WorkspaceRevision.initial(binding.rootFingerprint()),
                         now)
                 .activate(now));
-
-        var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-
-        operations = new LocalFileToolOperations(
-                workspaces, files, testMutations(workspaces, workspaceId), () -> "id-1", registry);
     }
 
     @Test
@@ -172,7 +201,110 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
-    void readsFromAttachedReadOnlyDirectory() {
+    void listReadAndSearchReturnHostAbsolutePaths() throws IOException {
+        Path file = mainDir.resolve("absolute-result.txt");
+        Files.writeString(file, "search needle", StandardCharsets.UTF_8);
+        String rootPath = mainDir.toAbsolutePath().normalize().toString();
+        String filePath = file.toAbsolutePath().normalize().toString();
+
+        var listed = operations.execute(
+                "file.list",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", rootPath)));
+        var read = operations.execute(
+                "file.read",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", filePath)));
+        var searched = operations.execute(
+                "file.search",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", rootPath, "query", "needle")));
+
+        assertThat(listed.successful()).isTrue();
+        assertThat(resultPaths(listed.structuredData().get("entries"))).contains(filePath);
+        assertThat(read.structuredData()).containsEntry("path", filePath);
+        assertThat(resultPaths(searched.structuredData().get("results"))).containsExactly(filePath);
+    }
+
+    @Test
+    void compactsCreateReplaceMoveAndDeleteWithinOneLogicalWorkspace() {
+        String created =
+                mainDir.resolve("created.txt").toAbsolutePath().normalize().toString();
+        String moved = mainDir.resolve("moved.txt").toAbsolutePath().normalize().toString();
+
+        assertThat(execute("file.create", Map.of("path", created, "content", "one"))
+                        .successful())
+                .isTrue();
+        assertThat(execute("file.write", Map.of("path", created, "content", "two"))
+                        .successful())
+                .isTrue();
+        assertThat(ledger.compactedChanges(workspaceId)).singleElement().satisfies(change -> {
+            assertThat(change.type()).isEqualTo(FileChangeType.CREATE);
+            assertThat(change.path().projectPath()).isEqualTo(ProjectPath.of("created.txt"));
+        });
+
+        assertThat(execute("file.move", Map.of("source", created, "destination", moved))
+                        .successful())
+                .isTrue();
+        assertThat(ledger.compactedChanges(workspaceId)).singleElement().satisfies(change -> {
+            assertThat(change.type()).isEqualTo(FileChangeType.CREATE);
+            assertThat(change.path().projectPath()).isEqualTo(ProjectPath.of("moved.txt"));
+        });
+
+        assertThat(execute("file.delete", Map.of("path", moved)).successful()).isTrue();
+        assertThat(ledger.compactedChanges(workspaceId)).isEmpty();
+    }
+
+    @Test
+    void sameRelativePathInTwoAuthorizedDirectoriesHasDistinctLogicalIdentity() {
+        String mainPath =
+                mainDir.resolve("same.txt").toAbsolutePath().normalize().toString();
+        String configPath =
+                configDir.resolve("same.txt").toAbsolutePath().normalize().toString();
+
+        assertThat(execute("file.create", Map.of("path", mainPath, "content", "main"))
+                        .successful())
+                .isTrue();
+        assertThat(execute("file.create", Map.of("path", configPath, "content", "config"))
+                        .successful())
+                .isTrue();
+
+        assertThat(ledger.allCompactedChanges()).hasSize(2);
+        assertThat(ledger.allCompactedChanges().values().stream()
+                        .flatMap(List::stream)
+                        .toList())
+                .allSatisfy(change -> assertThat(change.path().projectPath()).isEqualTo(ProjectPath.of("same.txt")))
+                .extracting(change -> change.path().workspaceId())
+                .containsExactlyInAnyOrder(workspaceId, new WorkspaceId("ws-config"));
+    }
+
+    private ToolResult execute(String toolName, Map<String, Object> values) {
+        return operations.execute(
+                toolName,
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-ledger",
+                "policy-1",
+                arguments(values));
+    }
+
+    private static List<Object> resultPaths(Object entries) {
+        return ((List<?>) entries)
+                .stream().map(entry -> (Object) ((Map<?, ?>) entry).get("path")).toList();
+    }
+
+    @Test
+    void readsFromAuthorizedReadOnlyDirectory() throws IOException {
+        Files.writeString(docsDir.resolve("guide.md"), "# Guide", StandardCharsets.UTF_8);
         String docPath =
                 docsDir.resolve("guide.md").toAbsolutePath().normalize().toString();
         var res = operations.execute(
@@ -182,8 +314,8 @@ class LocalFileToolOperationsMultiRootTest {
                 "run-1",
                 "policy-1",
                 arguments(Map.of("path", docPath)));
-        assertThat(res.successful()).isFalse();
-        assertThat(res.structuredData()).containsEntry("errorCode", "PATH_NOT_FOUND");
+        assertThat(res.successful()).isTrue();
+        assertThat(res.structuredData()).containsEntry("path", docPath);
     }
 
     @Test
@@ -285,7 +417,7 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
-    void attachesUserApprovedDirectoryForThisAgentAndUsesItsAlias() throws IOException {
+    void attachesUserApprovedDirectoryForThisAgent() throws IOException {
         Path extraDir = tempDir.resolve("extra-repo");
         Files.createDirectories(extraDir);
 
@@ -295,10 +427,7 @@ class LocalFileToolOperationsMultiRootTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of(
-                        "alias", "extra",
-                        "path", extraDir.toString(),
-                        "permission", "read-write")));
+                arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
         String notePath =
                 extraDir.resolve("note.txt").toAbsolutePath().normalize().toString();
         var created = operations.execute(
@@ -326,39 +455,16 @@ class LocalFileToolOperationsMultiRootTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of(
-                        "alias", "attached-rev",
-                        "path", extraDir.toString(),
-                        "permission", "read-write")));
+                arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
         assertThat(attached.successful()).isTrue();
 
         WorkspaceId extraWsId =
                 new WorkspaceId(attached.structuredData().get("workspaceId").toString());
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
-        WorkspaceRevision extraRevision = new WorkspaceRevision(999L, "sha256:custom-extra-rev");
-        WorkspaceLocationRef extraLoc = new WorkspaceLocationRef("loc-extra");
-        locations.register(extraLoc, extraDir);
-        WorkspaceBindingId extraBindingId = new WorkspaceBindingId("binding-extra");
-        WorkspaceBinding extraBinding = WorkspaceBinding.provision(
-                        extraBindingId,
-                        extraLoc,
-                        WorkspaceBindingMode.DIRECT,
-                        new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.readWriteFiles(),
-                        WorkspacePermissionSet.readWrite(),
-                        LocalWorkspaceLocationStore.fingerprintFor(extraDir),
-                        now)
-                .activate(now);
-        bindings.create(extraBinding);
-
-        workspaces.create(Workspace.provision(
-                        extraWsId,
-                        new ProjectId("proj-attached"),
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), extraBindingId, "test"),
-                        extraRevision,
-                        now)
-                .activate(now));
+        Workspace before = workspaces.find(extraWsId).orElseThrow();
+        Workspace customRevision = before.advanceRevision(
+                new WorkspaceRevision(before.revision().sequence() + 1, "sha256:custom-extra-rev"), now);
+        workspaces.save(customRevision, before.version());
 
         String notePath =
                 extraDir.resolve("note.txt").toAbsolutePath().normalize().toString();
@@ -372,6 +478,8 @@ class LocalFileToolOperationsMultiRootTest {
 
         assertThat(created.successful()).isTrue();
         assertThat(Files.readString(extraDir.resolve("note.txt"))).isEqualTo("content in extra");
+        assertThat(workspaces.find(extraWsId).orElseThrow().revision().sequence())
+                .isGreaterThan(customRevision.revision().sequence());
     }
 
     @Test
@@ -391,10 +499,7 @@ class LocalFileToolOperationsMultiRootTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of(
-                        "alias", "toctou-extra",
-                        "path", extraDir.toString(),
-                        "permission", "read-write")));
+                arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
         assertThat(attached.successful()).isTrue();
         assertThat(operations.currentScope().version()).isGreaterThan(initialScope.version());
         assertThat(initialScope.version())
@@ -402,21 +507,19 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
-    void rejectsAttachmentThatOverlapsTheMainDirectory() {
+    void reauthorizingTheMainDirectoryDoesNotDuplicateItsBoundary() {
+        int originalDirectoryCount =
+                operations.currentScope().allowedDirectories().size();
         var result = operations.execute(
                 "workspace.attach",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of(
-                        "alias", "duplicate",
-                        "path", mainDir.toString(),
-                        "permission", "read-only")));
+                arguments(Map.of("path", mainDir.toString(), "permission", "read-only")));
 
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
-        assertThat(registry.find(WorkspaceRootAlias.of("duplicate"))).isEmpty();
+        assertThat(result.successful()).isTrue();
+        assertThat(operations.currentScope().allowedDirectories()).hasSize(originalDirectoryCount);
     }
 
     @Test
@@ -615,7 +718,7 @@ class LocalFileToolOperationsMultiRootTest {
                 .containsEntry("atomic", false)
                 .containsEntry("appliedPaths", List.of(first))
                 .containsEntry("failedPath", second)
-                .containsEntry("errorCode", "IO_FAILURE")
+                .containsEntry("errorCode", "PATH_DENIED")
                 .containsEntry("reconciliationRequired", true);
         assertThat(Files.readString(configDir.resolve("first.txt"))).isEqualTo("first\n");
     }
@@ -711,131 +814,5 @@ class LocalFileToolOperationsMultiRootTest {
 
     private static ToolArguments arguments(Map<String, Object> values) {
         return new ToolArguments("haifa.file.test", "1.1.0", values);
-    }
-
-    private WorkspaceMutationProvider testMutations(InMemoryWorkspaceStore workspaces, WorkspaceId workspaceId) {
-        return new WorkspaceMutationProvider() {
-            @Override
-            public String providerId() {
-                return "test-mutations";
-            }
-
-            @Override
-            public WorkspaceMutationCapabilities capabilities() {
-                return new WorkspaceMutationCapabilities(false, false, "test");
-            }
-
-            @Override
-            public MutationResult create(CreateFileRequest request) {
-                writeTargetFile(request.path(), request.content());
-                WorkspaceRevision before = workspaces
-                        .find(request.path().workspaceId())
-                        .orElseThrow()
-                        .revision();
-                if (!request.precondition().expectedWorkspaceRevision().equals(before)) {
-                    throw new WorkspaceMutationException(
-                            MutationErrorCode.REVISION_CONFLICT,
-                            request.path(),
-                            "revision conflict: expected "
-                                    + request.precondition().expectedWorkspaceRevision() + " but was " + before);
-                }
-                WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:create-result");
-                FileChange change = new FileChange(
-                        FileChangeType.CREATE,
-                        request.path().projectPath(),
-                        null,
-                        null,
-                        new FileVersion(FileType.FILE, request.content().length, "sha256:hash-val"));
-
-                return new MutationResult(before, after, List.of(change), true, false);
-            }
-
-            @Override
-            public MutationResult write(WriteFileRequest request) {
-                writeTargetFile(request.path(), request.content());
-                WorkspaceRevision before = workspaces
-                        .find(request.path().workspaceId())
-                        .orElseThrow()
-                        .revision();
-                if (!request.precondition().expectedWorkspaceRevision().equals(before)) {
-                    throw new WorkspaceMutationException(
-                            MutationErrorCode.REVISION_CONFLICT,
-                            request.path(),
-                            "revision conflict: expected "
-                                    + request.precondition().expectedWorkspaceRevision() + " but was " + before);
-                }
-                WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:write-result");
-                return new MutationResult(before, after, List.of(), true, false);
-            }
-
-            @Override
-            public MutationResult delete(DeleteFileRequest request) {
-                try {
-                    Files.deleteIfExists(
-                            mainDir.resolve(request.path().projectPath().value()));
-                } catch (IOException exception) {
-                    throw new AssertionError(exception);
-                }
-                WorkspaceRevision before = workspaces
-                        .find(request.path().workspaceId())
-                        .orElseThrow()
-                        .revision();
-                if (!request.precondition().expectedWorkspaceRevision().equals(before)) {
-                    throw new WorkspaceMutationException(
-                            MutationErrorCode.REVISION_CONFLICT,
-                            request.path(),
-                            "revision conflict: expected "
-                                    + request.precondition().expectedWorkspaceRevision() + " but was " + before);
-                }
-                WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:del-result");
-                return new MutationResult(before, after, List.of(), true, false);
-            }
-
-            @Override
-            public MutationResult move(MoveFileRequest request) {
-                try {
-                    Path destination =
-                            mainDir.resolve(request.destination().projectPath().value());
-                    if (destination.getParent() != null) Files.createDirectories(destination.getParent());
-                    Files.move(mainDir.resolve(request.source().projectPath().value()), destination);
-                } catch (IOException exception) {
-                    throw new AssertionError(exception);
-                }
-                WorkspaceRevision before = workspaces
-                        .find(request.source().workspaceId())
-                        .orElseThrow()
-                        .revision();
-                if (!request.sourcePrecondition().expectedWorkspaceRevision().equals(before)) {
-                    throw new WorkspaceMutationException(
-                            MutationErrorCode.REVISION_CONFLICT,
-                            request.source(),
-                            "revision conflict: expected "
-                                    + request.sourcePrecondition().expectedWorkspaceRevision() + " but was " + before);
-                }
-                WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:move-result");
-                return new MutationResult(before, after, List.of(), true, false);
-            }
-        };
-    }
-
-    private void writeTargetFile(io.haifa.agent.project.path.WorkspacePath path, byte[] content) {
-        try {
-            Path dir = mainDir;
-            if (workspaces != null && bindings != null && locations != null) {
-                var wsOpt = workspaces.find(path.workspaceId());
-                if (wsOpt.isPresent()) {
-                    var bindingOpt = bindings.find(wsOpt.get().root().bindingId());
-                    if (bindingOpt.isPresent()) {
-                        dir = locations.resolveForTrustedProvider(
-                                bindingOpt.get().locationRef());
-                    }
-                }
-            }
-            Path target = dir.resolve(path.projectPath().value());
-            if (target.getParent() != null) Files.createDirectories(target.getParent());
-            Files.write(target, content);
-        } catch (IOException exception) {
-            throw new AssertionError(exception);
-        }
     }
 }

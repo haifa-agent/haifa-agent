@@ -333,7 +333,12 @@ class LocalCodingAgentTest {
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
             int call = modelCalls.incrementAndGet();
             return call % 2 == 1
-                    ? toolResponse("cli-persistence-read-" + call, "file_list", Map.of("path", "."))
+                    ? toolResponse(
+                            "cli-persistence-read-" + call,
+                            "file_list",
+                            Map.of(
+                                    "path",
+                                    workspace.toAbsolutePath().normalize().toString()))
                     : answer("cli-persistence-" + call, "persisted");
         };
         io.haifa.agent.core.run.AgentRunId runId;
@@ -403,10 +408,7 @@ class LocalCodingAgentTest {
                         List.of(new ModelToolCall(
                                 new ProviderToolCallCorrelationId("approval-tool-call-1"),
                                 "workspace_attach",
-                                Map.of(
-                                        "alias", "attached",
-                                        "path", attachedDirectory.toString(),
-                                        "permission", "read-only"))),
+                                Map.of("path", attachedDirectory.toString(), "permission", "read-only"))),
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unpriced(5, 2),
                         "stub",
@@ -445,7 +447,6 @@ class LocalCodingAgentTest {
                     .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
             assertThat(request.prompt())
                     .contains("Attach additional workspace directory")
-                    .contains("Alias: attached")
                     .contains("Path: " + attachedDirectory)
                     .contains("Permission: read-only")
                     .contains("this local agent session only");
@@ -822,7 +823,17 @@ class LocalCodingAgentTest {
                                     && message.content().contains("authoritative tool results show a workspace change"))
                             .noneMatch(message -> message.content().contains("[CODING_RUN_STATE]"));
                     yield toolResponse(
-                            "delivery-write", "file_create", Map.of("path", "delivered.txt", "content", "delivered\n"));
+                            "delivery-write",
+                            "file_create",
+                            Map.of(
+                                    "path",
+                                    successfulWorkspace
+                                            .resolve("delivered.txt")
+                                            .toAbsolutePath()
+                                            .normalize()
+                                            .toString(),
+                                    "content",
+                                    "delivered\n"));
                 }
                 case 2 -> {
                     yield toolResponse(
@@ -894,7 +905,17 @@ class LocalCodingAgentTest {
         Files.writeString(workspace.resolve("README.md"), "deterministic root cause evidence\n");
         AtomicInteger calls = new AtomicInteger();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> switch (calls.incrementAndGet()) {
-            case 1 -> toolResponse("analyze-read", "file_read", Map.of("path", "README.md"));
+            case 1 ->
+                toolResponse(
+                        "analyze-read",
+                        "file_read",
+                        Map.of(
+                                "path",
+                                workspace
+                                        .resolve("README.md")
+                                        .toAbsolutePath()
+                                        .normalize()
+                                        .toString()));
             default -> answer("analyze-complete", "root cause analyzed from deterministic read-only evidence");
         };
 
@@ -1081,7 +1102,12 @@ class LocalCodingAgentTest {
                     .noneMatch(message -> message.role() == ModelMessageRole.SYSTEM
                             && message.content().contains("Available Skills"));
             return call == 1
-                    ? toolResponse("cli-no-skills-read", "file_list", Map.of("path", "."))
+                    ? toolResponse(
+                            "cli-no-skills-read",
+                            "file_list",
+                            Map.of(
+                                    "path",
+                                    workspace.toAbsolutePath().normalize().toString()))
                     : answer("cli-no-skills", "complete");
         };
 
@@ -1122,7 +1148,7 @@ class LocalCodingAgentTest {
     }
 
     @Test
-    void fileListAcceptsTheDisclosedDotWorkspaceRoot() throws Exception {
+    void fileListAcceptsTheDisclosedAbsoluteWorkspaceRoot() throws Exception {
         Files.writeString(workspace.resolve("visible.txt"), "fixture", StandardCharsets.UTF_8);
         AtomicInteger calls = new AtomicInteger();
         AtomicReference<AgentChatRequest> firstRequest = new AtomicReference<>();
@@ -1134,7 +1160,11 @@ class LocalCodingAgentTest {
                         "stub-model",
                         "",
                         List.of(new ModelToolCall(
-                                new ProviderToolCallCorrelationId("list-call-1"), "file_list", Map.of("path", "."))),
+                                new ProviderToolCallCorrelationId("list-call-1"),
+                                "file_list",
+                                Map.of(
+                                        "path",
+                                        workspace.toAbsolutePath().normalize().toString()))),
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unpriced(10, 3),
                         "stub",
@@ -1192,7 +1222,13 @@ class LocalCodingAgentTest {
                         List.of(new ModelToolCall(
                                 new ProviderToolCallCorrelationId("missing-call-1"),
                                 "file_read",
-                                Map.of("path", "missing.txt"))),
+                                Map.of(
+                                        "path",
+                                        workspace
+                                                .resolve("missing.txt")
+                                                .toAbsolutePath()
+                                                .normalize()
+                                                .toString()))),
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unpriced(10, 3),
                         "stub",

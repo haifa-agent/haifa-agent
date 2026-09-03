@@ -3,7 +3,6 @@ package io.haifa.agent.application.project.product.coding.delivery;
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.ledger.SessionChangeLedger;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,17 +17,14 @@ public final class OnDemandChangeReviewService {
     private static final List<String> COUNT_KEYS =
             List.of("created", "replaced", "deleted", "moved", "binary", "oversize", "opaque");
 
-    private final LocalWorkspaceRootRegistry rootRegistry;
     private final SessionChangeLedger ledger;
     private final long oversizeThresholdBytes;
 
-    public OnDemandChangeReviewService(LocalWorkspaceRootRegistry rootRegistry, SessionChangeLedger ledger) {
-        this(rootRegistry, ledger, DEFAULT_OVERSIZE_THRESHOLD_BYTES);
+    public OnDemandChangeReviewService(SessionChangeLedger ledger) {
+        this(ledger, DEFAULT_OVERSIZE_THRESHOLD_BYTES);
     }
 
-    public OnDemandChangeReviewService(
-            LocalWorkspaceRootRegistry rootRegistry, SessionChangeLedger ledger, long oversizeThresholdBytes) {
-        this.rootRegistry = rootRegistry;
+    public OnDemandChangeReviewService(SessionChangeLedger ledger, long oversizeThresholdBytes) {
         this.ledger = Objects.requireNonNull(ledger, "ledger must not be null");
         if (oversizeThresholdBytes < 1) {
             throw new IllegalArgumentException("oversizeThresholdBytes must be positive");
