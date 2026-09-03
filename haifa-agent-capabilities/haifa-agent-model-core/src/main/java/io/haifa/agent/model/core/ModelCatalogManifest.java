@@ -1,14 +1,15 @@
 package io.haifa.agent.model.core;
 
-import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelBindingConsistencyValidator;
 import io.haifa.agent.model.api.ModelDefinition;
+import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelProviderId;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -16,7 +17,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.ArrayList;
 
 /** Validated, immutable catalog manifest projected from explicitly listed YAML resources. */
 public final class ModelCatalogManifest {
@@ -75,14 +75,18 @@ public final class ModelCatalogManifest {
             if (!configured.enabled()) continue;
             ModelCatalogProvider catalogProvider = providersById.get(configured.id());
             if (catalogProvider == null) {
-                throw new IllegalArgumentException("deployment provider is not registered in the catalog: " + configured.id());
+                throw new IllegalArgumentException(
+                        "deployment provider is not registered in the catalog: " + configured.id());
             }
             List<ModelCatalogBinding> selected = catalogProvider.bindings().stream()
-                    .filter(binding -> configured.allowedBindings().contains(binding.definition().id()))
+                    .filter(binding -> configured
+                            .allowedBindings()
+                            .contains(binding.definition().id()))
                     .toList();
             if (selected.size() != configured.allowedBindings().size()) {
                 ModelDefinitionId unknown = configured.allowedBindings().stream()
-                        .filter(bindingId -> selected.stream().noneMatch(binding -> binding.definition().id().equals(bindingId)))
+                        .filter(bindingId -> selected.stream()
+                                .noneMatch(binding -> binding.definition().id().equals(bindingId)))
                         .findFirst()
                         .orElseThrow();
                 throw new IllegalArgumentException(
@@ -92,10 +96,13 @@ public final class ModelCatalogManifest {
                     .map(binding -> new ModelApiBindingDefinition(
                             binding.apiBinding().style(),
                             binding.apiBinding().dialect(),
-                            configured.bindingEndpointOverrides().get(binding.definition().id())))
+                            configured
+                                    .bindingEndpointOverrides()
+                                    .get(binding.definition().id())))
                     .distinct()
                     .toList();
-            List<ModelDefinition> definitions = selected.stream().map(ModelCatalogBinding::definition).toList();
+            List<ModelDefinition> definitions =
+                    selected.stream().map(ModelCatalogBinding::definition).toList();
             ModelProviderDefinition provider = new ModelProviderDefinition(
                     catalogProvider.id(),
                     catalogProvider.version(),
@@ -110,8 +117,9 @@ public final class ModelCatalogManifest {
                     Map.of());
             ModelBindingConsistencyValidator.validateAll(
                     provider,
-                    selected.stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
-                            binding -> binding.definition().id().value(), ModelCatalogBinding::profile)));
+                    selected.stream()
+                            .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                                    binding -> binding.definition().id().value(), ModelCatalogBinding::profile)));
             projectedProviders.add(provider);
             projectedBindings.addAll(selected);
         }

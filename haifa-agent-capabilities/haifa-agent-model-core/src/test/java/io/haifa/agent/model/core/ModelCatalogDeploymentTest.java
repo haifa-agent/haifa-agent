@@ -17,8 +17,8 @@ class ModelCatalogDeploymentTest {
     @Test
     void projectsOnlyTheDeploymentAllowlistAndKeepsCatalogBindingIdentity() {
         ModelCatalogManifest manifest = packagedCatalog();
-        ModelCatalogDeployment deployment = new ModelCatalogDeployment(java.util.List.of(
-                new ModelCatalogDeployment.Provider(
+        ModelCatalogDeployment deployment =
+                new ModelCatalogDeployment(java.util.List.of(new ModelCatalogDeployment.Provider(
                         new ModelProviderId("deepseek"),
                         URI.create("https://api.deepseek.com"),
                         new CredentialRef("env://DEEPSEEK_API_KEY"),
@@ -33,25 +33,41 @@ class ModelCatalogDeploymentTest {
         assertThat(projection.providers().getFirst().models())
                 .extracting(model -> model.id().value())
                 .containsExactly("deepseek-chat-pro");
-        assertThat(projection.binding("deepseek-chat-pro").orElseThrow().definition().version())
+        assertThat(projection
+                        .binding("deepseek-chat-pro")
+                        .orElseThrow()
+                        .definition()
+                        .version())
                 .isEqualTo("2026-09-m0");
-        assertThat(projection.binding("deepseek-chat-pro").orElseThrow().profile().contextWindowTokens())
+        assertThat(projection
+                        .binding("deepseek-chat-pro")
+                        .orElseThrow()
+                        .profile()
+                        .contextWindowTokens())
                 .isEqualTo(1_048_576);
-        assertThat(projection.binding("deepseek-chat-pro")
+        assertThat(projection
+                        .binding("deepseek-chat-pro")
                         .orElseThrow()
                         .profile()
                         .executionLimits()
                         .maximumOutputTokens())
                 .isEqualTo(393_216);
-        assertThat(projection.binding("deepseek-chat-pro").orElseThrow().profile().digest())
-                .isEqualTo(manifest.binding("deepseek-chat-pro").orElseThrow().profile().digest());
+        assertThat(projection
+                        .binding("deepseek-chat-pro")
+                        .orElseThrow()
+                        .profile()
+                        .digest())
+                .isEqualTo(manifest.binding("deepseek-chat-pro")
+                        .orElseThrow()
+                        .profile()
+                        .digest());
     }
 
     @Test
     void usesOnlyAnExplicitEndpointOverrideForTheExactBinding() {
         ModelCatalogManifest manifest = packagedCatalog();
-        ModelCatalogDeployment deployment = new ModelCatalogDeployment(java.util.List.of(
-                new ModelCatalogDeployment.Provider(
+        ModelCatalogDeployment deployment =
+                new ModelCatalogDeployment(java.util.List.of(new ModelCatalogDeployment.Provider(
                         new ModelProviderId("deepseek"),
                         URI.create("https://api.deepseek.com"),
                         new CredentialRef("env://DEEPSEEK_API_KEY"),
@@ -71,8 +87,8 @@ class ModelCatalogDeploymentTest {
     @Test
     void rejectsADeploymentBindingThatDoesNotBelongToTheProvider() {
         ModelCatalogManifest manifest = packagedCatalog();
-        ModelCatalogDeployment deployment = new ModelCatalogDeployment(java.util.List.of(
-                new ModelCatalogDeployment.Provider(
+        ModelCatalogDeployment deployment =
+                new ModelCatalogDeployment(java.util.List.of(new ModelCatalogDeployment.Provider(
                         new ModelProviderId("deepseek"),
                         URI.create("https://api.deepseek.com"),
                         new CredentialRef("env://DEEPSEEK_API_KEY"),
