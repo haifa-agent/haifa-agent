@@ -94,6 +94,206 @@ models:
           contextWindow: 131072
           maxOutputTokens: 8192
 
+    - id: aliyun-bailian
+      displayName: Alibaba Cloud Model Studio
+      endpoint: https://default-workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+      credentialRef: env://DASHSCOPE_API_KEY
+      nativeStreaming: true
+      workspaceId: ${HAIFA_BAILIAN_WORKSPACE_ID:default-workspace}
+      region: ${HAIFA_BAILIAN_REGION:cn-beijing}
+      apiBindings:
+        - style: openai-chat-completions
+          dialect: aliyun-bailian-openai-chat
+      models:
+        - id: qwen3.8-max-0902
+          displayName: Qwen3.8 Max 0902
+          providerModelId: qwen3.8-max-0902
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 1048576
+          maxOutputTokens: 65536
+          reasoningMode: ENABLED
+        - id: qwen3.8-max
+          displayName: Qwen3.8 Max
+          providerModelId: qwen3.8-max
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 1048576
+          maxOutputTokens: 65536
+          reasoningMode: ENABLED
+        - id: qwen3.8-flash
+          displayName: Qwen3.8 Flash
+          providerModelId: qwen3.8-flash
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 1048576
+          maxOutputTokens: 65536
+          reasoningMode: ENABLED
+        - id: qwen3.7-plus
+          displayName: Qwen3.7 Plus
+          providerModelId: qwen3.7-plus
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 1048576
+          maxOutputTokens: 65536
+          reasoningMode: ENABLED
+        - id: qwen3-vl-plus
+          displayName: Qwen3 VL Plus
+          providerModelId: qwen3-vl-plus
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, IMAGE_UPLOAD_INPUT, IMAGE_URL_INPUT]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+
+    - id: siliconflow
+      displayName: SiliconFlow
+      endpoint: https://api.siliconflow.cn/v1
+      credentialRef: env://SILICONFLOW_API_KEY
+      nativeStreaming: true
+      apiBindings:
+        - style: openai-chat-completions
+          dialect: siliconflow-openai-chat
+      models:
+        - id: siliconflow-deepseek-v4-pro
+          displayName: SiliconFlow DeepSeek V4 Pro
+          providerModelId: deepseek-ai/DeepSeek-V4-Pro
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 1048576
+          maxOutputTokens: 393216
+          reasoningMode: ENABLED
+        - id: siliconflow-deepseek-v4-flash
+          displayName: SiliconFlow DeepSeek V4 Flash
+          providerModelId: deepseek-ai/DeepSeek-V4-Flash
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 1048576
+          maxOutputTokens: 393216
+          reasoningMode: ENABLED
+        - id: siliconflow-qwen3-vl-32b
+          displayName: SiliconFlow Qwen3 VL 32B Instruct
+          providerModelId: Qwen/Qwen3-VL-32B-Instruct
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, IMAGE_UPLOAD_INPUT]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+        - id: siliconflow-qwen3-32b
+          displayName: SiliconFlow Qwen3 32B
+          providerModelId: Qwen/Qwen3-32B
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+          reasoningMode: ENABLED
+        - id: siliconflow-kimi-k3
+          displayName: SiliconFlow Kimi K3
+          providerModelId: moonshotai/Kimi-K3
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 262144
+          maxOutputTokens: 32768
+          reasoningMode: ENABLED
+        - id: siliconflow-kimi-k2-6
+          displayName: SiliconFlow Kimi K2.6
+          providerModelId: moonshotai/Kimi-K2.6
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 262144
+          maxOutputTokens: 32768
+          reasoningMode: ENABLED
+        - id: siliconflow-glm-5-2
+          displayName: SiliconFlow GLM-5.2
+          providerModelId: zai-org/GLM-5.2
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 1048576
+          maxOutputTokens: 131072
+          reasoningMode: ENABLED
+        - id: siliconflow-glm-5-1
+          displayName: SiliconFlow GLM-5.1
+          providerModelId: zai-org/GLM-5.1
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 32768
+          reasoningMode: ENABLED
+
+    - id: kimi
+      displayName: Moonshot Kimi
+      endpoint: https://api.moonshot.cn/v1
+      credentialRef: env://KIMI_API_KEY
+      nativeStreaming: true
+      apiBindings:
+        - style: openai-chat-completions
+          dialect: kimi-openai-chat
+      models:
+        - id: kimi-k3
+          displayName: Kimi K3
+          providerModelId: kimi-k3
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 262144
+          maxOutputTokens: 32768
+          reasoningMode: ENABLED
+        - id: kimi-k2.7-code
+          displayName: Kimi K2.7 Code
+          providerModelId: kimi-k2.7-code
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 262144
+          maxOutputTokens: 32768
+          reasoningMode: ENABLED
+        - id: kimi-k2.6
+          displayName: Kimi K2.6
+          providerModelId: kimi-k2.6
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 262144
+          maxOutputTokens: 32768
+          reasoningMode: ENABLED
+
+    - id: zhipu
+      displayName: Zhipu AI
+      endpoint: https://open.bigmodel.cn/api/paas/v4
+      credentialRef: env://BIGMODEL_API_KEY
+      nativeStreaming: true
+      apiBindings:
+        - style: openai-chat-completions
+          dialect: zhipu-openai-chat
+      models:
+        - id: glm-5.2
+          displayName: GLM-5.2
+          providerModelId: glm-5.2
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 1048576
+          maxOutputTokens: 131072
+          reasoningMode: ENABLED
+        - id: glm-5.1
+          displayName: GLM-5.1
+          providerModelId: glm-5.1
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 32768
+          reasoningMode: ENABLED
+        - id: glm-5
+          displayName: GLM-5
+          providerModelId: glm-5
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 32768
+          reasoningMode: ENABLED
+        - id: glm-5-turbo
+          displayName: GLM-5 Turbo
+          providerModelId: glm-5-turbo
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 32768
+          reasoningMode: ENABLED
+
     - id: google-antigravity
       displayName: Google Antigravity Direct (Local Compatibility)
       endpoint: ${HAIFA_ANTIGRAVITY_MODEL_ENDPOINT:https://daily-cloudcode-pa.googleapis.com/v1internal}

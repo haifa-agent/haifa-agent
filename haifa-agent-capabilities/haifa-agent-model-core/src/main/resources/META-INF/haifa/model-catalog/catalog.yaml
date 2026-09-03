@@ -1,4 +1,9 @@
 schemaVersion: haifa.model-catalog/v1
 providers:
+  - resource: providers/openai-codex/provider.yaml
   - resource: providers/deepseek/provider.yaml
+  - resource: providers/aliyun-bailian/provider.yaml
+  - resource: providers/siliconflow/provider.yaml
+  - resource: providers/kimi/provider.yaml
+  - resource: providers/zhipu/provider.yaml
   - resource: providers/google-antigravity/provider.yaml

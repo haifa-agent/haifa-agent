@@ -35,6 +35,16 @@ BACKEND_LAUNCH_MODES = ("jar", "classpath")
 DEVELOPMENT_CLASSPATH_ENVIRONMENT = "HAIFA_PERSONAL_DEV_CLASSPATH"
 BAILIAN_DEFAULT_MODEL_ID = "qwen3.7-max-2026-05-17"
 ANTIGRAVITY_DIRECT_MODEL_ID = "antigravity-gemini"
+SILICONFLOW_MODEL_IDS = (
+    "siliconflow-deepseek-v4-pro",
+    "siliconflow-deepseek-v4-flash",
+    "siliconflow-qwen3-vl-32b",
+    "siliconflow-qwen3-32b",
+    "siliconflow-kimi-k3",
+    "siliconflow-kimi-k2-6",
+    "siliconflow-glm-5-2",
+    "siliconflow-glm-5-1",
+)
 SILICONFLOW_MODEL_ID = "siliconflow-deepseek-v4-flash"
 CODEX_MODEL_IDS = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
 SUPPORTED_DEFAULT_MODEL_IDS = (
@@ -50,6 +60,9 @@ SUPPORTED_DEFAULT_MODEL_IDS = (
     "qwen3-vl-plus",
     "qwen3.7-max-responses",
     "qwen3.7-plus-responses",
+    "qwen3.8-max-0902",
+    "qwen3.8-max",
+    "qwen3.8-flash",
     "kimi-k3",
     "kimi-k2.7-code",
     "kimi-k2.6",
@@ -58,7 +71,7 @@ SUPPORTED_DEFAULT_MODEL_IDS = (
     "glm-5.1-chat",
     "glm-5-chat",
     *CODEX_MODEL_IDS,
-    SILICONFLOW_MODEL_ID,
+    *SILICONFLOW_MODEL_IDS,
     ANTIGRAVITY_DIRECT_MODEL_ID,
 )
 ALLOWED_MCP_TOOLS = ",".join(
@@ -1041,7 +1054,7 @@ def backend_environment(
                 f"{model_prefix}_MAXOUTPUTTOKENS": "128000",
             }
         )
-    next_provider_index += 1
+    next_provider_index = 2
     if bailian is not None:
         bailian_key, workspace_id, region = bailian
         prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
@@ -1128,7 +1141,32 @@ def backend_environment(
                 f"{prefix}_MODELS_5_MAXOUTPUTTOKENS": "65536",
             }
         )
-        next_provider_index += 1
+        for model_index, (model_id, display_name) in enumerate(
+            (
+                ("qwen3.8-max-0902", "Qwen3.8 Max 0902"),
+                ("qwen3.8-max", "Qwen3.8 Max"),
+                ("qwen3.8-flash", "Qwen3.8 Flash"),
+            ),
+            start=6,
+        ):
+            model_prefix = f"{prefix}_MODELS_{model_index}"
+            environment.update(
+                {
+                    f"{model_prefix}_ID": model_id,
+                    f"{model_prefix}_DISPLAYNAME": display_name,
+                    f"{model_prefix}_MODELDISPLAYNAME": display_name,
+                    f"{model_prefix}_PROVIDERMODELID": model_id,
+                    f"{model_prefix}_STYLE": "openai-chat-completions",
+                    f"{model_prefix}_CAPABILITIES_0": "TEXT_CHAT",
+                    f"{model_prefix}_CAPABILITIES_1": "TOOL_CALLING",
+                    f"{model_prefix}_CAPABILITIES_2": "STRUCTURED_OUTPUT",
+                    f"{model_prefix}_CAPABILITIES_3": "REASONING",
+                    f"{model_prefix}_REASONINGMODE": "ADAPTIVE",
+                    f"{model_prefix}_CONTEXTWINDOW": "1048576",
+                    f"{model_prefix}_MAXOUTPUTTOKENS": "65536",
+                }
+            )
+    next_provider_index = 3
     if kimi_key is not None:
         prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
         environment.update(
@@ -1167,7 +1205,7 @@ def backend_environment(
                     f"{model_prefix}_MAXOUTPUTTOKENS": "131072",
                 }
             )
-        next_provider_index += 1
+    next_provider_index = 4
     if bigmodel_key is not None:
         prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
         environment.update(
@@ -1210,7 +1248,7 @@ def backend_environment(
                     f"{model_prefix}_MAXOUTPUTTOKENS": "131072",
                 }
             )
-        next_provider_index += 1
+    next_provider_index = 5
     if siliconflow_key is not None:
         prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
         environment.update(
@@ -1236,7 +1274,31 @@ def backend_environment(
                 f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
             }
         )
-        next_provider_index += 1
+        siliconflow_models = (
+            ("siliconflow-deepseek-v4-pro", "DeepSeek V4 Pro", "deepseek-ai/DeepSeek-V4-Pro", "1048576", "393216", ("TEXT_CHAT", "TOOL_CALLING", "STRUCTURED_OUTPUT", "REASONING"), "ENABLED"),
+            ("siliconflow-qwen3-vl-32b", "Qwen3 VL 32B Instruct", "Qwen/Qwen3-VL-32B-Instruct", "131072", "8192", ("TEXT_CHAT", "TOOL_CALLING", "STRUCTURED_OUTPUT", "IMAGE_UPLOAD_INPUT"), None),
+            ("siliconflow-qwen3-32b", "Qwen3 32B", "Qwen/Qwen3-32B", "131072", "8192", ("TEXT_CHAT", "TOOL_CALLING", "STRUCTURED_OUTPUT", "REASONING"), "ENABLED"),
+            ("siliconflow-kimi-k3", "Kimi K3", "moonshotai/Kimi-K3", "262144", "32768", ("TEXT_CHAT", "TOOL_CALLING", "REASONING"), "ENABLED"),
+            ("siliconflow-kimi-k2-6", "Kimi K2.6", "moonshotai/Kimi-K2.6", "262144", "32768", ("TEXT_CHAT", "TOOL_CALLING", "REASONING"), "ENABLED"),
+            ("siliconflow-glm-5-2", "GLM-5.2", "zai-org/GLM-5.2", "1048576", "131072", ("TEXT_CHAT", "TOOL_CALLING", "STRUCTURED_OUTPUT", "REASONING"), "ENABLED"),
+            ("siliconflow-glm-5-1", "GLM-5.1", "zai-org/GLM-5.1", "131072", "32768", ("TEXT_CHAT", "TOOL_CALLING", "STRUCTURED_OUTPUT", "REASONING"), "ENABLED"),
+        )
+        for model_index, (model_id, display_name, provider_model_id, context_window, max_output_tokens, capabilities, reasoning_mode) in enumerate(siliconflow_models, start=1):
+            model_prefix = f"{prefix}_MODELS_{model_index}"
+            environment.update(
+                {
+                    f"{model_prefix}_ID": model_id,
+                    f"{model_prefix}_DISPLAYNAME": display_name,
+                    f"{model_prefix}_MODELDISPLAYNAME": display_name,
+                    f"{model_prefix}_PROVIDERMODELID": provider_model_id,
+                    f"{model_prefix}_STYLE": "openai-chat-completions",
+                    f"{model_prefix}_CONTEXTWINDOW": context_window,
+                    f"{model_prefix}_MAXOUTPUTTOKENS": max_output_tokens,
+                    **{f"{model_prefix}_CAPABILITIES_{index}": capability for index, capability in enumerate(capabilities)},
+                    **({f"{model_prefix}_REASONINGMODE": reasoning_mode} if reasoning_mode else {}),
+                }
+            )
+    next_provider_index = 6
     if openai is not None:
         openai_base_url, openai_key, openai_model_id = openai
         prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
@@ -1309,7 +1371,7 @@ def resolve_default_model_id(
         fail("A Kimi default model requires a Kimi API key.")
     if selected.startswith("glm") and bigmodel_key is None:
         fail("A GLM default model requires a BigModel API key.")
-    if selected == SILICONFLOW_MODEL_ID and siliconflow_key is None:
+    if selected in SILICONFLOW_MODEL_IDS and siliconflow_key is None:
         fail("The SiliconFlow default model requires a SiliconFlow API key.")
     if selected == ANTIGRAVITY_DIRECT_MODEL_ID and antigravity is None:
         fail("The Antigravity Direct default model requires local compatibility testing to be enabled.")

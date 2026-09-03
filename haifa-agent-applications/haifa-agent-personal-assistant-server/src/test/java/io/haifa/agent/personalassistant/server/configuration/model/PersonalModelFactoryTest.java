@@ -130,7 +130,7 @@ class PersonalModelFactoryTest {
     }
 
     @Test
-    void defaultApplicationConfigurationIsDeepSeekOnly() throws Exception {
+    void defaultApplicationConfigurationIncludesTheReviewedProviderCatalog() throws Exception {
         var sources = new MutablePropertySources();
         var resource = new ClassPathResource("application.yml");
         for (var source : new YamlPropertySourceLoader().load("application", resource)) {
@@ -146,7 +146,13 @@ class PersonalModelFactoryTest {
 
         assertThat(providers)
                 .extracting(PersonalAssistantProperties.ModelProvider::id)
-                .containsExactly("deepseek");
+                .containsExactly("deepseek", "openai-codex", "aliyun-bailian", "siliconflow", "kimi", "zhipu");
+        assertThat(providers.get(2).models())
+                .extracting(PersonalAssistantProperties.ProviderModel::id)
+                .contains("qwen3-vl-plus");
+        assertThat(providers.get(3).models())
+                .extracting(PersonalAssistantProperties.ProviderModel::providerModelId)
+                .contains("zai-org/GLM-5.2");
     }
 
     @Test
