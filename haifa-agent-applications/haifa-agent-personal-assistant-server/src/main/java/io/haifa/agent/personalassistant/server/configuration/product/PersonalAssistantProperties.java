@@ -5,6 +5,7 @@ import io.haifa.agent.model.api.ModelReasoningMode;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.ConstructorBinding;
@@ -41,15 +42,15 @@ public record PersonalAssistantProperties(
         if (modelProviders.stream().map(ModelProvider::id).distinct().count() != modelProviders.size()) {
             throw new IllegalArgumentException("model provider ids must be unique");
         }
-        List<ProviderModel> configuredModels = modelProviders.stream()
-                .flatMap(provider -> provider.models().stream())
+        List<String> configuredModels = modelProviders.stream()
+                .flatMap(provider -> provider.bindingIds().stream())
                 .toList();
-        if (configuredModels.stream().map(ProviderModel::id).distinct().count() != configuredModels.size()) {
+        if (configuredModels.stream().distinct().count() != configuredModels.size()) {
             throw new IllegalArgumentException("model ids must be globally unique");
         }
         defaultModelId = text(defaultModelId, "defaultModelId");
         String selectedDefaultModelId = defaultModelId;
-        if (configuredModels.stream().noneMatch(value -> value.id().equals(selectedDefaultModelId))) {
+        if (!configuredModels.contains(selectedDefaultModelId)) {
             throw new IllegalArgumentException("defaultModelId must identify a configured model");
         }
         localSkillRoot = localSkillRoot == null ? "" : localSkillRoot.trim();
@@ -244,7 +245,24 @@ public record PersonalAssistantProperties(
             String credentialReference,
             List<ApiBinding> apiBindings,
             List<ProviderModel> models,
-            URI proxy) {
+            URI proxy,
+            ModelReasoningMode defaultReasoningMode,
+            List<String> allowedBindings,
+            Map<String, URI> bindingEndpointOverrides) {
+        public ModelProvider(
+                String id, String displayName, String mode, boolean allowDeterministic, boolean nativeStreaming,
+                URI endpoint, String credentialReference, List<ApiBinding> apiBindings, List<ProviderModel> models,
+                URI proxy) {
+            this(id, displayName, mode, allowDeterministic, nativeStreaming, endpoint, credentialReference,
+                    apiBindings, models, proxy, ModelReasoningMode.DISABLED, List.of(), Map.of());
+        }
+        public ModelProvider(
+                String id, String displayName, String mode, boolean allowDeterministic, boolean nativeStreaming,
+                URI endpoint, String credentialReference, List<ApiBinding> apiBindings, List<ProviderModel> models,
+                URI proxy, List<String> allowedBindings, Map<String, URI> bindingEndpointOverrides) {
+            this(id, displayName, mode, allowDeterministic, nativeStreaming, endpoint, credentialReference,
+                    apiBindings, models, proxy, ModelReasoningMode.DISABLED, allowedBindings, bindingEndpointOverrides);
+        }
         @ConstructorBinding
         public ModelProvider {
             id = text(id, "modelProvider.id");
@@ -270,14 +288,22 @@ public record PersonalAssistantProperties(
                         "modelProvider.credentialReference must use env:// or model-auth://");
             }
             apiBindings = List.copyOf(apiBindings == null ? List.of() : apiBindings);
-            if (apiBindings.isEmpty())
-                throw new IllegalArgumentException("modelProvider.apiBindings must not be empty");
             if (apiBindings.stream().map(ApiBinding::style).distinct().count() != apiBindings.size()) {
                 throw new IllegalArgumentException("API styles within a provider must be unique");
             }
             models = List.copyOf(models == null ? List.of() : models);
-            if (models.isEmpty()) {
-                throw new IllegalArgumentException("modelProvider.models must not be empty");
+            defaultReasoningMode =
+                    defaultReasoningMode == null ? ModelReasoningMode.DISABLED : defaultReasoningMode;
+            allowedBindings = List.copyOf(allowedBindings == null ? List.of() : allowedBindings);
+            bindingEndpointOverrides = Map.copyOf(bindingEndpointOverrides == null ? Map.of() : bindingEndpointOverrides);
+            if (models.isEmpty() == allowedBindings.isEmpty()) {
+                throw new IllegalArgumentException("configure either modelProvider.models or allowedBindings");
+            }
+            if (models.isEmpty() && !apiBindings.isEmpty()) {
+                throw new IllegalArgumentException("Catalog deployment must not configure apiBindings");
+            }
+            if (!models.isEmpty() && apiBindings.isEmpty()) {
+                throw new IllegalArgumentException("modelProvider.apiBindings must not be empty");
             }
             if (models.stream().map(ProviderModel::id).distinct().count() != models.size()) {
                 throw new IllegalArgumentException("model ids within a provider must be unique");
@@ -311,6 +337,10 @@ public record PersonalAssistantProperties(
                             .anyMatch(binding -> !"google-gemini-generate-content".equals(binding.style()))) {
                 throw new IllegalArgumentException("Antigravity Direct dialect only supports native Gemini style");
             }
+        }
+
+        public List<String> bindingIds() {
+            return models.isEmpty() ? allowedBindings : models.stream().map(ProviderModel::id).toList();
         }
 
         private static void validateModelProxy(URI proxy) {

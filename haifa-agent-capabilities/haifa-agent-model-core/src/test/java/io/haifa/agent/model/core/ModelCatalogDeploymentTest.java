@@ -113,7 +113,8 @@ class ModelCatalogDeploymentTest {
                                                 "siliconflow-openai-chat",
                                                 "kimi-openai-chat",
                                                 "zhipu-openai-chat"),
-                                ModelApiStyles.OPENAI_RESPONSES, Set.of("openai-codex-responses"),
+                                ModelApiStyles.OPENAI_RESPONSES,
+                                        Set.of("deepseek-openai-responses", "openai-codex-responses"),
                                 ModelApiStyles.ANTHROPIC_MESSAGES, Set.of("deepseek-anthropic-messages"),
                                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT, Set.of("antigravity-direct")),
                         Map.of(

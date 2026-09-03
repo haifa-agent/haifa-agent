@@ -44,7 +44,8 @@ events. Model activities never include prompts, assistant text, endpoints, crede
 or raw provider failures.
 
 Server 只接受 `haifa.personal.model-providers` 受信 Provider 列表和显式
-`default-model-id`，不支持旧的单模型 `haifa.personal.model` 配置。`/api/v1/models`、Bootstrap
+`default-model-id`，不支持旧的单模型 `haifa.personal.model` 配置。产品 YAML 仅保留连接、
+`allowed-bindings` allowlist 与可选的 Provider 默认推理模式；模型事实从打包 Catalog 投影。`/api/v1/models`、Bootstrap
 和 Conversation 只返回脱敏信息；Endpoint、
 Credential、`providerModelId`、Adapter 和完整 Snapshot 不进入浏览器。模型偏好保存在 Personal
 SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 production 可选列表。

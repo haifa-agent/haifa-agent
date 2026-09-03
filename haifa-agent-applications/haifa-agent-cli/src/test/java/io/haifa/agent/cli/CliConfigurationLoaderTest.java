@@ -185,14 +185,15 @@ class CliConfigurationLoaderTest {
         assertThat(result.availableModels())
                 .extracting(CliConfiguration.Model::id)
                 .containsExactly(
+                        "deepseek-chat-pro",
+                        "deepseek-chat-flash",
+                        "deepseek-responses-flash",
+                        "deepseek-responses-pro",
+                        "deepseek-anthropic-flash",
+                        "deepseek-anthropic-pro",
                         "gpt-5.6-sol",
                         "gpt-5.6-terra",
                         "gpt-5.6-luna",
-                        "deepseek-chat-flash",
-                        "deepseek-chat-pro",
-                        "deepseek-responses-flash",
-                        "deepseek-anthropic-flash",
-                        "local-openai-responses",
                         "qwen3.8-max-0902",
                         "qwen3.8-max",
                         "qwen3.8-flash",
@@ -266,17 +267,6 @@ class CliConfigurationLoaderTest {
                     assertThat(model.style()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES);
                     assertThat(model.dialect()).isEqualTo("deepseek-anthropic-messages");
                     assertThat(model.endpoint()).hasToString("https://api.deepseek.com/anthropic");
-                });
-        assertThat(result.availableModels())
-                .filteredOn(model -> model.id().equals("local-openai-responses"))
-                .singleElement()
-                .satisfies(model -> {
-                    assertThat(model.providerId()).isEqualTo("local-openai");
-                    assertThat(model.modelId()).isEqualTo("gpt-5.6-luna");
-                    assertThat(model.endpoint()).hasToString("http://127.0.0.1:30000/v1");
-                    assertThat(model.credentialRef()).isEqualTo("env://OPENAI_API_KEY");
-                    assertThat(model.style()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
-                    assertThat(model.dialect()).isEqualTo("standard");
                 });
         assertThat(new CliCodingModelCatalog(result)
                         .available(

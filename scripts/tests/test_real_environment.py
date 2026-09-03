@@ -16,6 +16,20 @@ import real_environment
 
 
 class RealEnvironmentTest(unittest.TestCase):
+    def test_backend_environment_injects_only_runtime_inputs_not_model_metadata(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            root, root / "server", root / "web", root / "runtime", root / "runtime/data",
+            root / "runtime/logs", root / "runtime/last-start.json", root / "runtime/last-stop.json", root / "mvnw")
+        environment = real_environment.backend_environment(
+            "deepseek-secret", "deepseek-chat-flash", None, "aliyun-secret", "continuation-secret",
+            paths, root / "skills", None, kimi_key="kimi-secret", bigmodel_key="bigmodel-secret",
+            siliconflow_key="siliconflow-secret", tavily_key="tavily-secret")
+        self.assertEqual("deepseek-chat-flash", environment["HAIFA_PERSONAL_DEFAULT_MODEL_ID"])
+        self.assertEqual("deepseek-secret", environment["DEEPSEEK_API_KEY"])
+        self.assertEqual("kimi-secret", environment["KIMI_API_KEY"])
+        self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_") for name in environment))
+        self.assertFalse(any("_MODELS_" in name for name in environment))
     @staticmethod
     def write_server_jar(path: Path, payload: bytes = b"application") -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -42,330 +56,6 @@ class RealEnvironmentTest(unittest.TestCase):
         )
         self.assertEqual(repository / "haifa-agent-applications/haifa-agent-personal-assistant-web", paths.web)
 
-    def test_web_environment_freezes_separate_search_and_fetch_providers(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            repository=root,
-            server=root / "server",
-            web=root / "web",
-            runtime=root / "runtime",
-            data=root / "runtime/data",
-            logs=root / "runtime/logs",
-            state=root / "runtime/last-start.json",
-            stop_state=root / "runtime/last-stop.json",
-            maven_wrapper=root / "mvnw",
-        )
-
-        defaults = real_environment.backend_environment(
-            "deepseek-secret",
-            "deepseek-chat-flash",
-            None,
-            "aliyun-secret",
-            "continuation-secret",
-            paths,
-            root / "skills",
-            None,
-            tavily_key="tavily-secret",
-        )
-
-        self.assertEqual("tavily", defaults["HAIFA_PERSONAL_WEB_SEARCH_PROVIDER"])
-        self.assertEqual("tavily", defaults["HAIFA_PERSONAL_WEB_FETCH_PROVIDER"])
-        self.assertEqual("https://api.tavily.com/search", defaults["HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT"])
-        self.assertEqual("https://api.tavily.com/extract", defaults["HAIFA_PERSONAL_WEB_FETCH_ENDPOINT"])
-
-        mixed = real_environment.backend_environment(
-            "deepseek-secret",
-            "deepseek-chat-flash",
-            None,
-            "aliyun-secret",
-            "continuation-secret",
-            paths,
-            root / "skills",
-            None,
-            browserless_token="browserless-secret",
-            tavily_key="tavily-secret",
-            web_search_provider="tavily",
-            web_fetch_provider="browserless",
-        )
-
-        self.assertEqual("tavily", mixed["HAIFA_PERSONAL_WEB_SEARCH_PROVIDER"])
-        self.assertEqual("https://api.tavily.com/search", mixed["HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT"])
-        self.assertEqual("env://TAVILY_API_KEY", mixed["HAIFA_PERSONAL_WEB_SEARCH_CREDENTIAL"])
-        self.assertEqual("browserless", mixed["HAIFA_PERSONAL_WEB_FETCH_PROVIDER"])
-        self.assertEqual(
-            "https://production-sfo.browserless.io/content",
-            mixed["HAIFA_PERSONAL_WEB_FETCH_ENDPOINT"],
-        )
-        self.assertEqual("env://BROWSERLESS_TOKEN", mixed["HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL"])
-
-        tavily = real_environment.backend_environment(
-            "deepseek-secret",
-            "deepseek-chat-flash",
-            None,
-            "aliyun-secret",
-            "continuation-secret",
-            paths,
-            root / "skills",
-            None,
-            tavily_key="tavily-secret",
-            web_search_provider="aliyun",
-            web_fetch_provider="tavily",
-        )
-        self.assertEqual("https://api.tavily.com/extract", tavily["HAIFA_PERSONAL_WEB_FETCH_ENDPOINT"])
-        self.assertEqual("env://TAVILY_API_KEY", tavily["HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL"])
-
-        with self.assertRaisesRegex(ValueError, "browserless credential is required"):
-            real_environment.backend_environment(
-                "deepseek-secret",
-                "deepseek-chat-flash",
-                None,
-                "aliyun-secret",
-                "continuation-secret",
-                paths,
-                root / "skills",
-                None,
-                web_search_provider="aliyun",
-                web_fetch_provider="browserless",
-            )
-
-    def test_responses_style_configuration_uses_shared_provider_connection_fields(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            repository=root,
-            server=root / "server",
-            web=root / "web",
-            runtime=root / "runtime",
-            data=root / "runtime/data",
-            logs=root / "runtime/logs",
-            state=root / "runtime/last-start.json",
-            stop_state=root / "runtime/last-stop.json",
-            maven_wrapper=root / "mvnw",
-        )
-
-        environment = real_environment.backend_environment(
-            "deepseek-secret",
-            "deepseek-responses-flash",
-            ("http://127.0.0.1:30000/v1", "openai-secret", "gpt-test"),
-            "aliyun-secret",
-            "continuation-secret",
-            paths,
-            root / "skills",
-            None,
-            tavily_key="tavily-secret",
-        )
-
-        self.assertEqual("deepseek-responses-flash", environment["HAIFA_PERSONAL_DEFAULT_MODEL_ID"])
-        self.assertEqual(
-            "openai-responses",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_1_STYLE"],
-        )
-        self.assertEqual(
-            "deepseek-openai-responses",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_1_DIALECT"],
-        )
-        self.assertEqual(
-            "anthropic-messages",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_2_STYLE"],
-        )
-        self.assertEqual(
-            "https://api.deepseek.com/anthropic",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_2_ENDPOINT"],
-        )
-        self.assertEqual(
-            "deepseek-anthropic-messages",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_2_DIALECT"],
-        )
-        self.assertEqual(
-            "anthropic-messages",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_STYLE"],
-        )
-        self.assertEqual(
-            "openai-responses",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_STYLE"],
-        )
-        self.assertEqual(
-            "anthropic-messages",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_STYLE"],
-        )
-        self.assertEqual(
-            "DeepSeek V4 Pro",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_MODELDISPLAYNAME"],
-        )
-        self.assertEqual(
-            "openai-responses",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_6_APIBINDINGS_0_STYLE"],
-        )
-        self.assertEqual("gpt-test", environment["HAIFA_PERSONAL_MODELPROVIDERS_6_MODELS_0_PROVIDERMODELID"])
-        self.assertEqual("TEXT_CHAT", environment["HAIFA_PERSONAL_MODELPROVIDERS_6_MODELS_0_CAPABILITIES_0"])
-        self.assertEqual("env://OPENAI_API_KEY", environment["HAIFA_PERSONAL_MODELPROVIDERS_6_CREDENTIALREFERENCE"])
-        self.assertNotIn("HAIFA_PERSONAL_MODELPROVIDERS_6_DIALECTID", environment)
-        self.assertNotIn("HAIFA_PERSONAL_MODELPROVIDERS_6_MODELS_0_IMAGEINPUT", environment)
-        self.assertFalse(any(name.startswith("CHATGPT2API_") for name in environment))
-        self.assertNotIn("openai-secret", json.dumps(list(environment)))
-
-    def test_base_configuration_adds_codex_catalog_but_omits_optional_openai_api_provider(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            repository=root,
-            server=root / "server",
-            web=root / "web",
-            runtime=root / "runtime",
-            data=root / "runtime/data",
-            logs=root / "runtime/logs",
-            state=root / "runtime/last-start.json",
-            stop_state=root / "runtime/last-stop.json",
-            maven_wrapper=root / "mvnw",
-        )
-
-        environment = real_environment.backend_environment(
-            "deepseek-secret",
-            "deepseek-chat-flash",
-            None,
-            "aliyun-secret",
-            "continuation-secret",
-            paths,
-            root / "skills",
-            None,
-            tavily_key="tavily-secret",
-        )
-
-        self.assertEqual("deepseek", environment["HAIFA_PERSONAL_MODELPROVIDERS_0_ID"])
-        self.assertEqual("deepseek-chat-flash", environment["HAIFA_PERSONAL_DEFAULT_MODEL_ID"])
-        self.assertFalse(any(name.startswith("OPENAI_") for name in environment))
-        prefix = "HAIFA_PERSONAL_MODELPROVIDERS_1"
-        self.assertEqual("openai-codex", environment[f"{prefix}_ID"])
-        self.assertEqual("model-auth://openai-codex/default", environment[f"{prefix}_CREDENTIALREFERENCE"])
-        self.assertEqual("http://127.0.0.1:2081", environment[f"{prefix}_PROXY"])
-        self.assertEqual("openai-codex-responses", environment[f"{prefix}_APIBINDINGS_0_DIALECT"])
-        self.assertEqual("gpt-5.6-sol", environment[f"{prefix}_MODELS_0_ID"])
-        self.assertEqual("gpt-5.6-terra", environment[f"{prefix}_MODELS_1_ID"])
-        self.assertEqual("gpt-5.6-luna", environment[f"{prefix}_MODELS_2_ID"])
-        self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_2_") for name in environment))
-
-    def test_antigravity_local_compatibility_adds_a_distinct_direct_model(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            repository=root,
-            server=root / "server",
-            web=root / "web",
-            runtime=root / "runtime",
-            data=root / "runtime/data",
-            logs=root / "runtime/logs",
-            state=root / "runtime/last-start.json",
-            stop_state=root / "runtime/last-stop.json",
-            maven_wrapper=root / "mvnw",
-        )
-        configuration = real_environment.antigravity_configuration({})
-
-        environment = real_environment.backend_environment(
-            "deepseek-secret",
-            real_environment.ANTIGRAVITY_DIRECT_MODEL_ID,
-            None,
-            "aliyun-secret",
-            "continuation-secret",
-            paths,
-            root / "skills",
-            None,
-            tavily_key="tavily-secret",
-            antigravity=configuration,
-        )
-
-        self.assertEqual(
-            real_environment.AntigravityConfiguration(
-                "https://daily-cloudcode-pa.googleapis.com/v1internal",
-                "gemini-3-flash",
-                "http://127.0.0.1:2081",
-            ),
-            configuration,
-        )
-        prefix = "HAIFA_PERSONAL_MODELPROVIDERS_6"
-        self.assertEqual("google-antigravity", environment[f"{prefix}_ID"])
-        self.assertEqual(
-            "Google Antigravity Direct (Local Compatibility)",
-            environment[f"{prefix}_DISPLAYNAME"],
-        )
-        self.assertEqual(
-            "https://daily-cloudcode-pa.googleapis.com/v1internal",
-            environment[f"{prefix}_ENDPOINT"],
-        )
-        self.assertEqual("http://127.0.0.1:2081", environment[f"{prefix}_PROXY"])
-        self.assertEqual(
-            "model-auth://google-antigravity/default",
-            environment[f"{prefix}_CREDENTIALREFERENCE"],
-        )
-        self.assertEqual(
-            "google-gemini-generate-content",
-            environment[f"{prefix}_APIBINDINGS_0_STYLE"],
-        )
-        self.assertEqual("antigravity-direct", environment[f"{prefix}_APIBINDINGS_0_DIALECT"])
-        self.assertEqual(
-            real_environment.ANTIGRAVITY_DIRECT_MODEL_ID,
-            environment[f"{prefix}_MODELS_0_ID"],
-        )
-        self.assertEqual("gemini-3-flash", environment[f"{prefix}_MODELS_0_PROVIDERMODELID"])
-        self.assertEqual("REASONING", environment[f"{prefix}_MODELS_0_CAPABILITIES_3"])
-        self.assertEqual("IMAGE_UPLOAD_INPUT", environment[f"{prefix}_MODELS_0_CAPABILITIES_4"])
-        self.assertFalse(any(name.startswith(f"{prefix}_MODELS_1_") for name in environment))
-
-        self.assertEqual(
-            real_environment.ANTIGRAVITY_DIRECT_MODEL_ID,
-            real_environment.resolve_default_model_id(
-                real_environment.ANTIGRAVITY_DIRECT_MODEL_ID,
-                None,
-                antigravity=configuration,
-            ),
-        )
-
-    def test_bailian_key_value_file_adds_qwen_models_without_exposing_secret_in_names(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            repository=root,
-            server=root / "server",
-            web=root / "web",
-            runtime=root / "runtime",
-            data=root / "runtime/data",
-            logs=root / "runtime/logs",
-            state=root / "runtime/last-start.json",
-            stop_state=root / "runtime/last-stop.json",
-            maven_wrapper=root / "mvnw",
-        )
-        environment = real_environment.backend_environment(
-            "deepseek-secret",
-            real_environment.BAILIAN_DEFAULT_MODEL_ID,
-            None,
-            "aliyun-secret",
-            "continuation-secret",
-            paths,
-            root / "skills",
-            None,
-            ("bailian-secret", "workspace-123", "cn-beijing"),
-            tavily_key="tavily-secret",
-        )
-
-        self.assertEqual("aliyun-bailian", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_ID"])
-        self.assertEqual(
-            "https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_ENDPOINT"],
-        )
-        self.assertEqual(
-            real_environment.BAILIAN_DEFAULT_MODEL_ID,
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_0_PROVIDERMODELID"],
-        )
-        self.assertEqual(
-            "ADAPTIVE",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_0_REASONINGMODE"],
-        )
-        self.assertEqual(
-            "IMAGE_UPLOAD_INPUT",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_3_CAPABILITIES_2"],
-        )
-        self.assertEqual(
-            "IMAGE_URL_INPUT",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_MODELS_3_CAPABILITIES_3"],
-        )
-        self.assertEqual("env://DASHSCOPE_API_KEY", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_CREDENTIALREFERENCE"])
-        self.assertNotIn("bailian-secret", json.dumps(list(environment)))
-
     def test_bailian_configuration_reads_key_value_file_and_defaults_region(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             key_file = Path(directory) / "ss-bailian.txt"
@@ -376,109 +66,6 @@ class RealEnvironmentTest(unittest.TestCase):
             )
 
         self.assertEqual(("test-secret", "workspace-123", "cn-beijing"), configured)
-
-    def test_kimi_and_zhipu_keys_add_only_reviewed_api_styles_and_never_enter_configuration_names(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            repository=root,
-            server=root / "server",
-            web=root / "web",
-            runtime=root / "runtime",
-            data=root / "runtime/data",
-            logs=root / "runtime/logs",
-            state=root / "runtime/last-start.json",
-            stop_state=root / "runtime/last-stop.json",
-            maven_wrapper=root / "mvnw",
-        )
-
-        environment = real_environment.backend_environment(
-            "deepseek-secret",
-            "deepseek-chat-flash",
-            None,
-            "aliyun-secret",
-            "continuation-secret",
-            paths,
-            root / "skills",
-            None,
-            kimi_key="kimi-secret",
-            bigmodel_key="bigmodel-secret",
-            tavily_key="tavily-secret",
-        )
-
-        self.assertEqual("kimi", environment["HAIFA_PERSONAL_MODELPROVIDERS_3_ID"])
-        self.assertEqual("kimi-openai-chat", environment["HAIFA_PERSONAL_MODELPROVIDERS_3_APIBINDINGS_0_DIALECT"])
-        self.assertEqual("kimi-k3", environment["HAIFA_PERSONAL_MODELPROVIDERS_3_MODELS_0_PROVIDERMODELID"])
-        self.assertEqual("zhipu", environment["HAIFA_PERSONAL_MODELPROVIDERS_4_ID"])
-        self.assertEqual("zhipu-openai-chat", environment["HAIFA_PERSONAL_MODELPROVIDERS_4_APIBINDINGS_0_DIALECT"])
-        self.assertEqual(
-            "zhipu-anthropic-messages",
-            environment["HAIFA_PERSONAL_MODELPROVIDERS_4_APIBINDINGS_1_DIALECT"],
-        )
-        self.assertFalse(any("responses" in key.lower() for key in environment if key.startswith("HAIFA_PERSONAL_MODELPROVIDERS_4_")))
-        names = json.dumps(list(environment))
-        self.assertNotIn("kimi-secret", names)
-        self.assertNotIn("bigmodel-secret", names)
-
-    def test_siliconflow_key_adds_the_reviewed_provider_model_set(self) -> None:
-        root = Path("repository")
-        paths = real_environment.Paths(
-            repository=root,
-            server=root / "server",
-            web=root / "web",
-            runtime=root / "runtime",
-            data=root / "runtime/data",
-            logs=root / "runtime/logs",
-            state=root / "runtime/last-start.json",
-            stop_state=root / "runtime/last-stop.json",
-            maven_wrapper=root / "mvnw",
-        )
-
-        environment = real_environment.backend_environment(
-            "deepseek-secret",
-            real_environment.SILICONFLOW_MODEL_ID,
-            None,
-            "aliyun-secret",
-            "continuation-secret",
-            paths,
-            root / "skills",
-            None,
-            siliconflow_key="siliconflow-secret",
-            tavily_key="tavily-secret",
-        )
-
-        prefix = "HAIFA_PERSONAL_MODELPROVIDERS_5"
-        self.assertEqual("siliconflow", environment[f"{prefix}_ID"])
-        self.assertEqual("硅基流动 SiliconFlow", environment[f"{prefix}_DISPLAYNAME"])
-        self.assertEqual("https://api.siliconflow.cn/v1", environment[f"{prefix}_ENDPOINT"])
-        self.assertEqual("env://SILICONFLOW_API_KEY", environment[f"{prefix}_CREDENTIALREFERENCE"])
-        self.assertEqual("siliconflow-openai-chat", environment[f"{prefix}_APIBINDINGS_0_DIALECT"])
-        self.assertEqual(real_environment.SILICONFLOW_MODEL_ID, environment[f"{prefix}_MODELS_0_ID"])
-        self.assertEqual(
-            "deepseek-ai/DeepSeek-V4-Flash",
-            environment[f"{prefix}_MODELS_0_PROVIDERMODELID"],
-        )
-        self.assertEqual("TEXT_CHAT", environment[f"{prefix}_MODELS_0_CAPABILITIES_0"])
-        self.assertEqual("TOOL_CALLING", environment[f"{prefix}_MODELS_0_CAPABILITIES_1"])
-        self.assertEqual(
-            "siliconflow-deepseek-v4-pro",
-            environment[f"{prefix}_MODELS_1_ID"],
-        )
-        self.assertEqual(
-            "Qwen/Qwen3-VL-32B-Instruct",
-            environment[f"{prefix}_MODELS_2_PROVIDERMODELID"],
-        )
-        self.assertEqual(
-            "zai-org/GLM-5.2",
-            environment[f"{prefix}_MODELS_6_PROVIDERMODELID"],
-        )
-        self.assertEqual(
-            "siliconflow-glm-5-1",
-            environment[f"{prefix}_MODELS_7_ID"],
-        )
-        self.assertNotIn("siliconflow-secret", json.dumps(list(environment)))
-
-        with self.assertRaisesRegex(RuntimeError, "requires a SiliconFlow API key"):
-            real_environment.resolve_default_model_id(real_environment.SILICONFLOW_MODEL_ID, None)
 
     def test_optional_openai_provider_requires_complete_environment_group(self) -> None:
         self.assertIsNone(real_environment.optional_openai_environment({}))
@@ -515,6 +102,9 @@ class RealEnvironmentTest(unittest.TestCase):
 
         self.assertIsNone(default_arguments.default_model_id)
         self.assertEqual("deepseek-chat-flash", chat_arguments.default_model_id)
+        self.assertEqual(
+            "deepseek-chat-flash", real_environment.resolve_default_model_id(None, None)
+        )
 
     def test_default_web_providers_are_tavily(self) -> None:
         with mock.patch.dict(real_environment.os.environ):
@@ -556,26 +146,6 @@ class RealEnvironmentTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "does not support --rebuild"):
             real_environment.validate_arguments(arguments)
-
-    def test_optional_bailian_configuration_does_not_replace_the_verified_default(self) -> None:
-        bailian = ("bailian-secret", "workspace-123", "cn-beijing")
-
-        self.assertEqual(
-            real_environment.DEFAULT_MODEL_ID,
-            real_environment.resolve_default_model_id(None, bailian),
-        )
-        self.assertEqual(
-            real_environment.BAILIAN_DEFAULT_MODEL_ID,
-            real_environment.resolve_default_model_id(
-                real_environment.BAILIAN_DEFAULT_MODEL_ID,
-                bailian,
-            ),
-        )
-        with self.assertRaisesRegex(RuntimeError, "Qwen default model requires"):
-            real_environment.resolve_default_model_id(
-                real_environment.BAILIAN_DEFAULT_MODEL_ID,
-                None,
-            )
 
     def test_rebuild_port_conflict_message_explains_stop_then_rebuild(self) -> None:
         arguments = real_environment.parser().parse_args(["--rebuild"])

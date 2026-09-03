@@ -17,6 +17,8 @@ import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.core.ModelCatalogDeployment;
 import io.haifa.agent.model.core.PackagedModelCatalog;
 import io.haifa.agent.model.gemini.GeminiDialects;
+import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
 import java.io.IOException;
@@ -266,32 +268,46 @@ final class CliConfigurationLoader {
             var definition = binding.definition();
             var provider = projectedProviders.get(definition.providerId().value());
             Map<String, Object> source = sourceProviders.get(provider.id().value());
+            String workspaceId = expandedNullable(source, "workspaceId");
+            String region = expandedNullable(source, "region");
+            java.net.URI providerEndpoint = provider.endpoint();
             java.net.URI endpoint = provider.apiBindings().stream()
                     .filter(value -> value.style().equals(definition.style()))
                     .findFirst()
                     .flatMap(value -> value.endpoint())
                     .orElse(provider.endpoint());
+            if (binding.apiBinding().dialect().equals(OpenAiCompatibleDialects.ALIYUN_BAILIAN)) {
+                var configuration = new AliyunBailianProviderFactory.ProviderConfiguration(
+                        "cli-v1", workspaceId, region, provider.credentialRef());
+                workspaceId = configuration.workspaceId();
+                region = configuration.region();
+                providerEndpoint = configuration.endpoint();
+                endpoint = configuration.endpoint();
+            }
+            ModelReasoningMode configuredReasoningMode = enumValue(
+                    ModelReasoningMode.class,
+                    text(source, "reasoningMode", ModelReasoningMode.DISABLED.name()),
+                    "model reasoning mode");
             return new CliConfiguration.Model(
                     provider.id().value(),
                     provider.displayName(),
                     definition.providerModelId(),
-                    provider.endpoint(),
+                    providerEndpoint,
                     endpoint,
                     provider.credentialRef().value(),
                     definition.style(),
                     binding.apiBinding().dialect(),
                     provider.nativeStreaming(),
-                    expandedNullable(source, "workspaceId"),
-                    expandedNullable(source, "region"),
+                    workspaceId,
+                    region,
                     definition.id().value(),
                     definition.displayName(),
                     definition.capabilities(),
                     definition.contextWindow(),
                     definition.maxOutputTokens(),
-                    enumValue(
-                            ModelReasoningMode.class,
-                            text(source, "reasoningMode", ModelReasoningMode.DISABLED.name()),
-                            "model reasoning mode"),
+                    definition.capabilities().contains(ModelCapability.REASONING)
+                            ? configuredReasoningMode
+                            : ModelReasoningMode.DISABLED,
                     expandedNullable(source, "originator"),
                     expandedNullable(source, "userAgent"));
         }).toList();

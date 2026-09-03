@@ -19,9 +19,11 @@ models:
       userAgent: ${HAIFA_CODEX_USER_AGENT:haifa-agent/1}
       allowedBindings: [gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna]
     - id: aliyun-bailian
-      endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1
+      endpoint: https://default-workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
       credentialRef: env://DASHSCOPE_API_KEY
       nativeStreaming: true
+      workspaceId: ${HAIFA_BAILIAN_WORKSPACE_ID:default-workspace}
+      region: ${HAIFA_BAILIAN_REGION:cn-beijing}
       allowedBindings: [qwen3.8-max-0902, qwen3.8-max, qwen3.8-flash, qwen3.7-plus, qwen3-vl-plus]
       reasoningMode: ENABLED
     - id: siliconflow
@@ -34,13 +36,13 @@ models:
       endpoint: https://api.moonshot.cn/v1
       credentialRef: env://KIMI_API_KEY
       nativeStreaming: true
-      allowedBindings: [kimi-k3, kimi-k2-7-code, kimi-k2-6]
+      allowedBindings: [kimi-k3, kimi-k2.7-code, kimi-k2.6]
       reasoningMode: ENABLED
     - id: zhipu
       endpoint: https://open.bigmodel.cn/api/paas/v4
       credentialRef: env://BIGMODEL_API_KEY
       nativeStreaming: true
-      allowedBindings: [glm-5-2, glm-5-1, glm-5, glm-5-turbo]
+      allowedBindings: [glm-5.2, glm-5.1, glm-5, glm-5-turbo]
       reasoningMode: ENABLED
     - id: google-antigravity
       endpoint: ${HAIFA_ANTIGRAVITY_MODEL_ENDPOINT:https://daily-cloudcode-pa.googleapis.com/v1internal}
