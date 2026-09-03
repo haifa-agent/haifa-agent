@@ -14,11 +14,11 @@ import io.haifa.agent.project.filesystem.ReadOptions;
 import io.haifa.agent.project.filesystem.SearchRequest;
 import io.haifa.agent.project.filesystem.WorkspaceFileErrorCode;
 import io.haifa.agent.project.filesystem.WorkspaceFileException;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -39,7 +39,7 @@ import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
-class LocalWorkspaceFileServiceTest {
+class HostWorkspaceFileServiceTest {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
 
     @TempDir
@@ -141,8 +141,8 @@ class LocalWorkspaceFileServiceTest {
     void fingerprintsCanonicalWindowsPathRepresentation() {
         Path differentlyCasedRoot = Path.of(root.toString().toUpperCase(Locale.ROOT));
 
-        assertThat(LocalWorkspaceLocationStore.fingerprintFor(differentlyCasedRoot))
-                .isEqualTo(LocalWorkspaceLocationStore.fingerprintFor(root));
+        assertThat(HostWorkspaceLocationStore.fingerprintFor(differentlyCasedRoot))
+                .isEqualTo(HostWorkspaceLocationStore.fingerprintFor(root));
     }
 
     @Test
@@ -188,7 +188,7 @@ class LocalWorkspaceFileServiceTest {
         WorkspaceLocationRef locationRef = new WorkspaceLocationRef("local-1");
         var bindingStore = new InMemoryWorkspaceBindingStore();
         var workspaceStore = new InMemoryWorkspaceStore();
-        var locations = new LocalWorkspaceLocationStore();
+        var locations = new HostWorkspaceLocationStore();
         locations.register(locationRef, root);
         WorkspaceBinding binding = WorkspaceBinding.provision(
                         bindingId,
@@ -197,7 +197,7 @@ class LocalWorkspaceFileServiceTest {
                         new PrincipalRef("owner", "user"),
                         WorkspaceCapabilitySet.readOnlyFiles(),
                         WorkspacePermissionSet.readOnly(),
-                        LocalWorkspaceLocationStore.fingerprintFor(root),
+                        HostWorkspaceLocationStore.fingerprintFor(root),
                         NOW)
                 .activate(NOW);
         bindingStore.create(binding);
@@ -211,9 +211,9 @@ class LocalWorkspaceFileServiceTest {
                 .activate(NOW);
         workspaceStore.create(workspace);
         var service =
-                new LocalWorkspaceFileService(workspaceStore, bindingStore, locations, SensitivePathPolicy.defaults());
+                new HostWorkspaceFileService(workspaceStore, bindingStore, locations, SensitivePathPolicy.defaults());
         return new Fixture(workspaceId, service);
     }
 
-    private record Fixture(WorkspaceId workspaceId, LocalWorkspaceFileService service) {}
+    private record Fixture(WorkspaceId workspaceId, HostWorkspaceFileService service) {}
 }

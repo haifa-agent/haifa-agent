@@ -1,4 +1,4 @@
-package io.haifa.agent.project.provider.local.scope;
+package io.haifa.agent.project.hostworkspace.scope;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -20,24 +20,27 @@ import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
-class LocalWorkspaceScopeTest {
+class HostWorkspaceScopeTest {
     @TempDir
     Path tempDir;
 
     private Path rootA;
     private Path rootB;
     private Path outside;
-    private LocalWorkspaceScope scope;
+    private HostWorkspaceScope scope;
 
     @BeforeEach
     void setUp() throws IOException {
+        // @TempDir may use an OS alias (/var vs /private/var or a Windows short path).
+        // Scope inputs must be derived from the same canonical host root used for authorization.
+        tempDir = tempDir.toRealPath();
         rootA = Files.createDirectories(tempDir.resolve("project-a"));
         rootB = Files.createDirectories(tempDir.resolve("project-b"));
         outside = Files.createDirectories(tempDir.resolve("outside"));
-        scope = LocalWorkspaceScope.initial(LocalAllowedDirectory.of(
-                new WorkspaceId("ws-a"), rootA.toRealPath(), LocalDirectoryPermission.READ_WRITE));
-        scope = scope.withDirectory(LocalAllowedDirectory.of(
-                new WorkspaceId("ws-b"), rootB.toRealPath(), LocalDirectoryPermission.READ_ONLY));
+        scope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(
+                new WorkspaceId("ws-a"), rootA.toRealPath(), HostDirectoryPermission.READ_WRITE));
+        scope = scope.withDirectory(AuthorizedHostDirectory.of(
+                new WorkspaceId("ws-b"), rootB.toRealPath(), HostDirectoryPermission.READ_ONLY));
     }
 
     @AfterEach
@@ -85,16 +88,16 @@ class LocalWorkspaceScopeTest {
     @Test
     void rejectsBlankInput() {
         assertThatThrownBy(() -> scope.resolve(" "))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.INVALID_ARGUMENT));
-        assertThatThrownBy(() -> scope.resolve(null)).isInstanceOf(LocalWorkspaceScopeException.class);
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.INVALID_ARGUMENT));
+        assertThatThrownBy(() -> scope.resolve(null)).isInstanceOf(HostWorkspaceScopeException.class);
     }
 
     @Test
     void rejectsRelativePathsWithoutAliasFallback() {
         assertThatThrownBy(() -> scope.resolve("src/App.java"))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> {
-                    assertThat(exception.code()).isEqualTo(LocalScopeErrorCode.INVALID_ARGUMENT);
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> {
+                    assertThat(exception.code()).isEqualTo(HostWorkspaceScopeErrorCode.INVALID_ARGUMENT);
                     assertThat(exception.getMessage()).contains("absolute");
                 });
     }
@@ -103,9 +106,8 @@ class LocalWorkspaceScopeTest {
     void rejectsRootAliasSyntax() {
         for (String input : List.of("main:src/App.java", "docs:guide.md", "main:.")) {
             assertThatThrownBy(() -> scope.resolve(input))
-                    .isInstanceOfSatisfying(
-                            LocalWorkspaceScopeException.class,
-                            exception -> assertThat(exception.code()).isEqualTo(LocalScopeErrorCode.INVALID_ARGUMENT));
+                    .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                            .isEqualTo(HostWorkspaceScopeErrorCode.INVALID_ARGUMENT));
         }
     }
 
@@ -114,16 +116,16 @@ class LocalWorkspaceScopeTest {
     void rejectsDriveRelativePathsOnWindows() {
         String drive = rootA.toString().substring(0, 2);
         assertThatThrownBy(() -> scope.resolve(drive + "relative.txt"))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.INVALID_ARGUMENT));
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.INVALID_ARGUMENT));
     }
 
     @Test
     @EnabledOnOs({OS.LINUX, OS.MAC})
     void rejectsPosixAbsolutePathsOutsideScope() {
         assertThatThrownBy(() -> scope.resolve("/etc/hostname"))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.ACCESS_DENIED));
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.ACCESS_DENIED));
     }
 
     @Test
@@ -141,8 +143,8 @@ class LocalWorkspaceScopeTest {
         Path stranger = outside.resolve("stranger.txt");
 
         assertThatThrownBy(() -> scope.resolve(stranger.toString()))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> {
-                    assertThat(exception.code()).isEqualTo(LocalScopeErrorCode.ACCESS_DENIED);
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> {
+                    assertThat(exception.code()).isEqualTo(HostWorkspaceScopeErrorCode.ACCESS_DENIED);
                     assertThat(exception.path()).isEqualTo(stranger.toString());
                 });
     }
@@ -152,8 +154,8 @@ class LocalWorkspaceScopeTest {
         Path escaped = Path.of(rootA.toString(), "..", "outside", "secret.txt");
 
         assertThatThrownBy(() -> scope.resolve(escaped.toString()))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.ACCESS_DENIED));
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.ACCESS_DENIED));
         String innerTraversal =
                 rootA.resolve("sub") + java.io.File.separator + ".." + java.io.File.separator + "App.java";
         assertThatCode(() -> scope.resolve(innerTraversal)).doesNotThrowAnyException();
@@ -163,8 +165,8 @@ class LocalWorkspaceScopeTest {
     void requiresWritePermissionForReadOnlyDirectories() {
         assertThatThrownBy(
                         () -> scope.requireWritable(scope.allowedDirectories().get(1)))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.PERMISSION_DENIED));
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.PERMISSION_DENIED));
         assertThatCode(() -> scope.requireWritable(scope.allowedDirectories().get(0)))
                 .doesNotThrowAnyException();
     }
@@ -175,8 +177,8 @@ class LocalWorkspaceScopeTest {
         Path link = createSymbolicLinkOrSkip(rootA.resolve("link.txt"), secret);
 
         assertThatThrownBy(() -> scope.resolve(link.toString()))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.PATH_ESCAPE_DENIED));
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.PATH_ESCAPE_DENIED));
     }
 
     @Test
@@ -195,8 +197,8 @@ class LocalWorkspaceScopeTest {
         Path linkDir = createSymbolicLinkOrSkip(rootA.resolve("link-dir"), outside);
 
         assertThatThrownBy(() -> scope.resolve(linkDir.resolve("new-file.txt").toString()))
-                .isInstanceOfSatisfying(LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(LocalScopeErrorCode.PATH_ESCAPE_DENIED));
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.PATH_ESCAPE_DENIED));
     }
 
     @Test
@@ -215,9 +217,8 @@ class LocalWorkspaceScopeTest {
 
             assertThatThrownBy(
                             () -> scope.resolve(junction.resolve("secret.txt").toString()))
-                    .isInstanceOfSatisfying(
-                            LocalWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                                    .isEqualTo(LocalScopeErrorCode.PATH_ESCAPE_DENIED));
+                    .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                            .isEqualTo(HostWorkspaceScopeErrorCode.PATH_ESCAPE_DENIED));
         } finally {
             deleteRecursively(junctionTarget);
         }
@@ -237,28 +238,28 @@ class LocalWorkspaceScopeTest {
     @Test
     void rejectsOverlappingAuthorizedDirectoriesAtConstruction() throws IOException {
         Files.createDirectories(rootA.resolve("child"));
-        LocalAllowedDirectory parent = LocalAllowedDirectory.of(
-                new WorkspaceId("ws-parent"), rootA.toRealPath(), LocalDirectoryPermission.READ_WRITE);
-        LocalAllowedDirectory child = LocalAllowedDirectory.of(
-                new WorkspaceId("ws-child"), rootA.resolve("child").toRealPath(), LocalDirectoryPermission.READ_ONLY);
+        AuthorizedHostDirectory parent = AuthorizedHostDirectory.of(
+                new WorkspaceId("ws-parent"), rootA.toRealPath(), HostDirectoryPermission.READ_WRITE);
+        AuthorizedHostDirectory child = AuthorizedHostDirectory.of(
+                new WorkspaceId("ws-child"), rootA.resolve("child").toRealPath(), HostDirectoryPermission.READ_ONLY);
 
-        assertThatThrownBy(() -> LocalWorkspaceScope.initial(child).withDirectory(parent))
+        assertThatThrownBy(() -> HostWorkspaceScope.initial(child).withDirectory(parent))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Overlapping");
-        assertThatThrownBy(() -> LocalWorkspaceScope.initial(parent).withDirectory(child))
+        assertThatThrownBy(() -> HostWorkspaceScope.initial(parent).withDirectory(child))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> LocalWorkspaceScope.initial(parent)
-                        .withDirectory(LocalAllowedDirectory.of(
-                                new WorkspaceId("ws-copy"), parent.realPath(), LocalDirectoryPermission.READ_ONLY)))
+        assertThatThrownBy(() -> HostWorkspaceScope.initial(parent)
+                        .withDirectory(AuthorizedHostDirectory.of(
+                                new WorkspaceId("ws-copy"), parent.realPath(), HostDirectoryPermission.READ_ONLY)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void acceptsDisjointSiblingDirectoriesIncludingAcrossDifferentParents() throws IOException {
-        LocalAllowedDirectory sibling = LocalAllowedDirectory.of(
-                new WorkspaceId("ws-outside"), outside.toRealPath(), LocalDirectoryPermission.READ_WRITE);
+        AuthorizedHostDirectory sibling = AuthorizedHostDirectory.of(
+                new WorkspaceId("ws-outside"), outside.toRealPath(), HostDirectoryPermission.READ_WRITE);
 
-        assertThatCode(() -> LocalWorkspaceScope.initial(
+        assertThatCode(() -> HostWorkspaceScope.initial(
                                 scope.allowedDirectories().get(0))
                         .withDirectory(sibling))
                 .doesNotThrowAnyException();
@@ -266,11 +267,11 @@ class LocalWorkspaceScopeTest {
 
     @Test
     void versionAdvancesWhenTheDirectorySetChanges() throws IOException {
-        LocalAllowedDirectory third = LocalAllowedDirectory.of(
-                new WorkspaceId("ws-c"), outside.toRealPath(), LocalDirectoryPermission.READ_WRITE);
+        AuthorizedHostDirectory third = AuthorizedHostDirectory.of(
+                new WorkspaceId("ws-c"), outside.toRealPath(), HostDirectoryPermission.READ_WRITE);
 
-        LocalWorkspaceScope expanded = scope.withDirectory(third);
-        LocalWorkspaceScope reverted = expanded.withoutDirectory(new WorkspaceId("ws-c"));
+        HostWorkspaceScope expanded = scope.withDirectory(third);
+        HostWorkspaceScope reverted = expanded.withoutDirectory(new WorkspaceId("ws-c"));
 
         assertThat(expanded.version()).isEqualTo(scope.version() + 1);
         assertThat(reverted.version()).isEqualTo(expanded.version() + 1);
@@ -280,8 +281,8 @@ class LocalWorkspaceScopeTest {
 
     @Test
     void rejectsEmptyScope() {
-        LocalWorkspaceScope single =
-                LocalWorkspaceScope.initial(scope.allowedDirectories().get(0));
+        HostWorkspaceScope single =
+                HostWorkspaceScope.initial(scope.allowedDirectories().get(0));
 
         assertThatThrownBy(() -> single.withoutDirectory(
                         scope.allowedDirectories().get(0).workspaceId()))

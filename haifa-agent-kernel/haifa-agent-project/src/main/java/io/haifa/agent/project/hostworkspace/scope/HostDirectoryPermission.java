@@ -1,10 +1,10 @@
-package io.haifa.agent.project.provider.local.scope;
+package io.haifa.agent.project.hostworkspace.scope;
 
 /**
  * Write permission granted for one authorized local directory. All peer directories can be read;
  * only {@link #READ_WRITE} directories accept mutations.
  */
-public enum LocalDirectoryPermission {
+public enum HostDirectoryPermission {
     READ_ONLY,
     READ_WRITE;
 

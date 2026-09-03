@@ -17,8 +17,8 @@ import io.haifa.agent.execution.core.change.LocalIncrementalWorkspaceChangeObser
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.policy.api.PolicyDigest;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.WorkspaceId;
@@ -76,8 +76,8 @@ final class CliExecutionPlatform implements AutoCloseable {
             CliConfiguration.Execution configuration,
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
-            LocalWorkspaceFileService files,
+            HostWorkspaceLocationStore locations,
+            HostWorkspaceFileService files,
             IdentifierGenerator identifiers,
             TimeProvider time,
             Clock clock,
@@ -105,8 +105,8 @@ final class CliExecutionPlatform implements AutoCloseable {
             CliConfiguration.Execution configuration,
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
-            LocalWorkspaceFileService files,
+            HostWorkspaceLocationStore locations,
+            HostWorkspaceFileService files,
             IdentifierGenerator identifiers,
             TimeProvider time,
             Clock clock,
@@ -136,8 +136,8 @@ final class CliExecutionPlatform implements AutoCloseable {
             CliConfiguration.Execution configuration,
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
-            LocalWorkspaceFileService files,
+            HostWorkspaceLocationStore locations,
+            HostWorkspaceFileService files,
             IdentifierGenerator identifiers,
             TimeProvider time,
             Clock clock,

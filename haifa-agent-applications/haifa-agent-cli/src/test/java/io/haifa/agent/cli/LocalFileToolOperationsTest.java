@@ -13,18 +13,18 @@ import io.haifa.agent.project.configuration.ProjectConfigurationId;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
+import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
+import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
 import io.haifa.agent.project.mutation.InMemoryWorkspaceWriteLeaseManager;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.provider.local.scope.AuthorizedDirectoryProvisioning;
-import io.haifa.agent.project.provider.local.scope.LocalAllowedDirectory;
-import io.haifa.agent.project.provider.local.scope.LocalDirectoryPermission;
-import io.haifa.agent.project.provider.local.scope.LocalWorkspaceScope;
 import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
@@ -222,7 +222,7 @@ class LocalFileToolOperationsTest {
         WorkspaceLocationRef locationRef = new WorkspaceLocationRef("location-file-read");
         var bindings = new InMemoryWorkspaceBindingStore();
         var workspaces = new InMemoryWorkspaceStore();
-        var locations = new LocalWorkspaceLocationStore();
+        var locations = new HostWorkspaceLocationStore();
         Path realRoot;
         try {
             realRoot = root.toRealPath();
@@ -237,7 +237,7 @@ class LocalFileToolOperationsTest {
                         new PrincipalRef("owner", "user"),
                         WorkspaceCapabilitySet.readWriteFiles(),
                         WorkspacePermissionSet.readWrite(),
-                        LocalWorkspaceLocationStore.fingerprintFor(realRoot),
+                        HostWorkspaceLocationStore.fingerprintFor(realRoot),
                         now)
                 .activate(now);
         bindings.create(binding);
@@ -249,9 +249,9 @@ class LocalFileToolOperationsTest {
                         WorkspaceRevision.initial(binding.rootFingerprint()),
                         now)
                 .activate(now));
-        var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        LocalWorkspaceScope scope = LocalWorkspaceScope.initial(
-                LocalAllowedDirectory.of(workspaceId, realRoot, LocalDirectoryPermission.READ_WRITE));
+        var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        HostWorkspaceScope scope = HostWorkspaceScope.initial(
+                AuthorizedHostDirectory.of(workspaceId, realRoot, HostDirectoryPermission.READ_WRITE));
         var sequence = new AtomicInteger();
         var identifiers =
                 (io.haifa.agent.common.id.IdentifierGenerator) () -> "file-tool-test-" + sequence.incrementAndGet();
@@ -268,9 +268,9 @@ class LocalFileToolOperationsTest {
                         Map.of())
                 .assignDefaultWorkspace(workspaceId, now));
         var workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, () -> now);
-        var provisioning = new AuthorizedDirectoryProvisioning(
+        var provisioning = new AuthorizedWorkspaceProvisioning(
                 projectId, workspaces, bindings, locations, workspaceService, owner, () -> now, scope);
-        var mutations = new LocalWorkspaceMutationService(
+        var mutations = new HostWorkspaceMutationService(
                 workspaces,
                 bindings,
                 locations,

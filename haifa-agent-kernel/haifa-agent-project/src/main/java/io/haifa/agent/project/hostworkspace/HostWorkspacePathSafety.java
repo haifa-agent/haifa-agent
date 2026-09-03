@@ -1,4 +1,4 @@
-package io.haifa.agent.project.provider.local;
+package io.haifa.agent.project.hostworkspace;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -7,10 +7,10 @@ import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 
 /**
- * Safety checks shared by local workspace roots before an operation can traverse or mutate a node.
+ * Safety checks shared by Host Workspace Access before an operation can traverse or mutate a node.
  */
-public final class LocalWorkspacePathSafety {
-    private LocalWorkspacePathSafety() {}
+public final class HostWorkspacePathSafety {
+    private HostWorkspacePathSafety() {}
 
     public static boolean isUnsafeNode(Path path) {
         if (Files.isSymbolicLink(path)) return true;

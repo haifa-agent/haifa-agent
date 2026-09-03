@@ -1,4 +1,4 @@
-package io.haifa.agent.project.provider.local;
+package io.haifa.agent.project.hostworkspace;
 
 import io.haifa.agent.project.path.ProjectPath;
 import java.util.Locale;

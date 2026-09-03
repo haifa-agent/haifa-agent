@@ -8,8 +8,8 @@ import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceBindingStatus;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.WorkspacePermission;
@@ -56,7 +56,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
-    private final LocalWorkspaceLocationStore locations;
+    private final HostWorkspaceLocationStore locations;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final HostShell shell;
@@ -71,7 +71,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
     public HostGuardedSandboxProvider(
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
+            HostWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time) {
         this(
@@ -87,7 +87,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
     public HostGuardedSandboxProvider(
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
+            HostWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time,
             HostShell shell) {
@@ -104,7 +104,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
     public HostGuardedSandboxProvider(
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
+            HostWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time,
             HostShell shell,
@@ -123,7 +123,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
     HostGuardedSandboxProvider(
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
+            HostWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time,
             HostShell shell,
@@ -206,7 +206,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         try {
             Path root =
                     locations.resolveForTrustedProvider(binding.locationRef()).toRealPath(LinkOption.NOFOLLOW_LINKS);
-            if (!LocalWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint()) || isLink(root)) {
+            if (!HostWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint()) || isLink(root)) {
                 throw failure("ROOT_CHANGED", "workspace root identity changed");
             }
             if (overlaps(root, scratchRoot)) {

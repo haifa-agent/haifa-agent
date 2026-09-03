@@ -1,4 +1,4 @@
-package io.haifa.agent.project.provider.local;
+package io.haifa.agent.project.hostworkspace;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
@@ -47,21 +47,21 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 
-public final class LocalWorkspaceMutationService implements WorkspaceMutationProvider, StreamingPatchMutationService {
+public final class HostWorkspaceMutationService implements WorkspaceMutationProvider, StreamingPatchMutationService {
     private static final int MAX_CONTENT_BYTES = 16 * 1024 * 1024;
 
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
-    private final LocalWorkspaceLocationStore locations;
+    private final HostWorkspaceLocationStore locations;
     private final SensitivePathPolicy sensitivePaths;
     private final WorkspaceWriteLeaseManager leases;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
 
-    public LocalWorkspaceMutationService(
+    public HostWorkspaceMutationService(
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
+            HostWorkspaceLocationStore locations,
             SensitivePathPolicy sensitivePaths,
             WorkspaceWriteLeaseManager leases,
             IdentifierGenerator identifiers,
@@ -162,7 +162,7 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
                                 Files.newInputStream(target, StandardOpenOption.READ), sourceDigest);
                         var output = Files.newOutputStream(
                                 temporary, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                    new LocalStreamingPatchTransformer()
+                    new HostStreamingPatchTransformer()
                             .transform(request.patch(), input, output, request.maxOutputBytes());
                 }
                 String streamedSourceHash = "sha256:" + HexFormat.of().formatHex(sourceDigest.digest());
@@ -300,7 +300,7 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
         }
         try {
             Path root = locations.resolve(binding.locationRef()).toRealPath(LinkOption.NOFOLLOW_LINKS);
-            if (!LocalWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint())
+            if (!HostWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint())
                     || isLinkOrReparse(root)) {
                 throw failure(MutationErrorCode.BINDING_INACTIVE, path, "workspace root identity changed");
             }
@@ -426,7 +426,7 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
                     logical,
                     "directory is not empty; recursive deletion is not supported");
         }
-        if (paths.stream().anyMatch(LocalWorkspaceMutationService::isLinkOrReparse)) {
+        if (paths.stream().anyMatch(HostWorkspaceMutationService::isLinkOrReparse)) {
             throw failure(MutationErrorCode.PATH_DENIED, logical, "directory contains links or reparse points");
         }
         try {
@@ -559,7 +559,7 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
     }
 
     private static boolean isLinkOrReparse(Path path) {
-        return LocalWorkspacePathSafety.isUnsafeNode(path);
+        return HostWorkspacePathSafety.isUnsafeNode(path);
     }
 
     private static String hash(byte[] bytes) {

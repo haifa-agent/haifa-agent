@@ -16,10 +16,10 @@ import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -730,7 +730,7 @@ class HostSandboxIT {
     private Fixture fixture(Path workspaceRoot, String workspaceValue, String bindingValue, String locationValue) {
         var workspaces = new InMemoryWorkspaceStore();
         var bindings = new InMemoryWorkspaceBindingStore();
-        var locations = new LocalWorkspaceLocationStore();
+        var locations = new HostWorkspaceLocationStore();
         WorkspaceId workspaceId = new WorkspaceId(workspaceValue);
         WorkspaceBindingId bindingId = new WorkspaceBindingId(bindingValue);
         WorkspaceLocationRef locationRef = new WorkspaceLocationRef(locationValue);
@@ -742,7 +742,7 @@ class HostSandboxIT {
                         new PrincipalRef("owner", "user"),
                         WorkspaceCapabilitySet.executionFiles(),
                         WorkspacePermissionSet.readWriteExecute(),
-                        LocalWorkspaceLocationStore.fingerprintFor(workspaceRoot),
+                        HostWorkspaceLocationStore.fingerprintFor(workspaceRoot),
                         NOW)
                 .activate(NOW);
         bindings.create(binding);
@@ -833,5 +833,5 @@ class HostSandboxIT {
             WorkspaceId workspaceId,
             InMemoryWorkspaceStore workspaces,
             InMemoryWorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations) {}
+            HostWorkspaceLocationStore locations) {}
 }

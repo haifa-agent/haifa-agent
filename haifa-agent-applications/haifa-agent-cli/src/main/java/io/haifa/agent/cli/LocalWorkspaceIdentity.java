@@ -4,7 +4,7 @@ import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.configuration.ProjectConfigurationId;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -49,7 +49,7 @@ final class LocalWorkspaceIdentity {
             if (!Files.isDirectory(real, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(real)) {
                 throw new IllegalArgumentException("workspace must be an existing non-symbolic-link directory");
             }
-            String fingerprint = LocalWorkspaceLocationStore.fingerprintFor(real);
+            String fingerprint = HostWorkspaceLocationStore.fingerprintFor(real);
             String platform =
                     System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win") ? "windows" : "posix";
             return new LocalWorkspaceIdentity(
