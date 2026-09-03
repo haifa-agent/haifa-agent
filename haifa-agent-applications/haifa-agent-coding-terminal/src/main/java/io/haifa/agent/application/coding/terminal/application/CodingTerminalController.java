@@ -1143,7 +1143,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private List<String> connectionOptions() {
         List<String> options = new java.util.ArrayList<>();
-        options.add(CHATGPT_CONNECTION);
+        if (authentication.codexConnectionSupported()) options.add(CHATGPT_CONNECTION);
         if (authentication.antigravityConnectionSupported()) options.add(ANTIGRAVITY_CONNECTION);
         if (authentication.apiKeyConnectionSupported()) options.add(API_KEY_CONNECTION);
         return List.copyOf(options);
