@@ -3,39 +3,29 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.changeset.FileChange;
-import io.haifa.agent.project.changeset.FileChangeType;
-import io.haifa.agent.project.changeset.FileVersion;
+import io.haifa.agent.project.configuration.ProjectConfigurationId;
+import io.haifa.agent.project.domain.Project;
+import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
-import io.haifa.agent.project.mutation.CreateFileRequest;
-import io.haifa.agent.project.mutation.DeleteFileRequest;
-import io.haifa.agent.project.mutation.MoveFileRequest;
-import io.haifa.agent.project.mutation.MutationErrorCode;
-import io.haifa.agent.project.mutation.MutationResult;
-import io.haifa.agent.project.mutation.WorkspaceMutationCapabilities;
-import io.haifa.agent.project.mutation.WorkspaceMutationException;
-import io.haifa.agent.project.mutation.WorkspaceMutationProvider;
-import io.haifa.agent.project.mutation.WriteFileRequest;
+import io.haifa.agent.project.mutation.InMemoryWorkspaceWriteLeaseManager;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
+import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
 import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
+import io.haifa.agent.project.provider.local.scope.AuthorizedDirectoryProvisioning;
 import io.haifa.agent.project.provider.local.scope.LocalAllowedDirectory;
 import io.haifa.agent.project.provider.local.scope.LocalDirectoryPermission;
 import io.haifa.agent.project.provider.local.scope.LocalWorkspaceScope;
-import io.haifa.agent.project.root.WorkspaceRootAlias;
-import io.haifa.agent.project.root.WorkspaceRootPermission;
-import io.haifa.agent.project.root.WorkspaceRootStrategy;
+import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -45,14 +35,14 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
+import io.haifa.agent.project.workspace.WorkspaceService;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -140,8 +130,9 @@ class LocalFileToolOperationsTest {
     }
 
     @Test
-    void returnsKnownToolFailureWhenWorkspaceMutationIsRejected() {
+    void returnsKnownToolFailureWhenWorkspaceMutationIsRejected() throws IOException {
         Fixture fixture = fixture();
+        Files.writeString(root.resolve("existing.txt"), "existing", StandardCharsets.UTF_8);
         String hostPath =
                 root.resolve("existing.txt").toAbsolutePath().normalize().toString();
 
@@ -223,13 +214,10 @@ class LocalFileToolOperationsTest {
         return fixture(null);
     }
 
-    private Fixture fixture(LocalWorkspaceRootRegistry registry) {
-        return fixture(registry, null);
-    }
-
-    private Fixture fixture(LocalWorkspaceRootRegistry registry, InMemorySessionChangeLedger ledger) {
+    private Fixture fixture(InMemorySessionChangeLedger ledger) {
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         WorkspaceId workspaceId = new WorkspaceId("workspace-file-read");
+        ProjectId projectId = new ProjectId("project-file-read");
         WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-file-read");
         WorkspaceLocationRef locationRef = new WorkspaceLocationRef("location-file-read");
         var bindings = new InMemoryWorkspaceBindingStore();
@@ -255,45 +243,43 @@ class LocalFileToolOperationsTest {
         bindings.create(binding);
         workspaces.create(Workspace.provision(
                         workspaceId,
-                        new ProjectId("project-file-read"),
+                        projectId,
                         WorkspacePurpose.PRIMARY,
                         new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
                         WorkspaceRevision.initial(binding.rootFingerprint()),
                         now)
                 .activate(now));
         var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        LocalWorkspaceScope scope;
-        if (registry != null) {
-            List<LocalAllowedDirectory> dirs = new ArrayList<>();
-            for (LocalWorkspaceRoot r : registry.allRoots()) {
-                WorkspaceId wsId = new WorkspaceId(
-                        r.alias().isMain()
-                                ? "workspace-file-read"
-                                : "ws-" + r.alias().value());
-                LocalDirectoryPermission perm = r.permission().canWrite()
-                        ? LocalDirectoryPermission.READ_WRITE
-                        : LocalDirectoryPermission.READ_ONLY;
-                try {
-                    dirs.add(LocalAllowedDirectory.of(wsId, r.hostPath().toRealPath(), perm));
-                } catch (IOException e) {
-                    dirs.add(LocalAllowedDirectory.of(
-                            wsId, r.hostPath().toAbsolutePath().normalize(), perm));
-                }
-            }
-            scope = new LocalWorkspaceScope(dirs, 1L);
-        } else {
-            scope = LocalWorkspaceScope.initial(
-                    LocalAllowedDirectory.of(workspaceId, realRoot, LocalDirectoryPermission.READ_WRITE));
-        }
-        var operations = new LocalFileToolOperations(
+        LocalWorkspaceScope scope = LocalWorkspaceScope.initial(
+                LocalAllowedDirectory.of(workspaceId, realRoot, LocalDirectoryPermission.READ_WRITE));
+        var sequence = new AtomicInteger();
+        var identifiers =
+                (io.haifa.agent.common.id.IdentifierGenerator) () -> "file-tool-test-" + sequence.incrementAndGet();
+        PrincipalRef owner = new PrincipalRef("owner", "user");
+        var projects = new InMemoryProjectStore();
+        projects.create(Project.create(
+                        projectId,
+                        new TenantRef("local"),
+                        owner,
+                        "file-tool-test",
+                        "test project",
+                        new ProjectConfigurationRef(new ProjectConfigurationId("config-1").value(), "1.0.0"),
+                        now,
+                        Map.of())
+                .assignDefaultWorkspace(workspaceId, now));
+        var workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, () -> now);
+        var provisioning = new AuthorizedDirectoryProvisioning(
+                projectId, workspaces, bindings, locations, workspaceService, owner, () -> now, scope);
+        var mutations = new LocalWorkspaceMutationService(
                 workspaces,
-                files,
-                testMutations(workspaces, workspaceId, new ProjectId("project-file-read")),
-                () -> "id-1",
-                registry,
-                null,
-                scope,
-                ledger);
+                bindings,
+                locations,
+                SensitivePathPolicy.defaults(),
+                new InMemoryWorkspaceWriteLeaseManager(),
+                identifiers,
+                () -> now);
+        var operations =
+                new LocalFileToolOperations(workspaces, files, mutations, identifiers, () -> now, provisioning, ledger);
         return new Fixture(workspaceId, operations);
     }
 
@@ -301,144 +287,7 @@ class LocalFileToolOperationsTest {
         return new ToolArguments("haifa.file.read.input", "1.1.0", values);
     }
 
-    private WorkspaceMutationProvider testMutations(
-            InMemoryWorkspaceStore workspaces, WorkspaceId workspaceId, ProjectId projectId) {
-        return new WorkspaceMutationProvider() {
-            @Override
-            public String providerId() {
-                return "unused";
-            }
-
-            @Override
-            public WorkspaceMutationCapabilities capabilities() {
-                return new WorkspaceMutationCapabilities(false, false, "unused");
-            }
-
-            @Override
-            public MutationResult create(CreateFileRequest request) {
-                if ("existing.txt".equals(request.path().projectPath().value())) {
-                    throw new WorkspaceMutationException(
-                            MutationErrorCode.TARGET_EXISTS, request.path(), "logical target already exists");
-                }
-                try {
-                    Path target = root;
-                    for (String segment : request.path().projectPath().segments()) target = target.resolve(segment);
-                    if (target.getParent() != null) Files.createDirectories(target.getParent());
-                    Files.write(target, request.content());
-                    WorkspaceRevision before =
-                            workspaces.find(workspaceId).orElseThrow().revision();
-                    WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:test-create-result");
-                    FileChange change = new FileChange(
-                            FileChangeType.CREATE,
-                            request.path().projectPath(),
-                            null,
-                            null,
-                            new FileVersion(FileType.FILE, request.content().length, "sha256:" + "a".repeat(64)));
-                    return new MutationResult(before, after, java.util.List.of(change), true, false);
-                } catch (java.io.IOException exception) {
-                    throw new AssertionError(exception);
-                }
-            }
-
-            @Override
-            public MutationResult write(WriteFileRequest request) {
-                try {
-                    Path target = root;
-                    for (String segment : request.path().projectPath().segments()) target = target.resolve(segment);
-                    Files.write(target, request.content());
-                    WorkspaceRevision before =
-                            workspaces.find(workspaceId).orElseThrow().revision();
-                    WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:test-patch-result");
-                    FileChange change = new FileChange(
-                            FileChangeType.REPLACE,
-                            request.path().projectPath(),
-                            null,
-                            new FileVersion(FileType.FILE, request.content().length, "sha256:" + "a".repeat(64)),
-                            new FileVersion(FileType.FILE, request.content().length, "sha256:" + "b".repeat(64)));
-
-                    return new MutationResult(before, after, java.util.List.of(change), true, false);
-                } catch (java.io.IOException exception) {
-                    throw new AssertionError(exception);
-                }
-            }
-
-            @Override
-            public MutationResult delete(DeleteFileRequest request) {
-                try {
-                    Files.deleteIfExists(
-                            root.resolve(request.path().projectPath().toString()));
-                    WorkspaceRevision before =
-                            workspaces.find(workspaceId).orElseThrow().revision();
-                    WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:delete-test");
-                    FileChange change = new FileChange(
-                            FileChangeType.DELETE,
-                            request.path().projectPath(),
-                            null,
-                            new FileVersion(FileType.FILE, 0, "sha256:zero"),
-                            null);
-                    return new MutationResult(before, after, java.util.List.of(change), true, false);
-                } catch (java.io.IOException exception) {
-                    throw new AssertionError(exception);
-                }
-            }
-
-            @Override
-            public MutationResult move(MoveFileRequest request) {
-                try {
-                    Files.move(
-                            root.resolve(request.source().projectPath().toString()),
-                            root.resolve(request.destination().projectPath().toString()));
-                    WorkspaceRevision before =
-                            workspaces.find(workspaceId).orElseThrow().revision();
-                    WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:move-test");
-                    return new MutationResult(before, after, java.util.List.of(), true, false);
-                } catch (java.io.IOException exception) {
-                    throw new AssertionError(exception);
-                }
-            }
-        };
-    }
-
     private record Fixture(WorkspaceId workspaceId, LocalFileToolOperations operations) {}
-
-    @Test
-    void rejectsWriteToReadOnlyAttachedRoot() throws Exception {
-        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(root, WorkspaceRootStrategy.GIT);
-        Path docsRoot = root.resolveSibling("docs");
-        Files.createDirectories(docsRoot);
-        LocalWorkspaceRoot docs = LocalWorkspaceRoot.of(
-                WorkspaceRootAlias.of("docs"),
-                docsRoot,
-                WorkspaceRootPermission.READ_ONLY,
-                WorkspaceRootStrategy.PLAIN);
-        LocalWorkspaceRootRegistry registry = LocalWorkspaceRootRegistry.builder()
-                .addRoot(mainRoot)
-                .addRoot(docs)
-                .build();
-
-        Fixture fixture = fixture(registry);
-
-        var result = fixture.operations.execute(
-                "file.create",
-                fixture.workspaceId,
-                new PrincipalRef("operator", "user"),
-                "run-1",
-                "policy-1",
-                arguments(Map.of(
-                        "path",
-                        docsRoot.resolve("guide.md")
-                                .toAbsolutePath()
-                                .normalize()
-                                .toString(),
-                        "content",
-                        "new content")));
-
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData())
-                .containsEntry("errorCode", "PERMISSION_DENIED")
-                .containsEntry("failureCategory", "POLICY_DENIED")
-                .containsEntry("failureActionCode", "REQUEST_WRITE_PERMISSION");
-    }
 
     @Test
     void rejectsRelativePathOrAlias() {
@@ -534,9 +383,7 @@ class LocalFileToolOperationsTest {
     @Test
     void recordsChangesIntoSessionLedger() {
         var ledger = new InMemorySessionChangeLedger();
-        LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(root, WorkspaceRootStrategy.GIT);
-        LocalWorkspaceRootRegistry registry = LocalWorkspaceRootRegistry.singleMain(mainRoot);
-        Fixture f = fixture(registry, ledger);
+        Fixture f = fixture(ledger);
 
         String hostPath = root.resolve("hello.txt").toAbsolutePath().normalize().toString();
         var createRes = f.operations.execute(

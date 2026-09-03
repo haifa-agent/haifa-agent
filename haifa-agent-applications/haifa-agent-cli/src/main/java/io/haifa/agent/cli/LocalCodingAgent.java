@@ -93,15 +93,10 @@ import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
 import io.haifa.agent.project.provider.local.SensitivePathPolicy;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootStrategyDetector;
 import io.haifa.agent.project.provider.local.scope.AuthorizedDirectoryProvisioning;
 import io.haifa.agent.project.provider.local.scope.LocalAllowedDirectory;
 import io.haifa.agent.project.provider.local.scope.LocalDirectoryPermission;
 import io.haifa.agent.project.provider.local.scope.LocalWorkspaceScope;
-import io.haifa.agent.project.root.WorkspaceRootAlias;
-import io.haifa.agent.project.root.WorkspaceRootPermission;
 import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
@@ -522,13 +517,6 @@ final class LocalCodingAgent implements AutoCloseable {
 
             SensitivePathPolicy sensitivePaths = SensitivePathPolicy.defaults();
             var files = new LocalWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
-            var detector = new LocalWorkspaceRootStrategyDetector();
-            var detection = detector.detect(workspaceRoot);
-            LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.of(
-                    WorkspaceRootAlias.MAIN, workspaceRoot, WorkspaceRootPermission.READ_WRITE, detection.strategy());
-            List<LocalWorkspaceRoot> rootsList = new ArrayList<>();
-            rootsList.add(mainRoot);
-            LocalWorkspaceRootRegistry rootRegistry = LocalWorkspaceRootRegistry.of(rootsList);
             WorkspaceService workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, time);
             Path realRoot;
             try {
@@ -551,7 +539,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     identifiers,
                     time);
             var operations = new LocalFileToolOperations(
-                    workspaces, files, mutations, identifiers, rootRegistry, provisioning, initialScope, sessionLedger);
+                    workspaces, files, mutations, identifiers, time, provisioning, sessionLedger);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
             CliExecutionPlatform executionPlatform = executionEnabled
@@ -1044,9 +1032,7 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     static String workspaceAttachmentApprovalPrompt(Map<String, Object> arguments) {
-        return "Attach additional workspace directory\nAlias: "
-                + attachmentApprovalArgument(arguments, "alias")
-                + "\nPath: "
+        return "Attach additional workspace directory\nPath: "
                 + attachmentApprovalArgument(arguments, "path")
                 + "\nPermission: "
                 + attachmentApprovalArgument(arguments, "permission")

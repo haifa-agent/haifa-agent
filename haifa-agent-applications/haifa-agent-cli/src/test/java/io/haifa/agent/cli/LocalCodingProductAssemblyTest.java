@@ -77,13 +77,11 @@ class LocalCodingProductAssemblyTest {
     @Test
     void rendersExactWorkspaceAttachmentDetailsForApproval() {
         String prompt = LocalCodingAgent.workspaceAttachmentApprovalPrompt(Map.of(
-                "alias", "docs",
                 "path", "D:\\workspace\\haifa-agent-docs",
                 "permission", "read-write"));
 
         assertThat(prompt)
                 .contains("Attach additional workspace directory")
-                .contains("Alias: docs")
                 .contains("Path: D:\\workspace\\haifa-agent-docs")
                 .contains("Permission: read-write")
                 .contains("not persisted or shared");
@@ -118,7 +116,7 @@ class LocalCodingProductAssemblyTest {
         AtomicInteger modelCalls = new AtomicInteger();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
             int call = modelCalls.incrementAndGet();
-            return call == 1 ? readWorkspace("terminal-read") : response("terminal-answer");
+            return call == 1 ? readWorkspace("terminal-read", workspace) : response("terminal-answer");
         };
         AtomicReference<LocalCodingAgent> assembled = new AtomicReference<>();
         AtomicReference<Throwable> runnerFailure = new AtomicReference<>();
@@ -311,7 +309,7 @@ class LocalCodingProductAssemblyTest {
             int call = modelCalls.incrementAndGet();
             if (call == 1) await(finishFirstRun);
             if (call == 3) await(finishQueuedRun);
-            return call % 2 == 1 ? readWorkspace("restart-read-" + call) : response("answer-" + call);
+            return call % 2 == 1 ? readWorkspace("restart-read-" + call, workspace) : response("answer-" + call);
         };
         io.haifa.agent.core.session.AgentSessionId sessionId;
         AgentRunId firstRunId;
@@ -534,13 +532,15 @@ class LocalCodingProductAssemblyTest {
                 Map.of());
     }
 
-    private static AgentChatResponse readWorkspace(String id) {
+    private static AgentChatResponse readWorkspace(String id, Path workspace) {
         return new AgentChatResponse(
                 id,
                 "stub-model",
                 "",
                 List.of(new ModelToolCall(
-                        new ProviderToolCallCorrelationId(id + "-call"), "file_list", Map.of("path", "."))),
+                        new ProviderToolCallCorrelationId(id + "-call"),
+                        "file_list",
+                        Map.of("path", workspace.toAbsolutePath().normalize().toString()))),
                 ModelFinishReason.TOOL_CALLS,
                 ModelUsage.unpriced(1, 1),
                 "stub",

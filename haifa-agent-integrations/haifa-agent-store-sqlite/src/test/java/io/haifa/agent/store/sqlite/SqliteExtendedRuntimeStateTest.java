@@ -114,6 +114,8 @@ class SqliteExtendedRuntimeStateTest {
         AgentStep step =
                 new AgentStep(new AgentStepId("step"), run.id(), null, null, new AgentStepType("tool"), 1, NOW);
         state.appendStep(step);
+        String hostAbsolutePath =
+                directory.resolve("readme").toAbsolutePath().normalize().toString();
         ToolCall call = new ToolCall(
                 new ToolCallId("tool-call"),
                 run.id(),
@@ -122,10 +124,11 @@ class SqliteExtendedRuntimeStateTest {
                 new RuntimeIdempotencyKey("asset-key"),
                 "file.read",
                 "1",
-                new ToolArguments("tool.arguments", "1", Map.of("path", "readme")),
+                new ToolArguments("tool.arguments", "1", Map.of("path", hostAbsolutePath)),
                 NOW);
         state.appendToolCall(call);
-        ToolResult result = new ToolResult(true, "read", Map.of("bytes", 5), List.of(), List.of(), false);
+        ToolResult result =
+                new ToolResult(true, "read", Map.of("path", hostAbsolutePath, "bytes", 5), List.of(), List.of(), false);
         var asset = first.toolResultAssets().put(call.id(), result);
         AgentStep secondStep =
                 new AgentStep(new AgentStepId("step-2"), run.id(), null, null, new AgentStepType("tool"), 2, NOW);
@@ -203,6 +206,11 @@ class SqliteExtendedRuntimeStateTest {
         assertThat(reopenedState.skillActivation(run.id(), new SkillAlias("test-skill")))
                 .contains(activation);
         assertThat(reopenedState.addSkillResourceReadBytes(run.id(), 5, 10)).isEqualTo(10);
+        assertThat(reopenedState.toolCalls(run.id()))
+                .filteredOn(restored -> restored.id().equals(call.id()))
+                .singleElement()
+                .satisfies(
+                        restored -> assertThat(restored.arguments().values()).containsEntry("path", hostAbsolutePath));
         assertThat(reopened.toolResultAssets().load(asset)).contains(result);
         assertThat(reopened.toolResultAssets().load(secondAsset)).contains(result);
         assertThat(reopened.summaries().latestValid(run.sessionId())).contains(summary);
