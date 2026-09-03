@@ -3,9 +3,7 @@ package io.haifa.agent.application.project.product.coding.delivery;
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.ledger.SessionChangeLedger;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
-import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
-import io.haifa.agent.project.root.WorkspaceRootAlias;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,7 +28,7 @@ public final class OnDemandChangeReviewService {
 
     public OnDemandChangeReviewService(
             LocalWorkspaceRootRegistry rootRegistry, SessionChangeLedger ledger, long oversizeThresholdBytes) {
-        this.rootRegistry = Objects.requireNonNull(rootRegistry, "rootRegistry must not be null");
+        this.rootRegistry = rootRegistry;
         this.ledger = Objects.requireNonNull(ledger, "ledger must not be null");
         if (oversizeThresholdBytes < 1) {
             throw new IllegalArgumentException("oversizeThresholdBytes must be positive");
@@ -54,19 +52,13 @@ public final class OnDemandChangeReviewService {
         List<CodingChangeReviewArtifact.FileSummary> summaries = new ArrayList<>();
         int totalFiles = 0;
 
-        for (LocalWorkspaceRoot root : rootRegistry.allRoots()) {
-            WorkspaceRootAlias alias = root.alias();
-            List<SessionFileChangeRecord> changes = ledger.compactedChanges(alias);
+        for (List<SessionFileChangeRecord> changes :
+                ledger.allCompactedChanges().values()) {
             for (SessionFileChangeRecord change : changes) {
                 totalFiles++;
-                String pathStr = alias.isMain()
-                        ? change.path().value()
-                        : alias.value() + ":" + change.path().value();
-                String destStr = change.sourcePath() != null
-                        ? (alias.isMain()
-                                ? change.sourcePath().value()
-                                : alias.value() + ":" + change.sourcePath().value())
-                        : "";
+                String pathStr = change.path().toString();
+                String destStr =
+                        change.sourcePath() != null ? change.sourcePath().toString() : "";
 
                 increment(counts, change.type());
                 counts.compute("opaque", (key, value) -> value + 1);

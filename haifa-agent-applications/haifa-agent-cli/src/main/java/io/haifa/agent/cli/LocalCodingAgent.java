@@ -96,6 +96,10 @@ import io.haifa.agent.project.provider.local.SensitivePathPolicy;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootStrategyDetector;
+import io.haifa.agent.project.provider.local.scope.AuthorizedDirectoryProvisioning;
+import io.haifa.agent.project.provider.local.scope.LocalAllowedDirectory;
+import io.haifa.agent.project.provider.local.scope.LocalDirectoryPermission;
+import io.haifa.agent.project.provider.local.scope.LocalWorkspaceScope;
 import io.haifa.agent.project.root.WorkspaceRootAlias;
 import io.haifa.agent.project.root.WorkspaceRootPermission;
 import io.haifa.agent.project.store.InMemoryProjectStore;
@@ -108,6 +112,7 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
+import io.haifa.agent.project.workspace.WorkspaceService;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
@@ -524,6 +529,18 @@ final class LocalCodingAgent implements AutoCloseable {
             List<LocalWorkspaceRoot> rootsList = new ArrayList<>();
             rootsList.add(mainRoot);
             LocalWorkspaceRootRegistry rootRegistry = LocalWorkspaceRootRegistry.of(rootsList);
+            WorkspaceService workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, time);
+            Path realRoot;
+            try {
+                realRoot = workspaceRoot.toRealPath();
+            } catch (IOException e) {
+                realRoot = workspaceRoot.toAbsolutePath().normalize();
+            }
+            LocalAllowedDirectory initialDir =
+                    LocalAllowedDirectory.of(workspaceId, realRoot, LocalDirectoryPermission.READ_WRITE);
+            LocalWorkspaceScope initialScope = LocalWorkspaceScope.initial(initialDir);
+            AuthorizedDirectoryProvisioning provisioning = new AuthorizedDirectoryProvisioning(
+                    projectId, workspaces, bindings, locations, workspaceService, principal, time, initialScope);
             var sessionLedger = new InMemorySessionChangeLedger();
             var mutations = new LocalWorkspaceMutationService(
                     workspaces,
@@ -533,8 +550,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     new InMemoryWorkspaceWriteLeaseManager(),
                     identifiers,
                     time);
-            var operations =
-                    new LocalFileToolOperations(workspaces, files, mutations, identifiers, rootRegistry, sessionLedger);
+            var operations = new LocalFileToolOperations(
+                    workspaces, files, mutations, identifiers, rootRegistry, provisioning, initialScope, sessionLedger);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
             CliExecutionPlatform executionPlatform = executionEnabled

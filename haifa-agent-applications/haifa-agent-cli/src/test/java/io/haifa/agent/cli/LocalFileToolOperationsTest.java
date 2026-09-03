@@ -30,6 +30,9 @@ import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.provider.local.SensitivePathPolicy;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
+import io.haifa.agent.project.provider.local.scope.LocalAllowedDirectory;
+import io.haifa.agent.project.provider.local.scope.LocalDirectoryPermission;
+import io.haifa.agent.project.provider.local.scope.LocalWorkspaceScope;
 import io.haifa.agent.project.root.WorkspaceRootAlias;
 import io.haifa.agent.project.root.WorkspaceRootPermission;
 import io.haifa.agent.project.root.WorkspaceRootStrategy;
@@ -42,10 +45,13 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -60,13 +66,14 @@ class LocalFileToolOperationsTest {
         Files.writeString(file, "one\ntwo\nthree\n", StandardCharsets.UTF_8);
         Fixture fixture = fixture();
 
+        String hostPath = file.toAbsolutePath().normalize().toString();
         var first = fixture.operations.execute(
                 "file.read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "large.txt", "maxBytes", 8, "maxLines", 1)));
+                arguments(Map.of("path", hostPath, "maxBytes", 8, "maxLines", 1)));
         String cursor = (String) first.structuredData().get("nextCursor");
         var second = fixture.operations.execute(
                 "file.read",
@@ -74,7 +81,7 @@ class LocalFileToolOperationsTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "large.txt", "cursor", cursor, "maxBytes", 8, "maxLines", 1)));
+                arguments(Map.of("path", hostPath, "cursor", cursor, "maxBytes", 8, "maxLines", 1)));
 
         assertThat(first.successful()).isTrue();
         assertThat(first.structuredData())
@@ -91,7 +98,7 @@ class LocalFileToolOperationsTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "large.txt", "cursor", cursor)));
+                arguments(Map.of("path", hostPath, "cursor", cursor)));
         assertThat(stale.successful()).isFalse();
         assertThat(stale.structuredData())
                 .containsEntry("errorCode", "FILE_CURSOR_STALE")
@@ -102,37 +109,41 @@ class LocalFileToolOperationsTest {
 
     @Test
     void appliesModelVisibleContextPatchWithoutSeparatePathArgument() throws Exception {
-        Files.writeString(root.resolve("source.txt"), "anchor\nold\n", StandardCharsets.UTF_8);
+        Path sourceFile = root.resolve("source.txt");
+        Files.writeString(sourceFile, "anchor\nold\n", StandardCharsets.UTF_8);
         Fixture fixture = fixture();
 
+        String hostPath = sourceFile.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
                 "file.patch",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(
-                        Map.of(
-                                "patch",
-                                """
+                arguments(Map.of(
+                        "patch",
+                        """
                         *** Begin Patch
-                        *** Update File: source.txt
+                        *** Update File: %s
                         @@ anchor
                         -old
                         +new
                         *** End Patch
-                        """)));
+                        """
+                                .formatted(hostPath))));
 
         assertThat(result.successful()).isTrue();
         assertThat(result.structuredData())
                 .containsEntry("complete", true)
                 .doesNotContainKeys("changeReviewArtifactRef", "artifactRef", "changeReviewArtifact", "changeSetIds");
-        assertThat(Files.readString(root.resolve("source.txt"))).isEqualTo("anchor\nnew\n");
+        assertThat(Files.readString(sourceFile)).isEqualTo("anchor\nnew\n");
     }
 
     @Test
     void returnsKnownToolFailureWhenWorkspaceMutationIsRejected() {
         Fixture fixture = fixture();
+        String hostPath =
+                root.resolve("existing.txt").toAbsolutePath().normalize().toString();
 
         var result = fixture.operations.execute(
                 "file.create",
@@ -140,7 +151,7 @@ class LocalFileToolOperationsTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "existing.txt", "content", "replacement")));
+                arguments(Map.of("path", hostPath, "content", "replacement")));
 
         assertThat(result.successful()).isFalse();
         assertThat(result.summary()).isEqualTo("Workspace mutation failed: TARGET_EXISTS (path=existing.txt)");
@@ -154,6 +165,9 @@ class LocalFileToolOperationsTest {
     @Test
     void writesMissingTargetAndKeepsSensitivePathRecoveryActions() throws Exception {
         Fixture fixture = fixture();
+        String missingPath =
+                root.resolve("missing.txt").toAbsolutePath().normalize().toString();
+        String sensitivePath = root.resolve(".env").toAbsolutePath().normalize().toString();
 
         var missingWrite = fixture.operations.execute(
                 "file.write",
@@ -161,18 +175,18 @@ class LocalFileToolOperationsTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "missing.txt", "content", "new")));
+                arguments(Map.of("path", missingPath, "content", "new")));
         var sensitiveRead = fixture.operations.execute(
                 "file.read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", ".env")));
+                arguments(Map.of("path", sensitivePath)));
 
         assertThat(missingWrite.successful()).isTrue();
-        assertThat(missingWrite.summary()).isEqualTo("Created missing.txt");
-        assertThat(missingWrite.structuredData()).containsEntry("path", "missing.txt");
+        assertThat(missingWrite.summary()).isEqualTo("Created " + missingPath);
+        assertThat(missingWrite.structuredData()).containsEntry("path", missingPath);
         assertThat(Files.readString(root.resolve("missing.txt"))).isEqualTo("new");
         assertThat(sensitiveRead.structuredData())
                 .containsEntry("stableFailureCode", "SENSITIVE_PATH")
@@ -185,9 +199,11 @@ class LocalFileToolOperationsTest {
 
     @Test
     void bindsFileMutationToTheToolCallAndWritesMatchingContent() throws Exception {
-        Files.writeString(root.resolve("tracked.txt"), "before", StandardCharsets.UTF_8);
+        Path tracked = root.resolve("tracked.txt");
+        Files.writeString(tracked, "before", StandardCharsets.UTF_8);
         Fixture fixture = fixture();
-        ToolArguments arguments = arguments(Map.of("path", "tracked.txt", "content", "after"));
+        String hostPath = tracked.toAbsolutePath().normalize().toString();
+        ToolArguments arguments = arguments(Map.of("path", hostPath, "content", "after"));
 
         var result = fixture.operations.execute(
                 "file.write",
@@ -200,7 +216,7 @@ class LocalFileToolOperationsTest {
                 arguments);
 
         assertThat(result.successful()).isTrue();
-        assertThat(Files.readString(root.resolve("tracked.txt"))).isEqualTo("after");
+        assertThat(Files.readString(tracked)).isEqualTo("after");
     }
 
     private Fixture fixture() {
@@ -219,7 +235,13 @@ class LocalFileToolOperationsTest {
         var bindings = new InMemoryWorkspaceBindingStore();
         var workspaces = new InMemoryWorkspaceStore();
         var locations = new LocalWorkspaceLocationStore();
-        locations.register(locationRef, root);
+        Path realRoot;
+        try {
+            realRoot = root.toRealPath();
+        } catch (IOException e) {
+            realRoot = root.toAbsolutePath().normalize();
+        }
+        locations.register(locationRef, realRoot);
         WorkspaceBinding binding = WorkspaceBinding.provision(
                         bindingId,
                         locationRef,
@@ -227,7 +249,7 @@ class LocalFileToolOperationsTest {
                         new PrincipalRef("owner", "user"),
                         WorkspaceCapabilitySet.readWriteFiles(),
                         WorkspacePermissionSet.readWrite(),
-                        LocalWorkspaceLocationStore.fingerprintFor(root),
+                        LocalWorkspaceLocationStore.fingerprintFor(realRoot),
                         now)
                 .activate(now);
         bindings.create(binding);
@@ -240,12 +262,37 @@ class LocalFileToolOperationsTest {
                         now)
                 .activate(now));
         var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        LocalWorkspaceScope scope;
+        if (registry != null) {
+            List<LocalAllowedDirectory> dirs = new ArrayList<>();
+            for (LocalWorkspaceRoot r : registry.allRoots()) {
+                WorkspaceId wsId = new WorkspaceId(
+                        r.alias().isMain()
+                                ? "workspace-file-read"
+                                : "ws-" + r.alias().value());
+                LocalDirectoryPermission perm = r.permission().canWrite()
+                        ? LocalDirectoryPermission.READ_WRITE
+                        : LocalDirectoryPermission.READ_ONLY;
+                try {
+                    dirs.add(LocalAllowedDirectory.of(wsId, r.hostPath().toRealPath(), perm));
+                } catch (IOException e) {
+                    dirs.add(LocalAllowedDirectory.of(
+                            wsId, r.hostPath().toAbsolutePath().normalize(), perm));
+                }
+            }
+            scope = new LocalWorkspaceScope(dirs, 1L);
+        } else {
+            scope = LocalWorkspaceScope.initial(
+                    LocalAllowedDirectory.of(workspaceId, realRoot, LocalDirectoryPermission.READ_WRITE));
+        }
         var operations = new LocalFileToolOperations(
                 workspaces,
                 files,
                 testMutations(workspaces, workspaceId, new ProjectId("project-file-read")),
                 () -> "id-1",
                 registry,
+                null,
+                scope,
                 ledger);
         return new Fixture(workspaceId, operations);
     }
@@ -355,9 +402,10 @@ class LocalFileToolOperationsTest {
     private record Fixture(WorkspaceId workspaceId, LocalFileToolOperations operations) {}
 
     @Test
-    void rejectsWriteToReadOnlyAttachedRoot() {
+    void rejectsWriteToReadOnlyAttachedRoot() throws Exception {
         LocalWorkspaceRoot mainRoot = LocalWorkspaceRoot.main(root, WorkspaceRootStrategy.GIT);
-        Path docsRoot = root.resolve("docs");
+        Path docsRoot = root.resolveSibling("docs");
+        Files.createDirectories(docsRoot);
         LocalWorkspaceRoot docs = LocalWorkspaceRoot.of(
                 WorkspaceRootAlias.of("docs"),
                 docsRoot,
@@ -376,19 +424,26 @@ class LocalFileToolOperationsTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "docs:guide.md", "content", "new content")));
+                arguments(Map.of(
+                        "path",
+                        docsRoot.resolve("guide.md")
+                                .toAbsolutePath()
+                                .normalize()
+                                .toString(),
+                        "content",
+                        "new content")));
 
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData())
-                .containsEntry("errorCode", "ROOT_READ_ONLY")
+                .containsEntry("errorCode", "PERMISSION_DENIED")
                 .containsEntry("failureCategory", "POLICY_DENIED")
                 .containsEntry("failureActionCode", "REQUEST_WRITE_PERMISSION");
     }
 
     @Test
-    void rejectsUnregisteredRootAlias() {
+    void rejectsRelativePathOrAlias() {
         Fixture fixture = fixture();
-        var result = fixture.operations.execute(
+        var resultAlias = fixture.operations.execute(
                 "file.read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
@@ -396,34 +451,50 @@ class LocalFileToolOperationsTest {
                 "policy-1",
                 arguments(Map.of("path", "unknown:file.txt")));
 
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData())
-                .containsEntry("errorCode", "ROOT_ALIAS_NOT_FOUND")
+        assertThat(resultAlias.successful()).isFalse();
+        assertThat(resultAlias.structuredData())
+                .containsEntry("errorCode", "INVALID_ARGUMENT")
                 .containsEntry("failureCategory", "INVALID_INPUT")
-                .containsEntry("failureActionCode", "USE_REGISTERED_ROOT_ALIAS");
+                .containsEntry("failureActionCode", "USE_ABSOLUTE_HOST_PATH");
+
+        var resultRelative = fixture.operations.execute(
+                "file.read",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "file.txt")));
+
+        assertThat(resultRelative.successful()).isFalse();
+        assertThat(resultRelative.structuredData())
+                .containsEntry("errorCode", "INVALID_ARGUMENT")
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("failureActionCode", "USE_ABSOLUTE_HOST_PATH");
     }
 
     @Test
-    void rejectsAbsoluteHostPathInToolArguments() {
+    void rejectsUnauthorizedHostPath() throws Exception {
         Fixture fixture = fixture();
+        Path outside = root.resolveSibling("outside.txt").toAbsolutePath().normalize();
         var result = fixture.operations.execute(
                 "file.read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "D:/workspace/file.txt")));
+                arguments(Map.of("path", outside.toString())));
 
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData())
-                .containsEntry("errorCode", "ABSOLUTE_PATH_FORBIDDEN")
-                .containsEntry("failureCategory", "INVALID_INPUT")
-                .containsEntry("failureActionCode", "USE_ALIAS_RELATIVE_SYNTAX");
+                .containsEntry("errorCode", "ACCESS_DENIED")
+                .containsEntry("failureCategory", "POLICY_DENIED")
+                .containsEntry("failureActionCode", "REQUEST_DIRECTORY_AUTHORIZATION");
     }
 
     @Test
     void deletesEmptyDirectory() throws Exception {
-        Files.createDirectories(root.resolve("testdir"));
+        Path testdir = root.resolve("testdir");
+        Files.createDirectories(testdir);
         Fixture fixture = fixture();
 
         var result = fixture.operations.execute(
@@ -432,30 +503,32 @@ class LocalFileToolOperationsTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "testdir")));
+                arguments(Map.of("path", testdir.toAbsolutePath().normalize().toString())));
 
         assertThat(result.successful()).isTrue();
-        assertThat(Files.exists(root.resolve("testdir"))).isFalse();
+        assertThat(Files.exists(testdir)).isFalse();
     }
 
     @Test
     void deletesRegularFileDirectlyWithoutQuarantineToken() throws Exception {
-        Files.writeString(root.resolve("trash.txt"), "delete me", StandardCharsets.UTF_8);
+        Path trash = root.resolve("trash.txt");
+        Files.writeString(trash, "delete me", StandardCharsets.UTF_8);
         Fixture fixture = fixture();
 
+        String hostPath = trash.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
                 "file.delete",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "trash.txt")));
+                arguments(Map.of("path", hostPath)));
 
         assertThat(result.successful()).isTrue();
         assertThat(result.structuredData())
-                .containsEntry("path", "trash.txt")
+                .containsEntry("path", hostPath)
                 .doesNotContainKeys("quarantineToken", "changeSetId", "changeReviewArtifact");
-        assertThat(Files.exists(root.resolve("trash.txt"))).isFalse();
+        assertThat(Files.exists(trash)).isFalse();
     }
 
     @Test
@@ -465,18 +538,18 @@ class LocalFileToolOperationsTest {
         LocalWorkspaceRootRegistry registry = LocalWorkspaceRootRegistry.singleMain(mainRoot);
         Fixture f = fixture(registry, ledger);
 
+        String hostPath = root.resolve("hello.txt").toAbsolutePath().normalize().toString();
         var createRes = f.operations.execute(
                 "file.create",
                 f.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", "hello.txt", "content", "hello world")));
+                arguments(Map.of("path", hostPath, "content", "hello world")));
 
         assertThat(createRes.successful()).isTrue();
-        assertThat(ledger.compactedChanges(WorkspaceRootAlias.MAIN)).hasSize(1);
-        SessionFileChangeRecord record =
-                ledger.compactedChanges(WorkspaceRootAlias.MAIN).get(0);
-        assertThat(record.path().value()).isEqualTo("hello.txt");
+        assertThat(ledger.compactedChanges(f.workspaceId)).hasSize(1);
+        SessionFileChangeRecord record = ledger.compactedChanges(f.workspaceId).get(0);
+        assertThat(record.path().projectPath().value()).isEqualTo("hello.txt");
     }
 }

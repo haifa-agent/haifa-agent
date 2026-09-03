@@ -1,10 +1,12 @@
 package io.haifa.agent.project.ledger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.root.WorkspaceRootAlias;
+import io.haifa.agent.project.path.WorkspacePath;
+import io.haifa.agent.project.workspace.WorkspaceId;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,25 +15,25 @@ import org.junit.jupiter.api.Test;
 class InMemorySessionChangeLedgerTest {
 
     private InMemorySessionChangeLedger ledger;
-    private WorkspaceRootAlias mainAlias;
-    private WorkspaceRootAlias docsAlias;
+    private WorkspaceId mainWorkspace;
+    private WorkspaceId docsWorkspace;
     private Instant now;
 
     @BeforeEach
     void setUp() {
         ledger = new InMemorySessionChangeLedger();
-        mainAlias = WorkspaceRootAlias.MAIN;
-        docsAlias = WorkspaceRootAlias.of("docs");
+        mainWorkspace = new WorkspaceId("ws-main");
+        docsWorkspace = new WorkspaceId("ws-docs");
         now = Instant.parse("2026-09-01T12:00:00Z");
     }
 
     @Test
     void mergesMultipleWritesOnSameFile() {
-        ProjectPath path = ProjectPath.of("src/App.java");
-        ledger.record(SessionFileChangeRecord.replace(mainAlias, path, "hash0", 10, "hash1", 15, now));
-        ledger.record(SessionFileChangeRecord.replace(mainAlias, path, "hash1", 15, "hash2", 20, now.plusSeconds(1)));
+        WorkspacePath path = new WorkspacePath(mainWorkspace, ProjectPath.of("src/App.java"));
+        ledger.record(SessionFileChangeRecord.replace(path, "hash0", 10, "hash1", 15, now));
+        ledger.record(SessionFileChangeRecord.replace(path, "hash1", 15, "hash2", 20, now.plusSeconds(1)));
 
-        List<SessionFileChangeRecord> compacted = ledger.compactedChanges(mainAlias);
+        List<SessionFileChangeRecord> compacted = ledger.compactedChanges(mainWorkspace);
         assertThat(compacted).hasSize(1);
         SessionFileChangeRecord change = compacted.get(0);
         assertThat(change.path()).isEqualTo(path);
@@ -44,12 +46,11 @@ class InMemorySessionChangeLedgerTest {
 
     @Test
     void createFollowedByWriteKeepsCreateTypeWithLatestContent() {
-        ProjectPath path = ProjectPath.of("README.md");
-        ledger.record(SessionFileChangeRecord.create(mainAlias, path, "hash-init", 5, now));
-        ledger.record(
-                SessionFileChangeRecord.replace(mainAlias, path, "hash-init", 5, "hash-final", 12, now.plusSeconds(1)));
+        WorkspacePath path = new WorkspacePath(mainWorkspace, ProjectPath.of("README.md"));
+        ledger.record(SessionFileChangeRecord.create(path, "hash-init", 5, now));
+        ledger.record(SessionFileChangeRecord.replace(path, "hash-init", 5, "hash-final", 12, now.plusSeconds(1)));
 
-        List<SessionFileChangeRecord> compacted = ledger.compactedChanges(mainAlias);
+        List<SessionFileChangeRecord> compacted = ledger.compactedChanges(mainWorkspace);
         assertThat(compacted).hasSize(1);
         SessionFileChangeRecord change = compacted.get(0);
         assertThat(change.type()).isEqualTo(FileChangeType.CREATE);
@@ -60,25 +61,25 @@ class InMemorySessionChangeLedgerTest {
 
     @Test
     void createFollowedByDeleteCancelsOut() {
-        ProjectPath path = ProjectPath.of("temp.txt");
-        ledger.record(SessionFileChangeRecord.create(mainAlias, path, "hash1", 10, now));
-        ledger.record(SessionFileChangeRecord.delete(mainAlias, path, "hash1", 10, now.plusSeconds(1)));
+        WorkspacePath path = new WorkspacePath(mainWorkspace, ProjectPath.of("temp.txt"));
+        ledger.record(SessionFileChangeRecord.create(path, "hash1", 10, now));
+        ledger.record(SessionFileChangeRecord.delete(path, "hash1", 10, now.plusSeconds(1)));
 
-        List<SessionFileChangeRecord> compacted = ledger.compactedChanges(mainAlias);
+        List<SessionFileChangeRecord> compacted = ledger.compactedChanges(mainWorkspace);
         assertThat(compacted).isEmpty();
     }
 
     @Test
     void moveChainTracksOriginalSourceAndLatestTarget() {
-        ProjectPath a = ProjectPath.of("a.txt");
-        ProjectPath b = ProjectPath.of("b.txt");
-        ProjectPath c = ProjectPath.of("c.txt");
+        WorkspacePath a = new WorkspacePath(mainWorkspace, ProjectPath.of("a.txt"));
+        WorkspacePath b = new WorkspacePath(mainWorkspace, ProjectPath.of("b.txt"));
+        WorkspacePath c = new WorkspacePath(mainWorkspace, ProjectPath.of("c.txt"));
 
-        ledger.record(SessionFileChangeRecord.move(mainAlias, a, b, "hashA", 10, "hashA", 10, now));
-        ledger.record(SessionFileChangeRecord.replace(mainAlias, b, "hashA", 10, "hashB", 15, now.plusSeconds(1)));
-        ledger.record(SessionFileChangeRecord.move(mainAlias, b, c, "hashB", 15, "hashB", 15, now.plusSeconds(2)));
+        ledger.record(SessionFileChangeRecord.move(a, b, "hashA", 10, "hashA", 10, now));
+        ledger.record(SessionFileChangeRecord.replace(b, "hashA", 10, "hashB", 15, now.plusSeconds(1)));
+        ledger.record(SessionFileChangeRecord.move(b, c, "hashB", 15, "hashB", 15, now.plusSeconds(2)));
 
-        List<SessionFileChangeRecord> compacted = ledger.compactedChanges(mainAlias);
+        List<SessionFileChangeRecord> compacted = ledger.compactedChanges(mainWorkspace);
         assertThat(compacted).hasSize(1);
         SessionFileChangeRecord change = compacted.get(0);
         assertThat(change.type()).isEqualTo(FileChangeType.MOVE);
@@ -89,12 +90,25 @@ class InMemorySessionChangeLedgerTest {
     }
 
     @Test
-    void isolatesChangesAcrossRoots() {
-        ledger.record(SessionFileChangeRecord.create(mainAlias, ProjectPath.of("main.txt"), "hashM", 5, now));
-        ledger.record(SessionFileChangeRecord.create(docsAlias, ProjectPath.of("guide.md"), "hashD", 8, now));
+    void isolatesChangesAcrossWorkspacesEvenForSameRelativeFileName() {
+        WorkspacePath inMain = new WorkspacePath(mainWorkspace, ProjectPath.of("notes.md"));
+        WorkspacePath inDocs = new WorkspacePath(docsWorkspace, ProjectPath.of("notes.md"));
+        ledger.record(SessionFileChangeRecord.create(inMain, "hashM", 5, now));
+        ledger.record(SessionFileChangeRecord.create(inDocs, "hashD", 8, now));
 
-        assertThat(ledger.compactedChanges(mainAlias)).hasSize(1);
-        assertThat(ledger.compactedChanges(docsAlias)).hasSize(1);
+        assertThat(ledger.compactedChanges(mainWorkspace)).hasSize(1);
+        assertThat(ledger.compactedChanges(docsWorkspace)).hasSize(1);
+        assertThat(ledger.compactedChanges(docsWorkspace).get(0).afterHash()).isEqualTo("hashD");
         assertThat(ledger.allCompactedChanges()).hasSize(2);
+    }
+
+    @Test
+    void rejectsMoveSpanningTwoWorkspaces() {
+        WorkspacePath source = new WorkspacePath(mainWorkspace, ProjectPath.of("a.txt"));
+        WorkspacePath target = new WorkspacePath(docsWorkspace, ProjectPath.of("b.txt"));
+
+        assertThatThrownBy(() -> SessionFileChangeRecord.move(source, target, "hashA", 10, "hashA", 10, now))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("two logical workspaces");
     }
 }

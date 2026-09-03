@@ -216,7 +216,7 @@ class LocalWorkspaceMutationServiceTest {
         var diff = new DiffService()
                 .generate(new DiffRequest(
                         List.of(new DiffFile(ProjectPath.of("bom.txt"), before, after)), 10, 1024, 4096));
-        var document = new UnifiedPatchParser(10, 100, 4096).parse(diff.unifiedDiff());
+        var document = new UnifiedPatchParser(10, 100, 4096).parse(fixture.workspaceId(), diff.unifiedDiff());
         assertThat(document.sha256()).isEqualTo(diff.sha256());
         var patchService = new PatchService(
                 fixture.workspaceStore(),
@@ -227,7 +227,7 @@ class LocalWorkspaceMutationServiceTest {
                 fixture.workspaceId(),
                 document,
                 fixture.workspace().revision(),
-                Map.of(ProjectPath.of("bom.txt"), hash(before)),
+                Map.of(fixture.path("bom.txt"), hash(before)),
                 context("patch")));
 
         assertThat(result.complete()).isTrue();
@@ -239,7 +239,7 @@ class LocalWorkspaceMutationServiceTest {
                 fixture.workspaceId(),
                 document,
                 WorkspaceRevision.initial("stale"),
-                Map.of(ProjectPath.of("bom.txt"), hash(after)),
+                Map.of(fixture.path("bom.txt"), hash(after)),
                 context("stale-patch")));
         assertThat(stale.complete()).isFalse();
         assertThat(stale.conflicts())
@@ -258,6 +258,7 @@ class LocalWorkspaceMutationServiceTest {
         Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
         var document = new ApplyPatchParser(10, 100, 1_000, 64 * 1024)
                 .parse(
+                        fixture.workspaceId(),
                         """
                 *** Begin Patch
                 *** Update File: large.txt
@@ -276,7 +277,7 @@ class LocalWorkspaceMutationServiceTest {
                         fixture.workspaceId(),
                         document,
                         fixture.workspace().revision(),
-                        Map.of(ProjectPath.of("large.txt"), hashFile(large)),
+                        Map.of(fixture.path("large.txt"), hashFile(large)),
                         context("large-context-patch")));
 
         assertThat(result.complete()).isTrue();
@@ -296,6 +297,7 @@ class LocalWorkspaceMutationServiceTest {
         Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
         var document = new ApplyPatchParser(10, 100, 1_000, 64 * 1024)
                 .parse(
+                        fixture.workspaceId(),
                         """
                 *** Begin Patch
                 *** Update File: old.txt
@@ -316,7 +318,7 @@ class LocalWorkspaceMutationServiceTest {
                         fixture.workspaceId(),
                         document,
                         fixture.workspace().revision(),
-                        Map.of(ProjectPath.of("old.txt"), hash("section\nold\n")),
+                        Map.of(fixture.path("old.txt"), hash("section\nold\n")),
                         context("multi-context-patch")));
 
         assertThat(result.complete()).isTrue();
@@ -328,12 +330,13 @@ class LocalWorkspaceMutationServiceTest {
     @Test
     void rejectsTraversalDuplicateAndOverBudgetPatchesDeterministically() {
         var parser = new UnifiedPatchParser(2, 20, 1024);
+        var wsId = new WorkspaceId("ws-resolver");
         String traversal = "--- a/../escape.txt\n+++ b/../escape.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n";
-        assertThatThrownBy(() -> parser.parse(traversal)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> parser.parse(wsId, traversal)).isInstanceOf(IllegalArgumentException.class);
 
         String duplicate = "--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-a\n+b\n"
                 + "--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-b\n+c\n";
-        assertThatThrownBy(() -> parser.parse(duplicate))
+        assertThatThrownBy(() -> parser.parse(wsId, duplicate))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("duplicate");
         assertThatThrownBy(() -> new DiffService()
@@ -361,7 +364,7 @@ class LocalWorkspaceMutationServiceTest {
                         10,
                         1024,
                         8192));
-        var document = new UnifiedPatchParser(10, 100, 8192).parse(diff.unifiedDiff());
+        var document = new UnifiedPatchParser(10, 100, 8192).parse(fixture.workspaceId(), diff.unifiedDiff());
         var calls = new AtomicInteger();
         io.haifa.agent.project.mutation.WorkspaceMutationService failSecond =
                 new io.haifa.agent.project.mutation.WorkspaceMutationService() {
@@ -396,8 +399,8 @@ class LocalWorkspaceMutationServiceTest {
                         document,
                         fixture.workspace().revision(),
                         Map.of(
-                                ProjectPath.of("first.txt"), hash("first\n"),
-                                ProjectPath.of("second.txt"), hash("second\n")),
+                                fixture.path("first.txt"), hash("first\n"),
+                                fixture.path("second.txt"), hash("second\n")),
                         context("partial-patch")));
 
         assertThat(result.complete()).isFalse();

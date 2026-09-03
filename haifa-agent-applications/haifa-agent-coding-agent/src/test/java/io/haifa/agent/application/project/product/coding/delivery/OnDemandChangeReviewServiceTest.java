@@ -5,11 +5,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
 import io.haifa.agent.project.path.ProjectPath;
+import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRoot;
 import io.haifa.agent.project.provider.local.root.LocalWorkspaceRootRegistry;
 import io.haifa.agent.project.root.WorkspaceRootAlias;
 import io.haifa.agent.project.root.WorkspaceRootPermission;
 import io.haifa.agent.project.root.WorkspaceRootStrategy;
+import io.haifa.agent.project.workspace.WorkspaceId;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Optional;
@@ -48,15 +50,15 @@ class OnDemandChangeReviewServiceTest {
 
     @Test
     void generatesReviewAcrossGitAndPlainRoots() {
+        WorkspaceId mainWs = new WorkspaceId("main");
+        WorkspaceId docsWs = new WorkspaceId("docs");
         ledger.record(SessionFileChangeRecord.create(
-                WorkspaceRootAlias.MAIN,
-                ProjectPath.of("src/App.java"),
+                new WorkspacePath(mainWs, ProjectPath.of("src/App.java")),
                 "sha256:0000000000000000000000000000000000000000000000000000000000000001",
                 100,
                 now));
         ledger.record(SessionFileChangeRecord.replace(
-                WorkspaceRootAlias.of("docs"),
-                ProjectPath.of("manual.md"),
+                new WorkspacePath(docsWs, ProjectPath.of("manual.md")),
                 "sha256:0000000000000000000000000000000000000000000000000000000000000002",
                 50,
                 "sha256:0000000000000000000000000000000000000000000000000000000000000003",
@@ -74,7 +76,7 @@ class OnDemandChangeReviewServiceTest {
         assertThat(artifact.counts()).containsEntry("created", 1).containsEntry("replaced", 1);
         assertThat(artifact.fileSummaries())
                 .extracting(CodingChangeReviewArtifact.FileSummary::path)
-                .containsExactlyInAnyOrder("src/App.java", "docs:manual.md");
+                .containsExactlyInAnyOrder("main:src/App.java", "docs:manual.md");
     }
 
     @Test

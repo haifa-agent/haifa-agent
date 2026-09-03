@@ -1,6 +1,6 @@
 package io.haifa.agent.project.patch;
 
-import io.haifa.agent.project.path.ProjectPath;
+import io.haifa.agent.project.path.WorkspacePath;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,7 +27,12 @@ public final class UnifiedPatchParser {
         this.maxBytes = maxBytes;
     }
 
-    public PatchDocument parse(String unifiedDiff) {
+    /**
+     * Parses a unified diff whose headers specify logical relative project paths within the given
+     * workspace. Absolute host paths must be resolved and mapped to workspace paths before calling this parser.
+     */
+    public PatchDocument parse(io.haifa.agent.project.workspace.WorkspaceId workspaceId, String unifiedDiff) {
+        Objects.requireNonNull(workspaceId, "workspaceId must not be null");
         if (unifiedDiff == null || unifiedDiff.isEmpty()) throw new IllegalArgumentException("patch must not be empty");
         byte[] bytes = unifiedDiff.getBytes(StandardCharsets.UTF_8);
         if (bytes.length > maxBytes || unifiedDiff.indexOf('\0') >= 0) {
@@ -36,20 +42,20 @@ public final class UnifiedPatchParser {
         String[] lines = normalized.split("\n", -1);
         if (lines.length > maxLines) throw new IllegalArgumentException("patch line budget exceeded");
         List<FilePatch> files = new ArrayList<>();
-        Set<ProjectPath> paths = new HashSet<>();
+        Set<WorkspacePath> paths = new HashSet<>();
         int index = 0;
         while (index < lines.length && lines[index].isEmpty()) index++;
         while (index < lines.length && !lines[index].isEmpty()) {
             if (!lines[index].startsWith("--- ")) throw new IllegalArgumentException("expected old file header");
-            ProjectPath oldPath = parsePath(lines[index++].substring(4), "a/");
+            WorkspacePath oldPath = parsePath(lines[index++].substring(4), "a/", workspaceId);
             if (index >= lines.length || !lines[index].startsWith("+++ ")) {
                 throw new IllegalArgumentException("expected new file header");
             }
-            ProjectPath newPath = parsePath(lines[index++].substring(4), "b/");
+            WorkspacePath newPath = parsePath(lines[index++].substring(4), "b/", workspaceId);
             if (oldPath != null && newPath != null && !oldPath.equals(newPath)) {
                 throw new IllegalArgumentException("rename patches are unsupported");
             }
-            ProjectPath target = newPath == null ? oldPath : newPath;
+            WorkspacePath target = newPath == null ? oldPath : newPath;
             if (!paths.add(target)) throw new IllegalArgumentException("duplicate logical patch path");
             List<PatchHunk> hunks = new ArrayList<>();
             boolean oldNewline = true;
@@ -94,14 +100,16 @@ public final class UnifiedPatchParser {
         return new PatchDocument(files, "sha256:" + hash(bytes));
     }
 
-    private static ProjectPath parsePath(String header, String prefix) {
+    private static WorkspacePath parsePath(
+            String header, String prefix, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
         String value = header.split("\\t", 2)[0].trim();
         if (value.equals("/dev/null")) return null;
         if (value.startsWith("GIT binary patch") || value.startsWith("Binary files")) {
             throw new IllegalArgumentException("binary patches are unsupported");
         }
         if (!value.startsWith(prefix)) throw new IllegalArgumentException("patch path prefix is invalid");
-        return ProjectPath.of(value.substring(prefix.length()));
+        return new WorkspacePath(
+                workspaceId, io.haifa.agent.project.path.ProjectPath.of(value.substring(prefix.length())));
     }
 
     private static String hash(byte[] bytes) {

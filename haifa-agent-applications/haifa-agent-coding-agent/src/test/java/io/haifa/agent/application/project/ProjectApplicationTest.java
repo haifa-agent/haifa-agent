@@ -104,7 +104,7 @@ class ProjectApplicationTest {
         var execution = disclosed.snapshot().bindings().getFirst();
         var fileRead = disclosed.snapshot().bindings().get(1);
         assertThat(execution.definition().version().value()).isEqualTo("1.7.2");
-        assertThat(fileRead.definition().version().value()).isEqualTo("1.2.0");
+        assertThat(fileRead.definition().version().value()).isEqualTo("2.0.0");
         @SuppressWarnings("unchecked")
         var properties = (java.util.Map<String, Object>)
                 execution.definition().inputSchema().document().get("properties");
@@ -156,7 +156,8 @@ class ProjectApplicationTest {
         @SuppressWarnings("unchecked")
         var pathSchema = (java.util.Map<String, Object>) fileProperties.get("path");
         assertThat(pathSchema.get("description"))
-                .isEqualTo("Workspace-relative path; use '.' for the workspace root. Absolute paths are not allowed.");
+                .isEqualTo(
+                        "Host absolute path within an authorized directory. Relative paths and root aliases are not allowed.");
         assertThat(disclosed.snapshot().digest()).matches("[0-9a-f]{64}");
         assertThat(catalog.freeze(Set.of("file.read"), Set.of("file.read"), false, provider)
                         .snapshot()
@@ -273,7 +274,7 @@ class ProjectApplicationTest {
                 .filteredOn(binding -> binding.alias().value().equals("file_write"))
                 .singleElement()
                 .satisfies(binding -> {
-                    assertThat(binding.definition().version().value()).isEqualTo("1.3.0");
+                    assertThat(binding.definition().version().value()).isEqualTo("2.0.0");
                     assertThat(binding.definition().description()).contains("creates the file atomically");
                 });
     }
