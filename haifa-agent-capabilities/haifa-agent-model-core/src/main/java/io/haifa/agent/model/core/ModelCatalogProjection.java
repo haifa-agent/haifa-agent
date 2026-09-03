@@ -21,7 +21,8 @@ public final class ModelCatalogProjection {
         LinkedHashMap<ModelDefinitionId, ModelBindingProfile> profileIndex = new LinkedHashMap<>();
         for (ModelCatalogBinding binding : List.copyOf(Objects.requireNonNull(bindings, "bindings must not be null"))) {
             if (bindingIndex.putIfAbsent(binding.definition().id(), binding) != null) {
-                throw new IllegalArgumentException("duplicate projected binding id: " + binding.definition().id());
+                throw new IllegalArgumentException("duplicate projected binding id: "
+                        + binding.definition().id());
             }
             profileIndex.put(binding.definition().id(), binding.profile());
         }

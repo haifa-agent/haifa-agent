@@ -52,8 +52,8 @@ public final class ModelCatalogDeployment {
             if (allowedBindings.isEmpty()) {
                 throw new IllegalArgumentException("deployment provider allowedBindings must not be empty");
             }
-            bindingEndpointOverrides = Map.copyOf(Objects.requireNonNull(
-                    bindingEndpointOverrides, "bindingEndpointOverrides must not be null"));
+            bindingEndpointOverrides = Map.copyOf(
+                    Objects.requireNonNull(bindingEndpointOverrides, "bindingEndpointOverrides must not be null"));
             if (!allowedBindings.containsAll(bindingEndpointOverrides.keySet())) {
                 throw new IllegalArgumentException("binding endpoint override must belong to the deployment allowlist");
             }
