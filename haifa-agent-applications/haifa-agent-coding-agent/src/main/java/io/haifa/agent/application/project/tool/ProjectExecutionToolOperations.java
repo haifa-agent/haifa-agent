@@ -3,6 +3,7 @@ package io.haifa.agent.application.project.tool;
 import io.haifa.agent.application.project.policy.CodingExecutionRiskResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandSemantics;
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationAttemptFactory;
+import io.haifa.agent.application.project.product.coding.delivery.RepositoryBaselineUnavailableException;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
@@ -74,6 +75,7 @@ public final class ProjectExecutionToolOperations {
     private final ExecutionScratchSpaceSpec scratchSpace;
     private final UnaryOperator<String> workdirNormalizer;
     private final CodingVerificationProfileProvider verificationProfiles;
+    private final ExecutionRepositoryBaselineObserver repositoryBaselines;
 
     public ProjectExecutionToolOperations(
             ExecutionBroker broker,
@@ -214,6 +216,42 @@ public final class ProjectExecutionToolOperations {
             ExecutionScratchSpaceSpec scratchSpace,
             UnaryOperator<String> workdirNormalizer,
             CodingVerificationProfileProvider verificationProfiles) {
+        this(
+                broker,
+                identifiers,
+                time,
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                maximumModelOutputLines,
+                maximumProcesses,
+                outputObserver,
+                outputSanitizer,
+                scratchSpace,
+                workdirNormalizer,
+                verificationProfiles,
+                ExecutionRepositoryBaselineObserver.noop());
+    }
+
+    public ProjectExecutionToolOperations(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            int maximumModelOutputLines,
+            int maximumProcesses,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer,
+            ExecutionScratchSpaceSpec scratchSpace,
+            UnaryOperator<String> workdirNormalizer,
+            CodingVerificationProfileProvider verificationProfiles,
+            ExecutionRepositoryBaselineObserver repositoryBaselines) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -245,6 +283,7 @@ public final class ProjectExecutionToolOperations {
         this.workdirNormalizer = Objects.requireNonNull(workdirNormalizer, "workdirNormalizer must not be null");
         this.verificationProfiles =
                 Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
+        this.repositoryBaselines = Objects.requireNonNull(repositoryBaselines, "repositoryBaselines must not be null");
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -310,17 +349,41 @@ public final class ProjectExecutionToolOperations {
                 ExecutionInput.none(),
                 invocationDigest(invocation, command, workdir, scratchSpace),
                 scratchSpace);
-        return withToolCallId(
-                invocation,
-                executeRequest(
-                        request,
-                        invocation.cancellation(),
-                        invocation.observer(),
-                        command,
-                        operationFamily,
-                        commandClassification,
-                        repositoryScopeDigest,
-                        invocation.toolCallId().value()));
+        try {
+            repositoryBaselines.beforeDispatch(
+                    invocation.tenant(), invocation.runId().value(), invocation.principal(), workingDirectory);
+        } catch (RepositoryBaselineUnavailableException exception) {
+            return withToolCallId(
+                    invocation,
+                    new ToolResult(
+                            false,
+                            "Repository baseline could not be established before execution",
+                            Map.of(
+                                    "errorCode", "REPOSITORY_BASELINE_UNAVAILABLE",
+                                    "stableFailureCode", "REPOSITORY_BASELINE_UNAVAILABLE",
+                                    "failureCategory", "LOCAL_ENVIRONMENT_UNAVAILABLE",
+                                    "failureActionCode", "CHECK_GIT_AVAILABILITY",
+                                    "retryable", false),
+                            List.of(),
+                            List.of(),
+                            false));
+        }
+        try {
+            return withToolCallId(
+                    invocation,
+                    executeRequest(
+                            request,
+                            invocation.cancellation(),
+                            invocation.observer(),
+                            command,
+                            operationFamily,
+                            commandClassification,
+                            repositoryScopeDigest,
+                            invocation.toolCallId().value()));
+        } finally {
+            repositoryBaselines.afterCompletion(
+                    invocation.tenant(), invocation.runId().value(), invocation.principal(), workingDirectory);
+        }
     }
 
     /** Read-only reconciliation for a previously dispatched local execution. */

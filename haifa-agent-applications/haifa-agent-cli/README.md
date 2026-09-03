@@ -589,6 +589,13 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 相对路径和 root alias 不再接受；跨授权目录的 patch 与 move 仍明确拒绝。已被现有授权目录覆盖的重复授权
 复用原边界，不创建第二份目录身份；无法确认物理路径边界时拒绝操作。
 
+CLI 会在本地执行平台可用时用同一个 `ExecutionBroker` 做内部有界 Git 读取：受管文件写入在物理 I/O
+前为 nearest repository 建立一次 Run 基线，Plain 路径继续只进入 `SessionChangeLedger`；没有可用
+执行平台时文件授权和写入不受影响，但 Review 归因保守标为 `ATTRIBUTION_PARTIAL`。每次
+`execution.run` 完成后失效该授权目录的仓库定位缓存，以便下一次观察 `git init`、删除 `.git` 或
+worktree/submodule 拓扑变化。Git 只决定 Review 证据来源，不扩大文件授权范围，也不向模型暴露新的
+`git.*` Tool。
+
 `file.patch` 接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，最多包含同一目录根下 100 个文件的新增或更新。
 删除和移动仍分别调用 `file.delete`、`file.move`；跨目录根的 patch 和移动明确拒绝。所有文件会在第一次写盘前完成
 路径、Hunk 与内容版本的乐观预检；它不是事务，提交期的 IO 或权限异常可能留下已提交前缀。此时工具返回

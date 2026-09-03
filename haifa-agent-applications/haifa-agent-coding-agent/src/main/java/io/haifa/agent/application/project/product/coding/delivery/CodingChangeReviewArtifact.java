@@ -23,15 +23,16 @@ public record CodingChangeReviewArtifact(
         int totalFileCount,
         boolean summariesTruncated,
         Map<String, Integer> counts,
-        boolean complete) {
-    public static final String SCHEMA_VERSION = "coding-change-review/1";
+        AttributionStatus attributionStatus) {
+    public static final String SCHEMA_VERSION = "coding-change-review/2";
+    public static final String LEGACY_SCHEMA_VERSION = "coding-change-review/1";
     public static final int MAXIMUM_CHANGE_SET_IDS = 128;
     public static final int MAXIMUM_FILE_SUMMARIES = 128;
     private static final List<String> COUNT_KEYS =
             List.of("created", "replaced", "deleted", "moved", "binary", "oversize", "opaque");
 
     public CodingChangeReviewArtifact {
-        if (!SCHEMA_VERSION.equals(schemaVersion)) {
+        if (!SCHEMA_VERSION.equals(schemaVersion) && !LEGACY_SCHEMA_VERSION.equals(schemaVersion)) {
             throw new IllegalArgumentException("unsupported change review schemaVersion");
         }
         artifactRef = digest(artifactRef, "artifactRef");
@@ -60,7 +61,9 @@ public record CodingChangeReviewArtifact(
             throw new IllegalArgumentException("change review counts contain unknown keys");
         }
         counts = Map.copyOf(normalized);
+        attributionStatus = Objects.requireNonNull(attributionStatus, "attributionStatus must not be null");
         String expectedRef = contentAddress(
+                schemaVersion,
                 changeSetIds,
                 baseWorkspaceDigest,
                 resultWorkspaceDigest,
@@ -68,7 +71,7 @@ public record CodingChangeReviewArtifact(
                 totalFileCount,
                 summariesTruncated,
                 counts,
-                complete);
+                attributionStatus);
         if (!artifactRef.equals(expectedRef)) {
             throw new IllegalArgumentException("artifactRef does not match change review content");
         }
@@ -82,8 +85,9 @@ public record CodingChangeReviewArtifact(
             int totalFileCount,
             boolean summariesTruncated,
             Map<String, Integer> counts,
-            boolean complete) {
+            AttributionStatus attributionStatus) {
         String artifactRef = contentAddress(
+                SCHEMA_VERSION,
                 changeSetIds,
                 baseWorkspaceDigest,
                 resultWorkspaceDigest,
@@ -91,7 +95,7 @@ public record CodingChangeReviewArtifact(
                 totalFileCount,
                 summariesTruncated,
                 counts,
-                complete);
+                attributionStatus);
         return new CodingChangeReviewArtifact(
                 SCHEMA_VERSION,
                 artifactRef,
@@ -102,23 +106,52 @@ public record CodingChangeReviewArtifact(
                 totalFileCount,
                 summariesTruncated,
                 counts,
-                complete);
+                attributionStatus);
+    }
+
+    /** Compatibility overload for existing callers; new code should pass an explicit status. */
+    public static CodingChangeReviewArtifact create(
+            List<String> changeSetIds,
+            String baseWorkspaceDigest,
+            String resultWorkspaceDigest,
+            List<FileSummary> fileSummaries,
+            int totalFileCount,
+            boolean summariesTruncated,
+            Map<String, Integer> counts,
+            boolean complete) {
+        return create(
+                changeSetIds,
+                baseWorkspaceDigest,
+                resultWorkspaceDigest,
+                fileSummaries,
+                totalFileCount,
+                summariesTruncated,
+                counts,
+                complete ? AttributionStatus.COMPLETE : AttributionStatus.ATTRIBUTION_PARTIAL);
+    }
+
+    public boolean complete() {
+        return attributionStatus == AttributionStatus.COMPLETE;
     }
 
     public Map<String, Object> toStructuredData() {
         List<Map<String, Object>> summaries =
                 fileSummaries.stream().map(FileSummary::toStructuredData).toList();
-        return Map.ofEntries(
-                Map.entry("schemaVersion", schemaVersion),
-                Map.entry("artifactRef", artifactRef),
-                Map.entry("changeSetIds", changeSetIds),
-                Map.entry("baseWorkspaceDigest", baseWorkspaceDigest),
-                Map.entry("resultWorkspaceDigest", resultWorkspaceDigest),
-                Map.entry("fileSummaries", summaries),
-                Map.entry("totalFileCount", totalFileCount),
-                Map.entry("summariesTruncated", summariesTruncated),
-                Map.entry("counts", counts),
-                Map.entry("complete", complete));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("schemaVersion", schemaVersion);
+        data.put("artifactRef", artifactRef);
+        data.put("changeSetIds", changeSetIds);
+        data.put("baseWorkspaceDigest", baseWorkspaceDigest);
+        data.put("resultWorkspaceDigest", resultWorkspaceDigest);
+        data.put("fileSummaries", summaries);
+        data.put("totalFileCount", totalFileCount);
+        data.put("summariesTruncated", summariesTruncated);
+        data.put("counts", counts);
+        if (SCHEMA_VERSION.equals(schemaVersion)) {
+            data.put("attributionStatus", attributionStatus.name());
+        }
+        data.put("complete", complete());
+        return Map.copyOf(data);
     }
 
     public static Optional<CodingChangeReviewArtifact> fromStructuredData(Object value) {
@@ -136,8 +169,12 @@ public record CodingChangeReviewArtifact(
             Map<String, Integer> counts = integerMap(map.get("counts"));
             int total = optionalInteger(map.get("totalFileCount"), summaries.size());
             boolean truncated = optionalBoolean(map.get("summariesTruncated"), total > summaries.size());
+            String schemaVersion = text(map, "schemaVersion");
+            AttributionStatus attributionStatus = LEGACY_SCHEMA_VERSION.equals(schemaVersion)
+                    ? (bool(map, "complete") ? AttributionStatus.COMPLETE : AttributionStatus.ATTRIBUTION_PARTIAL)
+                    : AttributionStatus.valueOf(text(map, "attributionStatus"));
             return Optional.of(new CodingChangeReviewArtifact(
-                    text(map, "schemaVersion"),
+                    schemaVersion,
                     text(map, "artifactRef"),
                     changeSetIds,
                     text(map, "baseWorkspaceDigest"),
@@ -146,7 +183,7 @@ public record CodingChangeReviewArtifact(
                     total,
                     truncated,
                     counts,
-                    bool(map, "complete")));
+                    attributionStatus));
         } catch (IllegalArgumentException | ClassCastException ignored) {
             return Optional.empty();
         }
@@ -289,6 +326,7 @@ public record CodingChangeReviewArtifact(
     }
 
     private static String contentAddress(
+            String schemaVersion,
             List<String> changeSetIds,
             String baseWorkspaceDigest,
             String resultWorkspaceDigest,
@@ -296,8 +334,8 @@ public record CodingChangeReviewArtifact(
             int totalFileCount,
             boolean summariesTruncated,
             Map<String, Integer> counts,
-            boolean complete) {
-        StringBuilder value = new StringBuilder(SCHEMA_VERSION);
+            AttributionStatus attributionStatus) {
+        StringBuilder value = new StringBuilder(schemaVersion);
         append(value, String.join("|", changeSetIds));
         append(value, baseWorkspaceDigest);
         append(value, resultWorkspaceDigest);
@@ -314,7 +352,11 @@ public record CodingChangeReviewArtifact(
         append(value, Integer.toString(totalFileCount));
         append(value, Boolean.toString(summariesTruncated));
         COUNT_KEYS.forEach(key -> append(value, key + "=" + counts.get(key)));
-        append(value, Boolean.toString(complete));
+        append(
+                value,
+                LEGACY_SCHEMA_VERSION.equals(schemaVersion)
+                        ? Boolean.toString(attributionStatus == AttributionStatus.COMPLETE)
+                        : attributionStatus.name());
         try {
             return "sha256:"
                     + HexFormat.of()
