@@ -1,0 +1,28 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: siliconflow-kimi-k2-6
+version: "2026-09-m2"
+providerModelId: moonshotai/Kimi-K2.6
+displayName: SiliconFlow Kimi K2.6
+status: ACTIVE
+apiStyle: openai-chat-completions
+dialect: siliconflow-openai-chat
+capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+profile:
+  version: "2.0"
+  reasoningBehavior: OPTIONAL
+  allowedReasoningModes: [DISABLED, ENABLED]
+  allowedReasoningEfforts: [LOW, HIGH, MAX]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 32768
+  contextWindowTokens: 262144
+  toolReasoningContinuationRequired: true
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: true
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT]
+  outputModalities: [TEXT]
+  imageInput: null
+  status: VERIFIED
+  lastVerifiedOn: "2026-09-03"

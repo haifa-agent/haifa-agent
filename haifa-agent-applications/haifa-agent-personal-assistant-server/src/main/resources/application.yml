@@ -107,6 +107,235 @@ haifa:
             capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
             context-window: 1048576
             max-output-tokens: 393216
+      - id: openai-codex
+        display-name: ChatGPT Codex
+        mode: remote
+        native-streaming: true
+        endpoint: https://chatgpt.com/backend-api/codex
+        credential-reference: model-auth://openai-codex/default
+        api-bindings:
+          - style: openai-responses
+            dialect: openai-codex-responses
+        models:
+          - id: gpt-5.6-sol
+            display-name: GPT-5.6 Sol
+            provider-model-id: gpt-5.6-sol
+            style: openai-responses
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            context-window: 272000
+            max-output-tokens: 128000
+          - id: gpt-5.6-terra
+            display-name: GPT-5.6 Terra
+            provider-model-id: gpt-5.6-terra
+            style: openai-responses
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            context-window: 272000
+            max-output-tokens: 128000
+          - id: gpt-5.6-luna
+            display-name: GPT-5.6 Luna
+            provider-model-id: gpt-5.6-luna
+            style: openai-responses
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            context-window: 272000
+            max-output-tokens: 128000
+      - id: aliyun-bailian
+        display-name: Alibaba Cloud Model Studio
+        mode: remote
+        native-streaming: true
+        endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1
+        credential-reference: env://DASHSCOPE_API_KEY
+        api-bindings:
+          - style: openai-chat-completions
+            dialect: aliyun-bailian-openai-chat
+        models:
+          - id: qwen3.8-max-0902
+            display-name: Qwen3.8 Max 0902
+            provider-model-id: qwen3.8-max-0902
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 1048576
+            max-output-tokens: 65536
+          - id: qwen3.8-max
+            display-name: Qwen3.8 Max
+            provider-model-id: qwen3.8-max
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 1048576
+            max-output-tokens: 65536
+          - id: qwen3.8-flash
+            display-name: Qwen3.8 Flash
+            provider-model-id: qwen3.8-flash
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 1048576
+            max-output-tokens: 65536
+          - id: qwen3.7-plus
+            display-name: Qwen3.7 Plus
+            provider-model-id: qwen3.7-plus
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 1048576
+            max-output-tokens: 65536
+          - id: qwen3-vl-plus
+            display-name: Qwen3 VL Plus
+            provider-model-id: qwen3-vl-plus
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, IMAGE_UPLOAD_INPUT, IMAGE_URL_INPUT]
+            context-window: 131072
+            max-output-tokens: 8192
+      - id: siliconflow
+        display-name: SiliconFlow
+        mode: remote
+        native-streaming: true
+        endpoint: https://api.siliconflow.cn/v1
+        credential-reference: env://SILICONFLOW_API_KEY
+        api-bindings:
+          - style: openai-chat-completions
+            dialect: siliconflow-openai-chat
+        models:
+          - id: siliconflow-deepseek-v4-pro
+            display-name: SiliconFlow DeepSeek V4 Pro
+            provider-model-id: deepseek-ai/DeepSeek-V4-Pro
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 1048576
+            max-output-tokens: 393216
+          - id: siliconflow-deepseek-v4-flash
+            display-name: SiliconFlow DeepSeek V4 Flash
+            provider-model-id: deepseek-ai/DeepSeek-V4-Flash
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 1048576
+            max-output-tokens: 393216
+          - id: siliconflow-qwen3-vl-32b
+            display-name: SiliconFlow Qwen3 VL 32B Instruct
+            provider-model-id: Qwen/Qwen3-VL-32B-Instruct
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, IMAGE_UPLOAD_INPUT]
+            context-window: 131072
+            max-output-tokens: 8192
+          - id: siliconflow-qwen3-32b
+            display-name: SiliconFlow Qwen3 32B
+            provider-model-id: Qwen/Qwen3-32B
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 131072
+            max-output-tokens: 8192
+          - id: siliconflow-kimi-k3
+            display-name: SiliconFlow Kimi K3
+            provider-model-id: moonshotai/Kimi-K3
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 262144
+            max-output-tokens: 32768
+          - id: siliconflow-kimi-k2-6
+            display-name: SiliconFlow Kimi K2.6
+            provider-model-id: moonshotai/Kimi-K2.6
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 262144
+            max-output-tokens: 32768
+          - id: siliconflow-glm-5-2
+            display-name: SiliconFlow GLM-5.2
+            provider-model-id: zai-org/GLM-5.2
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 1048576
+            max-output-tokens: 131072
+          - id: siliconflow-glm-5-1
+            display-name: SiliconFlow GLM-5.1
+            provider-model-id: zai-org/GLM-5.1
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 131072
+            max-output-tokens: 32768
+      - id: kimi
+        display-name: Moonshot Kimi
+        mode: remote
+        native-streaming: true
+        endpoint: https://api.moonshot.cn/v1
+        credential-reference: env://KIMI_API_KEY
+        api-bindings:
+          - style: openai-chat-completions
+            dialect: kimi-openai-chat
+        models:
+          - id: kimi-k3
+            display-name: Kimi K3
+            provider-model-id: kimi-k3
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 262144
+            max-output-tokens: 32768
+          - id: kimi-k2.7-code
+            display-name: Kimi K2.7 Code
+            provider-model-id: kimi-k2.7-code
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 262144
+            max-output-tokens: 32768
+          - id: kimi-k2.6
+            display-name: Kimi K2.6
+            provider-model-id: kimi-k2.6
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 262144
+            max-output-tokens: 32768
+      - id: zhipu
+        display-name: Zhipu AI
+        mode: remote
+        native-streaming: true
+        endpoint: https://open.bigmodel.cn/api/paas/v4
+        credential-reference: env://BIGMODEL_API_KEY
+        api-bindings:
+          - style: openai-chat-completions
+            dialect: zhipu-openai-chat
+        models:
+          - id: glm-5.2
+            display-name: GLM-5.2
+            provider-model-id: glm-5.2
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 1048576
+            max-output-tokens: 131072
+          - id: glm-5.1
+            display-name: GLM-5.1
+            provider-model-id: glm-5.1
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 131072
+            max-output-tokens: 32768
+          - id: glm-5
+            display-name: GLM-5
+            provider-model-id: glm-5
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 131072
+            max-output-tokens: 32768
+          - id: glm-5-turbo
+            display-name: GLM-5 Turbo
+            provider-model-id: glm-5-turbo
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            reasoning-mode: ENABLED
+            context-window: 131072
+            max-output-tokens: 32768
     default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-chat-flash}
     allow-insecure-loopback-model: ${HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL:true}
     web:

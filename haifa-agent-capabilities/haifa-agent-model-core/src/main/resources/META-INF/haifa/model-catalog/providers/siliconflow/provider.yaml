@@ -1,0 +1,15 @@
+schemaVersion: haifa.model-catalog-provider/v1
+providerId: siliconflow
+version: "2026-09-m2"
+displayName: SiliconFlow
+status: ACTIVE
+authenticationMethods: [API_KEY]
+bindings:
+  - resource: bindings/siliconflow-deepseek-v4-pro.yaml
+  - resource: bindings/siliconflow-deepseek-v4-flash.yaml
+  - resource: bindings/siliconflow-qwen3-vl-32b.yaml
+  - resource: bindings/siliconflow-qwen3-32b.yaml
+  - resource: bindings/siliconflow-kimi-k3.yaml
+  - resource: bindings/siliconflow-kimi-k2-6.yaml
+  - resource: bindings/siliconflow-glm-5-2.yaml
+  - resource: bindings/siliconflow-glm-5-1.yaml

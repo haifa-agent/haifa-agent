@@ -1,0 +1,10 @@
+schemaVersion: haifa.model-catalog-provider/v1
+providerId: openai-codex
+version: "2026-09-m2"
+displayName: ChatGPT Codex
+status: ACTIVE
+authenticationMethods: [EXTERNAL_LOGIN]
+bindings:
+  - resource: bindings/gpt-5-6-sol.yaml
+  - resource: bindings/gpt-5-6-terra.yaml
+  - resource: bindings/gpt-5-6-luna.yaml
