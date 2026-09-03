@@ -18,6 +18,10 @@ public interface CodingAuthenticationClient {
         return true;
     }
 
+    default boolean codexConnectionSupported() {
+        return false;
+    }
+
     default boolean antigravityConnectionSupported() {
         return false;
     }
