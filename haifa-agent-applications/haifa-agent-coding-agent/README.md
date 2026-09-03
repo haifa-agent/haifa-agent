@@ -88,7 +88,7 @@ candidate。该投影不是公共 `WorkspaceSnapshot`、Capability Detector 或�
 对应公共 DTO、持久化 Schema 或动态 executable/version 探测，具体静态发现和路径脱敏仍由 CLI 宿主负责。
 
 `CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别投影为
-`SATISFIED/INCOMPLETE` 和 `CLEAN/UNCLEAN/IN_PROGRESS`，并通过 `coding-run-outcome/2` 的幂等
+`SATISFIED/INCOMPLETE` 和 `CLEAN/PARTIAL/UNCLEAN/IN_PROGRESS`，并通过 `coding-run-outcome/2` 的幂等
 `coding.task-outcome` 安全事件记录。Coding CLI、Coding Web 与受信 Coding Host 可通过
 `CodingSessionClient.findOutcome` 查询权威投影，无需解析 Event map；归档查看器仍可兼容读取历史
 `outcome/1` 与当前 `outcome/2` 文件事件。它不是 Benchmark Verifier 结果，也不增加新的 Core Run 状态。

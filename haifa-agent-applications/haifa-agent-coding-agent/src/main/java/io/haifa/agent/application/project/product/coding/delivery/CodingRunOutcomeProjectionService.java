@@ -1,6 +1,7 @@
 package io.haifa.agent.application.project.product.coding.delivery;
 
 import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
@@ -37,12 +38,15 @@ public final class CodingRunOutcomeProjectionService {
         CompletionPolicyResult evidence = completion.evaluateEvidence(run);
         CodingDeliveryEvidenceStatus deliveryEvidenceStatus =
                 evidence.allowed() ? CodingDeliveryEvidenceStatus.SATISFIED : CodingDeliveryEvidenceStatus.INCOMPLETE;
-        CodingRunProtocolStatus protocol = protocol(run.status(), evidence.allowed());
+        CodingRunProtocolStatus protocol = protocol(run, evidence.allowed());
         LinkedHashSet<String> diagnostics = new LinkedHashSet<>();
         run.error().ifPresent(error -> {
             diagnostics.add(error.code().name());
             addCodes(diagnostics, error.details().get("blockerCodes"));
         });
+        run.result().ifPresent(result -> result.warnings().stream()
+                .filter(CodingRunOutcomeProjectionService::safeCode)
+                .forEach(diagnostics::add));
         events.eventsFor(run.id()).stream()
                 .filter(event -> event.type().equals("run.structured-termination"))
                 .forEach(event -> {
@@ -57,9 +61,14 @@ public final class CodingRunOutcomeProjectionService {
                 run.id(), deliveryEvidenceStatus, protocol, evidence.evidenceCodes(), List.copyOf(diagnostics));
     }
 
-    private static CodingRunProtocolStatus protocol(AgentRunStatus status, boolean evidenceSatisfied) {
-        if (status == AgentRunStatus.COMPLETED && evidenceSatisfied) return CodingRunProtocolStatus.CLEAN;
-        if (status.isTerminal()) return CodingRunProtocolStatus.UNCLEAN;
+    private static CodingRunProtocolStatus protocol(AgentRun run, boolean evidenceSatisfied) {
+        if (run.result()
+                .map(result -> result.outcome() == AgentRunOutcome.PARTIAL_SUCCESS)
+                .orElse(false)) {
+            return CodingRunProtocolStatus.PARTIAL;
+        }
+        if (run.status() == AgentRunStatus.COMPLETED && evidenceSatisfied) return CodingRunProtocolStatus.CLEAN;
+        if (run.status().isTerminal()) return CodingRunProtocolStatus.UNCLEAN;
         return CodingRunProtocolStatus.IN_PROGRESS;
     }
 

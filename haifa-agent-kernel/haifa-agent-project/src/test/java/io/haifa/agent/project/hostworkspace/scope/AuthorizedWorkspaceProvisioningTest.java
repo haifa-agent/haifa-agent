@@ -150,6 +150,24 @@ class AuthorizedWorkspaceProvisioningTest {
     }
 
     @Test
+    void rejectsPermissionChangesWhenReauthorizingARecoveredDirectory() {
+        ProvisioningResult readOnly = provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_ONLY);
+        provisioning.revoke(readOnly.directory().workspaceId());
+
+        assertThatThrownBy(() -> provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_WRITE))
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.PERMISSION_DENIED));
+
+        ProvisioningResult readWrite = provisioning.authorize(outsideRoot, HostDirectoryPermission.READ_WRITE);
+        provisioning.revoke(readWrite.directory().workspaceId());
+
+        assertThatThrownBy(() -> provisioning.authorize(outsideRoot, HostDirectoryPermission.READ_ONLY))
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.PERMISSION_DENIED));
+        assertThat(provisioning.scope().allowedDirectories()).hasSize(1);
+    }
+
+    @Test
     void reuseExistingBoundaryWhenCoveredByAuthorizedParent() throws IOException {
         provisioning.authorize(additionalRoot, HostDirectoryPermission.READ_WRITE);
         Path nested = Files.createDirectories(additionalRoot.resolve("nested"));

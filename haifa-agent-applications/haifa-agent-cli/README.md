@@ -574,7 +574,7 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 逐文件 Java 扫描。通用 Shell 命令仍遵循配置的 Approval、ExecutionBroker、Workspace、Sandbox、输出
 预算和审计边界；不会因为 `operationFamily=INSPECT` 是模型声明就自动降低授权要求。
 
-`file.read` 1.2 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
+`file.read` 2.0.0 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
 后续窗口通过 `SeekableByteChannel` 从游标字节位置读取，不按文件大小分配内存；游标绑定逻辑路径和版本，
 文件变化会返回 `FILE_CURSOR_STALE` 与 `RESTART_READ_FROM_CURRENT_VERSION`，只允许从当前版本无游标
 确定性重读一次；跨路径复用仍作为无效游标拒绝。敏感路径返回 `USER_ACTION_REQUIRED`，明确要求用户
