@@ -12,6 +12,7 @@ import java.util.Optional;
 /** Immutable product projection of catalog facts combined with one deployment. */
 public final class ModelCatalogProjection {
     private final List<ModelProviderDefinition> providers;
+    private final List<ModelCatalogBinding> bindingList;
     private final Map<ModelDefinitionId, ModelCatalogBinding> bindings;
     private final Map<ModelDefinitionId, ModelBindingProfile> profiles;
 
@@ -19,7 +20,8 @@ public final class ModelCatalogProjection {
         this.providers = List.copyOf(Objects.requireNonNull(providers, "providers must not be null"));
         LinkedHashMap<ModelDefinitionId, ModelCatalogBinding> bindingIndex = new LinkedHashMap<>();
         LinkedHashMap<ModelDefinitionId, ModelBindingProfile> profileIndex = new LinkedHashMap<>();
-        for (ModelCatalogBinding binding : List.copyOf(Objects.requireNonNull(bindings, "bindings must not be null"))) {
+        this.bindingList = List.copyOf(Objects.requireNonNull(bindings, "bindings must not be null"));
+        for (ModelCatalogBinding binding : bindingList) {
             if (bindingIndex.putIfAbsent(binding.definition().id(), binding) != null) {
                 throw new IllegalArgumentException("duplicate projected binding id: "
                         + binding.definition().id());
@@ -36,6 +38,11 @@ public final class ModelCatalogProjection {
 
     public Optional<ModelCatalogBinding> binding(String bindingId) {
         return Optional.ofNullable(bindings.get(new ModelDefinitionId(bindingId)));
+    }
+
+    /** Projected bindings in trusted deployment and catalog order. */
+    public List<ModelCatalogBinding> bindings() {
+        return bindingList;
     }
 
     public Map<ModelDefinitionId, ModelBindingProfile> profiles() {
