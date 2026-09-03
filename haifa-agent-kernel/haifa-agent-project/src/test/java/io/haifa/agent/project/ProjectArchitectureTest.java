@@ -1,6 +1,7 @@
 package io.haifa.agent.project;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
@@ -19,6 +20,8 @@ class ProjectArchitectureTest {
                         "org.springframework..",
                         "com.fasterxml.jackson..",
                         "jakarta.persistence..",
+                        "io.haifa.agent.execution..",
+                        "io.haifa.agent.git..",
                         "io.haifa.agent.runtime..",
                         "io.haifa.agent.model..",
                         "io.haifa.agent.product..")
@@ -31,14 +34,46 @@ class ProjectArchitectureTest {
     }
 
     @Test
-    void onlyLocalProviderUsesHostFileApis() {
+    void onlyHostWorkspaceAccessUsesHostFileApis() {
         noClasses()
                 .that()
-                .resideOutsideOfPackage("io.haifa.agent.project.provider.local..")
+                .resideOutsideOfPackage("io.haifa.agent.project.hostworkspace..")
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage("java.nio.file..")
                 .check(productionClasses());
+    }
+
+    @Test
+    void legacyMultiRootAliasModelIsRemoved() {
+        assertThat(productionClasses().stream().map(javaClass -> javaClass.getSimpleName()))
+                .noneMatch(name -> name.equals("WorkspaceRootAlias")
+                        || name.equals("MultiRootPath")
+                        || name.equals("WorkspaceRootStrategy")
+                        || name.equals("WorkspaceRootPermission")
+                        || name.equals("WorkspaceRootErrorCode")
+                        || name.equals("WorkspaceRootException")
+                        || name.equals("LocalWorkspaceRoot")
+                        || name.equals("LocalWorkspaceRootRegistry")
+                        || name.equals("LocalWorkspaceRootStrategyDetector")
+                        || name.equals("LocalMultiRootPathResolver"));
+    }
+
+    @Test
+    void legacyLocalWorkspaceAccessNamesAreRemoved() {
+        assertThat(productionClasses().stream().map(javaClass -> javaClass.getSimpleName()))
+                .noneMatch(name -> name.equals("LocalWorkspaceScope")
+                        || name.equals("LocalAllowedDirectory")
+                        || name.equals("LocalDirectoryPermission")
+                        || name.equals("LocalDirectoryIdentity")
+                        || name.equals("LocalScopeErrorCode")
+                        || name.equals("LocalWorkspaceScopeException")
+                        || name.equals("LocalWorkspaceFileService")
+                        || name.equals("LocalWorkspaceMutationService")
+                        || name.equals("LocalWorkspaceLocationStore")
+                        || name.equals("LocalWorkspacePathSafety")
+                        || name.equals("LocalStreamingPatchTransformer")
+                        || name.equals("AuthorizedDirectoryProvisioning"));
     }
 
     private static com.tngtech.archunit.core.domain.JavaClasses productionClasses() {

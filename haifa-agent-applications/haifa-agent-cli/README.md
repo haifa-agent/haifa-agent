@@ -574,7 +574,7 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 逐文件 Java 扫描。通用 Shell 命令仍遵循配置的 Approval、ExecutionBroker、Workspace、Sandbox、输出
 预算和审计边界；不会因为 `operationFamily=INSPECT` 是模型声明就自动降低授权要求。
 
-`file.read` 1.2 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
+`file.read` 2.0.0 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
 后续窗口通过 `SeekableByteChannel` 从游标字节位置读取，不按文件大小分配内存；游标绑定逻辑路径和版本，
 文件变化会返回 `FILE_CURSOR_STALE` 与 `RESTART_READ_FROM_CURRENT_VERSION`，只允许从当前版本无游标
 确定性重读一次；跨路径复用仍作为无效游标拒绝。敏感路径返回 `USER_ACTION_REQUIRED`，明确要求用户
@@ -582,11 +582,19 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 目标已存在时仍以版本和内容哈希保护整体替换。`file.create` 遇到已有目标返回
 `USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。
 
-当用户要求读取或修改当前 Workspace 外的目录时，模型只能请求 `workspace_attach`：必须给出新的 alias、
-绝对路径和最小权限（`read-only` 或 `read-write`）。默认 `ask` 模式会向用户展示这三项并等待明确批准；
-批准后目录只附加到当前本地 Agent 进程，既不写入配置也不在会话间复用。后续文件路径使用
-`alias:relative/path`；主目录仍使用原有相对路径。附加目录不得与既有目录重叠，无法确认物理路径边界时
-拒绝操作。
+当用户要求读取或修改当前 Workspace 外的目录时，模型只能请求 `workspace_attach`：必须给出主机绝对路径
+和最小权限（`read-only` 或 `read-write`）。默认 `ask` 模式会向用户展示这两项并等待明确批准；批准后目录
+只附加到当前本地 Agent 进程，既不写入配置也不在会话间复用。主目录与附加目录的后续文件操作都直接
+使用主机绝对路径，并统一映射到各自的 `WorkspaceId + WorkspacePath` 后进入同一文件服务与 mutation 服务。
+相对路径和 root alias 不再接受；跨授权目录的 patch 与 move 仍明确拒绝。已被现有授权目录覆盖的重复授权
+复用原边界，不创建第二份目录身份；无法确认物理路径边界时拒绝操作。
+
+CLI 会在本地执行平台可用时用同一个 `ExecutionBroker` 做内部有界 Git 读取：受管文件写入在物理 I/O
+前为 nearest repository 建立一次 Run 基线，Plain 路径继续只进入 `SessionChangeLedger`；没有可用
+执行平台时文件授权和写入不受影响，但 Review 归因保守标为 `ATTRIBUTION_PARTIAL`。每次
+`execution.run` 完成后失效该授权目录的仓库定位缓存，以便下一次观察 `git init`、删除 `.git` 或
+worktree/submodule 拓扑变化。Git 只决定 Review 证据来源，不扩大文件授权范围，也不向模型暴露新的
+`git.*` Tool。
 
 `file.patch` 接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，最多包含同一目录根下 100 个文件的新增或更新。
 删除和移动仍分别调用 `file.delete`、`file.move`；跨目录根的 patch 和移动明确拒绝。所有文件会在第一次写盘前完成

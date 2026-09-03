@@ -1,7 +1,6 @@
 package io.haifa.agent.project.patch;
 
-import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.root.WorkspaceRootAlias;
+import io.haifa.agent.project.path.WorkspacePath;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -9,6 +8,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /** Parses the bounded, context-oriented patch format used by coding models. */
@@ -36,7 +36,12 @@ public final class ApplyPatchParser {
         this.maxBytes = maxBytes;
     }
 
-    public PatchDocument parse(String patch) {
+    /**
+     * Parses a patch document whose headers specify logical relative project paths within the given
+     * workspace. Absolute host paths must be resolved and mapped to workspace paths before calling this parser.
+     */
+    public PatchDocument parse(io.haifa.agent.project.workspace.WorkspaceId workspaceId, String patch) {
+        Objects.requireNonNull(workspaceId, "workspaceId must not be null");
         if (patch == null || patch.isBlank()) throw new IllegalArgumentException("patch must not be blank");
         byte[] bytes = patch.getBytes(StandardCharsets.UTF_8);
         if (bytes.length > maxBytes) throw new IllegalArgumentException("patch byte budget exceeded");
@@ -54,18 +59,19 @@ public final class ApplyPatchParser {
             String header = lines.get(index++);
             FileParse parsed;
             if (header.startsWith(ADD)) {
-                parsed = parseAdd(parsePatchPath(header, ADD), lines, index);
+                parsed = parseAdd(parsePatchPath(header, ADD, workspaceId, index), lines, index);
             } else if (header.startsWith(DELETE)) {
-                parsed = parseDelete(parsePatchPath(header, DELETE), lines, index);
+                parsed = parseDelete(parsePatchPath(header, DELETE, workspaceId, index), lines, index);
             } else if (header.startsWith(UPDATE)) {
-                parsed = parseUpdate(parsePatchPath(header, UPDATE), lines, index);
+                parsed = parseUpdate(parsePatchPath(header, UPDATE, workspaceId, index), lines, index, workspaceId);
             } else {
                 throw invalid(index, "invalid file patch header");
             }
             index = parsed.nextIndex();
             FilePatch file = parsed.patch();
-            String identity = file.rootAlias().value() + ":" + file.sourcePath().value();
-            if (!sources.add(identity)) throw new IllegalArgumentException("duplicate logical patch path");
+            if (!sources.add(file.sourcePath().toString())) {
+                throw new IllegalArgumentException("duplicate logical patch path");
+            }
             files.add(file);
             totalHunks += file.hunks().size();
             totalLines += file.hunks().stream()
@@ -79,24 +85,14 @@ public final class ApplyPatchParser {
         return new PatchDocument(files, "sha256:" + hash(bytes));
     }
 
-    private record ParsedPatchPath(WorkspaceRootAlias alias, ProjectPath path) {}
-
-    private static ParsedPatchPath parsePatchPath(String header, String prefix) {
+    private static WorkspacePath parsePatchPath(
+            String header, String prefix, io.haifa.agent.project.workspace.WorkspaceId workspaceId, int index) {
         String value = header.substring(prefix.length()).trim();
-        if (value.isEmpty()) throw new IllegalArgumentException("patch file path must not be blank");
-        int colon = value.indexOf(':');
-        if (colon > 0 && !value.startsWith("/") && !value.startsWith("\\")) {
-            String prefixPart = value.substring(0, colon);
-            if (prefixPart.length() > 1) {
-                WorkspaceRootAlias alias = WorkspaceRootAlias.of(prefixPart);
-                String rest = value.substring(colon + 1);
-                return new ParsedPatchPath(alias, ProjectPath.of(rest));
-            }
-        }
-        return new ParsedPatchPath(WorkspaceRootAlias.MAIN, ProjectPath.of(value));
+        if (value.isEmpty()) throw invalid(index, "patch file path must not be blank");
+        return new WorkspacePath(workspaceId, io.haifa.agent.project.path.ProjectPath.of(value));
     }
 
-    private static FileParse parseAdd(ParsedPatchPath target, List<String> lines, int index) {
+    private static FileParse parseAdd(WorkspacePath target, List<String> lines, int index) {
         List<PatchLine> additions = new ArrayList<>();
         while (index < lines.size() - 1 && !isFileHeader(lines.get(index))) {
             String line = lines.get(index++);
@@ -105,35 +101,25 @@ public final class ApplyPatchParser {
         }
         if (additions.isEmpty()) throw invalid(index, "added file requires content");
         return new FileParse(
-                new FilePatch(
-                        target.alias(),
-                        null,
-                        target.path(),
-                        List.of(PatchHunk.contextual(null, additions, true)),
-                        false,
-                        true),
-                index);
+                new FilePatch(null, target, List.of(PatchHunk.contextual(null, additions, true)), false, true), index);
     }
 
-    private static FileParse parseDelete(ParsedPatchPath target, List<String> lines, int index) {
+    private static FileParse parseDelete(WorkspacePath target, List<String> lines, int index) {
         if (index < lines.size() - 1 && !isFileHeader(lines.get(index))) {
             throw invalid(index + 1, "delete file does not accept patch lines");
         }
         return new FileParse(
-                new FilePatch(
-                        target.alias(),
-                        target.path(),
-                        null,
-                        List.of(PatchHunk.contextual(null, List.of(), true)),
-                        true,
-                        false),
-                index);
+                new FilePatch(target, null, List.of(PatchHunk.contextual(null, List.of(), true)), true, false), index);
     }
 
-    private static FileParse parseUpdate(ParsedPatchPath source, List<String> lines, int index) {
-        ParsedPatchPath destination = source;
+    private static FileParse parseUpdate(
+            WorkspacePath source,
+            List<String> lines,
+            int index,
+            io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
+        WorkspacePath destination = source;
         if (index < lines.size() - 1 && lines.get(index).startsWith(MOVE)) {
-            destination = parsePatchPath(lines.get(index++), MOVE);
+            destination = parsePatchPath(lines.get(index++), MOVE, workspaceId, index);
         }
         List<PatchHunk> hunks = new ArrayList<>();
         while (index < lines.size() - 1 && !isFileHeader(lines.get(index))) {
@@ -166,8 +152,7 @@ public final class ApplyPatchParser {
             hunks.add(PatchHunk.contextual(context, patchLines, endOfFile));
         }
         if (hunks.isEmpty()) throw invalid(index, "updated file requires at least one hunk");
-        return new FileParse(
-                new FilePatch(source.alias(), source.path(), destination.path(), hunks, true, true), index);
+        return new FileParse(new FilePatch(source, destination, hunks, true, true), index);
     }
 
     private static boolean isFileHeader(String line) {

@@ -17,8 +17,9 @@ import io.haifa.agent.execution.core.change.LocalIncrementalWorkspaceChangeObser
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.policy.api.PolicyDigest;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.WorkspaceId;
@@ -54,6 +55,7 @@ final class CliExecutionPlatform implements AutoCloseable {
     private final String shellDisplayName;
     private final String securitySummary;
     private final LocalIncrementalWorkspaceChangeObserver workspaceChanges;
+    private final CliRepositoryBaselineSupport repositoryBaselines;
 
     private CliExecutionPlatform(
             ProjectExecutionToolOperations operations,
@@ -62,7 +64,8 @@ final class CliExecutionPlatform implements AutoCloseable {
             SandboxProfile permissionProfile,
             String shellDisplayName,
             String securitySummary,
-            LocalIncrementalWorkspaceChangeObserver workspaceChanges) {
+            LocalIncrementalWorkspaceChangeObserver workspaceChanges,
+            CliRepositoryBaselineSupport repositoryBaselines) {
         this.operations = operations;
         this.permissionOperations = permissionOperations;
         this.profile = profile;
@@ -70,14 +73,15 @@ final class CliExecutionPlatform implements AutoCloseable {
         this.shellDisplayName = shellDisplayName;
         this.securitySummary = securitySummary;
         this.workspaceChanges = workspaceChanges;
+        this.repositoryBaselines = repositoryBaselines;
     }
 
     static CliExecutionPlatform create(
             CliConfiguration.Execution configuration,
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
-            LocalWorkspaceFileService files,
+            HostWorkspaceLocationStore locations,
+            HostWorkspaceFileService files,
             IdentifierGenerator identifiers,
             TimeProvider time,
             Clock clock,
@@ -105,8 +109,8 @@ final class CliExecutionPlatform implements AutoCloseable {
             CliConfiguration.Execution configuration,
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
-            LocalWorkspaceFileService files,
+            HostWorkspaceLocationStore locations,
+            HostWorkspaceFileService files,
             IdentifierGenerator identifiers,
             TimeProvider time,
             Clock clock,
@@ -136,8 +140,8 @@ final class CliExecutionPlatform implements AutoCloseable {
             CliConfiguration.Execution configuration,
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
-            LocalWorkspaceFileService files,
+            HostWorkspaceLocationStore locations,
+            HostWorkspaceFileService files,
             IdentifierGenerator identifiers,
             TimeProvider time,
             Clock clock,
@@ -147,6 +151,40 @@ final class CliExecutionPlatform implements AutoCloseable {
             PrintStream output,
             Map<String, String> hostEnvironment,
             CodingVerificationProfileProvider verificationProfiles) {
+        return create(
+                configuration,
+                workspaces,
+                bindings,
+                locations,
+                files,
+                identifiers,
+                time,
+                clock,
+                policy,
+                workspaceId,
+                workspaceRoot,
+                output,
+                hostEnvironment,
+                verificationProfiles,
+                null);
+    }
+
+    static CliExecutionPlatform create(
+            CliConfiguration.Execution configuration,
+            WorkspaceStore workspaces,
+            WorkspaceBindingStore bindings,
+            HostWorkspaceLocationStore locations,
+            HostWorkspaceFileService files,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            Clock clock,
+            CodingAgentPolicyAssembly policy,
+            WorkspaceId workspaceId,
+            Path workspaceRoot,
+            PrintStream output,
+            Map<String, String> hostEnvironment,
+            CodingVerificationProfileProvider verificationProfiles,
+            AuthorizedWorkspaceProvisioning provisioning) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
         HostShell shell = shell(configuration);
@@ -224,6 +262,9 @@ final class CliExecutionPlatform implements AutoCloseable {
                 workspaces,
                 bindings,
                 workspaceChanges);
+        CliRepositoryBaselineSupport repositoryBaselines = provisioning == null
+                ? null
+                : CliRepositoryBaselineSupport.create(broker, identifiers, profile.ref(), policy, provisioning);
         ExecutionOutputObserver observer = new CliOutputObserver(output);
         var operations = new ProjectExecutionToolOperations(
                 broker,
@@ -240,7 +281,10 @@ final class CliExecutionPlatform implements AutoCloseable {
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 workspaceWorkdirNormalizer(workspaceRoot),
-                verificationProfiles);
+                verificationProfiles,
+                repositoryBaselines == null
+                        ? io.haifa.agent.application.project.tool.ExecutionRepositoryBaselineObserver.noop()
+                        : repositoryBaselines.observer());
         var permissionOperations = new ProjectExecutionToolOperations(
                 broker,
                 identifiers,
@@ -256,7 +300,10 @@ final class CliExecutionPlatform implements AutoCloseable {
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 workspaceWorkdirNormalizer(workspaceRoot),
-                verificationProfiles);
+                verificationProfiles,
+                repositoryBaselines == null
+                        ? io.haifa.agent.application.project.tool.ExecutionRepositoryBaselineObserver.noop()
+                        : repositoryBaselines.observer());
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(
@@ -266,11 +313,16 @@ final class CliExecutionPlatform implements AutoCloseable {
                 permissionProfile,
                 shell.displayName(),
                 securitySummary,
-                workspaceChanges);
+                workspaceChanges,
+                repositoryBaselines);
     }
 
     ProjectExecutionToolOperations operations() {
         return operations;
+    }
+
+    io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry repositoryBaselines() {
+        return repositoryBaselines == null ? null : repositoryBaselines.registry();
     }
 
     static java.util.function.UnaryOperator<String> workspaceWorkdirNormalizer(Path workspaceRoot) {

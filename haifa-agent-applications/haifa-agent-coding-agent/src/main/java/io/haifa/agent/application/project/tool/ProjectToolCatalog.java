@@ -278,10 +278,17 @@ public final class ProjectToolCatalog {
                 switch (name) {
                     case "execution.run" -> "1.7.2";
                     case ProjectPermissionRequestOperations.TOOL_NAME -> "1.6.0";
-                    case "file.read" -> "1.2.0";
-                    case "file.write" -> "1.3.0";
-                    case "file.create", "file.patch" -> "1.2.0";
-                    case "file.delete", "file.move" -> "1.1.0";
+                    case "file.list",
+                            "file.read",
+                            "file.search",
+                            "file.write",
+                            "file.create",
+                            "file.delete",
+                            "file.move",
+                            "file.diff",
+                            "file.patch",
+                            "file.stat",
+                            "workspace.attach" -> "2.0.0";
                     default -> "1.0.0";
                 };
         return new ToolDefinition(
@@ -380,16 +387,16 @@ public final class ProjectToolCatalog {
                     + "if the target is absent, creates the file atomically. Prefer file.patch for bounded edits.";
         }
         if (name.equals("file.patch")) {
-            return "Apply a bounded, non-atomic context patch to up to 100 files in one workspace root. Use "
+            return "Apply a bounded, non-atomic context patch to up to 100 files in one authorized directory using host absolute paths. Use "
                     + "*** Begin Patch / *** End Patch with Add File or Update File sections; use file.delete and "
                     + "file.move for those operations. All files are preflighted with optimistic checks before the "
-                    + "first write. Cross-root patches are rejected. A commit-time failure reports its committed prefix "
+                    + "first write. Cross-directory patches are rejected. A commit-time failure reports its committed prefix "
                     + "and requires a fresh read before regenerating the patch.";
         }
         if (name.equals("workspace.attach")) {
-            return "Request one additional existing local directory for this Coding Agent process only. Supply a "
-                    + "unique alias, absolute host path, and explicit read-only or read-write permission. The user "
-                    + "must approve the exact directory and permission before it becomes available as alias:path; "
+            return "Request one additional existing local directory for this Coding Agent process only. Supply an "
+                    + "absolute host path and explicit read-only or read-write permission. The user "
+                    + "must approve the exact directory and permission before it becomes available in the scope; "
                     + "attachments are not persisted or restored.";
         }
         if (WRITES.contains(name)) {
@@ -455,11 +462,10 @@ public final class ProjectToolCatalog {
                                 "maxLength",
                                 4194304,
                                 "description",
-                                "Context patch beginning with *** Begin Patch and ending with *** End Patch."));
+                                "Context patch beginning with *** Begin Patch and ending with *** End Patch, declaring host absolute paths for each file."));
                 required.add("patch");
             }
             case "workspace.attach" -> {
-                properties.put("alias", Map.of("type", "string", "minLength", 1, "maxLength", 64));
                 properties.put(
                         "path",
                         Map.of(
@@ -472,7 +478,6 @@ public final class ProjectToolCatalog {
                                 "description",
                                 "Absolute path of the user-requested existing local directory."));
                 properties.put("permission", Map.of("type", "string", "enum", List.of("read-only", "read-write")));
-                required.add("alias");
                 required.add("path");
                 required.add("permission");
             }
@@ -661,7 +666,7 @@ public final class ProjectToolCatalog {
                         "minLength",
                         1,
                         "description",
-                        "Workspace-relative path; use '.' for the workspace root. Absolute paths are not allowed."));
+                        "Host absolute path within an authorized directory. Relative paths and root aliases are not allowed."));
         required.add(name);
     }
 

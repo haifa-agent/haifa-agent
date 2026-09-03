@@ -67,13 +67,15 @@ public final class ProjectToolExecutor implements ToolProvider {
             String policyDecisionRef = request.policyDecisionRef()
                     .orElseThrow(() -> new SecurityException("policy decision reference is required"));
             result = operations.execute(
+                    new ProjectToolCallContext(
+                            request.tenant(),
+                            binding.workspaceId(),
+                            request.principal(),
+                            request.runId().value(),
+                            request.toolCallId().value(),
+                            request.idempotencyKey().orElse(request.toolCallId().value()),
+                            policyDecisionRef),
                     toolName,
-                    binding.workspaceId(),
-                    request.principal(),
-                    request.runId().value(),
-                    request.toolCallId().value(),
-                    request.idempotencyKey().orElse(request.toolCallId().value()),
-                    policyDecisionRef,
                     request.arguments());
             request.observer().acknowledged();
             return result;

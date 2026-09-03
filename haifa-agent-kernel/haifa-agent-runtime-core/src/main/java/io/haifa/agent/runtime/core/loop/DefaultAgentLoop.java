@@ -650,8 +650,8 @@ public final class DefaultAgentLoop implements AgentLoop {
                             progress.fingerprints(),
                             progress.forcedContextRebuildAttempts(),
                             CheckpointType.AUTOMATIC);
-                    Optional<FinalAnswerDecision> finalDecision =
-                            decision instanceof FinalAnswerDecision value ? Optional.of(value) : Optional.empty();
+                    Optional<FinalAnswerDecision> finalDecision = budgetLimitedFinalDecision(
+                            run, progress, model, builtRef[0].context().context(), decision, limitExceeded);
                     decisionExecutor.completeBudgetLimited(run, limitExceeded, finalDecision);
                     models.committed(run, response, progress.iteration());
                     middleware.apply(RuntimePhase.AFTER_COMPLETION, middlewareContextRef[0]);
@@ -1032,6 +1032,51 @@ public final class DefaultAgentLoop implements AgentLoop {
             return new RuntimeLimitExceededException("iterations", run.limits().maxIterations(), iteration);
         }
         return null;
+    }
+
+    private Optional<FinalAnswerDecision> budgetLimitedFinalDecision(
+            AgentRun run,
+            AgentLoopContext progress,
+            FrozenModelBinding model,
+            io.haifa.agent.context.api.AgentContext context,
+            AgentDecision decision,
+            RuntimeLimitExceededException limit) {
+        if (decision instanceof FinalAnswerDecision answer) return Optional.of(answer);
+        if (!"toolCalls".equals(limit.resource())
+                || run.usage().modelCalls() >= run.limits().maxModelCalls()
+                || run.activeElapsedMillis(time.now()) >= run.limits().maxWallTimeMillis()) {
+            return Optional.empty();
+        }
+        try {
+            transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
+            ModelInvocationResult synthesis = models.invokeWithoutTools(
+                    model, run, progress.iteration(), context, new ModelRequestId(ids.nextValue()), 1);
+            transitions.usage(
+                    run,
+                    new AgentRunUsageDelta(
+                            synthesis.inputTokens(),
+                            synthesis.outputTokens(),
+                            0,
+                            0,
+                            0,
+                            0,
+                            synthesis.costMinorUnits(),
+                            0));
+            if (synthesis.decision() instanceof FinalAnswerDecision answer) {
+                models.committed(run, synthesis, progress.iteration());
+                events.append(
+                        run.id(),
+                        "budget.finalization-synthesized",
+                        Map.of("limitingResource", "TOOL_CALLS"),
+                        time.now());
+                return Optional.of(answer);
+            }
+            models.failed(run, synthesis, progress.iteration());
+        } catch (RuntimeException ignored) {
+            // The existing bounded summary is the deliberately safe fallback for a failed final synthesis attempt.
+        }
+        events.append(run.id(), "budget.finalization-fallback", Map.of("limitingResource", "TOOL_CALLS"), time.now());
+        return Optional.empty();
     }
 
     private Duration modelRetryDelay(AgentRun run, int failedAttempt, RuntimeException failure) {

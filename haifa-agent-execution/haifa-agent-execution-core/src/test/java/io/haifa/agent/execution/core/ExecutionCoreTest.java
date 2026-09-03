@@ -34,11 +34,11 @@ import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -477,7 +477,7 @@ class ExecutionCoreTest {
         WorkspaceLocationRef locationRef = new WorkspaceLocationRef("location-1");
         var workspaces = new InMemoryWorkspaceStore();
         var bindings = new InMemoryWorkspaceBindingStore();
-        var locations = new LocalWorkspaceLocationStore();
+        var locations = new HostWorkspaceLocationStore();
         locations.register(locationRef, root);
         WorkspaceBinding binding = WorkspaceBinding.provision(
                         bindingId,
@@ -486,7 +486,7 @@ class ExecutionCoreTest {
                         new PrincipalRef("owner", "user"),
                         WorkspaceCapabilitySet.executionFiles(),
                         WorkspacePermissionSet.readWriteExecute(),
-                        LocalWorkspaceLocationStore.fingerprintFor(root),
+                        HostWorkspaceLocationStore.fingerprintFor(root),
                         NOW)
                 .activate(NOW);
         bindings.create(binding);
@@ -499,8 +499,7 @@ class ExecutionCoreTest {
                         NOW)
                 .activate(NOW);
         workspaces.create(workspace);
-        var fileService =
-                new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        var fileService = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
         var manifests = new WorkspaceManifestService(
                 workspaces, fileService, new ManifestBudget(100, 1024 * 1024, 1024 * 1024), "test-v1");
         return new Fixture(workspaceId, root, workspaces, bindings, manifests, new InMemoryExecutionOutputStore());

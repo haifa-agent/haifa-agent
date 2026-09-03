@@ -9,8 +9,8 @@ import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceBindingStatus;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.WorkspacePermission;
@@ -79,7 +79,7 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
 
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
-    private final LocalWorkspaceLocationStore locations;
+    private final HostWorkspaceLocationStore locations;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final LocalNativeSandboxConfiguration configuration;
@@ -88,7 +88,7 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
     public LocalNativeSandboxProvider(
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
+            HostWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time,
             LocalNativeSandboxConfiguration configuration) {
@@ -98,7 +98,7 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
     LocalNativeSandboxProvider(
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
-            LocalWorkspaceLocationStore locations,
+            HostWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time,
             LocalNativeSandboxConfiguration configuration,
@@ -180,8 +180,7 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
         try {
             Path root =
                     locations.resolveForTrustedProvider(binding.locationRef()).toRealPath(LinkOption.NOFOLLOW_LINKS);
-            if (isLink(root)
-                    || !LocalWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint())) {
+            if (isLink(root) || !HostWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint())) {
                 throw failure("WORKSPACE_BIND_FAILED", "workspace root identity changed");
             }
             List<LocalNativePathGrant> additional = configuration.resolveAdditionalPaths(

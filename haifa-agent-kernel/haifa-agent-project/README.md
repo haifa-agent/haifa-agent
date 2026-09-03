@@ -2,7 +2,7 @@
 
 纯 Java 的 Project、Workspace 与安全文件系统边界。
 
-本模块保存长期 Project、可选 Workspace、Binding、类型化逻辑路径和 Provider-neutral 文件读取契约。真实主机路径只允许存在于 `provider.local`；Runtime、Product、领域对象和普通 Store 不得接收或返回主机路径。
+本模块保存长期 Project、可选 Workspace、Binding、类型化逻辑路径和 Provider-neutral 文件读取契约。真实主机路径只允许存在于 Host Workspace Access（`io.haifa.agent.project.hostworkspace`）；Runtime、Product、领域对象和普通 Store 不得接收或返回主机路径。
 
 当前支持：
 
@@ -13,6 +13,7 @@
 - 受保护的普通文件直接删除与移动，严格校验根目录边界与只读授权；
 - 有界文本 Unified Diff 生成、严格 Parser、Patch 预校验、精确 Hunk 应用与结构化部分失败；
 - 平台已收敛为安全原子替换与 `SessionChangeLedger` 纯内存会话变更账本，不再维护自研文件恢复事务、回收站（Quarantine）与跨重启调和。
+- `HostRepositoryLocator` 只在单个已授权主机目录内向上定位最近仓库边界；Git 有效性由外部 `HostGitInspectionPort` 回答。Project 不运行 Git、不依赖 Execution，也不把仓库物理路径带出 Host Workspace Access。
 
 `COPY_ON_WRITE`、`EPHEMERAL_COPY`、命令执行和 Git 已由 Execution/Sandbox/Git 模块实现；Project 模块不反向依赖这些高层实现。
 

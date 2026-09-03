@@ -23,6 +23,7 @@ import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunOutcome;
+import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunSpec;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -424,6 +425,42 @@ class CodingDeliveryControlTest {
                         .containsEntry("deliveryEvidenceStatus", "SATISFIED")
                         .containsEntry("protocolStatus", "UNCLEAN")
                         .doesNotContainKeys("codeResult", "requiresCodeReexecution"));
+    }
+
+    @Test
+    void projectsCompletedPartialSuccessSeparatelyFromCleanCompletion() {
+        Fixture fixture = fixture("summarize the repository", trusted("ANALYZE"));
+        fixture.run().start(NOW.plusSeconds(1));
+        fixture.run().beginCompleting(NOW.plusSeconds(2));
+        fixture.run()
+                .complete(
+                        new AgentRunResult(
+                                AgentRunOutcome.PARTIAL_SUCCESS,
+                                "budget-limited summary",
+                                "haifa.agent.partial-result",
+                                "1",
+                                Map.of("completionReason", "BUDGET_LIMITED"),
+                                List.of(),
+                                List.of("BUDGET_LIMITED:TOOL_CALLS")),
+                        NOW.plusSeconds(3));
+
+        CodingRunOutcomeProjection outcome =
+                new CodingRunOutcomeProjectionService(policy(fixture.store()), fixture.store()).project(fixture.run());
+
+        assertThat(outcome.protocolStatus()).isEqualTo(CodingRunProtocolStatus.PARTIAL);
+        assertThat(outcome.diagnosticCodes()).contains("BUDGET_LIMITED:TOOL_CALLS");
+        CodingRunOutcomeProjectionMiddleware middleware = new CodingRunOutcomeProjectionMiddleware(
+                new CodingRunOutcomeProjectionService(policy(fixture.store()), fixture.store()),
+                fixture.store(),
+                () -> NOW.plusSeconds(4));
+        assertThat(middleware.phase()).isEqualTo(RuntimePhase.AFTER_COMPLETION);
+        middleware.apply(new RuntimeMiddlewareContext(fixture.run(), fixture.store()));
+        assertThat(fixture.store().eventsFor(fixture.run().id()))
+                .filteredOn(event -> event.type().equals("coding.task-outcome"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data()).containsEntry("protocolStatus", "PARTIAL"))
+                .satisfies(event -> assertThat(String.valueOf(event.data().get("diagnosticCodes")))
+                        .contains("BUDGET_LIMITED:TOOL_CALLS"));
     }
 
     @Test

@@ -1,7 +1,7 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;

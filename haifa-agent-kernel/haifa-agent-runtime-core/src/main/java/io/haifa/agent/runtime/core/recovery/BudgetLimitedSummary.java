@@ -18,7 +18,7 @@ public final class BudgetLimitedSummary {
         String safeResource = Objects.requireNonNull(resource, "resource must not be null")
                 .replaceAll("[^A-Za-z0-9_]", "_")
                 .toUpperCase(Locale.ROOT);
-        List<String> completed = completedPurposes(Objects.requireNonNull(toolCalls, "toolCalls must not be null"));
+        List<String> completed = completedSteps(Objects.requireNonNull(toolCalls, "toolCalls must not be null"));
         boolean chinese = completed.stream().anyMatch(BudgetLimitedSummary::containsHan);
         return chinese ? chinese(safeResource, used, limit, completed) : english(safeResource, used, limit, completed);
     }
@@ -51,18 +51,21 @@ public final class BudgetLimitedSummary {
                 .toString();
     }
 
-    private static List<String> completedPurposes(List<ToolCall> toolCalls) {
-        LinkedHashSet<String> purposes = new LinkedHashSet<>();
+    private static List<String> completedSteps(List<ToolCall> toolCalls) {
+        LinkedHashSet<String> steps = new LinkedHashSet<>();
         toolCalls.stream()
                 .filter(call -> call.status() == ToolCallStatus.COMPLETED)
                 .sorted(java.util.Comparator.comparing(ToolCall::requestedAt))
-                .map(call -> call.arguments().values().get("purpose"))
-                .filter(String.class::isInstance)
-                .map(String.class::cast)
-                .filter(value -> !value.isBlank())
+                .map(BudgetLimitedSummary::completedStep)
                 .map(BudgetLimitedSummary::bounded)
-                .forEach(purposes::add);
-        return purposes.stream().limit(MAXIMUM_COMPLETED_ITEMS).toList();
+                .forEach(steps::add);
+        return steps.stream().limit(MAXIMUM_COMPLETED_ITEMS).toList();
+    }
+
+    private static String completedStep(ToolCall call) {
+        Object purpose = call.arguments().values().get("purpose");
+        if (purpose instanceof String value && !value.isBlank()) return value;
+        return call.toolName();
     }
 
     private static void appendItems(StringBuilder text, List<String> items, String empty) {

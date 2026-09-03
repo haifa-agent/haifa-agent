@@ -26,7 +26,7 @@ public final class CodingRunOutcomeProjectionMiddleware implements AgentRuntimeM
 
     @Override
     public RuntimePhase phase() {
-        return RuntimePhase.AFTER_DECISION_EXECUTION;
+        return RuntimePhase.AFTER_COMPLETION;
     }
 
     @Override
