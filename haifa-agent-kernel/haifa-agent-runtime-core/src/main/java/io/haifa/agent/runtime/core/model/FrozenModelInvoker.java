@@ -104,6 +104,31 @@ public final class FrozenModelInvoker {
             AgentContext context,
             ModelRequestId requestId,
             int physicalAttempt) {
+        return invoke(binding, run, iteration, context, requestId, physicalAttempt, context.tools());
+    }
+
+    /**
+     * Performs one final answer attempt against the frozen model with the existing context but no disclosed tools.
+     * Callers must still account for this physical model call against the Run budget.
+     */
+    public ModelInvocationResult invokeWithoutTools(
+            FrozenModelBinding binding,
+            AgentRun run,
+            int iteration,
+            AgentContext context,
+            ModelRequestId requestId,
+            int physicalAttempt) {
+        return invoke(binding, run, iteration, context, requestId, physicalAttempt, List.of());
+    }
+
+    private ModelInvocationResult invoke(
+            FrozenModelBinding binding,
+            AgentRun run,
+            int iteration,
+            AgentContext context,
+            ModelRequestId requestId,
+            int physicalAttempt,
+            List<ModelToolSpecification> disclosedTools) {
         if (!binding.configuration().reference().equals(run.configurationSnapshot())) {
             throw new IllegalArgumentException("model binding belongs to another configuration snapshot");
         }
@@ -129,7 +154,7 @@ public final class FrozenModelInvoker {
                 physicalAttempt,
                 binding.configuration().model(),
                 messages.assemble(run.id(), context, binding.configuration().model()),
-                context.tools(),
+                disclosedTools,
                 Math.toIntExact(Math.min(
                         context.budget().outputReserve(),
                         binding.configuration().model().maxOutputTokens())),
@@ -177,7 +202,7 @@ public final class FrozenModelInvoker {
                 }
                 return ModelStreamControl.CONTINUE;
             });
-            var decision = responses.map(request, response, binding.tools());
+            var decision = responses.map(request, response, disclosedTools);
             var invocation = new ModelInvocationResult(
                     decision,
                     response.usage().inputTokens(),

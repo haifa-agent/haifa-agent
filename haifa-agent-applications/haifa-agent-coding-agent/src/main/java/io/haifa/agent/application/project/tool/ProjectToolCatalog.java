@@ -278,11 +278,14 @@ public final class ProjectToolCatalog {
                 switch (name) {
                     case "execution.run" -> "1.7.2";
                     case ProjectPermissionRequestOperations.TOOL_NAME -> "1.6.0";
-                    case "file.read",
+                    case "file.list",
+                            "file.read",
+                            "file.search",
                             "file.write",
                             "file.create",
                             "file.delete",
                             "file.move",
+                            "file.diff",
                             "file.patch",
                             "file.stat",
                             "workspace.attach" -> "2.0.0";

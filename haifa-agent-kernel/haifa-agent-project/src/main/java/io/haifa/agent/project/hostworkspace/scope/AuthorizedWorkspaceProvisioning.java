@@ -155,6 +155,15 @@ public final class AuthorizedWorkspaceProvisioning {
         boolean recovered = workspaces.find(identity.workspaceId()).isPresent();
         WorkspaceBindingMode mode =
                 permission.canWrite() ? WorkspaceBindingMode.DIRECT : WorkspaceBindingMode.READ_ONLY;
+        bindings.find(identity.bindingId()).ifPresent(existing -> {
+            if (existing.mode() != mode) {
+                throw HostWorkspaceScopeException.permissionDenied(
+                        realPath.toString(),
+                        "Directory was previously authorized with a different permission; permission changes during"
+                                + " recovery are not supported: "
+                                + realPath);
+            }
+        });
         WorkspaceBinding binding = WorkspaceBinding.provision(
                         identity.bindingId(),
                         identity.locationRef(),

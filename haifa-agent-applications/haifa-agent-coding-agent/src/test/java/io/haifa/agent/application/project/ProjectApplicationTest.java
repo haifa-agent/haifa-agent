@@ -171,6 +171,25 @@ class ProjectApplicationTest {
     }
 
     @Test
+    void versionsEveryAbsolutePathReadToolAsTwoPointZero() {
+        var bindings = new ProjectToolCatalog()
+                .freeze(
+                        Set.of("file.list", "file.search", "file.diff"),
+                        Set.of("file.read"),
+                        true,
+                        providerThatMustNotRun())
+                .snapshot()
+                .bindings();
+
+        assertThat(bindings)
+                .extracting(binding -> binding.definition().name().value())
+                .containsExactlyInAnyOrder("file.list", "file.search", "file.diff");
+        assertThat(bindings)
+                .allSatisfy(binding ->
+                        assertThat(binding.definition().version().value()).isEqualTo("2.0.0"));
+    }
+
+    @Test
     void skillEnabledProfileDiscoversBaseSkillsAndExplicitlyAddsProgressiveDisclosureTools() {
         TenantRef tenant = new TenantRef("tenant");
         PrincipalRef principal = new PrincipalRef("principal", "user");

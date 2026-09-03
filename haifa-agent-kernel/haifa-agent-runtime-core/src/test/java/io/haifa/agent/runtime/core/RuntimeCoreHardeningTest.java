@@ -852,10 +852,18 @@ class RuntimeCoreHardeningTest {
     @Test
     void exhaustedToolBudgetStopsBeforeDispatchAndCompletesPartially() {
         AtomicInteger executions = new AtomicInteger();
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> finalizationRequest = new AtomicReference<>();
         ToolRequest tool = toolRequest(
                 "budgeted-tool", "read", "1.0.0", new ToolArguments("read.input", "1", Map.of("purpose", "读取剩余文件")));
         Fixture fixture = fixture(
-                model(new ToolCallDecision(List.of(tool))),
+                request -> {
+                    if (modelCalls.incrementAndGet() == 2) finalizationRequest.set(request);
+                    return response(
+                            modelCalls.get() == 1
+                                    ? new ToolCallDecision(List.of(tool))
+                                    : finalDecision("retained answer from completed evidence"));
+                },
                 builder -> TestToolPlatform.install(builder, "read", "1.0.0", "read.input", false, request -> {
                     executions.incrementAndGet();
                     return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
@@ -873,10 +881,47 @@ class RuntimeCoreHardeningTest {
         assertThat(completed.result()).hasValueSatisfying(result -> {
             assertThat(result.outcome()).isEqualTo(AgentRunOutcome.PARTIAL_SUCCESS);
             assertThat(result.warnings()).containsExactly("BUDGET_LIMITED:TOOL_CALLS");
-            assertThat(result.summary()).contains("TOOL_CALLS", "33 / 32");
+            assertThat(result.summary()).isEqualTo("retained answer from completed evidence");
         });
+        assertThat(modelCalls).hasValue(2);
+        assertThat(finalizationRequest.get().tools()).isEmpty();
         assertThat(executions).hasValue(0);
         assertThat(fixture.store.toolCalls(accepted.runId())).isEmpty();
+    }
+
+    @Test
+    void failedToolBudgetFinalizationFallsBackToCompletedToolNameWithoutPurpose() {
+        AtomicInteger executions = new AtomicInteger();
+        AtomicInteger modelCalls = new AtomicInteger();
+        ToolRequest first = toolRequest("first-read", "read", "1.0.0", new ToolArguments("read.input", "1", Map.of()));
+        ToolRequest second =
+                toolRequest("second-read", "read", "1.0.0", new ToolArguments("read.input", "1", Map.of()));
+        Fixture fixture = fixture(
+                request -> {
+                    int call = modelCalls.incrementAndGet();
+                    if (call == 1) return response(new ToolCallDecision(List.of(first)));
+                    if (call == 2) return response(new ToolCallDecision(List.of(second)));
+                    throw new IllegalStateException("finalization unavailable");
+                },
+                builder -> TestToolPlatform.install(builder, "read", "1.0.0", "read.input", false, request -> {
+                    executions.incrementAndGet();
+                    return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
+                }));
+
+        var accepted = fixture.runtime.start(request("tool-budget-fallback"));
+        var run = fixture.store.find(accepted.runId()).orElseThrow();
+        long expected = run.version();
+        run.recordUsage(new AgentRunUsageDelta(0, 0, 0, 0, 31, 0, 0, 0));
+        fixture.store.save(run, expected);
+        fixture.scheduler.runAll();
+
+        var completed = fixture.store.find(accepted.runId()).orElseThrow();
+        assertThat(completed.result()).hasValueSatisfying(result -> {
+            assertThat(result.outcome()).isEqualTo(AgentRunOutcome.PARTIAL_SUCCESS);
+            assertThat(result.summary()).contains("read").doesNotContain("No successful tool step could be confirmed");
+        });
+        assertThat(modelCalls).hasValue(3);
+        assertThat(executions).hasValue(1);
     }
 
     @Test
