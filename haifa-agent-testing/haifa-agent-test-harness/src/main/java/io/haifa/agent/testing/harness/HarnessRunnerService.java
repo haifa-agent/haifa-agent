@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /** Executes an approved plan without exposing suite-internal phases or gates. */
 final class HarnessRunnerService {
@@ -18,7 +19,7 @@ final class HarnessRunnerService {
         this.currentRunner = currentRunner;
     }
 
-    int run(ExecutionPlanDocument document, String budgetApproval) throws Exception {
+    int run(ExecutionPlanDocument document, String budgetApproval, Consumer<String> progressOutput) throws Exception {
         document.plan().verifyIntegrity();
         ResolvedRunContext context = plans.resolveAndVerify(document, currentRunner);
         if (document.request().mode().requiresBudgetApproval()
@@ -26,7 +27,7 @@ final class HarnessRunnerService {
             throw new IllegalArgumentException("--approve-budget is required for live and release runs");
         }
         BigDecimal approvedBudget = positiveDecimal(budgetApproval);
-        RunEvidenceWriter.NativeResult nativeResult = executeNative(context, approvedBudget);
+        RunEvidenceWriter.NativeResult nativeResult = executeNative(context, approvedBudget, progressOutput);
         RunEvidenceWriter.PublishedRun published = new RunEvidenceWriter()
                 .write(
                         context,
@@ -43,17 +44,18 @@ final class HarnessRunnerService {
         return published.successful() ? 0 : 1;
     }
 
-    private RunEvidenceWriter.NativeResult executeNative(ResolvedRunContext context, BigDecimal approvedBudget)
-            throws Exception {
+    private RunEvidenceWriter.NativeResult executeNative(
+            ResolvedRunContext context, BigDecimal approvedBudget, Consumer<String> progressOutput) throws Exception {
         if (context instanceof ResolvedRunContext.AutonomousDelivery delivery) {
-            return executeAutonomousDelivery(delivery, approvedBudget);
+            return executeAutonomousDelivery(delivery, approvedBudget, progressOutput);
         }
         return new CriticalPathSuiteApplication()
                 .run((ResolvedRunContext.CriticalPath) context, approvedBudget, Map.copyOf(System.getenv()));
     }
 
     private RunEvidenceWriter.NativeResult executeAutonomousDelivery(
-            ResolvedRunContext.AutonomousDelivery context, BigDecimal approvedBudget) throws Exception {
+            ResolvedRunContext.AutonomousDelivery context, BigDecimal approvedBudget, Consumer<String> progressOutput)
+            throws Exception {
         ExecutableResolver tools = new ExecutableResolver(System.getenv());
         Map<String, Path> toolchains = new LinkedHashMap<>();
         toolchains.put("java", tools.require("java", "HAIFA_JAVA_EXECUTABLE", "java"));
@@ -64,7 +66,7 @@ final class HarnessRunnerService {
         toolchains.put("git", tools.require("git", "HAIFA_GIT_EXECUTABLE", "git"));
         toolchains.put("shell", tools.require("shell", "HAIFA_SHELL_EXECUTABLE", "pwsh", "powershell", "bash", "sh"));
         return new AutonomousDeliveryApplication(StandaloneCodingAgents.factory())
-                .run(context, approvedBudget.longValueExact(), toolchains);
+                .run(context, approvedBudget.longValueExact(), toolchains, progressOutput);
     }
 
     private static BigDecimal positiveDecimal(String value) {
