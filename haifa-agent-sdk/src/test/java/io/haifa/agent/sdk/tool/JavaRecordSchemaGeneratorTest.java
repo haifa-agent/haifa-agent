@@ -107,4 +107,28 @@ public class JavaRecordSchemaGeneratorTest {
     public record DecimalValue(double value) {}
 
     public record NullableValue(String value) {}
+
+    public record TranslationResult(Map<String, List<String>> translations) {}
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void mapOfStringListStringSchemaAndRoundTrip() {
+        var schema = JavaRecordSupport.schema(TranslationResult.class);
+        assertThat(schema).containsEntry("type", "object");
+        Map<String, Object> properties = (Map<String, Object>) schema.get("properties");
+        Map<String, Object> translations = (Map<String, Object>) properties.get("translations");
+        assertThat(translations).containsEntry("type", "object");
+        Map<String, Object> additionalProperties = (Map<String, Object>) translations.get("additionalProperties");
+        assertThat(additionalProperties).containsEntry("type", "array");
+
+        Map<String, Object> values = Map.of(
+                "translations",
+                Map.of(
+                        "Japanese", List.of("こんにちは", "さようなら"),
+                        "French", List.of("Bonjour", "Au revoir")));
+        TranslationResult result = JavaRecordSupport.decode(TranslationResult.class, values);
+        assertThat(result.translations()).containsEntry("Japanese", List.of("こんにちは", "さようなら"));
+        assertThat(result.translations()).containsEntry("French", List.of("Bonjour", "Au revoir"));
+        assertThat(JavaRecordSupport.encode(result)).isEqualTo(values);
+    }
 }
