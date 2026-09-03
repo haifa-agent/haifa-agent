@@ -1,6 +1,5 @@
 package io.haifa.agent.model.core;
 
-import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelAuthenticationMethod;
 import io.haifa.agent.model.api.ModelProviderId;
@@ -35,12 +34,18 @@ public final class PackagedModelCatalog {
                                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
                                 Set.of("antigravity-direct")),
                         Map.of(
-                                new ModelProviderId("deepseek"), Set.of(ModelAuthenticationMethod.API_KEY),
-                                new ModelProviderId("openai-codex"), Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN),
-                                new ModelProviderId("aliyun-bailian"), Set.of(ModelAuthenticationMethod.API_KEY),
-                                new ModelProviderId("siliconflow"), Set.of(ModelAuthenticationMethod.API_KEY),
-                                new ModelProviderId("kimi"), Set.of(ModelAuthenticationMethod.API_KEY),
-                                new ModelProviderId("zhipu"), Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("deepseek"),
+                                Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("openai-codex"),
+                                Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN),
+                                new ModelProviderId("aliyun-bailian"),
+                                Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("siliconflow"),
+                                Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("kimi"),
+                                Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("zhipu"),
+                                Set.of(ModelAuthenticationMethod.API_KEY),
                                 new ModelProviderId("google-antigravity"),
                                 Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN)))
                 .load();
