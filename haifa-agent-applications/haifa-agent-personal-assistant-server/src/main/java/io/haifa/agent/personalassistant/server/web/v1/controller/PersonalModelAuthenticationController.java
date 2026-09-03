@@ -83,7 +83,7 @@ public final class PersonalModelAuthenticationController {
     Mono<ResponseEntity<PersonalApiDtos.ExternalLoginAttempt>> startBrowserAttempt(
             @PathVariable String methodId, @RequestHeader("Idempotency-Key") String idempotencyKey) {
         return Mono.fromCallable(() -> {
-                    ExternalLoginMethodId method = enabledExternalLoginMethod(methodId);
+                    ExternalLoginMethodId method = externalLoginMethod(methodId);
                     return mapper.externalLoginAttempt(
                             authentication.startExternalLogin(method, ExternalLoginMode.BROWSER));
                 })
@@ -93,7 +93,7 @@ public final class PersonalModelAuthenticationController {
 
     @GetMapping("/{methodId}/browser-attempts/{attemptId}")
     PersonalApiDtos.ExternalLoginAttempt attempt(@PathVariable String methodId, @PathVariable String attemptId) {
-        enabledExternalLoginMethod(methodId);
+        externalLoginMethod(methodId);
         return mapper.externalLoginAttempt(authentication.attempt(new ExternalLoginAttemptId(attemptId)));
     }
 
@@ -102,7 +102,7 @@ public final class PersonalModelAuthenticationController {
             @PathVariable String methodId,
             @PathVariable String attemptId,
             @RequestHeader("Idempotency-Key") String idempotencyKey) {
-        enabledExternalLoginMethod(methodId);
+        externalLoginMethod(methodId);
         return authentication.cancel(new ExternalLoginAttemptId(attemptId))
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();
@@ -152,6 +152,28 @@ public final class PersonalModelAuthenticationController {
                     false,
                     externalLogin && externalLoginUnofficial(externalMethod)));
         }
+        authentication.externalLoginMethods().forEach(method -> {
+            String reference = externalCredentialReference(method.methodId());
+            if (!projected.add(reference)) return;
+            stored.stream()
+                    .filter(connection -> connection.connectionId().value().equals(reference))
+                    .findFirst()
+                    .map(mapper::modelConnection)
+                    .ifPresentOrElse(
+                            result::add,
+                            () -> result.add(new PersonalApiDtos.ModelConnection(
+                                    "configured://" + method.methodId().value() + "/default",
+                                    method.methodId().value(),
+                                    "EXTERNAL_LOGIN",
+                                    "REAUTH_REQUIRED",
+                                    "Not connected",
+                                    null,
+                                    "AUTH_CREDENTIAL_REQUIRED",
+                                    false,
+                                    true,
+                                    false,
+                                    method.unofficial())));
+        });
         stored.stream()
                 .filter(connection -> projected.add(connection.connectionId().value()))
                 .map(mapper::modelConnection)
@@ -183,16 +205,6 @@ public final class PersonalModelAuthenticationController {
                 .orElse(false);
     }
 
-    private ExternalLoginMethodId enabledExternalLoginMethod(String methodId) {
-        ExternalLoginMethodId value = externalLoginMethod(methodId);
-        boolean enabled = providers.get().stream()
-                .map(PersonalModelAuthenticationController::externalLoginMethod)
-                .flatMap(java.util.Optional::stream)
-                .anyMatch(value::equals);
-        if (!enabled) throw new IllegalStateException("AUTH_LOGIN_METHOD_UNAVAILABLE");
-        return value;
-    }
-
     private static ExternalLoginMethodId externalLoginMethod(String methodId) {
         return switch (Objects.requireNonNull(methodId, "methodId must not be null")) {
             case "codex" -> CodexExternalLoginMethod.METHOD_ID;
@@ -208,5 +220,13 @@ public final class PersonalModelAuthenticationController {
             return java.util.Optional.of(AntigravityExternalLoginMethod.METHOD_ID);
         }
         return java.util.Optional.empty();
+    }
+
+    private static String externalCredentialReference(ExternalLoginMethodId methodId) {
+        if (CodexExternalLoginMethod.METHOD_ID.equals(methodId)) return "model-auth://openai-codex/default";
+        if (AntigravityExternalLoginMethod.METHOD_ID.equals(methodId)) {
+            return "model-auth://google-antigravity/default";
+        }
+        throw new IllegalArgumentException("AUTH_LOGIN_METHOD_UNAVAILABLE");
     }
 }

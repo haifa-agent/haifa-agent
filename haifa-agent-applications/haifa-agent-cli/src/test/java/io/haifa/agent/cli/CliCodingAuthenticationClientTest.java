@@ -96,7 +96,7 @@ class CliCodingAuthenticationClientTest {
                                 java.util.List.of("model-auth://deepseek/default"),
                                 true)
                         .antigravityConnectionSupported())
-                .isFalse();
+                .isTrue();
         assertThat(new CliCodingAuthenticationClient(
                                 service,
                                 "model-auth://google-antigravity/default",
@@ -116,7 +116,7 @@ class CliCodingAuthenticationClientTest {
     }
 
     @Test
-    void exposesCodexLoginOnlyWhenTheConfiguredProvidersContainCodex() {
+    void alwaysExposesCodexLogin() {
         var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
         var service = new LocalModelAuthenticationService(
                 store,
@@ -133,7 +133,7 @@ class CliCodingAuthenticationClientTest {
                                 java.util.List.of("model-auth://deepseek/default"),
                                 false)
                         .codexConnectionSupported())
-                .isFalse();
+                .isTrue();
         assertThat(new CliCodingAuthenticationClient(
                                 service,
                                 "model-auth://openai-codex/default",

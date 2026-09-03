@@ -63,7 +63,7 @@ class PersonalModelAuthenticationControllerTest {
     }
 
     @Test
-    void doesNotProjectARegisteredLoginMethodOutsideTheProductEnabledProviders() {
+    void projectsARegisteredLoginMethodForConnectionOnboarding() {
         LocalModelAuthenticationService service = mock(LocalModelAuthenticationService.class);
         when(service.connections()).thenReturn(java.util.List.of());
         when(service.externalLoginMethods())
@@ -84,11 +84,13 @@ class PersonalModelAuthenticationControllerTest {
                 .isOk()
                 .expectBody()
                 .jsonPath("$.length()")
-                .isEqualTo(1)
+                .isEqualTo(2)
                 .jsonPath("$[0].providerId")
                 .isEqualTo("google-antigravity")
-                .jsonPath("$[0].externalLoginSupported")
-                .isEqualTo(false);
+                .jsonPath("$[1].providerId")
+                .isEqualTo("openai-codex")
+                .jsonPath("$[1].externalLoginSupported")
+                .isEqualTo(true);
     }
 
     @Test
@@ -233,7 +235,7 @@ class PersonalModelAuthenticationControllerTest {
     }
 
     @Test
-    void externalLoginFailsClosedWhenNoProviderEnablesTheMethod() {
+    void externalLoginFailsClosedWithoutApprovedRegistration() {
         var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
         try (var service = new LocalModelAuthenticationService(
                 store,
@@ -252,10 +254,10 @@ class PersonalModelAuthenticationControllerTest {
                     .bodyValue("{}")
                     .exchange()
                     .expectStatus()
-                    .isNotFound()
+                    .isEqualTo(409)
                     .expectBody()
                     .jsonPath("$.code")
-                    .isEqualTo("AUTH_LOGIN_METHOD_UNAVAILABLE")
+                    .isEqualTo("AUTH_EXTERNAL_APPROVAL_REQUIRED")
                     .jsonPath("$.message")
                     .isEqualTo("The operation cannot be completed.");
 
@@ -269,10 +271,10 @@ class PersonalModelAuthenticationControllerTest {
                     .bodyValue("{}")
                     .exchange()
                     .expectStatus()
-                    .isNotFound()
+                    .isEqualTo(409)
                     .expectBody()
                     .jsonPath("$.code")
-                    .isEqualTo("AUTH_LOGIN_METHOD_UNAVAILABLE");
+                    .isEqualTo("AUTH_EXTERNAL_APPROVAL_REQUIRED");
         }
     }
 
