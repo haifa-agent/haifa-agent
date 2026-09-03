@@ -10,7 +10,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import org.junit.jupiter.api.AfterEach;
@@ -106,8 +108,10 @@ class HostWorkspaceScopeTest {
     void rejectsRootAliasSyntax() {
         for (String input : List.of("main:src/App.java", "docs:guide.md", "main:.")) {
             assertThatThrownBy(() -> scope.resolve(input))
-                    .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                            .isEqualTo(HostWorkspaceScopeErrorCode.INVALID_ARGUMENT));
+                    .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> {
+                        assertThat(exception.code()).isEqualTo(HostWorkspaceScopeErrorCode.INVALID_ARGUMENT);
+                        assertThat(exception.getMessage()).contains("absolute").doesNotContain("main:", "docs:");
+                    });
         }
     }
 
@@ -263,6 +267,64 @@ class HostWorkspaceScopeTest {
                                 scope.allowedDirectories().get(0))
                         .withDirectory(sibling))
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void resolvesPeerAuthorizedDirectoriesAcrossTwoActualWindowsVolumes() throws IOException {
+        List<Path> candidateBases = new ArrayList<>();
+        candidateBases.add(tempDir);
+        candidateBases.add(
+                Path.of(System.getProperty("user.dir")).resolve("target").toAbsolutePath());
+        for (String name : List.of("RUNNER_TEMP", "GITHUB_WORKSPACE")) {
+            String value = System.getenv(name);
+            if (value != null && !value.isBlank())
+                candidateBases.add(Path.of(value).toAbsolutePath());
+        }
+        LinkedHashMap<Path, Path> basesByVolume = new LinkedHashMap<>();
+        for (Path candidate : candidateBases) {
+            try {
+                Files.createDirectories(candidate);
+                Path canonical = candidate.toRealPath();
+                basesByVolume.putIfAbsent(canonical.getRoot(), canonical);
+            } catch (IOException ignored) {
+                // A CI-provided candidate may not be writable by this process.
+            }
+        }
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                basesByVolume.size() >= 2, "two writable Windows volumes are unavailable");
+        var bases = basesByVolume.values().iterator();
+        Path first = Files.createTempDirectory(bases.next(), "haifa-plan030-volume-a-");
+        Path second = Files.createTempDirectory(bases.next(), "haifa-plan030-volume-b-");
+        try {
+            Path firstFile = Files.writeString(first.resolve("same.txt"), "a", StandardCharsets.UTF_8);
+            Path secondFile = Files.writeString(second.resolve("same.txt"), "b", StandardCharsets.UTF_8);
+            HostWorkspaceScope crossVolumeScope = new HostWorkspaceScope(
+                    List.of(
+                            AuthorizedHostDirectory.of(
+                                    new WorkspaceId("ws-volume-a"),
+                                    first.toRealPath(),
+                                    HostDirectoryPermission.READ_WRITE),
+                            AuthorizedHostDirectory.of(
+                                    new WorkspaceId("ws-volume-b"),
+                                    second.toRealPath(),
+                                    HostDirectoryPermission.READ_WRITE)),
+                    1L);
+
+            assertThat(crossVolumeScope
+                            .resolve(firstFile.toString())
+                            .workspacePath()
+                            .workspaceId())
+                    .isEqualTo(new WorkspaceId("ws-volume-a"));
+            assertThat(crossVolumeScope
+                            .resolve(secondFile.toString())
+                            .workspacePath()
+                            .workspaceId())
+                    .isEqualTo(new WorkspaceId("ws-volume-b"));
+        } finally {
+            deleteRecursively(first);
+            deleteRecursively(second);
+        }
     }
 
     @Test

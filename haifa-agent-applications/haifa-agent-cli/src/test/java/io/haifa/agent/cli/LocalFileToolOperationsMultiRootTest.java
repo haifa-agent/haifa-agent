@@ -57,7 +57,7 @@ class LocalFileToolOperationsMultiRootTest {
     @TempDir
     Path tempDir;
 
-    private Path mainDir;
+    private Path workspaceDir;
     private Path docsDir;
     private Path configDir;
     private LocalFileToolOperations operations;
@@ -70,10 +70,10 @@ class LocalFileToolOperationsMultiRootTest {
     @BeforeEach
     void setUp() throws IOException {
         tempDir = tempDir.toRealPath();
-        mainDir = tempDir.resolve("main-repo");
+        workspaceDir = tempDir.resolve("workspace-repo");
         docsDir = tempDir.resolve("docs-repo");
         configDir = tempDir.resolve("config-repo");
-        Files.createDirectories(mainDir);
+        Files.createDirectories(workspaceDir);
         Files.createDirectories(docsDir);
         Files.createDirectories(configDir);
 
@@ -84,7 +84,7 @@ class LocalFileToolOperationsMultiRootTest {
         locations = new HostWorkspaceLocationStore();
         ProjectId projectId = new ProjectId("proj-multiroot");
         PrincipalRef owner = new PrincipalRef("owner", "user");
-        registerWorkspace(workspaceId, mainDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.PRIMARY, now);
+        registerWorkspace(workspaceId, workspaceDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.PRIMARY, now);
         WorkspaceId docsWorkspaceId = new WorkspaceId("ws-docs");
         registerWorkspace(docsWorkspaceId, docsDir, HostDirectoryPermission.READ_ONLY, WorkspacePurpose.DIRECTORY, now);
         WorkspaceId configWorkspaceId = new WorkspaceId("ws-config");
@@ -109,7 +109,7 @@ class LocalFileToolOperationsMultiRootTest {
         var scope = new HostWorkspaceScope(
                 List.of(
                         AuthorizedHostDirectory.of(
-                                workspaceId, mainDir.toRealPath(), HostDirectoryPermission.READ_WRITE),
+                                workspaceId, workspaceDir.toRealPath(), HostDirectoryPermission.READ_WRITE),
                         AuthorizedHostDirectory.of(
                                 docsWorkspaceId, docsDir.toRealPath(), HostDirectoryPermission.READ_ONLY),
                         AuthorizedHostDirectory.of(
@@ -165,9 +165,9 @@ class LocalFileToolOperationsMultiRootTest {
 
     @Test
     void readsFileWithHostAbsolutePath() throws IOException {
-        Files.writeString(mainDir.resolve("App.java"), "public class App {}", StandardCharsets.UTF_8);
+        Files.writeString(workspaceDir.resolve("App.java"), "public class App {}", StandardCharsets.UTF_8);
         String hostPath =
-                mainDir.resolve("App.java").toAbsolutePath().normalize().toString();
+                workspaceDir.resolve("App.java").toAbsolutePath().normalize().toString();
 
         var res = operations.execute(
                 "file.read",
@@ -202,9 +202,9 @@ class LocalFileToolOperationsMultiRootTest {
 
     @Test
     void listReadAndSearchReturnHostAbsolutePaths() throws IOException {
-        Path file = mainDir.resolve("absolute-result.txt");
+        Path file = workspaceDir.resolve("absolute-result.txt");
         Files.writeString(file, "search needle", StandardCharsets.UTF_8);
-        String rootPath = mainDir.toAbsolutePath().normalize().toString();
+        String rootPath = workspaceDir.toAbsolutePath().normalize().toString();
         String filePath = file.toAbsolutePath().normalize().toString();
 
         var listed = operations.execute(
@@ -238,8 +238,9 @@ class LocalFileToolOperationsMultiRootTest {
     @Test
     void compactsCreateReplaceMoveAndDeleteWithinOneLogicalWorkspace() {
         String created =
-                mainDir.resolve("created.txt").toAbsolutePath().normalize().toString();
-        String moved = mainDir.resolve("moved.txt").toAbsolutePath().normalize().toString();
+                workspaceDir.resolve("created.txt").toAbsolutePath().normalize().toString();
+        String moved =
+                workspaceDir.resolve("moved.txt").toAbsolutePath().normalize().toString();
 
         assertThat(execute("file.create", Map.of("path", created, "content", "one"))
                         .successful())
@@ -267,11 +268,11 @@ class LocalFileToolOperationsMultiRootTest {
     @Test
     void sameRelativePathInTwoAuthorizedDirectoriesHasDistinctLogicalIdentity() {
         String mainPath =
-                mainDir.resolve("same.txt").toAbsolutePath().normalize().toString();
+                workspaceDir.resolve("same.txt").toAbsolutePath().normalize().toString();
         String configPath =
                 configDir.resolve("same.txt").toAbsolutePath().normalize().toString();
 
-        assertThat(execute("file.create", Map.of("path", mainPath, "content", "main"))
+        assertThat(execute("file.create", Map.of("path", mainPath, "content", "workspace"))
                         .successful())
                 .isTrue();
         assertThat(execute("file.create", Map.of("path", configPath, "content", "config"))
@@ -358,8 +359,10 @@ class LocalFileToolOperationsMultiRootTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("writableFileRoots")
-    void writableRootsCreateMissingTargetsThroughFileWrite(String targetRoot) throws IOException {
-        Path target = "main".equals(targetRoot) ? mainDir.resolve("contract.txt") : configDir.resolve("contract.txt");
+    void writableDirectoriesCreateMissingTargetsThroughFileWrite(String targetDirectory) throws IOException {
+        Path target = "workspace".equals(targetDirectory)
+                ? workspaceDir.resolve("contract.txt")
+                : configDir.resolve("contract.txt");
         String path = target.toAbsolutePath().normalize().toString();
         var written = operations.execute(
                 "file.write",
@@ -377,8 +380,10 @@ class LocalFileToolOperationsMultiRootTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("writableFileRoots")
-    void writableRootsShareCreateWriteAndDeleteContract(String targetRoot) throws IOException {
-        Path target = "main".equals(targetRoot) ? mainDir.resolve("contract.txt") : configDir.resolve("contract.txt");
+    void writableDirectoriesShareCreateWriteAndDeleteContract(String targetDirectory) throws IOException {
+        Path target = "workspace".equals(targetDirectory)
+                ? workspaceDir.resolve("contract.txt")
+                : configDir.resolve("contract.txt");
         String path = target.toAbsolutePath().normalize().toString();
         var created = operations.execute(
                 "file.create",
@@ -413,7 +418,7 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     private static Stream<String> writableFileRoots() {
-        return Stream.of("main", "config");
+        return Stream.of("workspace", "config");
     }
 
     @Test
@@ -421,7 +426,7 @@ class LocalFileToolOperationsMultiRootTest {
         Path extraDir = tempDir.resolve("extra-repo");
         Files.createDirectories(extraDir);
 
-        var attached = operations.execute(
+        var authorization = operations.execute(
                 "workspace.attach",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
@@ -436,30 +441,30 @@ class LocalFileToolOperationsMultiRootTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", notePath, "content", "attached")));
+                arguments(Map.of("path", notePath, "content", "authorized")));
 
-        assertThat(attached.successful()).isTrue();
-        assertThat(attached.structuredData()).containsEntry("permission", "READ_WRITE");
+        assertThat(authorization.successful()).isTrue();
+        assertThat(authorization.structuredData()).containsEntry("permission", "READ_WRITE");
         assertThat(created.successful()).isTrue();
-        assertThat(Files.readString(extraDir.resolve("note.txt"))).isEqualTo("attached");
+        assertThat(Files.readString(extraDir.resolve("note.txt"))).isEqualTo("authorized");
     }
 
     @Test
-    void usesAttachedWorkspaceRevisionWhenWritingToAttachedRoot() throws IOException {
-        Path extraDir = tempDir.resolve("attached-rev-repo");
+    void usesAuthorizedDirectoryWorkspaceRevisionWhenWriting() throws IOException {
+        Path extraDir = tempDir.resolve("authorized-revision-repo");
         Files.createDirectories(extraDir);
 
-        var attached = operations.execute(
+        var authorization = operations.execute(
                 "workspace.attach",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
                 arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
-        assertThat(attached.successful()).isTrue();
+        assertThat(authorization.successful()).isTrue();
 
-        WorkspaceId extraWsId =
-                new WorkspaceId(attached.structuredData().get("workspaceId").toString());
+        WorkspaceId extraWsId = new WorkspaceId(
+                authorization.structuredData().get("workspaceId").toString());
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         Workspace before = workspaces.find(extraWsId).orElseThrow();
         Workspace customRevision = before.advanceRevision(
@@ -488,26 +493,26 @@ class LocalFileToolOperationsMultiRootTest {
         Files.createDirectories(extraDir);
 
         HostWorkspaceScope initialScope = operations.currentScope();
-        Path file = mainDir.resolve("toctou.txt");
+        Path file = workspaceDir.resolve("toctou.txt");
         var resolvedTarget =
                 initialScope.resolve(file.toAbsolutePath().normalize().toString());
         assertThat(initialScope.version()).isEqualTo(1L);
 
-        var attached = operations.execute(
+        var authorization = operations.execute(
                 "workspace.attach",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
                 arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
-        assertThat(attached.successful()).isTrue();
+        assertThat(authorization.successful()).isTrue();
         assertThat(operations.currentScope().version()).isGreaterThan(initialScope.version());
         assertThat(initialScope.version())
                 .isNotEqualTo(operations.currentScope().version());
     }
 
     @Test
-    void reauthorizingTheMainDirectoryDoesNotDuplicateItsBoundary() {
+    void reauthorizingTheDefaultDirectoryDoesNotDuplicateItsBoundary() {
         int originalDirectoryCount =
                 operations.currentScope().allowedDirectories().size();
         var result = operations.execute(
@@ -516,7 +521,7 @@ class LocalFileToolOperationsMultiRootTest {
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 "policy-1",
-                arguments(Map.of("path", mainDir.toString(), "permission", "read-only")));
+                arguments(Map.of("path", workspaceDir.toString(), "permission", "read-only")));
 
         assertThat(result.successful()).isTrue();
         assertThat(operations.currentScope().allowedDirectories()).hasSize(originalDirectoryCount);
@@ -529,7 +534,7 @@ class LocalFileToolOperationsMultiRootTest {
         String srcPath =
                 configDir.resolve("move.txt").toAbsolutePath().normalize().toString();
         String dstPath =
-                mainDir.resolve("moved.txt").toAbsolutePath().normalize().toString();
+                workspaceDir.resolve("moved.txt").toAbsolutePath().normalize().toString();
         var result = operations.execute(
                 "file.move",
                 workspaceId,
@@ -544,7 +549,7 @@ class LocalFileToolOperationsMultiRootTest {
                 .containsEntry("failureCategory", "INVALID_INPUT")
                 .containsEntry("failureActionCode", "USE_CREATE_AND_DELETE");
         assertThat(Files.readString(configDir.resolve("move.txt"))).isEqualTo("source");
-        assertThat(Files.exists(mainDir.resolve("moved.txt"))).isFalse();
+        assertThat(Files.exists(workspaceDir.resolve("moved.txt"))).isFalse();
     }
 
     @Test
@@ -612,7 +617,7 @@ class LocalFileToolOperationsMultiRootTest {
         String first =
                 configDir.resolve("first.txt").toAbsolutePath().normalize().toString();
         String second =
-                mainDir.resolve("second.txt").toAbsolutePath().normalize().toString();
+                workspaceDir.resolve("second.txt").toAbsolutePath().normalize().toString();
         String patch =
                 """
                 *** Begin Patch
@@ -638,7 +643,7 @@ class LocalFileToolOperationsMultiRootTest {
                 .containsEntry("complete", false)
                 .containsEntry("appliedPaths", List.of());
         assertThat(configDir.resolve("first.txt")).doesNotExist();
-        assertThat(mainDir.resolve("second.txt")).doesNotExist();
+        assertThat(workspaceDir.resolve("second.txt")).doesNotExist();
     }
 
     @Test
@@ -743,7 +748,7 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
-    void reportsPathNotFoundForAnAbsentAttachedDeleteTarget() {
+    void reportsPathNotFoundForAnAbsentAuthorizedDirectoryDeleteTarget() {
         var result = operations.execute(
                 "file.delete",
                 workspaceId,
