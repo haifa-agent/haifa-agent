@@ -36,9 +36,15 @@ class CommandSemanticOutcomeInterpreterTest {
                 .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
         assertThat(interpret("git show missing", ExecutionStatus.FAILED, 128))
                 .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
-        assertThat(interpret("mvn test", ExecutionStatus.FAILED, 1)).isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
-        assertThat(interpret("git push", ExecutionStatus.TIMED_OUT, null))
+        assertThat(interpret("git push", ExecutionStatus.UNKNOWN, null))
                 .isEqualTo(CommandSemanticOutcome.OUTCOME_UNKNOWN);
+        assertThat(interpret("git push", ExecutionStatus.CANCELLED, null))
+                .isEqualTo(CommandSemanticOutcome.OUTCOME_UNKNOWN);
+        assertThat(interpret("mvn test", ExecutionStatus.TIMED_OUT, null))
+                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
+        assertThat(CommandSemanticOutcomeInterpreter.interpret("mvn test", ExecutionStatus.TIMED_OUT, null)
+                        .reasonCode())
+                .isEqualTo("COMMAND_TIMED_OUT");
         assertThat(interpret("mvn test", ExecutionStatus.PROCESS_LIMIT_EXCEEDED, null))
                 .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
         assertThat(CommandSemanticOutcomeInterpreter.interpret("mvn test", ExecutionStatus.PROCESS_LIMIT_EXCEEDED, null)

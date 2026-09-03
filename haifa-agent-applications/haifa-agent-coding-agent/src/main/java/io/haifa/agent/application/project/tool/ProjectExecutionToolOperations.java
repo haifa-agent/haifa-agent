@@ -14,9 +14,11 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionCommand;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
+import io.haifa.agent.execution.api.ExecutionFailure;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionInput;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionOutput;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
@@ -24,6 +26,7 @@ import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
+import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.execution.core.command.CommandSemanticOutcomeInterpreter;
@@ -34,14 +37,13 @@ import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.tool.api.ToolCancellation;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
-import io.haifa.agent.tool.api.ToolDispatchState;
-import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolReconciliation;
 import io.haifa.agent.tool.api.ToolReconciliationRequest;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -551,24 +553,98 @@ public final class ProjectExecutionToolOperations {
                     request.context().runRef(),
                     reviewToolCallRef);
         } catch (ExecutionPreflightException exception) {
-            throw new ToolInvocationException(
-                    exception.code(), ToolDispatchState.NOT_DISPATCHED, exception.getMessage(), exception);
+            return toFailedToolResult(
+                    request,
+                    merged,
+                    exception.code(),
+                    exception.getMessage(),
+                    command,
+                    operationFamily,
+                    commandClassification,
+                    repositoryScopeDigest,
+                    reviewToolCallRef);
         } catch (io.haifa.agent.execution.core.ExecutionRejectedException exception) {
-            throw new ToolInvocationException(
+            return toFailedToolResult(
+                    request,
+                    merged,
                     exception.code(),
-                    merged.dispatched() ? ToolDispatchState.DISPATCHED : ToolDispatchState.NOT_DISPATCHED,
                     exception.getMessage(),
-                    exception);
+                    command,
+                    operationFamily,
+                    commandClassification,
+                    repositoryScopeDigest,
+                    reviewToolCallRef);
         } catch (io.haifa.agent.sandbox.api.SandboxException exception) {
-            throw new ToolInvocationException(
+            return toFailedToolResult(
+                    request,
+                    merged,
                     exception.code(),
-                    merged.dispatched() ? ToolDispatchState.DISPATCHED : ToolDispatchState.NOT_DISPATCHED,
                     exception.getMessage(),
-                    exception);
+                    command,
+                    operationFamily,
+                    commandClassification,
+                    repositoryScopeDigest,
+                    reviewToolCallRef);
+        } catch (RuntimeException exception) {
+            return toFailedToolResult(
+                    request,
+                    merged,
+                    "EXECUTION_FAILED",
+                    exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage(),
+                    command,
+                    operationFamily,
+                    commandClassification,
+                    repositoryScopeDigest,
+                    reviewToolCallRef);
         } finally {
             complete.set(true);
             cancellation.interrupt();
         }
+    }
+
+    private ToolResult toFailedToolResult(
+            ExecutionRequest request,
+            MergedTailObserver merged,
+            String failureCode,
+            String errorMessage,
+            String command,
+            String operationFamily,
+            SystemGitCliCommandClassifier.Classification commandClassification,
+            String repositoryScopeDigest,
+            String reviewToolCallRef) {
+        String safeError = errorMessage == null || errorMessage.isBlank() ? "execution failed" : errorMessage;
+        byte[] errBytes = safeError.getBytes(StandardCharsets.UTF_8);
+        String safeDigestError = safeError.length() > 16_000 ? safeError.substring(0, 16_000) : safeError;
+        String errDigest = PolicyDigest.sha256Fields(List.of(safeDigestError));
+        ExecutionOutput errOutput = new ExecutionOutput(safeError, null, errBytes.length, errDigest, false, false);
+        ExecutionOutput outOutput = new ExecutionOutput("", null, 0, "0".repeat(64), false, false);
+        Instant now = time.now();
+        ExecutionResult failureResult = new ExecutionResult(
+                request.id(),
+                ExecutionStatus.FAILED,
+                1,
+                now,
+                now,
+                outOutput,
+                errOutput,
+                sandboxProfileRef.value(),
+                new ResourceUsageSummary(Duration.ZERO, 0),
+                new ExecutionFailure(failureCode, safeError),
+                false,
+                false,
+                false);
+        return toToolResult(
+                failureResult,
+                merged,
+                outputSanitizer,
+                command,
+                operationFamily,
+                commandClassification,
+                sandboxProfileRef,
+                scratchSpace,
+                repositoryScopeDigest,
+                request.context().runRef(),
+                reviewToolCallRef);
     }
 
     private ToolResult toToolResult(
@@ -586,7 +662,21 @@ public final class ProjectExecutionToolOperations {
         var semantic = CommandSemanticOutcomeInterpreter.interpret(command, result.status(), result.exitCode());
         String output = merged.text();
         if (output.isBlank() && !semantic.successfulToolResult()) {
-            output = MergedTailObserver.sanitize(fallbackOutput(result));
+            String fallback = fallbackOutput(result);
+            if (fallback.isBlank()) {
+                fallback = switch (result.status()) {
+                    case TIMED_OUT -> "Command timed out after execution limit.";
+                    case OUTPUT_LIMIT_EXCEEDED -> "Command exceeded output limit.";
+                    case PROCESS_LIMIT_EXCEEDED -> "Command exceeded process-count limit.";
+                    default -> "Command execution failed with no output.";
+                };
+            }
+            output = MergedTailObserver.sanitize(fallback);
+        }
+        if (!semantic.successfulToolResult()
+                && result.status() == ExecutionStatus.TIMED_OUT
+                && !output.toLowerCase(java.util.Locale.ROOT).contains("timed out")) {
+            output = output.isBlank() ? "Command timed out." : output + "\n\n[Command timed out before completion]";
         }
         output = Objects.requireNonNull(outputSanitizer.apply(output), "outputSanitizer must not return null");
         boolean truncated = merged.truncated()
@@ -710,7 +800,13 @@ public final class ProjectExecutionToolOperations {
                     case SUCCEEDED -> "Command succeeded";
                     case EXPECTED_VARIANT -> "Command completed with an expected result variant";
                     case EMPTY_RESULT -> "Command completed with an empty result";
-                    case COMMAND_FAILED -> "Command failed";
+                    case COMMAND_FAILED ->
+                        switch (result.status()) {
+                            case TIMED_OUT -> "Command timed out";
+                            case OUTPUT_LIMIT_EXCEEDED -> "Command exceeded output limit";
+                            case PROCESS_LIMIT_EXCEEDED -> "Command exceeded process-count limit";
+                            default -> "Command failed";
+                        };
                     case OUTCOME_UNKNOWN ->
                         switch (result.status()) {
                             case OUTPUT_LIMIT_EXCEEDED ->
