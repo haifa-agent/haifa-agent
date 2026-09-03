@@ -1,0 +1,4 @@
+schemaVersion: haifa.model-catalog/v1
+providers:
+  - resource: providers/deepseek/provider.yaml
+  - resource: providers/google-antigravity/provider.yaml

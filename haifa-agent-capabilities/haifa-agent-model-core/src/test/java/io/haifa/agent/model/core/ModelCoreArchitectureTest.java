@@ -15,7 +15,6 @@ class ModelCoreArchitectureTest {
                 .dependOnClassesThat()
                 .resideInAnyPackage(
                         "io.haifa.agent.model.openai..",
-                        "com.fasterxml.jackson..",
                         "org.springframework..",
                         "com.openai..",
                         "com.deepseek..",
