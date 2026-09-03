@@ -17,7 +17,7 @@ public record PatchFileMutationRequest(
         precondition = Objects.requireNonNull(precondition, "precondition must not be null");
         context = Objects.requireNonNull(context, "context must not be null");
         if (maxOutputBytes < 1) throw new IllegalArgumentException("maxOutputBytes must be positive");
-        if (!path.projectPath().equals(patch.sourcePath())) {
+        if (!path.equals(patch.sourcePath())) {
             throw new IllegalArgumentException("patch source path does not match mutation path");
         }
         if (patch.creation() || patch.deletion()) {

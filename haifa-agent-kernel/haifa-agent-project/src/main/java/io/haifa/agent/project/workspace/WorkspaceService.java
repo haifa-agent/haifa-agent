@@ -11,6 +11,7 @@ import io.haifa.agent.project.store.ProjectStore;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import java.util.Objects;
+import java.util.Optional;
 
 public final class WorkspaceService {
     private final ProjectStore projects;
@@ -54,6 +55,41 @@ public final class WorkspaceService {
             Project updated = project.assignDefaultWorkspace(id, time.now());
             projects.save(updated, project.version());
         }
+        return workspace;
+    }
+
+    /**
+     * Provisions the logical workspace of one explicitly authorized local directory. The caller
+     * supplies a stable workspace id so that re-authorizing the same directory recovers the same
+     * logical workspace instead of allocating a second one. The project's default workspace is never
+     * assigned here; the first directory is a UI/Shell default only, not a Main role.
+     */
+    public Workspace provisionDirectory(
+            ProjectId projectId, WorkspaceId workspaceId, WorkspaceBinding binding, String semanticsId) {
+        Project project = projects.find(projectId)
+                .orElseThrow(() -> new IllegalArgumentException("project not found: " + projectId.value()));
+        if (project.status() != ProjectStatus.ACTIVE) throw new IllegalStateException("project is not active");
+        if (binding.status() != io.haifa.agent.project.binding.WorkspaceBindingStatus.ACTIVE) {
+            throw new IllegalStateException("binding is not active");
+        }
+        if (bindings.find(binding.id()).isEmpty()) bindings.create(binding);
+        Optional<Workspace> existing = workspaces.find(workspaceId);
+        if (existing.isPresent()) {
+            Workspace workspace = existing.get();
+            if (!workspace.projectId().equals(projectId)) {
+                throw new IllegalStateException("workspace belongs to a different project");
+            }
+            return workspace;
+        }
+        Workspace workspace = Workspace.provision(
+                        workspaceId,
+                        projectId,
+                        WorkspacePurpose.DIRECTORY,
+                        new WorkspaceRoot(ProjectPath.root(), binding.id(), semanticsId),
+                        WorkspaceRevision.initial(binding.rootFingerprint()),
+                        time.now())
+                .activate(time.now());
+        workspaces.create(workspace);
         return workspace;
     }
 }
