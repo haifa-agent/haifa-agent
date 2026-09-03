@@ -154,10 +154,21 @@ try (var agent = HaifaAgentStarter.builder()
 对支持 `STRUCTURED_OUTPUT` 的模型，可以把有界 Java record 冻结为本次 Run 的最终输出契约：
 
 ```java
-public record TripPlan(String city, int days, List<String> activities) {}
+public record TranslationRequest(String sourceLanguage, List<String> phrases, List<String> destLangs) {}
+public record TranslationResult(Map<String, List<String>> translations) {}
 
-var response = agent.chat("Plan a two-day trip.", TripPlan.class).await();
-TripPlan plan = response.value();
+var request = new TranslationRequest("Chinese",
+        List.of("你好", "谢谢", "再见"),
+        List.of("English", "Japanese", "French"));
+
+var prompt = "Translate the following %s phrases %s into these languages: %s. "
+        + "Return a JSON object where each key is a target language "
+        + "and the value is the list of translated phrases in the same order."
+                .formatted(request.sourceLanguage(), request.phrases(), request.destLangs());
+
+var response = agent.chat(prompt, TranslationResult.class).await();
+TranslationResult result = response.value();
+// result.translations(): {"English": ["Hello", "Thank you", "Goodbye"], "Japanese": [...], ...}
 ```
 
 Provider Adapter 映射结构化输出协议，Runtime 校验并持久化最终结果后，SDK 才解码 record。中间流、
