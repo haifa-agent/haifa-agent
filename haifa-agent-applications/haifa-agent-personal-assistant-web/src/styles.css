@@ -586,7 +586,75 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .conversation-heading { grid-area: heading; min-height: 48px; }
 .conversation-heading h1, .panel-heading h2, .dialog-heading h2, .interaction-card h3 { margin: 0; }
-.conversation-heading h1 { max-width: 50vw; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 19px; }
+.conversation-heading h1 { max-width: 42vw; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 19px; }
+.conversation-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.conversation-model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 8px;
+  background: #f1f4fa;
+  border: 1px solid #dbe2ef;
+  border-radius: 9999px;
+  color: #27314f;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.conversation-model-badge:hover {
+  background: #e6ebf5;
+  border-color: #b9c7df;
+  color: #172033;
+}
+.conversation-model-badge.unavailable {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+.conversation-model-badge.unauthenticated {
+  border-color: #fed7aa;
+}
+.conversation-model-badge .conversation-model-icon {
+  color: #4f46e5;
+  flex-shrink: 0;
+}
+.conversation-model-badge.unavailable .conversation-model-icon {
+  color: #dc2626;
+}
+.conversation-model-name {
+  font-weight: 600;
+  color: #1e293b;
+}
+.conversation-model-provider {
+  color: #64748b;
+  font-size: 11px;
+}
+.conversation-model-mode {
+  padding: 1px 5px;
+  background: #e0e7ff;
+  color: #3730a3;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.conversation-model-arrow {
+  color: #8b94a6;
+  margin-left: 1px;
+  transition: transform 0.15s ease;
+}
+.conversation-model-badge:hover .conversation-model-arrow {
+  color: #475569;
+  transform: translateY(1px);
+}
 .run-state { padding: 6px 10px; color: #4260c8; font-size: 11px; font-weight: 700; border-radius: 999px; background: #eaf0ff; }
 
 .messages {
