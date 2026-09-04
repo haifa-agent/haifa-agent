@@ -211,7 +211,14 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                             "failureActionCode", "CHECK_GIT_AVAILABILITY",
                             "retryable", false));
         } catch (IllegalArgumentException exception) {
-            return failure("Workspace file arguments are invalid", Map.of("errorCode", "INVALID_ARGUMENT"));
+            return failure(
+                    "Workspace file arguments are invalid",
+                    Map.of(
+                            "errorCode", "INVALID_ARGUMENT",
+                            "stableFailureCode", "INVALID_ARGUMENT",
+                            "failureCategory", "INVALID_INPUT",
+                            "failureActionCode", "READ_CURRENT_STATE",
+                            "retryable", false));
         }
     }
 
