@@ -85,6 +85,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private io.haifa.agent.core.run.AgentRunId outputRunId;
     private RunOutputCursor outputCursor = RunOutputCursor.BEFORE_FIRST;
     private boolean awaitingNewSessionMessage;
+    private boolean automaticLastSessionLoadPending;
     private List<CodingSessionSummary> resumeOptions = List.of();
     private List<CodingQueuedMessage> restoreOptions = List.of();
     private List<CodingModelOption> modelOptions = List.of();
@@ -334,18 +335,23 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
-    /** Loads the initial session before the TUI event loop starts; interactive session changes use background effects. */
+    /** Loads an explicitly selected session; interactive session changes use background effects. */
     public void open(AgentSessionId sessionId) {
+        automaticLastSessionLoadPending = false;
         applyLoadedSession(readSession(client.open(sessionId), Optional.empty(), null, RunOutputCursor.BEFORE_FIRST));
     }
 
-    /** Applies a bounded startup Resume intent before the TUI event loop starts. */
+    /** Starts a bounded startup intent without blocking the terminal event loop. */
     public void start(CodingTerminalStartup startup) {
         Objects.requireNonNull(startup, "startup must not be null");
         try {
             switch (startup.mode()) {
                 case EMPTY -> {}
                 case SELECTOR -> showResumeOptions(client.list(projectId, 50));
+                case AUTO_LAST -> {
+                    startAutomaticLastSessionLoad();
+                    return;
+                }
                 case LAST -> {
                     List<CodingSessionSummary> sessions = client.list(projectId, 1);
                     if (sessions.isEmpty()) {
@@ -356,11 +362,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 }
                 case SESSION -> openForResume(startup.sessionId().orElseThrow(), startup.prompt());
             }
-            if (state.selector().isEmpty() && authentication.connectionRequired()) {
-                apply(new TerminalUiAction.SelectorOpened(
-                        new TerminalSelector("auth-login", "Connect a model to get started", connectionOptions(), 0)));
-                apply(new TerminalUiAction.StatusChanged("A model connection is required before the first prompt"));
-            }
+            offerAuthenticationOnboarding();
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         } catch (IllegalArgumentException
@@ -368,6 +370,57 @@ public final class CodingTerminalController implements AutoCloseable {
                 | SecurityException
                 | UnsupportedOperationException exception) {
             apply(new TerminalUiAction.RecoverableFailure(safeFailureCode(exception)));
+        }
+    }
+
+    private void startAutomaticLastSessionLoad() {
+        automaticLastSessionLoadPending = true;
+        apply(new TerminalUiAction.StatusChanged("Loading most recent session"));
+        submitEffect(
+                () -> {
+                    List<CodingSessionSummary> sessions = client.list(projectId, 1);
+                    Optional<LoadedSession> loaded = sessions.isEmpty()
+                            ? Optional.empty()
+                            : Optional.of(readSession(
+                                    client.open(sessions.getFirst().sessionId()),
+                                    Optional.empty(),
+                                    null,
+                                    RunOutputCursor.BEFORE_FIRST));
+                    return () -> completeAutomaticLastSessionLoad(loaded);
+                },
+                this::completeAutomaticLastSessionLoadFailure);
+    }
+
+    private void completeAutomaticLastSessionLoad(Optional<LoadedSession> loaded) {
+        if (!automaticLastSessionLoadCanApply()) return;
+        automaticLastSessionLoadPending = false;
+        if (loaded.isPresent()) {
+            applyLoadedSession(loaded.orElseThrow());
+        } else {
+            apply(new TerminalUiAction.StatusChanged("Idle"));
+        }
+        offerAuthenticationOnboarding();
+    }
+
+    private void completeAutomaticLastSessionLoadFailure(String code) {
+        if (!automaticLastSessionLoadCanApply()) return;
+        automaticLastSessionLoadPending = false;
+        apply(new TerminalUiAction.RecoverableFailure(code));
+        offerAuthenticationOnboarding();
+    }
+
+    private boolean automaticLastSessionLoadCanApply() {
+        return automaticLastSessionLoadPending
+                && state.session().isEmpty()
+                && state.selector().isEmpty()
+                && !awaitingNewSessionMessage;
+    }
+
+    private void offerAuthenticationOnboarding() {
+        if (state.selector().isEmpty() && authentication.connectionRequired()) {
+            apply(new TerminalUiAction.SelectorOpened(
+                    new TerminalSelector("auth-login", "Connect a model to get started", connectionOptions(), 0)));
+            apply(new TerminalUiAction.StatusChanged("A model connection is required before the first prompt"));
         }
     }
 
