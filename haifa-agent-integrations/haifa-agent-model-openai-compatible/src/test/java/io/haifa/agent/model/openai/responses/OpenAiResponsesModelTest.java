@@ -158,10 +158,56 @@ class OpenAiResponsesModelTest {
 
         JsonNode input = json.readTree(requestBody.get()).path("input");
         assertThat(input.get(1).path("type").asText()).isEqualTo("reasoning");
-        assertThat(input.get(1).path("content").asText()).isEqualTo("controlled reasoning continuation");
-        assertThat(input.get(1).path("content").asText()).doesNotContain("SensitiveModelReasoning[");
+        assertThat(input.get(1).path("content").isArray()).isTrue();
+        assertThat(input.get(1).path("content").get(0).path("type").asText()).isEqualTo("reasoning_text");
+        assertThat(input.get(1).path("content").get(0).path("text").asText())
+                .isEqualTo("controlled reasoning continuation")
+                .doesNotContain("SensitiveModelReasoning[");
         assertThat(input.get(2).path("type").asText()).isEqualTo("function_call");
         assertThat(input.get(3).path("type").asText()).isEqualTo("function_call_output");
+    }
+
+    @Test
+    void replaysTwoDeepSeekFunctionCallsBeforeTheirPairedResults() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-follow-up","status":"completed","model":"deepseek-v4-flash",
+                 "output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed",
+                   "content":[{"type":"output_text","text":"done"}]}],
+                 "usage":{"input_tokens":12,"output_tokens":2}}
+                """));
+        var first = new ModelToolCall(new ProviderToolCallCorrelationId("call-deepseek-1"), "lookup_alpha", Map.of());
+        var second = new ModelToolCall(new ProviderToolCallCorrelationId("call-deepseek-2"), "lookup_beta", Map.of());
+        var request = request(
+                deepSeekSnapshot(),
+                List.of(
+                        ModelMessage.text(ModelMessageRole.USER, "use both lookups"),
+                        ModelMessage.assistant(
+                                "", List.of(first, second), SensitiveModelReasoning.of("controlled continuation")),
+                        ModelMessage.tool(first.providerCorrelationId(), "alpha-result"),
+                        ModelMessage.tool(second.providerCorrelationId(), "beta-result")),
+                List.of(),
+                Map.of());
+
+        model().invoke(request);
+
+        JsonNode input = json.readTree(requestBody.get()).path("input");
+        assertThat(input)
+                .extracting(item -> item.path("type").asText())
+                .containsExactly(
+                        "message",
+                        "reasoning",
+                        "function_call",
+                        "function_call",
+                        "function_call_output",
+                        "function_call_output");
+        assertThat(input.get(1).path("content").get(0).path("type").asText()).isEqualTo("reasoning_text");
+        assertThat(input.get(2).path("call_id").asText()).isEqualTo("call-deepseek-1");
+        assertThat(input.get(3).path("call_id").asText()).isEqualTo("call-deepseek-2");
+        assertThat(input.get(4).path("call_id").asText()).isEqualTo("call-deepseek-1");
+        assertThat(input.get(5).path("call_id").asText()).isEqualTo("call-deepseek-2");
     }
 
     @Test
