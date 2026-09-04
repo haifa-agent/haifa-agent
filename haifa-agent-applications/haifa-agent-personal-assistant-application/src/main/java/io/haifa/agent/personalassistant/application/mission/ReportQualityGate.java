@@ -34,6 +34,9 @@ public final class ReportQualityGate {
             "<!--\\s*haifa-single-source-risk:\\s*([a-z0-9][a-z0-9-]{0,127})\\s*-->", Pattern.CASE_INSENSITIVE);
     private static final String UNVERIFIED_WARNING = "本报告包含尚未充分核实的判断，不应解读为所有关键结论均已确认。";
     private static final Pattern MARKDOWN_DECORATION = Pattern.compile("(?m)^[#>*+`|: -]+|[\\[\\]()`*_~]");
+    private static final Pattern MECHANICAL_AUDIT_LABEL = Pattern.compile(
+            "(?m)^\\s*-\\s*(?:证据|反证与限制|反证|推断|会改变判断的证据)[：:]|\\b(?:confirmed fact|integrated inference|third-party prediction)\\b",
+            Pattern.CASE_INSENSITIVE);
 
     public Result evaluate(String markdown, List<String> requiredTaskIds, Set<String> availableSourceIds) {
         return evaluate(markdown, requiredTaskIds, availableSourceIds, EvidenceSummary.empty());
@@ -71,7 +74,7 @@ public final class ReportQualityGate {
                 .toList();
         for (String taskId : requiredTaskIds) {
             if (taskMarkers.contains(taskId.toLowerCase(java.util.Locale.ROOT))
-                    && !hasSubstantiveText(taskBody(markdown, taskId), 24)
+                    && !hasSubstantiveText(taskBody(markdown, taskId), 60)
                     && !uncoveredTasks.contains(taskId)) {
                 uncoveredTasks = append(uncoveredTasks, taskId);
             }
@@ -93,6 +96,13 @@ public final class ReportQualityGate {
         if (!hasSubstantiveText(markdown, 160)) {
             failures.add(new Failure("REPORT_ONLY_METADATA", List.of()));
         }
+        if (countMatches(markdown, MECHANICAL_AUDIT_LABEL) > 3) {
+            failures.add(new Failure("REPORT_MECHANICAL_AUDIT_LABELS_EXCESSIVE", List.of()));
+        }
+        int minDepth = Math.min(800, Math.max(200, requiredTaskIds.size() * 120));
+        if (!hasSubstantiveText(markdown, minDepth)) {
+            failures.add(new Failure("REPORT_INSUFFICIENT_DEPTH", List.of()));
+        }
         Matcher counts = EVIDENCE_COUNTS.matcher(markdown);
         boolean countsMatch = counts.find()
                 && Integer.parseInt(counts.group(1)) == evidence.totalClaims()
@@ -110,6 +120,13 @@ public final class ReportQualityGate {
             failures.add(new Failure("REPORT_SINGLE_SOURCE_RISK_MISSING", List.of()));
         }
         return new Result(failures.isEmpty(), failures);
+    }
+
+    private static int countMatches(String text, Pattern pattern) {
+        Matcher matcher = pattern.matcher(text);
+        int count = 0;
+        while (matcher.find()) count++;
+        return count;
     }
 
     public boolean readable(String markdown) {

@@ -277,6 +277,107 @@ class MissionArtifactPublisherTest {
                 .isInstanceOf(MissionException.class);
     }
 
+    @Test
+    void publishesStandardMissionWithV2MarkdownReportAsPrimaryArtifact() throws Exception {
+        var metadata = new InMemoryArtifactStore();
+        var publisher = publisher(metadata, newIds());
+        var intent = new MissionSynthesisIntent(
+                "mission-std-1",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Analyze distributed transaction protocols",
+                List.of("{\"task\":\"completed\"}"),
+                List.of());
+
+        String richAnswerMarkdown = """
+                # 分布式事务协议对比分析
+
+                ## 核心机制概述
+                在分布式系统中，保证跨节点操作的一致性通常采用两阶段提交（2PC）、三阶段提交（3PC）或基于 Saga 的补偿机制。
+                两阶段提交通过协调者与参与者之间的 Prepare 和 Commit 两个阶段保证强一致性，但在协调者故障时可能发生阻塞。
+
+                ## 技术参数与选型权衡
+                | 方案 | 一致性级别 | 吞吐能力 | 延迟 | 容错复杂度 |
+                | --- | --- | --- | --- | --- |
+                | 2PC | 强一致（ACID） | 低（阻塞锁） | 高（两轮网络交互） | 协调者单点风险高 |
+                | 3PC | 强一致（ACID） | 较低 | 极高（三轮网络交互） | 降低阻塞概率 |
+                | Saga | 最终一致 | 极高（无长事务锁）| 低 | 需实现向前重试或向后补偿 |
+
+                ## 实践建议
+                对于长事务金融计费业务，建议采用 Saga 模式编排；跨行即时结算采用 TCC 模式，严格避免直接使用分布式两阶段阻塞长事务。
+                """;
+
+        String standardV2Result = """
+                {
+                  "schemaVersion": "pa.mission-final-result/v2",
+                  "directAnswer": "分布式事务在强一致与高吞吐之间存在根本权衡，短事务推荐2PC，长流程业务建议采用Saga编排。",
+                  "answerMarkdown": "%s",
+                  "completedItems": ["对比 2PC 与 3PC 机制", "分析 Saga 补偿模式"],
+                  "failedItems": [],
+                  "artifactRefs": [],
+                  "sourceRefs": ["https://research.example.com/transactions"],
+                  "unverifiedClaims": [],
+                  "unresolvedQuestions": [],
+                  "residualRisks": [],
+                  "completionKind": "COMPLETE"
+                }
+                """.formatted(richAnswerMarkdown.replace("\r\n", "\\n").replace("\n", "\\n").replace("\"", "\\\""));
+
+        var published = publisher.publish(intent, synthesis(standardV2Result));
+
+        assertThat(published.artifactIds()).hasSize(2);
+        assertThat(published.completionKind()).isEqualTo("COMPLETE");
+        var artifacts = metadata.findByProject("mission-mission-std-1");
+        assertThat(artifacts).extracting(value -> value.title())
+                .containsExactlyInAnyOrder("mission-result.json", "mission-report.md");
+        var reportArtifact = artifacts.stream()
+                .filter(a -> a.title().equals("mission-report.md"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(published.finalArtifactId()).isEqualTo(reportArtifact.id().value());
+    }
+
+    @Test
+    void publishesResearchTaskWithV2FindingsAndTaskSummary() throws Exception {
+        ObjectNode taskV2 = (ObjectNode) MAPPER.readTree(
+                """
+                {
+                  "schemaVersion": "pa.research-task-result/v2",
+                  "taskSummary": "Deep analysis of cloud infrastructure costs and optimization strategies.",
+                  "queries": [{"query": "cloud infrastructure", "phase": "DISCOVER"}],
+                  "findings": [{
+                    "findingId": "finding-1",
+                    "title": "Spot instance reclamation",
+                    "mechanism": "Cloud providers terminate spot nodes with 2-minute notice when capacity is constrained.",
+                    "keyParameters": ["notice period: 120s", "cost discount: 70-90%%"],
+                    "evidenceSummary": "Documented in vendor SLAs and independently benchmarked.",
+                    "implications": "Requires state checkpointing or stateless workload design.",
+                    "limitations": "Unpredictable interruption spikes.",
+                    "supportingSourceIds": ["source-1", "source-2"],
+                    "opposingSourceIds": []
+                  }],
+                  "sources": [
+                    {"sourceId":"source-1","locator":"https://research.stub/source-1","normalizedLocator":"https://research.stub/source-1","locatorDigest":"sha256:%s","title":"Primary","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z","status":"FETCHED","excerpt":"Primary evidence.","contentDigest":"sha256:%s"},
+                    {"sourceId":"source-2","locator":"https://research.stub/source-2","normalizedLocator":"https://research.stub/source-2","locatorDigest":"sha256:%s","title":"Independent","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-02-01T00:00:00Z","status":"FETCHED","excerpt":"Independent evidence.","contentDigest":"sha256:%s"}
+                  ],
+                  "artifactRefs": [],
+                  "unresolvedQuestions": ["Regional pricing variance"],
+                  "stopReason": "SUFFICIENT_EVIDENCE",
+                  "limitsUsed": {"searchCalls": 1, "fetchCalls": 2, "sources": 2, "contentBytes": 2048}
+                }
+                """.formatted("a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64)));
+
+        var publisher = publisher(new InMemoryArtifactStore(), newIds());
+        var published = publisher.publish(intent(taskV2), synthesis(validReport()));
+        JsonNode manifest = MAPPER.readTree(published.structuredResult());
+
+        assertThat(published.artifactIds()).hasSize(5);
+        assertThat(manifest.path("schemaVersion").asText()).isEqualTo("pa.research-delivery/v2");
+        assertThat(manifest.path("completionKind").asText()).isEqualTo("COMPLETE");
+        assertThat(manifest.path("evidenceSummary").path("totalClaimCount").asInt()).isEqualTo(1);
+    }
+
     private static void assertInvalid(ThrowingMutation mutation) throws Exception {
         ObjectNode task = validTask();
         mutation.apply(task);

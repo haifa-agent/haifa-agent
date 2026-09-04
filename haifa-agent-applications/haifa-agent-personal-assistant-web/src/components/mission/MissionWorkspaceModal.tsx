@@ -362,7 +362,8 @@ export function MissionFinalResult({
       {result.degraded && <p>下一步：查看已完成内容；如需重新调研，请按现有产品能力重新创建 Mission。</p>}
     </section>;
   }
-  const resultTitle = result.schemaVersion === "pa.mission-final-result/v1"
+  const isStandardResult = result.schemaVersion === "pa.mission-final-result/v1" || result.schemaVersion === "pa.mission-final-result/v2";
+  const resultTitle = isStandardResult
     ? "Mission 最终报告"
     : "历史最终报告";
   const completionLabel = result.completionKind === "COMPLETE"
@@ -370,7 +371,21 @@ export function MissionFinalResult({
     : result.completionKind === "PARTIAL"
       ? "部分完成"
       : result.completionKind;
-  return <section className="research-result"><h4>{resultTitle}{completionLabel && ` · ${completionLabel}`}</h4>{result.directAnswer && <p className="research-answer">{result.directAnswer}</p>}{(result.completedItems?.length ?? 0) > 0 && <><h5>完成项</h5><ul>{result.completedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.failedItems?.length ?? 0) > 0 && <><h5>未完成项</h5><ul>{result.failedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.sourceRefs?.length ?? 0) > 0 && <><h5>参考来源</h5><ul>{result.sourceRefs!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unverifiedClaims?.length ?? 0) > 0 && <><h5>未验证结论</h5><ul>{result.unverifiedClaims!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.residualRisks?.length ?? 0) > 0 && <><h5>剩余风险</h5><ul>{result.residualRisks!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unresolvedQuestions?.length ?? 0) > 0 && <><h5>未决问题</h5><ul>{result.unresolvedQuestions!.map((item) => <li key={item}>{item}</li>)}</ul></>}</section>;
+  const hasAuditItems = (result.completedItems?.length ?? 0) > 0 ||
+    (result.failedItems?.length ?? 0) > 0 ||
+    (result.unverifiedClaims?.length ?? 0) > 0 ||
+    (result.residualRisks?.length ?? 0) > 0 ||
+    (result.unresolvedQuestions?.length ?? 0) > 0;
+  return <section className="research-result">
+    <h4>{resultTitle}{completionLabel && ` · ${completionLabel}`}</h4>
+    {result.directAnswer && (!result.answerMarkdown || result.answerMarkdown.trim() !== result.directAnswer.trim()) && <p className="research-answer">{result.directAnswer}</p>}
+    {result.answerMarkdown && <div className="artifact-markdown-reader"><MessageContent text={result.answerMarkdown} /></div>}
+    {(result.sourceRefs?.length ?? 0) > 0 && <><h5>参考来源</h5><ul>{result.sourceRefs!.map((item) => {
+      const isUrl = /^https?:\/\//i.test(item.trim());
+      return <li key={item}>{isUrl ? <a href={item.trim()} target="_blank" rel="noopener noreferrer">{item}</a> : item}</li>;
+    })}</ul></>}
+    {hasAuditItems && <details className="artifact-technical-data"><summary>执行结果审计与详情</summary>{(result.completedItems?.length ?? 0) > 0 && <><h5>完成项</h5><ul>{result.completedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.failedItems?.length ?? 0) > 0 && <><h5>未完成项</h5><ul>{result.failedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unverifiedClaims?.length ?? 0) > 0 && <><h5>未验证结论</h5><ul>{result.unverifiedClaims!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.residualRisks?.length ?? 0) > 0 && <><h5>剩余风险</h5><ul>{result.residualRisks!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unresolvedQuestions?.length ?? 0) > 0 && <><h5>未决问题</h5><ul>{result.unresolvedQuestions!.map((item) => <li key={item}>{item}</li>)}</ul></>}</details>}
+  </section>;
 }
 
 
