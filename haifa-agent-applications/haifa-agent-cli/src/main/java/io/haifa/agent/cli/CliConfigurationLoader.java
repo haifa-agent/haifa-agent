@@ -145,6 +145,7 @@ final class CliConfigurationLoader {
                 approvalThreshold,
                 timeout,
                 Math.toIntExact(number(runtime, "maxIterations", defaults.maxIterations())),
+                number(runtime, "maxModelCalls", defaults.maxModelCalls()),
                 number(runtime, "maxToolCalls", defaults.maxToolCalls()),
                 persistence);
     }

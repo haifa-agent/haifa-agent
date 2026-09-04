@@ -65,6 +65,7 @@ import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.retry.BackoffStrategy;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
+import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
@@ -372,6 +373,8 @@ class RuntimeCoreTest {
         assertThat(persisted)
                 .extracting(call -> call.arguments().values().get("workdir"))
                 .containsExactly("success", "failure", "invalid", "unknown");
+        assertThat(persisted.get(1).error().orElseThrow().error().details())
+                .containsEntry("stableFailureCode", "EXPECTED_FAILURE");
         assertThat(fixture.journal.state(accepted.runId(), persisted.get(0).idempotencyKey()))
                 .contains(ToolJournalState.COMPLETED);
         assertThat(fixture.journal.state(accepted.runId(), persisted.get(1).idempotencyKey()))
@@ -1617,6 +1620,36 @@ class RuntimeCoreTest {
             assertThat(event.type()).isEqualTo("tool.cancelled");
             assertThat(event.data()).containsEntry("reasonCode", "SIBLING_TOOL_FAILED");
         });
+    }
+
+    @Test
+    void policyDenialDoesNotConsumeTheRepairRetryBudget() {
+        AtomicInteger toolCalls = new AtomicInteger();
+        AgentChatModel model = model(
+                new ToolCallDecision(List.of(
+                        toolRequest("denied", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of())))),
+                finalDecision("continued after policy denial"));
+        Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
+                        builder, "write", "1.0.0", "write.input", true, ToolPolicyDecision.DENY, request -> {
+                            toolCalls.incrementAndGet();
+                            return new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false);
+                        })
+                .repairRetry(new RepairRetryPolicy(0)));
+
+        var accepted = fixture.runtime.start(request("policy-denial"));
+        fixture.scheduler.runAll();
+
+        assertThat(toolCalls).hasValue(0);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.store.toolCalls(accepted.runId()))
+                .singleElement()
+                .satisfies(call -> assertThat(call.status().name()).isEqualTo("DENIED"));
+        assertThat(fixture.store.steps(accepted.runId()))
+                .filteredOn(step -> step.type() == AgentStepType.TOOL_EXECUTION)
+                .singleElement()
+                .satisfies(step -> assertThat(step.error().orElseThrow().error().details())
+                        .containsEntry("reason", "POLICY_DENIED"));
     }
 
     @Test

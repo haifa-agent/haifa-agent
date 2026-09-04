@@ -82,6 +82,9 @@
 - Coding Agent 默认不再向模型披露 Java `file.search`；仓库级文件发现和内容搜索改走通用
   `execution_run` OS CLI 主路径，优先使用当前 Shell `PATH` 中的 `rg --files` / `rg`，不可用时由模型
   选择平台适配的替代命令。`file.search` 仍可显式启用以兼容既有配置，产品代码不拼接搜索命令选项。
+- Coding `execution.run` 1.8.0 默认只接受退出码 0，并通过显式 `expectedExitCodes` 冻结有文档依据的
+  正常非零结果；生产 Broker 的 `NON_ZERO_EXIT` 与 Tool 语义解释保持一致，Timeout、Cancel 和未知终止
+  不会被该契约改写为成功。
 - Haifa Coding Agent 本地发行包默认改为 `SQLITE_WITH_JSONL + protection=NONE`：数据位于发行目录
   `data/`，无需 continuation key；可显式切换 `AES_GCM + env://HAIFA_CONTINUATION_KEY`。
 - Personal Assistant 真实环境的 PowerShell、POSIX、Python 生命周期脚本及单测统一迁移至根目录

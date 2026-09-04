@@ -103,13 +103,15 @@ class ProjectApplicationTest {
                 .containsExactly("execution_run", "file_read");
         var execution = disclosed.snapshot().bindings().getFirst();
         var fileRead = disclosed.snapshot().bindings().get(1);
-        assertThat(execution.definition().version().value()).isEqualTo("1.7.2");
+        assertThat(execution.definition().version().value()).isEqualTo("1.8.0");
         assertThat(fileRead.definition().version().value()).isEqualTo("2.0.0");
         @SuppressWarnings("unchecked")
         var properties = (java.util.Map<String, Object>)
                 execution.definition().inputSchema().document().get("properties");
+        assertThat(properties).containsKey("expectedExitCodes");
         assertThat(properties)
-                .containsOnlyKeys("command", "workdir", "timeoutMillis", "description", "operationFamily");
+                .containsOnlyKeys(
+                        "command", "workdir", "timeoutMillis", "expectedExitCodes", "description", "operationFamily");
         assertThat(execution.definition().inputSchema().document())
                 .containsEntry("required", List.of("command"))
                 .containsEntry("additionalProperties", false);

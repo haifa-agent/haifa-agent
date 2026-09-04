@@ -96,7 +96,7 @@ public final class HaifaCliMain {
                     : CliTraceOutput.open(parsed.trace(), parsed.traceFile(), error)) {
                 if (terminal) {
                     CodingTerminalStartup startup =
-                            parsed.resume().map(CliResumeRequest::startup).orElseGet(CodingTerminalStartup::empty);
+                            parsed.resume().map(CliResumeRequest::startup).orElseGet(CodingTerminalStartup::autoLast);
                     terminalRunner.run(workspace, configuration, startup, output, trace);
                     return 0;
                 }

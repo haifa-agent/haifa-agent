@@ -427,6 +427,62 @@ class CodingTerminalControllerTest {
     }
 
     @Test
+    void automaticStartupLoadsTheLastSessionOnTheInteractiveEffectQueue() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.summaries = List.of(client.view.summary());
+        ArrayDeque<Runnable> effects = new ArrayDeque<>();
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                effects::addLast);
+
+        controller.start(CodingTerminalStartup.autoLast());
+        controller.accept(input(TerminalInput.Kind.EDITOR_CHANGED, "draft while loading"));
+
+        assertThat(client.listCalls).isZero();
+        assertThat(client.opened).isEmpty();
+        assertThat(controller.state().session()).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft while loading");
+        assertThat(effects).hasSize(1);
+
+        effects.removeFirst().run();
+        assertThat(controller.state().session()).isEmpty();
+
+        controller.drainEvents();
+
+        assertThat(client.listCalls).isEqualTo(1);
+        assertThat(client.listLimit).isEqualTo(1);
+        assertThat(client.opened).containsExactly(SESSION_ID);
+        assertThat(controller.state().session()).contains(client.view);
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft while loading");
+    }
+
+    @Test
+    void automaticStartupKeepsTheExistingEmptyStateWhenTheProjectHasNoSessions() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        ArrayDeque<Runnable> effects = new ArrayDeque<>();
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                effects::addLast);
+
+        controller.start(CodingTerminalStartup.autoLast());
+        effects.removeFirst().run();
+        controller.drainEvents();
+
+        assertThat(client.listCalls).isEqualTo(1);
+        assertThat(controller.state().session()).isEmpty();
+        assertThat(controller.state().recoverableError()).isEmpty();
+        assertThat(controller.state().status()).isEqualTo("Idle");
+    }
+
+    @Test
     void startupPromptDoesNotTakeOverAnActiveRun() {
         FakeClient client = new FakeClient(activeView());
         var controller = controller(client);
@@ -1208,6 +1264,7 @@ class CodingTerminalControllerTest {
         private ProjectProductException submitFailure;
         private ProjectProductException responseFailure;
         private int submitAttempts;
+        private int listCalls;
         private int listLimit;
         private final List<String> submittedMessages = new ArrayList<>();
         private final List<String> steeredMessages = new ArrayList<>();
@@ -1254,6 +1311,7 @@ class CodingTerminalControllerTest {
 
         @Override
         public List<CodingSessionSummary> list(ProjectId projectId, int limit) {
+            listCalls++;
             listLimit = limit;
             return summaries;
         }

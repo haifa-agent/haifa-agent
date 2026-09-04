@@ -32,7 +32,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
         properties = "spring.config.location=classpath:/application-deepseek-vision-live.yml")
 @AutoConfigureWebTestClient
 @Tag("slow")
-class PersonalAssistantDeepSeekVisionLiveTest {
+class PersonalAssistantVisionLiveTest {
     private static final String MODEL_ID = "deepseek-v4-flash-vision-exp";
     private static final String FIXTURE = "fixtures/personal-assistant/deepseek-vision-live-v1/indoor-door-people.webp";
     private static final String FIXTURE_SHA256 = "b02eb0f560b43ffd898a094db0aa36d54959513f807fed35d032cafe946ffbf5";
@@ -55,7 +55,7 @@ class PersonalAssistantDeepSeekVisionLiveTest {
 
     @Test
     @EnabledIfEnvironmentVariable(named = "HAIFA_PERSONAL_LIVE_SMOKE", matches = "true")
-    void uploadsWebpAndVerifiesADeepSeekVisionResponse() throws Exception {
+    void uploadsWebpAndVerifiesAVisionResponse() throws Exception {
         Path image = fixture();
         byte[] bytes = Files.readAllBytes(image);
         assertThat(sha256(bytes)).isEqualTo(FIXTURE_SHA256);
