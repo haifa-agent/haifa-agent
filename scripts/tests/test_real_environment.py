@@ -46,6 +46,20 @@ class RealEnvironmentTest(unittest.TestCase):
             "https://ws-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
             environment["HAIFA_PERSONAL_BAILIAN_ENDPOINT"],
         )
+
+    def test_backend_environment_injects_antigravity_runtime_configuration(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            root, root / "server", root / "web", root / "runtime", root / "runtime/data",
+            root / "runtime/logs", root / "runtime/last-start.json", root / "runtime/last-stop.json", root / "mvnw")
+        environment = real_environment.backend_environment(
+            "deepseek-secret", "deepseek-chat-flash", None, "aliyun-secret", "continuation-secret",
+            paths, root / "skills", None, antigravity=real_environment.AntigravityConfiguration(
+                "https://cloudcode.test/v1", "gemini-test", "http://127.0.0.1:9999"))
+        self.assertEqual("https://cloudcode.test/v1", environment["HAIFA_ANTIGRAVITY_MODEL_ENDPOINT"])
+        self.assertEqual("http://127.0.0.1:9999", environment["HAIFA_ANTIGRAVITY_PROXY_URL"])
+        self.assertEqual("gemini-test", environment["HAIFA_ANTIGRAVITY_MODEL"])
+
     @staticmethod
     def write_server_jar(path: Path, payload: bytes = b"application") -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
