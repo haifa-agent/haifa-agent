@@ -19,6 +19,7 @@ public final class StoredExternalCredential implements StoredModelCredential {
     private final long expiresAtEpochMillis;
     private final long issuedAtEpochMillis;
     private final String accountId;
+    private final Optional<String> reasonCode;
 
     public StoredExternalCredential(
             LocalModelAuthReference reference,
@@ -29,6 +30,28 @@ public final class StoredExternalCredential implements StoredModelCredential {
             long expiresAtEpochMillis,
             long issuedAtEpochMillis,
             String accountId) {
+        this(
+                reference,
+                methodId,
+                clientRegistrationRef,
+                accessToken,
+                refreshToken,
+                expiresAtEpochMillis,
+                issuedAtEpochMillis,
+                accountId,
+                Optional.empty());
+    }
+
+    public StoredExternalCredential(
+            LocalModelAuthReference reference,
+            ExternalLoginMethodId methodId,
+            String clientRegistrationRef,
+            String accessToken,
+            String refreshToken,
+            long expiresAtEpochMillis,
+            long issuedAtEpochMillis,
+            String accountId,
+            Optional<String> reasonCode) {
         this.reference = Objects.requireNonNull(reference, "reference must not be null");
         this.methodId = Objects.requireNonNull(methodId, "methodId must not be null");
         this.clientRegistrationRef = safeIdentity(clientRegistrationRef, "clientRegistrationRef", 128);
@@ -40,6 +63,8 @@ public final class StoredExternalCredential implements StoredModelCredential {
         this.expiresAtEpochMillis = expiresAtEpochMillis;
         this.issuedAtEpochMillis = issuedAtEpochMillis;
         this.accountId = safeIdentity(accountId, "accountId", 256);
+        this.reasonCode = Objects.requireNonNull(reasonCode, "reasonCode must not be null")
+                .map(code -> safeIdentity(code, "reasonCode", 96));
     }
 
     @Override
@@ -75,6 +100,23 @@ public final class StoredExternalCredential implements StoredModelCredential {
         return accountId;
     }
 
+    public Optional<String> reasonCode() {
+        return reasonCode;
+    }
+
+    public StoredExternalCredential withReasonCode(String reasonCode) {
+        return new StoredExternalCredential(
+                reference,
+                methodId,
+                clientRegistrationRef,
+                accessToken,
+                refreshToken,
+                expiresAtEpochMillis,
+                issuedAtEpochMillis,
+                accountId,
+                Optional.ofNullable(reasonCode));
+    }
+
     public boolean validBeyond(Instant instant) {
         return expiresAtEpochMillis
                 > Objects.requireNonNull(instant, "instant must not be null").toEpochMilli();
@@ -86,10 +128,12 @@ public final class StoredExternalCredential implements StoredModelCredential {
                 reference,
                 reference.providerId(),
                 LocalModelConnectionView.Method.EXTERNAL_LOGIN,
-                LocalModelConnectionView.Status.AUTHENTICATED,
+                reasonCode.isPresent()
+                        ? LocalModelConnectionView.Status.REAUTH_REQUIRED
+                        : LocalModelConnectionView.Status.AUTHENTICATED,
                 "Account " + accountFingerprint(accountId),
                 OptionalLong.of(expiresAtEpochMillis),
-                Optional.empty(),
+                reasonCode,
                 unofficialLocalCompatibility);
     }
 
