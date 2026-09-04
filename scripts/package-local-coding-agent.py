@@ -187,11 +187,12 @@ def yaml_single_quoted(value: str) -> str:
 
 def validate_model_configuration(content: str) -> None:
     required_fragments = (
-        "apiBindings:",
-        "style: openai-responses",
-        "endpoint: ${OPENAI_BASE_URL:",
-        "credentialRef: env://OPENAI_API_KEY",
-        "providerModelId: ${OPENAI_MODEL_ID:",
+        "allowedBindings:",
+        "deepseek-responses-flash",
+        "deepseek-anthropic-flash",
+        "bindingEndpointOverrides:",
+        "https://api.deepseek.com/anthropic",
+        "model-auth://deepseek/default",
     )
     missing = [fragment for fragment in required_fragments if fragment not in content]
     if missing:
@@ -200,6 +201,7 @@ def validate_model_configuration(content: str) -> None:
             + ", ".join(missing)
         )
     forbidden_fragments = (
+        "apiBindings:",
         "dialectId:",
         "dialectVersion:",
         "styleVersion:",
@@ -264,20 +266,12 @@ def print_next_steps(output_directory: Path) -> None:
         print(f"  $env:Path = '{output_directory};' + $env:Path")
         print("Set the model credential, enter any workspace, and launch:")
         print("  $env:DEEPSEEK_API_KEY = '<secret>'")
-        print("For the configured local OpenAI Responses gateway, use:")
-        print("  $env:OPENAI_BASE_URL = 'http://127.0.0.1:30000/v1'")
-        print("  $env:OPENAI_API_KEY = '<api-key>'")
-        print("  $env:OPENAI_MODEL_ID = '<model-id>'")
         print(r"  Set-Location D:\path\to\project")
     else:
         print("Add it to PATH:")
         print(f'  export PATH="{output_directory}:$PATH"')
         print("Set the model credential, enter any workspace, and launch:")
         print("  export DEEPSEEK_API_KEY='<secret>'")
-        print("For the configured local OpenAI Responses gateway, use:")
-        print("  export OPENAI_BASE_URL='http://127.0.0.1:30000/v1'")
-        print("  export OPENAI_API_KEY='<api-key>'")
-        print("  export OPENAI_MODEL_ID='<model-id>'")
         print("  cd /path/to/project")
     print("  haifa-coding")
 
