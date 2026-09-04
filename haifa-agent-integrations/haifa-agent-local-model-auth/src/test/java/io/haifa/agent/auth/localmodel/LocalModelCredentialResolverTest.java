@@ -105,6 +105,49 @@ class LocalModelCredentialResolverTest {
         assertThat(method.refreshes).hasValue(0);
     }
 
+    @Test
+    void refreshForcesExternalCredentialRefreshAndUpdatesStore() {
+        InMemoryStore store = new InMemoryStore();
+        LocalModelAuthReference reference = LocalModelAuthReference.parse("model-auth://future/default");
+        ExternalLoginMethodId methodId = new ExternalLoginMethodId("future-login");
+        store.save(new StoredExternalCredential(
+                reference, methodId, "registration", "old-access", "old-refresh", 10_000, 500, "account"));
+        RefreshMethod method = new RefreshMethod(methodId, "registration");
+        LocalModelCredentialResolver resolver = resolver(store, new ExternalLoginRegistry(List.of(method)), Map.of());
+
+        assertThat(resolver.refresh(new CredentialRef(reference.value())).value())
+                .isEqualTo("new-access");
+        assertThat(method.refreshes).hasValue(1);
+        assertThat(store.find(reference)).get().isInstanceOfSatisfying(StoredExternalCredential.class, credential -> {
+            assertThat(credential.accessToken()).isEqualTo("new-access");
+            assertThat(credential.reasonCode()).isEmpty();
+        });
+    }
+
+    @Test
+    void refreshFailureMarksReauthRequiredAndBlocksSubsequentResolution() {
+        InMemoryStore store = new InMemoryStore();
+        LocalModelAuthReference reference = LocalModelAuthReference.parse("model-auth://future/default");
+        ExternalLoginMethodId methodId = new ExternalLoginMethodId("future-login");
+        store.save(new StoredExternalCredential(
+                reference, methodId, "wrong-registration", "old-access", "old-refresh", 10_000, 500, "account"));
+        RefreshMethod method = new RefreshMethod(methodId, "registration");
+        LocalModelCredentialResolver resolver = resolver(store, new ExternalLoginRegistry(List.of(method)), Map.of());
+
+        assertThatThrownBy(() -> resolver.refresh(new CredentialRef(reference.value())))
+                .isInstanceOf(ExternalLoginMethodUnavailableException.class)
+                .hasMessage("AUTH_REAUTH_REQUIRED");
+
+        assertThat(store.find(reference)).get().isInstanceOfSatisfying(StoredExternalCredential.class, credential -> {
+            assertThat(credential.reasonCode()).contains("AUTH_REAUTH_REQUIRED");
+            assertThat(credential.safeView(false).status()).isEqualTo(LocalModelConnectionView.Status.REAUTH_REQUIRED);
+        });
+
+        assertThatThrownBy(() -> resolver.resolve(new CredentialRef(reference.value())))
+                .isInstanceOf(ExternalLoginMethodUnavailableException.class)
+                .hasMessage("AUTH_REAUTH_REQUIRED");
+    }
+
     private static LocalModelCredentialResolver resolver(
             InMemoryStore store, ExternalLoginRegistry registry, Map<String, String> environment) {
         return new LocalModelCredentialResolver(environment::get, store, registry, CLOCK, Duration.ofSeconds(5));

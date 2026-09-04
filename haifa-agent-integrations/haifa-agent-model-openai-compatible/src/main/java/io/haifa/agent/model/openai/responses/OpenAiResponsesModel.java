@@ -106,18 +106,12 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         HttpRequest httpRequest = request(request, dialect, credential, false);
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
-            byte[] body;
-            try {
-                body = readBounded(response.body(), maxResponseBytes);
-            } catch (ResponseTooLargeException exception) {
-                throw failure(
-                        request,
-                        ModelErrorCategory.MALFORMED_RESPONSE,
-                        false,
-                        response.statusCode(),
-                        "response_too_large",
-                        "provider response exceeds the configured size limit",
-                        exception);
+            byte[] body = readResponseBody(request, response);
+            if (response.statusCode() == 401) {
+                ResolvedCredential refreshed = refreshCredential(request);
+                HttpRequest retryRequest = request(request, dialect, refreshed, false);
+                response = http.send(retryRequest, HttpResponse.BodyHandlers.ofInputStream());
+                body = readResponseBody(request, response);
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw httpFailure(request, dialect, response.statusCode(), response.headers(), body);
@@ -161,13 +155,15 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         ModelStreamObservation observation = new ModelStreamObservation();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                byte[] errorBody;
-                try (InputStream body = response.body()) {
-                    errorBody = body.readNBytes(maxResponseBytes + 1);
+            if (response.statusCode() == 401) {
+                ResolvedCredential refreshed = refreshCredential(request);
+                HttpRequest retryRequest = request(request, dialect, refreshed, true);
+                response = http.send(retryRequest, HttpResponse.BodyHandlers.ofInputStream());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw httpFailure(request, dialect, response.statusCode(), response.headers(), readStreamErrorBody(response));
                 }
-                if (errorBody.length > maxResponseBytes) errorBody = new byte[0];
-                throw httpFailure(request, dialect, response.statusCode(), response.headers(), errorBody);
+            } else if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw httpFailure(request, dialect, response.statusCode(), response.headers(), readStreamErrorBody(response));
             }
             requireContentType(request, dialect, response, "text/event-stream");
             try (InputStream body = response.body()) {
@@ -235,21 +231,78 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         return dialect;
     }
 
+    private byte[] readResponseBody(AgentChatRequest request, HttpResponse<InputStream> response) throws IOException {
+        try {
+            return readBounded(response.body(), maxResponseBytes);
+        } catch (ResponseTooLargeException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    response.statusCode(),
+                    "response_too_large",
+                    "provider response exceeds the configured size limit",
+                    exception);
+        }
+    }
+
+    private byte[] readStreamErrorBody(HttpResponse<InputStream> response) {
+        byte[] errorBody;
+        try (InputStream body = response.body()) {
+            errorBody = body.readNBytes(maxResponseBytes + 1);
+        } catch (IOException exception) {
+            errorBody = new byte[0];
+        }
+        if (errorBody.length > maxResponseBytes) errorBody = new byte[0];
+        return errorBody;
+    }
+
     private ResolvedCredential credential(AgentChatRequest request) {
         try {
             ResolvedCredential credential = credentials.resolve(request.model().credentialRef());
             OpenAiCodexAuthentication.validateHeaderValue(credential.value(), "model credential");
             return credential;
         } catch (RuntimeException exception) {
+            String code = isReauthRequired(exception) ? "AUTH_REAUTH_REQUIRED" : "credential_unavailable";
             throw failure(
                     request,
                     ModelErrorCategory.AUTHENTICATION_FAILED,
                     false,
                     0,
-                    "credential_unavailable",
-                    "model credential is unavailable",
-                    null);
+                    code,
+                    "model credential is unavailable: " + code,
+                    exception);
         }
+    }
+
+    private ResolvedCredential refreshCredential(AgentChatRequest request) {
+        try {
+            ResolvedCredential refreshed = credentials.refresh(request.model().credentialRef());
+            OpenAiCodexAuthentication.validateHeaderValue(refreshed.value(), "model credential");
+            return refreshed;
+        } catch (RuntimeException exception) {
+            String code = isReauthRequired(exception) ? "AUTH_REAUTH_REQUIRED" : "credential_unavailable";
+            throw failure(
+                    request,
+                    ModelErrorCategory.AUTHENTICATION_FAILED,
+                    false,
+                    401,
+                    code,
+                    "model credential refresh failed: " + code,
+                    exception);
+        }
+    }
+
+    private static boolean isReauthRequired(Throwable exception) {
+        Throwable current = exception;
+        while (current != null) {
+            String msg = current.getMessage();
+            if (msg != null && msg.contains("AUTH_REAUTH_REQUIRED")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private HttpRequest request(

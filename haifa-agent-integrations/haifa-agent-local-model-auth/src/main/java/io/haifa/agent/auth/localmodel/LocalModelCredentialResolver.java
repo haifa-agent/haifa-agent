@@ -55,12 +55,33 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
                 store.find(localReference).orElseThrow(() -> new IllegalStateException("AUTH_CREDENTIAL_UNAVAILABLE"));
         if (credential instanceof StoredApiKeyCredential apiKey) return new ResolvedCredential(apiKey.apiKey());
         StoredExternalCredential external = (StoredExternalCredential) credential;
+        if (external.reasonCode().isPresent()) {
+            throw new ExternalLoginMethodUnavailableException(external.reasonCode().get());
+        }
         Instant refreshBefore = clock.instant().plus(refreshSafetyWindow);
         if (external.validBeyond(refreshBefore)) {
             registry.prepareIfRegistered(external);
             return new ResolvedCredential(external.accessToken());
         }
-        StoredExternalCredential refreshed = refreshSingleFlight(external, refreshBefore);
+        StoredExternalCredential refreshed = refreshSingleFlight(external, refreshBefore, false);
+        registry.prepareIfRegistered(refreshed);
+        return new ResolvedCredential(refreshed.accessToken());
+    }
+
+    @Override
+    public ResolvedCredential refresh(CredentialRef reference) {
+        String value =
+                Objects.requireNonNull(reference, "reference must not be null").value();
+        if (value.startsWith(ENV_PREFIX)) return resolveEnvironment(value.substring(ENV_PREFIX.length()));
+        if (!value.startsWith(MODEL_AUTH_PREFIX)) {
+            throw new IllegalArgumentException("AUTH_CREDENTIAL_SCHEME_UNSUPPORTED");
+        }
+        LocalModelAuthReference localReference = LocalModelAuthReference.parse(value);
+        StoredModelCredential credential =
+                store.find(localReference).orElseThrow(() -> new IllegalStateException("AUTH_CREDENTIAL_UNAVAILABLE"));
+        if (credential instanceof StoredApiKeyCredential apiKey) return new ResolvedCredential(apiKey.apiKey());
+        StoredExternalCredential external = (StoredExternalCredential) credential;
+        StoredExternalCredential refreshed = refreshSingleFlight(external, Instant.MAX, true);
         registry.prepareIfRegistered(refreshed);
         return new ResolvedCredential(refreshed.accessToken());
     }
@@ -74,12 +95,18 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
         return new ResolvedCredential(value.trim());
     }
 
-    private StoredExternalCredential refreshSingleFlight(StoredExternalCredential observed, Instant refreshBefore) {
+    private StoredExternalCredential refreshSingleFlight(
+            StoredExternalCredential observed, Instant refreshBefore, boolean force) {
         CompletableFuture<StoredExternalCredential> created = new CompletableFuture<>();
         CompletableFuture<StoredExternalCredential> existing = refreshes.putIfAbsent(observed.reference(), created);
-        if (existing != null) return await(existing);
+        if (existing != null) {
+            StoredExternalCredential result = await(existing);
+            if (!force || !sameCredential(observed, result)) {
+                return result;
+            }
+        }
         try {
-            StoredExternalCredential refreshed = refresh(observed, refreshBefore);
+            StoredExternalCredential refreshed = refresh(observed, refreshBefore, force);
             created.complete(refreshed);
             return refreshed;
         } catch (RuntimeException exception) {
@@ -90,14 +117,22 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
         }
     }
 
-    private StoredExternalCredential refresh(StoredExternalCredential observed, Instant refreshBefore) {
+    private StoredExternalCredential refresh(
+            StoredExternalCredential observed, Instant refreshBefore, boolean force) {
         StoredModelCredential latest = store.find(observed.reference())
                 .orElseThrow(() -> new IllegalStateException("AUTH_CREDENTIAL_REMOVED_DURING_REFRESH"));
         if (!(latest instanceof StoredExternalCredential current)) {
             throw new IllegalStateException("AUTH_REAUTH_REQUIRED");
         }
-        if (current.validBeyond(refreshBefore)) return current;
-        if (!sameCredential(observed, current)) throw new IllegalStateException("AUTH_CREDENTIAL_CHANGED");
+        if (force && !sameCredential(observed, current) && current.reasonCode().isEmpty()) {
+            return current;
+        }
+        if (!force && current.validBeyond(refreshBefore) && current.reasonCode().isEmpty()) {
+            return current;
+        }
+        if (!force && !sameCredential(observed, current)) {
+            throw new IllegalStateException("AUTH_CREDENTIAL_CHANGED");
+        }
         ExternalLoginMethod method = registry.require(current.methodId());
         try {
             StoredExternalCredential refreshed = method.refresh(current, refreshBefore);
@@ -105,14 +140,24 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
                     || !refreshed.methodId().equals(current.methodId())
                     || !refreshed.clientRegistrationRef().equals(current.clientRegistrationRef())
                     || !refreshed.accountId().equals(current.accountId())) {
+                store.save(current.withReasonCode("AUTH_REAUTH_REQUIRED"));
                 throw new IllegalStateException("AUTH_REAUTH_REQUIRED");
             }
             store.save(refreshed);
             return refreshed;
         } catch (ExternalLoginMethodUnavailableException exception) {
             if ("AUTH_LOGIN_SERVICE_UNAVAILABLE".equals(exception.reasonCode())
+                    && !force
                     && current.validBeyond(clock.instant())) {
                 return current;
+            }
+            if ("AUTH_REAUTH_REQUIRED".equals(exception.reasonCode())) {
+                store.save(current.withReasonCode("AUTH_REAUTH_REQUIRED"));
+            }
+            throw exception;
+        } catch (IllegalStateException exception) {
+            if ("AUTH_REAUTH_REQUIRED".equals(exception.getMessage())) {
+                store.save(current.withReasonCode("AUTH_REAUTH_REQUIRED"));
             }
             throw exception;
         }
@@ -133,6 +178,7 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
                 && first.clientRegistrationRef().equals(second.clientRegistrationRef())
                 && first.refreshToken().equals(second.refreshToken())
                 && first.expiresAtEpochMillis() == second.expiresAtEpochMillis()
-                && first.accountId().equals(second.accountId());
+                && first.accountId().equals(second.accountId())
+                && first.reasonCode().equals(second.reasonCode());
     }
 }
