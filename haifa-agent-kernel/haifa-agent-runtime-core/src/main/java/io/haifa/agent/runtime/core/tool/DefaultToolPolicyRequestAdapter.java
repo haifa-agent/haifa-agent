@@ -14,6 +14,7 @@ import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSideEffect;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -77,7 +78,10 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
             Object command = request.arguments().values().get("command");
             Object workdir = request.arguments().values().getOrDefault("workdir", ".");
             if (command instanceof String commandText && workdir instanceof String workdirText) {
-                return PolicyDigest.sha256Fields(List.of(commandText, workdirText));
+                return PolicyDigest.sha256Fields(List.of(
+                        commandText,
+                        workdirText,
+                        canonicalExpectedExitCodes(request.arguments().values())));
             }
         }
         if ("execution.request_permissions".equals(capability)) {
@@ -99,10 +103,39 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
                         priorText,
                         permissionText,
                         justificationText,
-                        String.valueOf(timeout)));
+                        String.valueOf(timeout),
+                        canonicalExpectedExitCodes(values)));
             }
         }
         return ToolPipeline.argumentsDigest(request);
+    }
+
+    /**
+     * Mirrors the execution operation's canonical form so an approval is bound to the exit-code
+     * contract that will be dispatched. Invalid values deliberately retain their original form;
+     * the execution operation remains the single validation authority for those inputs.
+     */
+    private static String canonicalExpectedExitCodes(Map<String, Object> values) {
+        Object value = values.get("expectedExitCodes");
+        if (value == null) return List.of(0).toString();
+        if (!(value instanceof List<?> rawCodes) || rawCodes.isEmpty() || rawCodes.size() > 8) {
+            return String.valueOf(value);
+        }
+        var codes = new ArrayList<Integer>(rawCodes.size());
+        for (Object rawCode : rawCodes) {
+            if (!(rawCode instanceof Number number)
+                    || number.longValue() != number.doubleValue()
+                    || number.longValue() < 0
+                    || number.longValue() > 255) {
+                return String.valueOf(value);
+            }
+            int code = number.intValue();
+            if (codes.contains(code)) return String.valueOf(value);
+            codes.add(code);
+        }
+        if (!codes.contains(0)) return String.valueOf(value);
+        codes.sort(Integer::compareTo);
+        return codes.toString();
     }
 
     private static String executionScratchSpecDigest(Map<String, Object> schema) {

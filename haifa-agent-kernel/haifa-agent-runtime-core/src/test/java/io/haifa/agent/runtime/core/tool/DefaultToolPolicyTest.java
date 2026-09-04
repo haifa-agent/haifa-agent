@@ -106,7 +106,30 @@ class DefaultToolPolicyTest {
                 new ToolArguments("execution.input", "1.0.0", Map.of("command", "echo ok", "workdir", ".")));
 
         assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution.run", request))
-                .isEqualTo(PolicyDigest.sha256Fields(List.of("echo ok", ".")));
+                .isEqualTo(PolicyDigest.sha256Fields(List.of("echo ok", ".", "[0]")));
+    }
+
+    @Test
+    void executionDigestCanonicalizesDeclaredExpectedExitCodes() {
+        var request = new ToolRequest(
+                new ToolCallId("call"),
+                new ProviderToolCallCorrelationId("provider-call"),
+                new RuntimeIdempotencyKey("key"),
+                "execution_run",
+                "1.0.0",
+                new ToolArguments(
+                        "execution.input",
+                        "1.0.0",
+                        Map.of(
+                                "command",
+                                "git diff --no-index before after",
+                                "workdir",
+                                ".",
+                                "expectedExitCodes",
+                                List.of(1, 0))));
+
+        assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution.run", request))
+                .isEqualTo(PolicyDigest.sha256Fields(List.of("git diff --no-index before after", ".", "[0, 1]")));
     }
 
     @Test
@@ -134,7 +157,9 @@ class DefaultToolPolicyTest {
                                 "operationFamily",
                                 "inspect",
                                 "timeoutMillis",
-                                5000)));
+                                5000,
+                                "expectedExitCodes",
+                                List.of(1, 0))));
 
         assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution.request_permissions", request))
                 .isEqualTo(PolicyDigest.sha256Fields(List.of(
@@ -143,7 +168,8 @@ class DefaultToolPolicyTest {
                         "failed-call",
                         "HOST_NETWORK_ACCESS",
                         "Read the configured remote",
-                        "5000")));
+                        "5000",
+                        "[0, 1]")));
     }
 
     private ToolPolicyDecision evaluate(
