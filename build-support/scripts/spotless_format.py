@@ -148,6 +148,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run spotless:check (verify without writing changes).",
     )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Run spotless:apply (write formatting changes).",
+    )
+    parser.add_argument(
+        "--amend",
+        action="store_true",
+        help="Automatically amend previous git commit with formatting changes after spotless:apply.",
+    )
     parser.add_argument("git_args", nargs="*", help="Optional git hook arguments (e.g. remote name, remote url)")
     return parser.parse_args()
 
@@ -181,8 +191,15 @@ def main() -> int:
             has_root_files = True
 
     maven_cmd = root / ("mvnw.cmd" if os.name == "nt" else "mvnw")
-    # In pre-push hook or explicit check mode, run spotless:check
-    goal = "spotless:check" if (args.check or args.push) else "spotless:apply"
+    if args.check:
+        goal = "spotless:check"
+    elif args.apply:
+        goal = "spotless:apply"
+    elif args.push:
+        goal = "spotless:check"
+    else:
+        goal = "spotless:apply"
+
     maven_args = [str(maven_cmd), "-o", "--batch-mode", "--no-transfer-progress"]
 
     if has_root_files:
@@ -194,23 +211,35 @@ def main() -> int:
 
     selectors = ",".join(f":{mod}" for mod in sorted(affected_modules))
     maven_args.extend(["-pl", selectors, goal])
-    print(f"[spotless] Checking {len(affected_modules)} affected module(s): {selectors}")
+    maven_args.append(f"-DspotlessFiles={','.join(target_files)}")
+    print(f"[spotless] Executing {goal} on {len(affected_modules)} affected module(s) ({len(target_files)} target file(s)): {selectors}")
 
     try:
         completed = subprocess.run(maven_args, cwd=root, check=False)
         if completed.returncode != 0:
-            if args.push:
+            if goal == "spotless:check":
                 print(
                     "\n[spotless] ERROR: Unformatted code detected before push!\n"
-                    "  Please run: ./build-support/scripts/spotless-format.sh (or .ps1 on Windows)\n"
-                    "  or: ./mvnw spotless:apply -pl :<affected-module>\n"
-                    "  and commit the formatting changes before pushing.\n",
+                    "  To automatically format affected files and amend your commit, run:\n"
+                    "    ./build-support/scripts/spotless-format.sh --push --apply --amend  (or .ps1 on Windows)\n"
+                    "  Or run:\n"
+                    "    ./build-support/scripts/spotless-format.sh --push --apply\n"
+                    "    git commit -a --amend --no-edit\n",
                     file=sys.stderr,
                 )
             return completed.returncode
     except OSError as e:
         print(f"[spotless] Failed to invoke Maven wrapper: {e}", file=sys.stderr)
         return 1
+
+    if args.amend and goal == "spotless:apply":
+        print("[spotless] Amending formatting changes into previous git commit...")
+        try:
+            subprocess.run(["git", "commit", "-a", "--amend", "--no-edit"], cwd=root, check=True)
+            print("[spotless] Commit amended successfully.")
+        except (subprocess.SubprocessError, OSError) as e:
+            print(f"[spotless] Failed to amend commit: {e}", file=sys.stderr)
+            return 1
 
     if args.staged and not args.check:
         stage_cmd = ["git", "add", "--", *target_files]
