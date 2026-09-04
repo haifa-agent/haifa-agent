@@ -179,10 +179,10 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("exitCode", 7)
                 .containsEntry("truncated", true)
                 .containsEntry("outputRef", "stdout-asset")
-                .containsEntry("failureCode", "PROCESS_EXIT_NONZERO")
+                .containsEntry("failureCode", "NON_ZERO_EXIT")
                 .containsEntry("operationFamily", "TEST")
                 .containsEntry("failureCategory", "COMMAND_FAILED")
-                .containsEntry("stableFailureCode", "PROCESS_EXIT_NONZERO")
+                .containsEntry("stableFailureCode", "NON_ZERO_EXIT")
                 .containsEntry("resourceClass", "COMMAND")
                 .containsEntry(
                         "scratchSpecDigest",
@@ -590,7 +590,7 @@ class ProjectExecutionToolOperationsTest {
 
         assertThat(result.structuredData())
                 .containsEntry("failureCategory", "COMMAND_FAILED")
-                .containsEntry("stableFailureCode", "PROCESS_EXIT_NONZERO")
+                .containsEntry("stableFailureCode", "NON_ZERO_EXIT")
                 .containsEntry("resourceClass", "COMMAND")
                 .containsEntry("failureActionCode", "CONTINUE_WITH_DIAGNOSTIC");
         assertThat(captured.get().limits().maxStdoutBytes()).isEqualTo(4096);
@@ -1618,7 +1618,7 @@ class ProjectExecutionToolOperationsTest {
                 "session-1",
                 new ResourceUsageSummary(Duration.ofSeconds(1), 1),
                 status == ExecutionStatus.FAILED
-                        ? new ExecutionFailure("PROCESS_EXIT_NONZERO", "process exited with a non-zero code")
+                        ? new ExecutionFailure("NON_ZERO_EXIT", "process exited with a non-zero code")
                         : null,
                 false);
     }

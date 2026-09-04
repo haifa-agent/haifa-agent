@@ -1207,7 +1207,7 @@ public final class ProjectExecutionToolOperations {
                 && result.exitCode() != 0
                 && expectedExitCodes.contains(result.exitCode())
                 && result.optionalFailure()
-                        .map(failure -> failure.code().equals("PROCESS_EXIT_NONZERO"))
+                        .map(failure -> failure.code().equals("NON_ZERO_EXIT"))
                         .orElse(true)) {
             return new CommandSemanticOutcomeInterpreter.Interpretation(
                     CommandSemanticOutcome.EXPECTED_VARIANT, "DECLARED_EXPECTED_EXIT_CODE");
