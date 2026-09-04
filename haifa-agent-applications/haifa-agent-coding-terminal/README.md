@@ -212,6 +212,9 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 - `/resume <query>` 搜索 Session，`/rename [name]`（兼容 `/name`）使用 revision 重命名，
   `/archive` 与 `/delete`
   在同一内联 Selector 中确认；删除只隐藏产品 Session，不删除 Runtime/Artifact 事实；
+- 未显式指定 `resume` 的 Terminal 启动会在 INTERACTIVE 后台队列异步查询当前 Workspace 最近一次
+  Session；加载期间 UI 保持可输入，未找到历史 Session 时维持既有空态。显式 `resume` 仍按其给定
+  Session 或 `--last` 语义执行；
 - 切换或启动恢复 Session 时，通过 `CodingSessionClient` 加载最近 100 条 `USER_VISIBLE` 历史投影，
   只显示安全 User/Assistant 正文及失败摘要；更早历史显示有界占位，不回放 Tool、Prompt、reasoning
   或 JSONL；

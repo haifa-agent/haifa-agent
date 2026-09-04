@@ -33,7 +33,7 @@ public final class CodingTerminalApplication {
                 client,
                 resumeSession
                         .map(value -> CodingTerminalStartup.session(value, Optional.empty()))
-                        .orElseGet(CodingTerminalStartup::empty),
+                        .orElseGet(CodingTerminalStartup::autoLast),
                 Tui4jTerminalIo.system(),
                 TerminalWorkspaceContext.empty(),
                 CodingAuthenticationClient.unavailable());
@@ -49,7 +49,7 @@ public final class CodingTerminalApplication {
                 client,
                 resumeSession
                         .map(value -> CodingTerminalStartup.session(value, Optional.empty()))
-                        .orElseGet(CodingTerminalStartup::empty),
+                        .orElseGet(CodingTerminalStartup::autoLast),
                 terminalIo,
                 TerminalWorkspaceContext.empty(),
                 CodingAuthenticationClient.unavailable());
@@ -66,7 +66,7 @@ public final class CodingTerminalApplication {
                 client,
                 resumeSession
                         .map(value -> CodingTerminalStartup.session(value, Optional.empty()))
-                        .orElseGet(CodingTerminalStartup::empty),
+                        .orElseGet(CodingTerminalStartup::autoLast),
                 terminalIo,
                 workspace,
                 CodingAuthenticationClient.unavailable());
