@@ -6,7 +6,7 @@ displayName: GPT-5.6 Terra
 status: ACTIVE
 apiStyle: openai-responses
 dialect: openai-codex-responses
-capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
 profile:
   version: "2.0"
   reasoningBehavior: OPTIONAL
