@@ -276,8 +276,8 @@ public final class ProjectToolCatalog {
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         String version =
                 switch (name) {
-                    case "execution.run" -> "1.7.2";
-                    case ProjectPermissionRequestOperations.TOOL_NAME -> "1.6.0";
+                    case "execution.run" -> "1.8.0";
+                    case ProjectPermissionRequestOperations.TOOL_NAME -> "1.7.0";
                     case "file.list",
                             "file.read",
                             "file.search",
@@ -497,6 +497,22 @@ public final class ProjectToolCatalog {
                 required.add("command");
                 properties.put("workdir", Map.of("type", "string", "minLength", 1, "maxLength", 4096));
                 properties.put("timeoutMillis", Map.of("type", "integer", "minimum", 1, "maximum", 1800000));
+                properties.put(
+                        "expectedExitCodes",
+                        Map.of(
+                                "type",
+                                "array",
+                                "minItems",
+                                1,
+                                "maxItems",
+                                8,
+                                "uniqueItems",
+                                true,
+                                "items",
+                                Map.of("type", "integer", "minimum", 0, "maximum", 255),
+                                "description",
+                                "Allowed normal process exit codes. Defaults to [0]; when supplied it must include 0. "
+                                        + "Never use this for timeouts, cancellation, or an unknown outcome."));
                 properties.put("description", Map.of("type", "string", "minLength", 1, "maxLength", 256));
                 properties.put(
                         "operationFamily",
@@ -577,6 +593,7 @@ public final class ProjectToolCatalog {
             properties.put("executionId", Map.of("type", "string"));
             properties.put("status", Map.of("type", "string"));
             properties.put("exitCode", Map.of("type", "integer"));
+            properties.put("expectedExitCodes", Map.of("type", "array", "items", Map.of("type", "integer")));
             properties.put("semanticOutcome", Map.of("type", "string"));
             properties.put("semanticReasonCode", Map.of("type", "string"));
             properties.put("semanticInterpreterVersion", Map.of("type", "string"));

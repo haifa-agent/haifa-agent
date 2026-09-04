@@ -409,7 +409,7 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void treatsDocumentedGitNonzeroVariantsAsSuccessfulToolResults() {
+    void treatsExplicitlyDeclaredNormalNonzeroExitCodesAsSuccessfulToolResults() {
         AtomicInteger calls = new AtomicInteger();
         ExecutionBroker broker = new StubBroker() {
             @Override
@@ -423,11 +423,27 @@ class ProjectExecutionToolOperationsTest {
 
         var differences = operations(broker, 4096, 100)
                 .execute(
-                        invocation(Map.of("command", "git diff --exit-code", "operationFamily", "DIFF"), () -> false),
+                        invocation(
+                                Map.of(
+                                        "command",
+                                        "git diff --exit-code",
+                                        "operationFamily",
+                                        "DIFF",
+                                        "expectedExitCodes",
+                                        List.of(0, 1)),
+                                () -> false),
                         access());
         var noMatches = operations(broker, 4096, 100)
                 .execute(
-                        invocation(Map.of("command", "git grep missing", "operationFamily", "INSPECT"), () -> false),
+                        invocation(
+                                Map.of(
+                                        "command",
+                                        "git grep missing",
+                                        "operationFamily",
+                                        "INSPECT",
+                                        "expectedExitCodes",
+                                        List.of(0, 1)),
+                                () -> false),
                         access());
 
         assertThat(differences.successful()).isTrue();
@@ -437,9 +453,10 @@ class ProjectExecutionToolOperationsTest {
         assertThat(differences.structuredData())
                 .containsEntry("status", "FAILED")
                 .containsEntry("semanticOutcome", "EXPECTED_VARIANT")
-                .containsEntry("semanticReasonCode", "DIFFERENCES_FOUND")
-                .containsEntry("semanticInterpreterVersion", "2")
+                .containsEntry("semanticReasonCode", "DECLARED_EXPECTED_EXIT_CODE")
+                .containsEntry("semanticInterpreterVersion", "3")
                 .containsEntry("commandOutcomeCode", "COMMAND_EXIT_EXPECTED_VARIANT")
+                .containsEntry("expectedExitCodes", List.of(0, 1))
                 .containsEntry("outputBudgetFamily", "DIFF")
                 .containsEntry("outputBudgetBytesPerChannel", 16_384)
                 .containsEntry("modelOutputBudgetBytes", 4096)
@@ -452,12 +469,12 @@ class ProjectExecutionToolOperationsTest {
                         "failureCategory", "stableFailureCode", "failureCode", "runtimeOutcome", "reconcileStatus");
         assertThat(noMatches.successful()).isTrue();
         assertThat(noMatches.structuredData())
-                .containsEntry("semanticOutcome", "EMPTY_RESULT")
-                .containsEntry("semanticReasonCode", "NO_MATCHES");
+                .containsEntry("semanticOutcome", "EXPECTED_VARIANT")
+                .containsEntry("semanticReasonCode", "DECLARED_EXPECTED_EXIT_CODE");
     }
 
     @Test
-    void treatsRipgrepNoMatchesAsASuccessfulEmptyToolResult() {
+    void keepsUndeclaredNonzeroExitCodesAsFailures() {
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
@@ -476,11 +493,12 @@ class ProjectExecutionToolOperationsTest {
                                 () -> false),
                         access());
 
-        assertThat(noMatches.successful()).isTrue();
+        assertThat(noMatches.successful()).isFalse();
         assertThat(noMatches.structuredData())
-                .containsEntry("semanticOutcome", "EMPTY_RESULT")
-                .containsEntry("semanticReasonCode", "NO_MATCHES")
-                .containsEntry("semanticInterpreterVersion", "2");
+                .containsEntry("semanticOutcome", "COMMAND_FAILED")
+                .containsEntry("semanticReasonCode", "COMMAND_NONZERO_EXIT")
+                .containsEntry("semanticInterpreterVersion", "3")
+                .containsEntry("expectedExitCodes", List.of(0));
     }
 
     @Test
@@ -1190,11 +1208,14 @@ class ProjectExecutionToolOperationsTest {
         };
 
         var result = operations(broker, 1024, 2000)
-                .execute(invocation(Map.of("command", "go test ./..."), () -> false), access());
+                .execute(
+                        invocation(Map.of("command", "go test ./...", "expectedExitCodes", List.of(0, 1)), () -> false),
+                        access());
 
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData().get("status")).isEqualTo("TIMED_OUT");
         assertThat(result.structuredData().get("semanticOutcome")).isEqualTo("COMMAND_FAILED");
+        assertThat(result.structuredData()).containsEntry("expectedExitCodes", List.of(0, 1));
         assertThat(result.summary()).contains("Command timed out");
         assertThat(result.structuredData().get("output").toString()).contains("Command timed out");
     }
@@ -1274,6 +1295,45 @@ class ProjectExecutionToolOperationsTest {
                         "git fetch origin",
                         "operationFamily",
                         "MUTATE")),
+                access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("stableFailureCode", "PERMISSION_REQUEST_INTENT_MISMATCH");
+    }
+
+    @Test
+    void controlledPermissionRequestCannotChangeExpectedExitCodes() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        store.appendToolCall(failedExecutionCall(
+                "prior-tool-call",
+                Map.of(
+                        "command", "git ls-remote origin",
+                        "operationFamily", "INSPECT",
+                        "expectedExitCodes", List.of(0, 1)),
+                "NETWORK_UNAVAILABLE"));
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new AssertionError("a mismatched permission request must not execute");
+            }
+        };
+        var permissionOperations = new ProjectPermissionRequestOperations(
+                store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
+
+        var result = permissionOperations.execute(
+                permissionInvocation(Map.of(
+                        "priorToolCallId",
+                        "prior-tool-call",
+                        "requestedPermission",
+                        ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS,
+                        "justification",
+                        "Change expected exits",
+                        "command",
+                        "git ls-remote origin",
+                        "operationFamily",
+                        "INSPECT",
+                        "expectedExitCodes",
+                        List.of(0))),
                 access());
 
         assertThat(result.successful()).isFalse();

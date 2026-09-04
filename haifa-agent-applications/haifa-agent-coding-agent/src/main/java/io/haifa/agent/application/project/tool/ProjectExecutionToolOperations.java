@@ -30,6 +30,7 @@ import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
+import io.haifa.agent.execution.core.command.CommandSemanticOutcome;
 import io.haifa.agent.execution.core.command.CommandSemanticOutcomeInterpreter;
 import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
 import io.haifa.agent.policy.api.PolicyDigest;
@@ -292,6 +293,7 @@ public final class ProjectExecutionToolOperations {
         Map<String, Object> arguments = invocation.arguments().values();
         String command = requiredText(arguments, "command");
         String operationFamily = operationFamily(arguments.get("operationFamily"));
+        List<Integer> expectedExitCodes = expectedExitCodes(arguments);
         var commandClassification = SystemGitCliCommandClassifier.classify(command);
         if (commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED) {
             return withToolCallId(invocation, rejectedCommandClassification(operationFamily, commandClassification));
@@ -347,7 +349,7 @@ public final class ProjectExecutionToolOperations {
                 executionLimits(timeout, operationFamily, commandClassification),
                 sandboxProfileRef,
                 ExecutionInput.none(),
-                invocationDigest(invocation, command, workdir, scratchSpace),
+                invocationDigest(invocation, command, workdir, expectedExitCodes, scratchSpace),
                 scratchSpace);
         try {
             repositoryBaselines.beforeDispatch(
@@ -377,6 +379,7 @@ public final class ProjectExecutionToolOperations {
                             invocation.observer(),
                             command,
                             operationFamily,
+                            expectedExitCodes,
                             commandClassification,
                             repositoryScopeDigest,
                             invocation.toolCallId().value()));
@@ -393,6 +396,7 @@ public final class ProjectExecutionToolOperations {
         Map<String, Object> arguments = invocation.arguments().values();
         String command = requiredText(arguments, "command");
         String operationFamily = operationFamily(arguments.get("operationFamily"));
+        List<Integer> expectedExitCodes = expectedExitCodes(arguments);
         String workdir = optionalText(arguments, "workdir", ".");
         String expectedWorkingDirectoryDigest = workingDirectoryDigest(access.workspaceId(), workdir);
         if (invocation
@@ -424,6 +428,7 @@ public final class ProjectExecutionToolOperations {
                         outputSanitizer,
                         command,
                         operationFamily,
+                        expectedExitCodes,
                         classification,
                         sandboxProfileRef,
                         scratchSpace,
@@ -491,7 +496,11 @@ public final class ProjectExecutionToolOperations {
     }
 
     private static String invocationDigest(
-            ToolInvocationRequest invocation, String command, String workdir, ExecutionScratchSpaceSpec scratchSpace) {
+            ToolInvocationRequest invocation,
+            String command,
+            String workdir,
+            List<Integer> expectedExitCodes,
+            ExecutionScratchSpaceSpec scratchSpace) {
         List<String> fields;
         if (invocation.binding().definition().name().value().equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
             Map<String, Object> arguments = invocation.arguments().values();
@@ -501,9 +510,10 @@ public final class ProjectExecutionToolOperations {
                     requiredText(arguments, "priorToolCallId"),
                     requiredText(arguments, "requestedPermission"),
                     requiredText(arguments, "justification"),
-                    String.valueOf(arguments.getOrDefault("timeoutMillis", "DEFAULT")));
+                    String.valueOf(arguments.getOrDefault("timeoutMillis", "DEFAULT")),
+                    expectedExitCodes.toString());
         } else {
-            fields = List.of(command, workdir);
+            fields = List.of(command, workdir, expectedExitCodes.toString());
         }
         return ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(fields), scratchSpace);
     }
@@ -562,6 +572,7 @@ public final class ProjectExecutionToolOperations {
                 ToolInvocationObserver.noop(),
                 command,
                 "UNKNOWN",
+                List.of(0),
                 commandClassification,
                 repositoryScopeDigest(workdir),
                 null);
@@ -573,6 +584,7 @@ public final class ProjectExecutionToolOperations {
             ToolInvocationObserver invocationObserver,
             String command,
             String operationFamily,
+            List<Integer> expectedExitCodes,
             SystemGitCliCommandClassifier.Classification commandClassification,
             String repositoryScopeDigest,
             String reviewToolCallRef) {
@@ -609,6 +621,7 @@ public final class ProjectExecutionToolOperations {
                     outputSanitizer,
                     command,
                     operationFamily,
+                    expectedExitCodes,
                     commandClassification,
                     sandboxProfileRef,
                     scratchSpace,
@@ -623,6 +636,7 @@ public final class ProjectExecutionToolOperations {
                     exception.getMessage(),
                     command,
                     operationFamily,
+                    expectedExitCodes,
                     commandClassification,
                     repositoryScopeDigest,
                     reviewToolCallRef);
@@ -634,6 +648,7 @@ public final class ProjectExecutionToolOperations {
                     exception.getMessage(),
                     command,
                     operationFamily,
+                    expectedExitCodes,
                     commandClassification,
                     repositoryScopeDigest,
                     reviewToolCallRef);
@@ -645,6 +660,7 @@ public final class ProjectExecutionToolOperations {
                     exception.getMessage(),
                     command,
                     operationFamily,
+                    expectedExitCodes,
                     commandClassification,
                     repositoryScopeDigest,
                     reviewToolCallRef);
@@ -656,6 +672,7 @@ public final class ProjectExecutionToolOperations {
                     exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage(),
                     command,
                     operationFamily,
+                    expectedExitCodes,
                     commandClassification,
                     repositoryScopeDigest,
                     reviewToolCallRef);
@@ -672,6 +689,7 @@ public final class ProjectExecutionToolOperations {
             String errorMessage,
             String command,
             String operationFamily,
+            List<Integer> expectedExitCodes,
             SystemGitCliCommandClassifier.Classification commandClassification,
             String repositoryScopeDigest,
             String reviewToolCallRef) {
@@ -702,6 +720,7 @@ public final class ProjectExecutionToolOperations {
                 outputSanitizer,
                 command,
                 operationFamily,
+                expectedExitCodes,
                 commandClassification,
                 sandboxProfileRef,
                 scratchSpace,
@@ -716,13 +735,14 @@ public final class ProjectExecutionToolOperations {
             UnaryOperator<String> outputSanitizer,
             String command,
             String operationFamily,
+            List<Integer> expectedExitCodes,
             SystemGitCliCommandClassifier.Classification commandClassification,
             SandboxProfileRef sandboxProfileRef,
             ExecutionScratchSpaceSpec scratchSpace,
             String repositoryScopeDigest,
             String runRef,
             String reviewToolCallRef) {
-        var semantic = CommandSemanticOutcomeInterpreter.interpret(command, result.status(), result.exitCode());
+        var semantic = semanticOutcome(result, command, expectedExitCodes);
         String output = merged.text();
         if (output.isBlank() && !semantic.successfulToolResult()) {
             String fallback = fallbackOutput(result);
@@ -749,6 +769,7 @@ public final class ProjectExecutionToolOperations {
         data.put("executionId", result.id().value());
         data.put("status", result.status().name());
         result.optionalExitCode().ifPresent(value -> data.put("exitCode", value));
+        data.put("expectedExitCodes", expectedExitCodes);
         data.put("semanticOutcome", semantic.outcome().name());
         data.put("semanticReasonCode", semantic.reasonCode());
         data.put("semanticInterpreterVersion", CommandSemanticOutcomeInterpreter.VERSION);
@@ -1153,6 +1174,45 @@ public final class ProjectExecutionToolOperations {
         if (stdout.isBlank()) return stderr;
         if (stderr.isBlank()) return stdout;
         return stdout + "\n" + stderr;
+    }
+
+    static List<Integer> expectedExitCodes(Map<String, Object> values) {
+        Object value = values.get("expectedExitCodes");
+        if (value == null) return List.of(0);
+        if (!(value instanceof List<?> rawCodes) || rawCodes.isEmpty() || rawCodes.size() > 8) {
+            throw new IllegalArgumentException("expectedExitCodes must contain between one and eight integer codes");
+        }
+        var codes = new ArrayList<Integer>(rawCodes.size());
+        for (Object rawCode : rawCodes) {
+            if (!(rawCode instanceof Number number)
+                    || number.longValue() != number.doubleValue()
+                    || number.longValue() < 0
+                    || number.longValue() > 255) {
+                throw new IllegalArgumentException("expectedExitCodes must contain integer codes from 0 through 255");
+            }
+            int code = number.intValue();
+            if (codes.contains(code))
+                throw new IllegalArgumentException("expectedExitCodes must not contain duplicates");
+            codes.add(code);
+        }
+        if (!codes.contains(0)) throw new IllegalArgumentException("expectedExitCodes must include 0");
+        codes.sort(Integer::compareTo);
+        return List.copyOf(codes);
+    }
+
+    private static CommandSemanticOutcomeInterpreter.Interpretation semanticOutcome(
+            ExecutionResult result, String command, List<Integer> expectedExitCodes) {
+        if (result.status() == ExecutionStatus.FAILED
+                && result.exitCode() != null
+                && result.exitCode() != 0
+                && expectedExitCodes.contains(result.exitCode())
+                && result.optionalFailure()
+                        .map(failure -> failure.code().equals("PROCESS_EXIT_NONZERO"))
+                        .orElse(true)) {
+            return new CommandSemanticOutcomeInterpreter.Interpretation(
+                    CommandSemanticOutcome.EXPECTED_VARIANT, "DECLARED_EXPECTED_EXIT_CODE");
+        }
+        return CommandSemanticOutcomeInterpreter.interpret(command, result.status(), result.exitCode());
     }
 
     private static String requiredText(Map<String, Object> values, String key) {
