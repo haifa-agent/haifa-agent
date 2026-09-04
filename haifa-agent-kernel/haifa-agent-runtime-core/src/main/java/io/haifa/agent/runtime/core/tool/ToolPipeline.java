@@ -384,8 +384,7 @@ public final class ToolPipeline {
             else call.deny(time.now());
             state.appendToolCall(call);
             appendToolEvent(run, call, "tool.cancelled", "CANCELLED", "POLICY_DENIED", "");
-            throw new SecurityException(
-                    "tool policy denied: " + definition.name().value());
+            throw new ToolPolicyDeniedException("POLICY_DENIED");
         }
         PolicyDecision effectiveDecision = currentDecision;
         PolicyDecision approvedDecision = approved ? approvedDecisions.remove(call.id()) : null;
