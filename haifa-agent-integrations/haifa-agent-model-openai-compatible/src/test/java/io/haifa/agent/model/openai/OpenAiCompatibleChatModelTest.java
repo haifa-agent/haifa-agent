@@ -231,7 +231,7 @@ class OpenAiCompatibleChatModelTest {
         assertThat(actual.structuredOutput()).isEmpty();
         JsonNode sent = json.readTree(requestBody.get());
         assertThat(sent.path("response_format").path("type").asText()).isEqualTo("json_object");
-        assertThat(sent.path("messages").get(1).path("role").asText()).isEqualTo("developer");
+        assertThat(sent.path("messages").get(1).path("role").asText()).isEqualTo("system");
         assertThat(sent.path("messages").get(1).path("content").asText()).contains("additionalProperties");
     }
 

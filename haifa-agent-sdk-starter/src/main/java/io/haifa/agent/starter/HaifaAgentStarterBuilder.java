@@ -246,7 +246,10 @@ public final class HaifaAgentStarterBuilder {
                 ENDPOINT,
                 new CredentialRef("env://" + credentialEnvironmentVariable),
                 false,
-                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT),
                 1_048_576,
                 8_192,
                 Map.of(),

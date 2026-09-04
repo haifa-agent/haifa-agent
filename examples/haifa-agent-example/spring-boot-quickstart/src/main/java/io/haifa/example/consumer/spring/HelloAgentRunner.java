@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 
 /** Demonstrates constructor injection of the auto-configured Agent. */
 @Component
-@ConditionalOnProperty(name = "example.live", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "example.runner.enabled", havingValue = "true", matchIfMissing = false)
 public final class HelloAgentRunner implements CommandLineRunner {
     private final HaifaAgent agent;
 
