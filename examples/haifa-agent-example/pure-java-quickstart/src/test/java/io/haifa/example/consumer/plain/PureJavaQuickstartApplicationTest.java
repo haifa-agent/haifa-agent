@@ -19,4 +19,24 @@ class PureJavaQuickstartApplicationTest {
             assertNotNull(agent.assembly());
         }
     }
+
+    @Test
+    void assemblesStreamingConsumerWithoutCallingAProvider() {
+        try (var agent = HaifaAgentStarter.builder()
+                .credentialEnvironmentVariable("PATH")
+                .name("streaming-test-agent")
+                .build()) {
+            assertNotNull(agent.runs());
+            assertNotNull(agent.conversations());
+        }
+    }
+
+    @Test
+    void validatesStructuredOutputRecordSchemaWithoutCallingAProvider() {
+        var requirement = io.haifa.agent.sdk.internal.StructuredOutputRecords.requirement(
+                PureJavaStructuredOutputApplication.WeatherForecastReport.class);
+        assertNotNull(requirement);
+        assertEquals("WeatherForecastReport", requirement.responseName());
+        assertNotNull(requirement.jsonSchema());
+    }
 }
