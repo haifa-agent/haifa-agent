@@ -77,12 +77,12 @@ Git Credential 配置/子命令和 GH Token 披露继续硬拒绝；为了覆盖
 分类器只维护少量稳定类别：本地只读 LOW，本地写入或远端读取 MEDIUM，外部写入、破坏性、`gh api`、
 未知和复合形式 HIGH；它不尝试实现完整 Git/GH 参数治理或 Shell Grammar。
 
-`CommandSemanticOutcomeInterpreter` 在保留原始 `ExecutionStatus` 和 Exit Code 的同时提供稳定语义：普通退出
-0 为 `SUCCEEDED`，`git diff --exit-code` / `git diff --no-index` 的退出 1 为
-`EXPECTED_VARIANT/DIFFERENCES_FOUND`，`git grep` 及首个可执行文件为 `rg` / `ripgrep` 的退出 1 为
-`EMPTY_RESULT/NO_MATCHES`；其他非零退出仍为
-`COMMAND_FAILED`，超时、取消、输出截断终止或缺失退出码为 `OUTCOME_UNKNOWN`。该解释器不把 Build/Test
-失败改写成成功，也不推断复合命令内部各 Segment 的状态。进程数超限是已确认收敛的资源失败，解释为
+`CommandSemanticOutcomeInterpreter` 在保留原始 `ExecutionStatus` 和 Exit Code 的同时提供产品无关的
+稳定语义：成功终态为 `SUCCEEDED`，普通非零退出统一为 `COMMAND_FAILED`，不再根据 Git、ripgrep 或
+命令文本猜测正常非零变体。产品 Tool 可在调用该解释器前通过自己的冻结输入契约显式接受有文档依据的
+非零退出；例如 Coding `execution.run` 使用 `expectedExitCodes`，但 Timeout、Cancel 和未知终止不能被
+该契约改写为成功。该解释器不把 Build/Test 失败改写成成功，也不推断复合命令内部各 Segment 的状态。
+进程数超限是已确认收敛的资源失败，解释为
 `COMMAND_FAILED/PROCESS_LIMIT_EXCEEDED`，不升级为未知副作用。
 
 冻结输入只包含 `mode`、`content`、`language`、`args`、`purpose`、`timeoutMillis`；只有显式允许
