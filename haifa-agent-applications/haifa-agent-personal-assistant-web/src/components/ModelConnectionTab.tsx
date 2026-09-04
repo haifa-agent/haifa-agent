@@ -514,7 +514,7 @@ export function ModelConnectionTab({ client, providerId, onConnectionsChanged }:
                   disabled={busy}
                   onClick={() => openNetworkProxy(connection)}
                 >
-                  网络代理
+                  {connection.networkProxyMode === "CUSTOM" ? "网络代理（已设置）" : "网络代理"}
                 </button>
                 {connection.apiKeySupported && (
                   <button

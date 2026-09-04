@@ -43,8 +43,11 @@ describe("ModelConnectionPanel", () => {
 
   it("saves a provider-specific HTTP network proxy from its connection row", async () => {
     const saveModelNetworkProxy = vi.fn(async () => undefined);
+    const customConnection = { ...connection, networkProxyMode: "CUSTOM" as const };
     const client = {
-      modelConnections: vi.fn(async () => [connection]),
+      modelConnections: vi.fn()
+        .mockResolvedValueOnce([connection])
+        .mockResolvedValueOnce([customConnection]),
       saveModelNetworkProxy,
       resetModelNetworkProxy: vi.fn(async () => undefined),
     } as unknown as PersonalAssistantClient;
@@ -59,6 +62,42 @@ describe("ModelConnectionPanel", () => {
     await user.click(screen.getByRole("button", { name: "保存网络代理" }));
 
     await waitFor(() => expect(saveModelNetworkProxy).toHaveBeenCalledWith("deepseek", "http://127.0.0.1:2081"));
+    expect(await screen.findByRole("button", { name: "网络代理（已设置）" })).toBeTruthy();
+  });
+
+  it("refreshes a Codex login to the sign-in action after logout", async () => {
+    const signedIn = {
+      ...connection,
+      connectionId: "model-auth://openai-codex/default",
+      providerId: "openai-codex",
+      method: "EXTERNAL_LOGIN",
+      externalLoginSupported: true,
+      apiKeySupported: false,
+      accountLabel: "Account 173fb463",
+    } as ModelConnection;
+    const signedOut = {
+      ...signedIn,
+      connectionId: "configured://openai-codex/default",
+      status: "REAUTH_REQUIRED",
+      accountLabel: "Not connected",
+      logoutSupported: false,
+    } as ModelConnection;
+    const logoutModelConnection = vi.fn(async () => undefined);
+    const client = {
+      modelConnections: vi.fn()
+        .mockResolvedValueOnce([signedIn])
+        .mockResolvedValueOnce([signedOut]),
+      logoutModelConnection,
+      startModelBrowserLogin: vi.fn(),
+    } as unknown as PersonalAssistantClient;
+    const user = userEvent.setup();
+
+    render(<ModelConnectionPanel client={client} open providerId="openai-codex" onClose={() => undefined} />);
+    await screen.findByRole("button", { name: "已登录" });
+    await user.click(screen.getByRole("button", { name: "退出 openai-codex" }));
+
+    await waitFor(() => expect(logoutModelConnection).toHaveBeenCalledWith("model-auth://openai-codex/default"));
+    expect(await screen.findByRole("button", { name: "登录" })).toBeTruthy();
   });
 
   it("cancels an active external attempt when closed", async () => {
