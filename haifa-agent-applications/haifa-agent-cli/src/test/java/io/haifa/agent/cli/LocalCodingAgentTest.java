@@ -142,6 +142,10 @@ class LocalCodingAgentTest {
                         "rg --files for file discovery",
                         "rg for text search",
                         "dedicated search wrapper",
+                        "expectedExitCodes",
+                        "rg exit 1 means no matches",
+                        "git diff --no-index exit 1 means differences",
+                        "rg -F -- <text>",
                         "request_permissions is not a general sandbox bypass",
                         "Keep command output bounded")
                 .doesNotContain("Host OS:");

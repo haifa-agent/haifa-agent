@@ -7,24 +7,25 @@ import org.junit.jupiter.api.Test;
 
 class CommandSemanticOutcomeInterpreterTest {
     @Test
-    void recognizesDocumentedGitExitCodeVariants() {
+    void keepsNonzeroExitCodesAsFailuresUntilTheProductDeclaresThemExpected() {
         assertThat(interpret("git diff --exit-code", ExecutionStatus.SUCCEEDED, 0))
                 .isEqualTo(CommandSemanticOutcome.SUCCEEDED);
         assertThat(interpret("git diff --exit-code", ExecutionStatus.FAILED, 1))
-                .isEqualTo(CommandSemanticOutcome.EXPECTED_VARIANT);
+                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
         assertThat(interpret("git diff --no-index before after", ExecutionStatus.FAILED, 1))
-                .isEqualTo(CommandSemanticOutcome.EXPECTED_VARIANT);
+                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
         assertThat(interpret("git grep needle", ExecutionStatus.FAILED, 1))
-                .isEqualTo(CommandSemanticOutcome.EMPTY_RESULT);
+                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
     }
 
     @Test
-    void recognizesRipgrepNoMatchesWithoutMaskingRealRipgrepFailures() {
-        assertThat(interpret("rg needle .", ExecutionStatus.FAILED, 1)).isEqualTo(CommandSemanticOutcome.EMPTY_RESULT);
+    void doesNotInferSuccessfulVariantsFromTheCommandText() {
+        assertThat(interpret("rg needle .", ExecutionStatus.FAILED, 1))
+                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
         assertThat(interpret("rg needle . | Select-Object -First 20", ExecutionStatus.FAILED, 1))
-                .isEqualTo(CommandSemanticOutcome.EMPTY_RESULT);
+                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
         assertThat(interpret("& 'C:\\tools\\rg.exe' needle .", ExecutionStatus.FAILED, 1))
-                .isEqualTo(CommandSemanticOutcome.EMPTY_RESULT);
+                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
         assertThat(interpret("rg needle .", ExecutionStatus.FAILED, 2))
                 .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
         assertThat(interpret("echo rg", ExecutionStatus.FAILED, 1)).isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
