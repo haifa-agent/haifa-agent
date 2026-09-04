@@ -75,6 +75,8 @@ export interface PersonalAssistantClient {
   bootstrap(signal?: AbortSignal): Promise<Bootstrap>;
   modelConnections?(signal?: AbortSignal): Promise<ModelConnection[]>;
   saveModelApiKey?(providerId: string, apiKey: string, options?: CommandOptions): Promise<ModelConnection>;
+  saveModelNetworkProxy?(providerId: string, proxyUrl: string, options?: CommandOptions): Promise<void>;
+  resetModelNetworkProxy?(providerId: string, options?: CommandOptions): Promise<void>;
   startModelBrowserLogin?(methodId: "codex" | "antigravity", options?: CommandOptions): Promise<ExternalLoginAttempt>;
   modelLoginAttempt?(methodId: "codex" | "antigravity", attemptId: string, signal?: AbortSignal): Promise<ExternalLoginAttempt>;
   cancelModelLogin?(methodId: "codex" | "antigravity", attemptId: string, options?: CommandOptions): Promise<void>;
@@ -250,6 +252,26 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
         headers: commandHeaders(undefined, options.idempotencyKey),
         body: JSON.stringify({ providerId, apiKey }),
       },
+      options.signal,
+    );
+  }
+
+  saveModelNetworkProxy(providerId: string, proxyUrl: string, options: CommandOptions = {}) {
+    return this.request<void>(
+      "/model-connections/" + encoded(providerId) + "/network-proxy",
+      {
+        method: "PUT",
+        headers: commandHeaders(undefined, options.idempotencyKey),
+        body: JSON.stringify({ proxyUrl }),
+      },
+      options.signal,
+    );
+  }
+
+  resetModelNetworkProxy(providerId: string, options: CommandOptions = {}) {
+    return this.request<void>(
+      "/model-connections/" + encoded(providerId) + "/network-proxy",
+      { method: "DELETE", headers: commandHeaders(undefined, options.idempotencyKey) },
       options.signal,
     );
   }

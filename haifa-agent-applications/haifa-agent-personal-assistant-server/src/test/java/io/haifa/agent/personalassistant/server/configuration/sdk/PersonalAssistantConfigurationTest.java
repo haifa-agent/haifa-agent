@@ -2,17 +2,24 @@ package io.haifa.agent.personalassistant.server.configuration.sdk;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelReasoningMode;
+import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelProxySettings;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.URI;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class PersonalAssistantConfigurationTest {
+    @TempDir
+    Path directory;
+
     @Test
     void routesAntigravityAuthenticationTrafficThroughTheProviderProxy() {
         var provider = new PersonalAssistantProperties.ModelProvider(
@@ -37,7 +44,8 @@ class PersonalAssistantConfigurationTest {
                         8_192)),
                 URI.create("http://127.0.0.1:2081"));
 
-        var client = PersonalAssistantConfiguration.authenticationHttpClient(List.of(provider), "google-antigravity");
+        var settings = new PersonalModelProxySettings(List.of(provider), directory, new ObjectMapper());
+        var client = PersonalAssistantConfiguration.authenticationHttpClient(settings, "google-antigravity");
         Proxy selected = client.proxy()
                 .orElseThrow()
                 .select(URI.create("https://oauth2.googleapis.com/token"))

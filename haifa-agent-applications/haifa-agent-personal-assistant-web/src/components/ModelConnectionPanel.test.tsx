@@ -15,6 +15,7 @@ const connection: ModelConnection = {
   externalLoginSupported: false,
   logoutSupported: true,
   unofficialLocalCompatibility: false,
+  networkProxyMode: "SYSTEM",
 };
 
 describe("ModelConnectionPanel", () => {
@@ -38,6 +39,26 @@ describe("ModelConnectionPanel", () => {
     await waitFor(() => expect((input as HTMLInputElement).value).toBe(""));
     expect(screen.queryByText("secret-canary-value")).toBeNull();
     expect(await screen.findByText(/Saved API key/)).toBeTruthy();
+  });
+
+  it("saves a provider-specific HTTP network proxy from its connection row", async () => {
+    const saveModelNetworkProxy = vi.fn(async () => undefined);
+    const client = {
+      modelConnections: vi.fn(async () => [connection]),
+      saveModelNetworkProxy,
+      resetModelNetworkProxy: vi.fn(async () => undefined),
+    } as unknown as PersonalAssistantClient;
+    const user = userEvent.setup();
+
+    render(<ModelConnectionPanel client={client} open providerId="deepseek" onClose={() => undefined} />);
+    await screen.findByText("本机连接");
+
+    await user.click(screen.getByRole("button", { name: "网络代理" }));
+    await user.click(screen.getByRole("radio", { name: /使用专属 HTTP 代理/ }));
+    await user.type(screen.getByPlaceholderText("http://127.0.0.1:2081"), "http://127.0.0.1:2081");
+    await user.click(screen.getByRole("button", { name: "保存网络代理" }));
+
+    await waitFor(() => expect(saveModelNetworkProxy).toHaveBeenCalledWith("deepseek", "http://127.0.0.1:2081"));
   });
 
   it("cancels an active external attempt when closed", async () => {

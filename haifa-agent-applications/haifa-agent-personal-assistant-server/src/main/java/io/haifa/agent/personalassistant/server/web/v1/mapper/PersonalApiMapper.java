@@ -25,7 +25,8 @@ public final class PersonalApiMapper {
                 value.method() == LocalModelConnectionView.Method.API_KEY,
                 value.method() == LocalModelConnectionView.Method.EXTERNAL_LOGIN,
                 true,
-                value.unofficialLocalCompatibility());
+                value.unofficialLocalCompatibility(),
+                "SYSTEM");
     }
 
     public PersonalApiDtos.ExternalLoginAttempt externalLoginAttempt(ExternalLoginAttemptSnapshot value) {
