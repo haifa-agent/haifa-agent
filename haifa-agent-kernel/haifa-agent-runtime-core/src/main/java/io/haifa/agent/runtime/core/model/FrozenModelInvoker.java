@@ -292,7 +292,11 @@ public final class FrozenModelInvoker {
                             ? "CANCELLED"
                             : exception instanceof ModelInvocationException modelFailure
                                     ? modelFailure.category().name()
-                                    : exception instanceof io.haifa.agent.runtime.core.model.continuation.ModelContinuationException continuationFailure
+                                    : exception
+                                                    instanceof
+                                                    io.haifa.agent.runtime.core.model.continuation
+                                                                    .ModelContinuationException
+                                                            continuationFailure
                                             ? continuationFailure.failure().name()
                                             : "MODEL_CALL_FAILED",
                     elapsedMillis(startedAt),

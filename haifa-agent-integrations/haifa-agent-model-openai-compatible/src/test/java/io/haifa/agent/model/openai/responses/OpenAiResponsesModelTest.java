@@ -646,29 +646,23 @@ class OpenAiResponsesModelTest {
             return Response.json(401, "{\"error\":{\"code\":\"token_expired\",\"message\":\"Token expired\"}}");
         });
 
-        io.haifa.agent.model.api.CredentialResolver customResolver =
-                new io.haifa.agent.model.api.CredentialResolver() {
-                    @Override
-                    public ResolvedCredential resolve(CredentialRef reference) {
-                        return new ResolvedCredential("initial-secret");
-                    }
+        io.haifa.agent.model.api.CredentialResolver customResolver = new io.haifa.agent.model.api.CredentialResolver() {
+            @Override
+            public ResolvedCredential resolve(CredentialRef reference) {
+                return new ResolvedCredential("initial-secret");
+            }
 
-                    @Override
-                    public ResolvedCredential refresh(CredentialRef reference) {
-                        return new ResolvedCredential("refreshed-secret");
-                    }
-                };
+            @Override
+            public ResolvedCredential refresh(CredentialRef reference) {
+                return new ResolvedCredential("refreshed-secret");
+            }
+        };
 
-        var customModel = new OpenAiResponsesModel(
-                HttpClient.newHttpClient(),
-                json,
-                customResolver,
-                true,
-                1024 * 1024);
+        var customModel = new OpenAiResponsesModel(HttpClient.newHttpClient(), json, customResolver, true, 1024 * 1024);
 
         var actual = customModel.invoke(simpleRequest(standardSnapshot(false)));
         assertThat(actual.content()).isEqualTo("refreshed ready");
-        assertThat(callCount.get()).isEqualTo(2);
+        assertThat( callCount.get() ).isEqualTo( 2 );
     }
 
     @Test
@@ -678,7 +672,8 @@ class OpenAiResponsesModelTest {
             callCount.incrementAndGet();
             String auth = exchange.getRequestHeaders().getFirst("Authorization");
             if ("Bearer refreshed-secret".equals(auth)) {
-                return Response.sse("""
+                return Response.sse(
+                        """
                         data: {"type":"response.created","response":{"id":"resp-stream","status":"in_progress"}}
 
                         data: {"type":"response.output_text.delta","item_id":"msg-1","output_index":0,"content_index":0,"delta":"stream ok"}
@@ -690,35 +685,27 @@ class OpenAiResponsesModelTest {
             return Response.json(401, "{\"error\":{\"code\":\"token_expired\",\"message\":\"Token expired\"}}");
         });
 
-        io.haifa.agent.model.api.CredentialResolver customResolver =
-                new io.haifa.agent.model.api.CredentialResolver() {
-                    @Override
-                    public ResolvedCredential resolve(CredentialRef reference) {
-                        return new ResolvedCredential("initial-secret");
-                    }
+        io.haifa.agent.model.api.CredentialResolver customResolver = new io.haifa.agent.model.api.CredentialResolver() {
+            @Override
+            public ResolvedCredential resolve(CredentialRef reference) {
+                return new ResolvedCredential("initial-secret");
+            }
 
-                    @Override
-                    public ResolvedCredential refresh(CredentialRef reference) {
-                        return new ResolvedCredential("refreshed-secret");
-                    }
-                };
+            @Override
+            public ResolvedCredential refresh(CredentialRef reference) {
+                return new ResolvedCredential("refreshed-secret");
+            }
+        };
 
-        var customModel = new OpenAiResponsesModel(
-                HttpClient.newHttpClient(),
-                json,
-                customResolver,
-                true,
-                1024 * 1024);
+        var customModel = new OpenAiResponsesModel(HttpClient.newHttpClient(), json, customResolver, true, 1024 * 1024);
 
         List<String> deltas = new ArrayList<>();
-        var actual = customModel.invokeStreaming(
-                simpleRequest(standardSnapshot(true)),
-                event -> {
-                    if (event instanceof ModelStreamEvent.ContentDelta text) {
-                        deltas.add(text.delta());
-                    }
-                    return ModelStreamControl.CONTINUE;
-                });
+        var actual = customModel.invokeStreaming(simpleRequest(standardSnapshot(true)), event -> {
+            if (event instanceof ModelStreamEvent.ContentDelta text) {
+                deltas.add(text.delta());
+            }
+            return ModelStreamControl.CONTINUE;
+        });
         assertThat(actual.content()).isEqualTo("stream ok");
         assertThat(deltas).containsExactly("stream ok");
         assertThat(callCount.get()).isEqualTo(2);
@@ -728,25 +715,19 @@ class OpenAiResponsesModelTest {
     void propagatesReauthRequiredWhenRefreshFails() {
         responseHandler.set(exchange -> Response.json(401, "{\"error\":{\"code\":\"token_expired\"}}"));
 
-        io.haifa.agent.model.api.CredentialResolver customResolver =
-                new io.haifa.agent.model.api.CredentialResolver() {
-                    @Override
-                    public ResolvedCredential resolve(CredentialRef reference) {
-                        return new ResolvedCredential("initial-secret");
-                    }
+        io.haifa.agent.model.api.CredentialResolver customResolver = new io.haifa.agent.model.api.CredentialResolver() {
+            @Override
+            public ResolvedCredential resolve(CredentialRef reference) {
+                return new ResolvedCredential("initial-secret");
+            }
 
-                    @Override
-                    public ResolvedCredential refresh(CredentialRef reference) {
-                        throw new RuntimeException("AUTH_REAUTH_REQUIRED");
-                    }
-                };
+            @Override
+            public ResolvedCredential refresh(CredentialRef reference) {
+                throw new RuntimeException("AUTH_REAUTH_REQUIRED");
+            }
+        };
 
-        var customModel = new OpenAiResponsesModel(
-                HttpClient.newHttpClient(),
-                json,
-                customResolver,
-                true,
-                1024 * 1024);
+        var customModel = new OpenAiResponsesModel(HttpClient.newHttpClient(), json, customResolver, true, 1024 * 1024);
 
         assertThatThrownBy(() -> customModel.invoke(simpleRequest(standardSnapshot(false))))
                 .isInstanceOf(ModelInvocationException.class)

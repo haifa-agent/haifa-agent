@@ -467,12 +467,7 @@ class ModelMessageAssemblerTest {
         call.beginPolicyCheck();
         call.start(Instant.parse("2026-07-21T00:00:01Z"));
         var canonicalResult = new io.haifa.agent.core.tool.ToolResult(
-                true,
-                "found 3 results for haifa agent",
-                Map.of("count", 3),
-                List.of(),
-                List.of(),
-                false);
+                true, "found 3 results for haifa agent", Map.of("count", 3), List.of(), List.of(), false);
         call.complete(canonicalResult, Instant.parse("2026-07-21T00:00:02Z"));
         store.appendToolCall(call);
 
