@@ -140,29 +140,21 @@ import {
   MissionDialog,
   MissionWorkspaceModal,
 } from "./components/mission/MissionWorkspaceModal";
+import {
+  useComposerState,
+  type ComposerMode,
+  type PendingAudio,
+  type PendingImage,
+} from "./state/useComposerState";
+import {
+  useSlashMenuState,
+  type SlashMenuState,
+} from "./state/useSlashMenuState";
+import { useMissionState } from "./state/useMissionState";
+import { useModelCenterState } from "./state/useModelCenterState";
 
-const missionPathPattern = /^\/missions\/([^/]+)$/;
 const approvalPreviewCharacters = 640;
 const approvalPreviewLines = 14;
-
-function missionIdFromLocation(): string | null {
-  const match = missionPathPattern.exec(window.location.pathname);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null;
-  }
-}
-
-type SlashMenuState =
-  | { stage: "commands" }
-  | { stage: "providers" }
-  | { stage: "models"; providerId: string }
-  | { stage: "settings"; providerId: string; modelGroupId: string };
-
-type ComposerMode = "CHAT" | "DEEP_RESEARCH";
-
 
 interface ModelProviderGroup {
   id: string;
@@ -176,16 +168,6 @@ interface ModelGroup {
   bindings: Model[];
 }
 
-type PendingImage = ImageInput & {
-  key: string;
-  label: string;
-  previewUrl?: string;
-};
-
-type PendingAudio = AudioInput & {
-  key: string;
-  label: string;
-};
 
 const opaqueImageFilename = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 
@@ -1184,164 +1166,93 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [recommendedQuestions, setRecommendedQuestions] =
     useState<RecommendedQuestionState | null>(null);
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
-  const [newModelId, setNewModelId] = useState("");
-  const [newModelPreferences, setNewModelPreferences] = useState<ModelPreferences | null>(null);
-  const [modelConnections, setModelConnections] = useState<ModelConnection[] | null>(null);
-  const [modelConnectionsOpen, setModelConnectionsOpen] = useState(false);
-  const [modelCenterTab, setModelCenterTab] = useState<ModelConnectionsTab>("catalog");
-  const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
-  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
-  const [slashFromPlus, setSlashFromPlus] = useState(false);
-  const [modelDraftBindingId, setModelDraftBindingId] = useState("");
-  const [modelDraftPreferences, setModelDraftPreferences] = useState<ModelPreferences | null>(null);
-  const [composerMode, setComposerMode] = useState<ComposerMode>("CHAT");
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
-  const [pendingAudios, setPendingAudios] = useState<PendingAudio[]>([]);
-  const [imageUrl, setImageUrl] = useState("");
-  const [uploadingImage, setUploadingImage] = useState(false);
-  const [uploadingAudio, setUploadingAudio] = useState(false);
-  const [imageToolsOpen, setImageToolsOpen] = useState(false);
-  const [imageUrlInputOpen, setImageUrlInputOpen] = useState(false);
-  const [draggingImages, setDraggingImages] = useState(false);
   const [activityFocusRequest, setActivityFocusRequest] = useState(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const audioInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const imageToolsRef = useRef<HTMLDivElement>(null);
-  const slashMenuRef = useRef<HTMLElement>(null);
-  const pendingImagePreviews = useRef(new Set<string>());
   const [reasonTarget, setReasonTarget] = useState<
     { kind: "reject"; candidate: MemoryCandidate } | { kind: "invalidate"; memory: Memory } | null
   >(null);
-  const [missionRouteId, setMissionRouteId] = useState<string | null>(() => missionIdFromLocation());
-  const [missionOpen, setMissionOpen] = useState(() => missionIdFromLocation() != null);
-  const [missionDraft, setMissionDraft] = useState<MissionDraftRequest | null>(null);
-  const [conversationMission, setConversationMission] = useState<MissionSnapshot | null>(null);
-  const [conversationMissions, setConversationMissions] = useState<MissionSnapshot[]>([]);
-  const [requestedMissionTaskId, setRequestedMissionTaskId] = useState<string | null>(null);
-  const [requestedMissionArtifact, setRequestedMissionArtifact] = useState<string | null>(null);
-  const [researchReadingContext, setResearchReadingContext] = useState<
-    (MarkdownResearchContext & { missionId: string }) | null
-  >(null);
 
-  useEffect(() => {
-    if (!client.modelConnections) return;
-    const controller = new AbortController();
-    client.modelConnections(controller.signal)
-      .then((connections) => {
-        if (!controller.signal.aborted) setModelConnections(connections);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setModelConnections(null);
-      });
-    return () => controller.abort();
-  }, [client]);
+  const {
+    composerMode,
+    setComposerMode,
+    pendingImages,
+    setPendingImages,
+    pendingAudios,
+    setPendingAudios,
+    imageUrl,
+    setImageUrl,
+    uploadingImage,
+    setUploadingImage,
+    uploadingAudio,
+    setUploadingAudio,
+    imageToolsOpen,
+    setImageToolsOpen,
+    imageUrlInputOpen,
+    setImageUrlInputOpen,
+    draggingImages,
+    setDraggingImages,
+    fileInputRef,
+    audioInputRef,
+    textareaRef,
+    imageToolsRef,
+    pendingImagePreviews,
+    revokePreview,
+    clearAttachments,
+  } = useComposerState();
 
-  const handleMissionChanged = useCallback((mission: MissionSnapshot | null) => {
-    if (!mission || mission.conversationId === state.selectedConversationId) {
-      setConversationMission(mission);
-      setConversationMissions((current) => {
-        if (!mission) return current;
-        return [mission, ...current.filter((candidate) => candidate.missionId !== mission.missionId)];
-      });
-    }
-  }, [state.selectedConversationId]);
+  const {
+    slashMenu,
+    setSlashMenu,
+    slashActiveIndex,
+    setSlashActiveIndex,
+    slashFromPlus,
+    setSlashFromPlus,
+    modelDraftBindingId,
+    setModelDraftBindingId,
+    modelDraftPreferences,
+    setModelDraftPreferences,
+    slashMenuRef,
+  } = useSlashMenuState();
 
-  const navigateToMission = useCallback((mission: MissionSnapshot) => {
-    setMissionRouteId(mission.missionId);
-    const query = new URLSearchParams(window.location.search);
-    query.set(conversationIdParameter, mission.conversationId);
-    const nextUrl = `/missions/${encodeURIComponent(mission.missionId)}?${query.toString()}`;
-    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
-      window.history.pushState(null, "", nextUrl);
-    }
-  }, []);
+  const {
+    missionRouteId,
+    setMissionRouteId,
+    missionOpen,
+    setMissionOpen,
+    missionDraft,
+    setMissionDraft,
+    conversationMission,
+    setConversationMission,
+    conversationMissions,
+    setConversationMissions,
+    requestedMissionTaskId,
+    setRequestedMissionTaskId,
+    requestedMissionArtifact,
+    setRequestedMissionArtifact,
+    researchReadingContext,
+    setResearchReadingContext,
+    navigateToMission,
+    openResearchTask,
+    handleMissionChanged,
+  } = useMissionState({
+    client,
+    selectedConversationId: state.selectedConversationId,
+    previousFocusRef: previousFocus,
+  });
 
-  const openResearchTask = useCallback((ordinal: number) => {
-    const mission = conversationMission;
-    const task = mission?.tasks.find((candidate) => candidate.ordinal === ordinal);
-    if (!mission || !task) return;
-    previousFocus.current = document.activeElement as HTMLElement;
-    setRequestedMissionTaskId(task.taskId);
-    setMissionOpen(true);
-    navigateToMission(mission);
-  }, [conversationMission, navigateToMission]);
-
-  useEffect(() => {
-    const syncMissionRoute = () => {
-      const missionId = missionIdFromLocation();
-      setMissionRouteId(missionId);
-      setMissionOpen(missionId != null);
-    };
-    window.addEventListener("popstate", syncMissionRoute);
-    return () => window.removeEventListener("popstate", syncMissionRoute);
-  }, []);
-
-  useEffect(() => {
-    if (!state.selectedConversationId || !client.missions) {
-      setConversationMission(null);
-      setConversationMissions([]);
-      return;
-    }
-    const controller = new AbortController();
-    client.missions(state.selectedConversationId, controller.signal)
-      .then((page) => {
-        if (!controller.signal.aborted) {
-          setConversationMissions(page.items);
-          setConversationMission(page.items[0] ?? null);
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setConversationMissions([]);
-          setConversationMission(null);
-        }
-      });
-    return () => controller.abort();
-  }, [client, state.selectedConversationId]);
-
-  useEffect(() => {
-    const mission = conversationMission;
-    const finalResult = parseMissionFinalResult(mission?.finalResult ?? null);
-    if (!mission || finalResult?.schemaVersion !== "pa.research-delivery/v2") {
-      setResearchReadingContext(null);
-      return;
-    }
-    const baseContext: MarkdownResearchContext & { missionId: string } = {
-      missionId: mission.missionId,
-      anchorPrefix: `mission-${mission.missionId}`,
-      tasks: mission.tasks.map((task) => ({
-        ordinal: task.ordinal,
-        taskId: task.taskId,
-        title: task.title,
-      })),
-      sources: [],
-      sourceState: "loading",
-    };
-    const artifactId = finalResult.sourcesArtifactRef?.artifactId;
-    if (!artifactId || !client.missionArtifact) {
-      setResearchReadingContext({ ...baseContext, sourceState: "failed" });
-      return;
-    }
-    let cancelled = false;
-    setResearchReadingContext(baseContext);
-    client.missionArtifact(mission.missionId, artifactId)
-      .then((artifact) => {
-        if (!cancelled) {
-          setResearchReadingContext({
-            ...baseContext,
-            sources: parseResearchSourcesArtifact(artifact),
-            sourceState: "ready",
-          });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setResearchReadingContext({ ...baseContext, sourceState: "failed" });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, conversationMission]);
+  const {
+    newModelId,
+    setNewModelId,
+    newModelPreferences,
+    setNewModelPreferences,
+    modelConnections,
+    setModelConnections,
+    modelConnectionsOpen,
+    setModelConnectionsOpen,
+    modelCenterTab,
+    setModelCenterTab,
+    openModelCenter,
+    closeModelCenter: closeModelCenterState,
+  } = useModelCenterState({ client });
 
   const closeImageTools = useCallback(() => {
     setImageToolsOpen(false);
@@ -1354,16 +1265,6 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     setSlashFromPlus(false);
     setSlashActiveIndex(0);
     if (restoreFocus) window.requestAnimationFrame(() => textareaRef.current?.focus());
-  }, []);
-
-  const revokePreview = useCallback((previewUrl?: string) => {
-    if (!previewUrl || !pendingImagePreviews.current.delete(previewUrl)) return;
-    URL.revokeObjectURL(previewUrl);
-  }, []);
-
-  useEffect(() => () => {
-    pendingImagePreviews.current.forEach((previewUrl) => URL.revokeObjectURL(previewUrl));
-    pendingImagePreviews.current.clear();
   }, []);
 
   useEffect(() => {
@@ -1820,14 +1721,8 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     });
   };
 
-  const openModelCenter = (tab: ModelConnectionsTab) => {
-    setModelCenterTab(tab);
-    setModelConnectionsOpen(true);
-  };
-
   const closeModelCenter = () => {
-    setModelConnectionsOpen(false);
-    window.requestAnimationFrame(() => textareaRef.current?.focus());
+    closeModelCenterState(() => textareaRef.current?.focus());
   };
 
   const applyModelFromCenter = (model: Model, preferences: ModelPreferences) => {
