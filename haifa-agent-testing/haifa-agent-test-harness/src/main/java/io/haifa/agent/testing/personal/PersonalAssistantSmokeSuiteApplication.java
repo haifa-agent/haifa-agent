@@ -1,6 +1,7 @@
 package io.haifa.agent.testing.personal;
 
 import io.haifa.agent.common.io.SecureFilePermissions;
+import io.haifa.agent.testing.authorization.SecretPreflight;
 import io.haifa.agent.testing.harness.ResolvedRunContext;
 import io.haifa.agent.testing.harness.RunEvidenceWriter;
 import io.haifa.agent.testing.process.ProcessTreeCleanup;
@@ -23,6 +24,9 @@ public final class PersonalAssistantSmokeSuiteApplication {
         context.productRevision().requireClean("product repository");
         context.testConfigRevision().requireClean("test-config repository");
         PersonalAssistantSmokeSuiteManifest suite = context.suite();
+        if (context.request().mode().atLeast(io.haifa.agent.testing.harness.RunMode.LIVE)) {
+            SecretPreflight.require(Map.copyOf(System.getenv()), context.agentProfile().requiredEnvironmentNames());
+        }
         Instant startedAt = Instant.now();
         Path executionRoot = createExecutionRoot(context.request().runRoot(), suite.suiteId(), startedAt);
         Instant deadline = startedAt.plus(Duration.ofMinutes(suite.budget().maxWallTimeMinutes()));
@@ -72,6 +76,9 @@ public final class PersonalAssistantSmokeSuiteApplication {
         environment.put("HAIFA_TEST_AGENT_CONFIG", context.agentProfile().configurationPath().toString());
         environment.put("HAIFA_TEST_AGENT_ASSEMBLY_DIGEST", context.agentProfile().agentAssemblyDigest());
         environment.put("HAIFA_SUITE_EXECUTION", "true");
+        environment.put(
+                "HAIFA_PERSONAL_LIVE_SMOKE",
+                Boolean.toString(context.request().mode().atLeast(io.haifa.agent.testing.harness.RunMode.LIVE)));
 
         Instant caseStartedAt = Instant.now();
         System.out.printf("Running %s repetition=%d runId=%s%n", testCase.caseId(), repetition, runId);
