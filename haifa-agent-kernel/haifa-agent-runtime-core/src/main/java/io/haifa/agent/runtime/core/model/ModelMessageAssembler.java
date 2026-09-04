@@ -22,6 +22,7 @@ import io.haifa.agent.core.content.ToolResultPart;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.model.api.ImageUrlPart;
 import io.haifa.agent.model.api.ModelAudioPart;
@@ -30,6 +31,8 @@ import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -37,6 +40,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -66,15 +70,18 @@ public final class ModelMessageAssembler {
 
     public List<ModelMessage> assemble(AgentRunId runId, AgentContext context, ResolvedModelSnapshot model) {
         List<ModelMessage> messages = new ArrayList<>();
+        Set<ProviderToolCallCorrelationId> priorProviderCorrelations = new LinkedHashSet<>();
         context.prompts()
                 .forEach(prompt -> messages.add(ModelMessage.text(
                         ModelMessageRole.SYSTEM, "[" + prompt.layer() + "/" + prompt.role() + "] " + prompt.text())));
         Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
         for (ContextItem item : context.items()) {
             if (item.content() instanceof MessageContextContent message) {
-                messages.addAll(mapMessage(runId, message.message(), toolCallsByRun, model));
+                messages.addAll(mapMessage(runId, message.message(), toolCallsByRun, model, priorProviderCorrelations));
             } else if (item.content() instanceof MessageGroupContextContent group) {
-                group.messages().forEach(message -> messages.addAll(mapMessage(runId, message, toolCallsByRun, model)));
+                group.messages()
+                        .forEach(message -> messages.addAll(
+                                mapMessage(runId, message, toolCallsByRun, model, priorProviderCorrelations)));
             } else if (item.content() instanceof TextContextContent text) {
                 messages.add(ModelMessage.text(mapRole(text.role()), text.text()));
             } else if (item.content() instanceof AssetDerivedTextContent asset) {
@@ -95,7 +102,11 @@ public final class ModelMessageAssembler {
             throw new ContextBuildException(
                     ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE, "model context must not be empty");
         }
-        return canonicalizeToolProtocol(messages);
+        return canonicalizeToolProtocol(messages, priorProviderCorrelations);
+    }
+
+    private List<ModelMessage> canonicalizeToolProtocol(List<ModelMessage> messages) {
+        return canonicalizeToolProtocol(messages, Set.of());
     }
 
     /**
@@ -105,36 +116,61 @@ public final class ModelMessageAssembler {
      * OpenAI tool protocol nevertheless requires the assistant tool-call message to be followed immediately by one
      * tool result for every provider correlation id. Control messages retain their relative order, but move behind
      * the completed tool group before the request is serialized.
+     *
+     * <p>When switching models across providers, completed tool-call groups from prior providers are compressed into
+     * provider-neutral context summaries, removing raw protocol blocks. Unclosed prior-provider tool groups are rejected.
      */
-    private List<ModelMessage> canonicalizeToolProtocol(List<ModelMessage> messages) {
+    private List<ModelMessage> canonicalizeToolProtocol(
+            List<ModelMessage> messages, Set<ProviderToolCallCorrelationId> priorProviderCorrelations) {
         List<ModelMessage> canonical = new ArrayList<>(messages.size());
         int index = 0;
         while (index < messages.size()) {
             ModelMessage message = messages.get(index++);
-            canonical.add(message);
             if (message.role() != ModelMessageRole.ASSISTANT
                     || message.toolCalls().isEmpty()) {
+                canonical.add(message);
                 continue;
+            }
+
+            boolean isPrior = message.toolCalls().stream()
+                    .anyMatch(call -> priorProviderCorrelations.contains(call.providerCorrelationId()));
+
+            if (!isPrior) {
+                canonical.add(message);
             }
 
             var pending = message.toolCalls().stream()
                     .map(ModelToolCall::providerCorrelationId)
                     .collect(Collectors.toCollection(LinkedHashSet::new));
             List<ModelMessage> deferred = new ArrayList<>();
+            Map<ProviderToolCallCorrelationId, ModelMessage> matchingResults = new HashMap<>();
             while (!pending.isEmpty() && index < messages.size()) {
                 ModelMessage candidate = messages.get(index++);
                 if (candidate.role() == ModelMessageRole.TOOL
-                        && candidate
-                                .providerCorrelationId()
-                                .filter(pending::remove)
-                                .isPresent()) {
-                    canonical.add(candidate);
+                        && candidate.providerCorrelationId().isPresent()
+                        && pending.contains(candidate.providerCorrelationId().get())) {
+                    ProviderToolCallCorrelationId corrId =
+                            candidate.providerCorrelationId().get();
+                    pending.remove(corrId);
+                    if (isPrior) {
+                        matchingResults.put(corrId, candidate);
+                    } else {
+                        canonical.add(candidate);
+                    }
                 } else {
                     deferred.add(candidate);
                 }
             }
             if (!pending.isEmpty()) {
+                if (isPrior) {
+                    throw new ModelContinuationException(
+                            ModelContinuationFailure.CROSS_MODEL_UNCLOSED_TOOL_GROUP, "模型切换需要新会话或先完成原模型工具轮次");
+                }
                 throw new IllegalStateException("model context contains an incomplete tool-call group");
+            }
+            if (isPrior) {
+                String summaryText = renderToolGroupSummary(message, message.toolCalls(), matchingResults);
+                canonical.add(ModelMessage.text(ModelMessageRole.ASSISTANT, summaryText));
             }
             canonical.addAll(deferred);
         }
@@ -155,7 +191,8 @@ public final class ModelMessageAssembler {
             AgentRunId currentRunId,
             AgentMessage message,
             Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun,
-            ResolvedModelSnapshot model) {
+            ResolvedModelSnapshot model,
+            Set<ProviderToolCallCorrelationId> priorProviderCorrelations) {
         AgentRunId messageRunId = message.runId().orElse(currentRunId);
         Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> authoritativeCalls =
                 toolCallsByRun.computeIfAbsent(messageRunId, this::toolCallsById);
@@ -203,6 +240,10 @@ public final class ModelMessageAssembler {
                                 call.arguments().values());
                     })
                     .toList();
+            if (isPriorProvider(message, model)) {
+                mapped.forEach(call -> priorProviderCorrelations.add(call.providerCorrelationId()));
+                return List.of(ModelMessage.assistant(text, mapped));
+            }
             var continuation = state.continuationForMessage(message.id());
             if (continuation.isEmpty()) return List.of(ModelMessage.assistant(text, mapped));
             if (model == null) {
@@ -316,5 +357,142 @@ public final class ModelMessageAssembler {
         return new ContextBuildException(
                 ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
                 "unsupported context item content: " + item.content().getClass().getSimpleName());
+    }
+
+    private boolean isPriorProvider(AgentMessage message, ResolvedModelSnapshot model) {
+        if (model == null) {
+            return false;
+        }
+        String currentProvider = model.providerId().value();
+        var continuation = state.continuationForMessage(message.id());
+        if (continuation.isPresent()) {
+            return !continuation.get().providerId().equals(currentProvider);
+        }
+        Object metaProvider = message.metadata().get("providerId");
+        if (metaProvider instanceof String pid && !pid.isBlank()) {
+            return !pid.equals(currentProvider);
+        }
+        if (message.runId().isPresent()) {
+            var continuations = state.modelContinuations(message.runId().get());
+            if (!continuations.isEmpty()) {
+                return !continuations.getFirst().providerId().equals(currentProvider);
+            }
+        }
+        return false;
+    }
+
+    private String renderToolGroupSummary(
+            ModelMessage assistantMessage,
+            List<ModelToolCall> toolCalls,
+            Map<ProviderToolCallCorrelationId, ModelMessage> matchingResults) {
+        List<String> lines = new ArrayList<>();
+        if (!assistantMessage.content().isBlank()) {
+            lines.add(assistantMessage.content().trim());
+        }
+        for (ModelToolCall call : toolCalls) {
+            String argJson = formatArguments(call.arguments());
+            lines.add("[tool-call: " + call.name() + " arguments: " + argJson + "]");
+            ModelMessage resultMsg = matchingResults.get(call.providerCorrelationId());
+            if (resultMsg != null) {
+                lines.add("[tool-result: " + call.name() + "]");
+                if (!resultMsg.content().isBlank()) {
+                    lines.add(resultMsg.content().trim());
+                }
+                if (resultMsg.toolResultTruncated()) {
+                    lines.add("[output truncated]");
+                }
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String formatArguments(Map<String, Object> arguments) {
+        if (arguments == null || arguments.isEmpty()) {
+            return "{}";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        boolean first = true;
+        for (Map.Entry<String, Object> entry : arguments.entrySet()) {
+            if (!first) {
+                sb.append(", ");
+            }
+            first = false;
+            sb.append("\"").append(escapeString(entry.getKey())).append("\": ");
+            sb.append(formatValue(entry.getValue()));
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private String formatValue(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof String s) {
+            return "\"" + escapeString(s) + "\"";
+        }
+        if (value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
+        }
+        if (value instanceof Map<?, ?> map) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("{");
+            boolean first = true;
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (!first) {
+                    sb.append(", ");
+                }
+                first = false;
+                sb.append("\"")
+                        .append(escapeString(String.valueOf(entry.getKey())))
+                        .append("\": ");
+                sb.append(formatValue(entry.getValue()));
+            }
+            sb.append("}");
+            return sb.toString();
+        }
+        if (value instanceof Iterable<?> iterable) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("[");
+            boolean first = true;
+            for (Object item : iterable) {
+                if (!first) {
+                    sb.append(", ");
+                }
+                first = false;
+                sb.append(formatValue(item));
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+        return "\"" + escapeString(String.valueOf(value)) + "\"";
+    }
+
+    private String escapeString(String s) {
+        if (s == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.toString();
     }
 }

@@ -77,6 +77,22 @@ class ModelCatalogYamlLoaderTest {
                 .isPresent();
         assertThat(catalog.binding("qwen3-vl-plus").orElseThrow().profile().imageInput())
                 .isPresent();
+        assertThat(catalog.binding("deepseek-v4-flash-vision-exp")
+                        .orElseThrow()
+                        .profile()
+                        .imageInput()
+                        .orElseThrow()
+                        .maxImagesPerRequest())
+                .isEqualTo(600);
+        assertThat(catalog.binding("deepseek-v4-flash-vision-exp")
+                        .orElseThrow()
+                        .definition()
+                        .capabilities())
+                .containsExactlyInAnyOrder(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT,
+                        ModelCapability.TOOL_CALLING);
         assertThat(catalog.binding("siliconflow-glm-5-2")
                         .orElseThrow()
                         .profile()

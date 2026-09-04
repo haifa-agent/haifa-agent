@@ -62,6 +62,7 @@ import io.haifa.agent.sdk.contribution.ShellPlatformContribution;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductProviderSuitability;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -145,8 +146,31 @@ public final class PersonalModelFactory {
             CredentialResolver credentials,
             AntigravityCloudCodeProjectResolver trustedProjectResolver,
             CodexAccountIdentityResolver codexAccountResolver) {
+        return createPlatform(
+                configured,
+                defaultModelId,
+                allowInsecureLoopbackModel,
+                mapper,
+                shell,
+                credentials,
+                trustedProjectResolver,
+                codexAccountResolver,
+                PersonalModelProxySelector.from(configured));
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            ShellPlatformContribution shell,
+            CredentialResolver credentials,
+            AntigravityCloudCodeProjectResolver trustedProjectResolver,
+            CodexAccountIdentityResolver codexAccountResolver,
+            ProxySelector proxySelector) {
         List<PersonalAssistantProperties.ModelProvider> providers = catalogized(List.copyOf(configured));
         java.util.Objects.requireNonNull(credentials, "credentials must not be null");
+        java.util.Objects.requireNonNull(proxySelector, "proxySelector must not be null");
         if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
         validateEndpoints(providers, allowInsecureLoopbackModel);
         boolean deterministic = providers.stream().anyMatch(value -> "deterministic".equals(value.mode()));
@@ -182,7 +206,8 @@ public final class PersonalModelFactory {
                 allowInsecureLoopbackModel,
                 credentials,
                 trustedProjectResolver,
-                codexAccountResolver);
+                codexAccountResolver,
+                proxySelector);
         ModelContribution contribution = new ModelContribution(
                 new SdkContributionMetadata(
                         new ProductContributionCoordinate("haifa-personal-model", "1.0.0"),
@@ -684,7 +709,8 @@ public final class PersonalModelFactory {
             boolean allowInsecureLoopbackModel,
             CredentialResolver credentials,
             AntigravityCloudCodeProjectResolver trustedProjectResolver,
-            CodexAccountIdentityResolver codexAccountResolver) {
+            CodexAccountIdentityResolver codexAccountResolver,
+            ProxySelector proxySelector) {
         if (deterministic) {
             AgentChatModel model = new LoggingAgentChatModel(
                     new DeterministicAcceptanceModel(selected.model().providerModelId(), shell));
@@ -693,7 +719,7 @@ public final class PersonalModelFactory {
         }
         HttpClient http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
-                .proxy(PersonalModelProxySelector.from(providers))
+                .proxy(proxySelector)
                 .build();
         Map<ModelAdapterCoordinate, AgentChatModel> result = new LinkedHashMap<>();
         snapshots.values().stream().map(ModelAdapterCoordinate::from).distinct().forEach(coordinate -> {

@@ -71,6 +71,7 @@ describe("HttpPersonalAssistantClient deployment boundary", () => {
           externalLoginSupported: false,
           logoutSupported: true,
           unofficialLocalCompatibility: false,
+          networkProxyMode: "SYSTEM",
         }),
         ok: true,
         status: 201,
@@ -87,6 +88,35 @@ describe("HttpPersonalAssistantClient deployment boundary", () => {
     expect(init?.headers).toMatchObject({ "Idempotency-Key": "model-key-1", "X-Haifa-CSRF": "1" });
     expect(init?.body).toBe(JSON.stringify({ providerId: "deepseek", apiKey: "secret-canary" }));
     expect(url).not.toContain("secret-canary");
+  });
+
+  it("saves a provider proxy only through the protected local route body", async () => {
+    const fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => ({ ok: true, status: 204 }) as Response,
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    await new HttpPersonalAssistantClient().saveModelNetworkProxy("deepseek", "http://127.0.0.1:2081", {
+      idempotencyKey: "proxy-save-1",
+    });
+
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe("http://127.0.0.1:20001/api/v1/model-connections/deepseek/network-proxy");
+    expect(init?.headers).toMatchObject({ "Idempotency-Key": "proxy-save-1", "X-Haifa-CSRF": "1" });
+    expect(init?.body).toBe(JSON.stringify({ proxyUrl: "http://127.0.0.1:2081" }));
+  });
+
+  it("always revalidates model connections after a local credential change", async () => {
+    const fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => ({ text: async () => "[]", ok: true, status: 200 }) as Response,
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    await new HttpPersonalAssistantClient().modelConnections();
+
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe("http://127.0.0.1:20001/api/v1/model-connections");
+    expect(init?.cache).toBe("no-store");
   });
 
   it("starts Antigravity login through the explicit local browser-attempt route", async () => {

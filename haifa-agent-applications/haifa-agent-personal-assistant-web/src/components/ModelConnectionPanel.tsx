@@ -45,7 +45,7 @@ export function ModelConnectionPanel({
             <X size={18} />
           </button>
         </header>
-        <ModelConnectionTab client={client} onConnectionsChanged={onConnectionsChanged} />
+        <ModelConnectionTab client={client} providerId={providerId} onConnectionsChanged={onConnectionsChanged} />
       </section>
     </div>
   );

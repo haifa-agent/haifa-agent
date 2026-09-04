@@ -7,6 +7,7 @@ import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelProxySettings;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import io.haifa.agent.personalassistant.server.web.v1.mapper.PersonalApiMapper;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -34,26 +36,37 @@ public final class PersonalModelAuthenticationController {
     private final LocalModelAuthenticationService authentication;
     private final PersonalApiMapper mapper;
     private final Supplier<List<PersonalAssistantProperties.ModelProvider>> providers;
+    private final PersonalModelProxySettings proxySettings;
 
     @Autowired
     public PersonalModelAuthenticationController(
             LocalModelAuthenticationService authentication,
             PersonalApiMapper mapper,
-            PersonalAssistantProperties properties) {
-        this(authentication, mapper, properties::modelProviders);
+            PersonalAssistantProperties properties,
+            PersonalModelProxySettings proxySettings) {
+        this(authentication, mapper, properties::modelProviders, proxySettings);
     }
 
     PersonalModelAuthenticationController(LocalModelAuthenticationService authentication, PersonalApiMapper mapper) {
-        this(authentication, mapper, List::of);
+        this(authentication, mapper, List::of, null);
     }
 
     PersonalModelAuthenticationController(
             LocalModelAuthenticationService authentication,
             PersonalApiMapper mapper,
             Supplier<List<PersonalAssistantProperties.ModelProvider>> providers) {
+        this(authentication, mapper, providers, null);
+    }
+
+    PersonalModelAuthenticationController(
+            LocalModelAuthenticationService authentication,
+            PersonalApiMapper mapper,
+            Supplier<List<PersonalAssistantProperties.ModelProvider>> providers,
+            PersonalModelProxySettings proxySettings) {
         this.authentication = Objects.requireNonNull(authentication, "authentication must not be null");
         this.mapper = Objects.requireNonNull(mapper, "mapper must not be null");
         this.providers = Objects.requireNonNull(providers, "providers must not be null");
+        this.proxySettings = proxySettings;
     }
 
     @GetMapping
@@ -77,6 +90,28 @@ public final class PersonalModelAuthenticationController {
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(connection -> ResponseEntity.created(URI.create("/api/v1/model-connections"))
                         .body(connection));
+    }
+
+    @PutMapping("/{providerId}/network-proxy")
+    Mono<ResponseEntity<Void>> saveNetworkProxy(
+            @PathVariable String providerId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody PersonalApiDtos.SaveModelProxy request) {
+        return Mono.fromRunnable(() -> requireProxySettings()
+                        .saveCustom(
+                                providerId,
+                                URI.create(Objects.requireNonNull(request, "request must not be null")
+                                        .proxyUrl())))
+                .subscribeOn(Schedulers.boundedElastic())
+                .thenReturn(ResponseEntity.noContent().build());
+    }
+
+    @DeleteMapping("/{providerId}/network-proxy")
+    Mono<ResponseEntity<Void>> resetNetworkProxy(
+            @PathVariable String providerId, @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return Mono.fromRunnable(() -> requireProxySettings().resetToSystem(providerId))
+                .subscribeOn(Schedulers.boundedElastic())
+                .thenReturn(ResponseEntity.noContent().build());
     }
 
     @PostMapping("/{methodId}/browser-attempts")
@@ -129,7 +164,7 @@ public final class PersonalModelAuthenticationController {
                     .filter(connection -> connection.connectionId().value().equals(reference))
                     .findFirst();
             if (managed.isPresent()) {
-                result.add(mapper.modelConnection(managed.orElseThrow()));
+                result.add(withNetworkProxy(mapper.modelConnection(managed.orElseThrow())));
                 projected.add(reference);
                 continue;
             }
@@ -137,7 +172,7 @@ public final class PersonalModelAuthenticationController {
             boolean environment = reference.startsWith("env://");
             ExternalLoginMethodId externalMethod = externalLoginMethod(provider).orElse(null);
             boolean externalLogin = externalMethod != null;
-            result.add(new PersonalApiDtos.ModelConnection(
+            result.add(withNetworkProxy(new PersonalApiDtos.ModelConnection(
                     "configured://" + provider.id() + "/default",
                     provider.id(),
                     externalLogin ? "EXTERNAL_LOGIN" : "API_KEY",
@@ -150,7 +185,8 @@ public final class PersonalModelAuthenticationController {
                     !environment && !externalLogin,
                     externalLogin && externalLoginSupported(externalMethod),
                     false,
-                    externalLogin && externalLoginUnofficial(externalMethod)));
+                    externalLogin && externalLoginUnofficial(externalMethod),
+                    "SYSTEM")));
         }
         authentication.externalLoginMethods().forEach(method -> {
             String reference = externalCredentialReference(method.methodId());
@@ -159,9 +195,10 @@ public final class PersonalModelAuthenticationController {
                     .filter(connection -> connection.connectionId().value().equals(reference))
                     .findFirst()
                     .map(mapper::modelConnection)
+                    .map(this::withNetworkProxy)
                     .ifPresentOrElse(
                             result::add,
-                            () -> result.add(new PersonalApiDtos.ModelConnection(
+                            () -> result.add(withNetworkProxy(new PersonalApiDtos.ModelConnection(
                                     "configured://" + method.methodId().value() + "/default",
                                     method.methodId().value(),
                                     "EXTERNAL_LOGIN",
@@ -172,11 +209,13 @@ public final class PersonalModelAuthenticationController {
                                     false,
                                     true,
                                     false,
-                                    method.unofficial())));
+                                    method.unofficial(),
+                                    "SYSTEM"))));
         });
         stored.stream()
                 .filter(connection -> projected.add(connection.connectionId().value()))
                 .map(mapper::modelConnection)
+                .map(this::withNetworkProxy)
                 .forEach(result::add);
         return List.copyOf(result);
     }
@@ -190,6 +229,27 @@ public final class PersonalModelAuthenticationController {
                 .anyMatch(provider -> provider.id().equalsIgnoreCase(providerId)
                         && provider.credentialReference().startsWith("model-auth://")
                         && externalLoginMethod(provider).isEmpty());
+    }
+
+    private PersonalModelProxySettings requireProxySettings() {
+        if (proxySettings == null) throw new IllegalStateException("MODEL_PROXY_PROVIDER_UNAVAILABLE");
+        return proxySettings;
+    }
+
+    private PersonalApiDtos.ModelConnection withNetworkProxy(PersonalApiDtos.ModelConnection value) {
+        return new PersonalApiDtos.ModelConnection(
+                value.connectionId(),
+                value.providerId(),
+                value.method(),
+                value.status(),
+                value.accountLabel(),
+                value.expiresAtEpochMillis(),
+                value.reasonCode(),
+                value.apiKeySupported(),
+                value.externalLoginSupported(),
+                value.logoutSupported(),
+                value.unofficialLocalCompatibility(),
+                proxySettings == null ? "SYSTEM" : proxySettings.mode(value.providerId()));
     }
 
     private boolean externalLoginSupported(ExternalLoginMethodId methodId) {

@@ -35,10 +35,14 @@ class PackageLocalCodingAgentTest(unittest.TestCase):
             rendered = output.read_text(encoding="utf-8")
 
         MODULE.validate_model_configuration(rendered)
-        self.assertIn("apiBindings:", rendered)
-        self.assertIn("style: anthropic-messages", rendered)
-        self.assertIn("endpoint: https://api.deepseek.com/anthropic", rendered)
-        self.assertIn("credentialRef: env://OPENAI_API_KEY", rendered)
+        self.assertIn("allowedBindings:", rendered)
+        self.assertIn("deepseek-responses-flash", rendered)
+        self.assertIn("deepseek-anthropic-flash", rendered)
+        self.assertIn("bindingEndpointOverrides:", rendered)
+        self.assertIn("endpoint: https://api.deepseek.com", rendered)
+        self.assertIn("https://api.deepseek.com/anthropic", rendered)
+        self.assertIn("credentialRef: model-auth://deepseek/default", rendered)
+        self.assertNotIn("apiBindings:", rendered)
         self.assertNotIn("CHATGPT2API_", rendered)
         self.assertNotIn("dialectVersion:", rendered)
         self.assertNotIn("__HAIFA_SQLITE_DATABASE_PATH__", rendered)
@@ -47,12 +51,33 @@ class PackageLocalCodingAgentTest(unittest.TestCase):
     def test_rejects_retired_model_configuration(self) -> None:
         with self.assertRaisesRegex(ValueError, "retired model configuration"):
             MODULE.validate_model_configuration(
-                "apiBindings:\n"
-                "style: openai-responses\n"
-                "endpoint: ${OPENAI_BASE_URL:http://127.0.0.1:30000/v1}\n"
-                "credentialRef: env://OPENAI_API_KEY\n"
-                "providerModelId: ${OPENAI_MODEL_ID:test}\n"
+                "allowedBindings:\n"
+                "  - deepseek-responses-flash\n"
+                "  - deepseek-anthropic-flash\n"
+                "bindingEndpointOverrides:\n"
+                "  deepseek-anthropic-flash: https://api.deepseek.com/anthropic\n"
+                "endpoint: https://api.deepseek.com\n"
+                "credentialRef: model-auth://deepseek/default\n"
                 "dialectVersion: '1.0'\n"
+            )
+        with self.assertRaisesRegex(ValueError, "retired model configuration"):
+            MODULE.validate_model_configuration(
+                "allowedBindings:\n"
+                "  - deepseek-responses-flash\n"
+                "  - deepseek-anthropic-flash\n"
+                "bindingEndpointOverrides:\n"
+                "  deepseek-anthropic-flash: https://api.deepseek.com/anthropic\n"
+                "endpoint: https://api.deepseek.com\n"
+                "credentialRef: model-auth://deepseek/default\n"
+                "apiBindings:\n"
+                "  - style: openai-chat-completions\n"
+            )
+
+    def test_rejects_missing_model_configuration(self) -> None:
+        with self.assertRaisesRegex(ValueError, "missing the current model API structure"):
+            MODULE.validate_model_configuration(
+                "models:\n"
+                "  default: deepseek-responses-flash\n"
             )
 
     def test_shaded_jar_validation_requires_tui4j_cleanup_runtime(self) -> None:

@@ -27,7 +27,7 @@ class OpenAiCompatibleModelProfileFactoryTest {
     @Test
     void verifiesEverySingleAdmittedBindingAcrossAllOpenAiCompatibleRegistries() {
         var openAiChatAdmissions = OpenAiCompatibleBindingRegistry.admissions();
-        assertThat(openAiChatAdmissions).hasSize(18);
+        assertThat(openAiChatAdmissions).hasSize(19);
         for (var admission : openAiChatAdmissions) {
             verifyAdmittedBinding(
                     admission.key().providerId(),
@@ -254,6 +254,43 @@ class OpenAiCompatibleModelProfileFactoryTest {
         assertThat(profile.streaming().usageStreaming()).isTrue();
         assertThat(profile.streaming().reasoningStreaming()).isTrue();
         assertThat(profile.digest()).startsWith("sha256:");
+    }
+
+    @Test
+    void verifiesDeepSeekVisionAsAnExactImageBinding() {
+        ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
+                new ModelProviderId("deepseek"),
+                "1",
+                new ModelDefinitionId("deepseek-v4-flash-vision-exp-chat"),
+                "1",
+                "deepseek-v4-flash-vision-exp",
+                ModelApiStyles.OPENAI_CHAT_ADAPTER,
+                "1",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.DEEPSEEK,
+                URI.create("https://api.deepseek.com"),
+                new CredentialRef("env://DEEPSEEK_API_KEY"),
+                true,
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT,
+                        ModelCapability.TOOL_CALLING),
+                1_048_576,
+                393_216,
+                Map.of(),
+                Map.of("thinking", "disabled"));
+
+        var profile = OpenAiCompatibleModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 9, 4));
+
+        assertThat(profile.status()).isEqualTo(ModelProfileStatus.VERIFIED);
+        assertThat(profile.selectable()).isTrue();
+        assertThat(profile.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.NONE);
+        assertThat(profile.imageInput()).isPresent();
+        assertThat(profile.imageInput().orElseThrow().allowedSources())
+                .containsExactlyInAnyOrder(
+                        io.haifa.agent.model.api.ModelImageSource.UPLOAD,
+                        io.haifa.agent.model.api.ModelImageSource.URL);
     }
 
     @Test

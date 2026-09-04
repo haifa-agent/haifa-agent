@@ -1,4 +1,4 @@
-import { CircleAlert, KeyRound, LogIn, LogOut } from "lucide-react";
+import { CheckCircle2, CircleAlert, Globe2, KeyRound, LogIn, LogOut } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExternalLoginAttempt, ModelConnection } from "../api/generated";
 import type { PersonalAssistantClient } from "../api/client";
@@ -8,23 +8,157 @@ type ExternalMethodId = "codex" | "antigravity";
 
 export interface ModelConnectionTabProps {
   client: PersonalAssistantClient;
+  providerId?: string | null;
   onConnectionsChanged?(connections: ModelConnection[]): void;
 }
 
+interface ProviderMeta {
+  displayName: string;
+  tag: string;
+  tagClass: string;
+  envVarName?: string;
+}
+
+const KNOWN_PROVIDERS: Record<string, ProviderMeta> = {
+  deepseek: {
+    displayName: "DeepSeek (深度求索)",
+    tag: "DS",
+    tagClass: "tag-deepseek",
+    envVarName: "DEEPSEEK_API_KEY",
+  },
+  aliyun: {
+    displayName: "阿里云百炼 (DashScope)",
+    tag: "阿里",
+    tagClass: "tag-aliyun",
+    envVarName: "DASHSCOPE_API_KEY",
+  },
+  openai: {
+    displayName: "OpenAI",
+    tag: "OpenAI",
+    tagClass: "tag-openai",
+    envVarName: "OPENAI_API_KEY",
+  },
+  "openai-codex": {
+    displayName: "ChatGPT (Codex)",
+    tag: "GPT",
+    tagClass: "tag-openai",
+  },
+  "google-antigravity": {
+    displayName: "Google Antigravity",
+    tag: "AG",
+    tagClass: "tag-google",
+  },
+  gemini: {
+    displayName: "Google Gemini",
+    tag: "Gemini",
+    tagClass: "tag-google",
+    envVarName: "GEMINI_API_KEY",
+  },
+  anthropic: {
+    displayName: "Anthropic Claude",
+    tag: "Claude",
+    tagClass: "tag-anthropic",
+    envVarName: "ANTHROPIC_API_KEY",
+  },
+};
+
+function getProviderMeta(providerId: string): ProviderMeta {
+  if (KNOWN_PROVIDERS[providerId]) {
+    return KNOWN_PROVIDERS[providerId];
+  }
+  const clean = providerId.replace(/[-_]/g, " ");
+  return {
+    displayName: clean.charAt(0).toUpperCase() + clean.slice(1),
+    tag: providerId.slice(0, 4).toUpperCase(),
+    tagClass: "tag-custom",
+  };
+}
+
+function getStatusBadge(status: string) {
+  switch (status) {
+    case "AUTHENTICATED":
+      return { label: "已就绪", badgeClass: "status-ready" };
+    case "CONFIGURED":
+      return { label: "已配置", badgeClass: "status-ready" };
+    case "REAUTH_REQUIRED":
+      return { label: "需要重新授权", badgeClass: "status-warning" };
+    case "EXPIRED":
+      return { label: "已过期", badgeClass: "status-error" };
+    case "NOT_CONFIGURED":
+    case "UNAVAILABLE":
+    default:
+      return { label: "未连接", badgeClass: "status-not-configured" };
+  }
+}
+
+function formatAccountDetail(accountLabel: string, method: string, providerId: string): string {
+  const meta = getProviderMeta(providerId);
+  if (!accountLabel) return "未配置任何凭据";
+  const lower = accountLabel.toLowerCase();
+  if (lower.includes("environment") || lower.includes("env")) {
+    return `系统环境变量 (${meta.envVarName ?? "系统 ENV"})`;
+  }
+  if (lower.includes("saved")) {
+    return "本机保存的专属 Key";
+  }
+  if (method === "EXTERNAL_LOGIN") {
+    return `共享本机账户`;
+  }
+  return accountLabel;
+}
+
+function networkProxyLabel(mode: ModelConnection["networkProxyMode"]): string {
+  if (mode === "CUSTOM") return "专属 HTTP 代理已设置";
+  if (mode === "STARTUP") return "使用启动配置代理";
+  return "跟随本机代理";
+}
+
 /** Embeddable account-connection management content used by the model & connections window. */
-export function ModelConnectionTab({ client, onConnectionsChanged }: ModelConnectionTabProps) {
+export function ModelConnectionTab({ client, providerId, onConnectionsChanged }: ModelConnectionTabProps) {
   const [connections, setConnections] = useState<ModelConnection[]>([]);
+  const [targetProviderId, setTargetProviderId] = useState<string>(providerId ?? "deepseek");
   const [apiKey, setApiKey] = useState("");
   const [attempt, setAttempt] = useState<ExternalLoginAttempt | null>(null);
+  const [proxyTarget, setProxyTarget] = useState<ModelConnection | null>(null);
+  const [proxyMode, setProxyMode] = useState<"SYSTEM" | "CUSTOM">("SYSTEM");
+  const [proxyUrl, setProxyUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const attemptRef = useRef<{ methodId: ExternalMethodId; attemptId: string } | null>(null);
   const operationGeneration = useRef(0);
   const mounted = useRef(true);
+  const apiKeyInputRef = useRef<HTMLInputElement>(null);
+  const proxyEditorRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (providerId) {
+      setTargetProviderId(providerId);
+    }
+  }, [providerId]);
 
   const externalConnections = connections.filter((connection) => connection.externalLoginSupported);
-  const apiKeySupported =
-    connections.some((connection) => connection.providerId && connection.apiKeySupported) ?? false;
+  const hasApiKeySupportInConnections = connections.some((connection) => connection.providerId && connection.apiKeySupported);
+  const apiKeySupported = connections.length === 0 ? true : hasApiKeySupportInConnections;
+
+  // Build provider options for API key configuration
+  const apiKeyProviders = Array.from(
+    new Set(
+      connections
+        .filter((c) => c.apiKeySupported)
+        .map((c) => c.providerId)
+    )
+  );
+  if (targetProviderId && !apiKeyProviders.includes(targetProviderId)) {
+    apiKeyProviders.unshift(targetProviderId);
+  }
+  if (apiKeyProviders.length === 0) {
+    apiKeyProviders.push("deepseek", "aliyun", "openai");
+  }
+
+  const targetConnection = connections.find(
+    (c) => c.providerId === targetProviderId && c.apiKeySupported
+  );
+  const isTargetConfigured = targetConnection?.status === "AUTHENTICATED";
 
   const refresh = useCallback(async () => {
     if (!client.modelConnections) return;
@@ -47,13 +181,28 @@ export function ModelConnectionTab({ client, onConnectionsChanged }: ModelConnec
     };
   }, [client, refresh]);
 
+  useEffect(() => {
+    if (!proxyTarget) return;
+    const frame = window.requestAnimationFrame(() => {
+      const scrollIntoView = proxyEditorRef.current?.scrollIntoView;
+      if (typeof scrollIntoView === "function") {
+        scrollIntoView.call(proxyEditorRef.current, { behavior: "smooth", block: "start" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [proxyTarget]);
+
   const save = async () => {
     if (!client.saveModelApiKey || !apiKey) return;
+    const effectiveProviderId =
+      targetProviderId ||
+      connections.find((value) => value.apiKeySupported)?.providerId ||
+      "deepseek";
     const generation = ++operationGeneration.current;
     setBusy(true);
     setError(null);
     try {
-      await client.saveModelApiKey(connections.find((value) => value.apiKeySupported)?.providerId ?? "", apiKey);
+      await client.saveModelApiKey(effectiveProviderId, apiKey);
       if (generation !== operationGeneration.current) return;
       setApiKey("");
       await refresh();
@@ -115,6 +264,39 @@ export function ModelConnectionTab({ client, onConnectionsChanged }: ModelConnec
     }
   };
 
+  const openNetworkProxy = (connection: ModelConnection) => {
+    setProxyTarget(connection);
+    setProxyMode(connection.networkProxyMode === "CUSTOM" ? "CUSTOM" : "SYSTEM");
+    setProxyUrl("");
+    setError(null);
+  };
+
+  const saveNetworkProxy = async () => {
+    if (!proxyTarget) return;
+    const generation = ++operationGeneration.current;
+    setBusy(true);
+    setError(null);
+    try {
+      if (proxyMode === "CUSTOM") {
+        if (!client.saveModelNetworkProxy || !proxyUrl.trim()) return;
+        await client.saveModelNetworkProxy(proxyTarget.providerId, proxyUrl.trim());
+      } else {
+        if (!client.resetModelNetworkProxy) return;
+        await client.resetModelNetworkProxy(proxyTarget.providerId);
+      }
+      if (generation !== operationGeneration.current) return;
+      await refresh();
+      setProxyTarget(null);
+      setProxyUrl("");
+    } catch {
+      if (generation === operationGeneration.current) {
+        setError("网络代理保存失败。请确认地址为无认证的 http://host:port。");
+      }
+    } finally {
+      if (generation === operationGeneration.current && mounted.current) setBusy(false);
+    }
+  };
+
   return (
     <div className="model-connection-tab">
       {error && (
@@ -122,6 +304,67 @@ export function ModelConnectionTab({ client, onConnectionsChanged }: ModelConnec
           <CircleAlert size={15} />
           {error}
         </p>
+      )}
+
+      {proxyTarget && (
+        <section ref={proxyEditorRef} className="model-network-proxy-editor" aria-label={getProviderMeta(proxyTarget.providerId).displayName + " 网络代理"}>
+          <div className="model-network-proxy-heading">
+            <Globe2 size={20} aria-hidden="true" />
+            <div>
+              <h3>{getProviderMeta(proxyTarget.providerId).displayName} · 网络代理</h3>
+              <p>仅影响该供应商已批准的模型服务地址，不会更改模型、Endpoint 或认证方式。</p>
+            </div>
+          </div>
+          <div className="model-network-proxy-options" role="radiogroup" aria-label="网络访问方式">
+            <label>
+              <input
+                type="radio"
+                name="model-network-proxy-mode"
+                checked={proxyMode === "SYSTEM"}
+                disabled={busy}
+                onChange={() => setProxyMode("SYSTEM")}
+              />
+              <span><b>跟随本机代理（推荐）</b><small>使用系统或 PA 启动时配置的代理。</small></span>
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="model-network-proxy-mode"
+                checked={proxyMode === "CUSTOM"}
+                disabled={busy}
+                onChange={() => setProxyMode("CUSTOM")}
+              />
+              <span><b>使用专属 HTTP 代理</b><small>可代理 HTTPS 模型服务请求；仅支持无认证 HTTP Proxy。</small></span>
+            </label>
+          </div>
+          {proxyMode === "CUSTOM" && (
+            <label className="model-network-proxy-input">
+              <span>代理地址</span>
+              <input
+                type="url"
+                autoComplete="off"
+                inputMode="url"
+                value={proxyUrl}
+                disabled={busy}
+                placeholder={proxyTarget.networkProxyMode === "CUSTOM" ? "输入新的 http://host:port" : "http://127.0.0.1:2081"}
+                onChange={(event) => setProxyUrl(event.target.value)}
+              />
+              <small>不支持用户名密码、HTTPS Proxy、PAC、SOCKS、路径或查询参数。</small>
+            </label>
+          )}
+          <div className="model-network-proxy-actions">
+            <button type="button" className="button subtle" disabled={busy} onClick={() => setProxyTarget(null)}>取消</button>
+            <button
+              type="button"
+              className="button"
+              aria-busy={busy}
+              disabled={busy || (proxyMode === "CUSTOM" && (!proxyUrl.trim() || !client.saveModelNetworkProxy)) || (proxyMode === "SYSTEM" && !client.resetModelNetworkProxy)}
+              onClick={() => void saveNetworkProxy()}
+            >
+              保存网络代理
+            </button>
+          </div>
+        </section>
       )}
 
       <div className="model-connection-options">
@@ -157,16 +400,41 @@ export function ModelConnectionTab({ client, onConnectionsChanged }: ModelConnec
         <section>
           <KeyRound size={20} aria-hidden="true" />
           <div>
-            <h3>使用 API Key</h3>
+            <h3>配置 API Key</h3>
             <p>
               {apiKeySupported
-                ? "Key 只写入本机认证文件，不会回显或用于保存前验证。"
+                ? "Key 仅保存在本机认证文件，不会回显或云端同步。"
                 : "当前模型连接由运行环境或外部登录管理，不能在此保存 API Key。"}
             </p>
           </div>
+
+          <div className="model-connection-provider-select">
+            <label htmlFor="model-connection-provider-choice">目标供应商：</label>
+            <select
+              id="model-connection-provider-choice"
+              value={targetProviderId}
+              disabled={busy}
+              onChange={(e) => setTargetProviderId(e.target.value)}
+            >
+              {apiKeyProviders.map((pid) => (
+                <option key={pid} value={pid}>
+                  {KNOWN_PROVIDERS[pid]?.displayName ?? pid}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {isTargetConfigured && (
+            <div className="model-connection-saved-badge">
+              <CheckCircle2 size={15} />
+              <span>本机已保存 {getProviderMeta(targetProviderId).displayName} 的 API Key</span>
+            </div>
+          )}
+
           <label>
             <span className="sr-only">API Key</span>
             <input
+              ref={apiKeyInputRef}
               type="password"
               autoComplete="off"
               value={apiKey}
@@ -175,15 +443,28 @@ export function ModelConnectionTab({ client, onConnectionsChanged }: ModelConnec
               onChange={(event) => setApiKey(event.target.value)}
             />
           </label>
-          <button
-            type="button"
-            className="button"
-            aria-busy={busy}
-            disabled={busy || !apiKey || !client.saveModelApiKey || !apiKeySupported}
-            onClick={() => void save()}
-          >
-            保存
-          </button>
+          <div className="model-connection-save-actions">
+            <button
+              type="button"
+              className="button"
+              aria-busy={busy}
+              disabled={busy || !apiKey || !client.saveModelApiKey || !apiKeySupported}
+              onClick={() => void save()}
+            >
+              保存
+            </button>
+            {isTargetConfigured && targetConnection?.logoutSupported && (
+              <button
+                type="button"
+                className="button subtle"
+                disabled={busy}
+                onClick={() => void logout(targetConnection.connectionId)}
+                title="删除本机保存的该供应商 API Key"
+              >
+                清除已存 Key
+              </button>
+            )}
+          </div>
         </section>
       </div>
 
@@ -199,28 +480,72 @@ export function ModelConnectionTab({ client, onConnectionsChanged }: ModelConnec
         {connections.length === 0 && (
           <p>尚未保存连接。模型目录仍可查看，使用模型前再连接即可。</p>
         )}
-        {connections.map((connection) => (
-          <div key={connection.connectionId}>
-            <span>
-              <strong>{connection.providerId}</strong>
-              <small>
-                {connection.accountLabel} · {connection.status}
-              </small>
-            </span>
-            {connection.unofficialLocalCompatibility && <i>仅本地兼容测试</i>}
-            {connection.logoutSupported && (
-              <button
-                type="button"
-                className="icon"
-                aria-label={`退出 ${connection.providerId}`}
-                disabled={busy}
-                onClick={() => void logout(connection.connectionId)}
-              >
-                <LogOut size={16} />
-              </button>
-            )}
-          </div>
-        ))}
+        {connections.map((connection) => {
+          const meta = getProviderMeta(connection.providerId);
+          const statusBadge = getStatusBadge(connection.status);
+          const detailText = formatAccountDetail(
+            connection.accountLabel,
+            connection.method,
+            connection.providerId
+          );
+          return (
+            <div key={connection.connectionId}>
+              <div className={`connection-tag ${meta.tagClass}`}>
+                {meta.tag}
+              </div>
+              <div className="connection-info">
+                <div className="connection-title">
+                  <span>{meta.displayName}</span>
+                  <span className={`connection-status-badge ${statusBadge.badgeClass}`}>
+                    {statusBadge.label}
+                  </span>
+                </div>
+                <div className="connection-sub">
+                  <span>凭证来源：{detailText}</span>
+                  <span className="connection-account-label"> · {connection.accountLabel}</span>
+                  <span> · 网络：{networkProxyLabel(connection.networkProxyMode)}</span>
+                </div>
+              </div>
+              {connection.unofficialLocalCompatibility && <i>仅本地兼容测试</i>}
+              <div className="connection-actions">
+                <button
+                  type="button"
+                  className="button subtle small"
+                  disabled={busy}
+                  onClick={() => openNetworkProxy(connection)}
+                >
+                  {connection.networkProxyMode === "CUSTOM" ? "网络代理（已设置）" : "网络代理"}
+                </button>
+                {connection.apiKeySupported && (
+                  <button
+                    type="button"
+                    className="button subtle small"
+                    disabled={busy}
+                    onClick={() => {
+                      setTargetProviderId(connection.providerId);
+                      apiKeyInputRef.current?.focus();
+                    }}
+                    title="配置或更换此供应商的 API Key"
+                  >
+                    更换 Key
+                  </button>
+                )}
+                {connection.logoutSupported && (
+                  <button
+                    type="button"
+                    className="icon"
+                    aria-label={`退出 ${connection.providerId}`}
+                    disabled={busy}
+                    onClick={() => void logout(connection.connectionId)}
+                    title="退出登录 / 清除凭据"
+                  >
+                    <LogOut size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

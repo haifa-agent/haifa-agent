@@ -15,6 +15,7 @@ import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelReasoningMode;
+import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelProxySettings;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.web.v1.error.PersonalApiExceptionHandler;
 import io.haifa.agent.personalassistant.server.web.v1.mapper.PersonalApiMapper;
@@ -276,6 +277,55 @@ class PersonalModelAuthenticationControllerTest {
                     .jsonPath("$.code")
                     .isEqualTo("AUTH_EXTERNAL_APPROVAL_REQUIRED");
         }
+    }
+
+    @Test
+    void savesAndResetsProviderNetworkProxyWithoutReturningTheProxyAddress() {
+        LocalModelAuthenticationService service = mock(LocalModelAuthenticationService.class);
+        when(service.connections()).thenReturn(java.util.List.of());
+        when(service.connectionRequired(any())).thenReturn(false);
+        var provider = antigravityProvider();
+        var settings = new PersonalModelProxySettings(java.util.List.of(provider), temp, new ObjectMapper());
+        WebTestClient web = WebTestClient.bindToController(new PersonalModelAuthenticationController(
+                        service, new PersonalApiMapper(), () -> java.util.List.of(provider), settings))
+                .controllerAdvice(new PersonalApiExceptionHandler())
+                .build();
+
+        web.put()
+                .uri("/api/v1/model-connections/google-antigravity/network-proxy")
+                .header("Idempotency-Key", "proxy-save-1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"proxyUrl\":\"http://127.0.0.1:2081\"}")
+                .exchange()
+                .expectStatus()
+                .isNoContent();
+
+        web.get()
+                .uri("/api/v1/model-connections")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].networkProxyMode")
+                .isEqualTo("CUSTOM")
+                .jsonPath("$[0].proxyUrl")
+                .doesNotExist();
+
+        web.delete()
+                .uri("/api/v1/model-connections/google-antigravity/network-proxy")
+                .header("Idempotency-Key", "proxy-reset-1")
+                .exchange()
+                .expectStatus()
+                .isNoContent();
+
+        web.get()
+                .uri("/api/v1/model-connections")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].networkProxyMode")
+                .isEqualTo("SYSTEM");
     }
 
     private static PersonalAssistantProperties.ModelProvider antigravityProvider() {

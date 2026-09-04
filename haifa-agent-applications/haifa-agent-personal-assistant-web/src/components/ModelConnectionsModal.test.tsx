@@ -75,6 +75,7 @@ const connection: ModelConnection = {
   externalLoginSupported: false,
   logoutSupported: true,
   unofficialLocalCompatibility: false,
+  networkProxyMode: "SYSTEM",
 };
 
 function client(): PersonalAssistantClient {

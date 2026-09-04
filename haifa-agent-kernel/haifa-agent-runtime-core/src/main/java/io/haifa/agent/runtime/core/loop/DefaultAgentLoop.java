@@ -47,6 +47,7 @@ import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
 import io.haifa.agent.runtime.core.model.ModelInvocationResult;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
 import io.haifa.agent.runtime.core.recovery.RecoveryController;
 import io.haifa.agent.runtime.core.recovery.RecoveryDirective;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
@@ -905,6 +906,10 @@ public final class DefaultAgentLoop implements AgentLoop {
     }
 
     private static AgentErrorCode modelErrorCode(RuntimeException error) {
+        ModelContinuationException continuationFailure = findFailure(error, ModelContinuationException.class);
+        if (continuationFailure != null) {
+            return AgentErrorCode.CROSS_MODEL_CONTINUATION_INVALID;
+        }
         if (error instanceof RuntimeQuotaExceededException quotaExceeded) {
             return switch (quotaExceeded.resource()) {
                 case "inputTokens" -> AgentErrorCode.RUN_INPUT_QUOTA_EXHAUSTED;
@@ -1176,6 +1181,11 @@ public final class DefaultAgentLoop implements AgentLoop {
 
     private static Map<String, Object> modelErrorDetails(RuntimeException error) {
         Map<String, Object> details = new LinkedHashMap<>();
+        ModelContinuationException continuationFailure = findFailure(error, ModelContinuationException.class);
+        if (continuationFailure != null) {
+            details.put("continuationFailure", continuationFailure.failure().name());
+            details.put("continuationMessage", continuationFailure.getMessage());
+        }
         if (error instanceof RuntimeLimitExceededException limit) {
             details.put("resource", limit.resource());
             details.put("limit", limit.limit());
@@ -1191,6 +1201,17 @@ public final class DefaultAgentLoop implements AgentLoop {
             details.put("providerMessage", modelError.getMessage());
         }
         return Map.copyOf(details);
+    }
+
+    private static <T extends Throwable> T findFailure(Throwable error, Class<T> failureType) {
+        Throwable current = error;
+        int depth = 0;
+        while (current != null && depth < 8) {
+            if (failureType.isInstance(current)) return failureType.cast(current);
+            current = current.getCause();
+            depth++;
+        }
+        return null;
     }
 
     private boolean isContextTooLong(RuntimeException error) {

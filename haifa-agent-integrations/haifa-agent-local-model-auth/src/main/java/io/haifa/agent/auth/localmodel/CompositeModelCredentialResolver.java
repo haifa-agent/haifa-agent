@@ -25,6 +25,15 @@ public final class CompositeModelCredentialResolver implements CredentialResolve
 
     @Override
     public ResolvedCredential resolve(CredentialRef reference) {
+        return route(reference).resolve(reference);
+    }
+
+    @Override
+    public ResolvedCredential refresh(CredentialRef reference) {
+        return route(reference).refresh(reference);
+    }
+
+    private CredentialResolver route(CredentialRef reference) {
         String value =
                 Objects.requireNonNull(reference, "reference must not be null").value();
         int separator = value.indexOf("://");
@@ -32,6 +41,6 @@ public final class CompositeModelCredentialResolver implements CredentialResolve
         CredentialResolver resolver =
                 resolvers.get(value.substring(0, separator).toLowerCase(java.util.Locale.ROOT));
         if (resolver == null) throw new IllegalArgumentException("credential reference scheme is unsupported");
-        return resolver.resolve(reference);
+        return resolver;
     }
 }
