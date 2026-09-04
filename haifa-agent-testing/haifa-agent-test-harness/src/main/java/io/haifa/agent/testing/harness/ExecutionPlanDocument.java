@@ -42,7 +42,9 @@ public record ExecutionPlanDocument(int schemaVersion, ResolvedTestPlan plan) {
         Object value = plan.content().get("suiteType");
         if (!(value instanceof String text)) throw new IllegalArgumentException("suiteType must be a string");
         String suiteType = require(text, "suiteType");
-        if (!suiteType.equals("critical-path") && !suiteType.equals("autonomous-delivery")) {
+        if (!suiteType.equals("critical-path")
+                && !suiteType.equals("autonomous-delivery")
+                && !suiteType.equals("personal-assistant-smoke")) {
             throw new IllegalArgumentException("unsupported suiteType: " + suiteType);
         }
         return suiteType;

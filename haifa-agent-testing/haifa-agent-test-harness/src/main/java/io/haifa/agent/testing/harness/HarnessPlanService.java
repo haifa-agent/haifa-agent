@@ -9,6 +9,9 @@ import io.haifa.agent.testing.delivery.AutonomousDeliveryPlanResolver;
 import io.haifa.agent.testing.delivery.AutonomousDeliverySuiteManifest;
 import io.haifa.agent.testing.delivery.AutonomousDeliverySuiteManifestLoader;
 import io.haifa.agent.testing.fixtures.FixturePackageCatalog;
+import io.haifa.agent.testing.personal.PersonalAssistantSmokePlanResolver;
+import io.haifa.agent.testing.personal.PersonalAssistantSmokeSuiteManifest;
+import io.haifa.agent.testing.personal.PersonalAssistantSmokeSuiteManifestLoader;
 import io.haifa.agent.testing.repository.RepositoryRevision;
 import io.haifa.agent.testing.run.SafeRunRoot;
 import io.haifa.agent.testing.suite.AgentProfileManifestLoader;
@@ -59,7 +62,8 @@ public final class HarnessPlanService {
                 && !profile.credentialEnvironmentNames().isEmpty()) {
             throw new IllegalArgumentException("a credential-backed Agent Profile requires live or release mode");
         }
-        String suiteType = expectedSuiteType == null ? suiteType(configRoot, request.suiteRef()) : expectedSuiteType;
+        String suiteType = (expectedSuiteType == null ? suiteType(configRoot, request.suiteRef()) : expectedSuiteType)
+                .trim();
         TestRunRequest normalizedRequest = new TestRunRequest(
                 projectRoot,
                 configRoot,
@@ -112,6 +116,18 @@ public final class HarnessPlanService {
             return new ResolvedRunContext.CriticalPath(
                     document, suite, profile, platform, productRevision, testConfigRevision);
         }
+        if (suiteType.equals("personal-assistant-smoke")) {
+            PersonalAssistantSmokeSuiteManifest suite =
+                    new PersonalAssistantSmokeSuiteManifestLoader().load(configRoot, request.suiteRef());
+            PlatformManifest matrix = new PlatformManifestLoader().load(configRoot, suite.matrixRef());
+            PlatformManifest.PlatformProfile platform = matrix.requireCombination(request.platformRef());
+            platform.requireCurrentHost();
+            ResolvedTestPlan plan = PersonalAssistantSmokePlanResolver.resolve(
+                    suite, platform, profile, productRevision, testConfigRevision);
+            ExecutionPlanDocument document = ExecutionPlanDocument.freeze(normalizedRequest, plan, runnerArtifact);
+            return new ResolvedRunContext.PersonalAssistantSmoke(
+                    document, suite, profile, platform, productRevision, testConfigRevision);
+        }
         throw new IllegalArgumentException("unsupported suiteType: " + suiteType);
     }
 
@@ -121,6 +137,7 @@ public final class HarnessPlanService {
             throw new IllegalArgumentException("suite file is unavailable: " + suiteRef);
         }
         JsonNode root = yaml.readTree(suite.toFile());
+        if (root.hasNonNull("suiteType")) return root.get("suiteType").asText();
         return root.hasNonNull("phase") ? "autonomous-delivery" : "critical-path";
     }
 
