@@ -25,7 +25,8 @@ public final class PersonalAssistantSmokeSuiteApplication {
         context.testConfigRevision().requireClean("test-config repository");
         PersonalAssistantSmokeSuiteManifest suite = context.suite();
         if (context.request().mode().atLeast(io.haifa.agent.testing.harness.RunMode.LIVE)) {
-            SecretPreflight.require(Map.copyOf(System.getenv()), context.agentProfile().requiredEnvironmentNames());
+            SecretPreflight.require(
+                    Map.copyOf(System.getenv()), context.agentProfile().requiredEnvironmentNames());
         }
         Instant startedAt = Instant.now();
         Path executionRoot = createExecutionRoot(context.request().runRoot(), suite.suiteId(), startedAt);
@@ -56,14 +57,12 @@ public final class PersonalAssistantSmokeSuiteApplication {
         if (remaining.isZero() || remaining.isNegative()) {
             throw new IllegalArgumentException("suite wall-time budget was exhausted before " + testCase.caseId());
         }
-        String runId = testCase.caseId().toLowerCase(Locale.ROOT)
-                + "-r"
-                + repetition
-                + "-"
-                + java.util.UUID.randomUUID();
+        String runId =
+                testCase.caseId().toLowerCase(Locale.ROOT) + "-r" + repetition + "-" + java.util.UUID.randomUUID();
         Path caseRoot = Files.createDirectories(executionRoot.resolve("runs").resolve(runId));
         Path reportsRoot = caseRoot.resolve("surefire-reports");
-        ProcessBuilder builder = new ProcessBuilder(mavenCommand(context.request().projectRoot(), testCase, reportsRoot))
+        ProcessBuilder builder = new ProcessBuilder(
+                        mavenCommand(context.request().projectRoot(), testCase, reportsRoot))
                 .directory(context.request().projectRoot().toFile())
                 .inheritIO();
         Map<String, String> environment = builder.environment();
@@ -73,8 +72,11 @@ public final class PersonalAssistantSmokeSuiteApplication {
         environment.put("HAIFA_TEST_MATRIX_COMBINATION", context.platform().id());
         environment.put("HAIFA_TEST_PLATFORM", context.platform().platform());
         environment.put("HAIFA_TEST_AGENT_PROFILE", context.agentProfile().profileId());
-        environment.put("HAIFA_TEST_AGENT_CONFIG", context.agentProfile().configurationPath().toString());
-        environment.put("HAIFA_TEST_AGENT_ASSEMBLY_DIGEST", context.agentProfile().agentAssemblyDigest());
+        environment.put(
+                "HAIFA_TEST_AGENT_CONFIG",
+                context.agentProfile().configurationPath().toString());
+        environment.put(
+                "HAIFA_TEST_AGENT_ASSEMBLY_DIGEST", context.agentProfile().agentAssemblyDigest());
         environment.put("HAIFA_SUITE_EXECUTION", "true");
         environment.put(
                 "HAIFA_PERSONAL_LIVE_SMOKE",
@@ -101,7 +103,8 @@ public final class PersonalAssistantSmokeSuiteApplication {
             evidenceError = exception.getClass().getSimpleName();
         }
         MavenTestEvidence.Status status = evidence.status(completed, exitCode, evidenceError == null);
-        if (status == MavenTestEvidence.Status.PASSED && !cleanup.naturalExit()) status = MavenTestEvidence.Status.ERROR;
+        if (status == MavenTestEvidence.Status.PASSED && !cleanup.naturalExit())
+            status = MavenTestEvidence.Status.ERROR;
         LinkedHashMap<String, Object> result = new LinkedHashMap<>();
         result.put("caseId", testCase.caseId());
         result.put("repetition", repetition);
@@ -113,7 +116,8 @@ public final class PersonalAssistantSmokeSuiteApplication {
         result.put("processTreeNaturalExit", cleanup.naturalExit());
         result.put("testEvidence", evidence);
         if (evidenceError != null) result.put("evidenceError", evidenceError);
-        result.put("durationMillis", Duration.between(caseStartedAt, Instant.now()).toMillis());
+        result.put(
+                "durationMillis", Duration.between(caseStartedAt, Instant.now()).toMillis());
         return Map.copyOf(result);
     }
 
@@ -145,15 +149,24 @@ public final class PersonalAssistantSmokeSuiteApplication {
                     continue;
                 }
                 notRun.add(Map.of(
-                        "caseId", selection.caseId(),
-                        "repetition", repetition,
-                        "runId", "not-run-" + selection.caseId().toLowerCase(Locale.ROOT) + "-r" + repetition,
-                        "status", MavenTestEvidence.Status.NOT_RUN,
-                        "successful", false,
-                        "durationMillis", 0L,
-                        "notRunReason", "BLOCKING_CASE_FAILED",
-                        "blockedByCaseId", blockingCaseId,
-                        "evidenceRef", "run-result.json"));
+                        "caseId",
+                        selection.caseId(),
+                        "repetition",
+                        repetition,
+                        "runId",
+                        "not-run-" + selection.caseId().toLowerCase(Locale.ROOT) + "-r" + repetition,
+                        "status",
+                        MavenTestEvidence.Status.NOT_RUN,
+                        "successful",
+                        false,
+                        "durationMillis",
+                        0L,
+                        "notRunReason",
+                        "BLOCKING_CASE_FAILED",
+                        "blockedByCaseId",
+                        blockingCaseId,
+                        "evidenceRef",
+                        "run-result.json"));
             }
         }
         if (!found) throw new IllegalArgumentException("blocking execution is not present in the suite");
@@ -174,9 +187,11 @@ public final class PersonalAssistantSmokeSuiteApplication {
         Map<String, Object> usage = Map.of(
                 "caseExecutions", results.size(),
                 "tests", evidence.stream().mapToInt(MavenTestEvidence::tests).sum(),
-                "failures", evidence.stream().mapToInt(MavenTestEvidence::failures).sum(),
+                "failures",
+                        evidence.stream().mapToInt(MavenTestEvidence::failures).sum(),
                 "errors", evidence.stream().mapToInt(MavenTestEvidence::errors).sum(),
-                "skipped", evidence.stream().mapToInt(MavenTestEvidence::skipped).sum());
+                "skipped",
+                        evidence.stream().mapToInt(MavenTestEvidence::skipped).sum());
         LinkedHashMap<String, Object> nativeResult = new LinkedHashMap<>();
         nativeResult.put("schemaVersion", 1);
         nativeResult.put("suiteId", context.suite().suiteId());

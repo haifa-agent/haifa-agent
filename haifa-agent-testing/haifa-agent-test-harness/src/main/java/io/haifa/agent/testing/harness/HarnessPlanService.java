@@ -62,8 +62,8 @@ public final class HarnessPlanService {
                 && !profile.credentialEnvironmentNames().isEmpty()) {
             throw new IllegalArgumentException("a credential-backed Agent Profile requires live or release mode");
         }
-        String suiteType = (expectedSuiteType == null ? suiteType(configRoot, request.suiteRef()) : expectedSuiteType)
-                .trim();
+        String suiteType =
+                (expectedSuiteType == null ? suiteType(configRoot, request.suiteRef()) : expectedSuiteType).trim();
         TestRunRequest normalizedRequest = new TestRunRequest(
                 projectRoot,
                 configRoot,

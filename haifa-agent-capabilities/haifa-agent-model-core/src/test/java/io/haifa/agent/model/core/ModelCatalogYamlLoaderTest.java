@@ -89,7 +89,10 @@ class ModelCatalogYamlLoaderTest {
                         .definition()
                         .capabilities())
                 .containsExactlyInAnyOrder(
-                        ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_UPLOAD_INPUT, ModelCapability.IMAGE_URL_INPUT);
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT,
+                        ModelCapability.TOOL_CALLING);
         assertThat(catalog.binding("siliconflow-glm-5-2")
                         .orElseThrow()
                         .profile()

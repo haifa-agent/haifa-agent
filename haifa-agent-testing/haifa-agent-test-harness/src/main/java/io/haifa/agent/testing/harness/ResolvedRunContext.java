@@ -10,7 +10,9 @@ import io.haifa.agent.testing.suite.SuiteManifest;
 
 /** One verified, immutable set of inputs shared by a native suite execution. */
 public sealed interface ResolvedRunContext
-        permits ResolvedRunContext.CriticalPath, ResolvedRunContext.AutonomousDelivery, ResolvedRunContext.PersonalAssistantSmoke {
+        permits ResolvedRunContext.CriticalPath,
+                ResolvedRunContext.AutonomousDelivery,
+                ResolvedRunContext.PersonalAssistantSmoke {
     ExecutionPlanDocument approvedDocument();
 
     default TestRunRequest request() {

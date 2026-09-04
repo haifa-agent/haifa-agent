@@ -860,9 +860,10 @@ def backend_environment(
         "HAIFA_PERSONAL_MCP_SERVER_ID": "haifa-utility",
         "HAIFA_PERSONAL_MCP_DISPLAY_NAME": "Haifa Utility MCP",
         "HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED": "true",
+        "HAIFA_CODEX_ORIGINATOR": environment_value("HAIFA_CODEX_ORIGINATOR") or "haifa",
+        "HAIFA_CODEX_USER_AGENT": environment_value("HAIFA_CODEX_USER_AGENT") or "haifa-agent/1",
     }
     for name, secret in (
-        ("DASHSCOPE_API_KEY", bailian[0] if bailian else None),
         ("KIMI_API_KEY", kimi_key),
         ("BIGMODEL_API_KEY", bigmodel_key),
         ("SILICONFLOW_API_KEY", siliconflow_key),
@@ -871,11 +872,13 @@ def backend_environment(
     ):
         if secret:
             environment[name] = secret
-    if openai:
-        environment.update({
-            "HAIFA_CODEX_ORIGINATOR": environment_value("HAIFA_CODEX_ORIGINATOR") or "haifa",
-            "HAIFA_CODEX_USER_AGENT": environment_value("HAIFA_CODEX_USER_AGENT") or "haifa-agent/1",
-        })
+    if bailian:
+        environment["DASHSCOPE_API_KEY"] = bailian[0]
+        environment["ALIYUN_BAILIAN_WORKSPACE_ID"] = bailian[1]
+        environment["ALIYUN_BAILIAN_REGION"] = bailian[2]
+        environment["HAIFA_PERSONAL_BAILIAN_ENDPOINT"] = (
+            f"https://{bailian[1]}.{bailian[2]}.maas.aliyuncs.com/compatible-mode/v1"
+        )
     return environment
 
 

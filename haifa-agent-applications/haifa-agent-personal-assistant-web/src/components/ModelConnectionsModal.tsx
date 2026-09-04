@@ -96,12 +96,16 @@ export function ModelConnectionsModal({
 }: ModelConnectionsModalProps) {
   const [tab, setTab] = useState<ModelConnectionsTab>(initialTab);
   const [search, setSearch] = useState("");
+  const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all");
   const [inspectedModel, setInspectedModel] = useState<Model | null>(null);
   const [inspectedBindings, setInspectedBindings] = useState<Model[]>([]);
   const [draftPreferences, setDraftPreferences] = useState<ModelPreferences | null>(null);
 
   useEffect(() => {
-    if (open) setTab(initialTab);
+    if (open) {
+      setTab(initialTab);
+      setSelectedProviderFilter("all");
+    }
   }, [open, initialTab]);
 
   useEffect(() => {
@@ -115,6 +119,15 @@ export function ModelConnectionsModal({
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [inspectedModel, onClose]);
+
+  const currentModel = useMemo(
+    () => models.find((candidate) => candidate.id === selectedModelId) ?? null,
+    [models, selectedModelId],
+  );
+  const currentGroupBindings = useMemo(() => {
+    if (!currentModel) return [];
+    return models.filter((m) => m.modelGroupId === currentModel.modelGroupId);
+  }, [models, currentModel]);
 
   const providers = useMemo(() => groupModelsByProvider(models), [models]);
   const query = search.trim().toLowerCase();
@@ -139,6 +152,11 @@ export function ModelConnectionsModal({
         : providers,
     [providers, query],
   );
+
+  const displayedProviders = useMemo(() => {
+    if (selectedProviderFilter === "all") return visibleProviders;
+    return visibleProviders.filter((p) => p.id === selectedProviderFilter);
+  }, [visibleProviders, selectedProviderFilter]);
 
   if (!open) return null;
 
@@ -205,6 +223,49 @@ export function ModelConnectionsModal({
 
         {tab === "catalog" ? (
           <div className="model-catalog-tab" role="tabpanel">
+            {/* 顶部明显展示当前选中的模型 */}
+            {currentModel && (
+              <div className="model-current-banner">
+                <div className="model-current-banner-main">
+                  <div className={`model-current-tag tag-${currentModel.providerId}`}>
+                    {currentModel.providerDisplayName.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="model-current-info">
+                    <div className="model-current-heading">
+                      <span className="model-current-chip">当前对话正在使用</span>
+                      <strong className="model-current-name">当前模型：{currentModel.displayName}</strong>
+                      {providerConnectionLabel(currentModel.providerId, modelConnections) && (
+                        <span className="model-current-conn">服务连接已就绪 ✓</span>
+                      )}
+                    </div>
+                    <div className="model-current-meta">
+                      <span>供应商：{currentModel.providerDisplayName}</span>
+                      <span>·</span>
+                      <span>窗口容量 {formatTokens(currentModel.contextWindow)}</span>
+                      <span>·</span>
+                      <span>最大生成 {formatTokens(currentModel.maxOutputTokens)}</span>
+                      <span>·</span>
+                      <span className="model-current-caps">
+                        {currentModel.capabilities.map(capabilityLabel).filter(Boolean).join(" · ")}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="button model-current-inspect-btn"
+                  onClick={() =>
+                    inspect(
+                      currentModel,
+                      currentGroupBindings.length > 0 ? currentGroupBindings : [currentModel],
+                    )
+                  }
+                >
+                  查看当前设置
+                </button>
+              </div>
+            )}
+
             <label className="model-catalog-search">
               <Search size={15} aria-hidden="true" />
               <span className="sr-only">搜索模型</span>
@@ -216,58 +277,104 @@ export function ModelConnectionsModal({
               />
             </label>
 
-            {visibleProviders.length === 0 && <p className="model-catalog-empty">没有匹配的模型。</p>}
+            {/* 左侧供应商导航 + 右侧模型列表 */}
+            <div className="model-catalog-split">
+              <aside className="model-catalog-sidebar" aria-label="模型供应商列表">
+                <div className="model-sidebar-title">按供应商分类</div>
+                <button
+                  type="button"
+                  className={`model-provider-nav-item${selectedProviderFilter === "all" ? " active" : ""}`}
+                  onClick={() => setSelectedProviderFilter("all")}
+                >
+                  <span className="model-provider-nav-name">全部供应商模型</span>
+                  <span className="model-provider-nav-count">
+                    {visibleProviders.reduce((acc, p) => acc + p.modelGroups.length, 0)}
+                  </span>
+                </button>
+                {visibleProviders.map((provider) => {
+                  const connLabel = providerConnectionLabel(provider.id, modelConnections);
+                  const isConnected = connLabel?.includes("✓");
+                  return (
+                    <button
+                      key={provider.id}
+                      type="button"
+                      className={`model-provider-nav-item${selectedProviderFilter === provider.id ? " active" : ""}`}
+                      onClick={() => setSelectedProviderFilter(provider.id)}
+                    >
+                      <span className="model-provider-nav-name">
+                        <span className={`provider-dot dot-${provider.id}`} />
+                        {provider.displayName} 专区
+                      </span>
+                      <span className="model-provider-nav-right">
+                        {isConnected && <span className="provider-check">✓</span>}
+                        <span className="model-provider-nav-count">{provider.modelGroups.length}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </aside>
 
-            {visibleProviders.map((provider) => {
-              const connectionLabel = providerConnectionLabel(provider.id, modelConnections);
-              return (
-                <section className="model-provider-group" key={provider.id}>
-                  <h3>
-                    <span>{provider.displayName}</span>
-                    {connectionLabel && <small>{connectionLabel}</small>}
-                  </h3>
-                  <div className="model-card-grid">
-                    {provider.modelGroups.map((group) => {
-                      const current = group.bindings.some((binding) => binding.id === selectedModelId);
-                      return (
-                        <article
-                          className={`model-card${current ? " current" : ""}`}
-                          key={group.id}
-                        >
-                          <div className="model-card-head">
-                            <strong>{group.displayName}</strong>
-                            {current && <span className="model-badge current">当前使用</span>}
-                          </div>
-                          <div className="model-card-facts">
-                            <span>上下文 {formatTokens(group.bindings[0].contextWindow)}</span>
-                            <span>输出 {formatTokens(group.bindings[0].maxOutputTokens)}</span>
-                          </div>
-                          <div className="model-card-caps">
-                            {[
-                              ...new Set(
-                                group.bindings
-                                  .flatMap((binding) => binding.capabilities)
-                                  .map(capabilityLabel)
-                                  .filter((value): value is string => value !== null),
-                              ),
-                            ].map((label) => (
-                              <span key={label}>{label}</span>
-                            ))}
-                          </div>
-                          <button
-                            type="button"
-                            className="button"
-                            onClick={() => inspect(group.bindings[0], group.bindings)}
-                          >
-                            查看详情与设置
-                          </button>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </section>
-              );
-            })}
+              <div className="model-catalog-main">
+                {visibleProviders.length === 0 && (
+                  <p className="model-catalog-empty">没有匹配的模型。</p>
+                )}
+
+                {visibleProviders.length > 0 && displayedProviders.length === 0 && (
+                  <p className="model-catalog-empty">该分类下没有匹配的模型。</p>
+                )}
+
+                {displayedProviders.map((provider) => {
+                  const connectionLabel = providerConnectionLabel(provider.id, modelConnections);
+                  return (
+                    <section className="model-provider-group" key={provider.id}>
+                      <h3>
+                        <span>{provider.displayName}</span>
+                        {connectionLabel && <small>{connectionLabel}</small>}
+                      </h3>
+                      <div className="model-card-grid">
+                        {provider.modelGroups.map((group) => {
+                          const current = group.bindings.some((binding) => binding.id === selectedModelId);
+                          return (
+                            <article
+                              className={`model-card${current ? " current" : ""}`}
+                              key={group.id}
+                            >
+                              <div className="model-card-head">
+                                <strong>{group.displayName}</strong>
+                                {current && <span className="model-badge current">当前使用</span>}
+                              </div>
+                              <div className="model-card-facts">
+                                <span>上下文 {formatTokens(group.bindings[0].contextWindow)}</span>
+                                <span>输出 {formatTokens(group.bindings[0].maxOutputTokens)}</span>
+                              </div>
+                              <div className="model-card-caps">
+                                {[
+                                  ...new Set(
+                                    group.bindings
+                                      .flatMap((binding) => binding.capabilities)
+                                      .map(capabilityLabel)
+                                      .filter((value): value is string => value !== null),
+                                  ),
+                                ].map((label) => (
+                                  <span key={label}>{label}</span>
+                                ))}
+                              </div>
+                              <button
+                                type="button"
+                                className="button"
+                                onClick={() => inspect(group.bindings[0], group.bindings)}
+                              >
+                                查看详情与设置
+                              </button>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            </div>
 
             <p className="model-catalog-effective">
               提示：切换模型或更新参数将在当前对话的「下一次新提问」生效，不影响历史记录。

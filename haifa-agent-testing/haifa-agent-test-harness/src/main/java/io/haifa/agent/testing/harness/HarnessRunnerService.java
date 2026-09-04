@@ -27,9 +27,8 @@ final class HarnessRunnerService {
                 && (budgetApproval == null || budgetApproval.isBlank())) {
             throw new IllegalArgumentException("--approve-budget is required for live and release runs");
         }
-        BigDecimal approvedBudget = document.request().mode().requiresBudgetApproval()
-                ? positiveDecimal(budgetApproval)
-                : BigDecimal.ONE;
+        BigDecimal approvedBudget =
+                document.request().mode().requiresBudgetApproval() ? positiveDecimal(budgetApproval) : BigDecimal.ONE;
         RunEvidenceWriter.NativeResult nativeResult = executeNative(context, approvedBudget, progressOutput);
         RunEvidenceWriter.PublishedRun published = new RunEvidenceWriter()
                 .write(

@@ -1368,9 +1368,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .model-advanced-settings select { min-width: 0; height: 32px; padding: 0 8px; border: 1px solid #d9deea; border-radius: 8px; background: #fff; color: #303b52; }
 .model-settings-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .model-settings-locked { margin: -4px 0 0; color: #a46718; font-size: 10px; text-align: right; }
-.model-connection-notice { display: flex; width: calc(100% - 32px); align-items: center; gap: 10px; margin: 12px 16px 0; padding: 10px 12px; color: #51431f; border: 1px solid #ead9a6; border-radius: 10px; background: #fffaf0; cursor: pointer; text-align: left; }
-.model-connection-notice span { display: grid; gap: 2px; }
-.model-connection-notice small { color: #766b4f; }
+.model-connection-notice { display: inline-flex; align-items: center; gap: 8px; width: fit-content; max-width: calc(100% - 32px); margin: 8px 16px 0; padding: 5px 12px; color: #854d0e; border: 1px solid #fef08a; border-radius: 8px; background: #fefce8; cursor: pointer; text-align: left; font-size: 11px; }
+.model-connection-notice span { display: inline-flex; align-items: center; gap: 6px; }
+.model-connection-notice strong { font-weight: 600; color: #713f12; }
+.model-connection-notice small { color: #a16207; font-size: 11px; }
+.model-unavailable-notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: calc(100% - 32px); margin: 6px 16px 0; padding: 6px 12px; color: #78350f; border: 1px solid #fde68a; border-radius: 8px; background: #fffbeb; font-size: 11px; }
+.model-unavailable-notice-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.model-unavailable-notice-main svg { color: #d97706; flex-shrink: 0; }
+.model-unavailable-notice-content { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.model-unavailable-notice-content strong { font-size: 12px; color: #92400e; }
+.model-unavailable-notice-content span { font-size: 11px; color: #b45309; }
+.model-unavailable-notice-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.model-unavailable-notice-actions .button { padding: 3px 8px; font-size: 11px; font-weight: 500; border-radius: 5px; cursor: pointer; }
+.model-unavailable-primary-button { background: #d97706; color: #ffffff; border: 1px solid #b45309; }
+.model-unavailable-primary-button:hover { background: #b45309; }
+.model-unavailable-secondary-button { background: #ffffff; color: #78350f; border: 1px solid #fcd34d; }
+.model-unavailable-secondary-button:hover { background: #fef3c7; }
 .model-connection-backdrop { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(20 27 42 / 32%); }
 .model-connection-panel { width: min(680px, 100%); max-height: min(760px, calc(100vh - 40px)); overflow: auto; padding: 18px; border: 1px solid #d9deea; border-radius: 14px; background: #fff; box-shadow: 0 18px 60px rgb(25 35 60 / 22%); }
 .model-connection-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -1389,10 +1402,34 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .model-connection-list { display: grid; gap: 8px; margin-top: 16px; }
 .model-connection-list > h3 { font-size: 12px; }
 .model-connection-list > p { color: #707b8d; font-size: 11px; }
-.model-connection-list > div { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e2e6ee; border-radius: 9px; }
+.model-connection-list > div { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid #e2e6ee; border-radius: 10px; background: #fff; }
 .model-connection-list > div > span { display: grid; flex: 1; gap: 2px; }
 .model-connection-list small { color: #707b8d; }
 .model-connection-list i { padding: 3px 6px; border-radius: 6px; background: #fff4db; color: #8b651e; font-size: 9px; font-style: normal; }
+.model-connection-provider-select { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #4c5870; font-weight: 500; }
+.model-connection-provider-select select { flex: 1; height: 32px; padding: 0 8px; border: 1px solid #ccd3e0; border-radius: 6px; background: #fff; font-size: 12px; color: #1e293b; }
+.model-connection-saved-badge { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 6px; font-size: 11px; color: #065f46; grid-column: 1 / -1; }
+.model-connection-save-actions { grid-column: 1 / -1; display: flex; gap: 8px; }
+.model-connection-save-actions .button { flex: 1; justify-content: center; }
+.connection-tag { width: 32px; height: 32px; border-radius: 8px; background: #eef2ff; color: #4338ca; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+.connection-info { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.connection-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #0f172a; flex-wrap: wrap; }
+.connection-status-badge { padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; }
+.connection-status-badge.status-ready { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+.connection-status-badge.status-warning { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+.connection-sub { font-size: 11px; color: #64748b; }
+.connection-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.connection-actions .button.small { padding: 4px 10px; font-size: 11px; height: 28px; }
+.connection-status-badge.status-reauth,
+.connection-status-badge.status-error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.connection-status-badge.status-not-configured { background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; }
+.connection-tag.tag-deepseek { background: #eff6ff; color: #1d4ed8; }
+.connection-tag.tag-aliyun { background: #fff7ed; color: #c2410c; }
+.connection-tag.tag-openai { background: #f0fdf4; color: #15803d; }
+.connection-tag.tag-google { background: #fef2f2; color: #b91c1c; }
+.connection-tag.tag-anthropic { background: #faf5ff; color: #7e22ce; }
+.connection-tag.tag-custom { background: #f1f5f9; color: #475569; }
+.connection-account-label { color: #94a3b8; font-family: monospace; font-size: 10px; }
 .slash-current { display: inline-flex; align-items: center; gap: 4px; color: #39775c; font-size: 10px; font-weight: 700; }
 .slash-command-menu footer {
   display: flex;
@@ -2261,7 +2298,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 /* ---- Model & Connections window, catalog, and detail drawer (Phase 8-B) ---- */
-.model-connections-window { width: min(880px, 100%); max-height: min(820px, calc(100vh - 40px)); overflow: auto; padding: 18px; border: 1px solid #d9deea; border-radius: 14px; background: #fff; box-shadow: 0 18px 60px rgb(25 35 60 / 22%); }
+.model-connections-window { width: min(940px, 100%); max-height: min(840px, calc(100vh - 40px)); overflow: auto; padding: 18px; border: 1px solid #d9deea; border-radius: 14px; background: #fff; box-shadow: 0 18px 60px rgb(25 35 60 / 22%); }
 .model-connections-window > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .model-connections-window > header span { color: #68758c; font-size: 10px; font-weight: 750; letter-spacing: .1em; }
 .model-connections-window h2, .model-connections-window h3, .model-connections-window p { margin: 0; }
@@ -2270,6 +2307,46 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .model-connections-tabs button { flex: 1; min-height: 32px; padding: 5px 9px; color: #5e687a; border: 0; border-radius: 7px; background: transparent; cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; }
 .model-connections-tabs button[aria-selected="true"] { color: #334fbd; background: #fff; box-shadow: 0 1px 5px rgb(30 42 78 / 12%); }
 .model-catalog-tab, .model-connections-tab { display: grid; gap: 14px; margin-top: 14px; }
+
+/* 顶部明显展示当前选中的模型 */
+.model-current-banner { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 16px; border: 1px solid #dbeafe; border-radius: 12px; background: linear-gradient(135deg, #f0f7ff 0%, #fafcff 100%); box-shadow: 0 1px 3px rgb(37 99 235 / 5%); }
+.model-current-banner.unavailable { border-color: #fee2e2; background: #fff5f5; }
+.model-current-banner-main { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+.model-current-tag { width: 36px; height: 36px; border-radius: 9px; background: #2563eb; color: #ffffff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+.model-current-tag.tag-deepseek { background: #1d4ed8; }
+.model-current-tag.tag-aliyun { background: #c2410c; }
+.model-current-tag.tag-openai, .model-current-tag.tag-openai-codex { background: #15803d; }
+.model-current-tag.tag-google-antigravity, .model-current-tag.tag-gemini { background: #b91c1c; }
+.model-current-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.model-current-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.model-current-chip { padding: 1px 7px; border-radius: 999px; background: #dbeafe; color: #1e40af; font-size: 10px; font-weight: 600; }
+.model-current-chip.warn { background: #fee2e2; color: #991b1b; }
+.model-current-heading strong { font-size: 14px; color: #0f172a; }
+.model-current-conn { font-size: 11px; color: #059669; font-weight: 500; }
+.model-current-meta { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; font-size: 11px; color: #64748b; }
+.model-current-caps { color: #3b82f6; font-weight: 500; }
+.model-current-inspect-btn { padding: 6px 12px; font-size: 11px; height: 30px; white-space: nowrap; flex-shrink: 0; border: 1px solid #bfdbfe; background: #ffffff; color: #1d4ed8; }
+.model-current-inspect-btn:hover { background: #eff6ff; }
+
+/* 左右分栏布局：左侧供应商导航 + 右侧模型列表 */
+.model-catalog-split { display: grid; grid-template-columns: 210px 1fr; gap: 16px; align-items: start; min-height: 400px; }
+.model-catalog-sidebar { display: flex; flex-direction: column; gap: 3px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; }
+.model-sidebar-title { padding: 4px 8px; font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .08em; }
+.model-provider-nav-item { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 7px 9px; border-radius: 8px; border: 1px solid transparent; background: transparent; font-size: 12px; color: #475569; cursor: pointer; text-align: left; transition: all .15s; }
+.model-provider-nav-item:hover { background: #f1f5f9; color: #0f172a; }
+.model-provider-nav-item.active { background: #ffffff; color: #2563eb; font-weight: 600; border-color: #bfdbfe; box-shadow: 0 1px 3px rgb(37 99 235 / 8%); }
+.model-provider-nav-name { display: flex; align-items: center; gap: 7px; }
+.provider-dot { width: 7px; height: 7px; border-radius: 999px; background: #94a3b8; }
+.dot-deepseek { background: #2563eb; }
+.dot-aliyun { background: #ea580c; }
+.dot-openai, .dot-openai-codex { background: #16a34a; }
+.dot-google-antigravity, .dot-gemini { background: #dc2626; }
+.model-provider-nav-right { display: flex; align-items: center; gap: 6px; }
+.provider-check { font-size: 11px; color: #16a34a; font-weight: 700; }
+.model-provider-nav-count { padding: 1px 6px; border-radius: 999px; background: #e2e8f0; color: #64748b; font-size: 10px; font-weight: 600; }
+.model-provider-nav-item.active .model-provider-nav-count { background: #dbeafe; color: #1d4ed8; }
+
+.model-catalog-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .model-catalog-search { display: flex; align-items: center; gap: 8px; padding: 8px 11px; border: 1px solid #ccd3e0; border-radius: 9px; color: #68758c; background: #fbfcfe; }
 .model-catalog-search input { min-width: 0; flex: 1; border: 0; background: transparent; font: inherit; font-size: 12px; }
 .model-catalog-empty { padding: 24px 0; color: #68758c; font-size: 12px; text-align: center; }
