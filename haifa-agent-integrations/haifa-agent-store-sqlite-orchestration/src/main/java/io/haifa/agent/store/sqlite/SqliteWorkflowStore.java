@@ -38,7 +38,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Optional SQLite V9/V10 authoritative Workflow store. No Graph-provider object is serialized. */
+/** Optional SQLite V12/V13 authoritative Workflow store. No Graph-provider object is serialized. */
 public final class SqliteWorkflowStore implements WorkflowStore {
     private final SqliteRuntimeUnitOfWork unitOfWork;
     private final SqliteWorkflowCodec codec;

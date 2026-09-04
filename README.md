@@ -271,9 +271,9 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
   不返回 Prompt、用户消息、Memory 或 Tool 正文；
 - Run、Session、User Scope 的 Memory API/Core，以及 SQLite 中全人工确认的 Candidate、正式 Memory
   和最小 Audit；
-- 基础 SQLite V1～V8 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、
+- 基础 SQLite V1～V11 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、
   Conversation、Policy/Approval/Trust 与 Artifact；默认初始化不安装 Workflow 表；
-- 可选 `haifa-agent-store-sqlite-orchestration` 显式扩展从 V9 安装 Workflow 单机持久恢复；
+- 可选 `haifa-agent-store-sqlite-orchestration` 显式扩展从 V12 安装 Workflow 单机持久恢复；
 - JSONL 是可删除、可重建的安全 Transcript Outbox 投影，不是恢复事实源。
 
 ### Project、Execution 与安全
@@ -306,9 +306,9 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 - `haifa-agent-orchestration-core` 提供内容寻址编译、fail-closed 能力校验、确定状态合并和进程内参考执行器；
 - `haifa-agent-graph-langgraph4j` 以精确固定的 LangGraph4j Core `1.8.24` 提供可选 M2 Adapter，并用同一
   Contract Fixture 验证顺序、条件、有限循环、固定 `ALL_OF`、中断/恢复、取消和事件投影；
-- M3 的 `DurableWorkflowRuntime`、`WorkflowStore` Port 与可选 SQLite V9 Store 提供 Definition/Adapter/Codec
+- M3 的 `DurableWorkflowRuntime`、`WorkflowStore` Port 与可选 SQLite V12 Store 提供 Definition/Adapter/Codec
   冻结校验、节点两阶段提交、固定分支游标、Wait/Resume、幂等命令、单调事件和 Outbox 的跨进程恢复；
-- M5 通过可选 SQLite V10 保存父 Run、父节点 attempt 与 child Workflow Run 的稳定关系，支持静态受限子图、
+- M5 通过可选 SQLite V13 保存父 Run、父节点 attempt 与 child Workflow Run 的稳定关系，支持静态受限子图、
   子图内 Wait/Resume、父取消/超时传播、固定并行分支合并和 child-start 崩溃恢复；
 - M6 中立前置能力增加冻结候选、显式条件和持久选择集合的有界动态 fan-out，以及仅含单 Action 固定
   候选、稳定首成功 Winner、Loser 事件与未知结果 fail closed 的 `ANY_OF`；LangGraph4j 仍拒绝这两项

@@ -12,10 +12,10 @@ import java.util.List;
 
 /** Authoritative catalog for the explicitly installed SQLite Workflow extension. */
 public final class WorkflowStoreMigrations {
-    private static final String V9_RESOURCE =
-            "/io/haifa/agent/store/sqlite/orchestration/migration/V9__workflow_recovery.sql";
-    private static final String V10_RESOURCE =
-            "/io/haifa/agent/store/sqlite/orchestration/migration/V10__workflow_subgraph.sql";
+    private static final String V12_RESOURCE =
+            "/io/haifa/agent/store/sqlite/orchestration/migration/V12__workflow_recovery.sql";
+    private static final String V13_RESOURCE =
+            "/io/haifa/agent/store/sqlite/orchestration/migration/V13__workflow_subgraph.sql";
     private static final List<SqliteMigration> EXTENSIONS = loadExtensions();
     private static final List<SqliteMigration> COMPLETE = combineWithRuntime();
 
@@ -25,7 +25,7 @@ public final class WorkflowStoreMigrations {
         return EXTENSIONS;
     }
 
-    /** Runtime V1-V8 followed by the opt-in Workflow extension from V9. */
+    /** Runtime V1-V11 followed by the opt-in Workflow extension from V12. */
     public static List<SqliteMigration> complete() {
         return COMPLETE;
     }
@@ -36,7 +36,7 @@ public final class WorkflowStoreMigrations {
 
     private static List<SqliteMigration> loadExtensions() {
         try {
-            return List.of(read(9, "workflow_recovery", V9_RESOURCE), read(10, "workflow_subgraph", V10_RESOURCE));
+            return List.of(read(12, "workflow_recovery", V12_RESOURCE), read(13, "workflow_subgraph", V13_RESOURCE));
         } catch (IOException exception) {
             throw new SqliteStoreException(
                     SqliteStoreFailure.MIGRATION_FAILED, "Unable to read bundled SQLite Workflow migration", exception);

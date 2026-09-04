@@ -27,7 +27,7 @@ class WorkflowStoreMigrationTest {
     Path directory;
 
     @Test
-    void upgradesRuntimeV8ToWorkflowV9WithoutChangingRuntimeHistory() throws Exception {
+    void upgradesRuntimeV11ToWorkflowV12WithoutChangingRuntimeHistory() throws Exception {
         SqliteConnectionFactory connections = connections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, CLOCK);
         runner.migrate(RuntimeStoreMigrations.all());
@@ -37,13 +37,13 @@ class WorkflowStoreMigrationTest {
         assertThat(runtimeHistory.keySet()).contains(RuntimeStoreMigrations.currentVersion());
         assertThat(tableCount(connections, "workflow_run")).isZero();
 
-        List<SqliteMigration> throughWorkflowV9 = WorkflowStoreMigrations.complete()
+        List<SqliteMigration> throughWorkflowV12 = WorkflowStoreMigrations.complete()
                 .subList(0, RuntimeStoreMigrations.all().size() + 1);
-        runner.migrate(throughWorkflowV9);
+        runner.migrate(throughWorkflowV12);
 
-        Map<Long, AppliedMigration> v9History = history(connections);
-        assertThat(v9History).containsAllEntriesOf(runtimeHistory);
-        assertThat(v9History.get(RuntimeStoreMigrations.currentVersion() + 1).name())
+        Map<Long, AppliedMigration> v12History = history(connections);
+        assertThat(v12History).containsAllEntriesOf(runtimeHistory);
+        assertThat(v12History.get(RuntimeStoreMigrations.currentVersion() + 1).name())
                 .isEqualTo("workflow_recovery");
         assertThat(tableCount(connections, "workflow_run")).isOne();
 

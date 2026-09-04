@@ -1,7 +1,7 @@
 # Haifa Agent SQLite Orchestration Store
 
 This pure Java integration is the explicit, optional SQLite persistence adapter for Incubating Workflow/Orchestration.
-The base `haifa-agent-store-sqlite` artifact remains Runtime-only and installs V1-V8. This artifact depends on both the
+The base `haifa-agent-store-sqlite` artifact remains Runtime-only and installs V1-V11. This artifact depends on both the
 base store and `haifa-agent-orchestration-core`; no existing Coding, SDK, Personal Assistant, or Runtime assembly pulls
 it in automatically.
 
@@ -26,18 +26,18 @@ try (var sqlite = SqliteWorkflowStoreFoundation.initialize(configuration, clock)
 ```
 
 `SqliteWorkflowStoreFoundation.initialize(...)` is the only standard assembly entry. It validates the unchanged Runtime
-V1-V8 history, then applies the optional Workflow extension. The presence of this artifact or a Graph Bean does not
+V1-V11 history, then applies the optional Workflow extension. The presence of this artifact or a Graph Bean does not
 start a Workflow and does not intercept SDK/Runtime requests.
 
 ## Schema ownership
 
-- Runtime V1-V8 remain bundled in `haifa-agent-store-sqlite`; V8 is Tool reconciliation evidence.
-- V9 creates `workflow_run`, `workflow_node_attempt`, `workflow_wait`, `workflow_checkpoint`, `workflow_event`,
+- Runtime V1-V11 remain bundled in `haifa-agent-store-sqlite`; V11 separates the persisted Run limits.
+- V12 creates `workflow_run`, `workflow_node_attempt`, `workflow_wait`, `workflow_checkpoint`, `workflow_event`,
   `workflow_outbox`, and `workflow_command`.
-- V10 creates `workflow_subgraph_instance` for the stable parent/child Run relation.
+- V13 creates `workflow_subgraph_instance` for the stable parent/child Run relation.
 - `WorkflowStoreMigrations.complete()` is the authoritative catalog used by the optional assembly;
   `currentVersion()` is derived from the last catalog entry rather than copied into backup or test constants.
-- Schema migration is forward-only. Applications that never opt in remain on Runtime V8 with no `workflow_*` tables.
+- Schema migration is forward-only. Applications that never opt in remain on Runtime V11 with no `workflow_*` tables.
 
 `SqliteWorkflowStore` freezes Definition ID/version/digest, adapter coordinate/version/configuration digest and codec
 version per Run. Node results use a two-phase Attempt protocol; unresolved side effects become `OUTCOME_UNKNOWN` and
@@ -56,5 +56,5 @@ on Orchestration Core.
   -pl :haifa-agent-store-sqlite-orchestration -am test
 ```
 
-Tests cover the Runtime V8 to Workflow V9 upgrade, unchanged V1-V8 migration metadata, V9/V10 schema constraints,
+Tests cover the Runtime V11 to Workflow V12 upgrade, unchanged V1-V11 migration metadata, V12/V13 schema constraints,
 restart recovery, crash windows, idempotency, Outbox, subgraphs, and the absence of Graph-provider dependencies.

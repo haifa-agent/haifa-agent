@@ -14,7 +14,7 @@ import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class V9WorkflowSchemaTest {
+class V12WorkflowSchemaTest {
     @TempDir
     Path directory;
 
