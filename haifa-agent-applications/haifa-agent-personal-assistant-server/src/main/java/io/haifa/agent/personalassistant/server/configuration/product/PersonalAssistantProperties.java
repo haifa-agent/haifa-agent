@@ -250,19 +250,61 @@ public record PersonalAssistantProperties(
             List<String> allowedBindings,
             Map<String, URI> bindingEndpointOverrides) {
         public ModelProvider(
-                String id, String displayName, String mode, boolean allowDeterministic, boolean nativeStreaming,
-                URI endpoint, String credentialReference, List<ApiBinding> apiBindings, List<ProviderModel> models,
+                String id,
+                String displayName,
+                String mode,
+                boolean allowDeterministic,
+                boolean nativeStreaming,
+                URI endpoint,
+                String credentialReference,
+                List<ApiBinding> apiBindings,
+                List<ProviderModel> models,
                 URI proxy) {
-            this(id, displayName, mode, allowDeterministic, nativeStreaming, endpoint, credentialReference,
-                    apiBindings, models, proxy, ModelReasoningMode.DISABLED, List.of(), Map.of());
+            this(
+                    id,
+                    displayName,
+                    mode,
+                    allowDeterministic,
+                    nativeStreaming,
+                    endpoint,
+                    credentialReference,
+                    apiBindings,
+                    models,
+                    proxy,
+                    ModelReasoningMode.DISABLED,
+                    List.of(),
+                    Map.of());
         }
+
         public ModelProvider(
-                String id, String displayName, String mode, boolean allowDeterministic, boolean nativeStreaming,
-                URI endpoint, String credentialReference, List<ApiBinding> apiBindings, List<ProviderModel> models,
-                URI proxy, List<String> allowedBindings, Map<String, URI> bindingEndpointOverrides) {
-            this(id, displayName, mode, allowDeterministic, nativeStreaming, endpoint, credentialReference,
-                    apiBindings, models, proxy, ModelReasoningMode.DISABLED, allowedBindings, bindingEndpointOverrides);
+                String id,
+                String displayName,
+                String mode,
+                boolean allowDeterministic,
+                boolean nativeStreaming,
+                URI endpoint,
+                String credentialReference,
+                List<ApiBinding> apiBindings,
+                List<ProviderModel> models,
+                URI proxy,
+                List<String> allowedBindings,
+                Map<String, URI> bindingEndpointOverrides) {
+            this(
+                    id,
+                    displayName,
+                    mode,
+                    allowDeterministic,
+                    nativeStreaming,
+                    endpoint,
+                    credentialReference,
+                    apiBindings,
+                    models,
+                    proxy,
+                    ModelReasoningMode.DISABLED,
+                    allowedBindings,
+                    bindingEndpointOverrides);
         }
+
         @ConstructorBinding
         public ModelProvider {
             id = text(id, "modelProvider.id");
@@ -292,10 +334,10 @@ public record PersonalAssistantProperties(
                 throw new IllegalArgumentException("API styles within a provider must be unique");
             }
             models = List.copyOf(models == null ? List.of() : models);
-            defaultReasoningMode =
-                    defaultReasoningMode == null ? ModelReasoningMode.DISABLED : defaultReasoningMode;
+            defaultReasoningMode = defaultReasoningMode == null ? ModelReasoningMode.DISABLED : defaultReasoningMode;
             allowedBindings = List.copyOf(allowedBindings == null ? List.of() : allowedBindings);
-            bindingEndpointOverrides = Map.copyOf(bindingEndpointOverrides == null ? Map.of() : bindingEndpointOverrides);
+            bindingEndpointOverrides =
+                    Map.copyOf(bindingEndpointOverrides == null ? Map.of() : bindingEndpointOverrides);
             if (models.isEmpty() == allowedBindings.isEmpty()) {
                 throw new IllegalArgumentException("configure either modelProvider.models or allowedBindings");
             }
@@ -340,7 +382,9 @@ public record PersonalAssistantProperties(
         }
 
         public List<String> bindingIds() {
-            return models.isEmpty() ? allowedBindings : models.stream().map(ProviderModel::id).toList();
+            return models.isEmpty()
+                    ? allowedBindings
+                    : models.stream().map(ProviderModel::id).toList();
         }
 
         private static void validateModelProxy(URI proxy) {
