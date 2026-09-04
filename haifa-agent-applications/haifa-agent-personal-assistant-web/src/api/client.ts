@@ -241,7 +241,7 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
   }
 
   modelConnections(signal?: AbortSignal) {
-    return this.request<ModelConnection[]>("/model-connections", {}, signal);
+    return this.request<ModelConnection[]>("/model-connections", { cache: "no-store" }, signal);
   }
 
   saveModelApiKey(providerId: string, apiKey: string, options: CommandOptions = {}) {
