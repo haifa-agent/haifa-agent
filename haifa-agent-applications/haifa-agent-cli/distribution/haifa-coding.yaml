@@ -7,10 +7,11 @@ models:
       endpoint: https://api.deepseek.com
       credentialRef: model-auth://deepseek/default
       nativeStreaming: true
-      allowedBindings: [deepseek-chat-pro, deepseek-chat-flash, deepseek-responses-flash, deepseek-responses-pro, deepseek-anthropic-flash, deepseek-anthropic-pro]
+      allowedBindings: [deepseek-chat-pro, deepseek-chat-flash, deepseek-responses-flash, deepseek-responses-pro, deepseek-anthropic-flash, deepseek-anthropic-pro, deepseek-v4-flash-vision-exp, deepseek-responses-v4-flash-vision-exp, deepseek-anthropic-v4-flash-vision-exp]
       bindingEndpointOverrides:
         deepseek-anthropic-flash: https://api.deepseek.com/anthropic
         deepseek-anthropic-pro: https://api.deepseek.com/anthropic
+        deepseek-anthropic-v4-flash-vision-exp: https://api.deepseek.com/anthropic
     - id: openai-codex
       endpoint: https://chatgpt.com/backend-api/codex
       credentialRef: model-auth://openai-codex/default
