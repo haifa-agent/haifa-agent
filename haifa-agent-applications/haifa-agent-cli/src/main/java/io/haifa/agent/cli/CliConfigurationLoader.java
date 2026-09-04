@@ -8,12 +8,12 @@ import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceProtection;
 import io.haifa.agent.application.project.policy.CodingApprovalThreshold;
 import io.haifa.agent.model.api.ApiStyleId;
+import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelCapability;
-import io.haifa.agent.model.api.ModelReasoningMode;
-import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.core.ModelCatalogDeployment;
 import io.haifa.agent.model.core.PackagedModelCatalog;
 import io.haifa.agent.model.gemini.GeminiDialects;
@@ -248,69 +248,78 @@ final class CliConfigurationLoader {
                     .map(ModelDefinitionId::new)
                     .collect(java.util.stream.Collectors.toUnmodifiableSet());
             if (allowed.isEmpty()) {
-                throw new IllegalArgumentException("configuration models.providers[].allowedBindings must be non-empty");
+                throw new IllegalArgumentException(
+                        "configuration models.providers[].allowedBindings must be non-empty");
             }
             deployment.add(new ModelCatalogDeployment.Provider(
                     new ModelProviderId(id),
-                    java.net.URI.create(expandEnvironment(requiredText(
-                            provider, "endpoint", "configuration models.providers[].endpoint"))),
-                    new CredentialRef(requiredText(provider, "credentialRef", "configuration models.providers[].credentialRef")),
+                    java.net.URI.create(expandEnvironment(
+                            requiredText(provider, "endpoint", "configuration models.providers[].endpoint"))),
+                    new CredentialRef(
+                            requiredText(provider, "credentialRef", "configuration models.providers[].credentialRef")),
                     requiredBoolean(provider, "nativeStreaming", "configuration models.providers[].nativeStreaming"),
-                    !provider.containsKey("enabled") || requiredBoolean(provider, "enabled", "configuration models.providers[].enabled"),
+                    !provider.containsKey("enabled")
+                            || requiredBoolean(provider, "enabled", "configuration models.providers[].enabled"),
                     allowed,
                     bindingEndpointOverrides(provider, allowed)));
         }
         var projection = PackagedModelCatalog.load(CliConfigurationLoader.class.getClassLoader())
                 .project(new ModelCatalogDeployment(deployment));
-        Map<String, io.haifa.agent.model.api.ModelProviderDefinition> projectedProviders = projection.providers().stream()
-                .collect(java.util.stream.Collectors.toUnmodifiableMap(value -> value.id().value(), value -> value));
-        return projection.bindings().stream().map(binding -> {
-            var definition = binding.definition();
-            var provider = projectedProviders.get(definition.providerId().value());
-            Map<String, Object> source = sourceProviders.get(provider.id().value());
-            String workspaceId = expandedNullable(source, "workspaceId");
-            String region = expandedNullable(source, "region");
-            java.net.URI providerEndpoint = provider.endpoint();
-            java.net.URI endpoint = provider.apiBindings().stream()
-                    .filter(value -> value.style().equals(definition.style()))
-                    .findFirst()
-                    .flatMap(value -> value.endpoint())
-                    .orElse(provider.endpoint());
-            if (binding.apiBinding().dialect().equals(OpenAiCompatibleDialects.ALIYUN_BAILIAN)) {
-                var configuration = new AliyunBailianProviderFactory.ProviderConfiguration(
-                        "cli-v1", workspaceId, region, provider.credentialRef());
-                workspaceId = configuration.workspaceId();
-                region = configuration.region();
-                providerEndpoint = configuration.endpoint();
-                endpoint = configuration.endpoint();
-            }
-            ModelReasoningMode configuredReasoningMode = enumValue(
-                    ModelReasoningMode.class,
-                    text(source, "reasoningMode", ModelReasoningMode.DISABLED.name()),
-                    "model reasoning mode");
-            return new CliConfiguration.Model(
-                    provider.id().value(),
-                    provider.displayName(),
-                    definition.providerModelId(),
-                    providerEndpoint,
-                    endpoint,
-                    provider.credentialRef().value(),
-                    definition.style(),
-                    binding.apiBinding().dialect(),
-                    provider.nativeStreaming(),
-                    workspaceId,
-                    region,
-                    definition.id().value(),
-                    definition.displayName(),
-                    definition.capabilities(),
-                    definition.contextWindow(),
-                    definition.maxOutputTokens(),
-                    definition.capabilities().contains(ModelCapability.REASONING)
-                            ? configuredReasoningMode
-                            : ModelReasoningMode.DISABLED,
-                    expandedNullable(source, "originator"),
-                    expandedNullable(source, "userAgent"));
-        }).toList();
+        Map<String, io.haifa.agent.model.api.ModelProviderDefinition> projectedProviders =
+                projection.providers().stream()
+                        .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                                value -> value.id().value(), value -> value));
+        return projection.bindings().stream()
+                .map(binding -> {
+                    var definition = binding.definition();
+                    var provider =
+                            projectedProviders.get(definition.providerId().value());
+                    Map<String, Object> source =
+                            sourceProviders.get(provider.id().value());
+                    String workspaceId = expandedNullable(source, "workspaceId");
+                    String region = expandedNullable(source, "region");
+                    java.net.URI providerEndpoint = provider.endpoint();
+                    java.net.URI endpoint = provider.apiBindings().stream()
+                            .filter(value -> value.style().equals(definition.style()))
+                            .findFirst()
+                            .flatMap(value -> value.endpoint())
+                            .orElse(provider.endpoint());
+                    if (binding.apiBinding().dialect().equals(OpenAiCompatibleDialects.ALIYUN_BAILIAN)) {
+                        var configuration = new AliyunBailianProviderFactory.ProviderConfiguration(
+                                "cli-v1", workspaceId, region, provider.credentialRef());
+                        workspaceId = configuration.workspaceId();
+                        region = configuration.region();
+                        providerEndpoint = configuration.endpoint();
+                        endpoint = configuration.endpoint();
+                    }
+                    ModelReasoningMode configuredReasoningMode = enumValue(
+                            ModelReasoningMode.class,
+                            text(source, "reasoningMode", ModelReasoningMode.DISABLED.name()),
+                            "model reasoning mode");
+                    return new CliConfiguration.Model(
+                            provider.id().value(),
+                            provider.displayName(),
+                            definition.providerModelId(),
+                            providerEndpoint,
+                            endpoint,
+                            provider.credentialRef().value(),
+                            definition.style(),
+                            binding.apiBinding().dialect(),
+                            provider.nativeStreaming(),
+                            workspaceId,
+                            region,
+                            definition.id().value(),
+                            definition.displayName(),
+                            definition.capabilities(),
+                            definition.contextWindow(),
+                            definition.maxOutputTokens(),
+                            definition.capabilities().contains(ModelCapability.REASONING)
+                                    ? configuredReasoningMode
+                                    : ModelReasoningMode.DISABLED,
+                            expandedNullable(source, "originator"),
+                            expandedNullable(source, "userAgent"));
+                })
+                .toList();
     }
 
     private Map<ModelDefinitionId, java.net.URI> bindingEndpointOverrides(
