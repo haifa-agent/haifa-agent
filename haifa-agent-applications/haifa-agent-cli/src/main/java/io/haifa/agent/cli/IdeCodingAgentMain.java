@@ -116,7 +116,7 @@ public final class IdeCodingAgentMain {
                   execution   : %s provider, network=%s, shell=%s
                   approval    : %s (threshold=%s)
                   persistence : %s
-                  runtime     : timeout=%s, maxIterations=%d, maxToolCalls=%d
+                  runtime     : timeout=%s, maxIterations=%d, maxModelCalls=%d, maxToolCalls=%d
                   config tiers: FROZEN assembly defaults < user ~/.haifa-agent/coding/ide-config.yaml
                                  < workspace .haifa-agent/coding/ide-config.yaml < --config <path>;
                                  per-run flags override (--model/--approval/--timeout).
@@ -137,6 +137,7 @@ public final class IdeCodingAgentMain {
                         configuration.persistence().mode().name(),
                         configuration.timeout(),
                         configuration.maxIterations(),
+                        configuration.maxModelCalls(),
                         configuration.maxToolCalls());
     }
 

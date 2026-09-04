@@ -744,7 +744,7 @@ final class LocalCodingAgent implements AutoCloseable {
                                     1,
                                     configuration.timeout().toMillis(),
                                     configuration.timeout().toMillis(),
-                                    64,
+                                    configuration.maxModelCalls(),
                                     configuration.maxToolCalls(),
                                     8),
                             Optional.ofNullable(modelSnapshots.get(profileId))

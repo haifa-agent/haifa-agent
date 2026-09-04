@@ -164,6 +164,7 @@ public final class StandaloneCodingAgents {
                 "persistence=" + configuration.persistence().mode().name(),
                 "protection=" + configuration.persistence().protection().name(),
                 "maxIterations=" + configuration.maxIterations(),
+                "maxModelCalls=" + configuration.maxModelCalls(),
                 "maxToolCalls=" + configuration.maxToolCalls());
         return new StandaloneCodingAgentMetadata(
                 model.providerId(), model.modelId(), model.id(), model.style().value(), sha256(canonical));
