@@ -61,7 +61,7 @@ class PersonalSkillPlatformTest {
         assertThat(platform.bindingReferences().get("deep-research"))
                 .isEqualTo(binding.coordinate().externalForm())
                 .contains("product", "personal-assistant-bundled@1", "deep-research@2.2.0")
-                .endsWith("#sha256:f17d534b5bced7675eb0bf7c073d84d7490faab1248c2002a24e23694e0f9462");
+                .endsWith("#sha256:695a0dee7112ea81068902dc9bb3181373170b097178f551a3d059dea89e1f6d");
         assertThat(content.readableResources())
                 .containsKeys(
                         "references/research-types.md",
