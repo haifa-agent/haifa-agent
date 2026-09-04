@@ -99,12 +99,49 @@ class CliCodingAuthenticationClientTest {
                 .isTrue();
         assertThat(new CliCodingAuthenticationClient(
                                 service,
+                                "model-auth://google-antigravity/default",
+                                "google-antigravity",
+                                java.util.List.of("model-auth://google-antigravity/default"),
+                                true)
+                        .antigravityConnectionSupported())
+                .isTrue();
+        assertThat(new CliCodingAuthenticationClient(
+                                service,
                                 "model-auth://deepseek/default",
                                 "deepseek",
                                 java.util.List.of("model-auth://deepseek/default"),
                                 false)
                         .antigravityConnectionSupported())
                 .isFalse();
+    }
+
+    @Test
+    void alwaysExposesCodexLogin() {
+        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var service = new LocalModelAuthenticationService(
+                store,
+                java.util.Optional.empty(),
+                reference -> {
+                    throw new AssertionError("credential resolution is not expected");
+                },
+                ignored -> null);
+
+        assertThat(new CliCodingAuthenticationClient(
+                                service,
+                                "model-auth://deepseek/default",
+                                "deepseek",
+                                java.util.List.of("model-auth://deepseek/default"),
+                                false)
+                        .codexConnectionSupported())
+                .isTrue();
+        assertThat(new CliCodingAuthenticationClient(
+                                service,
+                                "model-auth://openai-codex/default",
+                                "openai-codex",
+                                java.util.List.of("model-auth://openai-codex/default"),
+                                false)
+                        .codexConnectionSupported())
+                .isTrue();
     }
 
     @Test

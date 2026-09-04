@@ -2,6 +2,7 @@ package io.haifa.agent.personalassistant.server.web.v1.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -11,6 +12,7 @@ import io.haifa.agent.auth.localmodel.ExternalLoginMode;
 import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
+import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
@@ -32,6 +34,7 @@ class PersonalModelAuthenticationControllerTest {
     void projectsEnabledAntigravityLoginEvenBeforeAConnectionIsStored() {
         LocalModelAuthenticationService service = mock(LocalModelAuthenticationService.class);
         when(service.connections()).thenReturn(java.util.List.of());
+        when(service.connectionRequired(any())).thenReturn(true);
         when(service.externalLoginMethods())
                 .thenReturn(java.util.List.of(new ExternalLoginMethodDescriptor(
                         AntigravityExternalLoginMethod.METHOD_ID,
@@ -40,7 +43,8 @@ class PersonalModelAuthenticationControllerTest {
                         true,
                         Optional.empty())));
 
-        WebTestClient.bindToController(new PersonalModelAuthenticationController(service, new PersonalApiMapper()))
+        WebTestClient.bindToController(new PersonalModelAuthenticationController(
+                        service, new PersonalApiMapper(), () -> java.util.List.of(antigravityProvider())))
                 .build()
                 .get()
                 .uri("/api/v1/model-connections")
@@ -55,6 +59,37 @@ class PersonalModelAuthenticationControllerTest {
                 .jsonPath("$[0].externalLoginSupported")
                 .isEqualTo(true)
                 .jsonPath("$[0].unofficialLocalCompatibility")
+                .isEqualTo(true);
+    }
+
+    @Test
+    void projectsARegisteredLoginMethodForConnectionOnboarding() {
+        LocalModelAuthenticationService service = mock(LocalModelAuthenticationService.class);
+        when(service.connections()).thenReturn(java.util.List.of());
+        when(service.externalLoginMethods())
+                .thenReturn(java.util.List.of(new ExternalLoginMethodDescriptor(
+                        CodexExternalLoginMethod.METHOD_ID,
+                        "ChatGPT subscription",
+                        java.util.Set.of(ExternalLoginMode.BROWSER),
+                        false,
+                        Optional.empty())));
+
+        WebTestClient.bindToController(new PersonalModelAuthenticationController(
+                        service, new PersonalApiMapper(), () -> java.util.List.of(antigravityProvider())))
+                .build()
+                .get()
+                .uri("/api/v1/model-connections")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.length()")
+                .isEqualTo(2)
+                .jsonPath("$[0].providerId")
+                .isEqualTo("google-antigravity")
+                .jsonPath("$[1].providerId")
+                .isEqualTo("openai-codex")
+                .jsonPath("$[1].externalLoginSupported")
                 .isEqualTo(true);
     }
 
@@ -241,5 +276,29 @@ class PersonalModelAuthenticationControllerTest {
                     .jsonPath("$.code")
                     .isEqualTo("AUTH_EXTERNAL_APPROVAL_REQUIRED");
         }
+    }
+
+    private static PersonalAssistantProperties.ModelProvider antigravityProvider() {
+        return new PersonalAssistantProperties.ModelProvider(
+                "google-antigravity",
+                "Antigravity",
+                "remote",
+                false,
+                true,
+                URI.create("https://generativelanguage.googleapis.com"),
+                "model-auth://google-antigravity/default",
+                java.util.List.of(new PersonalAssistantProperties.ApiBinding(
+                        "google-gemini-generate-content", "antigravity-direct", null)),
+                java.util.List.of(new PersonalAssistantProperties.ProviderModel(
+                        "google-antigravity-gemini-2-5-pro",
+                        "Gemini 2.5 Pro",
+                        "Gemini 2.5 Pro",
+                        "gemini-2.5-pro",
+                        "google-gemini-generate-content",
+                        java.util.Set.of(ModelCapability.TEXT_CHAT),
+                        ModelReasoningMode.DISABLED,
+                        1_048_576,
+                        65_536)),
+                null);
     }
 }

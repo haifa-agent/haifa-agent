@@ -1,0 +1,36 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: antigravity-gemini
+version: "2026-09-m0"
+providerModelId: gemini-3-flash
+displayName: Gemini via Antigravity Direct
+status: ACTIVE
+apiStyle: google-gemini-generate-content
+dialect: antigravity-direct
+capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING, IMAGE_UPLOAD_INPUT]
+profile:
+  version: "2.0"
+  reasoningBehavior: OPTIONAL
+  allowedReasoningModes: [DISABLED, ENABLED]
+  allowedReasoningEfforts: [LOW, MEDIUM, HIGH]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 8192
+  contextWindowTokens: 131072
+  toolReasoningContinuationRequired: true
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: false
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT, IMAGE]
+  outputModalities: [TEXT]
+  imageInput:
+    allowedSources: [UPLOAD]
+    supportedMediaTypes: [image/png, image/jpeg, image/webp, image/gif, application/pdf]
+    maxImagesPerRequest: 4
+    maxBytesPerItem: 10485760
+    maxTotalBytes: 12582912
+    maxUrlCharacters: 2048
+    detailSupported: false
+    allowedDetails: []
+  status: VERIFIED
+  lastVerifiedOn: "2026-08-24"

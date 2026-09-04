@@ -2,38 +2,16 @@ server:
   address: 127.0.0.1
   port: 20001
   shutdown: graceful
-  error:
-    include-message: never
-    include-stacktrace: never
-
+  error: {include-message: never, include-stacktrace: never}
 spring:
-  codec:
-    max-in-memory-size: 11MB
-  application:
-    name: haifa-personal-assistant
-  lifecycle:
-    timeout-per-shutdown-phase: 20s
-
+  codec: {max-in-memory-size: 11MB}
+  application: {name: haifa-personal-assistant}
+  lifecycle: {timeout-per-shutdown-phase: 20s}
 logging:
-  level:
-    io.haifa.agent.personalassistant.server.observability: INFO
-  pattern:
-    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{48} - %msg%n"
-
+  level: {io.haifa.agent.personalassistant.server.observability: INFO}
 management:
-  endpoints:
-    web:
-      exposure:
-        include: health
-  endpoint:
-    health:
-      probes:
-        enabled: true
-      show-details: never
-      group:
-        readiness:
-          include: personalAssistant,personalMission
-
+  endpoints: {web: {exposure: {include: health}}}
+  endpoint: {health: {probes: {enabled: true}, show-details: never}}
 haifa:
   personal:
     data-directory: ${HAIFA_PERSONAL_DATA_DIR:./data/personal-assistant}
@@ -43,127 +21,20 @@ haifa:
       principal: ${HAIFA_PERSONAL_PRINCIPAL:public-user}
       reviewer: ${HAIFA_PERSONAL_REVIEWER:public-user}
     model-providers:
-      - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_ID:deepseek}
-        display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_DISPLAYNAME:DeepSeek}
-        mode: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODE:remote}
-        allow-deterministic: ${HAIFA_PERSONAL_MODELPROVIDERS_0_ALLOWDETERMINISTIC:false}
-        native-streaming: ${HAIFA_PERSONAL_MODELPROVIDERS_0_NATIVESTREAMING:true}
-        endpoint: ${HAIFA_PERSONAL_MODELPROVIDERS_0_ENDPOINT:https://api.deepseek.com}
-        credential-reference: ${HAIFA_PERSONAL_MODELPROVIDERS_0_CREDENTIALREFERENCE:env://DEEPSEEK_API_KEY}
-        api-bindings:
-          - style: openai-chat-completions
-            dialect: deepseek-openai-chat
-          - style: openai-responses
-            dialect: deepseek-openai-responses
-          - style: anthropic-messages
-            dialect: deepseek-anthropic-messages
-            endpoint: https://api.deepseek.com/anthropic
-        models:
-          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID:deepseek-chat-pro}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME:DeepSeek V4 Pro · Chat Completions}
-            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_MODELDISPLAYNAME:DeepSeek V4 Pro}
-            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_PROVIDERMODELID:deepseek-v4-pro}
-            style: openai-chat-completions
-            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-            context-window: 1048576
-            max-output-tokens: 393216
-          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID:deepseek-chat-flash}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME:DeepSeek V4 Flash · Chat Completions}
-            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_MODELDISPLAYNAME:DeepSeek V4 Flash}
-            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_PROVIDERMODELID:deepseek-v4-flash}
-            style: openai-chat-completions
-            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-            context-window: 1048576
-            max-output-tokens: 393216
-          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_ID:deepseek-responses-flash}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_DISPLAYNAME:DeepSeek V4 Flash · Responses}
-            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_MODELDISPLAYNAME:DeepSeek V4 Flash}
-            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_PROVIDERMODELID:deepseek-v4-flash}
-            style: openai-responses
-            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-            context-window: 1048576
-            max-output-tokens: 393216
-          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_ID:deepseek-anthropic-flash}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_DISPLAYNAME:DeepSeek V4 Flash · Anthropic Messages}
-            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_MODELDISPLAYNAME:DeepSeek V4 Flash}
-            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_PROVIDERMODELID:deepseek-v4-flash}
-            style: anthropic-messages
-            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
-            context-window: 1048576
-            max-output-tokens: 393216
-          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_ID:deepseek-responses-pro}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_DISPLAYNAME:DeepSeek V4 Pro · Responses}
-            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_MODELDISPLAYNAME:DeepSeek V4 Pro}
-            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_PROVIDERMODELID:deepseek-v4-pro}
-            style: openai-responses
-            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-            context-window: 1048576
-            max-output-tokens: 393216
-          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_ID:deepseek-anthropic-pro}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_DISPLAYNAME:DeepSeek V4 Pro · Anthropic Messages}
-            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_MODELDISPLAYNAME:DeepSeek V4 Pro}
-            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_PROVIDERMODELID:deepseek-v4-pro}
-            style: anthropic-messages
-            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
-            context-window: 1048576
-            max-output-tokens: 393216
+      - {id: deepseek, mode: remote, native-streaming: true, endpoint: https://api.deepseek.com, credential-reference: env://DEEPSEEK_API_KEY, allowed-bindings: [deepseek-chat-pro, deepseek-chat-flash, deepseek-responses-flash, deepseek-responses-pro, deepseek-anthropic-flash, deepseek-anthropic-pro], binding-endpoint-overrides: {deepseek-anthropic-flash: https://api.deepseek.com/anthropic, deepseek-anthropic-pro: https://api.deepseek.com/anthropic}}
+      - {id: openai-codex, mode: remote, native-streaming: true, endpoint: https://chatgpt.com/backend-api/codex, credential-reference: model-auth://openai-codex/default, allowed-bindings: [gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna]}
+      - {id: aliyun-bailian, mode: remote, native-streaming: true, endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1, credential-reference: env://DASHSCOPE_API_KEY, default-reasoning-mode: ENABLED, allowed-bindings: [qwen3.8-max-0902, qwen3.8-max, qwen3.8-flash, qwen3.7-plus, qwen3-vl-plus]}
+      - {id: siliconflow, mode: remote, native-streaming: true, endpoint: https://api.siliconflow.cn/v1, credential-reference: env://SILICONFLOW_API_KEY, default-reasoning-mode: ENABLED, allowed-bindings: [siliconflow-deepseek-v4-pro, siliconflow-deepseek-v4-flash, siliconflow-qwen3-vl-32b, siliconflow-qwen3-32b, siliconflow-kimi-k3, siliconflow-kimi-k2-6, siliconflow-glm-5-2, siliconflow-glm-5-1]}
+      - {id: kimi, mode: remote, native-streaming: true, endpoint: https://api.moonshot.cn/v1, credential-reference: env://KIMI_API_KEY, default-reasoning-mode: ENABLED, allowed-bindings: [kimi-k3, kimi-k2.7-code, kimi-k2.6]}
+      - {id: zhipu, mode: remote, native-streaming: true, endpoint: https://open.bigmodel.cn/api/paas/v4, credential-reference: env://BIGMODEL_API_KEY, default-reasoning-mode: ENABLED, allowed-bindings: [glm-5.2, glm-5.1, glm-5, glm-5-turbo]}
     default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-chat-flash}
     allow-insecure-loopback-model: ${HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL:true}
     web:
-      search:
-        enabled: ${HAIFA_PERSONAL_WEB_SEARCH_ENABLED:${HAIFA_PERSONAL_WEB_ENABLED:false}}
-        provider-id: ${HAIFA_PERSONAL_WEB_SEARCH_PROVIDER:tavily}
-        endpoint: ${HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT:https://api.tavily.com/search}
-        credential-reference: ${HAIFA_PERSONAL_WEB_SEARCH_CREDENTIAL:${HAIFA_PERSONAL_WEB_CREDENTIAL:env://TAVILY_API_KEY}}
-        timeout-millis: ${HAIFA_PERSONAL_WEB_SEARCH_TIMEOUT_MILLIS:${HAIFA_PERSONAL_WEB_TIMEOUT_MILLIS:30000}}
-        maximum-response-bytes: ${HAIFA_PERSONAL_WEB_SEARCH_MAXIMUM_RESPONSE_BYTES:2097152}
-      fetch:
-        enabled: ${HAIFA_PERSONAL_WEB_FETCH_ENABLED:${HAIFA_PERSONAL_WEB_ENABLED:false}}
-        provider-id: ${HAIFA_PERSONAL_WEB_FETCH_PROVIDER:tavily}
-        endpoint: ${HAIFA_PERSONAL_WEB_FETCH_ENDPOINT:https://api.tavily.com/extract}
-        credential-reference: ${HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL:env://TAVILY_API_KEY}
-        timeout-millis: ${HAIFA_PERSONAL_WEB_FETCH_TIMEOUT_MILLIS:${HAIFA_PERSONAL_WEB_TIMEOUT_MILLIS:30000}}
-        maximum-response-bytes: ${HAIFA_PERSONAL_WEB_FETCH_MAXIMUM_RESPONSE_BYTES:262144}
-    mission:
-      planner-mode: ${HAIFA_PERSONAL_MISSION_PLANNER_MODE:runtime}
-      max-tasks: ${HAIFA_PERSONAL_MISSION_MAX_TASKS:8}
-      max-dependency-depth: ${HAIFA_PERSONAL_MISSION_MAX_DEPENDENCY_DEPTH:4}
-      max-acceptance-criteria: ${HAIFA_PERSONAL_MISSION_MAX_ACCEPTANCE_CRITERIA:20}
-      global-active-task-runs: ${HAIFA_PERSONAL_MISSION_GLOBAL_ACTIVE_TASK_RUNS:1}
-      max-auto-attempts-per-task: ${HAIFA_PERSONAL_MISSION_MAX_AUTO_ATTEMPTS_PER_TASK:1}
-      max-wall-clock-millis: ${HAIFA_PERSONAL_MISSION_MAX_WALL_CLOCK_MILLIS:7200000}
-      max-model-tokens: ${HAIFA_PERSONAL_MISSION_MAX_MODEL_TOKENS:3000000}
-      max-tool-calls: ${HAIFA_PERSONAL_MISSION_MAX_TOOL_CALLS:360}
-      max-artifacts: ${HAIFA_PERSONAL_MISSION_MAX_ARTIFACTS:8}
-      max-total-artifact-bytes: ${HAIFA_PERSONAL_MISSION_MAX_TOTAL_ARTIFACT_BYTES:4194304}
-      dispatcher-poll-millis: ${HAIFA_PERSONAL_MISSION_DISPATCHER_POLL_MILLIS:500}
-      dispatcher-shutdown-timeout-millis: ${HAIFA_PERSONAL_MISSION_DISPATCHER_SHUTDOWN_TIMEOUT_MILLIS:20000}
-      recovery-batch-size: ${HAIFA_PERSONAL_MISSION_RECOVERY_BATCH_SIZE:100}
-      db-warning-bytes: ${HAIFA_PERSONAL_MISSION_DB_WARNING_BYTES:536870912}
-      db-stop-bytes: ${HAIFA_PERSONAL_MISSION_DB_STOP_BYTES:1073741824}
-      artifact-warning-bytes: ${HAIFA_PERSONAL_MISSION_ARTIFACT_WARNING_BYTES:1073741824}
-      artifact-stop-bytes: ${HAIFA_PERSONAL_MISSION_ARTIFACT_STOP_BYTES:2147483648}
-    research:
-      max-sources: ${HAIFA_PERSONAL_RESEARCH_MAX_SOURCES:24}
-      max-source-content-bytes: ${HAIFA_PERSONAL_RESEARCH_MAX_SOURCE_CONTENT_BYTES:262144}
-      max-total-content-bytes: ${HAIFA_PERSONAL_RESEARCH_MAX_TOTAL_CONTENT_BYTES:2097152}
-    mcp:
-      mode: ${HAIFA_PERSONAL_MCP_MODE:embedded-echo}
-      address: 127.0.0.1
-      port: ${HAIFA_PERSONAL_MCP_PORT:20002}
-      endpoint: ${HAIFA_PERSONAL_MCP_ENDPOINT:http://127.0.0.1:20002/mcp}
-      allowed-tools: ${HAIFA_PERSONAL_MCP_ALLOWED_TOOLS:echo}
-      alias-namespace: ${HAIFA_PERSONAL_MCP_ALIAS_NAMESPACE:personal_mcp}
-      server-id: ${HAIFA_PERSONAL_MCP_SERVER_ID:personal-local}
-      display-name: ${HAIFA_PERSONAL_MCP_DISPLAY_NAME:Personal local utility}
-    execution:
-      default-timeout-millis: ${HAIFA_PERSONAL_EXECUTION_DEFAULT_TIMEOUT_MILLIS:15000}
-      maximum-timeout-millis: ${HAIFA_PERSONAL_EXECUTION_MAXIMUM_TIMEOUT_MILLIS:30000}
-      maximum-output-bytes: ${HAIFA_PERSONAL_EXECUTION_MAXIMUM_OUTPUT_BYTES:65536}
-      maximum-output-lines: ${HAIFA_PERSONAL_EXECUTION_MAXIMUM_OUTPUT_LINES:1000}
-      maximum-processes: ${HAIFA_PERSONAL_EXECUTION_MAXIMUM_PROCESSES:4}
-      trusted-host-enabled: ${HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED:false}
-      python-path: ${HAIFA_PERSONAL_PYTHON_PATH:}
-      power-shell-path: ${HAIFA_PERSONAL_POWERSHELL_PATH:}
-    local-skill-root: ${HAIFA_PERSONAL_SKILL_ROOT:}
-    trusted-script-manifest: ${HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST:}
+      search: {enabled: false, provider-id: tavily, endpoint: https://api.tavily.com/search, credential-reference: env://TAVILY_API_KEY, timeout-millis: 30000, maximum-response-bytes: 2097152}
+      fetch: {enabled: false, provider-id: tavily, endpoint: https://api.tavily.com/extract, credential-reference: env://TAVILY_API_KEY, timeout-millis: 30000, maximum-response-bytes: 262144}
+    mission: {planner-mode: runtime, max-tasks: 8, max-dependency-depth: 4, max-acceptance-criteria: 20, global-active-task-runs: 1, max-auto-attempts-per-task: 1, max-wall-clock-millis: 7200000, max-model-tokens: 3000000, max-tool-calls: 360, max-artifacts: 8, max-total-artifact-bytes: 4194304, dispatcher-poll-millis: 500, dispatcher-shutdown-timeout-millis: 20000, recovery-batch-size: 100, db-warning-bytes: 536870912, db-stop-bytes: 1073741824, artifact-warning-bytes: 1073741824, artifact-stop-bytes: 2147483648}
+    research: {max-sources: 24, max-source-content-bytes: 262144, max-total-content-bytes: 2097152}
+    mcp: {mode: embedded-echo, address: 127.0.0.1, port: 20002, endpoint: http://127.0.0.1:20002/mcp, allowed-tools: [echo], alias-namespace: personal_mcp, server-id: personal-local, display-name: Personal local utility}
+    execution: {default-timeout-millis: 15000, maximum-timeout-millis: 30000, maximum-output-bytes: 65536, maximum-output-lines: 1000, maximum-processes: 4, trusted-host-enabled: false, python-path: '', power-shell-path: ''}
+    local-skill-root: ''
+    trusted-script-manifest: ''

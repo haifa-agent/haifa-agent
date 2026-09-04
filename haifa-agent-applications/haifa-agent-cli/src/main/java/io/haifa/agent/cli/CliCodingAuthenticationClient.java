@@ -100,6 +100,11 @@ final class CliCodingAuthenticationClient implements CodingAuthenticationClient,
     }
 
     @Override
+    public boolean codexConnectionSupported() {
+        return true;
+    }
+
+    @Override
     public boolean antigravityConnectionSupported() {
         return antigravityConnectionSupported;
     }

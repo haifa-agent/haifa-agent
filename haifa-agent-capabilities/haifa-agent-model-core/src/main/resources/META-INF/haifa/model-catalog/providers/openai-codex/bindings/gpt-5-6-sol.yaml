@@ -1,0 +1,28 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: gpt-5.6-sol
+version: "2026-09-m2"
+providerModelId: gpt-5.6-sol
+displayName: GPT-5.6 Sol
+status: ACTIVE
+apiStyle: openai-responses
+dialect: openai-codex-responses
+capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+profile:
+  version: "2.0"
+  reasoningBehavior: OPTIONAL
+  allowedReasoningModes: [DISABLED, ENABLED]
+  allowedReasoningEfforts: [LOW, MEDIUM, HIGH, MAX]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 128000
+  contextWindowTokens: 272000
+  toolReasoningContinuationRequired: true
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: false
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT]
+  outputModalities: [TEXT]
+  imageInput: null
+  status: VERIFIED
+  lastVerifiedOn: "2026-09-03"

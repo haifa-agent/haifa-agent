@@ -1,0 +1,10 @@
+schemaVersion: haifa.model-catalog-provider/v1
+providerId: kimi
+version: "2026-09-m2"
+displayName: Moonshot Kimi
+status: ACTIVE
+authenticationMethods: [API_KEY]
+bindings:
+  - resource: bindings/kimi-k3.yaml
+  - resource: bindings/kimi-k2-7-code.yaml
+  - resource: bindings/kimi-k2-6.yaml

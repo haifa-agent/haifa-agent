@@ -1,0 +1,28 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: deepseek-anthropic-flash
+version: "2026-09-m1"
+providerModelId: deepseek-v4-flash
+displayName: DeepSeek V4 Flash · Anthropic Messages
+status: ACTIVE
+apiStyle: anthropic-messages
+dialect: deepseek-anthropic-messages
+capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+profile:
+  version: "2.0"
+  reasoningBehavior: ALWAYS
+  allowedReasoningModes: [ENABLED]
+  allowedReasoningEfforts: [HIGH]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 393216
+  contextWindowTokens: 1048576
+  toolReasoningContinuationRequired: true
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: true
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT]
+  outputModalities: [TEXT]
+  imageInput: null
+  status: VERIFIED
+  lastVerifiedOn: "2026-08-30"

@@ -67,7 +67,7 @@ class CodingTerminalControllerTest {
     private static final AgentSessionId SESSION_ID = new AgentSessionId("session-1");
 
     @Test
-    void firstStartupOpensConnectionOnboardingWhenTheSelectedCredentialIsMissing() {
+    void firstStartupOffersOnlyConfiguredAuthenticationMethodsWhenTheSelectedCredentialIsMissing() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
             @Override
@@ -109,7 +109,7 @@ class CodingTerminalControllerTest {
         assertThat(controller.state().selector()).get().satisfies(selector -> {
             assertThat(selector.kind()).isEqualTo("auth-login");
             assertThat(selector.title()).isEqualTo("Connect a model to get started");
-            assertThat(selector.options()).containsExactly("ChatGPT subscription", "Provider API key (secure input)");
+            assertThat(selector.options()).containsExactly("Provider API key (secure input)");
         });
     }
 
@@ -180,8 +180,7 @@ class CodingTerminalControllerTest {
         controller.start(CodingTerminalStartup.empty());
 
         assertThat(controller.state().selector().orElseThrow().options())
-                .containsExactly("ChatGPT subscription", "Antigravity subscription", "Provider API key (secure input)");
-        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+                .containsExactly("Antigravity subscription", "Provider API key (secure input)");
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
         controller.drainEvents();
 
