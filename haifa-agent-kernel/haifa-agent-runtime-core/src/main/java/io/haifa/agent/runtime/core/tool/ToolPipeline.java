@@ -973,11 +973,12 @@ public final class ToolPipeline {
                 attributes.put(key, text);
             }
         }
+        attributes.putIfAbsent("stableFailureCode", stableResultFailureCode(result));
         return Map.copyOf(attributes);
     }
 
     private static String stableResultFailureCode(ToolResult result) {
-        for (String key : List.of("stableFailureCode", "failureCode")) {
+        for (String key : List.of("stableFailureCode", "failureCode", "errorCode")) {
             Object value = result.structuredData().get(key);
             if (value instanceof String code && isStableFailureCode(code)) return code;
         }

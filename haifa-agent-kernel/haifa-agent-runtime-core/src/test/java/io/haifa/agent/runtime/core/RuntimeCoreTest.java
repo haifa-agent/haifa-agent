@@ -373,6 +373,8 @@ class RuntimeCoreTest {
         assertThat(persisted)
                 .extracting(call -> call.arguments().values().get("workdir"))
                 .containsExactly("success", "failure", "invalid", "unknown");
+        assertThat(persisted.get(1).error().orElseThrow().error().details())
+                .containsEntry("stableFailureCode", "EXPECTED_FAILURE");
         assertThat(fixture.journal.state(accepted.runId(), persisted.get(0).idempotencyKey()))
                 .contains(ToolJournalState.COMPLETED);
         assertThat(fixture.journal.state(accepted.runId(), persisted.get(1).idempotencyKey()))
