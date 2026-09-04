@@ -527,19 +527,14 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         if (summary.unverifiedClaims() > 0) {
             status.append("\n> 本报告包含尚未充分核实的判断，不应解读为所有关键结论均已确认。\n");
         }
-        StringBuilder risks = new StringBuilder("\n\n### 可信代码补充的证据限制\n\n");
+        StringBuilder risks = new StringBuilder("\n");
         evidence.claims().forEach((claimId, claim) -> {
             if (claim.path("supportingSourceIds").size() == 1) {
                 risks.append("<!-- haifa-single-source-risk: ")
                         .append(claimId)
-                        .append(" -->\n")
-                        .append("- 单一来源结论：")
-                        .append(claim.path("claim").asText())
-                        .append("\n");
+                        .append(" -->\n");
             }
         });
-        summary.unresolvedQuestions()
-                .forEach(question -> risks.append("- 未决问题：").append(question).append("\n"));
         String sourceMarker = "<!-- haifa-section: sources -->";
         String report = modelReport == null ? "" : modelReport;
         int sourceAt = report.toLowerCase(Locale.ROOT).indexOf(sourceMarker);

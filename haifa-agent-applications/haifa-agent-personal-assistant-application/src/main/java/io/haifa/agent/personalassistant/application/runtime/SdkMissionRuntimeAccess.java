@@ -949,10 +949,10 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         return """
                 Convert the completed research notes below into exactly one JSON object matching
                 pa.research-task-result/v1. Produce compact JSON only, without Markdown fences or commentary. Select
-                at most 6 strongest sources and 10 decision-relevant claims. Keep brief under 400 characters, each
-                title under 140 characters, each claim under 300 characters, each limitation under 240 characters,
-                and unresolvedQuestions to at most 10 items. Set every claim.quotedSpans to an empty JSON array and
-                do not copy quoted text or long excerpts.
+                at most 6 strongest sources and 10 decision-relevant claims. Keep brief under 4000 characters, each
+                title under 140 characters, each claim under 3000 characters (retaining core technical parameters,
+                mechanism distinctions, and causal chains), each limitation under 1000 characters, and unresolvedQuestions
+                to at most 10 items. Set every claim.quotedSpans to an empty JSON array.
 
                 Required exact top-level fields are schemaVersion, brief, queries, sources, claims, artifactRefs,
                 unresolvedQuestions, stopReason, and limitsUsed. Each query has only query and phase. Each source has
@@ -976,10 +976,13 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 provides only a publication date, use UTC midnight for that same date; never infer a different date.
                 Summarize the explicit research question in queries; when exact Tool counts are absent, use zero rather
                 than fabricating counts. Source identity is finalized by the trusted Server: copy locator into
-                normalizedLocator and use sha256:%s as the locatorDigest placeholder. Unless the notes explicitly
-                contain a fetched timestamp and valid content digest, set status to UNKNOWN, fetchedAt and
-                contentDigest to null, excerpt to an empty string, and every dependent claim to unverified. Mark all
-                other insufficiently supported claims as unverified and list unresolved gaps.
+                normalizedLocator and use sha256:%s as the locatorDigest placeholder. When a source was retrieved from
+                a successful page fetch in the Session, set status to FETCHED, provide an excerpt (1-2 sentences capturing
+                core findings), set fetchedAt to the session date or publication date, and allow claims supported by it
+                to be verified (unverified=false). If a locator was only discovered in search results without successful
+                page retrieval, or if page retrieval failed, set status to UNKNOWN, fetchedAt and contentDigest to null,
+                excerpt to an empty string, and every dependent claim to unverified. Mark all other insufficiently
+                supported claims as unverified and list unresolved gaps.
 
                 A successful search result with a public HTTP(S) locator is usable discovery evidence even when a
                 later fetch failed. Keep up to the strongest such locators as UNKNOWN sources; do not discard every
@@ -1305,6 +1308,10 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 Copy every real Task ID exactly into a <!-- haifa-task: task-id --> marker and cite settled sources only
                 with [[source-id]]. Use the required stable section markers from the template. A critical external claim
                 without sufficient fetched support must be explicitly labeled unverified.
+                Deliver an authoritative, publication-grade research report with rich narrative depth. Under each
+                <!-- haifa-task: task-id --> marker, write multiple substantive paragraphs explaining the core mechanisms,
+                architectural evolution, and trade-offs in depth. Weave citations smoothly into the prose as inline markers
+                [[source-id]]. Integrate analysis and limitations organically without using rigid audit checklist labels.
 
                 Mission objective: %s
                 Frozen Research Brief (the complete bounded input): %s

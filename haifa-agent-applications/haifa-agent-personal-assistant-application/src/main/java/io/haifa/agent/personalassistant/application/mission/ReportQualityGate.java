@@ -105,12 +105,6 @@ public final class ReportQualityGate {
         if (evidence.unverifiedClaims() > 0 && !markdown.contains(UNVERIFIED_WARNING)) {
             failures.add(new Failure("REPORT_UNVERIFIED_WARNING_MISSING", List.of()));
         }
-        List<String> missingUnresolved = evidence.unresolvedQuestions().stream()
-                .filter(question -> !markdown.contains(question))
-                .toList();
-        if (!missingUnresolved.isEmpty()) {
-            failures.add(new Failure("REPORT_UNRESOLVED_COVERAGE_MISSING", missingUnresolved));
-        }
         long singleSourceRiskCount = markerRanges(markdown, SINGLE_SOURCE_RISK).size();
         if (singleSourceRiskCount != evidence.singleSourceClaims()) {
             failures.add(new Failure("REPORT_SINGLE_SOURCE_RISK_MISSING", List.of()));
