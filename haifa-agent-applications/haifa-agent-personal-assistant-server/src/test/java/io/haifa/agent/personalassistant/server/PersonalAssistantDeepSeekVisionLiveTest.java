@@ -9,7 +9,6 @@ import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.util.Base64;
 import java.time.Duration;
 import java.util.HexFormat;
 import java.util.Set;
@@ -29,10 +28,10 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 /** Live-only DeepSeek Vision smoke; raw model text and image bytes never enter Harness evidence. */
 @SpringBootTest(
         classes = PersonalAssistantServerApplication.class,
-        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "spring.config.location=classpath:/application-deepseek-vision-live.yml")
 @AutoConfigureWebTestClient
 @Tag("slow")
-@EnabledIfEnvironmentVariable(named = "HAIFA_PERSONAL_LIVE_SMOKE", matches = "true")
 class PersonalAssistantDeepSeekVisionLiveTest {
     private static final String MODEL_ID = "deepseek-v4-flash-vision-exp";
     private static final String FIXTURE =
@@ -52,13 +51,11 @@ class PersonalAssistantDeepSeekVisionLiveTest {
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("haifa.personal.data-directory", () -> DATA.toString());
         registry.add("haifa.personal.default-model-id", () -> MODEL_ID);
-        registry.add("haifa.personal.continuation-key-base64", () -> Base64.getEncoder()
-                .encodeToString(new byte[32]));
-        registry.add("haifa.personal.execution.trusted-host-enabled", () -> "true");
         registry.add("haifa.personal.mcp.port", () -> MCP_PORT);
     }
 
     @Test
+    @EnabledIfEnvironmentVariable(named = "HAIFA_PERSONAL_LIVE_SMOKE", matches = "true")
     void uploadsWebpAndVerifiesADeepSeekVisionResponse() throws Exception {
         Path image = fixture();
         byte[] bytes = Files.readAllBytes(image);

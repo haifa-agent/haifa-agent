@@ -1,0 +1,92 @@
+server:
+  address: 127.0.0.1
+  port: 0
+  shutdown: graceful
+
+spring:
+  codec:
+    max-in-memory-size: 11MB
+  application:
+    name: haifa-personal-assistant-deepseek-vision-live
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+logging:
+  level:
+    io.haifa.agent.personalassistant: WARN
+    io.haifa.agent.storage.sqlite: WARN
+
+haifa:
+  personal:
+    data-directory: ./target/personal-assistant-deepseek-vision-live
+    continuation-key-base64: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    caller:
+      tenant: local
+      principal: public-user
+      reviewer: public-user
+    default-model-id: deepseek-v4-flash-vision-exp
+    allow-insecure-loopback-model: true
+    model-providers:
+      - id: deepseek
+        mode: remote
+        native-streaming: true
+        endpoint: https://api.deepseek.com
+        credential-reference: env://DEEPSEEK_API_KEY
+        allowed-bindings: [deepseek-v4-flash-vision-exp]
+    web:
+      search:
+        enabled: false
+        provider-id: aliyun
+        endpoint: https://cloud-iqs.aliyuncs.com/search/unified
+        credential-reference: env://UNUSED_ALIYUN
+        timeout-millis: 30000
+        maximum-response-bytes: 2097152
+      fetch:
+        enabled: false
+        provider-id: browserless
+        endpoint: https://production-sfo.browserless.io/content
+        credential-reference: env://UNUSED_BROWSERLESS
+        timeout-millis: 30000
+        maximum-response-bytes: 4194304
+    mission:
+      planner-mode: deterministic-stub
+      max-tasks: 8
+      max-dependency-depth: 4
+      max-acceptance-criteria: 20
+      global-active-task-runs: 1
+      max-auto-attempts-per-task: 2
+      max-wall-clock-millis: 1800000
+      max-model-tokens: 200000
+      max-tool-calls: 100
+      max-artifacts: 8
+      max-total-artifact-bytes: 4194304
+      dispatcher-poll-millis: 500
+      dispatcher-shutdown-timeout-millis: 20000
+      recovery-batch-size: 100
+      db-warning-bytes: 536870912
+      db-stop-bytes: 1073741824
+      artifact-warning-bytes: 1073741824
+      artifact-stop-bytes: 2147483648
+    research:
+      max-sources: 24
+      max-source-content-bytes: 262144
+      max-total-content-bytes: 2097152
+    mcp:
+      mode: embedded-echo
+      address: 127.0.0.1
+      port: 20002
+      endpoint: http://127.0.0.1:20002/mcp
+      allowed-tools: [echo]
+      alias-namespace: personal_mcp
+      server-id: personal-local
+      display-name: Personal local utility
+    execution:
+      default-timeout-millis: 15000
+      maximum-timeout-millis: 30000
+      maximum-output-bytes: 65536
+      maximum-output-lines: 1000
+      maximum-processes: 4
+      trusted-host-enabled: true
+      python-path: ""
+      power-shell-path: ""
+    local-skill-root: ""
