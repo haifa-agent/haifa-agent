@@ -1,6 +1,7 @@
 package io.haifa.agent.sdk.api;
 
 import io.haifa.agent.artifact.ArtifactService;
+import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
 import io.haifa.agent.sdk.conversation.ConversationService;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
@@ -65,11 +66,22 @@ public final class HaifaAgent implements AutoCloseable {
 
     /** Starts a new Conversation and Run through the existing authoritative services. */
     public AgentChatHandle chat(String message) {
+        return chat(message, List.of());
+    }
+
+    /** Starts a new Conversation and Run with media inputs (such as images) through the existing authoritative services. */
+    public AgentChatHandle chat(String message, List<ContentPart> inputs) {
         requireOpen();
         String idempotencyKey = "sdk-chat-" + ids.nextValue();
-        var conversation = conversations.start(new StartConversationCommand(idempotencyKey, metadata.name(), message));
+        var conversation = conversations.start(new StartConversationCommand(
+                idempotencyKey, metadata.name(), message, Optional.empty(), inputs, Optional.empty()));
         return new AgentChatHandle(
                 conversation.sessionId(), conversation.activeRunId().orElseThrow(), runs);
+    }
+
+    /** Starts a new Conversation and Run with media inputs (such as images) through the existing authoritative services. */
+    public AgentChatHandle chat(String message, ContentPart... inputs) {
+        return chat(message, List.of(inputs));
     }
 
     /** Starts a chat whose terminal result must satisfy the bounded schema generated from a public Java record. */
