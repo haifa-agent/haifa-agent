@@ -297,6 +297,7 @@ class CliConfigurationLoaderTest {
         CliConfiguration defaults = CliConfiguration.defaults();
 
         assertThat(defaults.enabledTools()).contains("execution.run").doesNotContain("file.search");
+        assertThat(defaults.maxModelCalls()).isEqualTo(64);
 
         var explicitCompatibilityConfiguration = new CliConfiguration(
                 defaults.model(),
@@ -673,6 +674,7 @@ class CliConfigurationLoaderTest {
                   inheritEnvironment: [PATH, JAVA_HOME]
                 runtime:
                   maxIterations: 3
+                  maxModelCalls: 5
                   maxToolCalls: 4
                   maxWallTimeMillis: 120000
                 mcp:
@@ -695,6 +697,7 @@ class CliConfigurationLoaderTest {
         assertThat(result.enabledTools()).containsExactlyInAnyOrder("file.read", "file.write");
         assertThat(result.approval()).isEqualTo(ApprovalMode.DENY);
         assertThat(result.timeout()).isEqualTo(java.time.Duration.ofMillis(120000));
+        assertThat(result.maxModelCalls()).isEqualTo(5);
         assertThat(result.execution().defaultTimeout()).isEqualTo(java.time.Duration.ofMillis(45000));
         assertThat(result.execution().provider()).isEqualTo("host-guarded");
         assertThat(result.execution().network()).isEqualTo("allow");

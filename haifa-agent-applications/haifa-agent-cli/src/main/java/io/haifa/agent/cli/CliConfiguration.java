@@ -32,8 +32,10 @@ record CliConfiguration(
         CodingApprovalThreshold approvalThreshold,
         Duration timeout,
         int maxIterations,
+        long maxModelCalls,
         long maxToolCalls,
         ProjectPersistenceConfiguration persistence) {
+    private static final long DEFAULT_MAX_MODEL_CALLS = 64L;
     private static final Set<String> DEFAULT_TOOLS = Set.of(
             "file.list",
             "file.stat",
@@ -81,7 +83,7 @@ record CliConfiguration(
         approvalThreshold = Objects.requireNonNull(approvalThreshold, "approvalThreshold must not be null");
         timeout = Objects.requireNonNull(timeout, "timeout must not be null");
         if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("timeout must be positive");
-        if (maxIterations < 1 || maxToolCalls < 1)
+        if (maxIterations < 1 || maxToolCalls < 1 || maxModelCalls < 1)
             throw new IllegalArgumentException("runtime limits must be positive");
     }
 
@@ -168,8 +170,40 @@ record CliConfiguration(
                 CodingApprovalThreshold.LOW,
                 Duration.ofMinutes(5),
                 50,
+                DEFAULT_MAX_MODEL_CALLS,
                 32,
                 ProjectPersistenceConfiguration.memory());
+    }
+
+    CliConfiguration(
+            Model model,
+            List<Model> availableModels,
+            Set<String> enabledTools,
+            List<McpServer> mcpServers,
+            Web web,
+            Skills skills,
+            Execution execution,
+            ApprovalMode approval,
+            CodingApprovalThreshold approvalThreshold,
+            Duration timeout,
+            int maxIterations,
+            long maxToolCalls,
+            ProjectPersistenceConfiguration persistence) {
+        this(
+                model,
+                availableModels,
+                enabledTools,
+                mcpServers,
+                web,
+                skills,
+                execution,
+                approval,
+                approvalThreshold,
+                timeout,
+                maxIterations,
+                DEFAULT_MAX_MODEL_CALLS,
+                maxToolCalls,
+                persistence);
     }
 
     CliConfiguration(
