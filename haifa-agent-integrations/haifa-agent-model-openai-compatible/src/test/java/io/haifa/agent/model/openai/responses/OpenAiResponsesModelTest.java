@@ -31,6 +31,7 @@ import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.api.SensitiveModelReasoning;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -127,6 +128,40 @@ class OpenAiResponsesModelTest {
             assertThat(call.providerCorrelationId().value()).isEqualTo("call-weather");
             assertThat(call.arguments()).containsEntry("city", "Paris");
         });
+    }
+
+    @Test
+    void replaysOriginalDeepSeekReasoningAlongsideFunctionResult() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-follow-up","status":"completed","model":"deepseek-v4-flash",
+                 "output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed",
+                   "content":[{"type":"output_text","text":"done"}]}],
+                 "usage":{"input_tokens":9,"output_tokens":2}}
+                """));
+        var call = new ModelToolCall(
+                new ProviderToolCallCorrelationId("call-deepseek-1"), "lookup", Map.of("city", "Hangzhou"));
+        var reasoning = SensitiveModelReasoning.of("controlled reasoning continuation");
+        var request = request(
+                deepSeekSnapshot(),
+                List.of(
+                        ModelMessage.text(ModelMessageRole.USER, "weather"),
+                        ModelMessage.assistant("", List.of(call), reasoning),
+                        ModelMessage.tool(call.providerCorrelationId(), "sunny")),
+                List.of(new ModelToolSpecification(
+                        "lookup", "1", "Lookup", "schema", "1", Map.of("type", "object"), false)),
+                Map.of());
+
+        model().invoke(request);
+
+        JsonNode input = json.readTree(requestBody.get()).path("input");
+        assertThat(input.get(1).path("type").asText()).isEqualTo("reasoning");
+        assertThat(input.get(1).path("content").asText()).isEqualTo("controlled reasoning continuation");
+        assertThat(input.get(1).path("content").asText()).doesNotContain("SensitiveModelReasoning[");
+        assertThat(input.get(2).path("type").asText()).isEqualTo("function_call");
+        assertThat(input.get(3).path("type").asText()).isEqualTo("function_call_output");
     }
 
     @Test
