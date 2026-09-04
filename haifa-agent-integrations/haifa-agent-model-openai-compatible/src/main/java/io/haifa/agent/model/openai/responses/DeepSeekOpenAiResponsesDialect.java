@@ -69,7 +69,9 @@ final class DeepSeekOpenAiResponsesDialect implements OpenAiResponsesDialect {
 
     @Override
     public Optional<Map<String, Object>> customizeReasoningInputItem(ModelMessage message) {
-        return message.reasoning().map(reasoning -> Map.of("type", "reasoning", "content", reasoning.toString()));
+        return message.reasoning()
+                .map(reasoning ->
+                        reasoning.use(content -> Map.<String, Object>of("type", "reasoning", "content", content)));
     }
 
     @Override
