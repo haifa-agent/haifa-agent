@@ -32,6 +32,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
 @SpringBootTest(
+        classes = PersonalAssistantServerApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "spring.config.location=classpath:/application-deterministic-model.yml")
 @AutoConfigureWebTestClient

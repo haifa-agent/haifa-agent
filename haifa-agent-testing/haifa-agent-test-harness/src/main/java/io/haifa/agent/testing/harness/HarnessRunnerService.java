@@ -2,6 +2,7 @@ package io.haifa.agent.testing.harness;
 
 import io.haifa.agent.cli.StandaloneCodingAgents;
 import io.haifa.agent.testing.delivery.AutonomousDeliveryApplication;
+import io.haifa.agent.testing.personal.PersonalAssistantSmokeSuiteApplication;
 import io.haifa.agent.testing.repository.RepositoryRevision;
 import io.haifa.agent.testing.suite.CriticalPathSuiteApplication;
 import java.math.BigDecimal;
@@ -26,7 +27,9 @@ final class HarnessRunnerService {
                 && (budgetApproval == null || budgetApproval.isBlank())) {
             throw new IllegalArgumentException("--approve-budget is required for live and release runs");
         }
-        BigDecimal approvedBudget = positiveDecimal(budgetApproval);
+        BigDecimal approvedBudget = document.request().mode().requiresBudgetApproval()
+                ? positiveDecimal(budgetApproval)
+                : BigDecimal.ONE;
         RunEvidenceWriter.NativeResult nativeResult = executeNative(context, approvedBudget, progressOutput);
         RunEvidenceWriter.PublishedRun published = new RunEvidenceWriter()
                 .write(
@@ -48,6 +51,9 @@ final class HarnessRunnerService {
             ResolvedRunContext context, BigDecimal approvedBudget, Consumer<String> progressOutput) throws Exception {
         if (context instanceof ResolvedRunContext.AutonomousDelivery delivery) {
             return executeAutonomousDelivery(delivery, approvedBudget, progressOutput);
+        }
+        if (context instanceof ResolvedRunContext.PersonalAssistantSmoke personalAssistantSmoke) {
+            return new PersonalAssistantSmokeSuiteApplication().run(personalAssistantSmoke);
         }
         return new CriticalPathSuiteApplication()
                 .run((ResolvedRunContext.CriticalPath) context, approvedBudget, Map.copyOf(System.getenv()));

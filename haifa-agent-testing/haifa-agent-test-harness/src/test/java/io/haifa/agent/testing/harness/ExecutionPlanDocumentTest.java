@@ -71,6 +71,23 @@ class ExecutionPlanDocumentTest {
                         RunMode.DEV));
     }
 
+    @Test
+    void acceptsPersonalAssistantSmokePlans() {
+        TestRunRequest request = new TestRunRequest(
+                temporaryDirectory.resolve("product"),
+                temporaryDirectory.resolve("config"),
+                temporaryDirectory.resolve("runs"),
+                "personal-assistant-smoke-v1",
+                "personal-assistant-deterministic-smoke-v1",
+                "windows-primary",
+                RunMode.DEV);
+
+        ExecutionPlanDocument document = ExecutionPlanDocument.freeze(
+                request, ResolvedTestPlan.freeze(Map.of("suiteType", "personal-assistant-smoke")), RUNNER);
+
+        assertEquals("personal-assistant-smoke", document.suiteType());
+    }
+
     private static int count(String value, String token) {
         return value.split(token, -1).length - 1;
     }
