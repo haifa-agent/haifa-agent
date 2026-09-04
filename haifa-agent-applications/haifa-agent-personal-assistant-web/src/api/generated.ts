@@ -105,11 +105,16 @@ export interface ModelConnection {
   externalLoginSupported: boolean;
   logoutSupported: boolean;
   unofficialLocalCompatibility: boolean;
+  networkProxyMode: "SYSTEM" | "STARTUP" | "CUSTOM";
 }
 
 export interface SaveModelApiKey {
   providerId: string;
   apiKey: string;
+}
+
+export interface SaveModelProxy {
+  proxyUrl: string;
 }
 
 export interface ExternalLoginAttempt {
@@ -500,4 +505,4 @@ export interface ApiError {
   actions: Array<string>;
 }
 
-export type OperationId = "bootstrap" | "listModels" | "listModelConnections" | "saveModelApiKey" | "startModelBrowserAttempt" | "getModelBrowserAttempt" | "cancelModelBrowserAttempt" | "deleteModelConnection" | "uploadImage" | "getUploadedImageContent" | "uploadAudio" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "downloadMissionArtifact" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";
+export type OperationId = "bootstrap" | "listModels" | "listModelConnections" | "saveModelApiKey" | "saveModelNetworkProxy" | "resetModelNetworkProxy" | "startModelBrowserAttempt" | "getModelBrowserAttempt" | "cancelModelBrowserAttempt" | "deleteModelConnection" | "uploadImage" | "getUploadedImageContent" | "uploadAudio" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "downloadMissionArtifact" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";

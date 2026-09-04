@@ -74,7 +74,8 @@ public final class PersonalApiDtos {
             boolean apiKeySupported,
             boolean externalLoginSupported,
             boolean logoutSupported,
-            boolean unofficialLocalCompatibility) {}
+            boolean unofficialLocalCompatibility,
+            String networkProxyMode) {}
 
     /**
      * Safe, provider-neutral image input limits projection. Only the white-listed bounds are exposed;
@@ -92,6 +93,9 @@ public final class PersonalApiDtos {
 
     /** One-shot mutable request buffer; the authentication service clears {@code apiKey} on every path. */
     public record SaveModelApiKey(String providerId, char[] apiKey) {}
+
+    /** A custom proxy address is accepted once and never returned by the safe connection projection. */
+    public record SaveModelProxy(String proxyUrl) {}
 
     public record ExternalLoginAttempt(
             String attemptId,

@@ -36,6 +36,20 @@
         }
       }
     },
+    "/api/v1/model-connections/{providerId}/network-proxy": {
+      "parameters": [{"name": "providerId", "in": "path", "required": true, "schema": {"type": "string", "maxLength": 64}}],
+      "put": {
+        "operationId": "saveModelNetworkProxy",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SaveModelProxy"}}}},
+        "responses": {"204": {"description": "Saved local provider proxy route"}, "400": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}}
+      },
+      "delete": {
+        "operationId": "resetModelNetworkProxy",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {"204": {"description": "Restored the startup or system proxy route"}, "404": {"$ref": "#/components/responses/Error"}}
+      }
+    },
     "/api/v1/model-connections/{methodId}/browser-attempts": {
       "parameters": [{"name": "methodId", "in": "path", "required": true, "schema": {"type": "string", "enum": ["codex", "antigravity"]}}],
       "post": {
@@ -591,7 +605,7 @@
       },
       "ModelConnection": {
         "type": "object",
-        "required": ["connectionId", "providerId", "method", "status", "accountLabel", "apiKeySupported", "externalLoginSupported", "logoutSupported", "unofficialLocalCompatibility"],
+        "required": ["connectionId", "providerId", "method", "status", "accountLabel", "apiKeySupported", "externalLoginSupported", "logoutSupported", "unofficialLocalCompatibility", "networkProxyMode"],
         "properties": {
           "connectionId": {"type": "string"},
           "providerId": {"type": "string"},
@@ -603,7 +617,8 @@
           "apiKeySupported": {"type": "boolean"},
           "externalLoginSupported": {"type": "boolean"},
           "logoutSupported": {"type": "boolean"},
-          "unofficialLocalCompatibility": {"type": "boolean"}
+          "unofficialLocalCompatibility": {"type": "boolean"},
+          "networkProxyMode": {"type": "string", "enum": ["SYSTEM", "STARTUP", "CUSTOM"]}
         }
       },
       "SaveModelApiKey": {
@@ -612,6 +627,13 @@
         "properties": {
           "providerId": {"type": "string", "maxLength": 64},
           "apiKey": {"type": "string", "format": "password", "minLength": 1, "maxLength": 65536, "writeOnly": true}
+        }
+      },
+      "SaveModelProxy": {
+        "type": "object",
+        "required": ["proxyUrl"],
+        "properties": {
+          "proxyUrl": {"type": "string", "format": "uri", "minLength": 1, "maxLength": 2048, "writeOnly": true}
         }
       },
       "ExternalLoginAttempt": {

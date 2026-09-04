@@ -15,15 +15,18 @@ import java.util.Objects;
 import java.util.Optional;
 
 /** Routes explicitly configured model origins through their provider-level HTTP proxy. */
-final class PersonalModelProxySelector extends ProxySelector {
+public final class PersonalModelProxySelector extends ProxySelector {
     private static final List<Proxy> DIRECT = List.of(Proxy.NO_PROXY);
 
     private final Map<Origin, Proxy> proxies;
     private final ProxySelector fallback;
+    private final PersonalModelProxySettings settings;
 
-    private PersonalModelProxySelector(Map<Origin, Proxy> proxies, ProxySelector fallback) {
+    private PersonalModelProxySelector(
+            Map<Origin, Proxy> proxies, ProxySelector fallback, PersonalModelProxySettings settings) {
         this.proxies = Map.copyOf(proxies);
         this.fallback = fallback;
+        this.settings = settings;
     }
 
     static ProxySelector from(List<PersonalAssistantProperties.ModelProvider> providers) {
@@ -48,7 +51,16 @@ final class PersonalModelProxySelector extends ProxySelector {
         configuredRoutes.forEach((origin, proxy) -> proxy.ifPresent(value -> proxies.put(
                 origin,
                 new Proxy(Proxy.Type.HTTP, InetSocketAddress.createUnresolved(value.getHost(), value.getPort())))));
-        return new PersonalModelProxySelector(proxies, fallback);
+        return new PersonalModelProxySelector(proxies, fallback, null);
+    }
+
+    public static ProxySelector from(
+            List<PersonalAssistantProperties.ModelProvider> providers,
+            PersonalModelProxySettings settings,
+            ProxySelector fallback) {
+        Objects.requireNonNull(providers, "providers must not be null");
+        return new PersonalModelProxySelector(
+                Map.of(), fallback, Objects.requireNonNull(settings, "settings must not be null"));
     }
 
     private static void register(Map<Origin, Optional<URI>> routes, Origin origin, Optional<URI> proxy) {
@@ -62,8 +74,18 @@ final class PersonalModelProxySelector extends ProxySelector {
     @Override
     public List<Proxy> select(URI uri) {
         Objects.requireNonNull(uri, "uri must not be null");
+        if (settings != null) {
+            return settings.proxyFor(uri)
+                    .map(value -> List.of(new Proxy(
+                            Proxy.Type.HTTP, InetSocketAddress.createUnresolved(value.getHost(), value.getPort()))))
+                    .orElseGet(() -> fallback(uri));
+        }
         Proxy configured = proxies.get(Origin.from(uri));
         if (configured != null) return List.of(configured);
+        return fallback(uri);
+    }
+
+    private List<Proxy> fallback(URI uri) {
         if (fallback == null || fallback == this) return DIRECT;
         List<Proxy> selected = fallback.select(uri);
         return selected == null || selected.isEmpty() ? DIRECT : List.copyOf(selected);
@@ -74,7 +96,10 @@ final class PersonalModelProxySelector extends ProxySelector {
         Objects.requireNonNull(uri, "uri must not be null");
         Objects.requireNonNull(socketAddress, "socketAddress must not be null");
         Objects.requireNonNull(failure, "failure must not be null");
-        if (!proxies.containsKey(Origin.from(uri)) && fallback != null && fallback != this) {
+        if ((settings == null || settings.proxyFor(uri).isEmpty())
+                && !proxies.containsKey(Origin.from(uri))
+                && fallback != null
+                && fallback != this) {
             fallback.connectFailed(uri, socketAddress, failure);
         }
     }

@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, KeyRound, LogIn, LogOut } from "lucide-react";
+import { CheckCircle2, CircleAlert, Globe2, KeyRound, LogIn, LogOut } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExternalLoginAttempt, ModelConnection } from "../api/generated";
 import type { PersonalAssistantClient } from "../api/client";
@@ -107,12 +107,21 @@ function formatAccountDetail(accountLabel: string, method: string, providerId: s
   return accountLabel;
 }
 
+function networkProxyLabel(mode: ModelConnection["networkProxyMode"]): string {
+  if (mode === "CUSTOM") return "专属 HTTP 代理已设置";
+  if (mode === "STARTUP") return "使用启动配置代理";
+  return "跟随本机代理";
+}
+
 /** Embeddable account-connection management content used by the model & connections window. */
 export function ModelConnectionTab({ client, providerId, onConnectionsChanged }: ModelConnectionTabProps) {
   const [connections, setConnections] = useState<ModelConnection[]>([]);
   const [targetProviderId, setTargetProviderId] = useState<string>(providerId ?? "deepseek");
   const [apiKey, setApiKey] = useState("");
   const [attempt, setAttempt] = useState<ExternalLoginAttempt | null>(null);
+  const [proxyTarget, setProxyTarget] = useState<ModelConnection | null>(null);
+  const [proxyMode, setProxyMode] = useState<"SYSTEM" | "CUSTOM">("SYSTEM");
+  const [proxyUrl, setProxyUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const attemptRef = useRef<{ methodId: ExternalMethodId; attemptId: string } | null>(null);
@@ -243,6 +252,39 @@ export function ModelConnectionTab({ client, providerId, onConnectionsChanged }:
     }
   };
 
+  const openNetworkProxy = (connection: ModelConnection) => {
+    setProxyTarget(connection);
+    setProxyMode(connection.networkProxyMode === "CUSTOM" ? "CUSTOM" : "SYSTEM");
+    setProxyUrl("");
+    setError(null);
+  };
+
+  const saveNetworkProxy = async () => {
+    if (!proxyTarget) return;
+    const generation = ++operationGeneration.current;
+    setBusy(true);
+    setError(null);
+    try {
+      if (proxyMode === "CUSTOM") {
+        if (!client.saveModelNetworkProxy || !proxyUrl.trim()) return;
+        await client.saveModelNetworkProxy(proxyTarget.providerId, proxyUrl.trim());
+      } else {
+        if (!client.resetModelNetworkProxy) return;
+        await client.resetModelNetworkProxy(proxyTarget.providerId);
+      }
+      if (generation !== operationGeneration.current) return;
+      await refresh();
+      setProxyTarget(null);
+      setProxyUrl("");
+    } catch {
+      if (generation === operationGeneration.current) {
+        setError("网络代理保存失败。请确认地址为无认证的 http://host:port。");
+      }
+    } finally {
+      if (generation === operationGeneration.current && mounted.current) setBusy(false);
+    }
+  };
+
   return (
     <div className="model-connection-tab">
       {error && (
@@ -250,6 +292,67 @@ export function ModelConnectionTab({ client, providerId, onConnectionsChanged }:
           <CircleAlert size={15} />
           {error}
         </p>
+      )}
+
+      {proxyTarget && (
+        <section className="model-network-proxy-editor" aria-label={getProviderMeta(proxyTarget.providerId).displayName + " 网络代理"}>
+          <div className="model-network-proxy-heading">
+            <Globe2 size={20} aria-hidden="true" />
+            <div>
+              <h3>{getProviderMeta(proxyTarget.providerId).displayName} · 网络代理</h3>
+              <p>仅影响该供应商已批准的模型服务地址，不会更改模型、Endpoint 或认证方式。</p>
+            </div>
+          </div>
+          <div className="model-network-proxy-options" role="radiogroup" aria-label="网络访问方式">
+            <label>
+              <input
+                type="radio"
+                name="model-network-proxy-mode"
+                checked={proxyMode === "SYSTEM"}
+                disabled={busy}
+                onChange={() => setProxyMode("SYSTEM")}
+              />
+              <span><b>跟随本机代理（推荐）</b><small>使用系统或 PA 启动时配置的代理。</small></span>
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="model-network-proxy-mode"
+                checked={proxyMode === "CUSTOM"}
+                disabled={busy}
+                onChange={() => setProxyMode("CUSTOM")}
+              />
+              <span><b>使用专属 HTTP 代理</b><small>可代理 HTTPS 模型服务请求；仅支持无认证 HTTP Proxy。</small></span>
+            </label>
+          </div>
+          {proxyMode === "CUSTOM" && (
+            <label className="model-network-proxy-input">
+              <span>代理地址</span>
+              <input
+                type="url"
+                autoComplete="off"
+                inputMode="url"
+                value={proxyUrl}
+                disabled={busy}
+                placeholder={proxyTarget.networkProxyMode === "CUSTOM" ? "输入新的 http://host:port" : "http://127.0.0.1:2081"}
+                onChange={(event) => setProxyUrl(event.target.value)}
+              />
+              <small>不支持用户名密码、HTTPS Proxy、PAC、SOCKS、路径或查询参数。</small>
+            </label>
+          )}
+          <div className="model-network-proxy-actions">
+            <button type="button" className="button subtle" disabled={busy} onClick={() => setProxyTarget(null)}>取消</button>
+            <button
+              type="button"
+              className="button"
+              aria-busy={busy}
+              disabled={busy || (proxyMode === "CUSTOM" && (!proxyUrl.trim() || !client.saveModelNetworkProxy)) || (proxyMode === "SYSTEM" && !client.resetModelNetworkProxy)}
+              onClick={() => void saveNetworkProxy()}
+            >
+              保存网络代理
+            </button>
+          </div>
+        </section>
       )}
 
       <div className="model-connection-options">
@@ -388,10 +491,19 @@ export function ModelConnectionTab({ client, providerId, onConnectionsChanged }:
                 <div className="connection-sub">
                   <span>凭证来源：{detailText}</span>
                   <span className="connection-account-label"> · {connection.accountLabel}</span>
+                  <span> · 网络：{networkProxyLabel(connection.networkProxyMode)}</span>
                 </div>
               </div>
               {connection.unofficialLocalCompatibility && <i>仅本地兼容测试</i>}
               <div className="connection-actions">
+                <button
+                  type="button"
+                  className="button subtle small"
+                  disabled={busy}
+                  onClick={() => openNetworkProxy(connection)}
+                >
+                  网络代理
+                </button>
                 {connection.apiKeySupported && (
                   <button
                     type="button"
