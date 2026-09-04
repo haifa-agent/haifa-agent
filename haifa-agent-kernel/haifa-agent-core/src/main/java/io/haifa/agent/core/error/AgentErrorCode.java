@@ -98,6 +98,11 @@ public enum AgentErrorCode {
             "MODEL_CANCELLED", "Model request was cancelled", AgentErrorCategory.CANCELLED, Retryability.NOT_RETRYABLE),
     MODEL_CALL_FAILED(
             "MODEL_CALL_FAILED", "Model call failed", AgentErrorCategory.MODEL, Retryability.RETRYABLE_WITH_BACKOFF),
+    CROSS_MODEL_CONTINUATION_INVALID(
+            "CROSS_MODEL_CONTINUATION_INVALID",
+            "Cross-model continuation failed",
+            AgentErrorCategory.VALIDATION,
+            Retryability.NOT_RETRYABLE),
     TOOL_REQUEST_REJECTED(
             "TOOL_REQUEST_REJECTED",
             "Tool request was rejected",

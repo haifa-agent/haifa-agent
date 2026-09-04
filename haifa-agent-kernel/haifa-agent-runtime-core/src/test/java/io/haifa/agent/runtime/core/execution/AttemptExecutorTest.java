@@ -45,6 +45,16 @@ class AttemptExecutorTest {
                 .isEqualTo(AgentErrorCode.AGENT_LOOP_DETECTED);
     }
 
+    @Test
+    void classifiesModelContinuationFailureAsCrossModelContinuationInvalid() {
+        var failure = new io.haifa.agent.runtime.core.model.continuation.ModelContinuationException(
+                io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure.CROSS_MODEL_UNCLOSED_TOOL_GROUP,
+                "test");
+
+        assertThat(AttemptExecutor.classifiedErrorCode(null, null, null, null, failure))
+                .isEqualTo(AgentErrorCode.CROSS_MODEL_CONTINUATION_INVALID);
+    }
+
     private static ContextBuildException failure(ContextBuildFailure failure) {
         return new ContextBuildException(failure, "must not be projected");
     }

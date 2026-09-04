@@ -16,6 +16,7 @@ import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
 import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
@@ -223,8 +224,13 @@ public final class AttemptExecutor {
         RuntimeLimitExceededException budgetExceeded = findFailure(error, RuntimeLimitExceededException.class);
         ContextBuildException contextBuild = findFailure(error, ContextBuildException.class);
         LoopDetectedException loopDetected = findFailure(error, LoopDetectedException.class);
+        ModelContinuationException continuationFailure = findFailure(error, ModelContinuationException.class);
         Map<String, Object> details;
-        if (loopDetected != null) {
+        if (continuationFailure != null) {
+            details = Map.of(
+                    "continuationFailure", continuationFailure.failure().name(),
+                    "continuationMessage", continuationFailure.getMessage());
+        } else if (loopDetected != null) {
             details = Map.of("loopReason", loopDetected.reason().name());
         } else if (quotaExceeded != null) {
             details = Map.of(
@@ -242,7 +248,7 @@ public final class AttemptExecutor {
             details = Map.of();
         }
         return new AgentError(
-                classifiedErrorCode(quotaExceeded, budgetExceeded, contextBuild, loopDetected),
+                classifiedErrorCode(quotaExceeded, budgetExceeded, contextBuild, loopDetected, continuationFailure),
                 details,
                 ids.nextValue(),
                 time.now());
@@ -250,14 +256,14 @@ public final class AttemptExecutor {
 
     static AgentErrorCode classifiedErrorCode(
             RuntimeLimitExceededException budgetExceeded, ContextBuildException contextBuild) {
-        return classifiedErrorCode(null, budgetExceeded, contextBuild, null);
+        return classifiedErrorCode(null, budgetExceeded, contextBuild, null, null);
     }
 
     static AgentErrorCode classifiedErrorCode(
             RuntimeLimitExceededException budgetExceeded,
             ContextBuildException contextBuild,
             LoopDetectedException loopDetected) {
-        return classifiedErrorCode(null, budgetExceeded, contextBuild, loopDetected);
+        return classifiedErrorCode(null, budgetExceeded, contextBuild, loopDetected, null);
     }
 
     static AgentErrorCode classifiedErrorCode(
@@ -265,6 +271,16 @@ public final class AttemptExecutor {
             RuntimeLimitExceededException budgetExceeded,
             ContextBuildException contextBuild,
             LoopDetectedException loopDetected) {
+        return classifiedErrorCode(quotaExceeded, budgetExceeded, contextBuild, loopDetected, null);
+    }
+
+    static AgentErrorCode classifiedErrorCode(
+            RuntimeQuotaExceededException quotaExceeded,
+            RuntimeLimitExceededException budgetExceeded,
+            ContextBuildException contextBuild,
+            LoopDetectedException loopDetected,
+            ModelContinuationException continuationFailure) {
+        if (continuationFailure != null) return AgentErrorCode.CROSS_MODEL_CONTINUATION_INVALID;
         if (loopDetected != null) return AgentErrorCode.AGENT_LOOP_DETECTED;
         if (quotaExceeded != null) {
             return switch (quotaExceeded.resource()) {

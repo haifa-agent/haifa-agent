@@ -65,6 +65,7 @@ import io.haifa.agent.runtime.core.tool.ToolInputValidationException;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPipelineOutcome;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -867,25 +868,26 @@ public final class DecisionExecutor {
                 .map(call -> (ContentPart)
                         new ToolCallPart(call.id(), call.providerCorrelationId(), call.toolName(), call.toolVersion()))
                 .toList();
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        if (invocation.isPresent()) {
+            metadata.put("providerId", invocation.get().model().providerId().value());
+            metadata.put("modelId", invocation.get().model().providerModelId());
+            metadata.put("configurationDigest", invocation.get().model().configurationDigest());
+        }
         var continuationInvocation =
                 invocation.filter(value -> value.reasoning().isPresent());
         if (continuationInvocation.isEmpty()) {
-            appendMessage(run, MessageRole.ASSISTANT, parts, MessageVisibility.AGENT_VISIBLE, Map.of());
+            appendMessage(run, MessageRole.ASSISTANT, parts, MessageVisibility.AGENT_VISIBLE, metadata);
             return;
         }
         ModelInvocationResult value = continuationInvocation.orElseThrow();
         var reasoning = value.reasoning().orElseThrow();
         ModelContinuationRef reference =
                 new ModelContinuationRef(ids.nextValue(), "1.0", reasoning.digest(), reasoning.byteLength());
-        Map<String, Object> metadata = Map.of(
-                "modelContinuationId",
-                reference.id(),
-                "modelContinuationVersion",
-                reference.version(),
-                "modelContinuationDigest",
-                reference.digest(),
-                "modelContinuationBytes",
-                reference.byteLength());
+        metadata.put("modelContinuationId", reference.id());
+        metadata.put("modelContinuationVersion", reference.version());
+        metadata.put("modelContinuationDigest", reference.digest());
+        metadata.put("modelContinuationBytes", reference.byteLength());
         SessionMessageDraft message =
                 messageDraft(run, MessageRole.ASSISTANT, parts, MessageVisibility.AGENT_VISIBLE, metadata);
         var correlations = calls.stream()
