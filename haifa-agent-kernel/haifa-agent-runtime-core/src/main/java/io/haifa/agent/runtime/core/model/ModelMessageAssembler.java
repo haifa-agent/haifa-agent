@@ -79,8 +79,9 @@ public final class ModelMessageAssembler {
             if (item.content() instanceof MessageContextContent message) {
                 messages.addAll(mapMessage(runId, message.message(), toolCallsByRun, model, priorProviderCorrelations));
             } else if (item.content() instanceof MessageGroupContextContent group) {
-                group.messages().forEach(message -> messages.addAll(
-                        mapMessage(runId, message, toolCallsByRun, model, priorProviderCorrelations)));
+                group.messages()
+                        .forEach(message -> messages.addAll(
+                                mapMessage(runId, message, toolCallsByRun, model, priorProviderCorrelations)));
             } else if (item.content() instanceof TextContextContent text) {
                 messages.add(ModelMessage.text(mapRole(text.role()), text.text()));
             } else if (item.content() instanceof AssetDerivedTextContent asset) {
@@ -120,8 +121,7 @@ public final class ModelMessageAssembler {
      * provider-neutral context summaries, removing raw protocol blocks. Unclosed prior-provider tool groups are rejected.
      */
     private List<ModelMessage> canonicalizeToolProtocol(
-            List<ModelMessage> messages,
-            Set<ProviderToolCallCorrelationId> priorProviderCorrelations) {
+            List<ModelMessage> messages, Set<ProviderToolCallCorrelationId> priorProviderCorrelations) {
         List<ModelMessage> canonical = new ArrayList<>(messages.size());
         int index = 0;
         while (index < messages.size()) {
@@ -149,7 +149,8 @@ public final class ModelMessageAssembler {
                 if (candidate.role() == ModelMessageRole.TOOL
                         && candidate.providerCorrelationId().isPresent()
                         && pending.contains(candidate.providerCorrelationId().get())) {
-                    ProviderToolCallCorrelationId corrId = candidate.providerCorrelationId().get();
+                    ProviderToolCallCorrelationId corrId =
+                            candidate.providerCorrelationId().get();
                     pending.remove(corrId);
                     if (isPrior) {
                         matchingResults.put(corrId, candidate);
@@ -163,8 +164,7 @@ public final class ModelMessageAssembler {
             if (!pending.isEmpty()) {
                 if (isPrior) {
                     throw new ModelContinuationException(
-                            ModelContinuationFailure.CROSS_MODEL_UNCLOSED_TOOL_GROUP,
-                            "模型切换需要新会话或先完成原模型工具轮次");
+                            ModelContinuationFailure.CROSS_MODEL_UNCLOSED_TOOL_GROUP, "模型切换需要新会话或先完成原模型工具轮次");
                 }
                 throw new IllegalStateException("model context contains an incomplete tool-call group");
             }
@@ -444,7 +444,9 @@ public final class ModelMessageAssembler {
                     sb.append(", ");
                 }
                 first = false;
-                sb.append("\"").append(escapeString(String.valueOf(entry.getKey()))).append("\": ");
+                sb.append("\"")
+                        .append(escapeString(String.valueOf(entry.getKey())))
+                        .append("\": ");
                 sb.append(formatValue(entry.getValue()));
             }
             sb.append("}");

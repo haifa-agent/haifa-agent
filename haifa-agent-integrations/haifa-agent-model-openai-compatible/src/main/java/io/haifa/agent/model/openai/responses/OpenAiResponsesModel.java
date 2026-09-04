@@ -160,10 +160,12 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                 HttpRequest retryRequest = request(request, dialect, refreshed, true);
                 response = http.send(retryRequest, HttpResponse.BodyHandlers.ofInputStream());
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                    throw httpFailure(request, dialect, response.statusCode(), response.headers(), readStreamErrorBody(response));
+                    throw httpFailure(
+                            request, dialect, response.statusCode(), response.headers(), readStreamErrorBody(response));
                 }
             } else if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw httpFailure(request, dialect, response.statusCode(), response.headers(), readStreamErrorBody(response));
+                throw httpFailure(
+                        request, dialect, response.statusCode(), response.headers(), readStreamErrorBody(response));
             }
             requireContentType(request, dialect, response, "text/event-stream");
             try (InputStream body = response.body()) {

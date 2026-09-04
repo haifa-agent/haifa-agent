@@ -56,7 +56,8 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
         if (credential instanceof StoredApiKeyCredential apiKey) return new ResolvedCredential(apiKey.apiKey());
         StoredExternalCredential external = (StoredExternalCredential) credential;
         if (external.reasonCode().isPresent()) {
-            throw new ExternalLoginMethodUnavailableException(external.reasonCode().get());
+            throw new ExternalLoginMethodUnavailableException(
+                    external.reasonCode().get());
         }
         Instant refreshBefore = clock.instant().plus(refreshSafetyWindow);
         if (external.validBeyond(refreshBefore)) {
@@ -117,8 +118,7 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
         }
     }
 
-    private StoredExternalCredential refresh(
-            StoredExternalCredential observed, Instant refreshBefore, boolean force) {
+    private StoredExternalCredential refresh(StoredExternalCredential observed, Instant refreshBefore, boolean force) {
         StoredModelCredential latest = store.find(observed.reference())
                 .orElseThrow(() -> new IllegalStateException("AUTH_CREDENTIAL_REMOVED_DURING_REFRESH"));
         if (!(latest instanceof StoredExternalCredential current)) {
