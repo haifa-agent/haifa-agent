@@ -185,14 +185,35 @@ class CliConfigurationLoaderTest {
         assertThat(result.availableModels())
                 .extracting(CliConfiguration.Model::id)
                 .containsExactly(
+                        "deepseek-chat-pro",
+                        "deepseek-chat-flash",
+                        "deepseek-responses-flash",
+                        "deepseek-responses-pro",
+                        "deepseek-anthropic-flash",
+                        "deepseek-anthropic-pro",
                         "gpt-5.6-sol",
                         "gpt-5.6-terra",
                         "gpt-5.6-luna",
-                        "deepseek-chat-flash",
-                        "deepseek-chat-pro",
-                        "deepseek-responses-flash",
-                        "deepseek-anthropic-flash",
-                        "local-openai-responses");
+                        "qwen3.8-max-0902",
+                        "qwen3.8-max",
+                        "qwen3.8-flash",
+                        "qwen3.7-plus",
+                        "qwen3-vl-plus",
+                        "siliconflow-deepseek-v4-pro",
+                        "siliconflow-deepseek-v4-flash",
+                        "siliconflow-qwen3-vl-32b",
+                        "siliconflow-qwen3-32b",
+                        "siliconflow-kimi-k3",
+                        "siliconflow-kimi-k2-6",
+                        "siliconflow-glm-5-2",
+                        "siliconflow-glm-5-1",
+                        "kimi-k3",
+                        "kimi-k2.7-code",
+                        "kimi-k2.6",
+                        "glm-5.2",
+                        "glm-5.1",
+                        "glm-5",
+                        "glm-5-turbo");
         assertThat(result.availableModels())
                 .filteredOn(model -> model.id().equals("gpt-5.6-sol"))
                 .singleElement()
@@ -205,6 +226,20 @@ class CliConfigurationLoaderTest {
                     assertThat(model.dialect()).isEqualTo("openai-codex-responses");
                     assertThat(model.originator()).isEqualTo("pi");
                     assertThat(model.userAgent()).isEqualTo("haifa-agent-local-compat/1");
+                });
+        assertThat(result.availableModels())
+                .filteredOn(model -> model.id().equals("qwen3-vl-plus"))
+                .singleElement()
+                .satisfies(model -> assertThat(model.capabilities())
+                        .contains(
+                                io.haifa.agent.model.api.ModelCapability.IMAGE_UPLOAD_INPUT,
+                                io.haifa.agent.model.api.ModelCapability.IMAGE_URL_INPUT));
+        assertThat(result.availableModels())
+                .filteredOn(model -> model.id().equals("siliconflow-glm-5-2"))
+                .singleElement()
+                .satisfies(model -> {
+                    assertThat(model.modelId()).isEqualTo("zai-org/GLM-5.2");
+                    assertThat(model.contextWindow()).isEqualTo(1_048_576);
                 });
         CliConfiguration antigravityEnabled = new CliConfigurationLoader(name -> switch (name) {
                     case "HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST" -> "true";
@@ -232,17 +267,6 @@ class CliConfigurationLoaderTest {
                     assertThat(model.style()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES);
                     assertThat(model.dialect()).isEqualTo("deepseek-anthropic-messages");
                     assertThat(model.endpoint()).hasToString("https://api.deepseek.com/anthropic");
-                });
-        assertThat(result.availableModels())
-                .filteredOn(model -> model.id().equals("local-openai-responses"))
-                .singleElement()
-                .satisfies(model -> {
-                    assertThat(model.providerId()).isEqualTo("local-openai");
-                    assertThat(model.modelId()).isEqualTo("gpt-5.6-luna");
-                    assertThat(model.endpoint()).hasToString("http://127.0.0.1:30000/v1");
-                    assertThat(model.credentialRef()).isEqualTo("env://OPENAI_API_KEY");
-                    assertThat(model.style()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
-                    assertThat(model.dialect()).isEqualTo("standard");
                 });
         assertThat(new CliCodingModelCatalog(result)
                         .available(

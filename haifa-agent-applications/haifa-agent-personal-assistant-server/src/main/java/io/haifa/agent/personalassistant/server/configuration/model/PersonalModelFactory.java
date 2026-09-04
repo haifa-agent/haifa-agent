@@ -33,7 +33,9 @@ import io.haifa.agent.model.core.ImmutableModelCatalog;
 import io.haifa.agent.model.core.InMemoryProviderHealthRegistry;
 import io.haifa.agent.model.core.ModelAccessPolicy;
 import io.haifa.agent.model.core.ModelAvailabilityRequest;
+import io.haifa.agent.model.core.ModelCatalogDeployment;
 import io.haifa.agent.model.core.ModelSelectionRequest;
+import io.haifa.agent.model.core.PackagedModelCatalog;
 import io.haifa.agent.model.core.StaticModelPlatform;
 import io.haifa.agent.model.gemini.AntigravityCloudCodeProjectResolver;
 import io.haifa.agent.model.gemini.GeminiGenerateContentModel;
@@ -143,7 +145,7 @@ public final class PersonalModelFactory {
             CredentialResolver credentials,
             AntigravityCloudCodeProjectResolver trustedProjectResolver,
             CodexAccountIdentityResolver codexAccountResolver) {
-        List<PersonalAssistantProperties.ModelProvider> providers = List.copyOf(configured);
+        List<PersonalAssistantProperties.ModelProvider> providers = catalogized(List.copyOf(configured));
         java.util.Objects.requireNonNull(credentials, "credentials must not be null");
         if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
         validateEndpoints(providers, allowInsecureLoopbackModel);
@@ -403,6 +405,99 @@ public final class PersonalModelFactory {
             }
         }
         return List.copyOf(result);
+    }
+
+    /** Replaces YAML model facts with the packaged Catalog while retaining product-owned connection settings. */
+    private static List<PersonalAssistantProperties.ModelProvider> catalogized(
+            List<PersonalAssistantProperties.ModelProvider> configured) {
+        if (configured.stream().anyMatch(provider -> "deterministic".equals(provider.mode()))
+                || configured.stream().allMatch(provider -> !provider.models().isEmpty())) {
+            return configured;
+        }
+        var deployment = new ModelCatalogDeployment(configured.stream()
+                .map(provider -> new ModelCatalogDeployment.Provider(
+                        new ModelProviderId(provider.id()),
+                        provider.endpoint(),
+                        new CredentialRef(provider.credentialReference()),
+                        provider.nativeStreaming(),
+                        true,
+                        provider.bindingIds().stream()
+                                .map(ModelDefinitionId::new)
+                                .collect(java.util.stream.Collectors.toUnmodifiableSet()),
+                        provider.models().isEmpty()
+                                ? provider.bindingEndpointOverrides().entrySet().stream()
+                                        .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                                                entry -> new ModelDefinitionId(entry.getKey()), Map.Entry::getValue))
+                                : provider.apiBindings().stream()
+                                        .filter(binding -> binding.endpoint() != null)
+                                        .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                                                binding -> provider.models().stream()
+                                                        .filter(model ->
+                                                                model.style().equals(binding.style()))
+                                                        .map(model -> new ModelDefinitionId(model.id()))
+                                                        .findFirst()
+                                                        .orElseThrow(),
+                                                PersonalAssistantProperties.ApiBinding::endpoint))))
+                .toList());
+        var projection = PackagedModelCatalog.load(PersonalModelFactory.class.getClassLoader())
+                .project(deployment);
+        Map<String, PersonalAssistantProperties.ModelProvider> source = configured.stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        PersonalAssistantProperties.ModelProvider::id, value -> value));
+        Map<String, io.haifa.agent.model.api.ModelProviderDefinition> providers = projection.providers().stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        value -> value.id().value(), value -> value));
+        return projection.providers().stream()
+                .map(provider -> {
+                    var original = source.get(provider.id().value());
+                    List<PersonalAssistantProperties.ApiBinding> bindings = provider.apiBindings().stream()
+                            .map(binding -> new PersonalAssistantProperties.ApiBinding(
+                                    binding.style().value(),
+                                    binding.dialect(),
+                                    binding.endpoint().orElse(null)))
+                            .toList();
+                    List<PersonalAssistantProperties.ProviderModel> models = projection.bindings().stream()
+                            .filter(binding -> binding.definition().providerId().equals(provider.id()))
+                            .map(binding -> {
+                                var definition = binding.definition();
+                                var existing = original.models().stream()
+                                        .filter(model -> model.id()
+                                                .equals(definition.id().value()))
+                                        .findFirst();
+                                return new PersonalAssistantProperties.ProviderModel(
+                                        definition.id().value(),
+                                        definition.displayName(),
+                                        definition.displayName(),
+                                        definition.providerModelId(),
+                                        definition.style().value(),
+                                        definition.capabilities(),
+                                        existing.map(PersonalAssistantProperties.ProviderModel::reasoningMode)
+                                                .orElse(
+                                                        definition
+                                                                        .capabilities()
+                                                                        .contains(ModelCapability.REASONING)
+                                                                ? original.defaultReasoningMode()
+                                                                : io.haifa.agent.model.api.ModelReasoningMode.DISABLED),
+                                        definition.contextWindow(),
+                                        definition.maxOutputTokens());
+                            })
+                            .toList();
+                    return new PersonalAssistantProperties.ModelProvider(
+                            provider.id().value(),
+                            provider.displayName(),
+                            original.mode(),
+                            original.allowDeterministic(),
+                            provider.nativeStreaming(),
+                            provider.endpoint(),
+                            provider.credentialRef().value(),
+                            bindings,
+                            models,
+                            original.proxy(),
+                            original.defaultReasoningMode(),
+                            List.of(),
+                            Map.of());
+                })
+                .toList();
     }
 
     private static String apiStyleDisplayName(ApiStyleId style) {

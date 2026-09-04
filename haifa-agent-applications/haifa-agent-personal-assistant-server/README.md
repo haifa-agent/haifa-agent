@@ -44,7 +44,8 @@ events. Model activities never include prompts, assistant text, endpoints, crede
 or raw provider failures.
 
 Server 只接受 `haifa.personal.model-providers` 受信 Provider 列表和显式
-`default-model-id`，不支持旧的单模型 `haifa.personal.model` 配置。`/api/v1/models`、Bootstrap
+`default-model-id`，不支持旧的单模型 `haifa.personal.model` 配置。产品 YAML 仅保留连接、
+`allowed-bindings` allowlist 与可选的 Provider 默认推理模式；模型事实从打包 Catalog 投影。`/api/v1/models`、Bootstrap
 和 Conversation 只返回脱敏信息；Endpoint、
 Credential、`providerModelId`、Adapter 和完整 Snapshot 不进入浏览器。模型偏好保存在 Personal
 SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 production 可选列表。
@@ -439,9 +440,11 @@ macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
 Key、Utility MCP、Skill 和 Continuation Key 路径均可通过参数或专用环境变量覆盖；脚本不会把凭据
 写入参数、状态文件或日志。
 
-PowerShell 与 Bash 启动脚本共用同一个配置生成器。OpenAI 本机中转是可选 Provider：只有当前进程
+默认受信目录包含 DeepSeek、ChatGPT Codex、阿里云百炼、SiliconFlow、Kimi 和智谱；默认模型仍为
+DeepSeek，选择其他 Provider 前必须先完成其对应认证。PowerShell 与 Bash 启动脚本共用同一个配置生成器。
+OpenAI 本机中转是可选 Provider：只有当前进程
 （Windows 也回退到用户环境）同时提供 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID` 时才
-装配；三项全部缺失或配置不完整都不阻断 DeepSeek-only 启动，配置不完整时脚本会输出不含值的警告。
+装配；三项全部缺失或配置不完整都不阻断以默认模型启动，配置不完整时脚本会输出不含值的警告。
 启用后，本机中转使用 standard dialect 的 OpenAI Responses API，Provider 持有共享 Endpoint、
 CredentialRef 与 `nativeStreaming=true`，Binding 只声明 `style: openai-responses`。该模型当前只声明
 `TEXT_CHAT`，因此不会进入要求 Tool Calling 的 Personal Assistant 可选模型目录。

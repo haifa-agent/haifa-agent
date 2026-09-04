@@ -38,3 +38,14 @@ Conversation 偏好、命令、HTTP API 和 UI 继续归属现有产品模块。
 
 本阶段不提供 Catalog CRUD/持久化、动态发现、模型 Picker UI、自动路由、成本/配额、OAuth 或
 Credential Lease 桥接。
+
+## 静态 Catalog resource（Phase 10 M0）
+
+`ModelCatalogYamlLoader` 只读取显式打包的 `META-INF/haifa/model-catalog/catalog.yaml` 总索引及其明确列出的
+Provider/Binding 分片，并投影为不可变 `ModelCatalogManifest`。Catalog 包含精确 Binding、`ModelBindingProfile`、
+Dialect 与非秘密认证方式；它不包含 Endpoint、`CredentialRef`、Secret、用户偏好、动态发现或远程更新。
+
+调用方必须显式提供已注册的 API Style/Dialect 和 Provider/认证方式集合。未知字段、YAML anchor/alias/merge、
+非显式 resource 路径、重复 ID、未注册引用、非 `VERIFIED` Profile 或 Definition/Profile 不一致都会 fail closed。
+产品部署通过 Provider 连接信息与 `allowedBindings` allowlist 投影此 Catalog；展示名、Provider Model ID、
+Style/Dialect、能力与 Token 上限不得在产品 YAML 中重复维护。连接引导仍属于上层产品能力。

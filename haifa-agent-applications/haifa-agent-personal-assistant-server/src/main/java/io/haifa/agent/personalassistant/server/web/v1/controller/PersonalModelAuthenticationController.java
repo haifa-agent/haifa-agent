@@ -150,7 +150,7 @@ public final class PersonalModelAuthenticationController {
                     !environment && !externalLogin,
                     externalLogin && externalLoginSupported(externalMethod),
                     false,
-                    false));
+                    externalLogin && externalLoginUnofficial(externalMethod)));
         }
         authentication.externalLoginMethods().forEach(method -> {
             String reference = externalCredentialReference(method.methodId());
@@ -195,6 +195,14 @@ public final class PersonalModelAuthenticationController {
     private boolean externalLoginSupported(ExternalLoginMethodId methodId) {
         return authentication.externalLoginMethods().stream()
                 .anyMatch(value -> value.methodId().equals(methodId));
+    }
+
+    private boolean externalLoginUnofficial(ExternalLoginMethodId methodId) {
+        return authentication.externalLoginMethods().stream()
+                .filter(value -> value.methodId().equals(methodId))
+                .findFirst()
+                .map(io.haifa.agent.auth.localmodel.ExternalLoginMethodDescriptor::unofficial)
+                .orElse(false);
     }
 
     private static ExternalLoginMethodId externalLoginMethod(String methodId) {

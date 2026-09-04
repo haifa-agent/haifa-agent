@@ -8,10 +8,17 @@ import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceProtection;
 import io.haifa.agent.application.project.policy.CodingApprovalThreshold;
 import io.haifa.agent.model.api.ApiStyleId;
+import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelDefinitionId;
+import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelReasoningMode;
+import io.haifa.agent.model.core.ModelCatalogDeployment;
+import io.haifa.agent.model.core.PackagedModelCatalog;
 import io.haifa.agent.model.gemini.GeminiDialects;
+import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
 import java.io.IOException;
@@ -151,6 +158,9 @@ final class CliConfigurationLoader {
         if (!(configured instanceof List<?> providers) || providers.isEmpty()) {
             throw new IllegalArgumentException("configuration models.providers must be a non-empty list");
         }
+        if (providers.stream().allMatch(this::isCatalogDeploymentProvider)) {
+            return catalogModels(providers);
+        }
         List<CliConfiguration.Model> result = new ArrayList<>();
         Set<String> providerIds = new java.util.LinkedHashSet<>();
         for (Object entry : providers) {
@@ -214,6 +224,122 @@ final class CliConfigurationLoader {
             }
         }
         return List.copyOf(result);
+    }
+
+    private boolean isCatalogDeploymentProvider(Object value) {
+        return value instanceof Map<?, ?> provider && provider.containsKey("allowedBindings");
+    }
+
+    private List<CliConfiguration.Model> catalogModels(List<?> providers) {
+        List<ModelCatalogDeployment.Provider> deployment = new ArrayList<>();
+        Map<String, Map<String, Object>> sourceProviders = new LinkedHashMap<>();
+        for (Object raw : providers) {
+            Map<String, Object> provider = stringObject((Map<?, ?>) raw, "configuration models.providers");
+            reject(provider, "displayName", "apiBindings", "models", "dialectId", "dialectVersion", "adapterType");
+            String id = text(provider, "id", "");
+            if (sourceProviders.putIfAbsent(id, provider) != null) {
+                throw new IllegalArgumentException("configuration contains duplicate model provider id: " + id);
+            }
+            Set<ModelDefinitionId> allowed = stringSet(
+                            provider.get("allowedBindings"),
+                            Set.of(),
+                            "configuration models.providers[].allowedBindings")
+                    .stream()
+                    .map(ModelDefinitionId::new)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            if (allowed.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "configuration models.providers[].allowedBindings must be non-empty");
+            }
+            deployment.add(new ModelCatalogDeployment.Provider(
+                    new ModelProviderId(id),
+                    java.net.URI.create(expandEnvironment(
+                            requiredText(provider, "endpoint", "configuration models.providers[].endpoint"))),
+                    new CredentialRef(
+                            requiredText(provider, "credentialRef", "configuration models.providers[].credentialRef")),
+                    requiredBoolean(provider, "nativeStreaming", "configuration models.providers[].nativeStreaming"),
+                    !provider.containsKey("enabled")
+                            || requiredBoolean(provider, "enabled", "configuration models.providers[].enabled"),
+                    allowed,
+                    bindingEndpointOverrides(provider, allowed)));
+        }
+        var projection = PackagedModelCatalog.load(CliConfigurationLoader.class.getClassLoader())
+                .project(new ModelCatalogDeployment(deployment));
+        Map<String, io.haifa.agent.model.api.ModelProviderDefinition> projectedProviders =
+                projection.providers().stream()
+                        .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                                value -> value.id().value(), value -> value));
+        return projection.bindings().stream()
+                .map(binding -> {
+                    var definition = binding.definition();
+                    var provider =
+                            projectedProviders.get(definition.providerId().value());
+                    Map<String, Object> source =
+                            sourceProviders.get(provider.id().value());
+                    String workspaceId = expandedNullable(source, "workspaceId");
+                    String region = expandedNullable(source, "region");
+                    java.net.URI providerEndpoint = provider.endpoint();
+                    java.net.URI endpoint = provider.apiBindings().stream()
+                            .filter(value -> value.style().equals(definition.style()))
+                            .findFirst()
+                            .flatMap(value -> value.endpoint())
+                            .orElse(provider.endpoint());
+                    if (binding.apiBinding().dialect().equals(OpenAiCompatibleDialects.ALIYUN_BAILIAN)) {
+                        var configuration = new AliyunBailianProviderFactory.ProviderConfiguration(
+                                "cli-v1", workspaceId, region, provider.credentialRef());
+                        workspaceId = configuration.workspaceId();
+                        region = configuration.region();
+                        providerEndpoint = configuration.endpoint();
+                        endpoint = configuration.endpoint();
+                    }
+                    ModelReasoningMode configuredReasoningMode = enumValue(
+                            ModelReasoningMode.class,
+                            text(source, "reasoningMode", ModelReasoningMode.DISABLED.name()),
+                            "model reasoning mode");
+                    return new CliConfiguration.Model(
+                            provider.id().value(),
+                            provider.displayName(),
+                            definition.providerModelId(),
+                            providerEndpoint,
+                            endpoint,
+                            provider.credentialRef().value(),
+                            definition.style(),
+                            binding.apiBinding().dialect(),
+                            provider.nativeStreaming(),
+                            workspaceId,
+                            region,
+                            definition.id().value(),
+                            definition.displayName(),
+                            definition.capabilities(),
+                            definition.contextWindow(),
+                            definition.maxOutputTokens(),
+                            definition.capabilities().contains(ModelCapability.REASONING)
+                                    ? configuredReasoningMode
+                                    : ModelReasoningMode.DISABLED,
+                            expandedNullable(source, "originator"),
+                            expandedNullable(source, "userAgent"));
+                })
+                .toList();
+    }
+
+    private Map<ModelDefinitionId, java.net.URI> bindingEndpointOverrides(
+            Map<String, Object> provider, Set<ModelDefinitionId> allowed) {
+        Object raw = provider.get("bindingEndpointOverrides");
+        if (raw == null) return Map.of();
+        if (!(raw instanceof Map<?, ?> map)) {
+            throw new IllegalArgumentException(
+                    "configuration models.providers[].bindingEndpointOverrides must be an object");
+        }
+        Map<String, Object> values = stringObject(map, "configuration models.providers[].bindingEndpointOverrides");
+        Map<ModelDefinitionId, java.net.URI> result = new LinkedHashMap<>();
+        values.forEach((bindingId, endpoint) -> {
+            ModelDefinitionId id = new ModelDefinitionId(bindingId);
+            if (!allowed.contains(id) || !(endpoint instanceof String value) || value.isBlank()) {
+                throw new IllegalArgumentException("invalid model binding endpoint override: " + bindingId);
+            }
+            result.put(id, java.net.URI.create(expandEnvironment(value)));
+        });
+        return Map.copyOf(result);
     }
 
     private static Map<ApiStyleId, Binding> bindings(Map<String, Object> provider) {
