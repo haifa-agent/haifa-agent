@@ -94,6 +94,6 @@ class ResolvedModelSnapshotEffectiveParametersTest {
         assertThat(derived.frozenImageInputProfile().get().allowedSources())
                 .containsExactlyInAnyOrder(ModelImageSource.UPLOAD, ModelImageSource.URL);
         assertThat(derived.invocationOptions())
-                .containsEntry(EffectiveModelParameters.IMAGE_INPUT_MAX_IMAGES_OPTION, 4);
+                .containsEntry(EffectiveModelParameters.IMAGE_INPUT_MAX_IMAGES_OPTION, 4L);
     }
 }
