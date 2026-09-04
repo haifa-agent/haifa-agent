@@ -534,6 +534,7 @@ execution:
   extraPathPolicies: []
 runtime:
   maxIterations: 50
+  maxModelCalls: 64
   maxToolCalls: 32
   maxWallTimeMillis: 300000
 persistence:
@@ -685,8 +686,11 @@ Policy/Approval、Workspace、Sandbox、网络权限和审计；`--approval auto
 通用边界。可信宿主显式传入 `LOCAL_COMMIT`、`REMOTE_PUSH` 或 `PULL_REQUEST` 时，完成策略仍要求相应的
 Stage、Commit、Push 或 PR 权威结果证据，但不在 Broker Dispatch 前增加 Coding 产品专用交付拦截。
 
-`git diff --exit-code` / `--no-index` 的退出 1 是 `EXPECTED_VARIANT/DIFFERENCES_FOUND`，`git grep` 的退出 1
-是 `EMPTY_RESULT/NO_MATCHES`；无效 revision、构建或测试的非零退出仍是失败。复合命令风险提升返回
+`execution.run` 默认只接受退出码 0。只有命令文档明确把非零退出定义为正常观察结果时，调用方才可通过
+同时包含 0 和该值的 `expectedExitCodes` 显式声明；例如 `git diff --exit-code` / `--no-index`、
+`git grep` 或 `rg` 可在预期退出 1 时使用 `[0, 1]`，结果投影为
+`EXPECTED_VARIANT/DECLARED_EXPECTED_EXIT_CODE`。无效 revision、未声明的构建或测试非零退出仍是失败，
+Timeout、Cancel 和未知终止不能通过该字段改写为成功。复合命令风险提升返回
 `COMMAND_RISK_ESCALATED`，未知 Git 子命令返回 `GIT_COMMAND_UNKNOWN_HIGH_RISK`，不可信
 `operationFamily` 返回 `OPERATION_HINT_IGNORED` 或 `UNVERIFIED`。认证环境覆盖硬拒绝使用
 `AUTHENTICATION_OVERRIDE_DENIED`，受限网络失败使用 `NETWORK_PERMISSION_REQUIRED`，二者分别引导移除

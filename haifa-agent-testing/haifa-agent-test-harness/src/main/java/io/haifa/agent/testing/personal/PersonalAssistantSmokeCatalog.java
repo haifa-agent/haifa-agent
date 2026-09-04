@@ -45,8 +45,8 @@ public final class PersonalAssistantSmokeCatalog {
                         "PersonalAssistantRestartTest#conversationRunUsageAndActivitiesRecoverFromTheSameSqliteDatabase"),
                 test(
                         "PA-SM-06",
-                        "DeepSeek vision image upload and semantic response",
-                        "PersonalAssistantDeepSeekVisionLiveTest#uploadsWebpAndVerifiesADeepSeekVisionResponse"));
+                        "Vision image upload and semantic response",
+                        "PersonalAssistantVisionLiveTest#uploadsWebpAndVerifiesAVisionResponse"));
         LinkedHashMap<String, PersonalAssistantSmokeCase> result = new LinkedHashMap<>();
         for (PersonalAssistantSmokeCase value : cases) {
             if (result.put(value.caseId(), value) != null) {

@@ -100,6 +100,12 @@ class ModelCatalogYamlLoaderTest {
                 .isEqualTo(1_048_576);
         assertThat(catalog.binding("gpt-5.6-sol").orElseThrow().definition().style())
                 .isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
+        assertThat(catalog.binding("gpt-5.6-sol").orElseThrow().definition().capabilities())
+                .contains(ModelCapability.STRUCTURED_OUTPUT);
+        assertThat(catalog.binding("gpt-5.6-terra").orElseThrow().definition().capabilities())
+                .contains(ModelCapability.STRUCTURED_OUTPUT);
+        assertThat(catalog.binding("gpt-5.6-luna").orElseThrow().definition().capabilities())
+                .contains(ModelCapability.STRUCTURED_OUTPUT);
     }
 
     @Test

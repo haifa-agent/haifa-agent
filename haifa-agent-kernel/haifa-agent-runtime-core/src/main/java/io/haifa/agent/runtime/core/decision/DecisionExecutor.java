@@ -64,6 +64,7 @@ import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.tool.ToolInputValidationException;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPipelineOutcome;
+import io.haifa.agent.runtime.core.tool.ToolPolicyDeniedException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -421,6 +422,9 @@ public final class DecisionExecutor {
             ToolPipelineOutcome outcome;
             try {
                 outcome = tools.execute(run, call, request, loopContext.iteration(), loopContext.traceContext());
+            } catch (ToolPolicyDeniedException denial) {
+                rejectPolicyDeniedToolRequest(run, call, step, denial);
+                continue;
             } catch (ToolInputValidationException validation) {
                 rejectToolRequest(
                         run, call, step, loopContext, validation, "Tool request rejected. " + validation.repairHint());
@@ -482,6 +486,20 @@ public final class DecisionExecutor {
                 time.now());
         state.appendStep(step);
         appendToolResult(run, call, modelSummary);
+    }
+
+    private void rejectPolicyDeniedToolRequest(
+            AgentRun run, ToolCall call, AgentStep step, ToolPolicyDeniedException denial) {
+        state.appendToolCall(call);
+        step.fail(
+                new AgentStepError(new AgentError(
+                        AgentErrorCode.TOOL_REQUEST_REJECTED,
+                        Map.of("reason", denial.failureCode()),
+                        ids.nextValue(),
+                        time.now())),
+                time.now());
+        state.appendStep(step);
+        appendToolResult(run, call, "Tool request was denied by policy; choose an authorized capability.");
     }
 
     private void cancelRejectedCall(ToolCall call) {

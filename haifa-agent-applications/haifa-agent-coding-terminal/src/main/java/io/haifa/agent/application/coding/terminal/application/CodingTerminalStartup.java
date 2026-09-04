@@ -15,7 +15,7 @@ public record CodingTerminalStartup(Mode mode, Optional<AgentSessionId> sessionI
         if ((mode == Mode.SESSION) != sessionId.isPresent()) {
             throw new IllegalArgumentException("SESSION startup requires exactly one session id");
         }
-        if ((mode == Mode.EMPTY || mode == Mode.SELECTOR) && prompt.isPresent()) {
+        if ((mode == Mode.EMPTY || mode == Mode.SELECTOR || mode == Mode.AUTO_LAST) && prompt.isPresent()) {
             throw new IllegalArgumentException("startup prompt requires LAST or SESSION mode");
         }
     }
@@ -26,6 +26,10 @@ public record CodingTerminalStartup(Mode mode, Optional<AgentSessionId> sessionI
 
     public static CodingTerminalStartup selectSession() {
         return new CodingTerminalStartup(Mode.SELECTOR, Optional.empty(), Optional.empty());
+    }
+
+    public static CodingTerminalStartup autoLast() {
+        return new CodingTerminalStartup(Mode.AUTO_LAST, Optional.empty(), Optional.empty());
     }
 
     public static CodingTerminalStartup lastSession(Optional<String> prompt) {
@@ -39,6 +43,7 @@ public record CodingTerminalStartup(Mode mode, Optional<AgentSessionId> sessionI
     public enum Mode {
         EMPTY,
         SELECTOR,
+        AUTO_LAST,
         LAST,
         SESSION
     }

@@ -70,6 +70,7 @@ execution:
   extraPathPolicies: []
 runtime:
   maxIterations: 50
+  maxModelCalls: 64
   maxToolCalls: 32
   maxWallTimeMillis: 300000
 persistence:

@@ -744,7 +744,7 @@ final class LocalCodingAgent implements AutoCloseable {
                                     1,
                                     configuration.timeout().toMillis(),
                                     configuration.timeout().toMillis(),
-                                    64,
+                                    configuration.maxModelCalls(),
                                     configuration.maxToolCalls(),
                                     8),
                             Optional.ofNullable(modelSnapshots.get(profileId))
@@ -863,6 +863,10 @@ final class LocalCodingAgent implements AutoCloseable {
                 + "discovery and rg for text search because they are fast; if rg is unavailable, use an appropriate "
                 + "alternative for the configured shell. Choose the exact command and options for the task rather than "
                 + "expecting a dedicated search wrapper.\n"
+                + "- execution_run accepts only exit code 0 by default. For a documented normal non-zero result, explicitly "
+                + "set expectedExitCodes to include 0 and that code. rg exit 1 means no matches; git diff --no-index exit 1 "
+                + "means differences. Use [0, 1] only when that result is the intended observation. For literal rg searches, "
+                + "prefer rg -F -- <text>; use regex only when intended.\n"
                 + "- Keep command output bounded and relevant. Narrow an overly broad query before repeating it.\n"
                 + "- request_permissions is not a general sandbox bypass. Use it only after execution_run returns an eligible "
                 + "stable remote-access or host-authentication code for a direct system git or gh command, and repeat the exact command, "

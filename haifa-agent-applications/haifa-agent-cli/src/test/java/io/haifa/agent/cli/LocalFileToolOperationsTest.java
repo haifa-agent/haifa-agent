@@ -110,6 +110,27 @@ class LocalFileToolOperationsTest {
     }
 
     @Test
+    void returnsStableFeedbackForInvalidFileArguments() {
+        Fixture fixture = fixture();
+
+        var result = fixture.operations.execute(
+                "file.list",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("recursive", true)));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "INVALID_ARGUMENT")
+                .containsEntry("stableFailureCode", "INVALID_ARGUMENT")
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("failureActionCode", "READ_CURRENT_STATE")
+                .containsEntry("retryable", false);
+    }
+
+    @Test
     void appliesModelVisibleContextPatchWithoutSeparatePathArgument() throws Exception {
         Path sourceFile = root.resolve("source.txt");
         Files.writeString(sourceFile, "anchor\nold\n", StandardCharsets.UTF_8);

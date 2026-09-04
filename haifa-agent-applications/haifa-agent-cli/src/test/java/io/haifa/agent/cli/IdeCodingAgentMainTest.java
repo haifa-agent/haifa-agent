@@ -118,6 +118,7 @@ class IdeCodingAgentMainTest {
                 .contains("deepseek")
                 .contains("execution")
                 .contains("approval")
+                .contains("maxModelCalls=64")
                 .contains("config tiers");
         assertThat(text)
                 .doesNotContain("credentialRef")

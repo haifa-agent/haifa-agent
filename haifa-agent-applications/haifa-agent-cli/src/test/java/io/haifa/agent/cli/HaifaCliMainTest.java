@@ -54,6 +54,18 @@ class HaifaCliMainTest {
     }
 
     @Test
+    void defaultTerminalRequestsAnAsynchronousLastSessionLoad() {
+        AtomicReference<CodingTerminalStartup> startup = new AtomicReference<>();
+        var main = new HaifaCliMain((workspace, configuration, requested, output, trace) -> startup.set(requested));
+
+        assertThat(main.run(new String[0], output(), output())).isZero();
+
+        assertThat(startup.get().mode()).isEqualTo(CodingTerminalStartup.Mode.AUTO_LAST);
+        assertThat(startup.get().sessionId()).isEmpty();
+        assertThat(startup.get().prompt()).isEmpty();
+    }
+
+    @Test
     void defaultTerminalUsesTheProcessWorkingDirectoryAsItsWorkspace() {
         AtomicReference<Path> launchedWorkspace = new AtomicReference<>();
         var main = new HaifaCliMain(

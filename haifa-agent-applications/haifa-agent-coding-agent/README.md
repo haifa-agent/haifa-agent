@@ -53,12 +53,14 @@ ANALYZE/REVIEW 不会被强制进入 CHANGE；仅修改工作区也
 不会隐式产生 commit、push 或 PR 意图。旧 Checkpoint 不增加 Codec 或 Migration，Resume 直接从权威
 记录重建投影。
 
-`execution.run` 1.7.2 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
+`execution.run` 1.8.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
 可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
 失败结果同样保留执行状态、可选退出码、墙钟耗时、截断标记、bounded 合并输出和稳定失败/动作码，
-并通过权威 `ToolResult` 进入后续模型上下文。普通进程非零退出保持 `COMMAND_FAILED`；只有执行器明确
-报告可执行文件或工具链缺失时才使用 `DEPENDENCY_UNAVAILABLE`，不会从普通命令输出关键词推断。
+并通过权威 `ToolResult` 进入后续模型上下文。默认只接受退出码 0；调用方只有在命令文档明确把某个
+非零退出定义为正常观察结果时，才可通过同时包含 0 和该值的 `expectedExitCodes` 显式声明。普通未声明
+非零退出保持 `COMMAND_FAILED`；只有执行器明确报告可执行文件或工具链缺失时才使用
+`DEPENDENCY_UNAVAILABLE`，不会从普通命令输出关键词推断。
 
 ## 自主交付模式与完成证据
 
@@ -264,9 +266,11 @@ Change Review 成功结果中的 `artifactRef` 与 `changeReviewArtifactRef` 均
 确定的 ExecutionResult 因派生字段契约漂移被误判为 `TOOL_OUTCOME_UNKNOWN`。
 命中冻结验证候选时生成的 `validationAttemptRef` 同样属于严格 Schema 契约，并在直接返回与只读
 reconcile 路径使用同一份冻结定义校验。
-Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版本：Git Diff 的退出 1 可作为
-`EXPECTED_VARIANT/DIFFERENCES_FOUND` 形成 Diff 证据，Git Grep 的退出 1 是 `EMPTY_RESULT/NO_MATCHES`；
-无效 revision 的 128 和 Build/Test 非零退出仍是失败，Timeout/Cancel/未知终止不得自动重放。
+Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版本。普通命令默认只接受退出码 0；
+例如只有调用方为 `git diff --exit-code`、`git diff --no-index`、`git grep` 或 `rg` 显式声明
+`expectedExitCodes: [0, 1]` 时，退出 1 才作为 `EXPECTED_VARIANT/DECLARED_EXPECTED_EXIT_CODE` 进入证据。
+无效 revision 的 128 和未声明的 Build/Test 非零退出仍是失败，Timeout/Cancel/未知终止不能通过该字段
+改写为成功，也不得自动重放。
 执行命令已经从受控 Workspace 启动。最高层受信本地装配在 ToolCall 持久化和 Policy 之前，将等于当前
 Workspace 或位于其下的绝对 `workdir` 生成唯一逻辑相对路径；Policy、Approval、Broker 与 Provider
 共用该 canonical target，Provider 只验证 canonical 约束而不再二次改写。Workspace 外绝对目录、绝对路径 `cd ...` 仍在进入 Broker 前以

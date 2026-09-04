@@ -384,8 +384,7 @@ public final class ToolPipeline {
             else call.deny(time.now());
             state.appendToolCall(call);
             appendToolEvent(run, call, "tool.cancelled", "CANCELLED", "POLICY_DENIED", "");
-            throw new SecurityException(
-                    "tool policy denied: " + definition.name().value());
+            throw new ToolPolicyDeniedException("POLICY_DENIED");
         }
         PolicyDecision effectiveDecision = currentDecision;
         PolicyDecision approvedDecision = approved ? approvedDecisions.remove(call.id()) : null;
@@ -974,11 +973,12 @@ public final class ToolPipeline {
                 attributes.put(key, text);
             }
         }
+        attributes.putIfAbsent("stableFailureCode", stableResultFailureCode(result));
         return Map.copyOf(attributes);
     }
 
     private static String stableResultFailureCode(ToolResult result) {
-        for (String key : List.of("stableFailureCode", "failureCode")) {
+        for (String key : List.of("stableFailureCode", "failureCode", "errorCode")) {
             Object value = result.structuredData().get(key);
             if (value instanceof String code && isStableFailureCode(code)) return code;
         }
