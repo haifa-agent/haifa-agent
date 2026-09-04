@@ -13,6 +13,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionPlanner;
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
+import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -23,22 +24,22 @@ import org.junit.jupiter.api.Test;
 class SdkMissionRuntimeAccessTest {
     @Test
     void synthesisProtocolVersionOwnsTheRunIdempotencyNamespace() {
-        assertThat(SdkMissionRuntimeAccess.SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v6");
-        assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v2");
+        assertThat(SdkMissionRuntimeAccess.SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v7");
+        assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v3");
         assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION)
                 .isEqualTo("v1");
         assertThat(SdkMissionRuntimeAccess.PLANNER_REPAIR_PROTOCOL_VERSION).isEqualTo("v4");
-        assertThat(SdkMissionRuntimeAccess.TASK_NORMALIZATION_PROTOCOL_VERSION).isEqualTo("v5");
+        assertThat(SdkMissionRuntimeAccess.TASK_NORMALIZATION_PROTOCOL_VERSION).isEqualTo("v6");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1"))
-                .isEqualTo("mission:mission-1:synthesis:v6");
+                .isEqualTo("mission:mission-1:synthesis:v7");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1", 1))
-                .isEqualTo("mission:mission-1:synthesis:v6:revision-1");
+                .isEqualTo("mission:mission-1:synthesis:v7:revision-1");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1", 2))
-                .isEqualTo("mission:mission-1:synthesis:v6:revision-2");
+                .isEqualTo("mission:mission-1:synthesis:v7:revision-2");
         assertThat(SdkMissionRuntimeAccess.standardSynthesisDispatchKey("mission-1"))
-                .isEqualTo("mission:mission-1:synthesis:standard:v2");
+                .isEqualTo("mission:mission-1:synthesis:standard:v3");
         assertThat(SdkMissionRuntimeAccess.standardSynthesisRepairDispatchKey("mission-1", "run-invalid", 1))
-                .isEqualTo("mission:mission-1:synthesis:standard:v2:repair:v1:attempt-1:source:run-invalid");
+                .isEqualTo("mission:mission-1:synthesis:standard:v3:repair:v1:attempt-1:source:run-invalid");
     }
 
     @Test
@@ -55,8 +56,9 @@ class SdkMissionRuntimeAccessTest {
         assertThat(SdkMissionRuntimeAccess.standardSynthesisPrompt(intent))
                 .contains(
                         "exactly one JSON object",
-                        "pa.mission-final-result/v1",
+                        "pa.mission-final-result/v2",
                         "\"directAnswer\"",
+                        "\"answerMarkdown\"",
                         "\"completedItems\"",
                         "\"failedItems\"",
                         "\"artifactRefs\":[]",
@@ -205,9 +207,9 @@ class SdkMissionRuntimeAccessTest {
                         "Frozen Research Brief",
                         "Which claims about Acme AI are true?",
                         "references/research-method.md",
-                        "schemas/research-task-result-v1.json",
+                        "schemas/research-task-result-v2.json",
                         "utility_wikipedia_search",
-                        "pa.research-task-result/v1",
+                        "pa.research-task-result/v2",
                         "hard safety ceiling of 40 research Tool calls",
                         "At 24 completed Tool calls",
                         "FINALIZE_ONLY",
@@ -221,17 +223,17 @@ class SdkMissionRuntimeAccessTest {
                         "market-evidence", "Research Amazon Halo", "research notes", skill))
                 .contains(
                         "exactly one JSON object",
-                        "pa.research-task-result/v1",
+                        "pa.research-task-result/v2",
                         "Do not invent a source",
                         "query.phase: DISCOVER, DEEPEN, or CROSS_CHECK",
                         "source.safetyType: PUBLIC_WEB",
-                        "artifactRefs and every claim.quotedSpans must be JSON arrays",
+                        "artifactRefs, keyParameters, supportingSourceIds, and opposingSourceIds must be JSON arrays",
                         "continues the same source",
                         "serialized DSML",
                         "Never substitute another company",
                         "usable discovery evidence even when a",
                         "later fetch failed",
-                        "brief must explicitly name the selected subject",
+                        "taskSummary must explicitly name the selected subject",
                         "market-evidence--",
                         "Research Amazon Halo",
                         "research notes")
@@ -481,6 +483,100 @@ class SdkMissionRuntimeAccessTest {
                 """;
 
         assertThat(SdkMissionRuntimeAccess.isResearchTaskResult(invalid, skill)).isFalse();
+    }
+
+    @Test
+    void canonicalizeResearchTaskResultWithCompletedFetchesAuthoritativelyAssignsStatusAndDigest() throws Exception {
+        var completedFetches = List.of(
+                new ResearchFetchEvidence(
+                        "tool-fetch-1",
+                        "https://example.com/halo",
+                        "https://example.com/halo",
+                        true,
+                        true,
+                        Instant.parse("2026-08-10T12:00:00Z"),
+                        "sha256:" + "f".repeat(64),
+                        1024,
+                        false
+                )
+        );
+        String v2Input = """
+                {
+                  "schemaVersion":"pa.research-task-result/v2",
+                  "taskSummary":"Halo research notes with rich technical mechanism details.",
+                  "queries":[{"query":"Amazon Halo","phase":"DISCOVER"}],
+                  "findings":[{
+                    "findingId":"finding-1",
+                    "title":"Halo sensors",
+                    "mechanism":"Optical sensor array operating with infrared LED pulses.",
+                    "keyParameters":["battery: 7 days", "sampling: 25Hz"],
+                    "evidenceSummary":"Verified through hardware tear down.",
+                    "implications":"High accuracy for heart rate variance.",
+                    "limitations":"Skin tone variations.",
+                    "supportingSourceIds":["source-1", "source-2"],
+                    "opposingSourceIds":[]
+                  }],
+                  "sources":[
+                    {
+                      "sourceId":"source-1",
+                      "locator":"https://example.com/halo",
+                      "normalizedLocator":"https://example.com/halo",
+                      "locatorDigest":"sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                      "title":"Halo tear down",
+                      "safetyType":"PUBLIC_WEB",
+                      "fetchedAt":null,
+                      "publishedAt":"2026-08-01T00:00:00Z",
+                      "status":"UNKNOWN",
+                      "excerpt":"Hardware analysis.",
+                      "contentDigest":null
+                    },
+                    {
+                      "sourceId":"source-2",
+                      "locator":"https://example.com/unfetched",
+                      "normalizedLocator":"https://example.com/unfetched",
+                      "locatorDigest":"sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                      "title":"Unfetched blog",
+                      "safetyType":"PUBLIC_WEB",
+                      "fetchedAt":null,
+                      "publishedAt":"2026-08-02T00:00:00Z",
+                      "status":"UNKNOWN",
+                      "excerpt":"Blog comments.",
+                      "contentDigest":null
+                    }
+                  ],
+                  "artifactRefs":[],
+                  "unresolvedQuestions":[],
+                  "stopReason":"SUFFICIENT_EVIDENCE",
+                  "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":2,"contentBytes":1024}
+                }
+                """;
+
+        String canonicalized = SdkMissionRuntimeAccess.canonicalizeResearchTaskResult(v2Input, "task-1", completedFetches);
+        var root = new ObjectMapper().readTree(canonicalized);
+
+        assertThat(root.path("schemaVersion").asText()).isEqualTo("pa.research-task-result/v2");
+        assertThat(root.path("taskSummary").asText()).contains("Halo research notes");
+        var sources = root.path("sources");
+        assertThat(sources.size()).isEqualTo(2);
+
+        var s1 = sources.get(0);
+        assertThat(s1.path("sourceId").asText()).isEqualTo("task-1--source-1");
+        assertThat(s1.path("status").asText()).isEqualTo("FETCHED");
+        assertThat(s1.path("fetchedAt").asText()).isEqualTo("2026-08-10T12:00:00Z");
+        assertThat(s1.path("contentDigest").asText()).isEqualTo("sha256:" + "f".repeat(64));
+
+        var s2 = sources.get(1);
+        assertThat(s2.path("sourceId").asText()).isEqualTo("task-1--source-2");
+        assertThat(s2.path("status").asText()).isEqualTo("UNKNOWN");
+        assertThat(s2.path("contentDigest").isNull()).isTrue();
+
+        var findings = root.path("findings");
+        assertThat(findings.size()).isEqualTo(1);
+        var f1 = findings.get(0);
+        assertThat(f1.path("findingId").asText()).isEqualTo("task-1--finding-1");
+        assertThat(f1.path("supportingSourceIds").get(0).asText()).isEqualTo("task-1--source-1");
+        assertThat(f1.path("supportingSourceIds").get(1).asText()).isEqualTo("task-1--source-2");
+        assertThat(f1.path("unverified").asBoolean()).isTrue();
     }
 
     @Test

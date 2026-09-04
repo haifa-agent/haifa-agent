@@ -42,6 +42,9 @@ import io.haifa.agent.skill.api.SkillContent;
 import io.haifa.agent.tool.api.ToolSchema;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import io.haifa.agent.web.DefaultWebUrlPolicy;
+import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence;
+import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidenceReader;
+import io.haifa.agent.personalassistant.application.research.RuntimeFetchEvidenceReader;
 import java.net.URI;
 import java.text.Normalizer;
 import java.time.Duration;
@@ -65,7 +68,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     public static final String TASK_RUN_PROFILE = MissionTaskRunInput.PRIMARY_RESEARCH_PROFILE;
     public static final String DEPENDENT_TASK_RUN_PROFILE = MissionTaskRunInput.DEPENDENCY_AWARE_RESEARCH_PROFILE;
     public static final String TASK_NORMALIZER_RUN_PROFILE = "personal-mission-task-normalizer";
-    public static final String TASK_NORMALIZATION_PROTOCOL_VERSION = "v5";
+    public static final String TASK_NORMALIZATION_PROTOCOL_VERSION = "v6";
     private static final int TASK_NORMALIZATION_MAX_ATTEMPTS = 3;
     private static final int PLANNER_REPAIR_INPUT_MAX_CHARACTERS = 16_000;
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -75,8 +78,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     private static final Pattern STABLE_EVIDENCE_ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,127}");
     public static final String SYNTHESIS_RUN_PROFILE = "personal-mission-synthesis";
     public static final String RESEARCH_SYNTHESIS_RUN_PROFILE = "personal-mission-research-synthesis";
-    public static final String SYNTHESIS_PROTOCOL_VERSION = "v6";
-    public static final String STANDARD_SYNTHESIS_PROTOCOL_VERSION = "v2";
+    public static final String SYNTHESIS_PROTOCOL_VERSION = "v7";
+    public static final String STANDARD_SYNTHESIS_PROTOCOL_VERSION = "v3";
     public static final String STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION = "v1";
     private static final int SYNTHESIS_MAX_UNVERIFIED_CLAIMS = 320;
     public static final long TASK_MAX_TOOL_CALLS = MissionTaskRunInput.PRIMARY_RESEARCH_TOOL_CALL_HARD_LIMIT;
@@ -92,6 +95,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     private final PersonalModelCatalog models;
     private final String defaultModelId;
     private final SkillContent deepResearchSkill;
+    private final ResearchFetchEvidenceReader fetchEvidenceReader;
 
     public SdkMissionRuntimeAccess(
             HaifaAgent agent,
@@ -102,6 +106,28 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             PersonalModelCatalog models,
             String defaultModelId,
             SkillContent deepResearchSkill) {
+        this(
+                agent,
+                persistence,
+                tenant,
+                principal,
+                time,
+                models,
+                defaultModelId,
+                deepResearchSkill,
+                new RuntimeFetchEvidenceReader(persistence.runtimePersistence()));
+    }
+
+    public SdkMissionRuntimeAccess(
+            HaifaAgent agent,
+            SdkPersistenceContribution persistence,
+            TenantRef tenant,
+            PrincipalRef principal,
+            TimeProvider time,
+            PersonalModelCatalog models,
+            String defaultModelId,
+            SkillContent deepResearchSkill,
+            ResearchFetchEvidenceReader fetchEvidenceReader) {
         this.agent = Objects.requireNonNull(agent);
         this.persistence = Objects.requireNonNull(persistence);
         this.tenant = Objects.requireNonNull(tenant);
@@ -110,6 +136,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         this.models = Objects.requireNonNull(models);
         this.defaultModelId = Objects.requireNonNull(defaultModelId);
         this.deepResearchSkill = Objects.requireNonNull(deepResearchSkill);
+        this.fetchEvidenceReader = Objects.requireNonNull(fetchEvidenceReader);
     }
 
     @Override
@@ -402,7 +429,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     [deep-research/references/citation-rules.md]
                     %s
 
-                    [deep-research/schemas/research-task-result-v1.json]
+                    [deep-research/schemas/research-task-result-v2.json]
                     %s
                     """
                             .formatted(
@@ -411,7 +438,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                                     deepResearchSkill.resource("references/research-method.md"),
                                     deepResearchSkill.resource("references/source-quality.md"),
                                     deepResearchSkill.resource("references/citation-rules.md"),
-                                    deepResearchSkill.resource("schemas/research-task-result-v1.json"));
+                                    deepResearchSkill.resource("schemas/research-task-result-v2.json"));
         }
         String dependencyContext =
                 MissionDependencyContextProjector.project(intent.runInput().dependencyResults());
@@ -596,11 +623,12 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         .orElse(terminal.status().name());
                 continue;
             }
+            List<ResearchFetchEvidence> completedFetches = fetchEvidenceReader.findCompletedFetches(sourceRunId);
             Optional<String> normalized = terminal.result()
                     .map(value -> value.summary())
                     .or(() -> terminal.output())
                     .filter(value -> !value.isBlank())
-                    .map(value -> canonicalizeResearchTaskResult(value, taskId));
+                    .map(value -> canonicalizeResearchTaskResult(value, taskId, completedFetches));
             if (normalized
                     .filter(value -> isResearchTaskResult(value, deepResearchSkill))
                     .isPresent()) {
@@ -615,11 +643,23 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     static boolean isResearchTaskResult(String value, SkillContent deepResearchSkill) {
         try {
             JsonNode root = JSON.readTree(value);
+            String schemaVersion = root.path("schemaVersion").asText();
+            String resource;
+            String version;
+            if ("pa.research-task-result/v2".equals(schemaVersion)) {
+                resource = "schemas/research-task-result-v2.json";
+                version = "v2";
+            } else if ("pa.research-task-result/v1".equals(schemaVersion)) {
+                resource = "schemas/research-task-result-v1.json";
+                version = "v1";
+            } else {
+                return false;
+            }
             Map<String, Object> schemaDocument = JSON.readValue(
-                    deepResearchSkill.resource("schemas/research-task-result-v1.json"), new TypeReference<>() {});
+                    deepResearchSkill.resource(resource), new TypeReference<>() {});
             Map<String, Object> instance = JSON.convertValue(root, new TypeReference<>() {});
             boolean schemaValid = new JsonSchema202012Validator()
-                    .validate(new ToolSchema("pa.research-task-result", "v1", schemaDocument), instance)
+                    .validate(new ToolSchema("pa.research-task-result", version, schemaDocument), instance)
                     .valid();
             return schemaValid && researchTaskSemanticsValid(root);
         } catch (Exception ignored) {
@@ -628,10 +668,15 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     }
 
     static String canonicalizeResearchTaskResult(String value) {
-        return canonicalizeResearchTaskResult(value, "");
+        return canonicalizeResearchTaskResult(value, "", null);
     }
 
     static String canonicalizeResearchTaskResult(String value, String taskId) {
+        return canonicalizeResearchTaskResult(value, taskId, null);
+    }
+
+    static String canonicalizeResearchTaskResult(
+            String value, String taskId, List<ResearchFetchEvidence> completedFetches) {
         try {
             JsonNode parsed = JSON.readTree(value);
             if (!parsed.isObject()) return value;
@@ -640,8 +685,9 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 canonicalizeInstant(source, "fetchedAt", false);
                 canonicalizeInstant(source, "publishedAt", true);
             }
-            if ("pa.research-task-result/v1".equals(parsed.path("schemaVersion").asText())) {
-                canonicalizeResearchEvidence((ObjectNode) parsed, taskId);
+            String schema = parsed.path("schemaVersion").asText();
+            if ("pa.research-task-result/v1".equals(schema) || "pa.research-task-result/v2".equals(schema)) {
+                canonicalizeResearchEvidence((ObjectNode) parsed, taskId, completedFetches);
             }
             return JSON.writeValueAsString(parsed);
         } catch (Exception ignored) {
@@ -649,11 +695,23 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         }
     }
 
-    private static void canonicalizeResearchEvidence(ObjectNode root, String taskId) {
+    private static void canonicalizeResearchEvidence(
+            ObjectNode root, String taskId, List<ResearchFetchEvidence> completedFetches) {
         ArrayNode canonicalSources = JSON.createArrayNode();
         Map<String, String> sourceAliases = new LinkedHashMap<>();
         Map<String, Boolean> fetchedBySource = new LinkedHashMap<>();
         Map<String, String> sourceByLocator = new LinkedHashMap<>();
+        Map<String, ResearchFetchEvidence> fetchByUrl = new LinkedHashMap<>();
+        if (completedFetches != null) {
+            for (ResearchFetchEvidence evidence : completedFetches) {
+                if (evidence.canonicalRequestedUrl() != null && !evidence.canonicalRequestedUrl().isBlank()) {
+                    fetchByUrl.put(evidence.canonicalRequestedUrl().toLowerCase(java.util.Locale.ROOT), evidence);
+                }
+                if (evidence.canonicalFinalUrl() != null && !evidence.canonicalFinalUrl().isBlank()) {
+                    fetchByUrl.put(evidence.canonicalFinalUrl().toLowerCase(java.util.Locale.ROOT), evidence);
+                }
+            }
+        }
         for (JsonNode candidate : root.path("sources")) {
             if (!(candidate instanceof ObjectNode source)) continue;
             String originalSourceId = source.path("sourceId").asText();
@@ -676,22 +734,45 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 source.put("locator", normalized);
                 source.put("normalizedLocator", normalized);
                 source.put("locatorDigest", digest(normalized));
-                boolean fetched = "FETCHED".equals(source.path("status").asText())
-                        && nullOrInstant(source.get("fetchedAt"))
-                        && source.get("fetchedAt") != null
-                        && !source.get("fetchedAt").isNull()
-                        && source.path("contentDigest").isTextual()
-                        && SHA256_DIGEST
-                                .matcher(source.path("contentDigest").asText())
-                                .matches()
-                        && !placeholderDigest(source.path("contentDigest").asText())
-                        && source.path("excerpt").isTextual()
-                        && !source.path("excerpt").asText().isBlank();
-                if (!fetched) {
-                    if ("FETCHED".equals(source.path("status").asText())) source.put("status", "UNKNOWN");
-                    source.putNull("fetchedAt");
-                    source.putNull("contentDigest");
-                    source.put("excerpt", "");
+                boolean fetched;
+                if (completedFetches != null) {
+                    ResearchFetchEvidence match = fetchByUrl.get(normalized.toLowerCase(java.util.Locale.ROOT));
+                    if (match != null && match.successful()) {
+                        source.put("status", "FETCHED");
+                        source.put("fetchedAt", match.completedAt().toString());
+                        source.put("contentDigest", match.contentSha256());
+                        fetched = true;
+                    } else if (match != null && !match.successful()) {
+                        source.put("status", "INACCESSIBLE");
+                        source.putNull("fetchedAt");
+                        source.putNull("contentDigest");
+                        source.put("excerpt", "");
+                        fetched = false;
+                    } else {
+                        source.put("status", "UNKNOWN");
+                        source.putNull("fetchedAt");
+                        source.putNull("contentDigest");
+                        source.put("excerpt", "");
+                        fetched = false;
+                    }
+                } else {
+                    fetched = "FETCHED".equals(source.path("status").asText())
+                            && nullOrInstant(source.get("fetchedAt"))
+                            && source.get("fetchedAt") != null
+                            && !source.get("fetchedAt").isNull()
+                            && source.path("contentDigest").isTextual()
+                            && SHA256_DIGEST
+                                    .matcher(source.path("contentDigest").asText())
+                                    .matches()
+                            && !placeholderDigest(source.path("contentDigest").asText())
+                            && source.path("excerpt").isTextual()
+                            && !source.path("excerpt").asText().isBlank();
+                    if (!fetched) {
+                        if ("FETCHED".equals(source.path("status").asText())) source.put("status", "UNKNOWN");
+                        source.putNull("fetchedAt");
+                        source.putNull("contentDigest");
+                        source.put("excerpt", "");
+                    }
                 }
                 fetchedBySource.put(sourceId, fetched);
                 canonicalSources.add(source);
@@ -701,40 +782,99 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         }
         root.set("sources", canonicalSources);
 
-        ArrayNode canonicalClaims = JSON.createArrayNode();
-        LinkedHashSet<String> claimIds = new LinkedHashSet<>();
-        for (JsonNode candidate : root.path("claims")) {
-            if (!(candidate instanceof ObjectNode claim)) continue;
-            String claimId = namespacedStableId(taskId, claim.path("claimId").asText());
-            if (claimId.isBlank() || !claimIds.add(claimId)) continue;
-            claim.put("claimId", claimId);
-            if (claim.path("limitations").isArray()) {
-                String limitations = java.util.stream.StreamSupport.stream(
-                                claim.path("limitations").spliterator(), false)
-                        .map(JsonNode::asText)
-                        .filter(text -> !text.isBlank())
-                        .collect(java.util.stream.Collectors.joining("; "));
-                claim.put("limitations", limitations);
+        if (root.has("claims")) {
+            ArrayNode canonicalClaims = JSON.createArrayNode();
+            LinkedHashSet<String> claimIds = new LinkedHashSet<>();
+            for (JsonNode candidate : root.path("claims")) {
+                if (!(candidate instanceof ObjectNode claim)) continue;
+                String claimId = namespacedStableId(taskId, claim.path("claimId").asText());
+                if (claimId.isBlank() || !claimIds.add(claimId)) continue;
+                claim.put("claimId", claimId);
+                if (claim.path("limitations").isArray()) {
+                    String limitations = java.util.stream.StreamSupport.stream(
+                                    claim.path("limitations").spliterator(), false)
+                            .map(JsonNode::asText)
+                            .filter(text -> !text.isBlank())
+                            .collect(java.util.stream.Collectors.joining("; "));
+                    claim.put("limitations", limitations);
+                }
+                // Normalized Task results intentionally carry no verbatim quotations. Enforce the required empty
+                // placeholder even when the model omits it, instead of rejecting otherwise usable evidence.
+                claim.putArray("quotedSpans");
+                LinkedHashSet<String> references = new LinkedHashSet<>();
+                rewriteSourceReferences(claim, "supportingSourceIds", sourceAliases, fetchedBySource, references);
+                rewriteSourceReferences(claim, "opposingSourceIds", sourceAliases, fetchedBySource, references);
+                if (references.isEmpty()) continue;
+                if (references.stream().anyMatch(sourceId -> !fetchedBySource.getOrDefault(sourceId, false))) {
+                    claim.put("unverified", true);
+                }
+                canonicalClaims.add(claim);
             }
-            // Normalized Task results intentionally carry no verbatim quotations. Enforce the required empty
-            // placeholder even when the model omits it, instead of rejecting otherwise usable evidence.
-            claim.putArray("quotedSpans");
-            LinkedHashSet<String> references = new LinkedHashSet<>();
-            rewriteSourceReferences(claim, "supportingSourceIds", sourceAliases, fetchedBySource, references);
-            rewriteSourceReferences(claim, "opposingSourceIds", sourceAliases, fetchedBySource, references);
-            if (references.isEmpty()) continue;
-            if (references.stream().anyMatch(sourceId -> !fetchedBySource.getOrDefault(sourceId, false))) {
-                claim.put("unverified", true);
-            }
-            canonicalClaims.add(claim);
+            root.set("claims", canonicalClaims);
         }
-        root.set("claims", canonicalClaims);
+
+        if (root.has("findings")) {
+            ArrayNode canonicalFindings = JSON.createArrayNode();
+            LinkedHashSet<String> findingIds = new LinkedHashSet<>();
+            for (JsonNode candidate : root.path("findings")) {
+                if (!(candidate instanceof ObjectNode finding)) continue;
+                String findingId = namespacedStableId(taskId, finding.path("findingId").asText());
+                if (findingId.isBlank() || !findingIds.add(findingId)) continue;
+                finding.put("findingId", findingId);
+                if (finding.path("limitations").isArray()) {
+                    String limitations = java.util.stream.StreamSupport.stream(
+                                    finding.path("limitations").spliterator(), false)
+                            .map(JsonNode::asText)
+                            .filter(text -> !text.isBlank())
+                            .collect(java.util.stream.Collectors.joining("; "));
+                    finding.put("limitations", limitations);
+                }
+                if (!finding.path("keyParameters").isArray()) {
+                    ArrayNode params = JSON.createArrayNode();
+                    if (finding.path("keyParameters").isTextual()
+                            && !finding.path("keyParameters").asText().isBlank()) {
+                        for (String param :
+                                finding.path("keyParameters").asText().split("[,;\\n]+")) {
+                            if (!param.isBlank()) params.add(param.trim());
+                        }
+                    }
+                    finding.set("keyParameters", params);
+                }
+                LinkedHashSet<String> references = new LinkedHashSet<>();
+                rewriteSourceReferences(finding, "supportingSourceIds", sourceAliases, fetchedBySource, references);
+                rewriteSourceReferences(finding, "opposingSourceIds", sourceAliases, fetchedBySource, references);
+                if (references.isEmpty()) continue;
+                if (references.stream().anyMatch(sourceId -> !fetchedBySource.getOrDefault(sourceId, false))
+                        || references.size() < 2) {
+                    finding.put("unverified", true);
+                }
+                canonicalFindings.add(finding);
+            }
+            root.set("findings", canonicalFindings);
+        }
+
+        if ("pa.research-task-result/v2".equals(root.path("schemaVersion").asText())) {
+            if (!root.hasNonNull("taskSummary") && root.hasNonNull("brief")) {
+                root.set("taskSummary", root.get("brief"));
+                root.remove("brief");
+            }
+        }
+
         if (root.path("limitsUsed") instanceof ObjectNode limits) {
             long fetched = fetchedBySource.values().stream()
                     .filter(Boolean::booleanValue)
                     .count();
             limits.put("sources", canonicalSources.size());
-            limits.put("fetchCalls", Math.max(limits.path("fetchCalls").asInt(0), fetched));
+            if (completedFetches != null) {
+                limits.put("fetchCalls", (int) fetched);
+                long totalBytes = completedFetches.stream()
+                        .filter(ResearchFetchEvidence::successful)
+                        .mapToLong(ResearchFetchEvidence::contentCharacters)
+                        .sum();
+                limits.put("contentBytes", (int) Math.min(totalBytes, 2_000_000));
+            } else {
+                limits.put("fetchCalls", Math.max(limits.path("fetchCalls").asInt(0), fetched));
+            }
         }
     }
 
@@ -823,14 +963,27 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                             || placeholderDigest(source.path("contentDigest").asText())
                             || source.path("excerpt").asText().isBlank())) return false;
         }
-        LinkedHashSet<String> claimIds = new LinkedHashSet<>();
-        for (JsonNode claim : root.path("claims")) {
-            String claimId = claim.path("claimId").asText();
-            if (!STABLE_EVIDENCE_ID.matcher(claimId).matches() || !claimIds.add(claimId)) return false;
-            LinkedHashSet<String> references = new LinkedHashSet<>();
-            claim.path("supportingSourceIds").forEach(value -> references.add(value.asText()));
-            claim.path("opposingSourceIds").forEach(value -> references.add(value.asText()));
-            if (references.isEmpty() || !sourceIds.containsAll(references)) return false;
+        if (root.has("findings")) {
+            LinkedHashSet<String> findingIds = new LinkedHashSet<>();
+            for (JsonNode finding : root.path("findings")) {
+                String findingId = finding.path("findingId").asText();
+                if (!STABLE_EVIDENCE_ID.matcher(findingId).matches() || !findingIds.add(findingId)) return false;
+                LinkedHashSet<String> references = new LinkedHashSet<>();
+                finding.path("supportingSourceIds").forEach(value -> references.add(value.asText()));
+                finding.path("opposingSourceIds").forEach(value -> references.add(value.asText()));
+                if (references.isEmpty() || !sourceIds.containsAll(references)) return false;
+            }
+        }
+        if (root.has("claims")) {
+            LinkedHashSet<String> claimIds = new LinkedHashSet<>();
+            for (JsonNode claim : root.path("claims")) {
+                String claimId = claim.path("claimId").asText();
+                if (!STABLE_EVIDENCE_ID.matcher(claimId).matches() || !claimIds.add(claimId)) return false;
+                LinkedHashSet<String> references = new LinkedHashSet<>();
+                claim.path("supportingSourceIds").forEach(value -> references.add(value.asText()));
+                claim.path("opposingSourceIds").forEach(value -> references.add(value.asText()));
+                if (references.isEmpty() || !sourceIds.containsAll(references)) return false;
+            }
         }
         return true;
     }
@@ -948,47 +1101,44 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         Objects.requireNonNull(deepResearchSkill);
         return """
                 Convert the completed research notes below into exactly one JSON object matching
-                pa.research-task-result/v1. Produce compact JSON only, without Markdown fences or commentary. Select
-                at most 6 strongest sources and 10 decision-relevant claims. Keep brief under 4000 characters, each
-                title under 140 characters, each claim under 3000 characters (retaining core technical parameters,
-                mechanism distinctions, and causal chains), each limitation under 1000 characters, and unresolvedQuestions
-                to at most 10 items. Set every claim.quotedSpans to an empty JSON array.
+                pa.research-task-result/v2. Produce compact JSON only, without Markdown fences or commentary. Select
+                at most 6 strongest sources and at most 10 decision-relevant findings. Keep taskSummary under 8000 characters,
+                each finding title under 200 characters, mechanism under 4000 characters (retaining core technical parameters,
+                mechanism distinctions, and causal chains), keyParameters to at most 20 items, evidenceSummary under 4000
+                characters, implications under 3000 characters, limitations under 2000 characters, and unresolvedQuestions
+                to at most 10 items.
 
-                Required exact top-level fields are schemaVersion, brief, queries, sources, claims, artifactRefs,
-                unresolvedQuestions, stopReason, and limitsUsed. Each query has only query and phase. Each source has
+                Required exact top-level fields are schemaVersion, taskSummary, queries, findings, sources, artifactRefs,
+                unresolvedQuestions, stopReason, and limitsUsed. schemaVersion must be pa.research-task-result/v2. Each
+                query has only query and phase. Each finding has exactly findingId, title, mechanism, keyParameters,
+                evidenceSummary, implications, limitations, supportingSourceIds, and opposingSourceIds. Each source has
                 exactly sourceId, locator, normalizedLocator, locatorDigest, title, safetyType, fetchedAt, publishedAt,
-                status, excerpt, and contentDigest. Each claim has exactly claimId, claim, supportingSourceIds,
-                opposingSourceIds, limitations, unverified, and quotedSpans. artifactRefs must be empty. limitsUsed has
-                exactly searchCalls, fetchCalls, sources, and contentBytes. Use lower-case kebab-case stable IDs.
-                To make evidence identity Mission-wide, prefix every sourceId and claimId with `%s--`; references in
+                status, excerpt, and contentDigest. artifactRefs must be empty. limitsUsed has exactly searchCalls,
+                fetchCalls, sources, and contentBytes. Use lower-case kebab-case stable IDs.
+                To make evidence identity Mission-wide, prefix every sourceId and findingId with `%s--`; references in
                 supportingSourceIds and opposingSourceIds must use the same prefixed source IDs.
 
                 Use only these exact enum values:
                 - query.phase: DISCOVER, DEEPEN, or CROSS_CHECK;
                 - source.safetyType: PUBLIC_WEB, or DEVELOPMENT_STUB only for an explicit local fixture;
-                - source.status: FETCHED, INACCESSIBLE, STALE, UNKNOWN, CONFLICT, UNDATED, or UNSAFE;
                 - stopReason: SUFFICIENT_EVIDENCE, SOURCE_LIMIT, CONTENT_LIMIT, TIME_LIMIT, TOOL_LIMIT,
                   NO_MORE_SAFE_SOURCES, or CANCELLED.
-                artifactRefs and every claim.quotedSpans must be JSON arrays, never objects.
+                artifactRefs, keyParameters, supportingSourceIds, and opposingSourceIds must be JSON arrays, never objects.
 
-                Preserve only evidence present in the notes. Do not invent a source, locator, quote, date, or claim.
-                Encode fetchedAt and publishedAt as UTC ISO-8601 instants such as 2026-08-10T00:00:00Z. When a source
-                provides only a publication date, use UTC midnight for that same date; never infer a different date.
+                Preserve only evidence present in the notes. Do not invent a source, locator, date, or finding.
+                Encode publishedAt as UTC ISO-8601 instant such as 2026-08-10T00:00:00Z. When a source provides only
+                a publication date, use UTC midnight for that same date; never infer a different date.
                 Summarize the explicit research question in queries; when exact Tool counts are absent, use zero rather
-                than fabricating counts. Source identity is finalized by the trusted Server: copy locator into
-                normalizedLocator and use sha256:%s as the locatorDigest placeholder. When a source was retrieved from
-                a successful page fetch in the Session, set status to FETCHED, provide an excerpt (1-2 sentences capturing
-                core findings), set fetchedAt to the session date or publication date, and allow claims supported by it
-                to be verified (unverified=false). If a locator was only discovered in search results without successful
-                page retrieval, or if page retrieval failed, set status to UNKNOWN, fetchedAt and contentDigest to null,
-                excerpt to an empty string, and every dependent claim to unverified. Mark all other insufficiently
-                supported claims as unverified and list unresolved gaps.
+                than fabricating counts. Source identity and fetch facts are finalized by the trusted server: copy locator
+                into normalizedLocator, set locatorDigest to sha256:%s placeholder, set status to UNKNOWN, fetchedAt and
+                contentDigest to null, and provide an excerpt (1-2 sentences capturing core findings). The server authoritatively
+                validates completed page fetches against the Session journal and verifies findings.
 
                 A successful search result with a public HTTP(S) locator is usable discovery evidence even when a
                 later fetch failed. Keep up to the strongest such locators as UNKNOWN sources; do not discard every
-                source merely because full-page fetching was unavailable. Do not create a factual claim unless its
+                source merely because full-page fetching was unavailable. Do not create a finding unless its
                 source references close within this result. When the Task selects or freezes a concrete case, company,
-                product, event, or other subject, the brief must explicitly name the selected subject if earlier Tool
+                product, event, or other subject, the taskSummary must explicitly name the selected subject if earlier Tool
                 results identify one. If no subject can be selected, say that explicitly instead of implying success.
 
                 The frozen Task objective below is authoritative. This normalization Run continues the same source
@@ -996,7 +1146,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 final notes contain serialized DSML/XML/function Tool-call markup, ignore the markup itself and recover
                 evidence only from the earlier Tool results. Never substitute another company, product, event, region,
                 or time period. If the Session contains no usable evidence for the frozen objective, return no sources
-                and no claims, keep the brief about the frozen objective, and state the evidence gap explicitly.
+                and no findings, keep the taskSummary about the frozen objective, and state the evidence gap explicitly.
 
                 Frozen Task objective:
                 %s
@@ -1214,19 +1364,21 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     static String standardSynthesisPrompt(MissionSynthesisIntent intent) {
         return """
                 [mission-synthesis]
-                Produce exactly one JSON object matching pa.mission-final-result/v1. Return JSON only: no Markdown
+                Produce exactly one JSON object matching pa.mission-final-result/v2. Return JSON only: no Markdown
                 fence, prose prefix, suffix, or second JSON value. Use this exact top-level shape and field names:
-                {"schemaVersion":"pa.mission-final-result/v1","directAnswer":"...",
-                "completedItems":["..."],"failedItems":[],"artifactRefs":[],"sourceRefs":["..."],
-                "unverifiedClaims":["..."],"unresolvedQuestions":["..."],"residualRisks":["..."],
-                "completionKind":"COMPLETE"}.
+                {"schemaVersion":"pa.mission-final-result/v2","directAnswer":"...",
+                "answerMarkdown":"...","completedItems":["..."],"failedItems":[],"artifactRefs":[],
+                "sourceRefs":["..."],"unverifiedClaims":["..."],"unresolvedQuestions":["..."],
+                "residualRisks":["..."],"completionKind":"COMPLETE"}.
 
-                All listed fields are required. directAnswer must be a non-empty string. The seven item collections
-                must be JSON arrays of strings. artifactRefs must always be an empty JSON array because only code can
-                publish Artifacts. completionKind must be COMPLETE exactly when failedItems is empty and PARTIAL
-                exactly when failedItems is non-empty. Do not add result, missionId, missionObjective, missionMode,
-                sources, nested report wrappers, or any other top-level field. Preserve uncertainty in
-                unverifiedClaims, unresolvedQuestions, and residualRisks instead of claiming unsupported certainty.
+                All listed fields are required. directAnswer must be a concise 1-3 sentence executive conclusion.
+                answerMarkdown must be a full, comprehensive answer in Markdown format, with thorough analysis, steps,
+                comparisons, and conclusions (not truncated or over-compressed). The seven item collections must be
+                JSON arrays of strings. artifactRefs must always be an empty JSON array because only code can publish
+                Artifacts. completionKind must be COMPLETE exactly when failedItems is empty and PARTIAL exactly when
+                failedItems is non-empty. Do not add result, missionId, missionObjective, missionMode, sources, nested
+                report wrappers, or any other top-level field. Preserve uncertainty in unverifiedClaims,
+                unresolvedQuestions, and residualRisks instead of claiming unsupported certainty.
 
                 Frozen Mission ID: %s
                 Mission mode: %s
@@ -1253,19 +1405,20 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         return """
                 [mission-synthesis]
                 This is the single bounded deterministic schema repair attempt. Convert the rejected output into
-                exactly one pa.mission-final-result/v1 JSON object. Return JSON only: no Markdown fence, prose prefix,
+                exactly one pa.mission-final-result/v2 JSON object. Return JSON only: no Markdown fence, prose prefix,
                 suffix, or second JSON value. Preserve supported content from the rejected output and authoritative
                 Task results, but do not invent facts, sources, failures, or Artifact references.
 
                 Required exact top-level shape:
-                {"schemaVersion":"pa.mission-final-result/v1","directAnswer":"...",
-                "completedItems":["..."],"failedItems":[],"artifactRefs":[],"sourceRefs":["..."],
-                "unverifiedClaims":["..."],"unresolvedQuestions":["..."],"residualRisks":["..."],
-                "completionKind":"COMPLETE"}.
+                {"schemaVersion":"pa.mission-final-result/v2","directAnswer":"...",
+                "answerMarkdown":"...","completedItems":["..."],"failedItems":[],"artifactRefs":[],
+                "sourceRefs":["..."],"unverifiedClaims":["..."],"unresolvedQuestions":["..."],
+                "residualRisks":["..."],"completionKind":"COMPLETE"}.
 
-                All fields are required. directAnswer must be non-empty. The seven item collections must contain only
-                strings. artifactRefs must be empty. completionKind must be COMPLETE exactly when failedItems is empty
-                and PARTIAL exactly when failedItems is non-empty. Do not add any other top-level field.
+                All fields are required. directAnswer must be a concise 1-3 sentence executive conclusion.
+                answerMarkdown must be a comprehensive answer in Markdown format. The seven item collections must
+                contain only strings. artifactRefs must be empty. completionKind must be COMPLETE exactly when
+                failedItems is empty and PARTIAL exactly when failedItems is non-empty. Do not add any other top-level field.
 
                 Frozen Mission ID: %s
                 Mission objective: %s
@@ -1356,9 +1509,9 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             String taskId = intent.completedTaskIds().get(index);
             String brief = "Settled research evidence was preserved for this task.";
             try {
-                String candidate = JSON.readTree(intent.taskResults().get(index))
-                        .path("brief")
-                        .asText();
+                JsonNode taskNode = JSON.readTree(intent.taskResults().get(index));
+                String candidate = taskNode.path("taskSummary").asText();
+                if (candidate.isBlank()) candidate = taskNode.path("brief").asText();
                 if (!candidate.isBlank()) brief = candidate;
             } catch (Exception ignored) {
                 // The deterministic publisher will retain the precise schema failure.
@@ -1565,7 +1718,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             itemNo++;
             try {
                 JsonNode task = JSON.readTree(encoded);
-                String brief = task.path("brief").asText();
+                String brief = task.path("taskSummary").asText();
+                if (brief.isBlank()) brief = task.path("brief").asText();
                 if (!brief.isBlank()) {
                     if (!answer.isEmpty()) answer.append("\n\n");
                     answer.append("### Research item ")
@@ -1580,6 +1734,11 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 task.path("claims").forEach(claim -> {
                     if (claim.path("unverified").asBoolean()) {
                         unverifiedClaims.add(claim.path("claimId").asText());
+                    }
+                });
+                task.path("findings").forEach(finding -> {
+                    if (finding.path("unverified").asBoolean()) {
+                        unverifiedClaims.add(finding.path("findingId").asText());
                     }
                 });
                 task.path("unresolvedQuestions").forEach(value -> unresolvedQuestions.add(value.asText()));

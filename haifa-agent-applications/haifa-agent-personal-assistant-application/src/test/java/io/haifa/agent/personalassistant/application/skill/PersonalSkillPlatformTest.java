@@ -52,7 +52,7 @@ class PersonalSkillPlatformTest {
                                 Set.of(SkillScope.PRODUCT, SkillScope.USER)));
 
         assertThat(binding.coordinate().declaredVersion())
-                .hasValueSatisfying(version -> assertThat(version.value()).isEqualTo("2.2.0"));
+                .hasValueSatisfying(version -> assertThat(version.value()).isEqualTo("2.3.0"));
         assertThat(binding.coordinate().source().sourceId()).isEqualTo("personal-assistant-bundled");
         assertThat(binding.metadata().toolHints())
                 .extracting(value -> value.value())
@@ -60,8 +60,8 @@ class PersonalSkillPlatformTest {
                         "web_search", "web_fetch", "utility_wikipedia_search", "utility_wikipedia_summary");
         assertThat(platform.bindingReferences().get("deep-research"))
                 .isEqualTo(binding.coordinate().externalForm())
-                .contains("product", "personal-assistant-bundled@1", "deep-research@2.2.0")
-                .endsWith("#sha256:695a0dee7112ea81068902dc9bb3181373170b097178f551a3d059dea89e1f6d");
+                .contains("product", "personal-assistant-bundled@1", "deep-research@2.3.0")
+                .endsWith("#sha256:46f3f3fc178eb0dd1f46f060870efcd4f9230b3ff53f9b3813edcaaebd33da3f");
         assertThat(content.readableResources())
                 .containsKeys(
                         "references/research-types.md",
@@ -70,10 +70,11 @@ class PersonalSkillPlatformTest {
                         "references/citation-rules.md",
                         "references/report-quality.md",
                         "schemas/research-task-result-v1.json",
+                        "schemas/research-task-result-v2.json",
                         "schemas/research-final-result-v1.json",
                         "schemas/research-delivery-v2.json",
                         "templates/report.md");
-        assertThat(content.readableResources()).hasSize(9);
+        assertThat(content.readableResources()).hasSize(10);
         assertThat(content.resource("references/research-types.md"))
                 .contains(
                         "TRUTHFULNESS_INVESTIGATION",
@@ -124,6 +125,8 @@ class PersonalSkillPlatformTest {
                 .hasSize(4_208)
                 .contains("pa.research-task-result/v1", "DISCOVER", "DEEPEN", "CROSS_CHECK")
                 .doesNotContain("sourceRole", "confidence");
+        assertThat(content.resource("schemas/research-task-result-v2.json"))
+                .contains("pa.research-task-result/v2", "DISCOVER", "DEEPEN", "CROSS_CHECK");
         assertThat(content.resource("schemas/research-delivery-v2.json"))
                 .hasSize(4_016)
                 .contains("pa.research-delivery/v2");

@@ -130,6 +130,7 @@ export type ParsedMissionFinalResult = {
   schemaVersion?: string;
   unsupportedVersion?: boolean;
   directAnswer?: string;
+  answerMarkdown?: string;
   completionKind?: string;
   degraded?: boolean;
   degradationReasons?: string[];
@@ -186,6 +187,7 @@ export function parseMissionFinalResult(value: string | null): ParsedMissionFina
     const schemaVersion = typeof parsed.schemaVersion === "string" ? parsed.schemaVersion : undefined;
     if (schemaVersion && ![
       "pa.mission-final-result/v1",
+      "pa.mission-final-result/v2",
       "pa.research-delivery/v2",
     ].includes(schemaVersion)) {
       return { schemaVersion, unsupportedVersion: true };
@@ -201,6 +203,7 @@ export function parseMissionFinalResult(value: string | null): ParsedMissionFina
     return {
       schemaVersion,
       directAnswer: typeof parsed.directAnswer === "string" ? parsed.directAnswer : undefined,
+      answerMarkdown: typeof parsed.answerMarkdown === "string" ? parsed.answerMarkdown : undefined,
       completionKind: typeof parsed.completionKind === "string" ? parsed.completionKind : undefined,
       degraded: typeof parsed.degraded === "boolean" ? parsed.degraded : undefined,
       degradationReasons: strings("degradationReasons"),
