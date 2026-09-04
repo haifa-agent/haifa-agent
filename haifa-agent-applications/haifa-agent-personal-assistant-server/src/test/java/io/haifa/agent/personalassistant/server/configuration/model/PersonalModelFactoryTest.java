@@ -171,8 +171,7 @@ class PersonalModelFactoryTest {
         assertThat(providers)
                 .extracting(PersonalAssistantProperties.ModelProvider::id)
                 .containsExactly("deepseek", "openai-codex", "aliyun-bailian", "siliconflow", "kimi", "zhipu");
-        assertThat(providers.get(2).bindingIds())
-                .contains("qwen3-vl-plus");
+        assertThat(providers.get(2).bindingIds()).contains("qwen3-vl-plus");
         assertThat(providers.get(3).bindingIds()).contains("siliconflow-glm-5-2");
     }
 
