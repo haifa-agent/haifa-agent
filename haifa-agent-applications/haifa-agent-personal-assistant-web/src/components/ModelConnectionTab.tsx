@@ -128,6 +128,7 @@ export function ModelConnectionTab({ client, providerId, onConnectionsChanged }:
   const operationGeneration = useRef(0);
   const mounted = useRef(true);
   const apiKeyInputRef = useRef<HTMLInputElement>(null);
+  const proxyEditorRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (providerId) {
@@ -179,6 +180,17 @@ export function ModelConnectionTab({ client, providerId, onConnectionsChanged }:
       }
     };
   }, [client, refresh]);
+
+  useEffect(() => {
+    if (!proxyTarget) return;
+    const frame = window.requestAnimationFrame(() => {
+      const scrollIntoView = proxyEditorRef.current?.scrollIntoView;
+      if (typeof scrollIntoView === "function") {
+        scrollIntoView.call(proxyEditorRef.current, { behavior: "smooth", block: "start" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [proxyTarget]);
 
   const save = async () => {
     if (!client.saveModelApiKey || !apiKey) return;
@@ -295,7 +307,7 @@ export function ModelConnectionTab({ client, providerId, onConnectionsChanged }:
       )}
 
       {proxyTarget && (
-        <section className="model-network-proxy-editor" aria-label={getProviderMeta(proxyTarget.providerId).displayName + " 网络代理"}>
+        <section ref={proxyEditorRef} className="model-network-proxy-editor" aria-label={getProviderMeta(proxyTarget.providerId).displayName + " 网络代理"}>
           <div className="model-network-proxy-heading">
             <Globe2 size={20} aria-hidden="true" />
             <div>
