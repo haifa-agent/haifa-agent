@@ -16,6 +16,7 @@ second catalog of SDK teaching snippets.
 | **PureJavaQuickstartApplication** | `pure-java-quickstart` | `HaifaAgentStarter`, `JavaTool`, ReAct Loop | `mvn exec:java -Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaQuickstartApplication` | Single-turn chat with typed weather tool execution |
 | **PureJavaStreamingApplication** | `pure-java-quickstart` | Real-time Streaming, `subscribeOutput`, Token Deltas | `mvn exec:java -Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaStreamingApplication` | Terminal typewriter-style streaming token output |
 | **PureJavaStructuredOutputApplication** | `pure-java-quickstart` | Structured Output, Java Record, Frozen Schema | `mvn exec:java -Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaStructuredOutputApplication` | Type-safe schema validation extracting a Java Record |
+| **PureJavaVisionApplication** | `pure-java-quickstart` | DeepSeek Vision, Direct Image Upload, Multimodal | `mvn exec:java '-Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaVisionApplication'` | Explains the story in an image uploaded directly without external URLs |
 | **SpringBootQuickstartApplication** | `spring-boot-quickstart` | Spring Boot, Tool Beans, REST API, Web SSE | `mvn -pl :haifa-agent-spring-boot-quickstart spring-boot:run` | Web service exposing REST and Server-Sent Events (SSE) |
 
 ---
@@ -233,7 +234,36 @@ Demonstrates extracting typed Java 17+ records from natural language prompts wit
 
 ---
 
-### 4. Spring Boot Web & SSE Streaming (`SpringBootQuickstartApplication`)
+### 4. Pure Java Multimodal Vision (`PureJavaVisionApplication`)
+
+Demonstrates multimodal vision understanding using the DeepSeek Vision model (`deepseek-v4-flash-vision-exp`) with **direct image data upload** (Base64 Data URI) without requiring external image URLs or public hosting.
+
+* **Image Fixture**: Bundles the Personal Assistant smoke test fixture `indoor-door-people.webp` (an indoor photo showing people and a door in an office corridor).
+* **Upload Method**: Raw bytes are loaded from the classpath, registered into `InMemoryImageStore`, and uploaded inline as standard OpenAI-compatible `data:image/webp;base64,...` payload.
+
+* **Linux / macOS**:
+  ```bash
+  ./mvnw -pl :haifa-agent-pure-java-quickstart compile \
+    -Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaVisionApplication exec:java
+  ```
+* **Windows PowerShell**:
+  ```powershell
+  & .\mvnw.cmd -pl :haifa-agent-pure-java-quickstart compile \
+    '-Dexec.mainClass=io.haifa.example.consumer.plain.PureJavaVisionApplication' exec:java
+  ```
+
+* **What you'll learn**:
+  * Configuring vision models with `HaifaAgentStarter.builder().defaultModel("deepseek-v4-flash-vision-exp")`.
+  * Using `InMemoryImageStore` to manage raw image bytes without external object storage.
+  * Passing image inputs via `agent.chat(prompt, imagePart).await()`.
+  * DeepSeek vision model's scene recognition, character interaction analysis, and narrative generation.
+* **Try asking**:
+  * `"请仔细观察这张图片，详细解释画面中正在发生的故事。"`
+  * `"Describe what the people are doing and the mood of the scene."`
+
+---
+
+### 5. Spring Boot Web & SSE Streaming (`SpringBootQuickstartApplication`)
 
 Demonstrates Spring Boot 3 auto-configuration, automatic Tool Bean discovery, and exposing REST + Server-Sent Events (SSE) endpoints.
 

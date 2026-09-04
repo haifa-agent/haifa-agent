@@ -39,4 +39,35 @@ class PureJavaQuickstartApplicationTest {
         assertEquals("WeatherForecastReport", requirement.responseName());
         assertNotNull(requirement.jsonSchema());
     }
+
+    @Test
+    void assemblesVisionConsumerWithoutCallingAProvider() throws Exception {
+        byte[] bytes = PureJavaVisionApplication.loadImageBytes();
+        assertNotNull(bytes);
+        assertEquals(24748, bytes.length);
+
+        var imageStore = new io.haifa.agent.sdk.api.InMemoryImageStore();
+        var imagePart = imageStore.store(bytes, "image/webp", "indoor-door-people.webp");
+        assertNotNull(imagePart);
+        assertEquals("image/webp", imagePart.mediaType());
+        assertEquals("indoor-door-people.webp", imagePart.originalFilename());
+        assertEquals(
+                "sha256:b02eb0f560b43ffd898a094db0aa36d54959513f807fed35d032cafe946ffbf5",
+                imagePart.sha256());
+
+        var resolved = imageStore.resolve(imagePart);
+        assertNotNull(resolved);
+        assertEquals("image/webp", resolved.mediaType());
+        assertEquals(bytes.length, resolved.bytes().length);
+
+        try (var agent = HaifaAgentStarter.builder()
+                .credentialEnvironmentVariable("PATH")
+                .name("vision-test-agent")
+                .defaultModel("deepseek-v4-flash-vision-exp")
+                .modelImageResolver(imageStore)
+                .build()) {
+            assertNotNull(agent.assembly());
+            assertNotNull(agent.runs());
+        }
+    }
 }

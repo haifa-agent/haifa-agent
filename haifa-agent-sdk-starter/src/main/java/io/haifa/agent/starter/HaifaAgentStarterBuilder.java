@@ -20,6 +20,7 @@ import io.haifa.agent.model.openai.OpenAiCompatibleModelConfiguration;
 import io.haifa.agent.sdk.api.AgentMetadata;
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
+import io.haifa.agent.sdk.api.ModelImageResolver;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.InMemoryConversationContribution;
@@ -70,6 +71,7 @@ public final class HaifaAgentStarterBuilder {
     private final List<JavaTool<?, ?>> tools = new ArrayList<>();
     private final Map<String, ModelRegistration> models = new LinkedHashMap<>();
     private String defaultModelId;
+    private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
 
     HaifaAgentStarterBuilder() {}
 
@@ -128,6 +130,17 @@ public final class HaifaAgentStarterBuilder {
         if (connectTimeout.isZero() || connectTimeout.isNegative()) {
             throw new IllegalArgumentException("connectTimeout must be positive");
         }
+        return this;
+    }
+
+    /**
+     * Sets the resolver used to map stored image references into model-accessible image bytes.
+     *
+     * @param value image resolver
+     * @return this builder
+     */
+    public HaifaAgentStarterBuilder modelImageResolver(ModelImageResolver value) {
+        modelImageResolver = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
@@ -215,6 +228,7 @@ public final class HaifaAgentStarterBuilder {
                 .contribute(model.contribution())
                 .contribute(persistenceContribution())
                 .contribute(conversationContribution())
+                .modelImageResolver(modelImageResolver)
                 .tools(tools);
         if (defaultInstructions) {
             builder.starterDefaultInstructionsInUse();
@@ -233,12 +247,22 @@ public final class HaifaAgentStarterBuilder {
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException(credentialEnvironmentVariable + " is not configured");
         }
+        String modelId = defaultModelId != null ? defaultModelId : MODEL_ID;
+        boolean isVision = modelId.contains("vision");
+        Set<ModelCapability> capabilities = isVision
+                ? Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT)
+                : Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.STRUCTURED_OUTPUT);
         ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
                 new ModelProviderId("deepseek"),
                 "2026-04-24",
-                new ModelDefinitionId(MODEL_ID),
+                new ModelDefinitionId(modelId),
                 "2026-04-24",
-                MODEL_ID,
+                modelId,
                 ADAPTER_TYPE,
                 VERSION,
                 ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
@@ -246,10 +270,7 @@ public final class HaifaAgentStarterBuilder {
                 ENDPOINT,
                 new CredentialRef("env://" + credentialEnvironmentVariable),
                 false,
-                Set.of(
-                        ModelCapability.TEXT_CHAT,
-                        ModelCapability.TOOL_CALLING,
-                        ModelCapability.STRUCTURED_OUTPUT),
+                capabilities,
                 1_048_576,
                 8_192,
                 Map.of(),
@@ -271,7 +292,9 @@ public final class HaifaAgentStarterBuilder {
                         ProductCapabilities.MODEL,
                         snapshot.configurationDigest(),
                         ProductProviderSuitability.PRODUCTION,
-                        "DeepSeek V4 Flash with Thinking disabled"),
+                        isVision
+                                ? "DeepSeek Vision with Thinking disabled"
+                                : "DeepSeek V4 Flash with Thinking disabled"),
                 Map.of(ModelAdapterCoordinate.from(snapshot), model),
                 snapshot,
                 Map.of(snapshot.modelId().value(), snapshot));
