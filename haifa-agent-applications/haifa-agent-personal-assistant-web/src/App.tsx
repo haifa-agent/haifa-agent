@@ -3630,6 +3630,18 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       state.selectedConversation?.activeRunId ||
       messageSubmissionInFlight.current
     ) return;
+    const conversationModel = state.selectedConversation?.model;
+    if (
+      conversationModel &&
+      (conversationModel.available === false || conversationModel.selectionCompatibility === "UNAVAILABLE")
+    ) {
+      dispatch({
+        type: "error",
+        message: "当前会话模型已下线，请先选择可用模型后再发送消息。",
+      });
+      openModelCenter("catalog");
+      return;
+    }
     messageSubmissionInFlight.current = true;
     const key = crypto.randomUUID();
     const sentImages = pendingImages.map((image) => ({ ...image }));
@@ -3758,6 +3770,20 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const selectedProviderConnected = modelConnections?.some(
     (connection) => connection.providerId === selectedModel?.providerId && connection.status === "AUTHENTICATED",
   );
+  const conversationModelSelection = state.selectedConversation?.model;
+  const isModelUnavailable = Boolean(
+    conversationModelSelection && (
+      conversationModelSelection.available === false ||
+      conversationModelSelection.selectionCompatibility === "UNAVAILABLE"
+    ),
+  );
+  const recommendedModel = configuredModels.find(
+    (model) => model.id === state.bootstrap?.defaultModelId && model.availability === "AVAILABLE",
+  ) ?? configuredModels.find((model) => model.availability === "AVAILABLE") ?? null;
+  const applyRecommendedModel = () => {
+    if (!recommendedModel || !state.selectedConversation) return;
+    selectModel(recommendedModel.id, recommendedModel.recommendedPreferences);
+  };
   const selectedModelPreferences = state.selectedConversation?.model.preferences
     ?? newModelPreferences
     ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId))?.recommendedPreferences
@@ -4035,6 +4061,14 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         dispatch({ type: "error", message: "请先选择一个已有会话，再从该会话发起 Deep Research Mission。" });
         return;
       }
+      if (isModelUnavailable) {
+        dispatch({
+          type: "error",
+          message: "当前会话模型已下线，请先选择可用模型后再发起 Deep Research Mission。",
+        });
+        openModelCenter("catalog");
+        return;
+      }
       if (!state.bootstrap?.capabilities.includes("mission") || !client.createMission) {
         dispatch({ type: "error", message: "当前 Server 未发布 Mission 能力。" });
         return;
@@ -4225,8 +4259,39 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         <main className="conversation">
           {modelConnections && selectedModel && !selectedProviderConnected && (
             <button type="button" className="model-connection-notice" onClick={() => openModelCenter("connections")}>
-              <KeyRound size={16} /><span><strong>尚未连接模型</strong><small>模型目录仍可浏览；首次使用前登录 ChatGPT 或保存 API Key。</small></span>
+              <KeyRound size={14} /><span><strong>尚未连接模型</strong><small>（{selectedModel.providerDisplayName || selectedModel.providerId} 凭据未就绪，点击前往连接）</small></span>
             </button>
+          )}
+          {isModelUnavailable && (
+            <div className="model-unavailable-notice" role="alert">
+              <div className="model-unavailable-notice-main">
+                <CircleAlert size={18} />
+                <div className="model-unavailable-notice-content">
+                  <strong>当前模型不可用</strong>
+                  <span>
+                    原模型（{state.selectedConversation?.model.model.displayName || state.selectedConversation?.model.model.id}）已下线或不在可用列表中。请选择可用模型后再继续对话。
+                  </span>
+                </div>
+              </div>
+              <div className="model-unavailable-notice-actions">
+                {recommendedModel && (
+                  <button
+                    type="button"
+                    className="button model-unavailable-primary-button"
+                    onClick={applyRecommendedModel}
+                  >
+                    使用推荐模型（{recommendedModel.displayName}）
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="button model-unavailable-secondary-button"
+                  onClick={() => openModelCenter("catalog")}
+                >
+                  选择其他模型
+                </button>
+              </div>
+            </div>
           )}
           <div className="conversation-heading">
             <div><span className="eyebrow">PERSONAL ASSISTANT</span><h1>{state.selectedConversation?.displayName ?? "新会话"}</h1></div>
@@ -4810,11 +4875,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={runActive ? "当前任务运行中" : composerMode === "DEEP_RESEARCH" ? "描述调研目标，Enter 打开 Mission 确认页" : "输入消息，Enter 发送"}
+                placeholder={runActive ? "当前任务运行中" : isModelUnavailable ? "当前模型已下线，请先选择可用模型" : composerMode === "DEEP_RESEARCH" ? "描述调研目标，Enter 打开 Mission 确认页" : "输入消息，Enter 发送"}
                 rows={4}
               />
             </label>
-            <span className="image-input-hint">{composerMode === "DEEP_RESEARCH" ? "将打开 Mission 确认页" : audioCapable ? "支持原生图片、音频与 Deep Research" : imageCapable ? "支持图片与 Deep Research" : "点击 + 使用 Deep Research"}</span>
+            <span className="image-input-hint">{isModelUnavailable ? "当前模型不可用，请重新选择模型后再发送消息" : composerMode === "DEEP_RESEARCH" ? "将打开 Mission 确认页" : audioCapable ? "支持原生图片、音频与 Deep Research" : imageCapable ? "支持图片与 Deep Research" : "点击 + 使用 Deep Research"}</span>
             {failedUserTurn && (
               <button
                 type="button"

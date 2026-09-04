@@ -6,7 +6,7 @@ displayName: DeepSeek V4 Flash Vision Exp
 status: ACTIVE
 apiStyle: openai-chat-completions
 dialect: deepseek-openai-chat
-capabilities: [TEXT_CHAT, IMAGE_UPLOAD_INPUT, IMAGE_URL_INPUT]
+capabilities: [TEXT_CHAT, IMAGE_UPLOAD_INPUT, IMAGE_URL_INPUT, TOOL_CALLING]
 profile:
   version: "2.0"
   reasoningBehavior: NONE

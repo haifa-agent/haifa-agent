@@ -18,7 +18,8 @@ public record PersonalAssistantSmokeCase(String caseId, String title, String mod
     }
 
     private static String text(String value, String field) {
-        String normalized = Objects.requireNonNull(value, field + " must not be null").trim();
+        String normalized =
+                Objects.requireNonNull(value, field + " must not be null").trim();
         if (normalized.isEmpty()) throw new IllegalArgumentException(field + " must not be blank");
         return normalized;
     }

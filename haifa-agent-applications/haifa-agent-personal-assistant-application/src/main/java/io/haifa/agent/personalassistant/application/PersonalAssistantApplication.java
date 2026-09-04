@@ -620,7 +620,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 value, preference.userPreferences(), preference.revision(), available, compatibility);
     }
 
-    private static PersonalModelOption unavailableModelOption(String modelId) {
+    static PersonalModelOption unavailableModelOption(String modelId) {
         return new PersonalModelOption(
                 modelId,
                 "unavailable:" + modelId,
@@ -647,20 +647,32 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                                 true,
                                 List.of(PersonalResponseMode.RECOMMENDED),
                                 PersonalResponseMode.RECOMMENDED,
-                                "",
-                                ""),
+                                "Unavailable",
+                                "Configured model is no longer available in the catalog."),
                         new PersonalModelControls.ReasoningEffortControl(
-                                "reasoningEffort", false, true, List.of(), null, "", ""),
+                                "reasoningEffort",
+                                false,
+                                true,
+                                List.of(),
+                                null,
+                                "Unavailable",
+                                "Configured model is no longer available in the catalog."),
                         new PersonalModelControls.ResponseLengthControl(
                                 "responseLength",
                                 false,
                                 true,
                                 List.of(PersonalResponseLength.RECOMMENDED),
                                 PersonalResponseLength.RECOMMENDED,
-                                "",
-                                ""),
+                                "Unavailable",
+                                "Configured model is no longer available in the catalog."),
                         new PersonalModelControls.ApiStyleControl(
-                                "apiStyle", false, true, List.of(modelId), modelId, "", "")),
+                                "apiStyle",
+                                false,
+                                true,
+                                List.of(modelId),
+                                modelId,
+                                "Unavailable",
+                                "Configured model is no longer available in the catalog.")),
                 new PersonalModelPreferences(
                         PersonalResponseMode.RECOMMENDED, Optional.empty(), PersonalResponseLength.RECOMMENDED),
                 Optional.empty());

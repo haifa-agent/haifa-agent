@@ -8,7 +8,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class PersonalAssistantSmokeSuiteManifestLoaderTest {
-    @TempDir Path temporaryDirectory;
+    @TempDir
+    Path temporaryDirectory;
 
     @Test
     void loadsOnlyThePersonalAssistantSmokeSuiteTypeAndPublicCaseIds() throws Exception {
@@ -29,8 +30,8 @@ class PersonalAssistantSmokeSuiteManifestLoaderTest {
                     blocking: true
                 """);
 
-        PersonalAssistantSmokeSuiteManifest manifest = new PersonalAssistantSmokeSuiteManifestLoader()
-                .load(temporaryDirectory, "personal-assistant-smoke-v1");
+        PersonalAssistantSmokeSuiteManifest manifest =
+                new PersonalAssistantSmokeSuiteManifestLoader().load(temporaryDirectory, "personal-assistant-smoke-v1");
 
         assertEquals("personal-assistant-smoke", manifest.suiteType());
         assertEquals("PA-SM-01", manifest.cases().getFirst().caseId());

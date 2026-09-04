@@ -34,8 +34,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 @Tag("slow")
 class PersonalAssistantDeepSeekVisionLiveTest {
     private static final String MODEL_ID = "deepseek-v4-flash-vision-exp";
-    private static final String FIXTURE =
-            "fixtures/personal-assistant/deepseek-vision-live-v1/indoor-door-people.webp";
+    private static final String FIXTURE = "fixtures/personal-assistant/deepseek-vision-live-v1/indoor-door-people.webp";
     private static final String FIXTURE_SHA256 = "b02eb0f560b43ffd898a094db0aa36d54959513f807fed35d032cafe946ffbf5";
     private static final Path DATA = temporaryDirectory();
     private static final int MCP_PORT = freeMcpPort();
@@ -93,29 +92,29 @@ class PersonalAssistantDeepSeekVisionLiveTest {
         upload.put("kind", "upload");
         upload.put("imageId", imageId);
         JsonNode conversation = mapper.readTree(web.post()
-                        .uri("/api/v1/conversations")
-                        .header("X-Haifa-CSRF", "1")
-                        .header("Idempotency-Key", "vision-conversation-" + UUID.randomUUID())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .bodyValue(mapper.writeValueAsString(request))
-                        .exchange()
-                        .expectStatus()
-                        .isCreated()
-                        .expectBody()
-                        .returnResult()
-                        .getResponseBody());
+                .uri("/api/v1/conversations")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "vision-conversation-" + UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapper.writeValueAsString(request))
+                .exchange()
+                .expectStatus()
+                .isCreated()
+                .expectBody()
+                .returnResult()
+                .getResponseBody());
 
         String conversationId = conversation.path("id").asText();
         assertThat(conversationId).isNotBlank();
         awaitCompleted(web, conversation.path("activeRunId").asText());
         JsonNode turns = mapper.readTree(web.get()
-                        .uri("/api/v1/conversations/{conversationId}/turns", conversationId)
-                        .exchange()
-                        .expectStatus()
-                        .isOk()
-                        .expectBody()
-                        .returnResult()
-                        .getResponseBody());
+                .uri("/api/v1/conversations/{conversationId}/turns", conversationId)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .returnResult()
+                .getResponseBody());
         boolean affirmed = false;
         for (JsonNode turn : turns) {
             if ("ASSISTANT".equalsIgnoreCase(turn.path("role").asText())
@@ -130,16 +129,18 @@ class PersonalAssistantDeepSeekVisionLiveTest {
         assertThat(runId).isNotBlank();
         long deadline = System.nanoTime() + TERMINAL_TIMEOUT.toNanos();
         do {
-            JsonNode run = new ObjectMapper().readTree(web.get()
-                    .uri("/api/v1/runs/{runId}", runId)
-                    .exchange()
-                    .expectStatus()
-                    .isOk()
-                    .expectBody()
-                    .returnResult()
-                    .getResponseBody());
+            JsonNode run = new ObjectMapper()
+                    .readTree(web.get()
+                            .uri("/api/v1/runs/{runId}", runId)
+                            .exchange()
+                            .expectStatus()
+                            .isOk()
+                            .expectBody()
+                            .returnResult()
+                            .getResponseBody());
             if ("COMPLETED".equals(run.path("status").asText())) return;
-            if (Set.of("FAILED", "CANCELLED", "TIMEOUT").contains(run.path("status").asText())) {
+            if (Set.of("FAILED", "CANCELLED", "TIMEOUT")
+                    .contains(run.path("status").asText())) {
                 throw new AssertionError("live vision run did not complete");
             }
             Thread.sleep(200);
@@ -168,10 +169,10 @@ class PersonalAssistantDeepSeekVisionLiveTest {
         try {
             String runRoot = System.getenv("HAIFA_TEST_RUN_ROOT");
             if (runRoot == null || runRoot.isBlank()) {
-                return Files.createTempDirectory("haifa-personal-deepseek-vision-").toAbsolutePath();
+                return Files.createTempDirectory("haifa-personal-deepseek-vision-")
+                        .toAbsolutePath();
             }
-            return Files.createTempDirectory(
-                            Path.of(runRoot).toAbsolutePath().normalize(), "deepseek-vision-")
+            return Files.createTempDirectory(Path.of(runRoot).toAbsolutePath().normalize(), "deepseek-vision-")
                     .toAbsolutePath();
         } catch (IOException exception) {
             throw new ExceptionInInitializerError(exception);

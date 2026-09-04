@@ -57,7 +57,6 @@ public final class PersonalAssistantSmokeCatalog {
     }
 
     private static PersonalAssistantSmokeCase test(String caseId, String title, String selector) {
-        return new PersonalAssistantSmokeCase(
-                caseId, title, ":haifa-agent-personal-assistant-server", selector);
+        return new PersonalAssistantSmokeCase(caseId, title, ":haifa-agent-personal-assistant-server", selector);
     }
 }

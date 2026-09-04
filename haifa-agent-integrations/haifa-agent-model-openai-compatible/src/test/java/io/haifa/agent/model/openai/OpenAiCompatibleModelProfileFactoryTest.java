@@ -271,7 +271,11 @@ class OpenAiCompatibleModelProfileFactoryTest {
                 URI.create("https://api.deepseek.com"),
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
                 true,
-                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_UPLOAD_INPUT, ModelCapability.IMAGE_URL_INPUT),
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT,
+                        ModelCapability.TOOL_CALLING),
                 1_048_576,
                 393_216,
                 Map.of(),
