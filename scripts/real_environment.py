@@ -879,6 +879,10 @@ def backend_environment(
         environment["HAIFA_PERSONAL_BAILIAN_ENDPOINT"] = (
             f"https://{bailian[1]}.{bailian[2]}.maas.aliyuncs.com/compatible-mode/v1"
         )
+    if antigravity:
+        environment["HAIFA_ANTIGRAVITY_MODEL_ENDPOINT"] = antigravity.endpoint
+        environment["HAIFA_ANTIGRAVITY_PROXY_URL"] = antigravity.proxy
+        environment["HAIFA_ANTIGRAVITY_MODEL"] = antigravity.provider_model_id
     return environment
 
 
