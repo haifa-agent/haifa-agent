@@ -4258,7 +4258,29 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             </button>
           )}
           <div className="conversation-heading">
-            <div><span className="eyebrow">PERSONAL ASSISTANT</span><h1>{state.selectedConversation?.displayName ?? "新会话"}</h1></div>
+            <div>
+              <span className="eyebrow">PERSONAL ASSISTANT</span>
+              <div className="conversation-title-row">
+                <h1>{state.selectedConversation?.displayName ?? "新会话"}</h1>
+                {selectedModel && (
+                  <button
+                    type="button"
+                    className={`conversation-model-badge${isModelUnavailable ? " unavailable" : ""}${!selectedProviderConnected ? " unauthenticated" : ""}`}
+                    onClick={() => openModelCenter("catalog")}
+                    title={state.selectedConversation?.activeRunId ? "任务执行中，完成后可切换模型" : "当前对话模型，点击查看或切换"}
+                    aria-label={`当前模型：${selectedModel.modelDisplayName || selectedModel.displayName}，点击查看详情或切换模型`}
+                  >
+                    <Bot size={14} className="conversation-model-icon" aria-hidden="true" />
+                    <span className="conversation-model-name">{selectedModel.modelDisplayName || selectedModel.displayName}</span>
+                    <span className="conversation-model-provider">{selectedModel.providerDisplayName}</span>
+                    {selectedModelPreferences?.responseMode && selectedModelPreferences.responseMode !== "RECOMMENDED" && (
+                      <span className="conversation-model-mode">{responseModeLabels[selectedModelPreferences.responseMode]}</span>
+                    )}
+                    <ChevronDown size={12} className="conversation-model-arrow" aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            </div>
             {state.run && <span className="run-state">{statusLabel(state.run.status)}</span>}
           </div>
           {conversationMission && !missionTerminalStates.has(conversationMission.state) && (

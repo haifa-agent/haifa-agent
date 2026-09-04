@@ -1922,6 +1922,26 @@ describe("Personal Assistant application", () => {
     expect((composer as HTMLTextAreaElement).value).toBe("");
   });
 
+  it("displays the active conversation model badge in heading and opens model center on click", async () => {
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: flashModel.id,
+      models: [proModel, flashModel, bailianModel],
+    });
+
+    render(<App client={api} />);
+
+    await screen.findByRole("heading", { level: 1, name: "新会话" });
+    const badge = await screen.findByRole("button", { name: /当前模型：/ });
+    expect(badge).toBeTruthy();
+    expect(within(badge).getByText(flashModel.modelDisplayName)).toBeTruthy();
+    expect(within(badge).getByText(flashModel.providerDisplayName)).toBeTruthy();
+
+    fireEvent.click(badge);
+    expect(await screen.findByRole("dialog", { name: "模型与连接" })).toBeTruthy();
+  });
+
   it("closes the unified model center with Escape, the close button, and an outside pointer", async () => {
     const api = client();
     vi.mocked(api.bootstrap).mockResolvedValue({
