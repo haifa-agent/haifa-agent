@@ -5,9 +5,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.Base64;
 import java.time.Duration;
 import java.util.HexFormat;
 import java.util.Set;
@@ -37,6 +39,7 @@ class PersonalAssistantDeepSeekVisionLiveTest {
             "fixtures/personal-assistant/deepseek-vision-live-v1/indoor-door-people.webp";
     private static final String FIXTURE_SHA256 = "b02eb0f560b43ffd898a094db0aa36d54959513f807fed35d032cafe946ffbf5";
     private static final Path DATA = temporaryDirectory();
+    private static final int MCP_PORT = freeMcpPort();
     private static final Duration TERMINAL_TIMEOUT = Duration.ofMinutes(2);
 
     @Autowired
@@ -49,6 +52,10 @@ class PersonalAssistantDeepSeekVisionLiveTest {
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("haifa.personal.data-directory", () -> DATA.toString());
         registry.add("haifa.personal.default-model-id", () -> MODEL_ID);
+        registry.add("haifa.personal.continuation-key-base64", () -> Base64.getEncoder()
+                .encodeToString(new byte[32]));
+        registry.add("haifa.personal.execution.trusted-host-enabled", () -> "true");
+        registry.add("haifa.personal.mcp.port", () -> MCP_PORT);
     }
 
     @Test
@@ -169,6 +176,14 @@ class PersonalAssistantDeepSeekVisionLiveTest {
             return Files.createTempDirectory(
                             Path.of(runRoot).toAbsolutePath().normalize(), "deepseek-vision-")
                     .toAbsolutePath();
+        } catch (IOException exception) {
+            throw new ExceptionInInitializerError(exception);
+        }
+    }
+
+    private static int freeMcpPort() {
+        try (ServerSocket socket = new ServerSocket(0)) {
+            return socket.getLocalPort();
         } catch (IOException exception) {
             throw new ExceptionInInitializerError(exception);
         }
