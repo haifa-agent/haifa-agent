@@ -32,6 +32,11 @@ attempt, and log out. The Key exists only in component input state and is cleare
 is never placed in URL state, local storage, reducer snapshots, or telemetry. A missing connection produces a
 non-blocking startup notice—the model catalog remains independently visible.
 
+Every remote provider row in the same tab has a 网络代理 action. It offers only 跟随本机代理 and a one-shot
+unauthenticated http://host:port HTTP forward proxy entry; the saved address is never returned to the browser. The
+connection list exposes only the effective route mode (SYSTEM, STARTUP, or CUSTOM), and the UI does not offer direct
+routing, arbitrary endpoint editing, proxy credentials, PAC, SOCKS, or TLS-to-proxy configuration.
+
 The live Run card shows an evidence-based phase summary. It displays observed activity counts
 without presenting them as a percentage; when the Server supplies an authoritative Plan, it shows
 real Todo completion and the current or blocked step. Activity lifecycle events are merged by the

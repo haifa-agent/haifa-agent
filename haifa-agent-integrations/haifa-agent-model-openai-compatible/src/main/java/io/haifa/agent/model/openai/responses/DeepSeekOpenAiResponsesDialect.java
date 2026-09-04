@@ -6,6 +6,7 @@ import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -69,7 +70,9 @@ final class DeepSeekOpenAiResponsesDialect implements OpenAiResponsesDialect {
 
     @Override
     public Optional<Map<String, Object>> customizeReasoningInputItem(ModelMessage message) {
-        return message.reasoning().map(reasoning -> Map.of("type", "reasoning", "content", reasoning.toString()));
+        return message.reasoning()
+                .map(reasoning -> reasoning.use(content -> Map.<String, Object>of(
+                        "type", "reasoning", "content", List.of(Map.of("type", "reasoning_text", "text", content)))));
     }
 
     @Override

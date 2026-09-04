@@ -209,4 +209,18 @@ class PersonalModelOptionTest {
                             "Protocol style used to communicate with the model"));
         }
     }
+
+    @Test
+    void unavailableModelOptionConstructsValidOptionWithNonBlankControls() {
+        PersonalModelOption option = PersonalAssistantApplication.unavailableModelOption("retired-model");
+
+        assertThat(option.id()).isEqualTo("retired-model");
+        assertThat(option.availability()).isEqualTo("UNAVAILABLE");
+        assertThat(option.displayName()).contains("retired-model");
+        assertThat(option.controls().responseMode().effectiveSummary()).isNotBlank();
+        assertThat(option.controls().responseMode().helpText()).isNotBlank();
+        assertThat(option.controls().reasoningEffort().effectiveSummary()).isNotBlank();
+        assertThat(option.controls().responseLength().effectiveSummary()).isNotBlank();
+        assertThat(option.controls().apiStyle().effectiveSummary()).isNotBlank();
+    }
 }

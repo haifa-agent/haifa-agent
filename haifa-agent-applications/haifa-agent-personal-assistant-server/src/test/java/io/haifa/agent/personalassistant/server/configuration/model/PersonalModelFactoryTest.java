@@ -170,9 +170,29 @@ class PersonalModelFactoryTest {
 
         assertThat(providers)
                 .extracting(PersonalAssistantProperties.ModelProvider::id)
-                .containsExactly("deepseek", "openai-codex", "aliyun-bailian", "siliconflow", "kimi", "zhipu");
+                .containsExactly(
+                        "deepseek",
+                        "openai-codex",
+                        "aliyun-bailian",
+                        "siliconflow",
+                        "kimi",
+                        "zhipu",
+                        "google-antigravity");
+        assertThat(providers.get(2).endpoint())
+                .hasToString("https://default-workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
         assertThat(providers.get(2).bindingIds()).contains("qwen3-vl-plus");
         assertThat(providers.get(3).bindingIds()).contains("siliconflow-glm-5-2");
+        assertThat(providers.get(6).bindingIds()).contains("antigravity-gemini");
+
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(providers.getFirst(), providers.get(2), providers.get(6)),
+                "deepseek-chat-flash",
+                false,
+                new ObjectMapper(),
+                shell());
+        assertThat(platform.catalog().available())
+                .extracting(io.haifa.agent.personalassistant.application.PersonalModelOption::id)
+                .contains("qwen3-vl-plus", "antigravity-gemini");
     }
 
     @Test

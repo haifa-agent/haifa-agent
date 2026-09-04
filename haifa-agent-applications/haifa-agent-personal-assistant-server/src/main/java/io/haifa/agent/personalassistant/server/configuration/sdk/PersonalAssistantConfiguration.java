@@ -34,6 +34,8 @@ import io.haifa.agent.personalassistant.server.audio.PersonalAudioStore;
 import io.haifa.agent.personalassistant.server.configuration.execution.PersonalExecutionRuntime;
 import io.haifa.agent.personalassistant.server.configuration.mcp.PersonalMcpRuntime;
 import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelFactory;
+import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelProxySelector;
+import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelProxySettings;
 import io.haifa.agent.personalassistant.server.configuration.model.SqlitePersonalModelPreferenceStore;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.image.PersonalImageStore;
@@ -55,7 +57,6 @@ import io.haifa.agent.store.sqlite.SqliteSdkProductContributions;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
 import java.awt.Desktop;
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -67,6 +68,7 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Executors;
@@ -87,6 +89,17 @@ public class PersonalAssistantConfiguration {
         return new AntigravityProjectRegistry();
     }
 
+    @Bean
+    PersonalModelProxySettings personalModelProxySettings(PersonalAssistantProperties properties, ObjectMapper mapper) {
+        return new PersonalModelProxySettings(properties.modelProviders(), prepare(properties.dataDirectory()), mapper);
+    }
+
+    @Bean
+    ProxySelector personalModelProxySelector(
+            PersonalAssistantProperties properties, PersonalModelProxySettings settings) {
+        return PersonalModelProxySelector.from(properties.modelProviders(), settings, ProxySelector.getDefault());
+    }
+
     @Bean(destroyMethod = "close")
     PersonalMcpRuntime personalMcpRuntime(PersonalAssistantProperties properties, ObjectMapper mapper) {
         return new PersonalMcpRuntime(properties.mcp(), mapper);
@@ -97,13 +110,14 @@ public class PersonalAssistantConfiguration {
             PersonalAssistantProperties properties,
             ObjectMapper mapper,
             Clock personalClock,
-            AntigravityProjectRegistry antigravityProjects) {
+            AntigravityProjectRegistry antigravityProjects,
+            PersonalModelProxySettings proxySettings) {
         Map<String, String> environment = System.getenv();
         var store = FileLocalModelAuthStore.defaultStore(mapper);
         var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(environment);
         var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(environment);
-        HttpClient codexHttp = authenticationHttpClient(properties.modelProviders(), "openai-codex");
-        HttpClient antigravityHttp = authenticationHttpClient(properties.modelProviders(), "google-antigravity");
+        HttpClient codexHttp = authenticationHttpClient(proxySettings, "openai-codex");
+        HttpClient antigravityHttp = authenticationHttpClient(proxySettings, "google-antigravity");
         List<ExternalLoginMethod> methods = new java.util.ArrayList<>();
         codexRegistration.ifPresent(value -> methods.add(new CodexExternalLoginMethod(
                 value,
@@ -143,17 +157,12 @@ public class PersonalAssistantConfiguration {
         return new LocalModelAuthenticationService(store, coordinator, resolver, environment::get);
     }
 
-    static HttpClient authenticationHttpClient(
-            List<PersonalAssistantProperties.ModelProvider> providers, String providerId) {
-        var builder = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10));
-        providers.stream()
-                .filter(provider -> provider.id().equals(providerId))
-                .map(PersonalAssistantProperties.ModelProvider::proxy)
-                .filter(java.util.Objects::nonNull)
-                .findFirst()
-                .ifPresent(proxy -> builder.proxy(
-                        ProxySelector.of(InetSocketAddress.createUnresolved(proxy.getHost(), proxy.getPort()))));
-        return builder.build();
+    static HttpClient authenticationHttpClient(PersonalModelProxySettings settings, String providerId) {
+        return HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .proxy(Objects.requireNonNull(settings, "settings must not be null")
+                        .providerSelector(providerId, ProxySelector.getDefault()))
+                .build();
     }
 
     @Bean(destroyMethod = "close")
@@ -165,7 +174,8 @@ public class PersonalAssistantConfiguration {
             PersonalImageStore imageStore,
             PersonalAudioStore audioStore,
             LocalModelAuthenticationService modelAuthentication,
-            AntigravityProjectRegistry antigravityProjects) {
+            AntigravityProjectRegistry antigravityProjects,
+            ProxySelector personalModelProxySelector) {
         Path dataDirectory = prepare(properties.dataDirectory());
         byte[] key = decodeKey(properties.continuationKeyBase64());
         ModelContinuationProtector protector =
@@ -216,7 +226,8 @@ public class PersonalAssistantConfiguration {
                     antigravityProjects::resolve,
                     ref -> modelAuthentication
                             .findExternalAccountId(ref, CodexExternalLoginMethod.METHOD_ID)
-                            .map(CodexAccountIdentity::new));
+                            .map(CodexAccountIdentity::new),
+                    personalModelProxySelector);
             var modelPreferences = new SqlitePersonalModelPreferenceStore(
                     dataDirectory.resolve("personal-assistant.sqlite"),
                     properties.caller().tenant(),

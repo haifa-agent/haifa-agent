@@ -47,19 +47,25 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolExecutionError;
+import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
 import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import java.net.URI;
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -437,6 +443,170 @@ class ModelMessageAssemblerTest {
                 .satisfies(message -> {
                     assertThat(message.toolCalls()).singleElement();
                     assertThat(message.reasoning()).isEmpty();
+                });
+    }
+
+    @Test
+    void compressesCompletedPriorProviderToolGroupIntoNeutralSummaryWhenSwitchingProvider() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRunId previousRunId = new AgentRunId("run-previous");
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-1");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-tool-call-1");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                previousRunId,
+                new AgentStepId("step-1"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-1"),
+                "utility_search",
+                "1.0.0",
+                new ToolArguments("search.input", "1.0.0", Map.of("query", "haifa agent")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(Instant.parse("2026-07-21T00:00:01Z"));
+        var canonicalResult = new io.haifa.agent.core.tool.ToolResult(
+                true, "found 3 results for haifa agent", Map.of("count", 3), List.of(), List.of(), false);
+        call.complete(canonicalResult, Instant.parse("2026-07-21T00:00:02Z"));
+        store.appendToolCall(call);
+
+        ResolvedModelSnapshot deepSeekModel = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        AgentMessage assistant = store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("assistant-tool-call"),
+                sessionId,
+                Optional.of(previousRunId),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(
+                        new TextPart("Let me search for that.", "plain"),
+                        new ToolCallPart(toolCallId, correlationId, "utility_search", "1.0.0")),
+                Map.of("providerId", deepSeekModel.providerId().value()),
+                Instant.parse("2026-07-21T00:00:02Z")));
+        AgentMessage toolResult = message(
+                "tool-result",
+                sessionId,
+                previousRunId,
+                MessageRole.TOOL,
+                2,
+                List.of(new ToolResultPart(toolCallId, correlationId, canonicalResult.summary())));
+        AgentMessage user = message(
+                "next-user", sessionId, RUN_ID, MessageRole.USER, 3, List.of(new TextPart("summarize", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item("assistant", ContextItemType.MESSAGE, new MessageContextContent(assistant)),
+                        item("tool-result", ContextItemType.MESSAGE, new MessageContextContent(toolResult)),
+                        item("user", ContextItemType.MESSAGE, new MessageContextContent(user))),
+                List.of(),
+                budget(),
+                40);
+
+        ResolvedModelSnapshot openAiModel = ResolvedModelSnapshot.create(
+                new ModelProviderId("openai"),
+                "2026-07-21",
+                new ModelDefinitionId("gpt-4o"),
+                "2026-07-21",
+                "gpt-4o",
+                ModelApiStyles.OPENAI_RESPONSES_ADAPTER,
+                "1.0.0",
+                ModelApiStyles.OPENAI_RESPONSES,
+                "standard",
+                URI.create("https://api.openai.com"),
+                new CredentialRef("env://OPENAI_API_KEY"),
+                true,
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                128_000,
+                4_096,
+                Map.of(),
+                Map.of());
+
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context, openAiModel);
+
+        assertThat(messages).noneMatch(m -> m.role() == ModelMessageRole.TOOL);
+
+        List<ModelMessage> assistantMessages = messages.stream()
+                .filter(m -> m.role() == ModelMessageRole.ASSISTANT)
+                .toList();
+        assertThat(assistantMessages).singleElement().satisfies(msg -> {
+            assertThat(msg.toolCalls()).isEmpty();
+            assertThat(msg.content()).contains("Let me search for that.");
+            assertThat(msg.content()).contains("[tool-call: utility_search arguments: {\"query\": \"haifa agent\"}]");
+            assertThat(msg.content()).contains("[tool-result: utility_search]");
+            assertThat(msg.content()).contains("found 3 results for haifa agent");
+        });
+    }
+
+    @Test
+    void rejectsUnclosedPriorProviderToolGroupWhenSwitchingProvider() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRunId previousRunId = new AgentRunId("run-previous");
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-unclosed");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-tool-call-unclosed");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                previousRunId,
+                new AgentStepId("step-unclosed"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-unclosed"),
+                "utility_search",
+                "1.0.0",
+                new ToolArguments("search.input", "1.0.0", Map.of("query", "haifa unclosed")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        store.appendToolCall(call);
+
+        ResolvedModelSnapshot deepSeekModel = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        AgentMessage assistant = store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("assistant-tool-call-unclosed"),
+                sessionId,
+                Optional.of(previousRunId),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(toolCallId, correlationId, "utility_search", "1.0.0")),
+                Map.of("providerId", deepSeekModel.providerId().value()),
+                Instant.parse("2026-07-21T00:00:02Z")));
+        AgentMessage user = message(
+                "next-user", sessionId, RUN_ID, MessageRole.USER, 2, List.of(new TextPart("continue", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item("assistant", ContextItemType.MESSAGE, new MessageContextContent(assistant)),
+                        item("user", ContextItemType.MESSAGE, new MessageContextContent(user))),
+                List.of(),
+                budget(),
+                40);
+
+        ResolvedModelSnapshot openAiModel = ResolvedModelSnapshot.create(
+                new ModelProviderId("openai"),
+                "2026-07-21",
+                new ModelDefinitionId("gpt-4o"),
+                "2026-07-21",
+                "gpt-4o",
+                ModelApiStyles.OPENAI_RESPONSES_ADAPTER,
+                "1.0.0",
+                ModelApiStyles.OPENAI_RESPONSES,
+                "standard",
+                URI.create("https://api.openai.com"),
+                new CredentialRef("env://OPENAI_API_KEY"),
+                true,
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                128_000,
+                4_096,
+                Map.of(),
+                Map.of());
+
+        assertThatThrownBy(() -> new ModelMessageAssembler(store).assemble(RUN_ID, context, openAiModel))
+                .isInstanceOf(ModelContinuationException.class)
+                .satisfies(error -> {
+                    ModelContinuationException mce = (ModelContinuationException) error;
+                    assertThat(mce.failure()).isEqualTo(ModelContinuationFailure.CROSS_MODEL_UNCLOSED_TOOL_GROUP);
+                    assertThat(mce.getMessage()).contains("模型切换需要新会话或先完成原模型工具轮次");
                 });
     }
 

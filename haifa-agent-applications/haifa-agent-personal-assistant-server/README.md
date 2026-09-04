@@ -28,6 +28,13 @@ ChatGPT subscription login is disabled unless local compatibility testing explic
 `HAIFA_CODEX_LOCAL_COMPAT_TEST=true`, `HAIFA_CODEX_OAUTH_CLIENT_ID`, and `HAIFA_CODEX_ORIGINATOR`. No Client ID is built
 into the Server, and default tests never contact OpenAI.
 
+The model-connections/{providerId}/network-proxy endpoint saves a PA-local, non-secret route preference under the
+configured data directory; it never rewrites the Catalog, product YAML, endpoint, dialect, or credential store. A
+provider can either follow the system/startup route or use a custom, unauthenticated http://host:port HTTP forward
+proxy. That proxy can tunnel HTTPS model APIs through CONNECT; TLS-to-proxy (https://proxy-host:port), proxy
+credentials, PAC, SOCKS, paths, and query parameters are deliberately unsupported. The safe connection projection only
+reports SYSTEM, STARTUP, or CUSTOM, never the stored proxy address.
+
 Google Antigravity direct login follows the same local-development boundary. It is absent unless
 `HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true` and both `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_ID` and
 `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_SECRET` are injected. Account onboarding is independently disabled unless

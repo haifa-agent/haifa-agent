@@ -30,6 +30,36 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertEqual("kimi-secret", environment["KIMI_API_KEY"])
         self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_") for name in environment))
         self.assertFalse(any("_MODELS_" in name for name in environment))
+
+    def test_backend_environment_injects_bailian_runtime_configuration(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            root, root / "server", root / "web", root / "runtime", root / "runtime/data",
+            root / "runtime/logs", root / "runtime/last-start.json", root / "runtime/last-stop.json", root / "mvnw")
+        environment = real_environment.backend_environment(
+            "deepseek-secret", "deepseek-chat-flash", None, "aliyun-secret", "continuation-secret",
+            paths, root / "skills", None, bailian=("dashscope-secret", "ws-123", "cn-beijing"))
+        self.assertEqual("dashscope-secret", environment["DASHSCOPE_API_KEY"])
+        self.assertEqual("ws-123", environment["ALIYUN_BAILIAN_WORKSPACE_ID"])
+        self.assertEqual("cn-beijing", environment["ALIYUN_BAILIAN_REGION"])
+        self.assertEqual(
+            "https://ws-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            environment["HAIFA_PERSONAL_BAILIAN_ENDPOINT"],
+        )
+
+    def test_backend_environment_injects_antigravity_runtime_configuration(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            root, root / "server", root / "web", root / "runtime", root / "runtime/data",
+            root / "runtime/logs", root / "runtime/last-start.json", root / "runtime/last-stop.json", root / "mvnw")
+        environment = real_environment.backend_environment(
+            "deepseek-secret", "deepseek-chat-flash", None, "aliyun-secret", "continuation-secret",
+            paths, root / "skills", None, antigravity=real_environment.AntigravityConfiguration(
+                "https://cloudcode.test/v1", "gemini-test", "http://127.0.0.1:9999"))
+        self.assertEqual("https://cloudcode.test/v1", environment["HAIFA_ANTIGRAVITY_MODEL_ENDPOINT"])
+        self.assertEqual("http://127.0.0.1:9999", environment["HAIFA_ANTIGRAVITY_PROXY_URL"])
+        self.assertEqual("gemini-test", environment["HAIFA_ANTIGRAVITY_MODEL"])
+
     @staticmethod
     def write_server_jar(path: Path, payload: bytes = b"application") -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

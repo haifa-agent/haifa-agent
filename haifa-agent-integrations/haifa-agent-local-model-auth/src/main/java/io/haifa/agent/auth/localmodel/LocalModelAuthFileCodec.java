@@ -85,7 +85,7 @@ final class LocalModelAuthFileCodec {
             return new StoredApiKeyCredential(reference, requiredText(node, "api_key"));
         }
         if ("EXTERNAL".equals(kind)) {
-            requireExactFields(
+            requireFields(
                     node,
                     Set.of(
                             "kind",
@@ -95,7 +95,8 @@ final class LocalModelAuthFileCodec {
                             "refresh_token",
                             "expires_at_epoch_millis",
                             "issued_at_epoch_millis",
-                            "account_id"));
+                            "account_id"),
+                    Set.of("reason_code"));
             return new StoredExternalCredential(
                     reference,
                     new ExternalLoginMethodId(requiredText(node, "method_id")),
@@ -104,7 +105,8 @@ final class LocalModelAuthFileCodec {
                     requiredText(node, "refresh_token"),
                     requiredLong(node, "expires_at_epoch_millis"),
                     requiredLong(node, "issued_at_epoch_millis"),
-                    requiredText(node, "account_id"));
+                    requiredText(node, "account_id"),
+                    optionalText(node, "reason_code"));
         }
         throw new IllegalStateException("Local model auth credential kind is unsupported");
     }
@@ -124,6 +126,7 @@ final class LocalModelAuthFileCodec {
         node.put("expires_at_epoch_millis", external.expiresAtEpochMillis());
         node.put("issued_at_epoch_millis", external.issuedAtEpochMillis());
         node.put("account_id", external.accountId());
+        external.reasonCode().ifPresent(code -> node.put("reason_code", code));
     }
 
     private static String requiredText(JsonNode node, String field) {
@@ -142,10 +145,31 @@ final class LocalModelAuthFileCodec {
         return value.longValue();
     }
 
+    private static java.util.Optional<String> optionalText(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        if (value == null || value.isNull()) {
+            return java.util.Optional.empty();
+        }
+        if (!value.isTextual() || value.textValue().isBlank()) {
+            throw new IllegalStateException("Local model auth credential field is invalid");
+        }
+        return java.util.Optional.of(value.textValue().trim());
+    }
+
     private static void requireExactFields(JsonNode node, Set<String> allowed) {
         List<String> names = new ArrayList<>();
         node.fieldNames().forEachRemaining(names::add);
         if (!allowed.containsAll(names) || !names.containsAll(allowed)) {
+            throw new IllegalStateException("Local model auth schema contains unexpected fields");
+        }
+    }
+
+    private static void requireFields(JsonNode node, Set<String> required, Set<String> optional) {
+        List<String> names = new ArrayList<>();
+        node.fieldNames().forEachRemaining(names::add);
+        Set<String> allowed = new java.util.HashSet<>(required);
+        allowed.addAll(optional);
+        if (!allowed.containsAll(names) || !names.containsAll(required)) {
             throw new IllegalStateException("Local model auth schema contains unexpected fields");
         }
     }

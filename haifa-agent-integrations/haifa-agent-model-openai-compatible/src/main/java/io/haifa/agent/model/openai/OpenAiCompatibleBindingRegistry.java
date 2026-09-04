@@ -87,6 +87,21 @@ final class OpenAiCompatibleBindingRegistry {
                     Set.of(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX),
                     true);
         }
+        register(
+                map,
+                "deepseek",
+                "deepseek-v4-flash-vision-exp",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.DEEPSEEK,
+                ModelReasoningBehavior.NONE,
+                Set.of(ModelReasoningMode.DISABLED),
+                Set.of(),
+                false,
+                io.haifa.agent.model.api.ModelIoProfile.withImage(io.haifa.agent.model.api.ImageInputProfile.standard(
+                        Set.of(
+                                io.haifa.agent.model.api.ModelImageSource.UPLOAD,
+                                io.haifa.agent.model.api.ModelImageSource.URL),
+                        true)));
 
         // Alibaba Cloud Bailian - Chat Completions
         for (String model : Set.of(

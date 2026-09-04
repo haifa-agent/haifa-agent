@@ -34,6 +34,8 @@ import org.junit.jupiter.api.Test;
 @Tag("live")
 class OpenAiResponsesLiveIT {
     private static final String DEEPSEEK_TOOL_RESULT_MARKER = "DEEPSEEK_RESPONSES_TOOL_OK_7319";
+    private static final String DEEPSEEK_MULTI_TOOL_ALPHA_MARKER = "DEEPSEEK_MULTI_ALPHA_7319";
+    private static final String DEEPSEEK_MULTI_TOOL_BETA_MARKER = "DEEPSEEK_MULTI_BETA_7319";
 
     @Test
     void invokesDeepSeekResponsesWhenExplicitlyEnabled() {
@@ -77,6 +79,26 @@ class OpenAiResponsesLiveIT {
                         ModelCapability.REASONING));
 
         assertToolRoundTrip(model(false), snapshot, DEEPSEEK_TOOL_RESULT_MARKER);
+    }
+
+    @Test
+    void closesTwoDeepSeekToolCallsAndResultsWhenExplicitlyEnabled() {
+        Assumptions.assumeTrue(enabled("HAIFA_DEEPSEEK_RESPONSES_LIVE_TEST"));
+        requireEnvironment("DEEPSEEK_API_KEY");
+        String providerModelId = environment("HAIFA_DEEPSEEK_RESPONSES_MODEL_ID", "deepseek-v4-flash");
+        var snapshot = snapshot(
+                "deepseek",
+                providerModelId,
+                URI.create("https://api.deepseek.com"),
+                "DEEPSEEK_API_KEY",
+                OpenAiResponsesDialects.DEEPSEEK,
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.REASONING));
+
+        assertTwoToolRoundTrip(model(false), snapshot);
     }
 
     @Test
@@ -224,6 +246,39 @@ class OpenAiResponsesLiveIT {
                 .isGreaterThan(0);
     }
 
+    private static void assertTwoToolRoundTrip(OpenAiResponsesModel model, ResolvedModelSnapshot snapshot) {
+        var tools = List.of(alphaTool(), betaTool());
+        var initialMessages = List.of(
+                ModelMessage.text(
+                        ModelMessageRole.SYSTEM,
+                        "Call both lookup_alpha and lookup_beta before answering. After results, reply with both verification codes."),
+                ModelMessage.text(
+                        ModelMessageRole.USER,
+                        "Call lookup_alpha and lookup_beta exactly once each. Do not answer before both calls."));
+
+        AgentChatResponse first = model.invoke(request(snapshot, initialMessages, tools));
+
+        assertThat(first.finishReason()).isEqualTo(ModelFinishReason.TOOL_CALLS);
+        assertThat(first.toolCalls())
+                .extracting(call -> call.name())
+                .containsExactlyInAnyOrder("lookup_alpha", "lookup_beta");
+
+        var followUpMessages = new ArrayList<>(initialMessages);
+        followUpMessages.add(assistantMessage(first));
+        for (var call : first.toolCalls()) {
+            String marker = call.name().equals("lookup_alpha")
+                    ? DEEPSEEK_MULTI_TOOL_ALPHA_MARKER
+                    : DEEPSEEK_MULTI_TOOL_BETA_MARKER;
+            followUpMessages.add(
+                    ModelMessage.tool(call.providerCorrelationId(), marker, Map.of("verificationCode", marker), false));
+        }
+
+        AgentChatResponse completed = model.invoke(request(snapshot, followUpMessages, tools));
+
+        assertThat(completed.toolCalls()).isEmpty();
+        assertThat(completed.content()).contains(DEEPSEEK_MULTI_TOOL_ALPHA_MARKER, DEEPSEEK_MULTI_TOOL_BETA_MARKER);
+    }
+
     private static List<ModelMessage> toolPromptMessages() {
         return List.of(
                 ModelMessage.text(
@@ -250,6 +305,25 @@ class OpenAiResponsesLiveIT {
                         List.of("city"),
                         "additionalProperties",
                         false),
+                false);
+    }
+
+    private static ModelToolSpecification alphaTool() {
+        return noArgumentTool("lookup_alpha", "Return the alpha verification code");
+    }
+
+    private static ModelToolSpecification betaTool() {
+        return noArgumentTool("lookup_beta", "Return the beta verification code");
+    }
+
+    private static ModelToolSpecification noArgumentTool(String name, String description) {
+        return new ModelToolSpecification(
+                name,
+                "1.0",
+                description,
+                name + "-input",
+                "1.0",
+                Map.of("type", "object", "properties", Map.of(), "additionalProperties", false),
                 false);
     }
 

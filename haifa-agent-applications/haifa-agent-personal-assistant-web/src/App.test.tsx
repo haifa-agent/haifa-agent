@@ -8,6 +8,7 @@ import type {
   Memory,
   MemoryCandidate,
   MissionSnapshot,
+  Model,
   ReplaceMissionPlan,
   Run,
   Turn,
@@ -1921,6 +1922,26 @@ describe("Personal Assistant application", () => {
     expect((composer as HTMLTextAreaElement).value).toBe("");
   });
 
+  it("displays the active conversation model badge in heading and opens model center on click", async () => {
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: flashModel.id,
+      models: [proModel, flashModel, bailianModel],
+    });
+
+    render(<App client={api} />);
+
+    await screen.findByRole("heading", { level: 1, name: "新会话" });
+    const badge = await screen.findByRole("button", { name: /当前模型：/ });
+    expect(badge).toBeTruthy();
+    expect(within(badge).getByText(flashModel.modelDisplayName)).toBeTruthy();
+    expect(within(badge).getByText(flashModel.providerDisplayName)).toBeTruthy();
+
+    fireEvent.click(badge);
+    expect(await screen.findByRole("dialog", { name: "模型与连接" })).toBeTruthy();
+  });
+
   it("closes the unified model center with Escape, the close button, and an outside pointer", async () => {
     const api = client();
     vi.mocked(api.bootstrap).mockResolvedValue({
@@ -2519,4 +2540,75 @@ describe("Personal Assistant application", () => {
     expect(screen.queryByText("Complete streamed assistant answer")).toBeNull();
     expect(api.conversation).toHaveBeenCalledTimes(2);
   });
+
+  it("displays model unavailable placeholder and does not render raw connection warning for offlined model", async () => {
+    const api = client();
+    const retiredModel: Model = {
+      ...model,
+      id: "retired-model",
+      displayName: "Retired Model (Unavailable)",
+      availability: "UNAVAILABLE",
+    };
+    const unavailableConversation: Conversation = {
+      ...conversation,
+      model: {
+        model: retiredModel,
+        preferences: model.recommendedPreferences,
+        revision: 0,
+        available: false,
+        selectionCompatibility: "UNAVAILABLE" as const,
+      },
+    };
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: model.id,
+      models: [model],
+    });
+    vi.mocked(api.conversations).mockResolvedValue([unavailableConversation]);
+    vi.mocked(api.conversation).mockResolvedValue(unavailableConversation);
+
+    render(<App client={api} />);
+
+    expect(await screen.findByPlaceholderText("当前模型已下线，请先选择可用模型")).toBeTruthy();
+    expect(screen.queryByText("当前模型不可用")).toBeNull();
+    expect(screen.queryByText(/Unavailable Provider/)).toBeNull();
+  });
+
+  it("intercepts message submission when model is unavailable and opens model catalog", async () => {
+    const api = client();
+    const retiredModel: Model = {
+      ...model,
+      id: "retired-model",
+      displayName: "Retired Model (Unavailable)",
+      availability: "UNAVAILABLE",
+    };
+    const unavailableConversation: Conversation = {
+      ...conversation,
+      model: {
+        model: retiredModel,
+        preferences: model.recommendedPreferences,
+        revision: 0,
+        available: false,
+        selectionCompatibility: "UNAVAILABLE" as const,
+      },
+    };
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: model.id,
+      models: [model],
+    });
+    vi.mocked(api.conversations).mockResolvedValue([unavailableConversation]);
+    vi.mocked(api.conversation).mockResolvedValue(unavailableConversation);
+
+    render(<App client={api} />);
+
+    const textarea = await screen.findByPlaceholderText("当前模型已下线，请先选择可用模型");
+    fireEvent.change(textarea, { target: { value: "你好" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+
+    expect(await screen.findByText("当前会话模型已下线，请先选择可用模型后再发送消息。")).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "模型与连接" })).toBeTruthy();
+    expect(api.submitMessage).not.toHaveBeenCalled();
+  });
 });
+
