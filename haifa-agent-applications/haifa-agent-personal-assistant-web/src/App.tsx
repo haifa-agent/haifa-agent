@@ -4211,11 +4211,6 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 state.connection === "connecting" ? "正在连接" : "连接中断"
           }</span>
           {client.modelConnections && (
-            <button className="button" onClick={() => openModelCenter("catalog")}>
-              <Bot size={16} /> 模型
-            </button>
-          )}
-          {client.modelConnections && (
             <button className="button" onClick={() => openModelCenter("connections")}>
               <KeyRound size={16} /> 模型连接{modelConnections?.length ? <b>{modelConnections.length}</b> : null}
             </button>
@@ -4257,41 +4252,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         />
 
         <main className="conversation">
-          {modelConnections && selectedModel && !selectedProviderConnected && (
+          {modelConnections && selectedModel && !isModelUnavailable && !selectedProviderConnected && (
             <button type="button" className="model-connection-notice" onClick={() => openModelCenter("connections")}>
               <KeyRound size={14} /><span><strong>尚未连接模型</strong><small>（{selectedModel.providerDisplayName || selectedModel.providerId} 凭据未就绪，点击前往连接）</small></span>
             </button>
-          )}
-          {isModelUnavailable && (
-            <div className="model-unavailable-notice" role="alert">
-              <div className="model-unavailable-notice-main">
-                <CircleAlert size={18} />
-                <div className="model-unavailable-notice-content">
-                  <strong>当前模型不可用</strong>
-                  <span>
-                    原模型（{state.selectedConversation?.model.model.displayName || state.selectedConversation?.model.model.id}）已下线或不在可用列表中。请选择可用模型后再继续对话。
-                  </span>
-                </div>
-              </div>
-              <div className="model-unavailable-notice-actions">
-                {recommendedModel && (
-                  <button
-                    type="button"
-                    className="button model-unavailable-primary-button"
-                    onClick={applyRecommendedModel}
-                  >
-                    使用推荐模型（{recommendedModel.displayName}）
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="button model-unavailable-secondary-button"
-                  onClick={() => openModelCenter("catalog")}
-                >
-                  选择其他模型
-                </button>
-              </div>
-            </div>
           )}
           <div className="conversation-heading">
             <div><span className="eyebrow">PERSONAL ASSISTANT</span><h1>{state.selectedConversation?.displayName ?? "新会话"}</h1></div>

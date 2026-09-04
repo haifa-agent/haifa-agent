@@ -2521,7 +2521,7 @@ describe("Personal Assistant application", () => {
     expect(api.conversation).toHaveBeenCalledTimes(2);
   });
 
-  it("displays model unavailable notice and allows switching to recommended model", async () => {
+  it("displays model unavailable placeholder and does not render raw connection warning for offlined model", async () => {
     const api = client();
     const retiredModel: Model = {
       ...model,
@@ -2549,23 +2549,12 @@ describe("Personal Assistant application", () => {
 
     render(<App client={api} />);
 
-    expect(await screen.findByText("当前模型不可用")).toBeTruthy();
-    expect(screen.getByText(/Retired Model/)).toBeTruthy();
-    const switchButton = screen.getByRole("button", { name: `使用推荐模型（${model.displayName}）` });
-    expect(switchButton).toBeTruthy();
-
-    fireEvent.click(switchButton);
-    await waitFor(() => {
-      expect(api.selectModel).toHaveBeenCalledWith(
-        unavailableConversation,
-        model,
-        expect.any(Object),
-        model.recommendedPreferences,
-      );
-    });
+    expect(await screen.findByPlaceholderText("当前模型已下线，请先选择可用模型")).toBeTruthy();
+    expect(screen.queryByText("当前模型不可用")).toBeNull();
+    expect(screen.queryByText(/Unavailable Provider/)).toBeNull();
   });
 
-  it("intercepts message submission when model is unavailable", async () => {
+  it("intercepts message submission when model is unavailable and opens model catalog", async () => {
     const api = client();
     const retiredModel: Model = {
       ...model,
@@ -2593,12 +2582,12 @@ describe("Personal Assistant application", () => {
 
     render(<App client={api} />);
 
-    expect(await screen.findByText("当前模型不可用")).toBeTruthy();
-    const textarea = screen.getByPlaceholderText("当前模型已下线，请先选择可用模型");
+    const textarea = await screen.findByPlaceholderText("当前模型已下线，请先选择可用模型");
     fireEvent.change(textarea, { target: { value: "你好" } });
     fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
 
     expect(await screen.findByText("当前会话模型已下线，请先选择可用模型后再发送消息。")).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "模型与连接" })).toBeTruthy();
     expect(api.submitMessage).not.toHaveBeenCalled();
   });
 });
