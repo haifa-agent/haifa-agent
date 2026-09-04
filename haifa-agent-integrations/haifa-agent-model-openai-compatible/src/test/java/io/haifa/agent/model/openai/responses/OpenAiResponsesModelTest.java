@@ -662,7 +662,7 @@ class OpenAiResponsesModelTest {
 
         var actual = customModel.invoke(simpleRequest(standardSnapshot(false)));
         assertThat(actual.content()).isEqualTo("refreshed ready");
-        assertThat( callCount.get() ).isEqualTo( 2 );
+        assertThat(callCount.get()).isEqualTo(2);
     }
 
     @Test
