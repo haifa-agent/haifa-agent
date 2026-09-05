@@ -1,0 +1,28 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: tokenrhythm-glm-5-3-flash
+version: "2026-09-m3"
+providerModelId: glm-5.3-flash
+displayName: GLM-5.3 Flash via TokenRhythm
+status: ACTIVE
+apiStyle: openai-chat-completions
+dialect: tokenrhythm-openai-chat
+capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+profile:
+  version: "2.0"
+  reasoningBehavior: OPTIONAL
+  allowedReasoningModes: [DISABLED, ENABLED]
+  allowedReasoningEfforts: [HIGH]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 131072
+  contextWindowTokens: 1048576
+  toolReasoningContinuationRequired: false
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: true
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT]
+  outputModalities: [TEXT]
+  imageInput: null
+  status: VERIFIED
+  lastVerifiedOn: "2026-09-05"

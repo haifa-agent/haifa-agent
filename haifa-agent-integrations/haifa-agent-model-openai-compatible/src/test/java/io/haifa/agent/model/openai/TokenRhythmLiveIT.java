@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Test;
 @Tag("live")
 class TokenRhythmLiveIT {
     private static final String PROVIDER_MODEL =
-            System.getenv().getOrDefault("HAIFA_TOKENRHYTHM_MODEL_ID", "deepseek-v4-flash");
+            System.getenv().getOrDefault("HAIFA_TOKENRHYTHM_MODEL_ID", "deepseek-v4-flash-0731");
     private static final String TOOL_RESULT_MARKER = "TOKENRHYTHM_TOOL_OK_8421";
 
     @Test
@@ -76,7 +76,7 @@ class TokenRhythmLiveIT {
         var initialMessages = List.of(
                 ModelMessage.text(
                         ModelMessageRole.SYSTEM,
-                        "Call lookup_verification when asked to verify a city. After the tool result, reply with exactly verificationCode."),
+                        "Call lookup_verification when asked to verify a city. After the tool result, reply with the value of verificationCode exactly, not its field name."),
                 ModelMessage.text(
                         ModelMessageRole.USER, "Verify Shanghai with lookup_verification. Call the tool once."));
         List<ModelStreamEvent> firstEvents = new ArrayList<>();
@@ -121,9 +121,9 @@ class TokenRhythmLiveIT {
 
     private static String requireLiveExecution() {
         Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("HAIFA_TOKENRHYTHM_LIVE_TEST")));
-        String apiKey = System.getenv("TR_API_KEY");
+        String apiKey = System.getenv("TK_API_KEY");
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("TR_API_KEY is required for explicit live execution");
+            throw new IllegalStateException("TK_API_KEY is required for explicit live execution");
         }
         return apiKey;
     }
@@ -142,15 +142,15 @@ class TokenRhythmLiveIT {
         URI endpoint = URI.create("https://tokenrhythm.studio/v1");
         ModelProviderId providerId = new ModelProviderId("tokenrhythm");
         ModelDefinition model = new ModelDefinition(
-                new ModelDefinitionId("tokenrhythm-deepseek-v4-flash"),
+                new ModelDefinitionId("tokenrhythm-deepseek-v4-flash-0731"),
                 "model-v1",
                 providerId,
                 PROVIDER_MODEL,
-                "TokenRhythm DeepSeek V4 Flash",
+                "TokenRhythm DeepSeek V4 Flash 0731",
                 ModelStatus.ACTIVE,
                 EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
                 1_000_000,
-                8_192,
+                384_000,
                 Map.of(),
                 Map.of(),
                 ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
@@ -159,7 +159,7 @@ class TokenRhythmLiveIT {
                 "provider-v1",
                 "TokenRhythm",
                 endpoint,
-                new CredentialRef("env://TR_API_KEY"),
+                new CredentialRef("env://TK_API_KEY"),
                 true,
                 ProviderStatus.ACTIVE,
                 List.of(new ModelApiBindingDefinition(

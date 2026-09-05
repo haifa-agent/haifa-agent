@@ -1,0 +1,28 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: tokenrhythm-minimax-m2-7
+version: "2026-09-m3"
+providerModelId: minimax-m2.7
+displayName: MiniMax M2.7 via TokenRhythm
+status: ACTIVE
+apiStyle: openai-chat-completions
+dialect: tokenrhythm-openai-chat
+capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+profile:
+  version: "2.0"
+  reasoningBehavior: OPTIONAL
+  allowedReasoningModes: [DISABLED, ENABLED]
+  allowedReasoningEfforts: [HIGH]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 192000
+  contextWindowTokens: 200000
+  toolReasoningContinuationRequired: false
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: true
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT]
+  outputModalities: [TEXT]
+  imageInput: null
+  status: VERIFIED
+  lastVerifiedOn: "2026-09-05"

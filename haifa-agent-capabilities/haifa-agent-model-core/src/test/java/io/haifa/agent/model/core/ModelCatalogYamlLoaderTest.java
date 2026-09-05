@@ -48,7 +48,8 @@ class ModelCatalogYamlLoaderTest {
                                                 "aliyun-bailian-openai-chat",
                                                 "siliconflow-openai-chat",
                                                 "kimi-openai-chat",
-                                                "zhipu-openai-chat"),
+                                                "zhipu-openai-chat",
+                                                "tokenrhythm-openai-chat"),
                                 ModelApiStyles.OPENAI_RESPONSES,
                                         Set.of("deepseek-openai-responses", "openai-codex-responses"),
                                 ModelApiStyles.ANTHROPIC_MESSAGES, Set.of("deepseek-anthropic-messages"),
@@ -60,6 +61,7 @@ class ModelCatalogYamlLoaderTest {
                                 new ModelProviderId("siliconflow"), Set.of(ModelAuthenticationMethod.API_KEY),
                                 new ModelProviderId("kimi"), Set.of(ModelAuthenticationMethod.API_KEY),
                                 new ModelProviderId("zhipu"), Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("tokenrhythm"), Set.of(ModelAuthenticationMethod.API_KEY),
                                 new ModelProviderId("google-antigravity"),
                                         Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN)))
                 .load();
@@ -100,6 +102,11 @@ class ModelCatalogYamlLoaderTest {
                 .isEqualTo(1_048_576);
         assertThat(catalog.binding("gpt-5.6-sol").orElseThrow().definition().style())
                 .isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
+        assertThat(catalog.binding("tokenrhythm-deepseek-v4-flash-0731")
+                        .orElseThrow()
+                        .profile()
+                        .contextWindowTokens())
+                .isEqualTo(1_000_000);
         assertThat(catalog.binding("gpt-5.6-sol").orElseThrow().definition().capabilities())
                 .contains(ModelCapability.STRUCTURED_OUTPUT);
         assertThat(catalog.binding("gpt-5.6-terra").orElseThrow().definition().capabilities())
