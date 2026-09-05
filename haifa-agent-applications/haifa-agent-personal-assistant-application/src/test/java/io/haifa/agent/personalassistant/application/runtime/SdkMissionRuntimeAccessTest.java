@@ -13,6 +13,8 @@ import io.haifa.agent.personalassistant.application.mission.MissionPlanner;
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
+import io.haifa.agent.personalassistant.application.mission.SourceReference;
+import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -23,22 +25,22 @@ import org.junit.jupiter.api.Test;
 class SdkMissionRuntimeAccessTest {
     @Test
     void synthesisProtocolVersionOwnsTheRunIdempotencyNamespace() {
-        assertThat(SdkMissionRuntimeAccess.SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v6");
-        assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v2");
+        assertThat(SdkMissionRuntimeAccess.SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v7");
+        assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v4");
         assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION)
-                .isEqualTo("v1");
+                .isEqualTo("v2");
         assertThat(SdkMissionRuntimeAccess.PLANNER_REPAIR_PROTOCOL_VERSION).isEqualTo("v4");
-        assertThat(SdkMissionRuntimeAccess.TASK_NORMALIZATION_PROTOCOL_VERSION).isEqualTo("v5");
+        assertThat(SdkMissionRuntimeAccess.TASK_NORMALIZATION_PROTOCOL_VERSION).isEqualTo("v6");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1"))
-                .isEqualTo("mission:mission-1:synthesis:v6");
+                .isEqualTo("mission:mission-1:synthesis:v7");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1", 1))
-                .isEqualTo("mission:mission-1:synthesis:v6:revision-1");
+                .isEqualTo("mission:mission-1:synthesis:v7:revision-1");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1", 2))
-                .isEqualTo("mission:mission-1:synthesis:v6:revision-2");
+                .isEqualTo("mission:mission-1:synthesis:v7:revision-2");
         assertThat(SdkMissionRuntimeAccess.standardSynthesisDispatchKey("mission-1"))
-                .isEqualTo("mission:mission-1:synthesis:standard:v2");
+                .isEqualTo("mission:mission-1:synthesis:standard:v4");
         assertThat(SdkMissionRuntimeAccess.standardSynthesisRepairDispatchKey("mission-1", "run-invalid", 1))
-                .isEqualTo("mission:mission-1:synthesis:standard:v2:repair:v1:attempt-1:source:run-invalid");
+                .isEqualTo("mission:mission-1:synthesis:standard:v4:repair:v2:attempt-1:source:run-invalid");
     }
 
     @Test
@@ -55,17 +57,20 @@ class SdkMissionRuntimeAccessTest {
         assertThat(SdkMissionRuntimeAccess.standardSynthesisPrompt(intent))
                 .contains(
                         "exactly one JSON object",
-                        "pa.mission-final-result/v1",
+                        "pa.mission-final-result/v2",
                         "\"directAnswer\"",
+                        "\"answerMarkdown\"",
                         "\"completedItems\"",
                         "\"failedItems\"",
                         "\"artifactRefs\":[]",
+                        "\"sectionSources\":[],\"sources\":[]",
                         "\"sourceRefs\"",
                         "\"unverifiedClaims\"",
                         "\"unresolvedQuestions\"",
                         "\"residualRisks\"",
                         "\"completionKind\"",
                         "Frozen Mission ID: mission-1",
+                        "[task-1] status=COMPLETED",
                         "Do not add result, missionId, missionObjective, missionMode")
                 .contains("COMPLETE exactly when failedItems is empty", "PARTIAL", "failedItems is non-empty");
 
@@ -75,14 +80,41 @@ class SdkMissionRuntimeAccessTest {
                         "{\"schemaVersion\":\"pa.mission-final-result/v1\",\"result\":{}}",
                         "MISSION_RESULT_SCHEMA_INVALID",
                         "directAnswer is invalid",
-                        1))
+                        1,
+                        List.of(new SourceReference(
+                                "src-001", "Ethereum protocol documentation", "https://ethereum.org/docs"))))
                 .contains(
                         "single bounded deterministic schema repair attempt",
                         "Rejected source Synthesis Run ID: run-invalid",
                         "MISSION_RESULT_SCHEMA_INVALID - directAnswer is invalid",
                         "\"result\":{}",
+                        "Execution as-of time:",
+                        "[src-001] Ethereum protocol documentation (https://ethereum.org/docs)",
+                        "\"sources\":[]",
                         "artifactRefs must be empty",
                         "Do not add any other top-level field");
+    }
+
+    @Test
+    void standardSynthesisExposesStableIdsForCompletedAndFailedTasks() {
+        var intent = new MissionSynthesisIntent(
+                "mission-partial",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Complete available analysis",
+                List.of("settled result"),
+                List.of("task-failed:BLOCKED:SOURCE_UNAVAILABLE"),
+                List.of("task-complete"),
+                List.of("Analyze available evidence"),
+                List.of("Verify all sources"),
+                List.of(),
+                Instant.parse("2026-09-05T00:00:00Z"));
+
+        assertThat(SdkMissionRuntimeAccess.standardSynthesisPrompt(intent))
+                .contains(
+                        "[task-complete] status=COMPLETED objective=Analyze available evidence",
+                        "[task-failed] status=FAILED detail=task-failed:BLOCKED:SOURCE_UNAVAILABLE");
     }
 
     @Test
@@ -205,9 +237,9 @@ class SdkMissionRuntimeAccessTest {
                         "Frozen Research Brief",
                         "Which claims about Acme AI are true?",
                         "references/research-method.md",
-                        "schemas/research-task-result-v1.json",
+                        "schemas/research-task-result-v2.json",
                         "utility_wikipedia_search",
-                        "pa.research-task-result/v1",
+                        "pa.research-task-result/v2",
                         "hard safety ceiling of 40 research Tool calls",
                         "At 24 completed Tool calls",
                         "FINALIZE_ONLY",
@@ -221,17 +253,17 @@ class SdkMissionRuntimeAccessTest {
                         "market-evidence", "Research Amazon Halo", "research notes", skill))
                 .contains(
                         "exactly one JSON object",
-                        "pa.research-task-result/v1",
+                        "pa.research-task-result/v2",
                         "Do not invent a source",
                         "query.phase: DISCOVER, DEEPEN, or CROSS_CHECK",
                         "source.safetyType: PUBLIC_WEB",
-                        "artifactRefs and every claim.quotedSpans must be JSON arrays",
+                        "artifactRefs, keyParameters, supportingSourceIds, and opposingSourceIds must be JSON arrays",
                         "continues the same source",
                         "serialized DSML",
                         "Never substitute another company",
                         "usable discovery evidence even when a",
                         "later fetch failed",
-                        "brief must explicitly name the selected subject",
+                        "taskSummary must explicitly name the selected subject",
                         "market-evidence--",
                         "Research Amazon Halo",
                         "research notes")
@@ -481,6 +513,230 @@ class SdkMissionRuntimeAccessTest {
                 """;
 
         assertThat(SdkMissionRuntimeAccess.isResearchTaskResult(invalid, skill)).isFalse();
+    }
+
+    @Test
+    void normalizationRejectsV2WithoutQueriesAndArtifactRefs() throws Exception {
+        var tenant = new TenantRef("local");
+        var principal = new PrincipalRef("personal-user", "user");
+        var skill = PersonalSkillPlatform.create(tenant, principal, Optional.empty(), List.of())
+                .load("deep-research", tenant, principal);
+        String invalid =
+                """
+                {"schemaVersion":"pa.research-task-result/v2","taskSummary":"notes","findings":[],"sources":[],
+                "unresolvedQuestions":[],"stopReason":"TIME_LIMIT",
+                "limitsUsed":{"searchCalls":0,"fetchCalls":0,"sources":0,"contentBytes":0}}
+                """;
+
+        assertThat(SdkMissionRuntimeAccess.isResearchTaskResult(invalid, skill)).isFalse();
+    }
+
+    @Test
+    void canonicalizeResearchTaskResultWithCompletedFetchesAuthoritativelyAssignsStatusAndDigest() throws Exception {
+        var completedFetches = List.of(new ResearchFetchEvidence(
+                "tool-fetch-1",
+                "https://example.com/halo",
+                "https://example.com/halo",
+                true,
+                true,
+                Instant.parse("2026-08-10T12:00:00Z"),
+                "sha256:" + "f".repeat(64),
+                1024,
+                false));
+        String v2Input =
+                """
+                {
+                  "schemaVersion":"pa.research-task-result/v2",
+                  "taskSummary":"Halo research notes with rich technical mechanism details.",
+                  "queries":[{"query":"Amazon Halo","phase":"DISCOVER"}],
+                  "findings":[{
+                    "findingId":"finding-1",
+                    "title":"Halo sensors",
+                    "mechanism":"Optical sensor array operating with infrared LED pulses.",
+                    "keyParameters":["battery: 7 days", "sampling: 25Hz"],
+                    "evidenceSummary":"Verified through hardware tear down.",
+                    "implications":"High accuracy for heart rate variance.",
+                    "limitations":"Skin tone variations.",
+                    "supportingSourceIds":["source-1", "source-2"],
+                    "opposingSourceIds":[],
+                    "evidenceAssessment":"SUPPORTED",
+                    "unverified":false
+                  }],
+                  "sources":[
+                    {
+                      "sourceId":"source-1",
+                      "locator":"https://example.com/halo",
+                      "normalizedLocator":"https://example.com/halo",
+                      "locatorDigest":"sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                      "title":"Halo tear down",
+                      "safetyType":"PUBLIC_WEB",
+                      "fetchedAt":null,
+                      "publishedAt":"2026-08-01T00:00:00Z",
+                      "status":"UNKNOWN",
+                      "excerpt":"Hardware analysis.",
+                      "contentDigest":null
+                    },
+                    {
+                      "sourceId":"source-2",
+                      "locator":"https://example.com/unfetched",
+                      "normalizedLocator":"https://example.com/unfetched",
+                      "locatorDigest":"sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                      "title":"Unfetched blog",
+                      "safetyType":"PUBLIC_WEB",
+                      "fetchedAt":null,
+                      "publishedAt":"2026-08-02T00:00:00Z",
+                      "status":"UNKNOWN",
+                      "excerpt":"Blog comments.",
+                      "contentDigest":null
+                    }
+                  ],
+                  "artifactRefs":[],
+                  "unresolvedQuestions":[],
+                  "stopReason":"SUFFICIENT_EVIDENCE",
+                  "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":2,"contentBytes":1024}
+                }
+                """;
+
+        String canonicalized =
+                SdkMissionRuntimeAccess.canonicalizeResearchTaskResult(v2Input, "task-1", completedFetches);
+        var root = new ObjectMapper().readTree(canonicalized);
+
+        assertThat(root.path("schemaVersion").asText()).isEqualTo("pa.research-task-result/v2");
+        assertThat(root.path("taskSummary").asText()).contains("Halo research notes");
+        var sources = root.path("sources");
+        assertThat(sources.size()).isEqualTo(2);
+
+        var s1 = sources.get(0);
+        assertThat(s1.path("sourceId").asText()).isEqualTo("task-1--source-1");
+        assertThat(s1.path("status").asText()).isEqualTo("FETCHED");
+        assertThat(s1.path("fetchedAt").asText()).isEqualTo("2026-08-10T12:00:00Z");
+        assertThat(s1.path("contentDigest").asText()).isEqualTo("sha256:" + "f".repeat(64));
+
+        var s2 = sources.get(1);
+        assertThat(s2.path("sourceId").asText()).isEqualTo("task-1--source-2");
+        assertThat(s2.path("status").asText()).isEqualTo("UNKNOWN");
+        assertThat(s2.path("contentDigest").isNull()).isTrue();
+
+        var findings = root.path("findings");
+        assertThat(findings.size()).isEqualTo(1);
+        var f1 = findings.get(0);
+        assertThat(f1.path("findingId").asText()).isEqualTo("task-1--finding-1");
+        assertThat(f1.path("supportingSourceIds").get(0).asText()).isEqualTo("task-1--source-1");
+        assertThat(f1.path("supportingSourceIds").get(1).asText()).isEqualTo("task-1--source-2");
+        assertThat(f1.path("unverified").asBoolean()).isTrue();
+    }
+
+    @Test
+    void canonicalizeResearchTaskResultPreservesVerifiedAuthoritativePrimaryFinding() throws Exception {
+        String digest = "sha256:" + "a".repeat(64);
+        var completedFetches = List.of(new ResearchFetchEvidence(
+                "tool-fetch-1",
+                "https://standards.example/spec",
+                "https://standards.example/spec",
+                true,
+                true,
+                Instant.parse("2026-08-10T12:00:00Z"),
+                digest,
+                2048,
+                false));
+        String input =
+                """
+                {
+                  "schemaVersion":"pa.research-task-result/v2",
+                  "taskSummary":"The authoritative specification directly defines the normative protocol value.",
+                  "queries":[{"query":"protocol specification","phase":"DISCOVER"}],
+                  "findings":[{
+                    "findingId":"normative-value","title":"Normative protocol value",
+                    "mechanism":"The specification defines the protocol value as 64.",
+                    "keyParameters":["value: 64"],"evidenceSummary":"Directly stated by the authoritative specification.",
+                    "implications":"Implementations must use the defined value.","limitations":"Normative fact only.",
+                    "supportingSourceIds":["spec"],"opposingSourceIds":[],
+                    "evidenceAssessment":"SUPPORTED","unverified":false
+                  }],
+                  "sources":[{
+                    "sourceId":"spec","locator":"https://standards.example/spec",
+                    "normalizedLocator":"https://standards.example/spec","locatorDigest":"sha256:%s",
+                    "title":"Protocol specification","safetyType":"PUBLIC_WEB","fetchedAt":null,
+                    "publishedAt":"2026-08-01T00:00:00Z","status":"UNKNOWN",
+                    "excerpt":"The authoritative specification defines the value.","contentDigest":null
+                  }],
+                  "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":1,"contentBytes":2048}
+                }
+                """
+                        .formatted("0".repeat(64));
+
+        JsonNode finding = new ObjectMapper()
+                .readTree(SdkMissionRuntimeAccess.canonicalizeResearchTaskResult(input, "task-1", completedFetches))
+                .path("findings")
+                .get(0);
+
+        assertThat(finding.path("evidenceAssessment").asText()).isEqualTo("SUPPORTED");
+        assertThat(finding.path("unverified").asBoolean()).isFalse();
+    }
+
+    @Test
+    void canonicalizeResearchTaskResultMatchesCaseSensitiveUrlsAndDetectsDigestConflicts() throws Exception {
+        String input =
+                """
+                {
+                  "schemaVersion":"pa.research-task-result/v1","brief":"Evidence",
+                  "queries":[{"query":"evidence","phase":"CROSS_CHECK"}],
+                  "sources":[{
+                    "sourceId":"source-1","locator":"https://example.com/Spec/A",
+                    "normalizedLocator":"https://example.com/Spec/A","locatorDigest":"sha256:%s",
+                    "title":"Specification","safetyType":"PUBLIC_WEB","fetchedAt":null,"publishedAt":null,
+                    "status":"UNKNOWN","excerpt":"Relevant evidence.","contentDigest":null
+                  }],
+                  "claims":[],"artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "limitsUsed":{"searchCalls":1,"fetchCalls":0,"sources":1,"contentBytes":0}
+                }
+                """
+                        .formatted("0".repeat(64));
+        Instant completedAt = Instant.parse("2026-08-10T12:00:00Z");
+        var wrongCase = new ResearchFetchEvidence(
+                "fetch-wrong-case",
+                "https://example.com/spec/A",
+                "https://example.com/spec/A",
+                true,
+                true,
+                completedAt,
+                "sha256:" + "a".repeat(64),
+                10,
+                false);
+
+        JsonNode unmatched = new ObjectMapper()
+                .readTree(
+                        SdkMissionRuntimeAccess.canonicalizeResearchTaskResult(input, "task-case", List.of(wrongCase)));
+        assertThat(unmatched.path("sources").get(0).path("status").asText()).isEqualTo("UNKNOWN");
+
+        var first = new ResearchFetchEvidence(
+                "fetch-1",
+                "https://example.com/Spec/A",
+                "https://example.com/Spec/A",
+                true,
+                true,
+                completedAt,
+                "sha256:" + "b".repeat(64),
+                10,
+                false);
+        var second = new ResearchFetchEvidence(
+                "fetch-2",
+                "https://example.com/Spec/A",
+                "https://example.com/Spec/A",
+                true,
+                true,
+                completedAt.plusSeconds(1),
+                "sha256:" + "c".repeat(64),
+                12,
+                false);
+
+        JsonNode conflict = new ObjectMapper()
+                .readTree(SdkMissionRuntimeAccess.canonicalizeResearchTaskResult(
+                        input, "task-conflict", List.of(first, second)));
+        assertThat(conflict.path("sources").get(0).path("status").asText()).isEqualTo("CONFLICT");
+        assertThat(conflict.path("limitsUsed").path("fetchCalls").asInt()).isEqualTo(2);
+        assertThat(conflict.path("limitsUsed").path("contentBytes").asInt()).isEqualTo(22);
     }
 
     @Test
