@@ -131,6 +131,15 @@ public record McpServerDefinition(
                         "deniedTools",
                         importPolicy.deniedTools().stream().sorted().toList()),
                 Map.entry("aliasNamespace", importPolicy.aliasNamespace()),
+                Map.entry(
+                        "aliasOverrides",
+                        importPolicy.aliasOverrides().entrySet().stream()
+                                .sorted(Map.Entry.comparingByKey())
+                                .collect(java.util.stream.Collectors.toMap(
+                                        Map.Entry::getKey,
+                                        Map.Entry::getValue,
+                                        (left, right) -> left,
+                                        java.util.LinkedHashMap::new))),
                 Map.entry("riskOverrides", enumMap(importPolicy.riskOverrides())),
                 Map.entry("idempotencyOverrides", enumMap(importPolicy.idempotencyOverrides())),
                 Map.entry(

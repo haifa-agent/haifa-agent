@@ -1,5 +1,16 @@
 # Changelog
 
+- SQLite Workflow persistence 从基础 Runtime Store 拆为显式可选的
+  `haifa-agent-store-sqlite-orchestration`：基础 Store 保持当前 Runtime V1～V11 且默认不创建
+  `workflow_*` 表；Workflow 从 V12、受限子图关系从 V13 开始，当前版本由迁移目录派生，PA 备份恢复不再
+  复制硬编码版本。
+- Incubating Workflow/Graph M5 新增固定 Definition、显式 State 映射和独立 child Workflow Run 的受限
+  子图；支持嵌套 Wait/Resume、父取消/超时传播、固定并行分支确定合并，并以可选 SQLite V13 保存可恢复的父子
+  attempt 关系。动态 fan-out、`ANY_OF`、并行分支内可中断子图和现有产品默认路由继续拒绝。
+- Incubating Workflow/Graph M3 新增可选 SQLite V12 单机持久恢复：冻结 Definition/Adapter/Codec，使用共享
+  Runtime/Workflow UoW、两阶段 Node Attempt、原子 Agent Run 关联、Wait/Resume、固定 `ALL_OF` 游标、
+  幂等命令及 Event/Outbox；未知副作用结果不重放，现有产品仍不自动或被动触发 Graph。
+
 - `file.write` 在读写授权的 Workspace 根中遇到不存在的目标时改为原子创建并记录 Create；已有目标仍以
   revision/content-hash 保护整体替换，目录、敏感路径、只读根和并发冲突继续 fail closed。
 - 新增原生 Google Gemini `generateContent` Integration，并严格区分官方 Standard 与个人本机

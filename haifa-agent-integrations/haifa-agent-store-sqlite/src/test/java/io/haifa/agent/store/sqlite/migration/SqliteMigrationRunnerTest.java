@@ -90,6 +90,21 @@ class SqliteMigrationRunnerTest {
     }
 
     @Test
+    void defaultRuntimeSchemaDoesNotInstallWorkflowTables() throws Exception {
+        SqliteConnectionFactory connections = initializedConnections();
+        new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK).migrate(RuntimeStoreMigrations.all());
+
+        try (Connection connection = connections.openConnection()) {
+            assertThat(queryLong(
+                            connection,
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'workflow_%'"))
+                    .isZero();
+            assertThat(queryLong(connection, "SELECT MAX(version) FROM schema_migration"))
+                    .isEqualTo(RuntimeStoreMigrations.CURRENT_SCHEMA_VERSION);
+        }
+    }
+
+    @Test
     void rejectsChecksumDrift() {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);

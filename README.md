@@ -271,8 +271,9 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
   不返回 Prompt、用户消息、Memory 或 Tool 正文；
 - Run、Session、User Scope 的 Memory API/Core，以及 SQLite 中全人工确认的 Candidate、正式 Memory
   和最小 Audit；
-- SQLite V1～V7 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、
-  Conversation、Policy/Approval/Trust 与 Artifact 单机存储；
+- 基础 SQLite V1～V11 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、
+  Conversation、Policy/Approval/Trust 与 Artifact；默认初始化不安装 Workflow 表；
+- 可选 `haifa-agent-store-sqlite-orchestration` 显式扩展从 V12 安装 Workflow 单机持久恢复；
 - JSONL 是可删除、可重建的安全 Transcript Outbox 投影，不是恢复事实源。
 
 ### Project、Execution 与安全
@@ -298,6 +299,26 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
   React Web、只读诊断 Admin、持久 Mission 与精简 Deep Research Product Skill；
 - Reactor 末端的 Test Harness、共享 Fixture、Transport TCK、Integration、Live 与 E2E 测试模块。
 
+### Incubating Workflow/Graph M1/M2/M3/M5/M6-neutral
+
+- 纯 Java `haifa-agent-orchestration-api` 提供冻结 Definition、State Schema、Workflow Run、Wait、
+  Checkpoint、Event、恢复、取消与超时契约；M5 增加固定子 Definition、显式 State 键映射和父子 Run 关联；
+- `haifa-agent-orchestration-core` 提供内容寻址编译、fail-closed 能力校验、确定状态合并和进程内参考执行器；
+- `haifa-agent-graph-langgraph4j` 以精确固定的 LangGraph4j Core `1.8.24` 提供可选 M2 Adapter，并用同一
+  Contract Fixture 验证顺序、条件、有限循环、固定 `ALL_OF`、中断/恢复、取消和事件投影；
+- M3 的 `DurableWorkflowRuntime`、`WorkflowStore` Port 与可选 SQLite V12 Store 提供 Definition/Adapter/Codec
+  冻结校验、节点两阶段提交、固定分支游标、Wait/Resume、幂等命令、单调事件和 Outbox 的跨进程恢复；
+- M5 通过可选 SQLite V13 保存父 Run、父节点 attempt 与 child Workflow Run 的稳定关系，支持静态受限子图、
+  子图内 Wait/Resume、父取消/超时传播、固定并行分支合并和 child-start 崩溃恢复；
+- M6 中立前置能力增加冻结候选、显式条件和持久选择集合的有界动态 fan-out，以及仅含单 Action 固定
+  候选、稳定首成功 Winner、Loser 事件与未知结果 fail closed 的 `ANY_OF`；LangGraph4j 仍拒绝这两项
+  能力，Spring AI Alibaba Adapter 按用户决策跳过；
+- 运行时 Definition 发现、不安全 `ANY_OF` 和并行分支内可中断子图仍 fail closed；Provider
+  State/MemorySaver 不是公共状态或持久事实源；
+- 该 API 仍标记为 Incubating，尚无产品接入。现有 Coding、
+  Personal Assistant、SDK `chat()`/`start()` 均不主动或被动触发 Workflow，默认 Product Profile 的
+  Graph Requirement 为 `NONE`。
+
 ## 架构
 
 ```mermaid
@@ -305,6 +326,8 @@ flowchart TB
   APP["Applications: Coding Agent / Personal Assistant"] --> SDK["Pure Java SDK"]
   APP --> INTEGRATIONS["Integrations: Model / MCP / Web / SQLite / HTTP"]
   SDK --> RUNTIME["Runtime API + Runtime Core"]
+  APP -. "explicit future product operation" .-> ORCH["Incubating Orchestration API + Core"]
+  ORCH --> RUNTIME
   INTEGRATIONS --> RUNTIME
   RUNTIME --> CAP["Capability APIs: Model / Tool / Skill / Memory / Policy / Credential"]
   RUNTIME --> KERNEL["Core / Context / Project / Artifact"]
@@ -325,7 +348,8 @@ Core、Runtime 或 Capability API。Spring Framework 从适配边界开始引入
 | `haifa-agent-kernel/` | Common、Core、Runtime、Context、Project 与 Artifact。 |
 | `haifa-agent-capabilities/` | Model、Tool、Skill、Credential、Memory 与 Policy API/Core。 |
 | `haifa-agent-execution/` | Execution、Sandbox SPI 与本地 Provider。 |
-| `haifa-agent-integrations/` | 模型、Web、MCP、Git、SQLite、JSONL 与 HTTP Adapter。 |
+| `haifa-agent-orchestration/` | Incubating Workflow Definition、Run 契约与进程内参考执行。 |
+| `haifa-agent-integrations/` | 模型、Web、MCP、Git、基础 SQLite、可选 SQLite Orchestration、JSONL、HTTP 与可选 LangGraph4j Adapter。 |
 | `haifa-agent-sdk/`、`haifa-agent-sdk-starter/` | 高层纯 Java Facade 与安全默认 Quickstart。 |
 | `haifa-agent-spring/` | Spring Boot 自动装配与依赖 Starter。 |
 | `haifa-agent-applications/` | Coding Agent、CLI、Personal Assistant、SDK 示例与 Runtime Demo。 |
@@ -403,7 +427,7 @@ Release 验证必须通过 `-pl` 指定受影响模块；完整分层矩阵见
 
 - Enterprise SDK、通用生产级 HTTP Server、Worker、Scheduler、Control Plane 和企业 Admin Server；
 - 分布式 Store/Lease、生产 KMS/Vault、对象存储和跨机器恢复；
-- Knowledge/RAG、Graph/Workflow 与多 Agent 调度；
+- Knowledge/RAG、分布式 Graph/Workflow、产品 Workflow、SAA Graph Adapter 与多 Agent 调度；
 - Skill Hub、Skill 创作/安装/企业管理面和动态插件平台；
 - 完整的 Project Trust/Approval 产品体验与企业审批流程；
 - Windows Local Native Adapter、容器、gVisor、microVM 或 Kubernetes Sandbox；

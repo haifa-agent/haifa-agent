@@ -5,6 +5,14 @@ Memory、Policy 与 Artifact。应用应在自己的装配层选择这些 Contri
 独立生产 Starter。单机持久化参考代码见 `haifa-agent-sdk-example` 的
 `SqliteDurableReferenceAssemblyExample`；示例模块不是发布制品或 Stable API。
 
+## Workflow extension boundary
+
+This base artifact owns Runtime migrations V1-V11. It has no Orchestration dependency, does not expose a Workflow
+Store, and default initialization does not create any `workflow_*` table. Durable Workflow persistence is provided by
+the explicit optional `haifa-agent-store-sqlite-orchestration` artifact, whose V12/V13 migrations immediately follow
+the current Runtime catalog. Merely adding Core, SDK, Coding, Personal Assistant, or this base Store does not alter the
+Workflow schema.
+
 ## V5 SDK Conversation
 
 Runtime Migration V5 新增产品中立的 `sdk_conversation` 与 `sdk_conversation_command`：

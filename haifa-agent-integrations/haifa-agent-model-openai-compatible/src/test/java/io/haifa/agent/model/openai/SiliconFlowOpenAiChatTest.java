@@ -93,7 +93,7 @@ class SiliconFlowOpenAiChatTest {
         assertThat(result.content()).isEqualTo("hello");
         assertThat(result.usage().inputTokens()).isEqualTo(5);
         assertThat(result.usage().outputTokens()).isEqualTo(5);
-        assertThat(result.metadata()).containsEntry("reasoningCharacters", 15);
+        assertThat(result.metadata()).containsEntry("reasoningCharacters", 15L);
         assertThat(result.toString()).doesNotContain("private thought");
         assertThat(events)
                 .filteredOn(ModelStreamEvent.UsageReported.class::isInstance)

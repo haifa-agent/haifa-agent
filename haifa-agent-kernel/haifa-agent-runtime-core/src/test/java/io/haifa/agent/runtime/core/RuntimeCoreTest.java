@@ -188,7 +188,7 @@ class RuntimeCoreTest {
         Fixture fixture = fixture(
                 model(new ToolCallDecision(List.of(first, second)), finalDecision("tools done")),
                 builder -> TestToolPlatform.install(builder, "echo", "1.0.0", "echo.input", false, request -> {
-                    order.add((Integer) request.arguments().values().get("v"));
+                    order.add(((Number) request.arguments().values().get("v")).intValue());
                     return new ToolResult(true, "echoed", request.arguments().values(), List.of(), List.of(), false);
                 }));
 
@@ -286,7 +286,7 @@ class RuntimeCoreTest {
             var call = persisted.get(index - 1);
             assertThat(call.providerCorrelationId().value()).isEqualTo("provider-canonical-sibling-" + index);
             assertThat(call.arguments().values())
-                    .containsEntry("marker", index)
+                    .containsEntry("marker", (long) index)
                     .containsEntry("workdir", "work-" + index);
             assertThat(fixture.journal.state(accepted.runId(), call.idempotencyKey()))
                     .contains(ToolJournalState.COMPLETED);
@@ -334,8 +334,9 @@ class RuntimeCoreTest {
         Fixture fixture =
                 fixture(model(new ToolCallDecision(requests)), builder -> TestToolPlatform.installWithInputSchema(
                                 builder, "mixed", "1.0.0", "mixed.input", inputSchema, request -> {
-                                    int marker = (Integer)
-                                            request.arguments().values().get("marker");
+                                    int marker = ((Number)
+                                                    request.arguments().values().get("marker"))
+                                            .intValue();
                                     invoked.add(marker);
                                     if (marker == 2) {
                                         return new ToolResult(
@@ -1413,7 +1414,7 @@ class RuntimeCoreTest {
                         true,
                         ToolPolicyDecision.REQUIRE_APPROVAL,
                         request -> {
-                            executed.add((Integer) request.arguments().values().get("v"));
+                            executed.add(((Number) request.arguments().values().get("v")).intValue());
                             return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
                         }));
 

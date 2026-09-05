@@ -26,6 +26,10 @@ public final class RuntimeStoreMigrations {
 
     private RuntimeStoreMigrations() {}
 
+    public static long currentVersion() {
+        return CURRENT_SCHEMA_VERSION;
+    }
+
     public static List<SqliteMigration> all() {
         try {
             return List.of(

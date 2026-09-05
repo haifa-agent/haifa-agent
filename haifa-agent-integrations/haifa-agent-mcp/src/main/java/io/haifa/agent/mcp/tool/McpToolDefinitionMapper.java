@@ -4,7 +4,6 @@ import io.haifa.agent.mcp.config.McpServerDefinition;
 import io.haifa.agent.mcp.config.StreamableHttpDefinition;
 import io.haifa.agent.mcp.protocol.McpRemoteTool;
 import io.haifa.agent.tool.api.SemanticVersion;
-import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
 import io.haifa.agent.tool.api.ToolDefinition;
 import io.haifa.agent.tool.api.ToolDefinitionHasher;
@@ -113,7 +112,7 @@ public final class McpToolDefinitionMapper {
                 remote.name(),
                 remoteDigest,
                 true,
-                Optional.of(new ToolAlias(server.importPolicy().aliasNamespace() + "_" + remote.name())),
+                Optional.of(server.importPolicy().aliasFor(remote.name())),
                 Optional.of(definition),
                 Optional.of(snapshot),
                 List.of());

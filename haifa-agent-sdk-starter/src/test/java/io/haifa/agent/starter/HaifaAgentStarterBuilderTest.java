@@ -325,7 +325,7 @@ public class HaifaAgentStarterBuilderTest {
             assertThat(modelCalls).hasValue(2);
             var persisted =
                     agent.runs().find(response.runId()).orElseThrow().result().orElseThrow();
-            assertThat(persisted.structuredOutput()).containsEntry("days", 2);
+            assertThat(persisted.structuredOutput()).containsEntry("days", 2L);
             assertThat(persisted.outputSchemaId()).startsWith("java-record:");
         }
     }

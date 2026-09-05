@@ -339,7 +339,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     request.model().dialect())) {
                 messages.add(Map.of(
                         "role",
-                        "developer",
+                        dialect(request).structuredOutputInstructionRole(),
                         "content",
                         "When producing the final answer, return one JSON object that exactly matches this schema: "
                                 + writeJson(requirement.jsonSchema())));

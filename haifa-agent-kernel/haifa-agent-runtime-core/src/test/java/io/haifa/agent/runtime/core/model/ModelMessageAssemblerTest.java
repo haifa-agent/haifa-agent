@@ -307,7 +307,7 @@ class ModelMessageAssemblerTest {
                 "Command failed (exit 1)\nbounded stderr tail",
                 Map.ofEntries(
                         Map.entry("status", "FAILED"),
-                        Map.entry("exitCode", 1),
+                        Map.entry("exitCode", 1L),
                         Map.entry("durationMillis", 1240L),
                         Map.entry("truncated", true),
                         Map.entry("output", "bounded stderr tail"),

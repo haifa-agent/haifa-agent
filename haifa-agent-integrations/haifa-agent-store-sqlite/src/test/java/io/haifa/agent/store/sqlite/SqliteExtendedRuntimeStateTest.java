@@ -298,7 +298,7 @@ class SqliteExtendedRuntimeStateTest {
                 Set.of(ModelCapability.TEXT_CHAT, ModelCapability.STRUCTURED_OUTPUT),
                 8_192,
                 1_024,
-                Map.of(),
+                Map.of("requestTimeoutMillis", 10_000L),
                 Map.of());
         return new RuntimeConfigurationSnapshot(
                 new RunConfigurationSnapshotRef("configuration-2", "sha256:configuration-2"),

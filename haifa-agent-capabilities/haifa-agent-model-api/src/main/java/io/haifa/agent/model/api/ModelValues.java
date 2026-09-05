@@ -40,8 +40,25 @@ final class ModelValues {
             source.forEach(item -> copy.add(immutable(item, field)));
             return Collections.unmodifiableSet(copy);
         }
+        if (value instanceof Byte
+                || value instanceof Short
+                || value instanceof Integer
+                || value instanceof Long
+                || value instanceof java.math.BigInteger) {
+            try {
+                return new java.math.BigInteger(value.toString()).longValueExact();
+            } catch (ArithmeticException exception) {
+                throw new IllegalArgumentException(field + " integer value exceeds the supported range", exception);
+            }
+        }
+        if (value instanceof Float || value instanceof Double || value instanceof java.math.BigDecimal) {
+            double decimal = Double.parseDouble(value.toString());
+            if (!Double.isFinite(decimal)) {
+                throw new IllegalArgumentException(field + " decimal value must be finite");
+            }
+            return decimal;
+        }
         if (value instanceof String
-                || value instanceof Number
                 || value instanceof Boolean
                 || value instanceof Enum<?>
                 || value instanceof java.net.URI
