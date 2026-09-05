@@ -22,6 +22,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender;
 import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender.RecommendationTurn;
+import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidenceReader;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
@@ -75,6 +76,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final MissionRuntimeAccess missionRuntime;
     private final ArtifactService artifacts;
     private final Map<String, String> skillBindingReferences;
+    private final ResearchFetchEvidenceReader fetchEvidenceReader;
     private final ConcurrentMap<String, List<String>> recommendedQuestions = new ConcurrentHashMap<>();
 
     public PersonalAssistantApplication(
@@ -89,6 +91,34 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             MissionRuntimeAccess missionRuntime,
             ArtifactService artifacts,
             Map<String, String> skillBindingReferences) {
+        this(
+                agent,
+                mcp,
+                clock,
+                capabilities,
+                models,
+                modelPreferences,
+                questionRecommender,
+                executionLifecycle,
+                missionRuntime,
+                artifacts,
+                skillBindingReferences,
+                ResearchFetchEvidenceReader.empty());
+    }
+
+    public PersonalAssistantApplication(
+            HaifaAgent agent,
+            PersonalMcpPlatform mcp,
+            Clock clock,
+            PersonalCapabilityRegistry capabilities,
+            PersonalModelCatalog models,
+            PersonalModelPreferenceStore modelPreferences,
+            PersonalQuestionRecommender questionRecommender,
+            AutoCloseable executionLifecycle,
+            MissionRuntimeAccess missionRuntime,
+            ArtifactService artifacts,
+            Map<String, String> skillBindingReferences,
+            ResearchFetchEvidenceReader fetchEvidenceReader) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
@@ -100,6 +130,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         this.missionRuntime = Objects.requireNonNull(missionRuntime);
         this.artifacts = Objects.requireNonNull(artifacts);
         this.skillBindingReferences = Map.copyOf(skillBindingReferences);
+        this.fetchEvidenceReader = Objects.requireNonNull(fetchEvidenceReader, "fetchEvidenceReader must not be null");
         this.mcpToolAliases = mcp.aliases();
     }
 
@@ -109,6 +140,10 @@ public final class PersonalAssistantApplication implements AutoCloseable {
 
     public MissionRuntimeAccess missionRuntime() {
         return missionRuntime;
+    }
+
+    public ResearchFetchEvidenceReader fetchEvidenceReader() {
+        return fetchEvidenceReader;
     }
 
     public Optional<String> skillBindingReference(String alias) {

@@ -17,6 +17,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.policy.PersonalWebAllowPolicy;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender;
+import io.haifa.agent.personalassistant.application.research.RuntimeFetchEvidenceReader;
 import io.haifa.agent.personalassistant.application.runtime.SdkMissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import io.haifa.agent.personalassistant.application.tool.PersonalToolPlatform;
@@ -268,7 +269,8 @@ public final class PersonalAssistantAssembler {
                                     dependencies.tenant(),
                                     dependencies.principal())),
                     dependencies.artifact().service(),
-                    skills.bindingReferences());
+                    skills.bindingReferences(),
+                    new RuntimeFetchEvidenceReader(dependencies.persistence().runtimePersistence()));
         } catch (RuntimeException | Error exception) {
             try {
                 dependencies.execution().close();

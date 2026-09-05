@@ -20,7 +20,10 @@ import io.haifa.agent.personalassistant.application.mission.MissionResultPublish
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
 import io.haifa.agent.personalassistant.application.mission.ReportQualityGate;
+import io.haifa.agent.personalassistant.application.mission.SourceReference;
 import io.haifa.agent.personalassistant.application.mission.StandardMissionQualityGate;
+import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence;
+import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidenceReader;
 import io.haifa.agent.personalassistant.application.runtime.SdkMissionRuntimeAccess;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -43,7 +46,15 @@ import java.util.regex.Pattern;
 public final class MissionArtifactPublisher implements MissionResultPublisher {
     private static final Set<String> EVIDENCE_ASSESSMENTS =
             Set.of("SUPPORTED", "PARTIALLY_SUPPORTED", "CONFLICTED", "INSUFFICIENT");
-    private static final Set<String> STANDARD_V2_FIELDS = Set.of(
+    private static final Set<String> STANDARD_V2_REQUIRED_FIELDS = Set.of(
+            "schemaVersion",
+            "directAnswer",
+            "answerMarkdown",
+            "completedItems",
+            "failedItems",
+            "artifactRefs",
+            "completionKind");
+    private static final Set<String> STANDARD_V2_ALLOWED_FIELDS = Set.of(
             "schemaVersion",
             "directAnswer",
             "answerMarkdown",
@@ -51,10 +62,16 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             "failedItems",
             "artifactRefs",
             "sourceRefs",
+            "taskOutcomes",
+            "acceptanceOutcomes",
+            "sectionSources",
+            "sources",
             "unverifiedClaims",
             "unresolvedQuestions",
             "residualRisks",
-            "completionKind");
+            "completionKind",
+            "reportArtifactRef",
+            "resultArtifactRef");
     private static final Pattern STABLE_ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,127}");
     private static final Pattern SHA256 = Pattern.compile("sha256:[a-f0-9]{64}");
     private static final Set<String> SOURCE_STATUSES =
@@ -80,9 +97,15 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
     private final int maxArtifacts;
     private final long maxTotalArtifactBytes;
     private final ReportQualityGate reportQualityGate = new ReportQualityGate();
+    private final ResearchFetchEvidenceReader fetchEvidenceReader;
 
     public MissionArtifactPublisher(ArtifactService artifacts, ObjectMapper mapper) {
-        this(artifacts, mapper, 24, 2_097_152, 8, 4L * 1024 * 1024);
+        this(artifacts, mapper, 24, 2_097_152, 8, 4L * 1024 * 1024, ResearchFetchEvidenceReader.empty());
+    }
+
+    public MissionArtifactPublisher(
+            ArtifactService artifacts, ObjectMapper mapper, ResearchFetchEvidenceReader fetchEvidenceReader) {
+        this(artifacts, mapper, 24, 2_097_152, 8, 4L * 1024 * 1024, fetchEvidenceReader);
     }
 
     public MissionArtifactPublisher(
@@ -92,8 +115,28 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             int maxTotalContentBytes,
             int maxArtifacts,
             long maxTotalArtifactBytes) {
+        this(
+                artifacts,
+                mapper,
+                maxSources,
+                maxTotalContentBytes,
+                maxArtifacts,
+                maxTotalArtifactBytes,
+                ResearchFetchEvidenceReader.empty());
+    }
+
+    public MissionArtifactPublisher(
+            ArtifactService artifacts,
+            ObjectMapper mapper,
+            int maxSources,
+            int maxTotalContentBytes,
+            int maxArtifacts,
+            long maxTotalArtifactBytes,
+            ResearchFetchEvidenceReader fetchEvidenceReader) {
         this.artifacts = java.util.Objects.requireNonNull(artifacts);
         this.mapper = java.util.Objects.requireNonNull(mapper).copy();
+        this.fetchEvidenceReader =
+                java.util.Objects.requireNonNullElseGet(fetchEvidenceReader, ResearchFetchEvidenceReader::empty);
         if (maxSources < 2 || maxSources > 24 || maxTotalContentBytes < 1 || maxTotalContentBytes > 2_097_152) {
             throw new IllegalArgumentException("Research limits are invalid");
         }
@@ -128,25 +171,68 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         FinalDelivery delivery = finalDelivery(finalResult, false);
         StandardMissionQualityGate standardGate = new StandardMissionQualityGate();
         StandardMissionQualityGate.Result gateResult = standardGate.evaluate(
-                finalResult, intent.taskResults(), intent.completedTaskObjectives(), intent.acceptanceCriteria());
+                candidateFrom(finalResult),
+                intent.taskResults(),
+                intent.completedTaskIds(),
+                intent.completedTaskObjectives(),
+                intent.acceptanceCriteria(),
+                intent.asOf());
         if (!gateResult.passed()) {
             throw new MissionException("MISSION_REPORT_QUALITY_FAILED", gateResult.revisionFeedback());
         }
-        Artifact artifact = publish(
-                intent,
-                synthesis,
-                "mission-result",
-                "mission-result.json",
-                synthesis.structuredOutput(),
-                "application/json");
+
+        ObjectNode enrichedResult = (ObjectNode) finalResult.deepCopy();
+
+        List<SourceReference> authoritativeSources = new ArrayList<>();
+        Set<String> seenLocators = new LinkedHashSet<>();
+        if (!intent.completedTaskRunIds().isEmpty()) {
+            for (String runId : intent.completedTaskRunIds()) {
+                for (ResearchFetchEvidence evidence : fetchEvidenceReader.findCompletedFetches(runId)) {
+                    if (evidence.successful() && evidence.sourceAvailable()) {
+                        String loc = evidence.canonicalFinalUrl() != null
+                                        && !evidence.canonicalFinalUrl().isBlank()
+                                ? evidence.canonicalFinalUrl()
+                                : evidence.canonicalRequestedUrl();
+                        if (loc != null && !loc.isBlank() && seenLocators.add(loc)) {
+                            String sourceId =
+                                    "src-" + String.format(Locale.ROOT, "%03d", authoritativeSources.size() + 1);
+                            String title = SdkMissionRuntimeAccess.urlDomainOrTitle(loc);
+                            authoritativeSources.add(new SourceReference(sourceId, title, loc));
+                        }
+                    }
+                }
+            }
+        }
+
+        List<String> resultSources = new ArrayList<>();
+        if (!authoritativeSources.isEmpty()) {
+            ArrayNode sourcesArray = mapper.createArrayNode();
+            for (SourceReference ref : authoritativeSources) {
+                ObjectNode sNode = mapper.createObjectNode();
+                sNode.put("sourceId", ref.sourceId());
+                sNode.put("title", ref.title());
+                sNode.put("locator", ref.locator());
+                sourcesArray.add(sNode);
+                resultSources.add(ref.locator());
+            }
+            enrichedResult.set("sources", sourcesArray);
+        } else if (finalResult.has("sources") && finalResult.get("sources").isArray()) {
+            for (JsonNode sNode : finalResult.get("sources")) {
+                if (sNode.has("locator") && sNode.get("locator").isTextual()) {
+                    resultSources.add(sNode.get("locator").asText());
+                }
+            }
+        } else {
+            resultSources.addAll(delivery.sourceRefs());
+        }
+
         List<String> publishedIds = new ArrayList<>();
-        publishedIds.add(artifact.id().value());
-        String primaryArtifactId = artifact.id().value();
         String answerMarkdown = finalResult.path("answerMarkdown").isTextual()
                 ? finalResult.path("answerMarkdown").asText().trim()
                 : "";
+        Artifact reportArtifact = null;
         if (!answerMarkdown.isBlank() && answerMarkdown.length() >= 300) {
-            Artifact reportArtifact = publish(
+            reportArtifact = publish(
                     intent,
                     synthesis,
                     "mission-report",
@@ -154,13 +240,28 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                     answerMarkdown,
                     "text/markdown; charset=utf-8");
             publishedIds.add(reportArtifact.id().value());
-            primaryArtifactId = reportArtifact.id().value();
+            enrichedResult.set("reportArtifactRef", reference(reportArtifact));
         }
+
+        Artifact resultArtifact = publish(
+                intent, synthesis, "mission-result", "mission-result.json", encode(enrichedResult), "application/json");
+        publishedIds.add(0, resultArtifact.id().value());
+        String primaryArtifactId = reportArtifact != null
+                ? reportArtifact.id().value()
+                : resultArtifact.id().value();
+        enrichedResult.set("resultArtifactRef", reference(resultArtifact));
+
+        ArrayNode artifactRefsArray = mapper.createArrayNode();
+        for (String pubId : publishedIds) {
+            artifactRefsArray.add(pubId);
+        }
+        enrichedResult.set("artifactRefs", artifactRefsArray);
+
         return new MissionPublishedResult(
                 primaryArtifactId,
                 publishedIds,
-                List.of(),
-                synthesis.structuredOutput(),
+                resultSources,
+                encode(enrichedResult),
                 delivery.directAnswer(),
                 delivery.completionKind());
     }
@@ -774,10 +875,22 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         String answer = requiredText(value, "directAnswer", 24_000);
         List<String> completed = textArray(value, "completedItems", 40);
         List<String> failed = textArray(value, "failedItems", 40);
-        List<String> sourceRefs = textArray(value, "sourceRefs", maxSources * MAX_TASK_RESULTS);
-        List<String> unverified = textArray(value, "unverifiedClaims", MAX_FINAL_UNVERIFIED_CLAIMS);
-        List<String> unresolved = textArray(value, "unresolvedQuestions", 20);
-        List<String> risks = textArray(value, "residualRisks", 20);
+        List<String> sourceRefs =
+                value.has("sourceRefs") && !value.path("sourceRefs").isNull()
+                        ? textArray(value, "sourceRefs", maxSources * MAX_TASK_RESULTS)
+                        : List.of();
+        List<String> unverified =
+                value.has("unverifiedClaims") && !value.path("unverifiedClaims").isNull()
+                        ? textArray(value, "unverifiedClaims", MAX_FINAL_UNVERIFIED_CLAIMS)
+                        : List.of();
+        List<String> unresolved = value.has("unresolvedQuestions")
+                        && !value.path("unresolvedQuestions").isNull()
+                ? textArray(value, "unresolvedQuestions", 20)
+                : List.of();
+        List<String> risks =
+                value.has("residualRisks") && !value.path("residualRisks").isNull()
+                        ? textArray(value, "residualRisks", 20)
+                        : List.of();
         String completion = requiredText(value, "completionKind", 16);
         if (!("COMPLETE".equals(completion) || "PARTIAL".equals(completion))) {
             invalid("completionKind is invalid");
@@ -799,16 +912,109 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                 JsonNode reference = value.get(field);
                 if (reference == null || !reference.isNull()) invalid("Synthesis Artifact placeholder is invalid");
             }
+        } else {
+            for (String field : List.of("reportArtifactRef", "resultArtifactRef")) {
+                if (value.has(field)) {
+                    JsonNode reference = value.get(field);
+                    if (reference != null && !reference.isNull()) invalid("Synthesis Artifact placeholder is invalid");
+                }
+            }
         }
         return new FinalDelivery(answer, completed, failed, sourceRefs, unverified, unresolved, risks, completion);
     }
 
+    private StandardMissionQualityGate.Candidate candidateFrom(JsonNode value) {
+        String schemaVersion = value.path("schemaVersion").asText("");
+        String directAnswer = value.path("directAnswer").asText("");
+        String answerMarkdown = value.path("answerMarkdown").asText("");
+        String completionKind = value.path("completionKind").asText("");
+        List<String> completedItems = extractTextList(value.path("completedItems"));
+        List<String> failedItems = extractTextList(value.path("failedItems"));
+        List<StandardMissionQualityGate.TaskOutcome> taskOutcomes = new ArrayList<>();
+        if (value.has("taskOutcomes") && value.get("taskOutcomes").isArray()) {
+            for (JsonNode to : value.get("taskOutcomes")) {
+                taskOutcomes.add(new StandardMissionQualityGate.TaskOutcome(
+                        to.path("taskId").asText(""), to.path("status").asText("")));
+            }
+        }
+        List<StandardMissionQualityGate.AcceptanceOutcome> acceptanceOutcomes = new ArrayList<>();
+        if (value.has("acceptanceOutcomes") && value.get("acceptanceOutcomes").isArray()) {
+            for (JsonNode ao : value.get("acceptanceOutcomes")) {
+                List<String> taskIds = extractTextList(ao.path("taskIds"));
+                acceptanceOutcomes.add(new StandardMissionQualityGate.AcceptanceOutcome(
+                        ao.path("criterionIndex").asInt(-1), ao.path("status").asText(""), taskIds));
+            }
+        }
+        List<SourceReference> sources = new ArrayList<>();
+        if (value.has("sources") && value.get("sources").isArray()) {
+            for (JsonNode s : value.get("sources")) {
+                String sourceId = s.path("sourceId").asText("");
+                String title = s.path("title").asText("");
+                String locator = s.path("locator").asText("");
+                if (!sourceId.isBlank() && !locator.isBlank()) {
+                    try {
+                        sources.add(new SourceReference(sourceId, title, locator));
+                    } catch (Exception ignored) {
+                        // ignore invalid candidate sources so gate evaluates them or skips
+                    }
+                }
+            }
+        }
+        List<String> sourceRefs = extractTextList(value.path("sourceRefs"));
+        return new StandardMissionQualityGate.Candidate(
+                schemaVersion,
+                directAnswer,
+                answerMarkdown,
+                completionKind,
+                completedItems,
+                failedItems,
+                taskOutcomes,
+                acceptanceOutcomes,
+                sources,
+                sourceRefs);
+    }
+
+    private static List<String> extractTextList(JsonNode node) {
+        if (node == null || !node.isArray()) {
+            return List.of();
+        }
+        List<String> list = new ArrayList<>();
+        node.forEach(item -> {
+            if (item.isTextual() && !item.asText().isBlank()) {
+                list.add(item.asText().trim());
+            }
+        });
+        return List.copyOf(list);
+    }
+
     private void validateStandardV2Shape(JsonNode value) {
+        if (!value.isObject()) invalid("Standard v2 result shape is invalid");
         LinkedHashSet<String> fields = new LinkedHashSet<>();
         value.fieldNames().forEachRemaining(fields::add);
-        if (!fields.equals(STANDARD_V2_FIELDS)) invalid("Standard v2 result shape is invalid");
+        for (String req : STANDARD_V2_REQUIRED_FIELDS) {
+            if (!fields.contains(req)) invalid("Standard v2 result shape is invalid");
+        }
+        for (String f : fields) {
+            if (!STANDARD_V2_ALLOWED_FIELDS.contains(f)) invalid("Standard v2 result shape is invalid");
+        }
         requiredText(value, "directAnswer", 4_000);
         requiredText(value, "answerMarkdown", 240_000);
+        if (value.has("taskOutcomes") && !value.path("taskOutcomes").isNull()) {
+            JsonNode taskOutcomes = value.get("taskOutcomes");
+            if (!taskOutcomes.isArray()) invalid("Standard v2 result shape is invalid");
+        }
+        if (value.has("acceptanceOutcomes") && !value.path("acceptanceOutcomes").isNull()) {
+            JsonNode acceptanceOutcomes = value.get("acceptanceOutcomes");
+            if (!acceptanceOutcomes.isArray()) invalid("Standard v2 result shape is invalid");
+        }
+        if (value.has("sectionSources") && !value.path("sectionSources").isNull()) {
+            JsonNode sectionSources = value.get("sectionSources");
+            if (!sectionSources.isArray()) invalid("Standard v2 result shape is invalid");
+        }
+        if (value.has("sources") && !value.path("sources").isNull()) {
+            JsonNode sourcesNode = value.get("sources");
+            if (!sourcesNode.isArray()) invalid("Standard v2 result shape is invalid");
+        }
     }
 
     private Artifact publish(
