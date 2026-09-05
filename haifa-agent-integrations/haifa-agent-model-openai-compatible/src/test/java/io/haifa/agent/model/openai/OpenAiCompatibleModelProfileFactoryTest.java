@@ -27,7 +27,7 @@ class OpenAiCompatibleModelProfileFactoryTest {
     @Test
     void verifiesEverySingleAdmittedBindingAcrossAllOpenAiCompatibleRegistries() {
         var openAiChatAdmissions = OpenAiCompatibleBindingRegistry.admissions();
-        assertThat(openAiChatAdmissions).hasSize(19);
+        assertThat(openAiChatAdmissions).hasSize(38);
         for (var admission : openAiChatAdmissions) {
             verifyAdmittedBinding(
                     admission.key().providerId(),
@@ -199,18 +199,18 @@ class OpenAiCompatibleModelProfileFactoryTest {
     }
 
     @Test
-    void verifiesOnlyTheReviewedTokenRhythmV4FlashChatBinding() {
+    void verifiesOnlyReviewedTokenRhythmChatBindings() {
         ResolvedModelSnapshot reviewed = snapshot(
                 "tokenrhythm",
-                "tokenrhythm-v4-flash",
-                "deepseek-v4-flash",
+                "tokenrhythm-v4-flash-0731",
+                "deepseek-v4-flash-0731",
                 ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
                 OpenAiCompatibleDialects.TOKENRHYTHM,
                 "https://tokenrhythm.studio/v1");
         ResolvedModelSnapshot differentModel = snapshot(
                 "tokenrhythm",
                 "tokenrhythm-other",
-                "deepseek-v4-pro",
+                "deepseek-v4-pro-0813-unreviewed",
                 ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
                 OpenAiCompatibleDialects.TOKENRHYTHM,
                 "https://tokenrhythm.studio/v1");

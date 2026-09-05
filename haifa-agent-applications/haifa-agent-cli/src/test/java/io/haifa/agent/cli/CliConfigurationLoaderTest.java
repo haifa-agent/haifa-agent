@@ -216,7 +216,27 @@ class CliConfigurationLoaderTest {
                         "glm-5.2",
                         "glm-5.1",
                         "glm-5",
-                        "glm-5-turbo");
+                        "glm-5-turbo",
+                        "tokenrhythm-glm-5",
+                        "tokenrhythm-glm-5-1",
+                        "tokenrhythm-minimax-m2-7",
+                        "tokenrhythm-kimi-k2-5",
+                        "tokenrhythm-kimi-k2-6",
+                        "tokenrhythm-minimax-m2-5",
+                        "tokenrhythm-mimo-v2-5-pro",
+                        "tokenrhythm-qwen3-7-max",
+                        "tokenrhythm-kimi-k2-7-code",
+                        "tokenrhythm-glm-5-2",
+                        "tokenrhythm-qwen3-8-max",
+                        "tokenrhythm-deepseek-v4-flash-0731",
+                        "tokenrhythm-seed-2-1-pro",
+                        "tokenrhythm-seed-2-1-turbo",
+                        "tokenrhythm-deepseek-v4-pro-0813",
+                        "tokenrhythm-glm-5-3",
+                        "tokenrhythm-qwen3-7-flash",
+                        "tokenrhythm-qwen3-8-27b",
+                        "tokenrhythm-longcat-2-0",
+                        "tokenrhythm-glm-5-3-flash");
         assertThat(result.availableModels())
                 .filteredOn(model -> model.id().equals("gpt-5.6-sol"))
                 .singleElement()

@@ -26,7 +26,8 @@ public final class PackagedModelCatalog {
                                         "aliyun-bailian-openai-chat",
                                         "siliconflow-openai-chat",
                                         "kimi-openai-chat",
-                                        "zhipu-openai-chat"),
+                                        "zhipu-openai-chat",
+                                        "tokenrhythm-openai-chat"),
                                 ModelApiStyles.OPENAI_RESPONSES,
                                 Set.of("deepseek-openai-responses", "openai-codex-responses"),
                                 ModelApiStyles.ANTHROPIC_MESSAGES,
@@ -45,6 +46,8 @@ public final class PackagedModelCatalog {
                                 new ModelProviderId("kimi"),
                                 Set.of(ModelAuthenticationMethod.API_KEY),
                                 new ModelProviderId("zhipu"),
+                                Set.of(ModelAuthenticationMethod.API_KEY),
+                                new ModelProviderId("tokenrhythm"),
                                 Set.of(ModelAuthenticationMethod.API_KEY),
                                 new ModelProviderId("google-antigravity"),
                                 Set.of(ModelAuthenticationMethod.EXTERNAL_LOGIN)))

@@ -250,7 +250,7 @@ class TokenRhythmOpenAiChatTest {
                 "provider-v1",
                 "TokenRhythm",
                 endpoint,
-                new CredentialRef("env://TR_API_KEY"),
+                new CredentialRef("env://TK_API_KEY"),
                 true,
                 ProviderStatus.ACTIVE,
                 List.of(new ModelApiBindingDefinition(

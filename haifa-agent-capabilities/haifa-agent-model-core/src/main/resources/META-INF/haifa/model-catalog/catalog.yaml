@@ -6,4 +6,5 @@ providers:
   - resource: providers/siliconflow/provider.yaml
   - resource: providers/kimi/provider.yaml
   - resource: providers/zhipu/provider.yaml
+  - resource: providers/tokenrhythm/provider.yaml
   - resource: providers/google-antigravity/provider.yaml
