@@ -139,7 +139,7 @@ public final class TavilyFetchProvider implements WebFetchProvider {
                     selected.format(),
                     selected.mediaType(),
                     Optional.of("UTF-8"),
-                    WebHttpSupport.sha256(content),
+                    WebHttpSupport.sha256(complete),
                     truncated);
         });
     }

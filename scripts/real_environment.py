@@ -860,6 +860,10 @@ def backend_environment(
         "HAIFA_PERSONAL_MCP_SERVER_ID": "haifa-utility",
         "HAIFA_PERSONAL_MCP_DISPLAY_NAME": "Haifa Utility MCP",
         "HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED": "true",
+        "HAIFA_PERSONAL_WEB_SEARCH_ENABLED": "true",
+        "HAIFA_PERSONAL_WEB_SEARCH_PROVIDER_ID": web_search_provider,
+        "HAIFA_PERSONAL_WEB_FETCH_ENABLED": "true",
+        "HAIFA_PERSONAL_WEB_FETCH_PROVIDER_ID": web_fetch_provider,
         "HAIFA_CODEX_ORIGINATOR": environment_value("HAIFA_CODEX_ORIGINATOR") or "haifa",
         "HAIFA_CODEX_USER_AGENT": environment_value("HAIFA_CODEX_USER_AGENT") or "haifa-agent/1",
     }

@@ -44,6 +44,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
@@ -897,8 +898,8 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 try (var select = current()
                         .prepareStatement(
                                 """
-                    SELECT mission_id,conversation_id,owner_scope,model_binding_json,mode,objective,research_brief_json,
-                           usage_model_tokens,usage_model_calls,usage_tool_calls,deadline_at_ms
+                    SELECT mission_id,conversation_id,owner_scope,model_binding_json,mode,objective,acceptance_json,research_brief_json,
+                           usage_model_tokens,usage_model_calls,usage_tool_calls,deadline_at_ms,state,updated_at_ms
                     FROM personal_mission m
                     WHERE state IN ('RUNNING','WAITING_USER','SYNTHESIZING')
                       AND NOT EXISTS (SELECT 1 FROM personal_mission_task t
@@ -914,13 +915,21 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                     try (var result = select.executeQuery()) {
                         if (!result.next()) return Optional.empty();
                         String missionId = result.getString("mission_id");
-                        updateMissionState(missionId, "SYNTHESIZING", now, "state IN ('RUNNING','WAITING_USER')");
+                        String currentState = result.getString("state");
+                        Instant asOf;
+                        if ("SYNTHESIZING".equals(currentState)) {
+                            asOf = Instant.ofEpochMilli(result.getLong("updated_at_ms"));
+                        } else {
+                            updateMissionState(missionId, "SYNTHESIZING", now, "state IN ('RUNNING','WAITING_USER')");
+                            asOf = now;
+                        }
                         List<String> taskResults = new ArrayList<>();
                         List<String> completedTaskIds = new ArrayList<>();
+                        List<String> completedTaskObjectives = new ArrayList<>();
                         List<String> failedItems = new ArrayList<>();
                         try (var tasks = current()
                                 .prepareStatement(
-                                        "SELECT task_id,state,result_json,block_code FROM personal_mission_task WHERE mission_id=? ORDER BY ordinal")) {
+                                        "SELECT task_id,objective,state,result_json,block_code FROM personal_mission_task WHERE mission_id=? ORDER BY ordinal")) {
                             tasks.setString(1, missionId);
                             try (var rows = tasks.executeQuery()) {
                                 while (rows.next()) {
@@ -928,6 +937,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                     if (taskResult != null) {
                                         taskResults.add(taskResult);
                                         completedTaskIds.add(rows.getString("task_id"));
+                                        completedTaskObjectives.add(rows.getString("objective"));
                                     } else {
                                         String code = rows.getString("block_code");
                                         failedItems.add(rows.getString("task_id") + ":" + rows.getString("state")
@@ -936,6 +946,24 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 }
                             }
                         }
+                        Map<String, String> settledRunIdByTaskId = new LinkedHashMap<>();
+                        try (var attempts = current()
+                                .prepareStatement(
+                                        "SELECT task_id, run_id FROM personal_mission_task_attempt WHERE mission_id=? AND state='SETTLED' ORDER BY attempt_no ASC")) {
+                            attempts.setString(1, missionId);
+                            try (var rows = attempts.executeQuery()) {
+                                while (rows.next()) {
+                                    String runId = rows.getString("run_id");
+                                    if (runId != null && !runId.isBlank()) {
+                                        settledRunIdByTaskId.put(rows.getString("task_id"), runId);
+                                    }
+                                }
+                            }
+                        }
+                        List<String> completedTaskRunIds = completedTaskIds.stream()
+                                .map(settledRunIdByTaskId::get)
+                                .filter(Objects::nonNull)
+                                .toList();
                         return Optional.of(new MissionSynthesisIntent(
                                 missionId,
                                 result.getString("conversation_id"),
@@ -952,6 +980,9 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 taskResults,
                                 failedItems,
                                 completedTaskIds,
+                                completedTaskObjectives,
+                                jsonList(result.getString("acceptance_json")),
+                                completedTaskRunIds,
                                 2,
                                 Math.max(0, maxModelTokens - result.getLong("usage_model_tokens")),
                                 Optional.of(Instant.ofEpochMilli(result.getLong("deadline_at_ms"))),
@@ -960,7 +991,8 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 new MissionUsage(
                                         result.getLong("usage_model_tokens"),
                                         result.getLong("usage_model_calls"),
-                                        result.getLong("usage_tool_calls"))));
+                                        result.getLong("usage_tool_calls")),
+                                asOf));
                     }
                 }
             } catch (SQLException exception) {

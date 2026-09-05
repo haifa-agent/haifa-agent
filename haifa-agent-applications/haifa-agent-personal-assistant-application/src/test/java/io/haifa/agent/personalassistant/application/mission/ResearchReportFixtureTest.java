@@ -99,7 +99,7 @@ class ResearchReportFixtureTest {
                 ## 分项研究发现
                 <!-- haifa-task: %s -->
                 ### 主要发现
-                %s，并由 [[source-fixture]] 提供结构化证据。
+                %s，相关机制演进与技术参数由 [[source-fixture]] 提供详实结构化支撑，全面覆盖核心要求并深入分析因果链条。
                 <!-- haifa-section: synthesis -->
                 ## 综合分析
                 %s，同时记录相反证据、剩余风险和会改变判断的新事实。

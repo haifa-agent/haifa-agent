@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.haifa.agent.artifact.Artifact;
 import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.artifact.InMemoryArtifactPayloadStore;
 import io.haifa.agent.artifact.InMemoryArtifactStore;
@@ -15,6 +16,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionMode;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -275,6 +277,439 @@ class MissionArtifactPublisherTest {
                 .isInstanceOf(MissionException.class);
         assertThatThrownBy(() -> ResearchSourceLocator.normalize("https://user@example.com/private"))
                 .isInstanceOf(MissionException.class);
+    }
+
+    @Test
+    void publishesStandardMissionWithV2MarkdownReportAsPrimaryArtifact() throws Exception {
+        var metadata = new InMemoryArtifactStore();
+        var publisher = publisher(metadata, newIds());
+        var intent = new MissionSynthesisIntent(
+                "mission-std-1",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Analyze distributed transaction protocols",
+                List.of("{\"task\":\"completed\"}"),
+                List.of());
+
+        String richAnswerMarkdown =
+                """
+                # 分布式事务协议对比分析
+
+                ## 核心机制概述
+                在分布式系统中，保证跨节点操作的一致性通常采用两阶段提交（2PC）、三阶段提交（3PC）或基于 Saga 的补偿机制。
+                两阶段提交通过协调者与参与者之间的 Prepare 和 Commit 两个阶段保证强一致性，但在协调者故障时可能发生阻塞。
+
+                ## 技术参数与选型权衡
+                | 方案 | 一致性级别 | 吞吐能力 | 延迟 | 容错复杂度 |
+                | --- | --- | --- | --- | --- |
+                | 2PC | 强一致（ACID） | 低（阻塞锁） | 高（两轮网络交互） | 协调者单点风险高 |
+                | 3PC | 强一致（ACID） | 较低 | 极高（三轮网络交互） | 降低阻塞概率 |
+                | Saga | 最终一致 | 极高（无长事务锁）| 低 | 需实现向前重试或向后补偿 |
+
+                ## 实践建议
+                对于长事务金融计费业务，建议采用 Saga 模式编排；跨行即时结算采用 TCC 模式，严格避免直接使用分布式两阶段阻塞长事务。
+                """;
+
+        String standardV2Result =
+                """
+                {
+                  "schemaVersion": "pa.mission-final-result/v2",
+                  "directAnswer": "分布式事务在强一致与高吞吐之间存在根本权衡，短事务推荐2PC，长流程业务建议采用Saga编排。",
+                  "answerMarkdown": "%s",
+                  "completedItems": ["对比 2PC 与 3PC 机制", "分析 Saga 补偿模式"],
+                  "failedItems": [],
+                  "taskOutcomes": [{"taskId": "task-1", "status": "COMPLETED"}],
+                  "acceptanceOutcomes": [],
+                  "artifactRefs": [],
+                  "sourceRefs": ["https://research.example.com/transactions"],
+                  "unverifiedClaims": [],
+                  "unresolvedQuestions": [],
+                  "residualRisks": [],
+                  "completionKind": "COMPLETE"
+                }
+                """
+                        .formatted(richAnswerMarkdown
+                                .replace("\r\n", "\\n")
+                                .replace("\n", "\\n")
+                                .replace("\"", "\\\""));
+
+        var published = publisher.publish(intent, synthesis(standardV2Result));
+
+        assertThat(published.artifactIds()).hasSize(2);
+        assertThat(published.completionKind()).isEqualTo("COMPLETE");
+        var artifacts = metadata.findByProject("mission-mission-std-1");
+        assertThat(artifacts)
+                .extracting(value -> value.title())
+                .containsExactlyInAnyOrder("mission-result.json", "mission-report.md");
+        var reportArtifact = artifacts.stream()
+                .filter(a -> a.title().equals("mission-report.md"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(published.finalArtifactId()).isEqualTo(reportArtifact.id().value());
+        JsonNode publishedResultJson = MAPPER.readTree(published.structuredResult());
+        assertThat(publishedResultJson
+                        .path("reportArtifactRef")
+                        .path("artifactId")
+                        .asText())
+                .isEqualTo(reportArtifact.id().value());
+        assertThat(publishedResultJson.path("reportArtifactRef").path("title").asText())
+                .isEqualTo("mission-report.md");
+        assertThat(publishedResultJson.path("resultArtifactRef").path("title").asText())
+                .isEqualTo("mission-result.json");
+        assertThat(publishedResultJson.path("sources").isEmpty()).isTrue();
+        assertThat(publishedResultJson.path("sourceRefs").isEmpty()).isTrue();
+    }
+
+    @Test
+    void publishesStandardMissionWithAuthoritativeFetchEvidenceSources() throws Exception {
+        var metadata = new InMemoryArtifactStore();
+        io.haifa.agent.personalassistant.application.research.ResearchFetchEvidenceReader fetchReader = runId -> {
+            if ("run-task-1".equals(runId)) {
+                return List.of(new io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence(
+                        "call-1",
+                        "https://blog.ethereum.org/dencun",
+                        "https://blog.ethereum.org/dencun",
+                        true,
+                        true,
+                        Instant.parse("2026-09-05T00:00:00Z"),
+                        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                        1234,
+                        false));
+            }
+            return List.of();
+        };
+
+        var publisher = new MissionArtifactPublisher(artifactService(metadata, newIds()), MAPPER, fetchReader);
+
+        var intent = new MissionSynthesisIntent(
+                "mission-std-authoritative",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Analyze protocol changes",
+                List.of("{\"task\":\"completed\"}"),
+                List.of(),
+                List.of("task-1"),
+                List.of("Analyze protocol changes"),
+                List.of(),
+                List.of("run-task-1"),
+                Instant.parse("2026-09-05T00:00:00Z"));
+
+        String resultJson =
+                """
+                {
+                  "schemaVersion": "pa.mission-final-result/v2",
+                  "directAnswer": "以太坊协议升级成功完成分析。",
+                  "answerMarkdown": "%s",
+                  "completedItems": [],
+                  "failedItems": [],
+                  "artifactRefs": [],
+                  "taskOutcomes": [{"taskId": "task-1", "status": "COMPLETED"}],
+                  "acceptanceOutcomes": [],
+                  "completionKind": "COMPLETE"
+                }
+                """
+                        .formatted("以太坊协议升级详述报告内容。".repeat(30));
+
+        var published = publisher.publish(intent, synthesis(resultJson));
+
+        assertThat(published.sources()).containsExactly("https://blog.ethereum.org/dencun");
+        JsonNode publishedResult = MAPPER.readTree(published.structuredResult());
+        assertThat(publishedResult.path("sources")).hasSize(1);
+        assertThat(publishedResult.path("sources").get(0).path("sourceId").asText())
+                .isEqualTo("src-001");
+        assertThat(publishedResult.path("sources").get(0).path("locator").asText())
+                .isEqualTo("https://blog.ethereum.org/dencun");
+        assertThat(publishedResult.path("reportArtifactRef").path("title").asText())
+                .isEqualTo("mission-report.md");
+        assertThat(publishedResult.path("resultArtifactRef").path("title").asText())
+                .isEqualTo("mission-result.json");
+    }
+
+    @Test
+    void publishesPartialStandardMissionWithAuthoritativeFailedTaskOutcome() throws Exception {
+        var publisher = publisher(new InMemoryArtifactStore(), newIds());
+        var intent = new MissionSynthesisIntent(
+                "mission-std-partial",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Complete available analysis and report blocked work",
+                List.of("settled result"),
+                List.of("task-failed:BLOCKED:SOURCE_UNAVAILABLE"),
+                List.of("task-complete"),
+                List.of("Complete available analysis"),
+                List.of("Verify the unavailable source"),
+                List.of(),
+                Instant.parse("2026-09-05T00:00:00Z"));
+
+        String resultJson =
+                """
+                {
+                  "schemaVersion": "pa.mission-final-result/v2",
+                  "directAnswer": "可完成的分析已经交付，来源验证仍受阻。",
+                  "answerMarkdown": "%s",
+                  "completedItems": [],
+                  "failedItems": ["task-failed:BLOCKED:SOURCE_UNAVAILABLE"],
+                  "taskOutcomes": [
+                    {"taskId": "task-complete", "status": "COMPLETED"},
+                    {"taskId": "task-failed", "status": "FAILED"}
+                  ],
+                  "acceptanceOutcomes": [
+                    {"criterionIndex": 0, "status": "UNSATISFIED", "taskIds": ["task-failed"]}
+                  ],
+                  "artifactRefs": [],
+                  "completionKind": "PARTIAL"
+                }
+                """
+                        .formatted("部分完成报告解释了现有结论、失败原因和后续验证路径。".repeat(30));
+
+        var published = publisher.publish(intent, synthesis(resultJson));
+
+        assertThat(published.completionKind()).isEqualTo("PARTIAL");
+        assertThat(MAPPER.readTree(published.structuredResult()).path("taskOutcomes"))
+                .hasSize(2);
+    }
+
+    @Test
+    void rejectsStandardV2WithUnknownSectionSourceId() throws Exception {
+        var metadata = new InMemoryArtifactStore();
+        var publisher = publisher(metadata, newIds());
+        var intent = new MissionSynthesisIntent(
+                "mission-std-unknown-source",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Analyze distributed transaction protocols",
+                List.of("{\"task\":\"completed\"}"),
+                List.of(),
+                List.of("task-1"),
+                List.of("Analyze distributed transaction protocols"),
+                List.of(),
+                List.of(),
+                Instant.parse("2026-09-05T00:00:00Z"));
+
+        String invalid =
+                """
+                {
+                  "schemaVersion": "pa.mission-final-result/v2",
+                  "directAnswer": "分布式事务分析完成。",
+                  "answerMarkdown": "%s",
+                  "completedItems": [],
+                  "failedItems": [],
+                  "artifactRefs": [],
+                  "taskOutcomes": [{"taskId": "task-1", "status": "COMPLETED"}],
+                  "acceptanceOutcomes": [],
+                  "sectionSources": [
+                    {"sectionHeading": "核心机制概述", "sourceIds": ["src-999"]}
+                  ],
+                  "completionKind": "COMPLETE"
+                }
+                """
+                        .formatted("分布式事务分析内容。".repeat(30));
+
+        assertThatThrownBy(() -> publisher.publish(intent, synthesis(invalid)))
+                .isInstanceOf(MissionException.class)
+                .extracting(value -> ((MissionException) value).code())
+                .isEqualTo("MISSION_REPORT_QUALITY_FAILED");
+    }
+
+    @Test
+    void publishesStandardMissionWithValidSectionSources() throws Exception {
+        var metadata = new InMemoryArtifactStore();
+        io.haifa.agent.personalassistant.application.research.ResearchFetchEvidenceReader fetchReader = runId -> {
+            if ("run-task-1".equals(runId)) {
+                return List.of(new io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence(
+                        "call-1",
+                        "https://blog.ethereum.org/dencun",
+                        "https://blog.ethereum.org/dencun",
+                        true,
+                        true,
+                        Instant.parse("2026-09-05T00:00:00Z"),
+                        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                        1234,
+                        false));
+            }
+            return List.of();
+        };
+
+        var publisher = new MissionArtifactPublisher(artifactService(metadata, newIds()), MAPPER, fetchReader);
+
+        var intent = new MissionSynthesisIntent(
+                "mission-std-section-sources",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Analyze protocol changes",
+                List.of("{\"task\":\"completed\"}"),
+                List.of(),
+                List.of("task-1"),
+                List.of("Analyze protocol changes"),
+                List.of(),
+                List.of("run-task-1"),
+                Instant.parse("2026-09-05T00:00:00Z"));
+
+        String resultJson =
+                """
+                {
+                  "schemaVersion": "pa.mission-final-result/v2",
+                  "directAnswer": "以太坊协议升级成功完成分析。",
+                  "answerMarkdown": "%s",
+                  "completedItems": [],
+                  "failedItems": [],
+                  "artifactRefs": [],
+                  "taskOutcomes": [{"taskId": "task-1", "status": "COMPLETED"}],
+                  "acceptanceOutcomes": [],
+                  "sectionSources": [
+                    {"sectionHeading": "升级机制概述", "sourceIds": ["src-001"]}
+                  ],
+                  "completionKind": "COMPLETE"
+                }
+                """
+                        .formatted("以太坊协议升级详述报告内容。".repeat(30));
+
+        var published = publisher.publish(intent, synthesis(resultJson));
+        JsonNode publishedResult = MAPPER.readTree(published.structuredResult());
+        assertThat(publishedResult.path("sectionSources")).hasSize(1);
+        assertThat(publishedResult
+                        .path("sectionSources")
+                        .get(0)
+                        .path("sectionHeading")
+                        .asText())
+                .isEqualTo("升级机制概述");
+        assertThat(publishedResult
+                        .path("sectionSources")
+                        .get(0)
+                        .path("sourceIds")
+                        .get(0)
+                        .asText())
+                .isEqualTo("src-001");
+    }
+
+    @Test
+    void publishesResearchTaskWithV2FindingsAndTaskSummary() throws Exception {
+        ObjectNode taskV2 = (ObjectNode) MAPPER.readTree(
+                """
+                {
+                  "schemaVersion": "pa.research-task-result/v2",
+                  "taskSummary": "Deep analysis of cloud infrastructure costs and optimization strategies.",
+                  "queries": [{"query": "cloud infrastructure", "phase": "DISCOVER"}],
+                  "findings": [{
+                    "findingId": "finding-1",
+                    "title": "Spot instance reclamation",
+                    "mechanism": "Cloud providers terminate spot nodes with 2-minute notice when capacity is constrained.",
+                    "keyParameters": ["notice period: 120s", "cost discount: 70-90%%"],
+                    "evidenceSummary": "Documented in vendor SLAs and independently benchmarked.",
+                    "implications": "Requires state checkpointing or stateless workload design.",
+                    "limitations": "Unpredictable interruption spikes.",
+                    "supportingSourceIds": ["source-1", "source-2"],
+                    "opposingSourceIds": [],
+                    "evidenceAssessment": "PARTIALLY_SUPPORTED",
+                    "unverified": true
+                  }],
+                  "sources": [
+                    {"sourceId":"source-1","locator":"https://research.stub/source-1","normalizedLocator":"https://research.stub/source-1","locatorDigest":"sha256:%s","title":"Primary","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z","status":"FETCHED","excerpt":"Primary evidence.","contentDigest":"sha256:%s"},
+                    {"sourceId":"source-2","locator":"https://research.stub/source-2","normalizedLocator":"https://research.stub/source-2","locatorDigest":"sha256:%s","title":"Independent","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-02-01T00:00:00Z","status":"FETCHED","excerpt":"Independent evidence.","contentDigest":"sha256:%s"}
+                  ],
+                  "artifactRefs": [],
+                  "unresolvedQuestions": ["Regional pricing variance"],
+                  "stopReason": "SUFFICIENT_EVIDENCE",
+                  "limitsUsed": {"searchCalls": 1, "fetchCalls": 2, "sources": 2, "contentBytes": 2048}
+                }
+                """
+                        .formatted("a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64)));
+
+        var publisher = publisher(new InMemoryArtifactStore(), newIds());
+        var published = publisher.publish(intent(taskV2), synthesis(validReport()));
+        JsonNode manifest = MAPPER.readTree(published.structuredResult());
+
+        assertThat(published.artifactIds()).hasSize(5);
+        assertThat(manifest.path("schemaVersion").asText()).isEqualTo("pa.research-delivery/v2");
+        assertThat(manifest.path("completionKind").asText()).isEqualTo("COMPLETE");
+        assertThat(manifest.path("evidenceSummary").path("totalClaimCount").asInt())
+                .isEqualTo(1);
+        assertThat(manifest.path("evidenceSummary").path("unverifiedClaimCount").asInt())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void publishesSupportedNormativeFindingFromOneFetchedAuthoritativeSource() throws Exception {
+        ObjectNode task = (ObjectNode) MAPPER.readTree(
+                """
+                {
+                  "schemaVersion":"pa.research-task-result/v2",
+                  "taskSummary":"An authoritative specification defines the normative protocol value.",
+                  "queries":[{"query":"protocol specification","phase":"DISCOVER"}],
+                  "findings":[{
+                    "findingId":"finding-1","title":"Normative value",
+                    "mechanism":"The specification defines the protocol value as 64.",
+                    "keyParameters":["value: 64"],"evidenceSummary":"Direct primary-source statement.",
+                    "implications":"Implementations must use the value.","limitations":"Normative fact only.",
+                    "supportingSourceIds":["source-1"],"opposingSourceIds":[],
+                    "evidenceAssessment":"SUPPORTED","unverified":false
+                  }],
+                  "sources":[{
+                    "sourceId":"source-1","locator":"https://research.stub/source-1",
+                    "normalizedLocator":"https://research.stub/source-1","locatorDigest":"sha256:%s",
+                    "title":"Authoritative protocol specification","safetyType":"DEVELOPMENT_STUB",
+                    "fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z",
+                    "status":"FETCHED","excerpt":"The specification defines the value.","contentDigest":"sha256:%s"
+                  }],
+                  "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":1,"contentBytes":128}
+                }
+                """
+                        .formatted("a".repeat(64), "b".repeat(64)));
+        var store = new InMemoryArtifactStore();
+        var payloads = new InMemoryArtifactPayloadStore();
+        var publisher = new MissionArtifactPublisher(artifactService(store, payloads, newIds()), MAPPER);
+        String report =
+                validReport().replace("，反证来自 [[source-2]]", "").replace("- [[source-2]] Independent evidence\n", "");
+
+        var published = publisher.publish(intent(task), synthesis(report));
+        JsonNode manifest = MAPPER.readTree(published.structuredResult());
+        Artifact claimsArtifact = store.findByProject("mission-mission-1").stream()
+                .filter(artifact -> artifact.title().equals("claim-evidence.json"))
+                .findFirst()
+                .orElseThrow();
+        JsonNode claim = MAPPER.readTree(
+                        new String(payloads.load(claimsArtifact.payload()).orElseThrow(), StandardCharsets.UTF_8))
+                .path("claims")
+                .get(0);
+
+        assertThat(claim.path("unverified").asBoolean()).isFalse();
+        assertThat(manifest.path("unverifiedClaimCount").asInt()).isZero();
+        assertThat(manifest.path("evidenceSummary")
+                        .path("singleSourceClaimCount")
+                        .asInt())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void rejectsStandardV2WithoutAnswerMarkdown() {
+        var publisher = publisher(new InMemoryArtifactStore(), newIds());
+        var intent = new MissionSynthesisIntent(
+                "mission-std-missing-answer",
+                "conversation-std",
+                "local:user",
+                MissionMode.STANDARD,
+                "Compare transaction protocols",
+                List.of("settled task result"),
+                List.of());
+        String invalid =
+                """
+                {
+                  "schemaVersion":"pa.mission-final-result/v2",
+                  "directAnswer":"This conclusion is intentionally long enough for the legacy fallback threshold.",
+                  "completedItems":[],"failedItems":[],"artifactRefs":[],"sourceRefs":[],
+                  "unverifiedClaims":[],"unresolvedQuestions":[],"residualRisks":[],"completionKind":"COMPLETE"
+                }
+                """;
+
+        assertThatThrownBy(() -> publisher.publish(intent, synthesis(invalid)))
+                .isInstanceOf(MissionException.class)
+                .hasMessageContaining("Standard v2 result shape is invalid");
     }
 
     private static void assertInvalid(ThrowingMutation mutation) throws Exception {

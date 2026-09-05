@@ -126,18 +126,46 @@ export type MissionArtifactReference = {
   mediaType?: string;
 };
 
+export type SourceReference = {
+  sourceId: string;
+  title: string;
+  locator: string;
+};
+
+export type TaskOutcome = {
+  taskId: string;
+  status: "COMPLETED" | "FAILED" | "PARTIAL" | string;
+};
+
+export type AcceptanceOutcome = {
+  criterionIndex: number;
+  status: "SATISFIED" | "PARTIALLY_SATISFIED" | "UNSATISFIED" | string;
+  taskIds?: string[];
+};
+
+export type SectionSource = {
+  sectionHeading: string;
+  sourceIds: string[];
+};
+
 export type ParsedMissionFinalResult = {
   schemaVersion?: string;
   unsupportedVersion?: boolean;
   directAnswer?: string;
+  answerMarkdown?: string;
   completionKind?: string;
   degraded?: boolean;
   degradationReasons?: string[];
   affectedTaskIds?: string[];
   reportArtifactRef?: MissionArtifactReference;
+  resultArtifactRef?: MissionArtifactReference;
   sourcesArtifactRef?: MissionArtifactReference;
   claimEvidenceArtifactRef?: MissionArtifactReference;
   unresolvedArtifactRef?: MissionArtifactReference;
+  sources?: SourceReference[];
+  taskOutcomes?: TaskOutcome[];
+  acceptanceOutcomes?: AcceptanceOutcome[];
+  sectionSources?: SectionSource[];
   sourceCount?: number;
   unverifiedClaimCount?: number;
   unresolvedQuestionCount?: number;
@@ -186,6 +214,7 @@ export function parseMissionFinalResult(value: string | null): ParsedMissionFina
     const schemaVersion = typeof parsed.schemaVersion === "string" ? parsed.schemaVersion : undefined;
     if (schemaVersion && ![
       "pa.mission-final-result/v1",
+      "pa.mission-final-result/v2",
       "pa.research-delivery/v2",
     ].includes(schemaVersion)) {
       return { schemaVersion, unsupportedVersion: true };
@@ -201,14 +230,62 @@ export function parseMissionFinalResult(value: string | null): ParsedMissionFina
     return {
       schemaVersion,
       directAnswer: typeof parsed.directAnswer === "string" ? parsed.directAnswer : undefined,
+      answerMarkdown: typeof parsed.answerMarkdown === "string" ? parsed.answerMarkdown : undefined,
       completionKind: typeof parsed.completionKind === "string" ? parsed.completionKind : undefined,
       degraded: typeof parsed.degraded === "boolean" ? parsed.degraded : undefined,
       degradationReasons: strings("degradationReasons"),
       affectedTaskIds: strings("affectedTaskIds"),
       reportArtifactRef: parseArtifactReference(parsed.reportArtifactRef),
+      resultArtifactRef: parseArtifactReference(parsed.resultArtifactRef),
       sourcesArtifactRef: parseArtifactReference(parsed.sourcesArtifactRef),
       claimEvidenceArtifactRef: parseArtifactReference(parsed.claimEvidenceArtifactRef),
       unresolvedArtifactRef: parseArtifactReference(parsed.unresolvedArtifactRef),
+      sources: Array.isArray(parsed.sources)
+        ? parsed.sources.flatMap((s) => {
+            if (typeof s !== "object" || s === null) return [];
+            const r = s as Record<string, unknown>;
+            if (typeof r.sourceId === "string" && typeof r.title === "string" && typeof r.locator === "string") {
+              return [{ sourceId: r.sourceId, title: r.title, locator: r.locator }];
+            }
+            return [];
+          })
+        : undefined,
+      taskOutcomes: Array.isArray(parsed.taskOutcomes)
+        ? parsed.taskOutcomes.flatMap((t) => {
+            if (typeof t !== "object" || t === null) return [];
+            const r = t as Record<string, unknown>;
+            if (typeof r.taskId === "string" && typeof r.status === "string") {
+              return [{ taskId: r.taskId, status: r.status }];
+            }
+            return [];
+          })
+        : undefined,
+      acceptanceOutcomes: Array.isArray(parsed.acceptanceOutcomes)
+        ? parsed.acceptanceOutcomes.flatMap((a) => {
+            if (typeof a !== "object" || a === null) return [];
+            const r = a as Record<string, unknown>;
+            if (typeof r.criterionIndex === "number" && typeof r.status === "string") {
+              const taskIds = Array.isArray(r.taskIds)
+                ? r.taskIds.filter((id): id is string => typeof id === "string")
+                : undefined;
+              return [{ criterionIndex: r.criterionIndex, status: r.status, taskIds }];
+            }
+            return [];
+          })
+        : undefined,
+      sectionSources: Array.isArray(parsed.sectionSources)
+        ? parsed.sectionSources.flatMap((sec) => {
+            if (typeof sec !== "object" || sec === null) return [];
+            const r = sec as Record<string, unknown>;
+            if (typeof r.sectionHeading === "string" && Array.isArray(r.sourceIds)) {
+              return [{
+                sectionHeading: r.sectionHeading,
+                sourceIds: r.sourceIds.filter((id): id is string => typeof id === "string"),
+              }];
+            }
+            return [];
+          })
+        : undefined,
       sourceCount: typeof parsed.sourceCount === "number" ? parsed.sourceCount : undefined,
       unverifiedClaimCount: typeof parsed.unverifiedClaimCount === "number" ? parsed.unverifiedClaimCount : undefined,
       unresolvedQuestionCount: typeof parsed.unresolvedQuestionCount === "number" ? parsed.unresolvedQuestionCount : undefined,
@@ -299,6 +376,8 @@ export function artifactDisplayName(fileName: string): string {
     "claim-evidence.json": "结论与证据关系",
     "unresolved-questions.json": "未决问题",
     "research-delivery.json": "交付清单",
+    "mission-report.md": "完整任务报告",
+    "mission-result.json": "任务执行结果",
   }[fileName] ?? fileName.replace(/[-_]+/g, " ").replace(/\.[^.]+$/, "");
 }
 
@@ -306,6 +385,7 @@ export function missionArtifactItems(mission: MissionSnapshot): MissionArtifactI
   const result = parseMissionFinalResult(mission.finalResult);
   const references = [
     result?.reportArtifactRef,
+    result?.resultArtifactRef,
     result?.sourcesArtifactRef,
     result?.claimEvidenceArtifactRef,
     result?.unresolvedArtifactRef,

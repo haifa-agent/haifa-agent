@@ -160,7 +160,8 @@ public final class MissionExecutionCoordinator {
         try {
             return new PublishedSynthesis(synthesis, publisher.publish(intent, synthesis));
         } catch (MissionException invalid) {
-            if (!"MISSION_RESULT_SCHEMA_INVALID".equals(invalid.code())) throw invalid;
+            if (!"MISSION_RESULT_SCHEMA_INVALID".equals(invalid.code())
+                    && !"MISSION_REPORT_QUALITY_FAILED".equals(invalid.code())) throw invalid;
             MissionRuntimeAccess.SynthesisRunResult repaired =
                     runtime.repairSynthesis(intent, synthesis, invalid.code(), invalid.getMessage(), 1);
             repaired = new MissionRuntimeAccess.SynthesisRunResult(
