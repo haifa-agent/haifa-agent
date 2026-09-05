@@ -129,9 +129,8 @@ class LocalFileToolOperationsMultiRootTest {
                 () -> now);
         ledger = new InMemorySessionChangeLedger();
 
-        operations =
-                new LocalFileToolOperations(
-                        workspaces, files, mutations, identifiers, () -> now, provisioning, ledger, null, true);
+        operations = new LocalFileToolOperations(
+                workspaces, files, mutations, identifiers, () -> now, provisioning, ledger, null, true);
     }
 
     private void registerWorkspace(

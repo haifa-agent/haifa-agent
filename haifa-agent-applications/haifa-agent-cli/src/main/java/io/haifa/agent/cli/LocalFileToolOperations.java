@@ -992,9 +992,10 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 switch (exception.code()) {
                     case PERMISSION_DENIED -> "REQUEST_WRITE_PERMISSION";
                     case PATH_ESCAPE_DENIED -> "USE_BOUNDED_PATH";
-                    case ACCESS_DENIED -> workspaceAttachmentDisclosed
-                            ? "REQUEST_DIRECTORY_AUTHORIZATION"
-                            : "USE_AUTHORIZED_WORKSPACE_PATH";
+                    case ACCESS_DENIED ->
+                        workspaceAttachmentDisclosed
+                                ? "REQUEST_DIRECTORY_AUTHORIZATION"
+                                : "USE_AUTHORIZED_WORKSPACE_PATH";
                     case INVALID_ARGUMENT -> "USE_ABSOLUTE_HOST_PATH";
                     case CROSS_DIRECTORY_MOVE -> "USE_CREATE_AND_DELETE";
                 });
