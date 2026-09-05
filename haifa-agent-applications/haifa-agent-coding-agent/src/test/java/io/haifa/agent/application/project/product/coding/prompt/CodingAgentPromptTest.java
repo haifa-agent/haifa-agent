@@ -71,10 +71,8 @@ class CodingAgentPromptTest {
 
     @Test
     void rendersWorkspaceAttachmentGuidanceAccordingToFrozenBuiltInAvailability() {
-        CodingAgentPrompt.Snapshot withoutAttachment =
-                CodingAgentPrompt.forWorkspaceAttachment(false);
-        CodingAgentPrompt.Snapshot withAttachment =
-                CodingAgentPrompt.forWorkspaceAttachment(true);
+        CodingAgentPrompt.Snapshot withoutAttachment = CodingAgentPrompt.forWorkspaceAttachment(false);
+        CodingAgentPrompt.Snapshot withAttachment = CodingAgentPrompt.forWorkspaceAttachment(true);
 
         assertThat(withoutAttachment.text())
                 .contains("does not expose a workspace attachment tool")
