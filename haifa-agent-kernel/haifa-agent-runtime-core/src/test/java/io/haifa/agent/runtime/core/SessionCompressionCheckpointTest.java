@@ -6,11 +6,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.budget.ContextWindowBudget;
-import io.haifa.agent.context.compression.CompressionPolicy;
-import io.haifa.agent.context.compression.CompressionRequest;
-import io.haifa.agent.context.compression.CompressionResult;
-import io.haifa.agent.context.compression.ContextCompressor;
-import io.haifa.agent.context.compression.DeterministicContextCompressor;
+import io.haifa.agent.context.compaction.CompressionPolicy;
+import io.haifa.agent.context.compaction.CompressionRequest;
+import io.haifa.agent.context.compaction.CompressionResult;
+import io.haifa.agent.context.compaction.ContextCompressor;
+import io.haifa.agent.context.compaction.DeterministicContextCompressor;
 import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
@@ -891,9 +891,9 @@ class SessionCompressionCheckpointTest {
 
         // Create a synthetic buggy summary that truncated after turn0-call-0 (so coveredThrough is turn0-call-0)
         // leaving turn0-result-0 as the first message in tail
-        var invalidSummary = new io.haifa.agent.context.compression.ConversationSummary(
-                new io.haifa.agent.context.compression.SummaryId("invalid-summary-1"),
-                new io.haifa.agent.context.compression.SummaryVersion(1),
+        var invalidSummary = new io.haifa.agent.context.compaction.ConversationSummary(
+                new io.haifa.agent.context.compaction.SummaryId("invalid-summary-1"),
+                new io.haifa.agent.context.compaction.SummaryVersion(1),
                 session,
                 new MessageCursor(1),
                 new MessageCursor(2),

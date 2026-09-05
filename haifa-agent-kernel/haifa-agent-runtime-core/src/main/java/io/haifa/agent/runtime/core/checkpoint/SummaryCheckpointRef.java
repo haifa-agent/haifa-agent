@@ -1,7 +1,7 @@
 package io.haifa.agent.runtime.core.checkpoint;
 
-import io.haifa.agent.context.compression.SummaryId;
-import io.haifa.agent.context.compression.SummaryVersion;
+import io.haifa.agent.context.compaction.SummaryId;
+import io.haifa.agent.context.compaction.SummaryVersion;
 import io.haifa.agent.core.message.MessageCursor;
 import java.util.Objects;
 

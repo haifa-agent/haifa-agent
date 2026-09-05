@@ -1,9 +1,9 @@
 package io.haifa.agent.runtime.core.storage;
 
-import io.haifa.agent.context.compression.ConversationSummary;
-import io.haifa.agent.context.compression.ConversationSummaryRepository;
-import io.haifa.agent.context.compression.SummaryId;
-import io.haifa.agent.context.compression.SummaryVersion;
+import io.haifa.agent.context.compaction.ConversationSummary;
+import io.haifa.agent.context.compaction.ConversationSummaryRepository;
+import io.haifa.agent.context.compaction.SummaryId;
+import io.haifa.agent.context.compaction.SummaryVersion;
 import io.haifa.agent.core.checkpoint.Checkpoint;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.AgentMessage;
