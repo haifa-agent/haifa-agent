@@ -616,6 +616,9 @@ final class LocalCodingAgent implements AutoCloseable {
                             executionPlatform == null ? null : executionPlatform.profile(),
                             executionPlatform == null ? null : executionPlatform.permissionProfile(),
                             CodingToolchainEnvironmentProfile.defaultScratchSpace());
+            Set<String> disclosedToolAliases = catalog.snapshot().bindings().stream()
+                    .map(binding -> binding.alias().value())
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
             var interactions = persistence.ports().interactions();
             Map<String, ResolvedModelSnapshot> modelSnapshots = configuration.availableModels().stream()
                     .collect(java.util.stream.Collectors.toUnmodifiableMap(
@@ -720,12 +723,10 @@ final class LocalCodingAgent implements AutoCloseable {
                     .definitions((id, requested) -> new ResolvedDefinition(
                             id,
                             requested.orElse(new AgentDefinitionVersion(1, 0, 0)),
-                            catalog.snapshot().bindings().stream()
-                                    .map(binding -> binding.alias().value())
-                                    .collect(java.util.stream.Collectors.toUnmodifiableSet()),
+                            disclosedToolAliases,
                             configuration.skills().allowedAliases(),
                             Set.of(),
-                            CodingAgentPrompt.current().text()
+                            CodingAgentPrompt.forDisclosedToolAliases(disclosedToolAliases).text()
                                     + executionEnvironmentPrompt(
                                             executionPlatform == null ? "" : executionPlatform.shellDisplayName())
                                     + workspaceEnvironment
