@@ -899,7 +899,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                         .prepareStatement(
                                 """
                     SELECT mission_id,conversation_id,owner_scope,model_binding_json,mode,objective,acceptance_json,research_brief_json,
-                           usage_model_tokens,usage_model_calls,usage_tool_calls,deadline_at_ms
+                           usage_model_tokens,usage_model_calls,usage_tool_calls,deadline_at_ms,state,updated_at_ms
                     FROM personal_mission m
                     WHERE state IN ('RUNNING','WAITING_USER','SYNTHESIZING')
                       AND NOT EXISTS (SELECT 1 FROM personal_mission_task t
@@ -915,7 +915,14 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                     try (var result = select.executeQuery()) {
                         if (!result.next()) return Optional.empty();
                         String missionId = result.getString("mission_id");
-                        updateMissionState(missionId, "SYNTHESIZING", now, "state IN ('RUNNING','WAITING_USER')");
+                        String currentState = result.getString("state");
+                        Instant asOf;
+                        if ("SYNTHESIZING".equals(currentState)) {
+                            asOf = Instant.ofEpochMilli(result.getLong("updated_at_ms"));
+                        } else {
+                            updateMissionState(missionId, "SYNTHESIZING", now, "state IN ('RUNNING','WAITING_USER')");
+                            asOf = now;
+                        }
                         List<String> taskResults = new ArrayList<>();
                         List<String> completedTaskIds = new ArrayList<>();
                         List<String> completedTaskObjectives = new ArrayList<>();
@@ -985,7 +992,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                         result.getLong("usage_model_tokens"),
                                         result.getLong("usage_model_calls"),
                                         result.getLong("usage_tool_calls")),
-                                now));
+                                asOf));
                     }
                 }
             } catch (SQLException exception) {

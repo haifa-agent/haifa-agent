@@ -205,25 +205,55 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         }
 
         List<String> resultSources = new ArrayList<>();
-        if (!authoritativeSources.isEmpty()) {
-            ArrayNode sourcesArray = mapper.createArrayNode();
-            for (SourceReference ref : authoritativeSources) {
-                ObjectNode sNode = mapper.createObjectNode();
-                sNode.put("sourceId", ref.sourceId());
-                sNode.put("title", ref.title());
-                sNode.put("locator", ref.locator());
-                sourcesArray.add(sNode);
-                resultSources.add(ref.locator());
-            }
+        ArrayNode sourcesArray = mapper.createArrayNode();
+        for (SourceReference ref : authoritativeSources) {
+            ObjectNode sNode = mapper.createObjectNode();
+            sNode.put("sourceId", ref.sourceId());
+            sNode.put("title", ref.title());
+            sNode.put("locator", ref.locator());
+            sourcesArray.add(sNode);
+            resultSources.add(ref.locator());
+        }
+        if ("pa.mission-final-result/v2".equals(schema)) {
             enrichedResult.set("sources", sourcesArray);
-        } else if (finalResult.has("sources") && finalResult.get("sources").isArray()) {
-            for (JsonNode sNode : finalResult.get("sources")) {
-                if (sNode.has("locator") && sNode.get("locator").isTextual()) {
-                    resultSources.add(sNode.get("locator").asText());
+            enrichedResult.set("sourceRefs", mapper.createArrayNode());
+
+            if (finalResult.has("sectionSources")
+                    && finalResult.get("sectionSources").isArray()) {
+                Set<String> authoritativeSourceIdSet = authoritativeSources.stream()
+                        .map(SourceReference::sourceId)
+                        .collect(java.util.stream.Collectors.toSet());
+                ArrayNode validatedSectionSources = mapper.createArrayNode();
+                for (JsonNode sec : finalResult.get("sectionSources")) {
+                    String heading = sec.has("sectionHeading")
+                            ? sec.path("sectionHeading").asText("")
+                            : sec.path("section").asText("");
+                    ArrayNode secSourceIds = mapper.createArrayNode();
+                    if (sec.has("sourceIds") && sec.get("sourceIds").isArray()) {
+                        for (JsonNode sidNode : sec.get("sourceIds")) {
+                            String sid = sidNode.asText("").trim();
+                            if (authoritativeSourceIdSet.contains(sid)) {
+                                secSourceIds.add(sid);
+                            } else {
+                                throw new MissionException(
+                                        "MISSION_REPORT_QUALITY_FAILED",
+                                        "sectionSources references unknown sourceId: " + sid);
+                            }
+                        }
+                    }
+                    ObjectNode secNode = mapper.createObjectNode();
+                    secNode.put("sectionHeading", heading);
+                    secNode.set("sourceIds", secSourceIds);
+                    validatedSectionSources.add(secNode);
                 }
+                enrichedResult.set("sectionSources", validatedSectionSources);
             }
         } else {
-            resultSources.addAll(delivery.sourceRefs());
+            if (!authoritativeSources.isEmpty()) {
+                enrichedResult.set("sources", sourcesArray);
+            } else {
+                resultSources.addAll(delivery.sourceRefs());
+            }
         }
 
         List<String> publishedIds = new ArrayList<>();
@@ -951,13 +981,21 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                 String sourceId = s.path("sourceId").asText("");
                 String title = s.path("title").asText("");
                 String locator = s.path("locator").asText("");
-                if (!sourceId.isBlank() && !locator.isBlank()) {
-                    try {
-                        sources.add(new SourceReference(sourceId, title, locator));
-                    } catch (Exception ignored) {
-                        // ignore invalid candidate sources so gate evaluates them or skips
-                    }
+                try {
+                    sources.add(new SourceReference(sourceId, title, locator));
+                } catch (IllegalArgumentException exception) {
+                    invalid("Standard v2 sources contains invalid locator or sourceId: " + exception.getMessage());
                 }
+            }
+        }
+        List<StandardMissionQualityGate.SectionSource> sectionSources = new ArrayList<>();
+        if (value.has("sectionSources") && value.get("sectionSources").isArray()) {
+            for (JsonNode sec : value.get("sectionSources")) {
+                String heading = sec.has("sectionHeading")
+                        ? sec.path("sectionHeading").asText("")
+                        : sec.path("section").asText("");
+                List<String> sourceIds = extractTextList(sec.path("sourceIds"));
+                sectionSources.add(new StandardMissionQualityGate.SectionSource(heading, sourceIds));
             }
         }
         List<String> sourceRefs = extractTextList(value.path("sourceRefs"));
@@ -970,6 +1008,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                 failedItems,
                 taskOutcomes,
                 acceptanceOutcomes,
+                sectionSources,
                 sources,
                 sourceRefs);
     }
@@ -1010,10 +1049,29 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         if (value.has("sectionSources") && !value.path("sectionSources").isNull()) {
             JsonNode sectionSources = value.get("sectionSources");
             if (!sectionSources.isArray()) invalid("Standard v2 result shape is invalid");
+            for (JsonNode sec : sectionSources) {
+                if (!sec.isObject()) invalid("Standard v2 result shape is invalid");
+                String heading = sec.has("sectionHeading")
+                        ? sec.path("sectionHeading").asText("")
+                        : sec.path("section").asText("");
+                if (heading.isBlank() || heading.length() > 512) {
+                    invalid("Standard v2 sectionSources element is invalid");
+                }
+                if (!sec.has("sourceIds")
+                        || !sec.get("sourceIds").isArray()
+                        || sec.get("sourceIds").isEmpty()) {
+                    invalid("Standard v2 sectionSources element is invalid");
+                }
+            }
         }
         if (value.has("sources") && !value.path("sources").isNull()) {
             JsonNode sourcesNode = value.get("sources");
             if (!sourcesNode.isArray()) invalid("Standard v2 result shape is invalid");
+            for (JsonNode s : sourcesNode) {
+                if (!s.isObject()) invalid("Standard v2 sources element is invalid");
+                requiredText(s, "sourceId", 128);
+                requiredText(s, "locator", 2_048);
+            }
         }
     }
 

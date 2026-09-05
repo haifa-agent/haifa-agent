@@ -387,7 +387,7 @@ export function MissionFinalResult({
       <ul>
         {(result.sources?.length ?? 0) > 0
           ? result.sources!.map((s) => {
-              const href = safeResearchLocator(s.locator) || (s.locator.startsWith("http") ? s.locator : undefined);
+              const href = safeResearchLocator(s) || (s.locator.startsWith("http") ? s.locator : undefined);
               return (
                 <li key={s.sourceId}>
                   {href ? (
