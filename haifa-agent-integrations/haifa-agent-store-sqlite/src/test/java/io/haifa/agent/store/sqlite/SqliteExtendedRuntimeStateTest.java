@@ -262,15 +262,18 @@ class SqliteExtendedRuntimeStateTest {
 
         SemanticSummaryItem goal = new SemanticSummaryItem(
                 "G-1", "Build semantic compaction", List.of("msg-1"), SemanticConfidence.OBSERVED);
-        SemanticSummaryItem completed = new SemanticSummaryItem(
-                "P-1", "Phase 1 complete", List.of("msg-1"), SemanticConfidence.OBSERVED);
+        SemanticSummaryItem completed =
+                new SemanticSummaryItem("P-1", "Phase 1 complete", List.of("msg-1"), SemanticConfidence.OBSERVED);
         SemanticDecisionItem decision = new SemanticDecisionItem(
-                "D-1", "Store normalized V2 payload", "Avoid redundant markdown",
-                SemanticDecisionStatus.ACCEPTED, List.of("msg-2"));
-        SemanticSummaryItem nextStep = new SemanticSummaryItem(
-                "N-1", "Phase 3 coordinator", List.of(), SemanticConfidence.INFERRED);
-        SemanticSummaryItem context = new SemanticSummaryItem(
-                "C-1", "Pure Java context", List.of("msg-1"), SemanticConfidence.OBSERVED);
+                "D-1",
+                "Store normalized V2 payload",
+                "Avoid redundant markdown",
+                SemanticDecisionStatus.ACCEPTED,
+                List.of("msg-2"));
+        SemanticSummaryItem nextStep =
+                new SemanticSummaryItem("N-1", "Phase 3 coordinator", List.of(), SemanticConfidence.INFERRED);
+        SemanticSummaryItem context =
+                new SemanticSummaryItem("C-1", "Pure Java context", List.of("msg-1"), SemanticConfidence.OBSERVED);
 
         SemanticConversationSummaryV1 semantic = new SemanticConversationSummaryV1(
                 "v1",

@@ -64,27 +64,34 @@ public record SemanticConversationSummaryV1(
     @SuppressWarnings("unchecked")
     public static SemanticConversationSummaryV1 fromMap(java.util.Map<String, Object> map) {
         Objects.requireNonNull(map, "map must not be null");
-        String schema = Objects.toString(
-                        map.getOrDefault("schemaVersion", CURRENT_SCHEMA_VERSION), CURRENT_SCHEMA_VERSION)
-                .trim();
-        String lang = Objects.toString(map.getOrDefault("language", "en"), "en").trim();
-
-        List<SemanticSummaryItem> goals = mapSummaryItems(map.get("goals"));
-        List<SemanticSummaryItem> constraints = mapSummaryItems(map.get("constraints"));
-
-        SemanticProgress prog = SemanticProgress.empty();
-        Object progressObj = map.get("progress");
-        if (progressObj instanceof java.util.Map<?, ?> pMap) {
-            prog = new SemanticProgress(
-                    mapSummaryItems(pMap.get("completed")),
-                    mapSummaryItems(pMap.get("active")),
-                    mapSummaryItems(pMap.get("blocked")));
+        Object schemaObj = map.get("schemaVersion");
+        if (schemaObj == null || schemaObj.toString().isBlank()) {
+            throw new IllegalArgumentException("schemaVersion must not be null or blank");
         }
+        String schema = schemaObj.toString().trim();
 
-        List<SemanticDecisionItem> decisions = mapDecisionItems(map.get("decisions"));
-        List<SemanticSummaryItem> nextSteps = mapSummaryItems(map.get("nextSteps"));
-        List<SemanticSummaryItem> criticalContext = mapSummaryItems(map.get("criticalContext"));
-        List<SemanticSummaryItem> unresolvedQuestions = mapSummaryItems(map.get("unresolvedQuestions"));
+        Object langObj = map.get("language");
+        if (langObj == null || langObj.toString().isBlank()) {
+            throw new IllegalArgumentException("language must not be null or blank");
+        }
+        String lang = langObj.toString().trim();
+
+        List<SemanticSummaryItem> goals = requireSummaryItems(map, "goals");
+        List<SemanticSummaryItem> constraints = requireSummaryItems(map, "constraints");
+
+        Object progressObj = map.get("progress");
+        if (!(progressObj instanceof java.util.Map<?, ?> pMap)) {
+            throw new IllegalArgumentException("progress must be a non-null object in SemanticConversationSummaryV1");
+        }
+        SemanticProgress prog = new SemanticProgress(
+                requireSummaryItems((java.util.Map<String, Object>) pMap, "completed"),
+                requireSummaryItems((java.util.Map<String, Object>) pMap, "active"),
+                requireSummaryItems((java.util.Map<String, Object>) pMap, "blocked"));
+
+        List<SemanticDecisionItem> decisions = requireDecisionItems(map, "decisions");
+        List<SemanticSummaryItem> nextSteps = requireSummaryItems(map, "nextSteps");
+        List<SemanticSummaryItem> criticalContext = requireSummaryItems(map, "criticalContext");
+        List<SemanticSummaryItem> unresolvedQuestions = requireSummaryItems(map, "unresolvedQuestions");
 
         return new SemanticConversationSummaryV1(
                 schema, lang, goals, constraints, prog, decisions, nextSteps, criticalContext, unresolvedQuestions);
@@ -124,25 +131,41 @@ public record SemanticConversationSummaryV1(
         return map;
     }
 
-    private static List<SemanticSummaryItem> mapSummaryItems(Object obj) {
-        if (obj instanceof List<?> list) {
-            return list.stream()
-                    .filter(java.util.Map.class::isInstance)
-                    .map(item -> (java.util.Map<String, Object>) item)
-                    .map(SemanticSummaryItem::fromMap)
-                    .toList();
+    @SuppressWarnings("unchecked")
+    private static List<SemanticSummaryItem> requireSummaryItems(java.util.Map<String, Object> map, String key) {
+        if (!map.containsKey(key)) {
+            throw new IllegalArgumentException("missing required field '" + key + "' in SemanticConversationSummaryV1");
         }
-        return List.of();
+        Object obj = map.get(key);
+        if (!(obj instanceof List<?> list)) {
+            throw new IllegalArgumentException("field '" + key + "' must be a list in SemanticConversationSummaryV1");
+        }
+        List<SemanticSummaryItem> items = new java.util.ArrayList<>(list.size());
+        for (Object item : list) {
+            if (!(item instanceof java.util.Map<?, ?> itemMap)) {
+                throw new IllegalArgumentException("items in '" + key + "' must be objects");
+            }
+            items.add(SemanticSummaryItem.fromMap((java.util.Map<String, Object>) itemMap));
+        }
+        return List.copyOf(items);
     }
 
-    private static List<SemanticDecisionItem> mapDecisionItems(Object obj) {
-        if (obj instanceof List<?> list) {
-            return list.stream()
-                    .filter(java.util.Map.class::isInstance)
-                    .map(item -> (java.util.Map<String, Object>) item)
-                    .map(SemanticDecisionItem::fromMap)
-                    .toList();
+    @SuppressWarnings("unchecked")
+    private static List<SemanticDecisionItem> requireDecisionItems(java.util.Map<String, Object> map, String key) {
+        if (!map.containsKey(key)) {
+            throw new IllegalArgumentException("missing required field '" + key + "' in SemanticConversationSummaryV1");
         }
-        return List.of();
+        Object obj = map.get(key);
+        if (!(obj instanceof List<?> list)) {
+            throw new IllegalArgumentException("field '" + key + "' must be a list in SemanticConversationSummaryV1");
+        }
+        List<SemanticDecisionItem> items = new java.util.ArrayList<>(list.size());
+        for (Object item : list) {
+            if (!(item instanceof java.util.Map<?, ?> itemMap)) {
+                throw new IllegalArgumentException("items in '" + key + "' must be objects");
+            }
+            items.add(SemanticDecisionItem.fromMap((java.util.Map<String, Object>) itemMap));
+        }
+        return List.copyOf(items);
     }
 }

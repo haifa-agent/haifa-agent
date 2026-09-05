@@ -7,6 +7,7 @@ import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.tool.ToolCallId;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -157,5 +158,140 @@ class SemanticSummaryValidatorTest {
         assertThatThrownBy(() -> SemanticSummaryValidator.validate(summary, projectedSource, List.of()))
                 .isInstanceOf(SemanticSummaryValidationException.class)
                 .hasMessageContaining("forbidden or sensitive pattern detected");
+    }
+
+    @Test
+    void allowsHistoricalDurableRefsInCarryForward() {
+        SemanticSummaryItem carryItem = new SemanticSummaryItem(
+                "C-1", "Historical constraint", List.of("msg-historical-1"), SemanticConfidence.OBSERVED);
+        SemanticConversationSummaryV1 summary = new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(new SemanticSummaryItem("G-1", "Goal", List.of("m001"), SemanticConfidence.OBSERVED)),
+                List.of(carryItem),
+                SemanticProgress.empty(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
+
+        assertThatCode(() -> SemanticSummaryValidator.validate(
+                        summary, projectedSource, List.of(carryItem), Set.of("msg-historical-1"), Optional.empty()))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void rejectsCategoryJumpingForConstraints() {
+        SemanticSummaryItem carryItem = new SemanticSummaryItem(
+                "C-1", "Must keep this constraint", List.of("m001"), SemanticConfidence.OBSERVED);
+        // C-1 moved to nextSteps instead of constraints
+        SemanticConversationSummaryV1 summary = new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(),
+                List.of(),
+                SemanticProgress.empty(),
+                List.of(),
+                List.of(new SemanticSummaryItem(
+                        "C-1", "Now a next step", List.of("m001"), SemanticConfidence.OBSERVED)),
+                List.of(),
+                List.of());
+
+        assertThatThrownBy(() -> SemanticSummaryValidator.validate(
+                        summary, projectedSource, List.of(carryItem), Set.of(), Optional.empty()))
+                .isInstanceOf(SemanticSummaryValidationException.class)
+                .hasMessageContaining("constraint item 'C-1' cannot transition to another category");
+    }
+
+    @Test
+    void allowsUnresolvedQuestionResolvedInDecisions() {
+        SemanticSummaryItem questionItem = new SemanticSummaryItem(
+                "Q-1", "Should we enable feature X?", List.of("m001"), SemanticConfidence.OBSERVED);
+        // Q-1 is omitted from unresolvedQuestions, but resolved in decisions citing Q-1
+        SemanticConversationSummaryV1 summary = new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(),
+                List.of(),
+                SemanticProgress.empty(),
+                List.of(new SemanticDecisionItem(
+                        "D-1",
+                        "Enabled feature X",
+                        "Resolved Q-1 following stakeholder review",
+                        SemanticDecisionStatus.ACCEPTED,
+                        List.of("m001"))),
+                List.of(),
+                List.of(),
+                List.of());
+
+        assertThatCode(() -> SemanticSummaryValidator.validate(
+                        summary, projectedSource, List.of(questionItem), Set.of(), Optional.empty()))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void rejectsUnresolvedQuestionDroppedWithoutResolution() {
+        SemanticSummaryItem questionItem = new SemanticSummaryItem(
+                "Q-1", "Should we enable feature X?", List.of("m001"), SemanticConfidence.OBSERVED);
+        SemanticConversationSummaryV1 summary = new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(new SemanticSummaryItem("G-1", "Goal", List.of("m001"), SemanticConfidence.OBSERVED)),
+                List.of(),
+                SemanticProgress.empty(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
+
+        assertThatThrownBy(() -> SemanticSummaryValidator.validate(
+                        summary, projectedSource, List.of(questionItem), Set.of(), Optional.empty()))
+                .isInstanceOf(SemanticSummaryValidationException.class)
+                .hasMessageContaining("mandatory carry-forward item 'Q-1' was dropped without resolution");
+    }
+
+    @Test
+    void strictFailClosedSchemaParsingRejectsMissingFields() {
+        Map<String, Object> base = Map.of(
+                "schemaVersion", "v1",
+                "language", "en",
+                "goals", List.of(),
+                "constraints", List.of(),
+                "progress", Map.of("completed", List.of(), "active", List.of(), "blocked", List.of()),
+                "decisions", List.of(),
+                "nextSteps", List.of(),
+                "criticalContext", List.of(),
+                "unresolvedQuestions", List.of());
+
+        // Valid base parses cleanly
+        assertThatCode(() -> SemanticConversationSummaryV1.fromMap(base)).doesNotThrowAnyException();
+
+        // Missing goals
+        var missingGoals = new java.util.HashMap<>(base);
+        missingGoals.remove("goals");
+        assertThatThrownBy(() -> SemanticConversationSummaryV1.fromMap(missingGoals))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("missing required field 'goals'");
+
+        // Missing progress
+        var missingProgress = new java.util.HashMap<>(base);
+        missingProgress.remove("progress");
+        assertThatThrownBy(() -> SemanticConversationSummaryV1.fromMap(missingProgress))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("progress must be a non-null object");
+
+        // Missing unresolvedQuestions
+        var missingQuestions = new java.util.HashMap<>(base);
+        missingQuestions.remove("unresolvedQuestions");
+        assertThatThrownBy(() -> SemanticConversationSummaryV1.fromMap(missingQuestions))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("missing required field 'unresolvedQuestions'");
+
+        // Missing language
+        var missingLang = new java.util.HashMap<>(base);
+        missingLang.remove("language");
+        assertThatThrownBy(() -> SemanticConversationSummaryV1.fromMap(missingLang))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("language");
     }
 }
