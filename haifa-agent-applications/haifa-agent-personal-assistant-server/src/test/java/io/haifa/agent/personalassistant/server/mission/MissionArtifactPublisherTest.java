@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.haifa.agent.artifact.Artifact;
 import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.artifact.InMemoryArtifactPayloadStore;
 import io.haifa.agent.artifact.InMemoryArtifactStore;
@@ -15,6 +16,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionMode;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -290,7 +292,8 @@ class MissionArtifactPublisherTest {
                 List.of("{\"task\":\"completed\"}"),
                 List.of());
 
-        String richAnswerMarkdown = """
+        String richAnswerMarkdown =
+                """
                 # 分布式事务协议对比分析
 
                 ## 核心机制概述
@@ -308,7 +311,8 @@ class MissionArtifactPublisherTest {
                 对于长事务金融计费业务，建议采用 Saga 模式编排；跨行即时结算采用 TCC 模式，严格避免直接使用分布式两阶段阻塞长事务。
                 """;
 
-        String standardV2Result = """
+        String standardV2Result =
+                """
                 {
                   "schemaVersion": "pa.mission-final-result/v2",
                   "directAnswer": "分布式事务在强一致与高吞吐之间存在根本权衡，短事务推荐2PC，长流程业务建议采用Saga编排。",
@@ -322,14 +326,19 @@ class MissionArtifactPublisherTest {
                   "residualRisks": [],
                   "completionKind": "COMPLETE"
                 }
-                """.formatted(richAnswerMarkdown.replace("\r\n", "\\n").replace("\n", "\\n").replace("\"", "\\\""));
+                """
+                        .formatted(richAnswerMarkdown
+                                .replace("\r\n", "\\n")
+                                .replace("\n", "\\n")
+                                .replace("\"", "\\\""));
 
         var published = publisher.publish(intent, synthesis(standardV2Result));
 
         assertThat(published.artifactIds()).hasSize(2);
         assertThat(published.completionKind()).isEqualTo("COMPLETE");
         var artifacts = metadata.findByProject("mission-mission-std-1");
-        assertThat(artifacts).extracting(value -> value.title())
+        assertThat(artifacts)
+                .extracting(value -> value.title())
                 .containsExactlyInAnyOrder("mission-result.json", "mission-report.md");
         var reportArtifact = artifacts.stream()
                 .filter(a -> a.title().equals("mission-report.md"))
@@ -355,7 +364,9 @@ class MissionArtifactPublisherTest {
                     "implications": "Requires state checkpointing or stateless workload design.",
                     "limitations": "Unpredictable interruption spikes.",
                     "supportingSourceIds": ["source-1", "source-2"],
-                    "opposingSourceIds": []
+                    "opposingSourceIds": [],
+                    "evidenceAssessment": "PARTIALLY_SUPPORTED",
+                    "unverified": true
                   }],
                   "sources": [
                     {"sourceId":"source-1","locator":"https://research.stub/source-1","normalizedLocator":"https://research.stub/source-1","locatorDigest":"sha256:%s","title":"Primary","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z","status":"FETCHED","excerpt":"Primary evidence.","contentDigest":"sha256:%s"},
@@ -366,7 +377,8 @@ class MissionArtifactPublisherTest {
                   "stopReason": "SUFFICIENT_EVIDENCE",
                   "limitsUsed": {"searchCalls": 1, "fetchCalls": 2, "sources": 2, "contentBytes": 2048}
                 }
-                """.formatted("a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64)));
+                """
+                        .formatted("a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64)));
 
         var publisher = publisher(new InMemoryArtifactStore(), newIds());
         var published = publisher.publish(intent(taskV2), synthesis(validReport()));
@@ -375,7 +387,89 @@ class MissionArtifactPublisherTest {
         assertThat(published.artifactIds()).hasSize(5);
         assertThat(manifest.path("schemaVersion").asText()).isEqualTo("pa.research-delivery/v2");
         assertThat(manifest.path("completionKind").asText()).isEqualTo("COMPLETE");
-        assertThat(manifest.path("evidenceSummary").path("totalClaimCount").asInt()).isEqualTo(1);
+        assertThat(manifest.path("evidenceSummary").path("totalClaimCount").asInt())
+                .isEqualTo(1);
+        assertThat(manifest.path("evidenceSummary").path("unverifiedClaimCount").asInt())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void publishesSupportedNormativeFindingFromOneFetchedAuthoritativeSource() throws Exception {
+        ObjectNode task = (ObjectNode) MAPPER.readTree(
+                """
+                {
+                  "schemaVersion":"pa.research-task-result/v2",
+                  "taskSummary":"An authoritative specification defines the normative protocol value.",
+                  "queries":[{"query":"protocol specification","phase":"DISCOVER"}],
+                  "findings":[{
+                    "findingId":"finding-1","title":"Normative value",
+                    "mechanism":"The specification defines the protocol value as 64.",
+                    "keyParameters":["value: 64"],"evidenceSummary":"Direct primary-source statement.",
+                    "implications":"Implementations must use the value.","limitations":"Normative fact only.",
+                    "supportingSourceIds":["source-1"],"opposingSourceIds":[],
+                    "evidenceAssessment":"SUPPORTED","unverified":false
+                  }],
+                  "sources":[{
+                    "sourceId":"source-1","locator":"https://research.stub/source-1",
+                    "normalizedLocator":"https://research.stub/source-1","locatorDigest":"sha256:%s",
+                    "title":"Authoritative protocol specification","safetyType":"DEVELOPMENT_STUB",
+                    "fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z",
+                    "status":"FETCHED","excerpt":"The specification defines the value.","contentDigest":"sha256:%s"
+                  }],
+                  "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":1,"contentBytes":128}
+                }
+                """
+                        .formatted("a".repeat(64), "b".repeat(64)));
+        var store = new InMemoryArtifactStore();
+        var payloads = new InMemoryArtifactPayloadStore();
+        var publisher = new MissionArtifactPublisher(artifactService(store, payloads, newIds()), MAPPER);
+        String report =
+                validReport().replace("，反证来自 [[source-2]]", "").replace("- [[source-2]] Independent evidence\n", "");
+
+        var published = publisher.publish(intent(task), synthesis(report));
+        JsonNode manifest = MAPPER.readTree(published.structuredResult());
+        Artifact claimsArtifact = store.findByProject("mission-mission-1").stream()
+                .filter(artifact -> artifact.title().equals("claim-evidence.json"))
+                .findFirst()
+                .orElseThrow();
+        JsonNode claim = MAPPER.readTree(
+                        new String(payloads.load(claimsArtifact.payload()).orElseThrow(), StandardCharsets.UTF_8))
+                .path("claims")
+                .get(0);
+
+        assertThat(claim.path("unverified").asBoolean()).isFalse();
+        assertThat(manifest.path("unverifiedClaimCount").asInt()).isZero();
+        assertThat(manifest.path("evidenceSummary")
+                        .path("singleSourceClaimCount")
+                        .asInt())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void rejectsStandardV2WithoutAnswerMarkdown() {
+        var publisher = publisher(new InMemoryArtifactStore(), newIds());
+        var intent = new MissionSynthesisIntent(
+                "mission-std-missing-answer",
+                "conversation-std",
+                "local:user",
+                MissionMode.STANDARD,
+                "Compare transaction protocols",
+                List.of("settled task result"),
+                List.of());
+        String invalid =
+                """
+                {
+                  "schemaVersion":"pa.mission-final-result/v2",
+                  "directAnswer":"This conclusion is intentionally long enough for the legacy fallback threshold.",
+                  "completedItems":[],"failedItems":[],"artifactRefs":[],"sourceRefs":[],
+                  "unverifiedClaims":[],"unresolvedQuestions":[],"residualRisks":[],"completionKind":"COMPLETE"
+                }
+                """;
+
+        assertThatThrownBy(() -> publisher.publish(intent, synthesis(invalid)))
+                .isInstanceOf(MissionException.class)
+                .hasMessageContaining("Standard v2 result shape is invalid");
     }
 
     private static void assertInvalid(ThrowingMutation mutation) throws Exception {

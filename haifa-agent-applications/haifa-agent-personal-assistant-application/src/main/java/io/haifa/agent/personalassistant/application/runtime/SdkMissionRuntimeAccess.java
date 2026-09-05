@@ -33,6 +33,9 @@ import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.mission.MissionUsage;
 import io.haifa.agent.personalassistant.application.mission.ReportQualityGate;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
+import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence;
+import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidenceReader;
+import io.haifa.agent.personalassistant.application.research.RuntimeFetchEvidenceReader;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
@@ -42,9 +45,6 @@ import io.haifa.agent.skill.api.SkillContent;
 import io.haifa.agent.tool.api.ToolSchema;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import io.haifa.agent.web.DefaultWebUrlPolicy;
-import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence;
-import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidenceReader;
-import io.haifa.agent.personalassistant.application.research.RuntimeFetchEvidenceReader;
 import java.net.URI;
 import java.text.Normalizer;
 import java.time.Duration;
@@ -655,8 +655,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             } else {
                 return false;
             }
-            Map<String, Object> schemaDocument = JSON.readValue(
-                    deepResearchSkill.resource(resource), new TypeReference<>() {});
+            Map<String, Object> schemaDocument =
+                    JSON.readValue(deepResearchSkill.resource(resource), new TypeReference<>() {});
             Map<String, Object> instance = JSON.convertValue(root, new TypeReference<>() {});
             boolean schemaValid = new JsonSchema202012Validator()
                     .validate(new ToolSchema("pa.research-task-result", version, schemaDocument), instance)
@@ -701,14 +701,16 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         Map<String, String> sourceAliases = new LinkedHashMap<>();
         Map<String, Boolean> fetchedBySource = new LinkedHashMap<>();
         Map<String, String> sourceByLocator = new LinkedHashMap<>();
-        Map<String, ResearchFetchEvidence> fetchByUrl = new LinkedHashMap<>();
+        Map<String, Map<String, ResearchFetchEvidence>> fetchesByUrl = new LinkedHashMap<>();
         if (completedFetches != null) {
             for (ResearchFetchEvidence evidence : completedFetches) {
-                if (evidence.canonicalRequestedUrl() != null && !evidence.canonicalRequestedUrl().isBlank()) {
-                    fetchByUrl.put(evidence.canonicalRequestedUrl().toLowerCase(java.util.Locale.ROOT), evidence);
+                if (evidence.canonicalRequestedUrl() != null
+                        && !evidence.canonicalRequestedUrl().isBlank()) {
+                    registerFetchEvidence(fetchesByUrl, evidence.canonicalRequestedUrl(), evidence);
                 }
-                if (evidence.canonicalFinalUrl() != null && !evidence.canonicalFinalUrl().isBlank()) {
-                    fetchByUrl.put(evidence.canonicalFinalUrl().toLowerCase(java.util.Locale.ROOT), evidence);
+                if (evidence.canonicalFinalUrl() != null
+                        && !evidence.canonicalFinalUrl().isBlank()) {
+                    registerFetchEvidence(fetchesByUrl, evidence.canonicalFinalUrl(), evidence);
                 }
             }
         }
@@ -736,14 +738,21 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 source.put("locatorDigest", digest(normalized));
                 boolean fetched;
                 if (completedFetches != null) {
-                    ResearchFetchEvidence match = fetchByUrl.get(normalized.toLowerCase(java.util.Locale.ROOT));
-                    if (match != null && match.successful()) {
+                    ResearchFetchResolution resolution = resolveResearchFetch(fetchesByUrl.get(normalized));
+                    ResearchFetchEvidence match = resolution.evidence();
+                    if ("FETCHED".equals(resolution.status())) {
                         source.put("status", "FETCHED");
                         source.put("fetchedAt", match.completedAt().toString());
                         source.put("contentDigest", match.contentSha256());
                         fetched = true;
-                    } else if (match != null && !match.successful()) {
+                    } else if ("INACCESSIBLE".equals(resolution.status())) {
                         source.put("status", "INACCESSIBLE");
+                        source.putNull("fetchedAt");
+                        source.putNull("contentDigest");
+                        source.put("excerpt", "");
+                        fetched = false;
+                    } else if ("CONFLICT".equals(resolution.status())) {
+                        source.put("status", "CONFLICT");
                         source.putNull("fetchedAt");
                         source.putNull("contentDigest");
                         source.put("excerpt", "");
@@ -787,7 +796,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             LinkedHashSet<String> claimIds = new LinkedHashSet<>();
             for (JsonNode candidate : root.path("claims")) {
                 if (!(candidate instanceof ObjectNode claim)) continue;
-                String claimId = namespacedStableId(taskId, claim.path("claimId").asText());
+                String claimId =
+                        namespacedStableId(taskId, claim.path("claimId").asText());
                 if (claimId.isBlank() || !claimIds.add(claimId)) continue;
                 claim.put("claimId", claimId);
                 if (claim.path("limitations").isArray()) {
@@ -818,7 +828,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             LinkedHashSet<String> findingIds = new LinkedHashSet<>();
             for (JsonNode candidate : root.path("findings")) {
                 if (!(candidate instanceof ObjectNode finding)) continue;
-                String findingId = namespacedStableId(taskId, finding.path("findingId").asText());
+                String findingId =
+                        namespacedStableId(taskId, finding.path("findingId").asText());
                 if (findingId.isBlank() || !findingIds.add(findingId)) continue;
                 finding.put("findingId", findingId);
                 if (finding.path("limitations").isArray()) {
@@ -840,12 +851,17 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     }
                     finding.set("keyParameters", params);
                 }
-                LinkedHashSet<String> references = new LinkedHashSet<>();
-                rewriteSourceReferences(finding, "supportingSourceIds", sourceAliases, fetchedBySource, references);
+                LinkedHashSet<String> supportingReferences = new LinkedHashSet<>();
+                rewriteSourceReferences(
+                        finding, "supportingSourceIds", sourceAliases, fetchedBySource, supportingReferences);
+                LinkedHashSet<String> references = new LinkedHashSet<>(supportingReferences);
                 rewriteSourceReferences(finding, "opposingSourceIds", sourceAliases, fetchedBySource, references);
                 if (references.isEmpty()) continue;
-                if (references.stream().anyMatch(sourceId -> !fetchedBySource.getOrDefault(sourceId, false))
-                        || references.size() < 2) {
+                boolean semanticallySupported =
+                        "SUPPORTED".equals(finding.path("evidenceAssessment").asText());
+                if (!semanticallySupported
+                        || supportingReferences.isEmpty()
+                        || references.stream().anyMatch(sourceId -> !fetchedBySource.getOrDefault(sourceId, false))) {
                     finding.put("unverified", true);
                 }
                 canonicalFindings.add(finding);
@@ -866,17 +882,52 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     .count();
             limits.put("sources", canonicalSources.size());
             if (completedFetches != null) {
-                limits.put("fetchCalls", (int) fetched);
+                limits.put("fetchCalls", Math.min(completedFetches.size(), 100));
                 long totalBytes = completedFetches.stream()
                         .filter(ResearchFetchEvidence::successful)
-                        .mapToLong(ResearchFetchEvidence::contentCharacters)
+                        .mapToLong(ResearchFetchEvidence::contentBytes)
                         .sum();
-                limits.put("contentBytes", (int) Math.min(totalBytes, 2_000_000));
+                limits.put("contentBytes", (int) Math.min(totalBytes, 2_097_152));
             } else {
                 limits.put("fetchCalls", Math.max(limits.path("fetchCalls").asInt(0), fetched));
             }
         }
     }
+
+    private static void registerFetchEvidence(
+            Map<String, Map<String, ResearchFetchEvidence>> fetchesByUrl,
+            String canonicalUrl,
+            ResearchFetchEvidence evidence) {
+        fetchesByUrl
+                .computeIfAbsent(canonicalUrl, ignored -> new LinkedHashMap<>())
+                .put(evidence.toolCallId(), evidence);
+    }
+
+    private static ResearchFetchResolution resolveResearchFetch(Map<String, ResearchFetchEvidence> matchesByCall) {
+        if (matchesByCall == null || matchesByCall.isEmpty()) {
+            return new ResearchFetchResolution("UNKNOWN", null);
+        }
+        List<ResearchFetchEvidence> successful = matchesByCall.values().stream()
+                .filter(ResearchFetchEvidence::successful)
+                .sorted(java.util.Comparator.comparing(ResearchFetchEvidence::completedAt)
+                        .thenComparing(ResearchFetchEvidence::toolCallId))
+                .toList();
+        long digestCount = successful.stream()
+                .map(ResearchFetchEvidence::contentSha256)
+                .distinct()
+                .count();
+        if (digestCount > 1) return new ResearchFetchResolution("CONFLICT", null);
+        if (!successful.isEmpty()) {
+            return new ResearchFetchResolution("FETCHED", successful.getLast());
+        }
+        ResearchFetchEvidence latest = matchesByCall.values().stream()
+                .max(java.util.Comparator.comparing(ResearchFetchEvidence::completedAt)
+                        .thenComparing(ResearchFetchEvidence::toolCallId))
+                .orElseThrow();
+        return new ResearchFetchResolution("INACCESSIBLE", latest);
+    }
+
+    private record ResearchFetchResolution(String status, ResearchFetchEvidence evidence) {}
 
     private static void rewriteSourceReferences(
             ObjectNode claim,
@@ -1111,7 +1162,11 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 Required exact top-level fields are schemaVersion, taskSummary, queries, findings, sources, artifactRefs,
                 unresolvedQuestions, stopReason, and limitsUsed. schemaVersion must be pa.research-task-result/v2. Each
                 query has only query and phase. Each finding has exactly findingId, title, mechanism, keyParameters,
-                evidenceSummary, implications, limitations, supportingSourceIds, and opposingSourceIds. Each source has
+                evidenceSummary, implications, limitations, supportingSourceIds, opposingSourceIds, evidenceAssessment,
+                and unverified. evidenceAssessment must be SUPPORTED, PARTIALLY_SUPPORTED, CONFLICTED, or INSUFFICIENT.
+                Set unverified to false only when the notes provide direct semantic support either from an authoritative
+                primary source for a normative or first-party fact, or from at least two genuinely independent sources
+                for an empirical or interpretive claim. Retrieval success alone never establishes factual support. Each source has
                 exactly sourceId, locator, normalizedLocator, locatorDigest, title, safetyType, fetchedAt, publishedAt,
                 status, excerpt, and contentDigest. artifactRefs must be empty. limitsUsed has exactly searchCalls,
                 fetchCalls, sources, and contentBytes. Use lower-case kebab-case stable IDs.
@@ -1379,10 +1434,15 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 failedItems is non-empty. Do not add result, missionId, missionObjective, missionMode, sources, nested
                 report wrappers, or any other top-level field. Preserve uncertainty in unverifiedClaims,
                 unresolvedQuestions, and residualRisks instead of claiming unsupported certainty.
+                Include every authoritative completed Task objective verbatim in completedItems. Include every Mission
+                acceptance criterion verbatim in completedItems or failedItems according to its outcome, and at least once
+                in answerMarkdown. Integrate them into a coherent reader-facing narrative rather than dumping raw Task results.
 
                 Frozen Mission ID: %s
                 Mission mode: %s
                 Mission objective: %s
+                Authoritative completed Task objectives: %s
+                Mission acceptance criteria: %s
                 Authoritative settled Task results: %s
                 Failed or cancelled Task items: %s
                 """
@@ -1390,6 +1450,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         intent.missionId(),
                         intent.mode(),
                         intent.objective(),
+                        intent.completedTaskObjectives(),
+                        intent.acceptanceCriteria(),
                         intent.taskResults(),
                         intent.failedItems());
     }
@@ -1419,9 +1481,14 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 answerMarkdown must be a comprehensive answer in Markdown format. The seven item collections must
                 contain only strings. artifactRefs must be empty. completionKind must be COMPLETE exactly when
                 failedItems is empty and PARTIAL exactly when failedItems is non-empty. Do not add any other top-level field.
+                Include every authoritative completed Task objective verbatim in completedItems. Include every Mission
+                acceptance criterion verbatim in completedItems or failedItems according to its outcome, and at least once
+                in answerMarkdown. Expand the narrative enough to address the settled Task results comprehensively.
 
                 Frozen Mission ID: %s
                 Mission objective: %s
+                Authoritative completed Task objectives: %s
+                Mission acceptance criteria: %s
                 Authoritative settled Task results: %s
                 Failed or cancelled Task items: %s
                 Rejected source Synthesis Run ID: %s
@@ -1432,6 +1499,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 .formatted(
                         intent.missionId(),
                         intent.objective(),
+                        intent.completedTaskObjectives(),
+                        intent.acceptanceCriteria(),
                         intent.taskResults(),
                         intent.failedItems(),
                         invalidRunId,

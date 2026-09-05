@@ -52,4 +52,3 @@ into a structured analytical narrative.
 ## {Sources}
 
 List each cited `[[source-id]]` with settled title, publisher, date/status, and URL.
-

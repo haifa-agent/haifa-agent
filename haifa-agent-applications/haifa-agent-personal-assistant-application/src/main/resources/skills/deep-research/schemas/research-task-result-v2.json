@@ -3,7 +3,7 @@
   "$id": "pa.research-task-result/v2",
   "type": "object",
   "required": [
-    "schemaVersion", "taskSummary", "findings", "sources",
+    "schemaVersion", "taskSummary", "queries", "findings", "sources", "artifactRefs",
     "unresolvedQuestions", "stopReason", "limitsUsed"
   ],
   "properties": {
@@ -25,7 +25,8 @@
         "type": "object",
         "required": [
           "findingId", "title", "mechanism", "keyParameters", "evidenceSummary",
-          "implications", "limitations", "supportingSourceIds", "opposingSourceIds"
+          "implications", "limitations", "supportingSourceIds", "opposingSourceIds",
+          "evidenceAssessment", "unverified"
         ],
         "additionalProperties": false,
         "properties": {

@@ -1313,6 +1313,41 @@ describe("Personal Assistant application", () => {
     expect(within(dialog).queryByText("最终报告版本不受支持")).toBeNull();
   });
 
+  it("renders the Standard Mission v2 narrative and linked sources", async () => {
+    const delivered: MissionSnapshot = {
+      ...mission,
+      state: "COMPLETED",
+      finalResult: JSON.stringify({
+        schemaVersion: "pa.mission-final-result/v2",
+        directAnswer: "以太坊扩容路线已经从单纯提高 L1 吞吐转向以 Rollup 和数据可用性为中心的分层架构。",
+        answerMarkdown: "## 技术演进\n\nDencun、Pectra 与 PeerDAS 分别推进数据成本、账户能力和数据可用性扩展。",
+        completionKind: "COMPLETE",
+        completedItems: ["梳理技术演进"],
+        failedItems: [],
+        artifactRefs: [],
+        sourceRefs: ["https://ethereum.org/roadmap/"],
+        unverifiedClaims: [],
+        residualRisks: ["路线图时间仍可能变化"],
+        unresolvedQuestions: [],
+      }),
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [delivered], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => delivered),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+
+    expect(await within(dialog).findByRole("heading", { name: "技术演进" })).toBeTruthy();
+    expect(within(dialog).getByRole("link", { name: "https://ethereum.org/roadmap/" }).getAttribute("href"))
+      .toBe("https://ethereum.org/roadmap/");
+    expect(within(dialog).getByText("执行结果审计与详情")).toBeTruthy();
+  });
+
   it("fails closed for an unknown research delivery version", async () => {
     const delivered: MissionSnapshot = {
       ...mission,
@@ -2611,4 +2646,3 @@ describe("Personal Assistant application", () => {
     expect(api.submitMessage).not.toHaveBeenCalled();
   });
 });
-

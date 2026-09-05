@@ -123,7 +123,7 @@ public final class BrowserlessFetchProvider implements WebFetchProvider {
                     WebContentFormat.HTML,
                     "text/html",
                     Optional.of("UTF-8"),
-                    WebHttpSupport.sha256(content),
+                    WebHttpSupport.sha256(complete),
                     truncated);
         });
     }

@@ -8,11 +8,14 @@ import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.web.DefaultWebUrlPolicy;
 import io.haifa.agent.web.WebUrlPolicy;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 /**
  * Runtime Core-backed implementation of {@link ResearchFetchEvidenceReader}.
@@ -22,7 +25,9 @@ import java.util.Objects;
  */
 public final class RuntimeFetchEvidenceReader implements ResearchFetchEvidenceReader {
     private static final String EMPTY_SHA256 =
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    private static final Pattern BARE_SHA256 = Pattern.compile("^[a-f0-9]{64}$");
+    private static final Pattern CANONICAL_SHA256 = Pattern.compile("^sha256:[a-f0-9]{64}$");
 
     private final RuntimePersistencePorts runtimePersistence;
     private final WebUrlPolicy urlPolicy;
@@ -62,14 +67,10 @@ public final class RuntimeFetchEvidenceReader implements ResearchFetchEvidenceRe
             boolean sourceAvailable = Boolean.TRUE.equals(data.get("sourceAvailable"));
             boolean resultSuccessful = result != null && result.successful();
             String content = data.get("content") instanceof String value ? value : "";
-            String digest = data.get("contentSha256") instanceof String value && !value.isBlank()
-                    ? value.toLowerCase(java.util.Locale.ROOT)
-                    : EMPTY_SHA256;
+            String digest = canonicalDigest(data.get("contentSha256"));
             boolean successful = resultSuccessful && sourceAvailable && !EMPTY_SHA256.equals(digest);
             boolean truncated = Boolean.TRUE.equals(data.get("truncated"));
-            Instant completedAt = call.completedAt()
-                    .or(call::startedAt)
-                    .orElseGet(call::requestedAt);
+            Instant completedAt = call.completedAt().or(call::startedAt).orElseGet(call::requestedAt);
 
             completedFetches.add(new ResearchFetchEvidence(
                     call.id().value(),
@@ -79,7 +80,7 @@ public final class RuntimeFetchEvidenceReader implements ResearchFetchEvidenceRe
                     sourceAvailable,
                     completedAt,
                     digest,
-                    content.length(),
+                    content.getBytes(StandardCharsets.UTF_8).length,
                     truncated));
         }
         return List.copyOf(completedFetches);
@@ -110,5 +111,13 @@ public final class RuntimeFetchEvidenceReader implements ResearchFetchEvidenceRe
         } catch (Exception ignored) {
             return "";
         }
+    }
+
+    private static String canonicalDigest(Object rawDigest) {
+        if (!(rawDigest instanceof String value)) return EMPTY_SHA256;
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        if (BARE_SHA256.matcher(normalized).matches()) return "sha256:" + normalized;
+        if (CANONICAL_SHA256.matcher(normalized).matches()) return normalized;
+        return EMPTY_SHA256;
     }
 }

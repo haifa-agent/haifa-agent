@@ -291,6 +291,31 @@ class WebHttpProvidersTest {
     }
 
     @Test
+    void tavilyFetchDigestIdentifiesCompleteSnapshotAcrossCallerTruncationLimits() {
+        String complete = "# Stable page\n\n" + "evidence ".repeat(50);
+        response.set(
+                """
+                {"results":[{"url":"https://example.com/final","raw_content":%s}],"failed_results":[]}
+                """
+                        .formatted(mapper.valueToTree(complete)));
+        var provider = new TavilyFetchProvider(
+                client(), mapper, baseUri.resolve("/extract"), Duration.ofSeconds(5), 64 * 1024);
+
+        var shortResult = provider.fetch(
+                new WebFetchRequest(URI.create("https://example.com/page"), WebContentFormat.MARKDOWN, 20), context());
+        var longResult = provider.fetch(
+                new WebFetchRequest(URI.create("https://example.com/page"), WebContentFormat.MARKDOWN, 200), context());
+
+        assertThat(shortResult.content()).hasSize(20);
+        assertThat(longResult.content()).hasSize(200);
+        assertThat(shortResult.truncated()).isTrue();
+        assertThat(longResult.truncated()).isTrue();
+        assertThat(shortResult.contentSha256())
+                .isEqualTo(longResult.contentSha256())
+                .isEqualTo(WebHttpSupport.sha256(complete.strip()));
+    }
+
+    @Test
     void tavilyFetchReportsUnavailableExtractionWithoutLeakingProviderDetails() {
         response.set(
                 """

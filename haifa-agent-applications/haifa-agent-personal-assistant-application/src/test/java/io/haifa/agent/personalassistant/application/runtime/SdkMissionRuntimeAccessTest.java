@@ -486,21 +486,35 @@ class SdkMissionRuntimeAccessTest {
     }
 
     @Test
+    void normalizationRejectsV2WithoutQueriesAndArtifactRefs() throws Exception {
+        var tenant = new TenantRef("local");
+        var principal = new PrincipalRef("personal-user", "user");
+        var skill = PersonalSkillPlatform.create(tenant, principal, Optional.empty(), List.of())
+                .load("deep-research", tenant, principal);
+        String invalid =
+                """
+                {"schemaVersion":"pa.research-task-result/v2","taskSummary":"notes","findings":[],"sources":[],
+                "unresolvedQuestions":[],"stopReason":"TIME_LIMIT",
+                "limitsUsed":{"searchCalls":0,"fetchCalls":0,"sources":0,"contentBytes":0}}
+                """;
+
+        assertThat(SdkMissionRuntimeAccess.isResearchTaskResult(invalid, skill)).isFalse();
+    }
+
+    @Test
     void canonicalizeResearchTaskResultWithCompletedFetchesAuthoritativelyAssignsStatusAndDigest() throws Exception {
-        var completedFetches = List.of(
-                new ResearchFetchEvidence(
-                        "tool-fetch-1",
-                        "https://example.com/halo",
-                        "https://example.com/halo",
-                        true,
-                        true,
-                        Instant.parse("2026-08-10T12:00:00Z"),
-                        "sha256:" + "f".repeat(64),
-                        1024,
-                        false
-                )
-        );
-        String v2Input = """
+        var completedFetches = List.of(new ResearchFetchEvidence(
+                "tool-fetch-1",
+                "https://example.com/halo",
+                "https://example.com/halo",
+                true,
+                true,
+                Instant.parse("2026-08-10T12:00:00Z"),
+                "sha256:" + "f".repeat(64),
+                1024,
+                false));
+        String v2Input =
+                """
                 {
                   "schemaVersion":"pa.research-task-result/v2",
                   "taskSummary":"Halo research notes with rich technical mechanism details.",
@@ -514,7 +528,9 @@ class SdkMissionRuntimeAccessTest {
                     "implications":"High accuracy for heart rate variance.",
                     "limitations":"Skin tone variations.",
                     "supportingSourceIds":["source-1", "source-2"],
-                    "opposingSourceIds":[]
+                    "opposingSourceIds":[],
+                    "evidenceAssessment":"SUPPORTED",
+                    "unverified":false
                   }],
                   "sources":[
                     {
@@ -551,7 +567,8 @@ class SdkMissionRuntimeAccessTest {
                 }
                 """;
 
-        String canonicalized = SdkMissionRuntimeAccess.canonicalizeResearchTaskResult(v2Input, "task-1", completedFetches);
+        String canonicalized =
+                SdkMissionRuntimeAccess.canonicalizeResearchTaskResult(v2Input, "task-1", completedFetches);
         var root = new ObjectMapper().readTree(canonicalized);
 
         assertThat(root.path("schemaVersion").asText()).isEqualTo("pa.research-task-result/v2");
@@ -577,6 +594,119 @@ class SdkMissionRuntimeAccessTest {
         assertThat(f1.path("supportingSourceIds").get(0).asText()).isEqualTo("task-1--source-1");
         assertThat(f1.path("supportingSourceIds").get(1).asText()).isEqualTo("task-1--source-2");
         assertThat(f1.path("unverified").asBoolean()).isTrue();
+    }
+
+    @Test
+    void canonicalizeResearchTaskResultPreservesVerifiedAuthoritativePrimaryFinding() throws Exception {
+        String digest = "sha256:" + "a".repeat(64);
+        var completedFetches = List.of(new ResearchFetchEvidence(
+                "tool-fetch-1",
+                "https://standards.example/spec",
+                "https://standards.example/spec",
+                true,
+                true,
+                Instant.parse("2026-08-10T12:00:00Z"),
+                digest,
+                2048,
+                false));
+        String input =
+                """
+                {
+                  "schemaVersion":"pa.research-task-result/v2",
+                  "taskSummary":"The authoritative specification directly defines the normative protocol value.",
+                  "queries":[{"query":"protocol specification","phase":"DISCOVER"}],
+                  "findings":[{
+                    "findingId":"normative-value","title":"Normative protocol value",
+                    "mechanism":"The specification defines the protocol value as 64.",
+                    "keyParameters":["value: 64"],"evidenceSummary":"Directly stated by the authoritative specification.",
+                    "implications":"Implementations must use the defined value.","limitations":"Normative fact only.",
+                    "supportingSourceIds":["spec"],"opposingSourceIds":[],
+                    "evidenceAssessment":"SUPPORTED","unverified":false
+                  }],
+                  "sources":[{
+                    "sourceId":"spec","locator":"https://standards.example/spec",
+                    "normalizedLocator":"https://standards.example/spec","locatorDigest":"sha256:%s",
+                    "title":"Protocol specification","safetyType":"PUBLIC_WEB","fetchedAt":null,
+                    "publishedAt":"2026-08-01T00:00:00Z","status":"UNKNOWN",
+                    "excerpt":"The authoritative specification defines the value.","contentDigest":null
+                  }],
+                  "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":1,"contentBytes":2048}
+                }
+                """
+                        .formatted("0".repeat(64));
+
+        JsonNode finding = new ObjectMapper()
+                .readTree(SdkMissionRuntimeAccess.canonicalizeResearchTaskResult(input, "task-1", completedFetches))
+                .path("findings")
+                .get(0);
+
+        assertThat(finding.path("evidenceAssessment").asText()).isEqualTo("SUPPORTED");
+        assertThat(finding.path("unverified").asBoolean()).isFalse();
+    }
+
+    @Test
+    void canonicalizeResearchTaskResultMatchesCaseSensitiveUrlsAndDetectsDigestConflicts() throws Exception {
+        String input =
+                """
+                {
+                  "schemaVersion":"pa.research-task-result/v1","brief":"Evidence",
+                  "queries":[{"query":"evidence","phase":"CROSS_CHECK"}],
+                  "sources":[{
+                    "sourceId":"source-1","locator":"https://example.com/Spec/A",
+                    "normalizedLocator":"https://example.com/Spec/A","locatorDigest":"sha256:%s",
+                    "title":"Specification","safetyType":"PUBLIC_WEB","fetchedAt":null,"publishedAt":null,
+                    "status":"UNKNOWN","excerpt":"Relevant evidence.","contentDigest":null
+                  }],
+                  "claims":[],"artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "limitsUsed":{"searchCalls":1,"fetchCalls":0,"sources":1,"contentBytes":0}
+                }
+                """
+                        .formatted("0".repeat(64));
+        Instant completedAt = Instant.parse("2026-08-10T12:00:00Z");
+        var wrongCase = new ResearchFetchEvidence(
+                "fetch-wrong-case",
+                "https://example.com/spec/A",
+                "https://example.com/spec/A",
+                true,
+                true,
+                completedAt,
+                "sha256:" + "a".repeat(64),
+                10,
+                false);
+
+        JsonNode unmatched = new ObjectMapper()
+                .readTree(
+                        SdkMissionRuntimeAccess.canonicalizeResearchTaskResult(input, "task-case", List.of(wrongCase)));
+        assertThat(unmatched.path("sources").get(0).path("status").asText()).isEqualTo("UNKNOWN");
+
+        var first = new ResearchFetchEvidence(
+                "fetch-1",
+                "https://example.com/Spec/A",
+                "https://example.com/Spec/A",
+                true,
+                true,
+                completedAt,
+                "sha256:" + "b".repeat(64),
+                10,
+                false);
+        var second = new ResearchFetchEvidence(
+                "fetch-2",
+                "https://example.com/Spec/A",
+                "https://example.com/Spec/A",
+                true,
+                true,
+                completedAt.plusSeconds(1),
+                "sha256:" + "c".repeat(64),
+                12,
+                false);
+
+        JsonNode conflict = new ObjectMapper()
+                .readTree(SdkMissionRuntimeAccess.canonicalizeResearchTaskResult(
+                        input, "task-conflict", List.of(first, second)));
+        assertThat(conflict.path("sources").get(0).path("status").asText()).isEqualTo("CONFLICT");
+        assertThat(conflict.path("limitsUsed").path("fetchCalls").asInt()).isEqualTo(2);
+        assertThat(conflict.path("limitsUsed").path("contentBytes").asInt()).isEqualTo(22);
     }
 
     @Test

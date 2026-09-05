@@ -4,6 +4,13 @@ import java.net.URI;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * A bounded page representation plus the identity of the complete extracted snapshot.
+ *
+ * <p>{@code content} may be truncated to the caller's requested character limit. {@code contentSha256} always hashes
+ * the complete extracted content before that caller-specific truncation, so repeated fetches of the same snapshot keep
+ * one stable evidence identity across different presentation limits.
+ */
 public record WebFetchResponse(
         URI requestedUrl,
         URI finalUrl,

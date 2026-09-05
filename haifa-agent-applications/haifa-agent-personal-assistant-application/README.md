@@ -56,7 +56,7 @@ that reaches its execution or Mission deadline is cancelled and enters the exist
 partial-synthesis path instead of being silently abandoned.
 
 Phase 3 adds an explicit `DEEP_RESEARCH` Mission mode with a frozen Research Brief and the
-bundled `deep-research@2.2.0` Skill. The Mission persists the full resolved Skill coordinate
+bundled `deep-research@2.3.0` Skill. The Mission persists the full resolved Skill coordinate
 (scope, source version, declared version, and package content digest), while each Research Task
 runs in an isolated ephemeral Session through the existing Runtime Tool pipeline. Strict task schemas preserve
 source identity and claim-to-evidence closure. Final Synthesis returns Markdown directly; a deterministic Report
@@ -64,7 +64,7 @@ Quality Gate and code-owned `pa.research-delivery/v2` manifest preserve Task cov
 partial/degraded completion, and five immutable research Artifacts. Relative Brief ranges are frozen to explicit UTC
 dates at creation. Fetched content remains untrusted data.
 
-The 2.2.0 package applies one shared, prompt-only research-type table to the same frozen Brief in Task execution and
+The 2.3.0 package applies one shared, prompt-only research-type table to the same frozen Brief in Task execution and
 Final Synthesis. Its claim-first DISCOVER/DEEPEN/CROSS_CHECK method prioritizes primary and independent evidence,
 deduplicates fetched canonical URLs, reuses dependency evidence, and stops when another call cannot close a material
 gap. The trusted publisher adds an evidence status section, unresolved and single-source limitations, and computes
@@ -95,8 +95,12 @@ Final publication canonicalizes and deduplicates those Task-local aliases by pub
 Mission-wide 24-source limit. The bounded final unverified-claim index supports the existing eight-Task by
 forty-claims-per-Task ceiling, so
 strict citation closure never requires dropping an unverified claim merely to satisfy a smaller synthesis array.
-Only complete FETCHED metadata with a canonical `sha256:` content digest survives Task normalization; all other
-source states clear fetch-only metadata and dependent claims remain unverified. Synthesis uses stable initial,
+Only completed journal evidence with an exact case-sensitive canonical URL and canonical `sha256:` content digest
+survives Task normalization. Conflicting digests become `CONFLICT`; all other source states clear fetch-only metadata.
+Retrieval status does not establish factual support: v2 findings retain an explicit evidence assessment and preserve
+conservative model judgments. A normative or first-party fact may be verified from one fetched authoritative primary
+source; empirical or interpretive claims require at least two genuinely independent fetched sources.
+Synthesis uses stable initial,
 revision-1 and revision-2 Runtime idempotency keys. The product checks marked Markdown before publication, then
 checks the four published Artifact refs before publishing `research-delivery.json` last; the model never supplies
 Artifact references or the delivery manifest.
@@ -111,8 +115,10 @@ Task deliberately does not combine that option with iterative Tool calls, and De
 separate Markdown Profile without JSON response formatting. The preloaded Skill still requires exactly one Task JSON
 object, while the final report uses stable section, Task and source markers validated by the product boundary.
 
-Standard Mission Synthesis freezes the complete `pa.mission-final-result/v1` field shape in its prompt. If the first
-candidate is rejected specifically by the deterministic final-result schema validator, the coordinator permits one
+Standard Mission Synthesis emits `pa.mission-final-result/v2`, separating a concise `directAnswer` from required,
+reader-facing `answerMarkdown`. The deterministic product gate scales minimum depth to settled Task input and requires
+every completed Task objective and Mission acceptance criterion in both the completion ledger and report. If the first
+candidate is rejected by the deterministic final-result or quality validator, the coordinator permits one
 stable-idempotency repair Run in the same ephemeral Synthesis Session and validates the repaired candidate again.
 Usage from that repair is cumulative; a second invalid candidate or any non-schema publication failure terminates
 without another model retry.
