@@ -52,6 +52,8 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             "answerMarkdown",
             "completedItems",
             "failedItems",
+            "taskOutcomes",
+            "acceptanceOutcomes",
             "artifactRefs",
             "completionKind");
     private static final Set<String> STANDARD_V2_ALLOWED_FIELDS = Set.of(
@@ -174,6 +176,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                 candidateFrom(finalResult),
                 intent.taskResults(),
                 intent.completedTaskIds(),
+                failedTaskIds(intent.failedItems()),
                 intent.completedTaskObjectives(),
                 intent.acceptanceCriteria(),
                 intent.asOf());
@@ -1024,6 +1027,18 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             }
         });
         return List.copyOf(list);
+    }
+
+    private static List<String> failedTaskIds(List<String> failedItems) {
+        if (failedItems == null || failedItems.isEmpty()) return List.of();
+        LinkedHashSet<String> taskIds = new LinkedHashSet<>();
+        for (String failedItem : failedItems) {
+            if (failedItem == null || failedItem.isBlank()) continue;
+            int separator = failedItem.indexOf(':');
+            String taskId = (separator < 0 ? failedItem : failedItem.substring(0, separator)).trim();
+            if (!taskId.isBlank()) taskIds.add(taskId);
+        }
+        return List.copyOf(taskIds);
     }
 
     private void validateStandardV2Shape(JsonNode value) {

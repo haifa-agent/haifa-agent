@@ -13,6 +13,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionPlanner;
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
+import io.haifa.agent.personalassistant.application.mission.SourceReference;
 import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import java.time.Instant;
@@ -25,9 +26,9 @@ class SdkMissionRuntimeAccessTest {
     @Test
     void synthesisProtocolVersionOwnsTheRunIdempotencyNamespace() {
         assertThat(SdkMissionRuntimeAccess.SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v7");
-        assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v3");
+        assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v4");
         assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION)
-                .isEqualTo("v1");
+                .isEqualTo("v2");
         assertThat(SdkMissionRuntimeAccess.PLANNER_REPAIR_PROTOCOL_VERSION).isEqualTo("v4");
         assertThat(SdkMissionRuntimeAccess.TASK_NORMALIZATION_PROTOCOL_VERSION).isEqualTo("v6");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1"))
@@ -37,9 +38,9 @@ class SdkMissionRuntimeAccessTest {
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1", 2))
                 .isEqualTo("mission:mission-1:synthesis:v7:revision-2");
         assertThat(SdkMissionRuntimeAccess.standardSynthesisDispatchKey("mission-1"))
-                .isEqualTo("mission:mission-1:synthesis:standard:v3");
+                .isEqualTo("mission:mission-1:synthesis:standard:v4");
         assertThat(SdkMissionRuntimeAccess.standardSynthesisRepairDispatchKey("mission-1", "run-invalid", 1))
-                .isEqualTo("mission:mission-1:synthesis:standard:v3:repair:v1:attempt-1:source:run-invalid");
+                .isEqualTo("mission:mission-1:synthesis:standard:v4:repair:v2:attempt-1:source:run-invalid");
     }
 
     @Test
@@ -62,12 +63,14 @@ class SdkMissionRuntimeAccessTest {
                         "\"completedItems\"",
                         "\"failedItems\"",
                         "\"artifactRefs\":[]",
+                        "\"sectionSources\":[],\"sources\":[]",
                         "\"sourceRefs\"",
                         "\"unverifiedClaims\"",
                         "\"unresolvedQuestions\"",
                         "\"residualRisks\"",
                         "\"completionKind\"",
                         "Frozen Mission ID: mission-1",
+                        "[task-1] status=COMPLETED",
                         "Do not add result, missionId, missionObjective, missionMode")
                 .contains("COMPLETE exactly when failedItems is empty", "PARTIAL", "failedItems is non-empty");
 
@@ -77,14 +80,41 @@ class SdkMissionRuntimeAccessTest {
                         "{\"schemaVersion\":\"pa.mission-final-result/v1\",\"result\":{}}",
                         "MISSION_RESULT_SCHEMA_INVALID",
                         "directAnswer is invalid",
-                        1))
+                        1,
+                        List.of(new SourceReference(
+                                "src-001", "Ethereum protocol documentation", "https://ethereum.org/docs"))))
                 .contains(
                         "single bounded deterministic schema repair attempt",
                         "Rejected source Synthesis Run ID: run-invalid",
                         "MISSION_RESULT_SCHEMA_INVALID - directAnswer is invalid",
                         "\"result\":{}",
+                        "Execution as-of time:",
+                        "[src-001] Ethereum protocol documentation (https://ethereum.org/docs)",
+                        "\"sources\":[]",
                         "artifactRefs must be empty",
                         "Do not add any other top-level field");
+    }
+
+    @Test
+    void standardSynthesisExposesStableIdsForCompletedAndFailedTasks() {
+        var intent = new MissionSynthesisIntent(
+                "mission-partial",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Complete available analysis",
+                List.of("settled result"),
+                List.of("task-failed:BLOCKED:SOURCE_UNAVAILABLE"),
+                List.of("task-complete"),
+                List.of("Analyze available evidence"),
+                List.of("Verify all sources"),
+                List.of(),
+                Instant.parse("2026-09-05T00:00:00Z"));
+
+        assertThat(SdkMissionRuntimeAccess.standardSynthesisPrompt(intent))
+                .contains(
+                        "[task-complete] status=COMPLETED objective=Analyze available evidence",
+                        "[task-failed] status=FAILED detail=task-failed:BLOCKED:SOURCE_UNAVAILABLE");
     }
 
     @Test

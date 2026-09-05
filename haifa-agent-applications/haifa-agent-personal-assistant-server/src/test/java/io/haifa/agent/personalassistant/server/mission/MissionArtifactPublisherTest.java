@@ -319,6 +319,8 @@ class MissionArtifactPublisherTest {
                   "answerMarkdown": "%s",
                   "completedItems": ["对比 2PC 与 3PC 机制", "分析 Saga 补偿模式"],
                   "failedItems": [],
+                  "taskOutcomes": [{"taskId": "task-1", "status": "COMPLETED"}],
+                  "acceptanceOutcomes": [],
                   "artifactRefs": [],
                   "sourceRefs": ["https://research.example.com/transactions"],
                   "unverifiedClaims": [],
@@ -404,6 +406,7 @@ class MissionArtifactPublisherTest {
                   "failedItems": [],
                   "artifactRefs": [],
                   "taskOutcomes": [{"taskId": "task-1", "status": "COMPLETED"}],
+                  "acceptanceOutcomes": [],
                   "completionKind": "COMPLETE"
                 }
                 """
@@ -422,6 +425,51 @@ class MissionArtifactPublisherTest {
                 .isEqualTo("mission-report.md");
         assertThat(publishedResult.path("resultArtifactRef").path("title").asText())
                 .isEqualTo("mission-result.json");
+    }
+
+    @Test
+    void publishesPartialStandardMissionWithAuthoritativeFailedTaskOutcome() throws Exception {
+        var publisher = publisher(new InMemoryArtifactStore(), newIds());
+        var intent = new MissionSynthesisIntent(
+                "mission-std-partial",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Complete available analysis and report blocked work",
+                List.of("settled result"),
+                List.of("task-failed:BLOCKED:SOURCE_UNAVAILABLE"),
+                List.of("task-complete"),
+                List.of("Complete available analysis"),
+                List.of("Verify the unavailable source"),
+                List.of(),
+                Instant.parse("2026-09-05T00:00:00Z"));
+
+        String resultJson =
+                """
+                {
+                  "schemaVersion": "pa.mission-final-result/v2",
+                  "directAnswer": "可完成的分析已经交付，来源验证仍受阻。",
+                  "answerMarkdown": "%s",
+                  "completedItems": [],
+                  "failedItems": ["task-failed:BLOCKED:SOURCE_UNAVAILABLE"],
+                  "taskOutcomes": [
+                    {"taskId": "task-complete", "status": "COMPLETED"},
+                    {"taskId": "task-failed", "status": "FAILED"}
+                  ],
+                  "acceptanceOutcomes": [
+                    {"criterionIndex": 0, "status": "UNSATISFIED", "taskIds": ["task-failed"]}
+                  ],
+                  "artifactRefs": [],
+                  "completionKind": "PARTIAL"
+                }
+                """
+                        .formatted("部分完成报告解释了现有结论、失败原因和后续验证路径。".repeat(30));
+
+        var published = publisher.publish(intent, synthesis(resultJson));
+
+        assertThat(published.completionKind()).isEqualTo("PARTIAL");
+        assertThat(MAPPER.readTree(published.structuredResult()).path("taskOutcomes"))
+                .hasSize(2);
     }
 
     @Test
@@ -452,6 +500,7 @@ class MissionArtifactPublisherTest {
                   "failedItems": [],
                   "artifactRefs": [],
                   "taskOutcomes": [{"taskId": "task-1", "status": "COMPLETED"}],
+                  "acceptanceOutcomes": [],
                   "sectionSources": [
                     {"sectionHeading": "核心机制概述", "sourceIds": ["src-999"]}
                   ],
@@ -511,6 +560,7 @@ class MissionArtifactPublisherTest {
                   "failedItems": [],
                   "artifactRefs": [],
                   "taskOutcomes": [{"taskId": "task-1", "status": "COMPLETED"}],
+                  "acceptanceOutcomes": [],
                   "sectionSources": [
                     {"sectionHeading": "升级机制概述", "sourceIds": ["src-001"]}
                   ],
