@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
 SPOTLESS_EXTENSIONS = {".java", ".xml", ".md", ".yml", ".yaml"}
-IGNORED_DIRS = {".git", "docs", "test-config", "local-tmp", "target", "node_modules", ".idea", ".vscode"}
+IGNORED_DIRS = {".git", "docs", "test-config", "local-tmp", "target", "node_modules", ".idea", ".vscode", "examples"}
 
 
 def repository_root() -> Path:
