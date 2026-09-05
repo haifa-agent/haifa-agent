@@ -129,8 +129,8 @@ class LocalFileToolOperationsMultiRootTest {
                 () -> now);
         ledger = new InMemorySessionChangeLedger();
 
-        operations =
-                new LocalFileToolOperations(workspaces, files, mutations, identifiers, () -> now, provisioning, ledger);
+        operations = new LocalFileToolOperations(
+                workspaces, files, mutations, identifiers, () -> now, provisioning, ledger, null, true);
     }
 
     private void registerWorkspace(
@@ -797,7 +797,7 @@ class LocalFileToolOperationsMultiRootTest {
         assertThat(res.successful()).isFalse();
         assertThat(res.structuredData())
                 .containsEntry("errorCode", "ACCESS_DENIED")
-                .containsEntry("failureCategory", "POLICY_DENIED")
+                .containsEntry("failureCategory", "WORKSPACE_SCOPE_DENIED")
                 .containsEntry("failureActionCode", "REQUEST_DIRECTORY_AUTHORIZATION");
     }
 

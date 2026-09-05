@@ -569,7 +569,15 @@ final class LocalCodingAgent implements AutoCloseable {
                             })
                     : executionPlatform.repositoryBaselines();
             var operations = new LocalFileToolOperations(
-                    workspaces, files, mutations, identifiers, time, provisioning, sessionLedger, repositoryBaselines);
+                    workspaces,
+                    files,
+                    mutations,
+                    identifiers,
+                    time,
+                    provisioning,
+                    sessionLedger,
+                    repositoryBaselines,
+                    configuredTools.contains("workspace.attach"));
             TrustedWorkspaceEnvironmentCatalog workspaceEnvironment = new TrustedWorkspaceEnvironmentCatalog(
                     workspaceRoot,
                     verificationDiscovery,
@@ -616,6 +624,11 @@ final class LocalCodingAgent implements AutoCloseable {
                             executionPlatform == null ? null : executionPlatform.profile(),
                             executionPlatform == null ? null : executionPlatform.permissionProfile(),
                             CodingToolchainEnvironmentProfile.defaultScratchSpace());
+            Set<String> disclosedToolAliases = catalog.snapshot().bindings().stream()
+                    .map(binding -> binding.alias().value())
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            boolean workspaceAttachmentDisclosed = catalog.snapshot().bindings().stream()
+                    .anyMatch(binding -> binding.definition().name().value().equals("workspace.attach"));
             var interactions = persistence.ports().interactions();
             Map<String, ResolvedModelSnapshot> modelSnapshots = configuration.availableModels().stream()
                     .collect(java.util.stream.Collectors.toUnmodifiableMap(
@@ -720,12 +733,11 @@ final class LocalCodingAgent implements AutoCloseable {
                     .definitions((id, requested) -> new ResolvedDefinition(
                             id,
                             requested.orElse(new AgentDefinitionVersion(1, 0, 0)),
-                            catalog.snapshot().bindings().stream()
-                                    .map(binding -> binding.alias().value())
-                                    .collect(java.util.stream.Collectors.toUnmodifiableSet()),
+                            disclosedToolAliases,
                             configuration.skills().allowedAliases(),
                             Set.of(),
-                            CodingAgentPrompt.current().text()
+                            CodingAgentPrompt.forWorkspaceAttachment(workspaceAttachmentDisclosed)
+                                            .text()
                                     + executionEnvironmentPrompt(
                                             executionPlatform == null ? "" : executionPlatform.shellDisplayName())
                                     + workspaceEnvironment
