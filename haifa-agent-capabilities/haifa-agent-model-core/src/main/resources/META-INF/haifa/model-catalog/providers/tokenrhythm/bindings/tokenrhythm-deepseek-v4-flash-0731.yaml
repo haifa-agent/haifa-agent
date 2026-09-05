@@ -1,0 +1,28 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: tokenrhythm-deepseek-v4-flash-0731
+version: "2026-09-m3"
+providerModelId: deepseek-v4-flash-0731
+displayName: DeepSeek V4 Flash 0731 via TokenRhythm
+status: ACTIVE
+apiStyle: openai-chat-completions
+dialect: tokenrhythm-openai-chat
+capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+profile:
+  version: "2.0"
+  reasoningBehavior: OPTIONAL
+  allowedReasoningModes: [DISABLED, ENABLED]
+  allowedReasoningEfforts: [HIGH]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 384000
+  contextWindowTokens: 1000000
+  toolReasoningContinuationRequired: false
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: true
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT]
+  outputModalities: [TEXT]
+  imageInput: null
+  status: VERIFIED
+  lastVerifiedOn: "2026-09-05"

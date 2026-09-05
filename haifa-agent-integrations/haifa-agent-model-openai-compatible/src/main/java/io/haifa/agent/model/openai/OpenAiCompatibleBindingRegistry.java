@@ -212,17 +212,39 @@ final class OpenAiCompatibleBindingRegistry {
                 Set.of(ModelReasoningEffort.HIGH),
                 false);
 
-        // TokenRhythm - Chat Completions
-        register(
-                map,
-                "tokenrhythm",
-                "deepseek-v4-flash",
-                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
-                OpenAiCompatibleDialects.TOKENRHYTHM,
-                ModelReasoningBehavior.OPTIONAL,
-                Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED),
-                Set.of(ModelReasoningEffort.HIGH),
-                false);
+        // TokenRhythm - reviewed Chat Completions bindings
+        for (String model : Set.of(
+                "glm-5",
+                "glm-5.1",
+                "minimax-m2.7",
+                "kimi-k2.5",
+                "kimi-k2.6",
+                "minimax-m2.5",
+                "mimo-v2.5-pro",
+                "qwen3.7-max",
+                "kimi-k2.7-code",
+                "glm-5.2",
+                "qwen3.8-max",
+                "deepseek-v4-flash-0731",
+                "seed-2.1-pro",
+                "seed-2.1-turbo",
+                "deepseek-v4-pro-0813",
+                "glm-5.3",
+                "qwen3.7-flash",
+                "qwen3.8-27b",
+                "longcat-2.0",
+                "glm-5.3-flash")) {
+            register(
+                    map,
+                    "tokenrhythm",
+                    model,
+                    ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                    OpenAiCompatibleDialects.TOKENRHYTHM,
+                    ModelReasoningBehavior.OPTIONAL,
+                    Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED),
+                    Set.of(ModelReasoningEffort.HIGH),
+                    false);
+        }
 
         // Personal Local Acceptance Test Fixture
         register(

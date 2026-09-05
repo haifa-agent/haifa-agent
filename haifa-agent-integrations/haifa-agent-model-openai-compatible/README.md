@@ -172,7 +172,7 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 | Zhipu | `https://open.bigmodel.cn/api/paas/v4` | `env://BIGMODEL_API_KEY` | reviewed GLM model id | thinking/reasoning_effort/do_sample |
 | Ark | `https://ark.cn-beijing.volces.com/api/v3` | `env://ARK_API_KEY` | typed Model ID/Endpoint ID | thinking/service_tier/token parameter |
 | SiliconFlow | `https://api.siliconflow.cn/v1` | `env://SILICONFLOW_API_KEY` | reviewed model id | cumulative stream usage |
-| TokenRhythm | `https://tokenrhythm.studio/v1` | `env://TR_API_KEY` | reviewed model id | cumulative stream usage |
+| TokenRhythm | `https://tokenrhythm.studio/v1` | `env://TK_API_KEY` | reviewed model id | cumulative stream usage |
 
 标准 OpenAI dialect 可冻结 `native_streaming=false`。此时 Adapter 使用同步 Chat Completions 获取权威
 `usage`，再通过 provider-neutral 默认桥接发出有界 Content/Usage 事件，适用于不实现 SSE usage 的本机中转。
@@ -324,7 +324,7 @@ HAIFA_SILICONFLOW_LIVE_TEST=true
 SILICONFLOW_API_KEY=<secret>
 
 HAIFA_TOKENRHYTHM_LIVE_TEST=true
-TR_API_KEY=<secret>
+TK_API_KEY=<secret>
 
 # Explicit paid 2x2 comparison: SiliconFlow/DeepSeek x native streaming true/false
 HAIFA_STREAMING_MODE_COMPARISON_LIVE_TEST=true
