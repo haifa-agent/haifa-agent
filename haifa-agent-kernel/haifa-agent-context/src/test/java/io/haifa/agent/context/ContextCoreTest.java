@@ -8,7 +8,7 @@ import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.context.api.ContextBuildRequest;
 import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.budget.TokenEstimator;
-import io.haifa.agent.context.compaction.CompressionPolicy;
+import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.core.DefaultAgentContextBuilder;
 import io.haifa.agent.context.item.AssetDerivedTextContent;
 import io.haifa.agent.context.item.ContextItem;

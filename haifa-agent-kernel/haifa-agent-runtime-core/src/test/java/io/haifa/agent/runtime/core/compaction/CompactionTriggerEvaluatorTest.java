@@ -2,7 +2,7 @@ package io.haifa.agent.runtime.core.compaction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.haifa.agent.context.compaction.CompressionPolicy;
+import io.haifa.agent.context.compression.CompressionPolicy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -20,13 +20,14 @@ class CompactionTriggerEvaluatorTest {
         long otherSources = 1_000L;
         long currentTokens = 50_000L;
 
-        ContextBudgetBreakdown breakdown = evaluator.calculateBreakdown(
-                contextWindow, outputReserve, fixedPrefix, otherSources, currentTokens);
+        ContextBudgetBreakdown breakdown =
+                evaluator.calculateBreakdown(contextWindow, outputReserve, fixedPrefix, otherSources, currentTokens);
 
         long expectedSafety = 128_000L * 5 / 100L; // 6,400
         long expectedAvailable = 128_000L - 4_096L - expectedSafety - 2_000L - 1_000L; // 114,504
         long calculatedHeadroom = (expectedAvailable * policy.softTriggerHeadroomPercent()) / 100L;
-        long expectedHeadroom = Math.clamp(calculatedHeadroom, (long) policy.minTriggerHeadroom(), (long) policy.maxTriggerHeadroom());
+        long expectedHeadroom =
+                Math.clamp(calculatedHeadroom, (long) policy.minTriggerHeadroom(), (long) policy.maxTriggerHeadroom());
         long expectedSoftLimit = expectedAvailable - expectedHeadroom;
 
         assertThat(breakdown.contextWindowTokens()).isEqualTo(contextWindow);
@@ -44,8 +45,7 @@ class CompactionTriggerEvaluatorTest {
         CompressionPolicy policy = CompressionPolicy.defaults(); // semanticCompactionEnabled = false
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
 
-        CompactionTriggerDecision decision = evaluator.evaluate(
-                128_000L, 4_096L, 2_000L, 1_000L, 120_000L, 10);
+        CompactionTriggerDecision decision = evaluator.evaluate(128_000L, 4_096L, 2_000L, 1_000L, 120_000L, 10);
 
         assertThat(decision.shouldCompact()).isFalse();
         assertThat(decision.reason()).isEqualTo(CompactionTriggerReason.NONE);
@@ -57,11 +57,9 @@ class CompactionTriggerEvaluatorTest {
         CompressionPolicy policy = CompressionPolicy.defaults().withSemanticCompactionEnabled(true);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
 
-        ContextBudgetBreakdown breakdown = evaluator.calculateBreakdown(
-                128_000L, 4_096L, 2_000L, 1_000L, 20_000L);
+        ContextBudgetBreakdown breakdown = evaluator.calculateBreakdown(128_000L, 4_096L, 2_000L, 1_000L, 20_000L);
 
-        CompactionTriggerDecision decision = evaluator.evaluate(
-                128_000L, 4_096L, 2_000L, 1_000L, 20_000L, 10);
+        CompactionTriggerDecision decision = evaluator.evaluate(128_000L, 4_096L, 2_000L, 1_000L, 20_000L, 10);
 
         assertThat(20_000L).isLessThan(breakdown.softLimitTokens());
         assertThat(decision.shouldCompact()).isFalse();
@@ -74,11 +72,9 @@ class CompactionTriggerEvaluatorTest {
         CompressionPolicy policy = CompressionPolicy.defaults().withSemanticCompactionEnabled(true);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
 
-        ContextBudgetBreakdown breakdown = evaluator.calculateBreakdown(
-                128_000L, 4_096L, 2_000L, 1_000L, 110_000L);
+        ContextBudgetBreakdown breakdown = evaluator.calculateBreakdown(128_000L, 4_096L, 2_000L, 1_000L, 110_000L);
 
-        CompactionTriggerDecision decision = evaluator.evaluate(
-                128_000L, 4_096L, 2_000L, 1_000L, 110_000L, 5);
+        CompactionTriggerDecision decision = evaluator.evaluate(128_000L, 4_096L, 2_000L, 1_000L, 110_000L, 5);
 
         assertThat(110_000L).isGreaterThanOrEqualTo(breakdown.softLimitTokens());
         assertThat(decision.shouldCompact()).isTrue();
@@ -91,8 +87,7 @@ class CompactionTriggerEvaluatorTest {
         CompressionPolicy policy = CompressionPolicy.defaults().withSemanticCompactionEnabled(true);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
 
-        CompactionTriggerDecision decision = evaluator.evaluate(
-                128_000L, 4_096L, 2_000L, 1_000L, 110_000L, 1);
+        CompactionTriggerDecision decision = evaluator.evaluate(128_000L, 4_096L, 2_000L, 1_000L, 110_000L, 1);
 
         assertThat(decision.shouldCompact()).isFalse();
         assertThat(decision.reason()).isEqualTo(CompactionTriggerReason.NONE);

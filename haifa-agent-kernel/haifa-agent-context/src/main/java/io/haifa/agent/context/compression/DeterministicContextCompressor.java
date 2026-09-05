@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.core.content.TextPart;

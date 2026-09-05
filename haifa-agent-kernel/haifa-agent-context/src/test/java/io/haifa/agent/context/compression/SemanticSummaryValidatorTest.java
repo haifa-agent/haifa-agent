@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -25,15 +25,29 @@ class SemanticSummaryValidatorTest {
         SemanticConversationSummaryV1 summary = new SemanticConversationSummaryV1(
                 "v1",
                 "zh-CN",
-                List.of(new SemanticSummaryItem("g01", "Compile water treatment report", List.of("m001"), SemanticConfidence.OBSERVED)),
-                List.of(new SemanticSummaryItem("c01", "Use ENV-ACCEPT-V3", List.of("m001"), SemanticConfidence.OBSERVED)),
+                List.of(new SemanticSummaryItem(
+                        "g01", "Compile water treatment report", List.of("m001"), SemanticConfidence.OBSERVED)),
+                List.of(new SemanticSummaryItem(
+                        "c01", "Use ENV-ACCEPT-V3", List.of("m001"), SemanticConfidence.OBSERVED)),
                 new SemanticProgress(
-                        List.of(new SemanticSummaryItem("p01", "Monitoring records extracted", List.of("m002", "t001"), SemanticConfidence.OBSERVED)),
-                        List.of(new SemanticSummaryItem("p02", "Drafting final document", List.of("m002"), SemanticConfidence.OBSERVED)),
+                        List.of(new SemanticSummaryItem(
+                                "p01",
+                                "Monitoring records extracted",
+                                List.of("m002", "t001"),
+                                SemanticConfidence.OBSERVED)),
+                        List.of(new SemanticSummaryItem(
+                                "p02", "Drafting final document", List.of("m002"), SemanticConfidence.OBSERVED)),
                         List.of()),
-                List.of(new SemanticDecisionItem("d01", "Adopted limit <= 8 mg/L", "Based on official approval", SemanticDecisionStatus.ACCEPTED, List.of("m001"))),
-                List.of(new SemanticSummaryItem("n01", "Submit to environmental board", List.of("m002"), SemanticConfidence.OBSERVED)),
-                List.of(new SemanticSummaryItem("ctx01", "Approval ref HuanShen [2025] 18", List.of("m001"), SemanticConfidence.OBSERVED)),
+                List.of(new SemanticDecisionItem(
+                        "d01",
+                        "Adopted limit <= 8 mg/L",
+                        "Based on official approval",
+                        SemanticDecisionStatus.ACCEPTED,
+                        List.of("m001"))),
+                List.of(new SemanticSummaryItem(
+                        "n01", "Submit to environmental board", List.of("m002"), SemanticConfidence.OBSERVED)),
+                List.of(new SemanticSummaryItem(
+                        "ctx01", "Approval ref HuanShen [2025] 18", List.of("m001"), SemanticConfidence.OBSERVED)),
                 List.of());
 
         assertThatCode(() -> SemanticSummaryValidator.validate(summary, projectedSource, List.of()))
@@ -66,7 +80,8 @@ class SemanticSummaryValidatorTest {
                 List.of(new SemanticSummaryItem("g01", "Goal", List.of("m001"), SemanticConfidence.OBSERVED)),
                 List.of(),
                 new SemanticProgress(
-                        List.of(new SemanticSummaryItem("p01", "Done without evidence", List.of("m001"), SemanticConfidence.INFERRED)),
+                        List.of(new SemanticSummaryItem(
+                                "p01", "Done without evidence", List.of("m001"), SemanticConfidence.INFERRED)),
                         List.of(),
                         List.of()),
                 List.of(),
@@ -87,7 +102,8 @@ class SemanticSummaryValidatorTest {
                 List.of(new SemanticSummaryItem("g01", "Goal", List.of("m001"), SemanticConfidence.OBSERVED)),
                 List.of(),
                 new SemanticProgress(
-                        List.of(new SemanticSummaryItem("p01", "Claimed complete", List.of(), SemanticConfidence.OBSERVED)),
+                        List.of(new SemanticSummaryItem(
+                                "p01", "Claimed complete", List.of(), SemanticConfidence.OBSERVED)),
                         List.of(),
                         List.of()),
                 List.of(),
@@ -102,7 +118,8 @@ class SemanticSummaryValidatorTest {
 
     @Test
     void rejectsDroppedMandatoryCarryForward() {
-        SemanticSummaryItem carryItem = new SemanticSummaryItem("b01", "Night noise exceeding limit", List.of("m001"), SemanticConfidence.OBSERVED);
+        SemanticSummaryItem carryItem = new SemanticSummaryItem(
+                "b01", "Night noise exceeding limit", List.of("m001"), SemanticConfidence.OBSERVED);
 
         SemanticConversationSummaryV1 summary = new SemanticConversationSummaryV1(
                 "v1",
@@ -125,7 +142,11 @@ class SemanticSummaryValidatorTest {
         SemanticConversationSummaryV1 summary = new SemanticConversationSummaryV1(
                 "v1",
                 "zh-CN",
-                List.of(new SemanticSummaryItem("g01", "Leaked key: sk-abcdef1234567890abcdef12345", List.of("m001"), SemanticConfidence.OBSERVED)),
+                List.of(new SemanticSummaryItem(
+                        "g01",
+                        "Leaked key: sk-abcdef1234567890abcdef12345",
+                        List.of("m001"),
+                        SemanticConfidence.OBSERVED)),
                 List.of(),
                 SemanticProgress.empty(),
                 List.of(),

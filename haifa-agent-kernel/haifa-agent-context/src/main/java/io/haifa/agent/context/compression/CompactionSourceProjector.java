@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import io.haifa.agent.core.content.ArtifactRefPart;
 import io.haifa.agent.core.content.AssetRefPart;
@@ -97,9 +97,13 @@ public final class CompactionSourceProjector {
                             toolAlias,
                             bounded(sanitizedSummary, MAX_TOOL_SUMMARY_CHARS)));
                 } else if (part instanceof AssetRefPart assetPart) {
-                    contentLines.add(String.format(Locale.ROOT, "[asset-ref: %s]", assetPart.asset().assetId()));
+                    contentLines.add(String.format(
+                            Locale.ROOT, "[asset-ref: %s]", assetPart.asset().assetId()));
                 } else if (part instanceof ArtifactRefPart artifactPart) {
-                    contentLines.add(String.format(Locale.ROOT, "[artifact-ref: %s]", artifactPart.artifact().artifactId()));
+                    contentLines.add(String.format(
+                            Locale.ROOT,
+                            "[artifact-ref: %s]",
+                            artifactPart.artifact().artifactId()));
                 }
             }
 

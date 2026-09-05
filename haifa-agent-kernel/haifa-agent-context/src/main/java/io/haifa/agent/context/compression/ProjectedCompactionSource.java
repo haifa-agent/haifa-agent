@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.tool.ToolCallId;
@@ -24,7 +24,8 @@ public record ProjectedCompactionSource(
         messageAliases = Map.copyOf(Objects.requireNonNull(messageAliases, "messageAliases must not be null"));
         toolAliases = Map.copyOf(Objects.requireNonNull(toolAliases, "toolAliases must not be null"));
         sourceMessageIds = List.copyOf(Objects.requireNonNull(sourceMessageIds, "sourceMessageIds must not be null"));
-        toolOutcomeReferences = List.copyOf(Objects.requireNonNull(toolOutcomeReferences, "toolOutcomeReferences must not be null"));
+        toolOutcomeReferences =
+                List.copyOf(Objects.requireNonNull(toolOutcomeReferences, "toolOutcomeReferences must not be null"));
         securityLabels = Set.copyOf(Objects.requireNonNull(securityLabels, "securityLabels must not be null"));
     }
 }

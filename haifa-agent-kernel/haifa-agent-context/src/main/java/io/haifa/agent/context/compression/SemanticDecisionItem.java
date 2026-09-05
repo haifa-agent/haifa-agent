@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import java.util.List;
 import java.util.Objects;
@@ -11,11 +11,13 @@ public record SemanticDecisionItem(
         SemanticDecisionStatus status,
         List<String> sourceRefs) {
     public SemanticDecisionItem {
-        stableItemId = Objects.requireNonNull(stableItemId, "stableItemId must not be null").trim();
+        stableItemId = Objects.requireNonNull(stableItemId, "stableItemId must not be null")
+                .trim();
         if (stableItemId.isEmpty()) {
             throw new IllegalArgumentException("stableItemId must not be blank");
         }
-        statement = Objects.requireNonNull(statement, "statement must not be null").trim();
+        statement =
+                Objects.requireNonNull(statement, "statement must not be null").trim();
         if (statement.isEmpty()) {
             throw new IllegalArgumentException("statement must not be blank");
         }
@@ -26,17 +28,21 @@ public record SemanticDecisionItem(
 
     public static SemanticDecisionItem fromMap(java.util.Map<String, Object> map) {
         Objects.requireNonNull(map, "map must not be null");
-        String stableItemId = Objects.toString(map.getOrDefault("stableItemId", ""), "").trim();
-        String statement = Objects.toString(map.getOrDefault("statement", ""), "").trim();
-        String rationale = Objects.toString(map.getOrDefault("rationale", ""), "").trim();
+        String stableItemId =
+                Objects.toString(map.getOrDefault("stableItemId", ""), "").trim();
+        String statement =
+                Objects.toString(map.getOrDefault("statement", ""), "").trim();
+        String rationale =
+                Objects.toString(map.getOrDefault("rationale", ""), "").trim();
         Object statusObj = map.get("status");
-        SemanticDecisionStatus status = SemanticDecisionStatus.PROPOSED;
-        if (statusObj != null) {
-            try {
-                status = SemanticDecisionStatus.valueOf(statusObj.toString().trim().toUpperCase());
-            } catch (IllegalArgumentException ignored) {
-                status = SemanticDecisionStatus.PROPOSED;
-            }
+        if (statusObj == null || statusObj.toString().isBlank()) {
+            throw new IllegalArgumentException("status must not be null or blank in SemanticDecisionItem");
+        }
+        SemanticDecisionStatus status;
+        try {
+            status = SemanticDecisionStatus.valueOf(statusObj.toString().trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown decision status value: " + statusObj, e);
         }
         List<String> sourceRefs = extractStringList(map.get("sourceRefs"));
         return new SemanticDecisionItem(stableItemId, statement, rationale, status, sourceRefs);

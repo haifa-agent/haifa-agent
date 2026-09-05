@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 /** Status of a recorded decision in a derived conversation summary. */
 public enum SemanticDecisionStatus {

@@ -455,7 +455,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                     "summarySourceHash",
                                     built.sessionSelection()
                                             .summary()
-                                            .map(io.haifa.agent.context.compaction.ConversationSummary::sourceHash)
+                                            .map(io.haifa.agent.context.compression.ConversationSummary::sourceHash)
                                             .orElse("none")),
                             Map.entry(
                                     "instructionComponentDigests",

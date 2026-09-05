@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -26,7 +26,8 @@ public final class SimpleJsonParser {
         if (result instanceof Map<?, ?> map) {
             return (Map<String, Object>) map;
         }
-        throw new IllegalArgumentException("Expected JSON object but got: " + (result == null ? "null" : result.getClass().getSimpleName()));
+        throw new IllegalArgumentException("Expected JSON object but got: "
+                + (result == null ? "null" : result.getClass().getSimpleName()));
     }
 
     public static Object parse(String json) {
@@ -38,7 +39,8 @@ public final class SimpleJsonParser {
         Object value = parser.parseValue();
         parser.skipWhitespace();
         if (parser.index < parser.source.length()) {
-            throw new IllegalArgumentException("Unexpected character after JSON at position " + parser.index + ": " + parser.source.charAt(parser.index));
+            throw new IllegalArgumentException("Unexpected character after JSON at position " + parser.index + ": "
+                    + parser.source.charAt(parser.index));
         }
         return value;
     }

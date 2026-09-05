@@ -1,6 +1,6 @@
 package io.haifa.agent.store.sqlite.payload;
 
-import io.haifa.agent.context.compaction.ConversationSummary;
+import io.haifa.agent.context.compression.ConversationSummary;
 import java.util.List;
 import java.util.Set;
 

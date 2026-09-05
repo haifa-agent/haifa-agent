@@ -1,6 +1,6 @@
 package io.haifa.agent.runtime.core.compaction;
 
-import io.haifa.agent.context.compaction.CompressionPolicy;
+import io.haifa.agent.context.compression.CompressionPolicy;
 import java.util.Objects;
 
 /**
@@ -21,13 +21,13 @@ public final class CompactionTriggerEvaluator {
             long fixedPrefixTokens,
             long otherSourceTokens,
             long currentSessionTokens) {
-        long safetyMarginTokens = Math.max(1024L, contextWindowTokens * 5 / 100L);
+        long safetyMarginTokens = Math.min(16_384L, Math.max(256L, contextWindowTokens / 20L));
         long availableSessionTokens = Math.max(
                 0L,
                 contextWindowTokens - outputReserveTokens - safetyMarginTokens - fixedPrefixTokens - otherSourceTokens);
         long calculatedHeadroom = (availableSessionTokens * policy.softTriggerHeadroomPercent()) / 100L;
-        long triggerHeadroomTokens = Math.clamp(
-                calculatedHeadroom, (long) policy.minTriggerHeadroom(), (long) policy.maxTriggerHeadroom());
+        long triggerHeadroomTokens =
+                Math.clamp(calculatedHeadroom, (long) policy.minTriggerHeadroom(), (long) policy.maxTriggerHeadroom());
         long softLimitTokens = Math.max(0L, availableSessionTokens - triggerHeadroomTokens);
 
         return new ContextBudgetBreakdown(
@@ -50,11 +50,7 @@ public final class CompactionTriggerEvaluator {
             long currentSessionTokens,
             int turnCount) {
         ContextBudgetBreakdown breakdown = calculateBreakdown(
-                contextWindowTokens,
-                outputReserveTokens,
-                fixedPrefixTokens,
-                otherSourceTokens,
-                currentSessionTokens);
+                contextWindowTokens, outputReserveTokens, fixedPrefixTokens, otherSourceTokens, currentSessionTokens);
 
         if (!policy.semanticCompactionEnabled()) {
             return CompactionTriggerDecision.doNotCompact(breakdown);

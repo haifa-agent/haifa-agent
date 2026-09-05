@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import java.util.HashSet;
 import java.util.List;
@@ -26,8 +26,8 @@ public final class SemanticSummaryValidator {
         Objects.requireNonNull(mandatoryCarryForward, "mandatoryCarryForward must not be null");
 
         if (!SemanticConversationSummaryV1.CURRENT_SCHEMA_VERSION.equals(summary.schemaVersion())) {
-            throw new SemanticSummaryValidationException(
-                    "unsupported schemaVersion: " + summary.schemaVersion() + ", expected " + SemanticConversationSummaryV1.CURRENT_SCHEMA_VERSION);
+            throw new SemanticSummaryValidationException("unsupported schemaVersion: " + summary.schemaVersion()
+                    + ", expected " + SemanticConversationSummaryV1.CURRENT_SCHEMA_VERSION);
         }
 
         if (summary.language().isBlank()) {
@@ -38,7 +38,8 @@ public final class SemanticSummaryValidator {
             throw new SemanticSummaryValidationException("summary must not be completely empty");
         }
 
-        Set<String> validAliases = new HashSet<>(projectedSource.messageAliases().keySet());
+        Set<String> validAliases =
+                new HashSet<>(projectedSource.messageAliases().keySet());
         validAliases.addAll(projectedSource.toolAliases().keySet());
 
         // 1. Validate all sourceRefs exist in projected input aliases
@@ -83,8 +84,7 @@ public final class SemanticSummaryValidator {
         }
     }
 
-    private static void validateSourceRefs(
-            List<SemanticSummaryItem> items, Set<String> validAliases, String section) {
+    private static void validateSourceRefs(List<SemanticSummaryItem> items, Set<String> validAliases, String section) {
         for (SemanticSummaryItem item : items) {
             for (String ref : item.sourceRefs()) {
                 if (!validAliases.contains(ref)) {

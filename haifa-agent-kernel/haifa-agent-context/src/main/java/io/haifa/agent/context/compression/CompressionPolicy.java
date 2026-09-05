@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 /** Deterministic compaction bounds and semantic compaction configuration for a session window. */
 public record CompressionPolicy(
@@ -75,21 +75,7 @@ public record CompressionPolicy(
     }
 
     public static CompressionPolicy defaults() {
-        return new CompressionPolicy(
-                12,
-                32,
-                4,
-                50,
-                25,
-                15,
-                8_000,
-                32_000,
-                25,
-                8_000,
-                24_000,
-                3,
-                false,
-                false);
+        return new CompressionPolicy(12, 32, 4, 50, 25, 15, 8_000, 32_000, 25, 8_000, 24_000, 3, false, false);
     }
 
     public CompressionPolicy withSemanticCompactionEnabled(boolean enabled) {
