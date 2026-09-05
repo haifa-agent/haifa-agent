@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
 SPOTLESS_EXTENSIONS = {".java", ".xml", ".md", ".yml", ".yaml"}
-IGNORED_DIRS = {".git", "docs", "test-config", "local-tmp", "target", "node_modules", ".idea", ".vscode"}
+IGNORED_DIRS = {".git", "docs", "test-config", "local-tmp", "target", "node_modules", ".idea", ".vscode", "examples"}
 
 
 def repository_root() -> Path:
@@ -212,6 +212,8 @@ def main() -> int:
     selectors = ",".join(f":{mod}" for mod in sorted(affected_modules))
     maven_args.extend(["-pl", selectors, goal])
     maven_args.append(f"-DspotlessFiles={','.join(target_files)}")
+    if (root / ".git").is_file():
+        maven_args.append("-Dspotless.ratchetFrom=")
     print(f"[spotless] Executing {goal} on {len(affected_modules)} affected module(s) ({len(target_files)} target file(s)): {selectors}")
 
     try:
