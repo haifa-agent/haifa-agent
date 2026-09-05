@@ -44,6 +44,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
@@ -938,6 +939,24 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 }
                             }
                         }
+                        Map<String, String> settledRunIdByTaskId = new LinkedHashMap<>();
+                        try (var attempts = current()
+                                .prepareStatement(
+                                        "SELECT task_id, run_id FROM personal_mission_task_attempt WHERE mission_id=? AND state='SETTLED' ORDER BY attempt_no ASC")) {
+                            attempts.setString(1, missionId);
+                            try (var rows = attempts.executeQuery()) {
+                                while (rows.next()) {
+                                    String runId = rows.getString("run_id");
+                                    if (runId != null && !runId.isBlank()) {
+                                        settledRunIdByTaskId.put(rows.getString("task_id"), runId);
+                                    }
+                                }
+                            }
+                        }
+                        List<String> completedTaskRunIds = completedTaskIds.stream()
+                                .map(settledRunIdByTaskId::get)
+                                .filter(Objects::nonNull)
+                                .toList();
                         return Optional.of(new MissionSynthesisIntent(
                                 missionId,
                                 result.getString("conversation_id"),
@@ -956,6 +975,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 completedTaskIds,
                                 completedTaskObjectives,
                                 jsonList(result.getString("acceptance_json")),
+                                completedTaskRunIds,
                                 2,
                                 Math.max(0, maxModelTokens - result.getLong("usage_model_tokens")),
                                 Optional.of(Instant.ofEpochMilli(result.getLong("deadline_at_ms"))),
@@ -964,7 +984,8 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 new MissionUsage(
                                         result.getLong("usage_model_tokens"),
                                         result.getLong("usage_model_calls"),
-                                        result.getLong("usage_tool_calls"))));
+                                        result.getLong("usage_tool_calls")),
+                                now));
                     }
                 }
             } catch (SQLException exception) {

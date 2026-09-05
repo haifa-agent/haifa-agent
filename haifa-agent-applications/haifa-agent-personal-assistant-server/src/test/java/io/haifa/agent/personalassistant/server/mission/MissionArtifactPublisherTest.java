@@ -345,6 +345,81 @@ class MissionArtifactPublisherTest {
                 .findFirst()
                 .orElseThrow();
         assertThat(published.finalArtifactId()).isEqualTo(reportArtifact.id().value());
+        JsonNode publishedResultJson = MAPPER.readTree(published.structuredResult());
+        assertThat(publishedResultJson
+                        .path("reportArtifactRef")
+                        .path("artifactId")
+                        .asText())
+                .isEqualTo(reportArtifact.id().value());
+        assertThat(publishedResultJson.path("reportArtifactRef").path("title").asText())
+                .isEqualTo("mission-report.md");
+        assertThat(publishedResultJson.path("resultArtifactRef").path("title").asText())
+                .isEqualTo("mission-result.json");
+    }
+
+    @Test
+    void publishesStandardMissionWithAuthoritativeFetchEvidenceSources() throws Exception {
+        var metadata = new InMemoryArtifactStore();
+        io.haifa.agent.personalassistant.application.research.ResearchFetchEvidenceReader fetchReader = runId -> {
+            if ("run-task-1".equals(runId)) {
+                return List.of(new io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence(
+                        "call-1",
+                        "https://blog.ethereum.org/dencun",
+                        "https://blog.ethereum.org/dencun",
+                        true,
+                        true,
+                        Instant.parse("2026-09-05T00:00:00Z"),
+                        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                        1234,
+                        false));
+            }
+            return List.of();
+        };
+
+        var publisher = new MissionArtifactPublisher(artifactService(metadata, newIds()), MAPPER, fetchReader);
+
+        var intent = new MissionSynthesisIntent(
+                "mission-std-authoritative",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Analyze protocol changes",
+                List.of("{\"task\":\"completed\"}"),
+                List.of(),
+                List.of("task-1"),
+                List.of("Analyze protocol changes"),
+                List.of(),
+                List.of("run-task-1"),
+                Instant.parse("2026-09-05T00:00:00Z"));
+
+        String resultJson =
+                """
+                {
+                  "schemaVersion": "pa.mission-final-result/v2",
+                  "directAnswer": "以太坊协议升级成功完成分析。",
+                  "answerMarkdown": "%s",
+                  "completedItems": [],
+                  "failedItems": [],
+                  "artifactRefs": [],
+                  "taskOutcomes": [{"taskId": "task-1", "status": "COMPLETED"}],
+                  "completionKind": "COMPLETE"
+                }
+                """
+                        .formatted("以太坊协议升级详述报告内容。".repeat(30));
+
+        var published = publisher.publish(intent, synthesis(resultJson));
+
+        assertThat(published.sources()).containsExactly("https://blog.ethereum.org/dencun");
+        JsonNode publishedResult = MAPPER.readTree(published.structuredResult());
+        assertThat(publishedResult.path("sources")).hasSize(1);
+        assertThat(publishedResult.path("sources").get(0).path("sourceId").asText())
+                .isEqualTo("src-001");
+        assertThat(publishedResult.path("sources").get(0).path("locator").asText())
+                .isEqualTo("https://blog.ethereum.org/dencun");
+        assertThat(publishedResult.path("reportArtifactRef").path("title").asText())
+                .isEqualTo("mission-report.md");
+        assertThat(publishedResult.path("resultArtifactRef").path("title").asText())
+                .isEqualTo("mission-result.json");
     }
 
     @Test

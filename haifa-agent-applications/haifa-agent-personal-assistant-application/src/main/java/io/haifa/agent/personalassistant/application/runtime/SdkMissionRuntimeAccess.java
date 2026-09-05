@@ -33,6 +33,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.mission.MissionUsage;
 import io.haifa.agent.personalassistant.application.mission.ReportQualityGate;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
+import io.haifa.agent.personalassistant.application.mission.SourceReference;
 import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence;
 import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidenceReader;
 import io.haifa.agent.personalassistant.application.research.RuntimeFetchEvidenceReader;
@@ -51,12 +52,14 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -1313,7 +1316,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 : standardSynthesisDispatchKey(intent.missionId());
         String prompt = intent.mode() == MissionMode.DEEP_RESEARCH
                 ? researchSynthesisPrompt(intent, previous, quality, revisionAttempt, deepResearchSkill)
-                : standardSynthesisPrompt(intent);
+                : standardSynthesisPrompt(intent, availableSources(intent));
         String profile =
                 intent.mode() == MissionMode.DEEP_RESEARCH ? RESEARCH_SYNTHESIS_RUN_PROFILE : SYNTHESIS_RUN_PROFILE;
         var started = agent.runs()
@@ -1416,44 +1419,107 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         return sessionId;
     }
 
+    private List<SourceReference> availableSources(MissionSynthesisIntent intent) {
+        if (fetchEvidenceReader == null
+                || intent.completedTaskRunIds() == null
+                || intent.completedTaskRunIds().isEmpty()) {
+            return List.of();
+        }
+        Set<String> seenUrls = new LinkedHashSet<>();
+        List<SourceReference> sources = new ArrayList<>();
+        int index = 1;
+        for (String runId : intent.completedTaskRunIds()) {
+            for (var fetch : fetchEvidenceReader.findCompletedFetches(runId)) {
+                if (fetch.successful() && fetch.sourceAvailable()) {
+                    String url = fetch.canonicalFinalUrl();
+                    if (seenUrls.add(url)) {
+                        sources.add(new SourceReference("source-" + index++, urlDomainOrTitle(url), url));
+                    }
+                }
+            }
+        }
+        return List.copyOf(sources);
+    }
+
+    public static String urlDomainOrTitle(String rawUrl) {
+        try {
+            java.net.URI uri = java.net.URI.create(rawUrl);
+            String host = uri.getHost();
+            if (host != null && !host.isBlank()) {
+                String path = uri.getPath();
+                if (path != null && !path.isBlank() && !"/".equals(path)) {
+                    return host + path;
+                }
+                return host;
+            }
+        } catch (Exception ignored) {
+        }
+        return rawUrl;
+    }
+
     static String standardSynthesisPrompt(MissionSynthesisIntent intent) {
+        return standardSynthesisPrompt(intent, List.of());
+    }
+
+    static String standardSynthesisPrompt(MissionSynthesisIntent intent, List<SourceReference> availableSources) {
+        String sourcesSummary = availableSources.isEmpty()
+                ? "[]"
+                : availableSources.stream()
+                        .map(s -> "[%s] %s (%s)".formatted(s.sourceId(), s.title(), s.locator()))
+                        .collect(java.util.stream.Collectors.joining("\n- ", "\n- ", ""));
         return """
                 [mission-synthesis]
                 Produce exactly one JSON object matching pa.mission-final-result/v2. Return JSON only: no Markdown
                 fence, prose prefix, suffix, or second JSON value. Use this exact top-level shape and field names:
                 {"schemaVersion":"pa.mission-final-result/v2","directAnswer":"...",
-                "answerMarkdown":"...","completedItems":["..."],"failedItems":[],"artifactRefs":[],
-                "sourceRefs":["..."],"unverifiedClaims":["..."],"unresolvedQuestions":["..."],
+                "answerMarkdown":"...","completedItems":["..."],"failedItems":[],
+                "taskOutcomes":[{"taskId":"...","status":"COMPLETED"}],
+                "acceptanceOutcomes":[{"criterionIndex":0,"status":"SATISFIED","taskIds":["..."]}],
+                "sectionSources":[{"section":"...","sourceIds":["..."]}],
+                "sources":[{"sourceId":"...","title":"...","locator":"https://..."}],
+                "artifactRefs":[],"sourceRefs":[],"unverifiedClaims":["..."],"unresolvedQuestions":["..."],
                 "residualRisks":["..."],"completionKind":"COMPLETE"}.
 
-                All listed fields are required. directAnswer must be a concise 1-3 sentence executive conclusion.
-                answerMarkdown must be a full, comprehensive answer in Markdown format, with thorough analysis, steps,
-                comparisons, and conclusions (not truncated or over-compressed). The seven item collections must be
-                JSON arrays of strings. artifactRefs must always be an empty JSON array because only code can publish
-                Artifacts. completionKind must be COMPLETE exactly when failedItems is empty and PARTIAL exactly when
-                failedItems is non-empty. Do not add result, missionId, missionObjective, missionMode, sources, nested
-                report wrappers, or any other top-level field. Preserve uncertainty in unverifiedClaims,
-                unresolvedQuestions, and residualRisks instead of claiming unsupported certainty.
-                Include every authoritative completed Task objective verbatim in completedItems. Include every Mission
-                acceptance criterion verbatim in completedItems or failedItems according to its outcome, and at least once
-                in answerMarkdown. Integrate them into a coherent reader-facing narrative rather than dumping raw Task results.
+                directAnswer must be a concise 1-3 sentence executive conclusion.
+                answerMarkdown must be a full, comprehensive reader-facing report in Markdown format, with thorough analysis, steps,
+                comparisons, and conclusions (not truncated or over-compressed).
+                Do NOT copy internal task objectives or acceptance criteria verbatim into the beginning of the narrative; instead,
+                record task and acceptance execution in taskOutcomes and acceptanceOutcomes:
+                - taskOutcomes: array of {"taskId": "...", "status": "COMPLETED" | "FAILED"} for all authoritative tasks.
+                - acceptanceOutcomes: array of {"criterionIndex": <0-based index>, "status": "SATISFIED" | "UNSATISFIED", "taskIds": ["..."]}
+                  indicating which tasks supported each criterion.
+                - sectionSources (optional): array of {"section": "<heading>", "sourceIds": ["..."]} connecting narrative sections
+                  to available source IDs.
+                - sources: array of {"sourceId": "...", "title": "...", "locator": "https://..."} referencing the authoritative
+                  sources from completed tool calls. Do not fabricate URLs or invent sources not present in the available sources list.
+                artifactRefs must always be an empty JSON array because only trusted code can publish Artifacts.
+                completionKind must be COMPLETE exactly when failedItems is empty, all taskOutcomes are COMPLETED, and all
+                acceptanceOutcomes are SATISFIED; otherwise PARTIAL (including when failedItems is non-empty).
+                Do not add result, missionId, missionObjective, missionMode, nested report wrappers, or any other top-level field.
+                Preserve uncertainty in unverifiedClaims, unresolvedQuestions, and residualRisks instead of claiming unsupported certainty.
+
+                Execution as-of time: %s. Facts up to this timestamp are current. Do not emit contradictory defensive statements
+                claiming historical facts or past dates are in the future or after the execution point.
 
                 Frozen Mission ID: %s
                 Mission mode: %s
                 Mission objective: %s
-                Authoritative completed Task objectives: %s
+                Authoritative Task IDs and objectives: %s
                 Mission acceptance criteria: %s
                 Authoritative settled Task results: %s
                 Failed or cancelled Task items: %s
+                Authoritative available sources from completed Tool calls: %s
                 """
                 .formatted(
+                        intent.asOf(),
                         intent.missionId(),
                         intent.mode(),
                         intent.objective(),
                         intent.completedTaskObjectives(),
                         intent.acceptanceCriteria(),
                         intent.taskResults(),
-                        intent.failedItems());
+                        intent.failedItems(),
+                        sourcesSummary);
     }
 
     static String standardSynthesisRepairPrompt(
@@ -1473,21 +1539,25 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
 
                 Required exact top-level shape:
                 {"schemaVersion":"pa.mission-final-result/v2","directAnswer":"...",
-                "answerMarkdown":"...","completedItems":["..."],"failedItems":[],"artifactRefs":[],
-                "sourceRefs":["..."],"unverifiedClaims":["..."],"unresolvedQuestions":["..."],
+                "answerMarkdown":"...","completedItems":["..."],"failedItems":[],
+                "taskOutcomes":[{"taskId":"...","status":"COMPLETED"}],
+                "acceptanceOutcomes":[{"criterionIndex":0,"status":"SATISFIED","taskIds":["..."]}],
+                "sectionSources":[{"section":"...","sourceIds":["..."]}],
+                "sources":[{"sourceId":"...","title":"...","locator":"https://..."}],
+                "artifactRefs":[],"sourceRefs":[],"unverifiedClaims":["..."],"unresolvedQuestions":["..."],
                 "residualRisks":["..."],"completionKind":"COMPLETE"}.
 
-                All fields are required. directAnswer must be a concise 1-3 sentence executive conclusion.
-                answerMarkdown must be a comprehensive answer in Markdown format. The seven item collections must
-                contain only strings. artifactRefs must be empty. completionKind must be COMPLETE exactly when
-                failedItems is empty and PARTIAL exactly when failedItems is non-empty. Do not add any other top-level field.
-                Include every authoritative completed Task objective verbatim in completedItems. Include every Mission
-                acceptance criterion verbatim in completedItems or failedItems according to its outcome, and at least once
-                in answerMarkdown. Expand the narrative enough to address the settled Task results comprehensively.
+                directAnswer must be a concise 1-3 sentence executive conclusion.
+                answerMarkdown must be a comprehensive answer in Markdown format.
+                Do NOT copy internal task objectives or acceptance criteria verbatim into the beginning of the narrative;
+                instead record task and acceptance execution in taskOutcomes and acceptanceOutcomes.
+                artifactRefs must be empty. completionKind must be COMPLETE exactly when
+                failedItems is empty, all taskOutcomes are COMPLETED, and all acceptanceOutcomes are SATISFIED; otherwise PARTIAL (including when failedItems is non-empty).
+                Do not add any other top-level field.
 
                 Frozen Mission ID: %s
                 Mission objective: %s
-                Authoritative completed Task objectives: %s
+                Authoritative Task IDs and objectives: %s
                 Mission acceptance criteria: %s
                 Authoritative settled Task results: %s
                 Failed or cancelled Task items: %s

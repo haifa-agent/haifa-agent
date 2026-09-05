@@ -373,6 +373,8 @@ export function MissionFinalResult({
       : result.completionKind;
   const hasAuditItems = (result.completedItems?.length ?? 0) > 0 ||
     (result.failedItems?.length ?? 0) > 0 ||
+    (result.taskOutcomes?.length ?? 0) > 0 ||
+    (result.acceptanceOutcomes?.length ?? 0) > 0 ||
     (result.unverifiedClaims?.length ?? 0) > 0 ||
     (result.residualRisks?.length ?? 0) > 0 ||
     (result.unresolvedQuestions?.length ?? 0) > 0;
@@ -380,11 +382,55 @@ export function MissionFinalResult({
     <h4>{resultTitle}{completionLabel && ` · ${completionLabel}`}</h4>
     {result.directAnswer && (!result.answerMarkdown || result.answerMarkdown.trim() !== result.directAnswer.trim()) && <p className="research-answer">{result.directAnswer}</p>}
     {result.answerMarkdown && <div className="artifact-markdown-reader"><MessageContent text={result.answerMarkdown} /></div>}
-    {(result.sourceRefs?.length ?? 0) > 0 && <><h5>参考来源</h5><ul>{result.sourceRefs!.map((item) => {
-      const isUrl = /^https?:\/\//i.test(item.trim());
-      return <li key={item}>{isUrl ? <a href={item.trim()} target="_blank" rel="noopener noreferrer">{item}</a> : item}</li>;
-    })}</ul></>}
-    {hasAuditItems && <details className="artifact-technical-data"><summary>执行结果审计与详情</summary>{(result.completedItems?.length ?? 0) > 0 && <><h5>完成项</h5><ul>{result.completedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.failedItems?.length ?? 0) > 0 && <><h5>未完成项</h5><ul>{result.failedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unverifiedClaims?.length ?? 0) > 0 && <><h5>未验证结论</h5><ul>{result.unverifiedClaims!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.residualRisks?.length ?? 0) > 0 && <><h5>剩余风险</h5><ul>{result.residualRisks!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unresolvedQuestions?.length ?? 0) > 0 && <><h5>未决问题</h5><ul>{result.unresolvedQuestions!.map((item) => <li key={item}>{item}</li>)}</ul></>}</details>}
+    {((result.sources?.length ?? 0) > 0 || (result.sourceRefs?.length ?? 0) > 0) && <>
+      <h5>参考来源</h5>
+      <ul>
+        {(result.sources?.length ?? 0) > 0
+          ? result.sources!.map((s) => {
+              const href = safeResearchLocator(s.locator) || (s.locator.startsWith("http") ? s.locator : undefined);
+              return (
+                <li key={s.sourceId}>
+                  {href ? (
+                    <a href={href} target="_blank" rel="noopener noreferrer">
+                      {s.title || s.locator}
+                    </a>
+                  ) : (
+                    <span>{s.title ? `${s.title} (${s.locator})` : s.locator}</span>
+                  )}
+                </li>
+              );
+            })
+          : result.sourceRefs!.map((item, idx) => {
+              const urlMatch = /(https?:\/\/[^\s]+)/i.exec(item);
+              if (urlMatch) {
+                const url = urlMatch[1];
+                const prefix = item.substring(0, urlMatch.index);
+                const suffix = item.substring(urlMatch.index + url.length);
+                return (
+                  <li key={idx}>
+                    {prefix}
+                    <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+                    {suffix}
+                  </li>
+                );
+              }
+              return <li key={idx}>{item}</li>;
+            })}
+      </ul>
+    </>}
+    {(result.sectionSources?.length ?? 0) > 0 && (
+      <div className="section-sources">
+        <h6>章节来源分布</h6>
+        <ul>
+          {result.sectionSources!.map((sec, idx) => (
+            <li key={idx}>
+              <strong>{sec.sectionHeading}</strong>: {sec.sourceIds.join(", ")}
+            </li>
+          ))}
+        </ul>
+      </div>
+    )}
+    {hasAuditItems && <details className="artifact-technical-data"><summary>执行结果审计与详情</summary>{(result.taskOutcomes?.length ?? 0) > 0 && <><h5>任务执行状态</h5><ul>{result.taskOutcomes!.map((to) => <li key={to.taskId}><code>{to.taskId}</code> · {to.status}</li>)}</ul></>}{(result.acceptanceOutcomes?.length ?? 0) > 0 && <><h5>验收标准评估</h5><ul>{result.acceptanceOutcomes!.map((ao) => <li key={ao.criterionIndex}>验收项 #{ao.criterionIndex + 1} · {ao.status}{ao.taskIds && ao.taskIds.length > 0 && ` (关联任务: ${ao.taskIds.join(", ")})`}</li>)}</ul></>}{(result.completedItems?.length ?? 0) > 0 && <><h5>完成项</h5><ul>{result.completedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.failedItems?.length ?? 0) > 0 && <><h5>未完成项</h5><ul>{result.failedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unverifiedClaims?.length ?? 0) > 0 && <><h5>未验证结论</h5><ul>{result.unverifiedClaims!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.residualRisks?.length ?? 0) > 0 && <><h5>剩余风险</h5><ul>{result.residualRisks!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unresolvedQuestions?.length ?? 0) > 0 && <><h5>未决问题</h5><ul>{result.unresolvedQuestions!.map((item) => <li key={item}>{item}</li>)}</ul></>}</details>}
   </section>;
 }
 

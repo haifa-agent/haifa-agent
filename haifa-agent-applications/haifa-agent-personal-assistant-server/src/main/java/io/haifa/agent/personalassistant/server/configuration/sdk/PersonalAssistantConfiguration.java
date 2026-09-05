@@ -365,7 +365,8 @@ public class PersonalAssistantConfiguration {
                         properties.research().maxSources(),
                         properties.research().maxTotalContentBytes(),
                         properties.mission().maxArtifacts(),
-                        properties.mission().maxTotalArtifactBytes()));
+                        properties.mission().maxTotalArtifactBytes(),
+                        application.fetchEvidenceReader()));
         return new MissionDispatcher(
                 store,
                 coordinator,
