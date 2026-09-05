@@ -72,6 +72,35 @@ public class HaifaAgentStarterBuilderTest {
     }
 
     @Test
+    void buildsDeepSeekVisionAssemblyWithExactModelBinding() {
+        assertThat(HaifaAgentStarterBuilder.SUPPORTED_DEEPSEEK_MODELS)
+                .contains(HaifaAgentStarterBuilder.MODEL_ID, HaifaAgentStarterBuilder.VISION_MODEL_ID);
+        assertThat(HaifaAgentStarterBuilder.DEEPSEEK_VISION_MODELS)
+                .contains(HaifaAgentStarterBuilder.VISION_MODEL_ID)
+                .doesNotContain(HaifaAgentStarterBuilder.MODEL_ID);
+
+        try (var agent = HaifaAgentStarter.builder()
+                .environment(ignored -> "test-secret")
+                .defaultModel(HaifaAgentStarterBuilder.VISION_MODEL_ID)
+                .build()) {
+            assertThat(agent.assembly().profile().runProfileId()).isEqualTo(HaifaAgentStarterBuilder.VISION_MODEL_ID);
+            var contribution = agent.assembly().contributions().get(ProductCapabilities.MODEL);
+            assertThat(contribution).isNotNull();
+            assertThat(contribution.publicSummary()).isEqualTo("DeepSeek Vision with Thinking disabled");
+        }
+    }
+
+    @Test
+    void rejectsUnsupportedDeepSeekModelId() {
+        assertThatThrownBy(() -> HaifaAgentStarter.builder()
+                        .environment(ignored -> "test-secret")
+                        .defaultModel("unsupported-vision-model")
+                        .build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unsupported default DeepSeek model: unsupported-vision-model");
+    }
+
+    @Test
     void runsDeterministicHelloWorldThroughTheSameStarterAssembly() throws Exception {
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> new AgentChatResponse(
                 "starter-response",
