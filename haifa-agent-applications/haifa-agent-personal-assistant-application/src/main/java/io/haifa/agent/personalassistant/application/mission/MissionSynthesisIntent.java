@@ -35,7 +35,7 @@ public record MissionSynthesisIntent(
         deadlineAt = java.util.Objects.requireNonNull(deadlineAt);
         researchBrief = java.util.Objects.requireNonNull(researchBrief);
         preSynthesisUsage = java.util.Objects.requireNonNull(preSynthesisUsage);
-        asOf = asOf == null ? Instant.now() : asOf;
+        asOf = java.util.Objects.requireNonNull(asOf, "asOf is required");
         if (taskResults.size() != completedTaskIds.size()) {
             throw new IllegalArgumentException("Each settled Task result must retain its real taskId");
         }
@@ -85,7 +85,7 @@ public record MissionSynthesisIntent(
                 deadlineAt,
                 researchBrief,
                 preSynthesisUsage,
-                Instant.now());
+                Instant.EPOCH);
     }
 
     public MissionSynthesisIntent(

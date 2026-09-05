@@ -160,6 +160,89 @@ class StandardMissionQualityGateTest {
                 candidate, List.of("settled"), List.of("real-task"), List.of("Objective"), List.of(), null);
 
         assertThat(evaluation.passed()).isFalse();
-        assertThat(evaluation.failureCodes()).contains("STANDARD_TASK_COVERAGE_MISSING");
+        assertThat(evaluation.failureCodes())
+                .contains("STANDARD_TASK_OUTCOME_UNKNOWN_TASK", "STANDARD_TASK_COVERAGE_MISSING");
+    }
+
+    @Test
+    void rejectsDuplicateTaskOutcomeOrInvalidStatus() {
+        StandardMissionQualityGate gate = new StandardMissionQualityGate();
+        var candidate = new StandardMissionQualityGate.Candidate(
+                "pa.mission-final-result/v2",
+                "Summary",
+                "Valid long answer markdown content with sufficient length for standard quality gate. ".repeat(10),
+                "COMPLETE",
+                List.of(),
+                List.of(),
+                List.of(
+                        new StandardMissionQualityGate.TaskOutcome("task-1", "COMPLETED"),
+                        new StandardMissionQualityGate.TaskOutcome("task-1", "UNKNOWN_STATUS")),
+                List.of(),
+                List.of(),
+                List.of());
+
+        StandardMissionQualityGate.Result evaluation =
+                gate.evaluate(candidate, List.of("settled"), List.of("task-1"), List.of("Objective"), List.of(), null);
+
+        assertThat(evaluation.passed()).isFalse();
+        assertThat(evaluation.failureCodes())
+                .contains("STANDARD_TASK_OUTCOME_DUPLICATE", "STANDARD_TASK_OUTCOME_STATUS_INVALID");
+    }
+
+    @Test
+    void rejectsAcceptanceOutcomeWithoutSupportingTasksOrReferencingUnknownTasks() {
+        StandardMissionQualityGate gate = new StandardMissionQualityGate();
+        var candidate = new StandardMissionQualityGate.Candidate(
+                "pa.mission-final-result/v2",
+                "Summary",
+                "Valid long answer markdown content with sufficient length for standard quality gate. ".repeat(10),
+                "COMPLETE",
+                List.of(),
+                List.of(),
+                List.of(new StandardMissionQualityGate.TaskOutcome("task-1", "COMPLETED")),
+                List.of(
+                        new StandardMissionQualityGate.AcceptanceOutcome(0, "SATISFIED", List.of()),
+                        new StandardMissionQualityGate.AcceptanceOutcome(1, "SATISFIED", List.of("ghost-task")),
+                        new StandardMissionQualityGate.AcceptanceOutcome(5, "SATISFIED", List.of("task-1"))),
+                List.of(),
+                List.of());
+
+        StandardMissionQualityGate.Result evaluation = gate.evaluate(
+                candidate,
+                List.of("settled"),
+                List.of("task-1"),
+                List.of("Objective"),
+                List.of("Criterion 0", "Criterion 1"),
+                null);
+
+        assertThat(evaluation.passed()).isFalse();
+        assertThat(evaluation.failureCodes())
+                .contains(
+                        "STANDARD_ACCEPTANCE_SUPPORTING_TASKS_MISSING",
+                        "STANDARD_ACCEPTANCE_UNKNOWN_TASK",
+                        "STANDARD_ACCEPTANCE_INDEX_OUT_OF_BOUNDS");
+    }
+
+    @Test
+    void rejectsInvalidSectionSource() {
+        StandardMissionQualityGate gate = new StandardMissionQualityGate();
+        var candidate = new StandardMissionQualityGate.Candidate(
+                "pa.mission-final-result/v2",
+                "Summary",
+                "Valid long answer markdown content with sufficient length for standard quality gate. ".repeat(10),
+                "COMPLETE",
+                List.of(),
+                List.of(),
+                List.of(new StandardMissionQualityGate.TaskOutcome("task-1", "COMPLETED")),
+                List.of(new StandardMissionQualityGate.AcceptanceOutcome(0, "SATISFIED", List.of("task-1"))),
+                List.of(new StandardMissionQualityGate.SectionSource("", List.of("src-001"))),
+                List.of(),
+                List.of());
+
+        StandardMissionQualityGate.Result evaluation = gate.evaluate(
+                candidate, List.of("settled"), List.of("task-1"), List.of("Objective"), List.of("Criterion 0"), null);
+
+        assertThat(evaluation.passed()).isFalse();
+        assertThat(evaluation.failureCodes()).contains("STANDARD_SECTION_SOURCE_INVALID");
     }
 }

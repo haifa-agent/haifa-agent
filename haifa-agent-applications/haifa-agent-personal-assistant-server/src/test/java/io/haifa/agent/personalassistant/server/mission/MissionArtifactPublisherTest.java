@@ -355,6 +355,8 @@ class MissionArtifactPublisherTest {
                 .isEqualTo("mission-report.md");
         assertThat(publishedResultJson.path("resultArtifactRef").path("title").asText())
                 .isEqualTo("mission-result.json");
+        assertThat(publishedResultJson.path("sources").isEmpty()).isTrue();
+        assertThat(publishedResultJson.path("sourceRefs").isEmpty()).isTrue();
     }
 
     @Test
@@ -420,6 +422,119 @@ class MissionArtifactPublisherTest {
                 .isEqualTo("mission-report.md");
         assertThat(publishedResult.path("resultArtifactRef").path("title").asText())
                 .isEqualTo("mission-result.json");
+    }
+
+    @Test
+    void rejectsStandardV2WithUnknownSectionSourceId() throws Exception {
+        var metadata = new InMemoryArtifactStore();
+        var publisher = publisher(metadata, newIds());
+        var intent = new MissionSynthesisIntent(
+                "mission-std-unknown-source",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Analyze distributed transaction protocols",
+                List.of("{\"task\":\"completed\"}"),
+                List.of(),
+                List.of("task-1"),
+                List.of("Analyze distributed transaction protocols"),
+                List.of(),
+                List.of(),
+                Instant.parse("2026-09-05T00:00:00Z"));
+
+        String invalid =
+                """
+                {
+                  "schemaVersion": "pa.mission-final-result/v2",
+                  "directAnswer": "分布式事务分析完成。",
+                  "answerMarkdown": "%s",
+                  "completedItems": [],
+                  "failedItems": [],
+                  "artifactRefs": [],
+                  "taskOutcomes": [{"taskId": "task-1", "status": "COMPLETED"}],
+                  "sectionSources": [
+                    {"sectionHeading": "核心机制概述", "sourceIds": ["src-999"]}
+                  ],
+                  "completionKind": "COMPLETE"
+                }
+                """
+                        .formatted("分布式事务分析内容。".repeat(30));
+
+        assertThatThrownBy(() -> publisher.publish(intent, synthesis(invalid)))
+                .isInstanceOf(MissionException.class)
+                .extracting(value -> ((MissionException) value).code())
+                .isEqualTo("MISSION_REPORT_QUALITY_FAILED");
+    }
+
+    @Test
+    void publishesStandardMissionWithValidSectionSources() throws Exception {
+        var metadata = new InMemoryArtifactStore();
+        io.haifa.agent.personalassistant.application.research.ResearchFetchEvidenceReader fetchReader = runId -> {
+            if ("run-task-1".equals(runId)) {
+                return List.of(new io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence(
+                        "call-1",
+                        "https://blog.ethereum.org/dencun",
+                        "https://blog.ethereum.org/dencun",
+                        true,
+                        true,
+                        Instant.parse("2026-09-05T00:00:00Z"),
+                        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                        1234,
+                        false));
+            }
+            return List.of();
+        };
+
+        var publisher = new MissionArtifactPublisher(artifactService(metadata, newIds()), MAPPER, fetchReader);
+
+        var intent = new MissionSynthesisIntent(
+                "mission-std-section-sources",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Analyze protocol changes",
+                List.of("{\"task\":\"completed\"}"),
+                List.of(),
+                List.of("task-1"),
+                List.of("Analyze protocol changes"),
+                List.of(),
+                List.of("run-task-1"),
+                Instant.parse("2026-09-05T00:00:00Z"));
+
+        String resultJson =
+                """
+                {
+                  "schemaVersion": "pa.mission-final-result/v2",
+                  "directAnswer": "以太坊协议升级成功完成分析。",
+                  "answerMarkdown": "%s",
+                  "completedItems": [],
+                  "failedItems": [],
+                  "artifactRefs": [],
+                  "taskOutcomes": [{"taskId": "task-1", "status": "COMPLETED"}],
+                  "sectionSources": [
+                    {"sectionHeading": "升级机制概述", "sourceIds": ["src-001"]}
+                  ],
+                  "completionKind": "COMPLETE"
+                }
+                """
+                        .formatted("以太坊协议升级详述报告内容。".repeat(30));
+
+        var published = publisher.publish(intent, synthesis(resultJson));
+        JsonNode publishedResult = MAPPER.readTree(published.structuredResult());
+        assertThat(publishedResult.path("sectionSources")).hasSize(1);
+        assertThat(publishedResult
+                        .path("sectionSources")
+                        .get(0)
+                        .path("sectionHeading")
+                        .asText())
+                .isEqualTo("升级机制概述");
+        assertThat(publishedResult
+                        .path("sectionSources")
+                        .get(0)
+                        .path("sourceIds")
+                        .get(0)
+                        .asText())
+                .isEqualTo("src-001");
     }
 
     @Test

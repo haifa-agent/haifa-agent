@@ -36,6 +36,13 @@ public final class StandardMissionQualityGate {
         }
     }
 
+    public record SectionSource(String sectionHeading, List<String> sourceIds) {
+        public SectionSource {
+            sectionHeading = sectionHeading == null ? "" : sectionHeading.trim();
+            sourceIds = sourceIds == null ? List.of() : List.copyOf(sourceIds);
+        }
+    }
+
     public record Candidate(
             String schemaVersion,
             String directAnswer,
@@ -45,6 +52,7 @@ public final class StandardMissionQualityGate {
             List<String> failedItems,
             List<TaskOutcome> taskOutcomes,
             List<AcceptanceOutcome> acceptanceOutcomes,
+            List<SectionSource> sectionSources,
             List<SourceReference> sources,
             List<String> sourceRefs) {
         public Candidate {
@@ -56,8 +64,34 @@ public final class StandardMissionQualityGate {
             failedItems = failedItems == null ? List.of() : List.copyOf(failedItems);
             taskOutcomes = taskOutcomes == null ? List.of() : List.copyOf(taskOutcomes);
             acceptanceOutcomes = acceptanceOutcomes == null ? List.of() : List.copyOf(acceptanceOutcomes);
+            sectionSources = sectionSources == null ? List.of() : List.copyOf(sectionSources);
             sources = sources == null ? List.of() : List.copyOf(sources);
             sourceRefs = sourceRefs == null ? List.of() : List.copyOf(sourceRefs);
+        }
+
+        public Candidate(
+                String schemaVersion,
+                String directAnswer,
+                String answerMarkdown,
+                String completionKind,
+                List<String> completedItems,
+                List<String> failedItems,
+                List<TaskOutcome> taskOutcomes,
+                List<AcceptanceOutcome> acceptanceOutcomes,
+                List<SourceReference> sources,
+                List<String> sourceRefs) {
+            this(
+                    schemaVersion,
+                    directAnswer,
+                    answerMarkdown,
+                    completionKind,
+                    completedItems,
+                    failedItems,
+                    taskOutcomes,
+                    acceptanceOutcomes,
+                    List.of(),
+                    sources,
+                    sourceRefs);
         }
     }
 
@@ -140,18 +174,42 @@ public final class StandardMissionQualityGate {
 
         boolean anyTaskFailed = false;
         boolean anyCriterionUnsatisfied = false;
+        Set<String> authoritativeTaskIdSet = new LinkedHashSet<>(completedTaskIds);
 
         if (versionTwo) {
             if (hasTaskOutcomes) {
+                Set<String> seenTaskIds = new LinkedHashSet<>();
+                List<String> duplicateTaskIds = new ArrayList<>();
+                List<String> invalidStatusTasks = new ArrayList<>();
+                List<String> unknownTaskIds = new ArrayList<>();
                 Set<String> reportedCompletedTaskIds = new LinkedHashSet<>();
+
                 for (TaskOutcome outcome : candidate.taskOutcomes()) {
                     String taskId = outcome.taskId();
                     String status = outcome.status();
+                    if (!seenTaskIds.add(taskId)) {
+                        duplicateTaskIds.add(taskId);
+                    }
+                    if (!"COMPLETED".equals(status) && !"FAILED".equals(status)) {
+                        invalidStatusTasks.add(taskId + ":" + status);
+                    }
+                    if (!authoritativeTaskIdSet.isEmpty() && !authoritativeTaskIdSet.contains(taskId)) {
+                        unknownTaskIds.add(taskId);
+                    }
                     if ("COMPLETED".equals(status)) {
                         reportedCompletedTaskIds.add(taskId);
                     } else {
                         anyTaskFailed = true;
                     }
+                }
+                if (!duplicateTaskIds.isEmpty()) {
+                    failures.add(new Failure("STANDARD_TASK_OUTCOME_DUPLICATE", duplicateTaskIds));
+                }
+                if (!invalidStatusTasks.isEmpty()) {
+                    failures.add(new Failure("STANDARD_TASK_OUTCOME_STATUS_INVALID", invalidStatusTasks));
+                }
+                if (!unknownTaskIds.isEmpty()) {
+                    failures.add(new Failure("STANDARD_TASK_OUTCOME_UNKNOWN_TASK", unknownTaskIds));
                 }
                 List<String> missingTaskIds = completedTaskIds.stream()
                         .filter(id -> !reportedCompletedTaskIds.contains(id.trim()))
@@ -170,19 +228,55 @@ public final class StandardMissionQualityGate {
             }
 
             if (hasAcceptanceOutcomes) {
-                Set<Integer> satisfiedIndices = new LinkedHashSet<>();
+                Set<Integer> seenIndices = new LinkedHashSet<>();
+                List<String> duplicateIndices = new ArrayList<>();
+                List<String> outOfBoundsIndices = new ArrayList<>();
+                List<String> invalidStatusCriteria = new ArrayList<>();
+                List<String> missingSupportTasks = new ArrayList<>();
+                List<String> unknownSupportTasks = new ArrayList<>();
                 Set<Integer> allIndices = new LinkedHashSet<>();
+
                 for (AcceptanceOutcome outcome : candidate.acceptanceOutcomes()) {
                     int index = outcome.criterionIndex();
                     String status = outcome.status();
-                    if (index >= 0) {
-                        allIndices.add(index);
-                        if ("SATISFIED".equals(status)) {
-                            satisfiedIndices.add(index);
-                        } else {
-                            anyCriterionUnsatisfied = true;
+                    if (index < 0 || index >= acceptanceCriteria.size()) {
+                        outOfBoundsIndices.add("index-" + index);
+                    } else if (!seenIndices.add(index)) {
+                        duplicateIndices.add("index-" + index);
+                    }
+                    if (!"SATISFIED".equals(status) && !"UNSATISFIED".equals(status)) {
+                        invalidStatusCriteria.add("index-" + index + ":" + status);
+                    }
+                    if ("SATISFIED".equals(status)) {
+                        if (outcome.taskIds().isEmpty()) {
+                            missingSupportTasks.add("index-" + index);
+                        }
+                    } else {
+                        anyCriterionUnsatisfied = true;
+                    }
+                    if (!authoritativeTaskIdSet.isEmpty()) {
+                        for (String refTaskId : outcome.taskIds()) {
+                            if (!authoritativeTaskIdSet.contains(refTaskId)) {
+                                unknownSupportTasks.add("index-" + index + " references unknown task: " + refTaskId);
+                            }
                         }
                     }
+                    allIndices.add(index);
+                }
+                if (!outOfBoundsIndices.isEmpty()) {
+                    failures.add(new Failure("STANDARD_ACCEPTANCE_INDEX_OUT_OF_BOUNDS", outOfBoundsIndices));
+                }
+                if (!duplicateIndices.isEmpty()) {
+                    failures.add(new Failure("STANDARD_ACCEPTANCE_INDEX_DUPLICATE", duplicateIndices));
+                }
+                if (!invalidStatusCriteria.isEmpty()) {
+                    failures.add(new Failure("STANDARD_ACCEPTANCE_STATUS_INVALID", invalidStatusCriteria));
+                }
+                if (!missingSupportTasks.isEmpty()) {
+                    failures.add(new Failure("STANDARD_ACCEPTANCE_SUPPORTING_TASKS_MISSING", missingSupportTasks));
+                }
+                if (!unknownSupportTasks.isEmpty()) {
+                    failures.add(new Failure("STANDARD_ACCEPTANCE_UNKNOWN_TASK", unknownSupportTasks));
                 }
                 List<String> missingIndices = new ArrayList<>();
                 for (int i = 0; i < acceptanceCriteria.size(); i++) {
@@ -202,6 +296,17 @@ public final class StandardMissionQualityGate {
                 if (!missingCriteria.isEmpty()) {
                     failures.add(new Failure("STANDARD_ACCEPTANCE_COVERAGE_MISSING", missingCriteria));
                 }
+            }
+        }
+
+        for (SectionSource sec : candidate.sectionSources()) {
+            if (sec.sectionHeading().isBlank()) {
+                failures.add(new Failure("STANDARD_SECTION_SOURCE_INVALID", List.of("sectionHeading is blank")));
+            }
+            if (sec.sourceIds().isEmpty()) {
+                failures.add(new Failure(
+                        "STANDARD_SECTION_SOURCE_INVALID",
+                        List.of("sourceIds is empty for section: " + sec.sectionHeading())));
             }
         }
 

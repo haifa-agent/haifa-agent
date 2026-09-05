@@ -191,6 +191,41 @@ class SqliteMissionStoreTest {
     }
 
     @Test
+    void reclaimsSynthesizingMissionWithStableAsOfTimestamp() {
+        SqliteMissionStore store = new SqliteMissionStore(directory.resolve("claim-as-of.sqlite"), new ObjectMapper());
+        store.registerDispatcher("process", "instance", CLOCK.instant());
+        AtomicInteger ids = new AtomicInteger();
+        MissionApplicationService service = new MissionApplicationService(
+                store,
+                store,
+                new DeterministicMissionPlanner(),
+                MissionPlanValidator.phaseOne(),
+                () -> "mission-" + ids.incrementAndGet(),
+                CLOCK,
+                store);
+        MissionSnapshot created =
+                service.create(create("create-1", "conversation-1", "Execute one task for stable asOf"));
+        service.confirm(new MissionApplicationService.ChangeMission(
+                "confirm-1", "local/public-user", created.missionId(), created.version()));
+
+        var claimed = store.prepareAndClaimNext(
+                        "dispatcher", CLOCK.instant(), CLOCK.instant().minusSeconds(30))
+                .orElseThrow();
+        store.bind(claimed, "session-1", "run-1", CLOCK.instant().plusSeconds(10));
+        var attempt = store.activeAttempts().getFirst();
+        store.settleCompleted(attempt, "sha256:result", "done", CLOCK.instant().plusSeconds(20));
+
+        Instant t1 = CLOCK.instant().plusSeconds(40);
+        var firstSynthesis = store.claimSynthesis(t1).orElseThrow();
+        assertThat(firstSynthesis.asOf()).isEqualTo(t1);
+
+        Instant t2 = CLOCK.instant().plusSeconds(100);
+        var reclaimedSynthesis = store.claimSynthesis(t2).orElseThrow();
+        assertThat(reclaimedSynthesis.asOf()).isEqualTo(t1);
+        assertThat(reclaimedSynthesis.asOf()).isNotEqualTo(t2);
+    }
+
+    @Test
     void freezesDependencyResultsInDispatchInputAndKeepsRetryDigestStable() {
         SqliteMissionStore store = new SqliteMissionStore(
                 directory.resolve("dependency-input.sqlite"), new ObjectMapper(), 2, 3, 200_000, 100);

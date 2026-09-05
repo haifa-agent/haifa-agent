@@ -56,6 +56,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -1433,7 +1434,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 if (fetch.successful() && fetch.sourceAvailable()) {
                     String url = fetch.canonicalFinalUrl();
                     if (seenUrls.add(url)) {
-                        sources.add(new SourceReference("source-" + index++, urlDomainOrTitle(url), url));
+                        String sourceId = "src-" + String.format(Locale.ROOT, "%03d", sources.size() + 1);
+                        sources.add(new SourceReference(sourceId, urlDomainOrTitle(url), url));
                     }
                 }
             }
@@ -1475,7 +1477,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 "answerMarkdown":"...","completedItems":["..."],"failedItems":[],
                 "taskOutcomes":[{"taskId":"...","status":"COMPLETED"}],
                 "acceptanceOutcomes":[{"criterionIndex":0,"status":"SATISFIED","taskIds":["..."]}],
-                "sectionSources":[{"section":"...","sourceIds":["..."]}],
+                "sectionSources":[{"sectionHeading":"...","sourceIds":["src-001"]}],
                 "sources":[{"sourceId":"...","title":"...","locator":"https://..."}],
                 "artifactRefs":[],"sourceRefs":[],"unverifiedClaims":["..."],"unresolvedQuestions":["..."],
                 "residualRisks":["..."],"completionKind":"COMPLETE"}.
@@ -1488,7 +1490,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 - taskOutcomes: array of {"taskId": "...", "status": "COMPLETED" | "FAILED"} for all authoritative tasks.
                 - acceptanceOutcomes: array of {"criterionIndex": <0-based index>, "status": "SATISFIED" | "UNSATISFIED", "taskIds": ["..."]}
                   indicating which tasks supported each criterion.
-                - sectionSources (optional): array of {"section": "<heading>", "sourceIds": ["..."]} connecting narrative sections
+                - sectionSources (optional): array of {"sectionHeading": "<heading>", "sourceIds": ["src-001"]} connecting narrative sections
                   to available source IDs.
                 - sources: array of {"sourceId": "...", "title": "...", "locator": "https://..."} referencing the authoritative
                   sources from completed tool calls. Do not fabricate URLs or invent sources not present in the available sources list.
@@ -1542,7 +1544,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 "answerMarkdown":"...","completedItems":["..."],"failedItems":[],
                 "taskOutcomes":[{"taskId":"...","status":"COMPLETED"}],
                 "acceptanceOutcomes":[{"criterionIndex":0,"status":"SATISFIED","taskIds":["..."]}],
-                "sectionSources":[{"section":"...","sourceIds":["..."]}],
+                "sectionSources":[{"sectionHeading":"...","sourceIds":["src-001"]}],
                 "sources":[{"sourceId":"...","title":"...","locator":"https://..."}],
                 "artifactRefs":[],"sourceRefs":[],"unverifiedClaims":["..."],"unresolvedQuestions":["..."],
                 "residualRisks":["..."],"completionKind":"COMPLETE"}.
