@@ -24,7 +24,7 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelRequestId;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
-import io.haifa.agent.runtime.core.compression.SemanticCompactionCoordinator;
+import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
@@ -455,7 +455,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                     "summarySourceHash",
                                     built.sessionSelection()
                                             .summary()
-                                            .map(io.haifa.agent.context.compression.ConversationSummary::sourceHash)
+                                            .map(io.haifa.agent.context.compaction.ConversationSummary::sourceHash)
                                             .orElse("none")),
                             Map.entry(
                                     "instructionComponentDigests",
