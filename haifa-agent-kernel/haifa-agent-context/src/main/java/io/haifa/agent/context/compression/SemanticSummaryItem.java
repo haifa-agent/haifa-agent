@@ -1,16 +1,14 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import java.util.List;
 import java.util.Objects;
 
 /** A single structured item in a semantic conversation summary. */
 public record SemanticSummaryItem(
-        String stableItemId,
-        String text,
-        List<String> sourceRefs,
-        SemanticConfidence confidence) {
+        String stableItemId, String text, List<String> sourceRefs, SemanticConfidence confidence) {
     public SemanticSummaryItem {
-        stableItemId = Objects.requireNonNull(stableItemId, "stableItemId must not be null").trim();
+        stableItemId = Objects.requireNonNull(stableItemId, "stableItemId must not be null")
+                .trim();
         if (stableItemId.isEmpty()) {
             throw new IllegalArgumentException("stableItemId must not be blank");
         }
@@ -24,17 +22,19 @@ public record SemanticSummaryItem(
 
     public static SemanticSummaryItem fromMap(java.util.Map<String, Object> map) {
         Objects.requireNonNull(map, "map must not be null");
-        String stableItemId = Objects.toString(map.getOrDefault("stableItemId", ""), "").trim();
+        String stableItemId =
+                Objects.toString(map.getOrDefault("stableItemId", ""), "").trim();
         String text = Objects.toString(map.getOrDefault("text", ""), "").trim();
         List<String> sourceRefs = extractStringList(map.get("sourceRefs"));
         Object confObj = map.get("confidence");
-        SemanticConfidence confidence = SemanticConfidence.OBSERVED;
-        if (confObj != null) {
-            try {
-                confidence = SemanticConfidence.valueOf(confObj.toString().trim().toUpperCase());
-            } catch (IllegalArgumentException ignored) {
-                confidence = SemanticConfidence.OBSERVED;
-            }
+        if (confObj == null || confObj.toString().isBlank()) {
+            throw new IllegalArgumentException("confidence must not be null or blank in SemanticSummaryItem");
+        }
+        SemanticConfidence confidence;
+        try {
+            confidence = SemanticConfidence.valueOf(confObj.toString().trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown confidence value: " + confObj, e);
         }
         return new SemanticSummaryItem(stableItemId, text, sourceRefs, confidence);
     }

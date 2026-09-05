@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -61,7 +61,11 @@ class CompactionSourceProjectorTest {
                 3L,
                 List.of(
                         new TextPart("I will structure the draft accordingly.", "plain"),
-                        new ToolCallPart(new ToolCallId("tool-1"), new ProviderToolCallCorrelationId("c-1"), "extract_records", "1.0")),
+                        new ToolCallPart(
+                                new ToolCallId("tool-1"),
+                                new ProviderToolCallCorrelationId("c-1"),
+                                "extract_records",
+                                "1.0")),
                 Map.of(),
                 Instant.EPOCH);
 
@@ -74,11 +78,15 @@ class CompactionSourceProjectorTest {
                 MessageStatus.COMPLETED,
                 MessageVisibility.USER_VISIBLE,
                 4L,
-                List.of(new ToolResultPart(new ToolCallId("tool-1"), new ProviderToolCallCorrelationId("c-1"), "Extracted COD 42 mg/L, NH3-N 6.5 mg/L")),
+                List.of(new ToolResultPart(
+                        new ToolCallId("tool-1"),
+                        new ProviderToolCallCorrelationId("c-1"),
+                        "Extracted COD 42 mg/L, NH3-N 6.5 mg/L")),
                 Map.of(),
                 Instant.EPOCH);
 
-        ProjectedCompactionSource result = CompactionSourceProjector.project(List.of(user, hidden, assistant, toolResult));
+        ProjectedCompactionSource result =
+                CompactionSourceProjector.project(List.of(user, hidden, assistant, toolResult));
 
         assertThat(result.sourceMessageIds()).containsExactly(user.id(), assistant.id(), toolResult.id());
         assertThat(result.messageAliases()).containsEntry("m001", user.id());
@@ -89,7 +97,9 @@ class CompactionSourceProjectorTest {
 
         String text = result.safeConversationText();
         assertThat(text).contains("[m001 user completed] Please build the water treatment report");
-        assertThat(text).contains("[m002 assistant completed] I will structure the draft accordingly. [tool-call t001: extract_records]");
+        assertThat(text)
+                .contains(
+                        "[m002 assistant completed] I will structure the draft accordingly. [tool-call t001: extract_records]");
         assertThat(text).contains("[m003 tool completed] [tool-outcome t001: Extracted COD 42 mg/L, NH3-N 6.5 mg/L]");
         assertThat(text).doesNotContain("hidden internal note");
     }
@@ -106,9 +116,11 @@ class CompactionSourceProjectorTest {
                 MessageStatus.COMPLETED,
                 MessageVisibility.USER_VISIBLE,
                 1L,
-                List.of(new TextPart("Here is the key: sk-abcdef1234567890abcdef12345 and token Bearer my_secret_bearer_token_xyz. "
-                        + "<think>internal reasoning to be stripped</think> "
-                        + "Also PROTECTED_CONTINUATION:opaque_token_state final text.", "plain")),
+                List.of(new TextPart(
+                        "Here is the key: sk-abcdef1234567890abcdef12345 and token Bearer my_secret_bearer_token_xyz. "
+                                + "<think>internal reasoning to be stripped</think> "
+                                + "Also PROTECTED_CONTINUATION:opaque_token_state final text.",
+                        "plain")),
                 Map.of(),
                 Instant.EPOCH);
 

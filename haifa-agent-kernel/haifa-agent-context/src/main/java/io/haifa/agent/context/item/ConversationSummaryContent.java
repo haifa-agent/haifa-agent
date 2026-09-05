@@ -33,7 +33,11 @@ public record ConversationSummaryContent(
         openItems = immutable(openItems, "openItems");
         toolOutcomeReferences = immutable(toolOutcomeReferences, "toolOutcomeReferences");
         renderedMarkdown = Objects.requireNonNullElse(renderedMarkdown, Optional.empty());
-        if (facts.isEmpty() && decisions.isEmpty() && openItems.isEmpty() && toolOutcomeReferences.isEmpty() && renderedMarkdown.isEmpty()) {
+        if (facts.isEmpty()
+                && decisions.isEmpty()
+                && openItems.isEmpty()
+                && toolOutcomeReferences.isEmpty()
+                && renderedMarkdown.isEmpty()) {
             throw new IllegalArgumentException("conversation summary must not be empty");
         }
     }

@@ -1,6 +1,6 @@
 package io.haifa.agent.runtime.core.storage;
 
-import io.haifa.agent.context.compaction.ConversationSummaryRepository;
+import io.haifa.agent.context.compression.ConversationSummaryRepository;
 import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
 import io.haifa.agent.runtime.core.input.RunInputPort;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;

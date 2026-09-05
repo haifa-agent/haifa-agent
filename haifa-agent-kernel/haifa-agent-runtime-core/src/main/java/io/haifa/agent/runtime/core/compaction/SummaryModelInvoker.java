@@ -2,17 +2,18 @@ package io.haifa.agent.runtime.core.compaction;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
-import io.haifa.agent.context.compaction.CompressionPolicy;
-import io.haifa.agent.context.compaction.SemanticConversationSummaryV1;
-import io.haifa.agent.context.compaction.SemanticSummarySchema;
-import io.haifa.agent.context.compaction.SemanticSummaryValidationException;
-import io.haifa.agent.context.compaction.SimpleJsonParser;
+import io.haifa.agent.context.compression.CompressionPolicy;
+import io.haifa.agent.context.compression.SemanticConversationSummaryV1;
+import io.haifa.agent.context.compression.SemanticSummarySchema;
+import io.haifa.agent.context.compression.SemanticSummaryValidationException;
+import io.haifa.agent.context.compression.SimpleJsonParser;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelCallId;
+import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelRequestId;
@@ -99,7 +100,6 @@ public final class SummaryModelInvoker {
         ModelRequestId requestId = new ModelRequestId(ids.nextValue());
         Map<String, Object> options = new HashMap<>(
                 RuntimeControlOptions.providerOptions(binding.configuration().modelRequestOptions()));
-        options.put("modelRequestPurpose", isRepair ? "REPAIR" : "COMPACTION");
 
         StructuredOutputRequirement structuredRequirement = new StructuredOutputRequirement(
                 "json-schema:SemanticConversationSummaryV1",
@@ -131,16 +131,25 @@ public final class SummaryModelInvoker {
         // 7. Invoke outside of DB transaction
         AgentChatResponse response = binding.chatModel().invoke(request);
 
-        // 8. Account for tokens and cost
-        transitions.usage(run, new AgentRunUsageDelta(
-                response.usage().inputTokens(),
-                response.usage().outputTokens(),
-                response.usage().cacheHitTokens(),
-                0,
-                0,
-                0,
-                response.usage().costMinorUnits(),
-                0));
+        // 8. Enforce fail-closed check on finish reason
+        if (response.finishReason() != ModelFinishReason.STOP) {
+            throw new SemanticSummaryValidationException(
+                    "Model compaction response did not finish with STOP (finishReason=" + response.finishReason() + ")",
+                    List.of("UNEXPECTED_FINISH_REASON"));
+        }
+
+        // 9. Account for tokens and cost
+        transitions.usage(
+                run,
+                new AgentRunUsageDelta(
+                        response.usage().inputTokens(),
+                        response.usage().outputTokens(),
+                        response.usage().cacheHitTokens(),
+                        0,
+                        0,
+                        0,
+                        response.usage().costMinorUnits(),
+                        0));
 
         // 9. Extract and parse structured output
         Map<String, Object> outputMap = null;
@@ -158,15 +167,15 @@ public final class SummaryModelInvoker {
 
         if (outputMap == null || outputMap.isEmpty()) {
             throw new SemanticSummaryValidationException(
-                    "Model returned empty response for compaction request",
-                    List.of("EMPTY_STRUCTURED_OUTPUT"));
+                    "Model returned empty response for compaction request", List.of("EMPTY_STRUCTURED_OUTPUT"));
         }
 
         try {
             return SemanticConversationSummaryV1.fromMap(outputMap);
         } catch (Exception mappingException) {
             throw new SemanticSummaryValidationException(
-                    "Failed to map structured output to SemanticConversationSummaryV1: " + mappingException.getMessage(),
+                    "Failed to map structured output to SemanticConversationSummaryV1: "
+                            + mappingException.getMessage(),
                     List.of("SCHEMA_MAPPING_ERROR"));
         }
     }

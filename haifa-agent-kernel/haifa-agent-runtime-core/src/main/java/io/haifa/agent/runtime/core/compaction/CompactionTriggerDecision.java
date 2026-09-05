@@ -6,9 +6,7 @@ import java.util.Objects;
  * Result of evaluating whether conversation compaction should run.
  */
 public record CompactionTriggerDecision(
-        boolean shouldCompact,
-        CompactionTriggerReason reason,
-        ContextBudgetBreakdown budgetBreakdown) {
+        boolean shouldCompact, CompactionTriggerReason reason, ContextBudgetBreakdown budgetBreakdown) {
 
     public CompactionTriggerDecision {
         reason = Objects.requireNonNull(reason, "reason must not be null");
@@ -19,7 +17,8 @@ public record CompactionTriggerDecision(
         return new CompactionTriggerDecision(false, CompactionTriggerReason.NONE, budgetBreakdown);
     }
 
-    public static CompactionTriggerDecision compact(CompactionTriggerReason reason, ContextBudgetBreakdown budgetBreakdown) {
+    public static CompactionTriggerDecision compact(
+            CompactionTriggerReason reason, ContextBudgetBreakdown budgetBreakdown) {
         return new CompactionTriggerDecision(true, reason, budgetBreakdown);
     }
 }

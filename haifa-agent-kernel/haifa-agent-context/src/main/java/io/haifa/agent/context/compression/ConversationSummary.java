@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageCursor;
@@ -91,7 +91,11 @@ public record ConversationSummary(
                 List.copyOf(Objects.requireNonNull(toolOutcomeReferences, "toolOutcomeReferences must not be null"));
         semanticSummary = Objects.requireNonNullElse(semanticSummary, Optional.empty());
         quality = Objects.requireNonNullElse(quality, CompactionQuality.DETERMINISTIC_DEGRADED);
-        if (facts.isEmpty() && decisions.isEmpty() && openItems.isEmpty() && toolOutcomeReferences.isEmpty() && semanticSummary.isEmpty()) {
+        if (facts.isEmpty()
+                && decisions.isEmpty()
+                && openItems.isEmpty()
+                && toolOutcomeReferences.isEmpty()
+                && semanticSummary.isEmpty()) {
             throw new IllegalArgumentException("summary must contain structured content");
         }
         if (estimatedTokens < 1) throw new IllegalArgumentException("estimatedTokens must be positive");

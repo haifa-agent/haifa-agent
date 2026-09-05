@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import java.util.List;
 import java.util.Objects;
@@ -55,15 +55,14 @@ public final class SemanticSummaryRenderer {
         if (!summary.decisions().isEmpty()) {
             sb.append("## Decisions\n");
             for (SemanticDecisionItem decision : summary.decisions()) {
-                sb.append("- [")
-                        .append(decision.status().name())
-                        .append("] ")
-                        .append(decision.statement());
+                sb.append("- [").append(decision.status().name()).append("] ").append(decision.statement());
                 if (!decision.rationale().isBlank()) {
                     sb.append(" — ").append(decision.rationale());
                 }
                 if (!decision.sourceRefs().isEmpty()) {
-                    sb.append(" [").append(String.join(", ", decision.sourceRefs())).append("]");
+                    sb.append(" [")
+                            .append(String.join(", ", decision.sourceRefs()))
+                            .append("]");
                 }
                 sb.append("\n");
             }

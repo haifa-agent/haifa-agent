@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 public record SummaryVersion(long value) {
     public SummaryVersion {

@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import java.util.List;
 import java.util.Objects;
@@ -9,7 +9,8 @@ import java.util.Optional;
  */
 public final class CompactionPromptRenderer {
 
-    private static final String SYSTEM_PROMPT = """
+    private static final String SYSTEM_PROMPT =
+            """
             You are a "Conversation State Compiler". You are not a conversational assistant.
             Your sole purpose is to compile historical conversation records into a structured JSON state representation.
 

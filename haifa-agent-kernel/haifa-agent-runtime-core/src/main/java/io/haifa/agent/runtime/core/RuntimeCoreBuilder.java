@@ -6,14 +6,11 @@ import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.budget.HeuristicTokenEstimator;
-import io.haifa.agent.context.compaction.CompressionPolicy;
-import io.haifa.agent.context.compaction.DeterministicContextCompressor;
+import io.haifa.agent.context.compression.CompressionPolicy;
+import io.haifa.agent.context.compression.DeterministicContextCompressor;
 import io.haifa.agent.context.core.DefaultAgentContextBuilder;
 import io.haifa.agent.context.selection.ContextSelectionPolicy;
 import io.haifa.agent.context.source.ContextSource;
-import io.haifa.agent.runtime.core.compaction.CompactionTriggerEvaluator;
-import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
-import io.haifa.agent.runtime.core.compaction.SummaryModelInvoker;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -59,6 +56,9 @@ import io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder;
 import io.haifa.agent.runtime.core.checkpoint.MemoryCheckpointValidator;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCheckpointSelector;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCoordinator;
+import io.haifa.agent.runtime.core.compaction.CompactionTriggerEvaluator;
+import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
+import io.haifa.agent.runtime.core.compaction.SummaryModelInvoker;
 import io.haifa.agent.runtime.core.completion.CompletionPolicy;
 import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.completion.DefaultCompletionGuard;
@@ -713,7 +713,8 @@ public final class RuntimeCoreBuilder {
                 skillContentLoader);
         var compressor = new DeterministicContextCompressor();
         var effectiveCompressionPolicy = compressionPolicy != null ? compressionPolicy : CompressionPolicy.defaults();
-        var sessionMessageSource = new SessionMessageSource(state, summaries, compressor, effectiveCompressionPolicy, ids, time);
+        var sessionMessageSource =
+                new SessionMessageSource(state, summaries, compressor, effectiveCompressionPolicy, ids, time);
         var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state, time);
         RunInputApplier runInputApplier =
                 new RunInputApplier(configuredRunInputs, state, events, outbox, unitOfWork, ids, time);

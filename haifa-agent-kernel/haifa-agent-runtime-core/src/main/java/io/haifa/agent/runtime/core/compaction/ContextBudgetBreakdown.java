@@ -12,5 +12,4 @@ public record ContextBudgetBreakdown(
         long availableSessionTokens,
         long triggerHeadroomTokens,
         long softLimitTokens,
-        long currentSessionTokens) {
-}
+        long currentSessionTokens) {}

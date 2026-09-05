@@ -2,7 +2,7 @@ package io.haifa.agent.runtime.core.checkpoint;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
-import io.haifa.agent.context.compaction.ConversationSummaryRepository;
+import io.haifa.agent.context.compression.ConversationSummaryRepository;
 import io.haifa.agent.core.checkpoint.Checkpoint;
 import io.haifa.agent.core.checkpoint.CheckpointId;
 import io.haifa.agent.core.checkpoint.CheckpointStatus;

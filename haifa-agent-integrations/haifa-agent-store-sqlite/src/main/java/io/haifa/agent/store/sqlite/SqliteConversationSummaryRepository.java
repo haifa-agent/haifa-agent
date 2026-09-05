@@ -1,10 +1,10 @@
 package io.haifa.agent.store.sqlite;
 
-import io.haifa.agent.context.compaction.CompactionQuality;
-import io.haifa.agent.context.compaction.ConversationSummary;
-import io.haifa.agent.context.compaction.ConversationSummaryRepository;
-import io.haifa.agent.context.compaction.SummaryId;
-import io.haifa.agent.context.compaction.SummaryVersion;
+import io.haifa.agent.context.compression.CompactionQuality;
+import io.haifa.agent.context.compression.ConversationSummary;
+import io.haifa.agent.context.compression.ConversationSummaryRepository;
+import io.haifa.agent.context.compression.SummaryId;
+import io.haifa.agent.context.compression.SummaryVersion;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageCursor;
 import io.haifa.agent.core.session.AgentSessionId;

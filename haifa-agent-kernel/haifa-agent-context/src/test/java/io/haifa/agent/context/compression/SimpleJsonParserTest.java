@@ -1,4 +1,4 @@
-package io.haifa.agent.context.compaction;
+package io.haifa.agent.context.compression;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -11,7 +11,8 @@ class SimpleJsonParserTest {
 
     @Test
     void parsesSimpleObject() {
-        String json = """
+        String json =
+                """
                 {
                     "name": "Haifa Agent",
                     "version": 1,
@@ -32,7 +33,8 @@ class SimpleJsonParserTest {
 
     @Test
     void parsesSemanticSummaryJsonRoundtrip() {
-        SemanticSummaryItem item = new SemanticSummaryItem("g01", "Complete task", List.of("[M1]"), SemanticConfidence.OBSERVED);
+        SemanticSummaryItem item =
+                new SemanticSummaryItem("g01", "Complete task", List.of("[M1]"), SemanticConfidence.OBSERVED);
         SemanticConversationSummaryV1 original = new SemanticConversationSummaryV1(
                 "v1",
                 "zh",
@@ -44,7 +46,8 @@ class SimpleJsonParserTest {
                 List.of(),
                 List.of());
 
-        String json = """
+        String json =
+                """
                 {
                     "schemaVersion": "v1",
                     "language": "zh",
@@ -84,8 +87,7 @@ class SimpleJsonParserTest {
 
     @Test
     void rejectsMalformedJson() {
-        assertThatThrownBy(() -> SimpleJsonParser.parseObject("not json"))
-                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> SimpleJsonParser.parseObject("not json")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> SimpleJsonParser.parseObject("{\"unclosed\": "))
                 .isInstanceOf(IllegalArgumentException.class);
     }
