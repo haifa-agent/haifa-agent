@@ -83,8 +83,8 @@ class RuntimeFetchEvidenceReaderTest {
         assertThat(evidence.successful()).isTrue();
         assertThat(evidence.sourceAvailable()).isTrue();
         assertThat(evidence.contentSha256())
-                .isEqualTo("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852beef");
-        assertThat(evidence.contentCharacters()).isEqualTo("Ethereum scalability upgrade details...".length());
+                .isEqualTo("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852beef");
+        assertThat(evidence.contentBytes()).isEqualTo("Ethereum scalability upgrade details...".length());
     }
 
     @Test

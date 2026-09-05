@@ -41,6 +41,20 @@ import java.util.regex.Pattern;
 
 /** Strict research schema, source identity, citation closure, and immutable Artifact publication. */
 public final class MissionArtifactPublisher implements MissionResultPublisher {
+    private static final Set<String> EVIDENCE_ASSESSMENTS =
+            Set.of("SUPPORTED", "PARTIALLY_SUPPORTED", "CONFLICTED", "INSUFFICIENT");
+    private static final Set<String> STANDARD_V2_FIELDS = Set.of(
+            "schemaVersion",
+            "directAnswer",
+            "answerMarkdown",
+            "completedItems",
+            "failedItems",
+            "artifactRefs",
+            "sourceRefs",
+            "unverifiedClaims",
+            "unresolvedQuestions",
+            "residualRisks",
+            "completionKind");
     private static final Pattern STABLE_ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,127}");
     private static final Pattern SHA256 = Pattern.compile("sha256:[a-f0-9]{64}");
     private static final Set<String> SOURCE_STATUSES =
@@ -110,9 +124,11 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         if (!"pa.mission-final-result/v1".equals(schema) && !"pa.mission-final-result/v2".equals(schema)) {
             invalid("Result schema is unsupported");
         }
+        if ("pa.mission-final-result/v2".equals(schema)) validateStandardV2Shape(finalResult);
         FinalDelivery delivery = finalDelivery(finalResult, false);
         StandardMissionQualityGate standardGate = new StandardMissionQualityGate();
-        StandardMissionQualityGate.Result gateResult = standardGate.evaluate(finalResult, intent.taskResults());
+        StandardMissionQualityGate.Result gateResult = standardGate.evaluate(
+                finalResult, intent.taskResults(), intent.completedTaskObjectives(), intent.acceptanceCriteria());
         if (!gateResult.passed()) {
             throw new MissionException("MISSION_REPORT_QUALITY_FAILED", gateResult.revisionFeedback());
         }
@@ -575,9 +591,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         StringBuilder risks = new StringBuilder("\n");
         evidence.claims().forEach((claimId, claim) -> {
             if (claim.path("supportingSourceIds").size() == 1) {
-                risks.append("<!-- haifa-single-source-risk: ")
-                        .append(claimId)
-                        .append(" -->\n");
+                risks.append("<!-- haifa-single-source-risk: ").append(claimId).append(" -->\n");
             }
         });
         String sourceMarker = "<!-- haifa-section: sources -->";
@@ -713,16 +727,24 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         requiredTextAllowEmpty(finding, "limitations", 2_000);
         List<String> supporting = textArray(finding, "supportingSourceIds", 20);
         List<String> opposing = textArray(finding, "opposingSourceIds", 20);
+        String evidenceAssessment = requiredText(finding, "evidenceAssessment", 32);
+        if (!EVIDENCE_ASSESSMENTS.contains(evidenceAssessment)) {
+            invalid("Finding evidence assessment is invalid");
+        }
+        JsonNode unverifiedNode = finding.get("unverified");
+        if (unverifiedNode == null || !unverifiedNode.isBoolean()) {
+            invalid("Finding unverified flag is invalid");
+        }
         LinkedHashSet<String> references = new LinkedHashSet<>(supporting);
         references.addAll(opposing);
         if (references.isEmpty() || !sources.keySet().containsAll(references)) {
             invalid("Finding references an unavailable source");
         }
         boolean insufficient = supporting.isEmpty()
+                || !"SUPPORTED".equals(evidenceAssessment)
                 || references.stream().anyMatch(id -> !"FETCHED"
-                        .equals(sources.get(id).get("status").asText()))
-                || references.size() < 2;
-        if (insufficient && !finding.path("unverified").asBoolean(false)) {
+                        .equals(sources.get(id).get("status").asText()));
+        if (insufficient && !unverifiedNode.asBoolean()) {
             invalid("Insufficiently supported finding must be unverified");
         }
     }
@@ -736,12 +758,15 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         claim.set("supportingSourceIds", finding.path("supportingSourceIds").deepCopy());
         claim.set("opposingSourceIds", finding.path("opposingSourceIds").deepCopy());
         claim.put("limitations", finding.path("limitations").asText());
-        claim.put("unverified", finding.path("unverified").asBoolean(false));
+        claim.put("unverified", finding.path("unverified").asBoolean());
         claim.putArray("quotedSpans");
         if (finding.has("mechanism")) claim.set("mechanism", finding.get("mechanism"));
         if (finding.has("keyParameters")) claim.set("keyParameters", finding.get("keyParameters"));
         if (finding.has("evidenceSummary")) claim.set("evidenceSummary", finding.get("evidenceSummary"));
         if (finding.has("implications")) claim.set("implications", finding.get("implications"));
+        if (finding.has("evidenceAssessment")) {
+            claim.set("evidenceAssessment", finding.get("evidenceAssessment"));
+        }
         return claim;
     }
 
@@ -776,6 +801,14 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             }
         }
         return new FinalDelivery(answer, completed, failed, sourceRefs, unverified, unresolved, risks, completion);
+    }
+
+    private void validateStandardV2Shape(JsonNode value) {
+        LinkedHashSet<String> fields = new LinkedHashSet<>();
+        value.fieldNames().forEachRemaining(fields::add);
+        if (!fields.equals(STANDARD_V2_FIELDS)) invalid("Standard v2 result shape is invalid");
+        requiredText(value, "directAnswer", 4_000);
+        requiredText(value, "answerMarkdown", 240_000);
     }
 
     private Artifact publish(

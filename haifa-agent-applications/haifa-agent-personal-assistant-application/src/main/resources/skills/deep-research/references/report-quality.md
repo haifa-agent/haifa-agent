@@ -17,4 +17,3 @@ claim, claim origin, primary/technical evidence, independent validation, counter
 evidence strength (high/medium/low), judgment (verified/partly verified/insufficient evidence/misleading/refuted), and
 evidence that would change it. Address technical origin, capability, business model, and exaggeration separately.
 Insufficient evidence is not refutation; no counterevidence is not verification. Preserve other type additions.
-

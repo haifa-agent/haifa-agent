@@ -897,7 +897,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 try (var select = current()
                         .prepareStatement(
                                 """
-                    SELECT mission_id,conversation_id,owner_scope,model_binding_json,mode,objective,research_brief_json,
+                    SELECT mission_id,conversation_id,owner_scope,model_binding_json,mode,objective,acceptance_json,research_brief_json,
                            usage_model_tokens,usage_model_calls,usage_tool_calls,deadline_at_ms
                     FROM personal_mission m
                     WHERE state IN ('RUNNING','WAITING_USER','SYNTHESIZING')
@@ -917,10 +917,11 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                         updateMissionState(missionId, "SYNTHESIZING", now, "state IN ('RUNNING','WAITING_USER')");
                         List<String> taskResults = new ArrayList<>();
                         List<String> completedTaskIds = new ArrayList<>();
+                        List<String> completedTaskObjectives = new ArrayList<>();
                         List<String> failedItems = new ArrayList<>();
                         try (var tasks = current()
                                 .prepareStatement(
-                                        "SELECT task_id,state,result_json,block_code FROM personal_mission_task WHERE mission_id=? ORDER BY ordinal")) {
+                                        "SELECT task_id,objective,state,result_json,block_code FROM personal_mission_task WHERE mission_id=? ORDER BY ordinal")) {
                             tasks.setString(1, missionId);
                             try (var rows = tasks.executeQuery()) {
                                 while (rows.next()) {
@@ -928,6 +929,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                     if (taskResult != null) {
                                         taskResults.add(taskResult);
                                         completedTaskIds.add(rows.getString("task_id"));
+                                        completedTaskObjectives.add(rows.getString("objective"));
                                     } else {
                                         String code = rows.getString("block_code");
                                         failedItems.add(rows.getString("task_id") + ":" + rows.getString("state")
@@ -952,6 +954,8 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 taskResults,
                                 failedItems,
                                 completedTaskIds,
+                                completedTaskObjectives,
+                                jsonList(result.getString("acceptance_json")),
                                 2,
                                 Math.max(0, maxModelTokens - result.getLong("usage_model_tokens")),
                                 Optional.of(Instant.ofEpochMilli(result.getLong("deadline_at_ms"))),

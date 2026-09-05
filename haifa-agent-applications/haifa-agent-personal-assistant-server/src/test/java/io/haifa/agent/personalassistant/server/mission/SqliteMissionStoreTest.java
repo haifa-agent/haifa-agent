@@ -368,8 +368,10 @@ class SqliteMissionStoreTest {
         assertThat(operations.modelCalls()).isEqualTo(1);
         assertThat(operations.toolCalls()).isEqualTo(2);
         assertThat(operations.budgetExhaustedTasks()).isEqualTo(1);
-        assertThat(store.claimSynthesis(CLOCK.instant()).orElseThrow().failedItems())
-                .containsExactly("task-2:BLOCKED:MISSION_BUDGET_EXHAUSTED");
+        var synthesis = store.claimSynthesis(CLOCK.instant()).orElseThrow();
+        assertThat(synthesis.failedItems()).containsExactly("task-2:BLOCKED:MISSION_BUDGET_EXHAUSTED");
+        assertThat(synthesis.completedTaskObjectives()).containsExactly("Produce a bounded result — first");
+        assertThat(synthesis.acceptanceCriteria()).containsExactly("first", "second");
     }
 
     @Test

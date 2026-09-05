@@ -28,6 +28,10 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertEqual("deepseek-chat-flash", environment["HAIFA_PERSONAL_DEFAULT_MODEL_ID"])
         self.assertEqual("deepseek-secret", environment["DEEPSEEK_API_KEY"])
         self.assertEqual("kimi-secret", environment["KIMI_API_KEY"])
+        self.assertEqual("true", environment["HAIFA_PERSONAL_WEB_SEARCH_ENABLED"])
+        self.assertEqual("tavily", environment["HAIFA_PERSONAL_WEB_SEARCH_PROVIDER_ID"])
+        self.assertEqual("true", environment["HAIFA_PERSONAL_WEB_FETCH_ENABLED"])
+        self.assertEqual("tavily", environment["HAIFA_PERSONAL_WEB_FETCH_PROVIDER_ID"])
         self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_") for name in environment))
         self.assertFalse(any("_MODELS_" in name for name in environment))
 
