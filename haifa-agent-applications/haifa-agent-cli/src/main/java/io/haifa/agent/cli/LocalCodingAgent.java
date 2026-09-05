@@ -736,7 +736,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             disclosedToolAliases,
                             configuration.skills().allowedAliases(),
                             Set.of(),
-                            CodingAgentPrompt.forWorkspaceAttachment(workspaceAttachmentDisclosed).text()
+                            CodingAgentPrompt.forWorkspaceAttachment(workspaceAttachmentDisclosed)
+                                            .text()
                                     + executionEnvironmentPrompt(
                                             executionPlatform == null ? "" : executionPlatform.shellDisplayName())
                                     + workspaceEnvironment
