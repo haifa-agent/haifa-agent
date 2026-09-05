@@ -1,5 +1,6 @@
 package io.haifa.agent.store.sqlite;
 
+import io.haifa.agent.context.compression.CompactionQuality;
 import io.haifa.agent.context.compression.ConversationSummary;
 import io.haifa.agent.context.compression.ConversationSummaryRepository;
 import io.haifa.agent.context.compression.SummaryId;
@@ -14,6 +15,7 @@ import io.haifa.agent.store.sqlite.codec.VersionedPayloadCodecRegistry;
 import io.haifa.agent.store.sqlite.mybatis.ConversationSummaryRow;
 import io.haifa.agent.store.sqlite.mybatis.RuntimeStoreMapper;
 import io.haifa.agent.store.sqlite.payload.ConversationSummaryPayload;
+import io.haifa.agent.store.sqlite.payload.ConversationSummaryPayloadV2;
 import io.haifa.agent.store.sqlite.payload.SqliteRuntimePayloadTypes;
 import java.util.Objects;
 import java.util.Optional;
@@ -58,8 +60,75 @@ public final class SqliteConversationSummaryRepository implements ConversationSu
                 throw new OptimisticLockException(
                         "summary version conflict: expected " + expectedPreviousVersion + " but was " + actual);
             }
-            EncodedPayload content = codecs.encode(
-                    SqliteRuntimePayloadTypes.CONVERSATION_SUMMARY, ConversationSummaryPayload.from(summary));
+            EncodedPayload content;
+            if (summary.semanticSummary().isPresent()) {
+                content = codecs.encode(
+                        SqliteRuntimePayloadTypes.CONVERSATION_SUMMARY_V2, ConversationSummaryPayloadV2.from(summary));
+            } else {
+                content = codecs.encode(
+                        SqliteRuntimePayloadTypes.CONVERSATION_SUMMARY, ConversationSummaryPayload.from(summary));
+            }
+            mapper.insertSummary(new ConversationSummaryRow(
+                    summary.id().value(),
+                    summary.version().value(),
+                    summary.sessionId().value(),
+                    summary.coveredFrom().value(),
+                    summary.coveredThrough().value(),
+                    summary.sourceHash(),
+                    content.schemaVersion(),
+                    content.bytes(),
+                    content.hash(),
+                    summary.estimatedTokens(),
+                    summary.policyVersion(),
+                    summary.compressorVersion(),
+                    summary.valid(),
+                    summary.createdAt()));
+            return summary;
+        });
+    }
+
+    @Override
+    public io.haifa.agent.context.compression.SummarySnapshot latestSnapshot(AgentSessionId sessionId) {
+        return execute(() -> {
+            long version = unitOfWork.mapper(RuntimeStoreMapper.class).latestSummaryVersion(sessionId.value());
+            Optional<ConversationSummary> valid =
+                    latestValid(sessionId).filter(s -> coversValidSource(s, s.coveredThrough()));
+            return new io.haifa.agent.context.compression.SummarySnapshot(valid, version);
+        });
+    }
+
+    @Override
+    public ConversationSummary compareAndSetValid(ConversationSummary summary, long expectedPreviousVersion) {
+        Objects.requireNonNull(summary, "summary must not be null");
+        return execute(() -> {
+            RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
+            long actual = mapper.latestSummaryVersion(summary.sessionId().value());
+            if (actual != expectedPreviousVersion || summary.version().value() != expectedPreviousVersion + 1) {
+                throw new OptimisticLockException(
+                        "summary version conflict: expected " + expectedPreviousVersion + " but was " + actual);
+            }
+            if (!summary.valid()) {
+                throw new OptimisticLockException("summary marked invalid for session "
+                        + summary.sessionId().value());
+            }
+            int validCount = mapper.validSummarySourceCount(
+                    summary.sessionId().value(),
+                    summary.sourceMessageIds().stream()
+                            .map(AgentMessageId::value)
+                            .toList());
+            if (validCount != summary.sourceMessageIds().size()) {
+                throw new OptimisticLockException(
+                        "summary source messages are invalid or have been redacted for session "
+                                + summary.sessionId().value());
+            }
+            EncodedPayload content;
+            if (summary.semanticSummary().isPresent()) {
+                content = codecs.encode(
+                        SqliteRuntimePayloadTypes.CONVERSATION_SUMMARY_V2, ConversationSummaryPayloadV2.from(summary));
+            } else {
+                content = codecs.encode(
+                        SqliteRuntimePayloadTypes.CONVERSATION_SUMMARY, ConversationSummaryPayload.from(summary));
+            }
             mapper.insertSummary(new ConversationSummaryRow(
                     summary.id().value(),
                     summary.version().value(),
@@ -105,6 +174,39 @@ public final class SqliteConversationSummaryRepository implements ConversationSu
     }
 
     private ConversationSummary fromRow(ConversationSummaryRow row) {
+        if ("2".equals(row.contentSchemaVersion())) {
+            ConversationSummaryPayloadV2 content = codecs.decode(
+                    SqliteRuntimePayloadTypes.CONVERSATION_SUMMARY_V2,
+                    new EncodedPayload(
+                            SqliteRuntimePayloadTypes.CONVERSATION_SUMMARY_V2.name(),
+                            row.contentSchemaVersion(),
+                            row.contentPayload(),
+                            row.contentHash()));
+            return new ConversationSummary(
+                    new SummaryId(row.summaryId()),
+                    new SummaryVersion(row.summaryVersion()),
+                    new AgentSessionId(row.sessionId()),
+                    new MessageCursor(row.coveredFrom()),
+                    new MessageCursor(row.coveredThrough()),
+                    content.sourceMessageIds().stream().map(AgentMessageId::new).toList(),
+                    row.sourceHash(),
+                    content.facts(),
+                    content.decisions(),
+                    content.openItems(),
+                    content.toolOutcomeReferences().stream()
+                            .map(ToolCallId::new)
+                            .toList(),
+                    row.estimatedTokens(),
+                    row.createdAt(),
+                    row.policyVersion(),
+                    row.compressorVersion(),
+                    content.securityLabels(),
+                    row.valid(),
+                    content.semanticSummary(),
+                    content.quality() != null
+                            ? CompactionQuality.valueOf(content.quality())
+                            : CompactionQuality.DETERMINISTIC_DEGRADED);
+        }
         ConversationSummaryPayload content = codecs.decode(
                 SqliteRuntimePayloadTypes.CONVERSATION_SUMMARY,
                 new EncodedPayload(

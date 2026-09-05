@@ -17,4 +17,16 @@ public interface ConversationSummaryRepository {
     void invalidateContaining(AgentSessionId sessionId, AgentMessageId messageId);
 
     boolean coversValidSource(ConversationSummary summary, MessageCursor through);
+
+    default SummarySnapshot latestSnapshot(AgentSessionId sessionId) {
+        return new SummarySnapshot(
+                latestValid(sessionId).filter(s -> coversValidSource(s, s.coveredThrough())), latestVersion(sessionId));
+    }
+
+    default ConversationSummary compareAndSetValid(ConversationSummary summary, long expectedPreviousVersion) {
+        if (!coversValidSource(summary, summary.coveredThrough())) {
+            throw new IllegalStateException("summary source messages are invalid or have been redacted");
+        }
+        return compareAndSet(summary, expectedPreviousVersion);
+    }
 }

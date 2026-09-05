@@ -7,6 +7,7 @@ import io.haifa.agent.core.tool.ToolCallId;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /** Versioned, derived session context. Source messages remain authoritative. */
@@ -27,7 +28,50 @@ public record ConversationSummary(
         String policyVersion,
         String compressorVersion,
         Set<String> securityLabels,
-        boolean valid) {
+        boolean valid,
+        Optional<SemanticConversationSummaryV1> semanticSummary,
+        CompactionQuality quality) {
+
+    public ConversationSummary(
+            SummaryId id,
+            SummaryVersion version,
+            AgentSessionId sessionId,
+            MessageCursor coveredFrom,
+            MessageCursor coveredThrough,
+            List<AgentMessageId> sourceMessageIds,
+            String sourceHash,
+            List<String> facts,
+            List<String> decisions,
+            List<String> openItems,
+            List<ToolCallId> toolOutcomeReferences,
+            int estimatedTokens,
+            Instant createdAt,
+            String policyVersion,
+            String compressorVersion,
+            Set<String> securityLabels,
+            boolean valid) {
+        this(
+                id,
+                version,
+                sessionId,
+                coveredFrom,
+                coveredThrough,
+                sourceMessageIds,
+                sourceHash,
+                facts,
+                decisions,
+                openItems,
+                toolOutcomeReferences,
+                estimatedTokens,
+                createdAt,
+                policyVersion,
+                compressorVersion,
+                securityLabels,
+                valid,
+                Optional.empty(),
+                CompactionQuality.DETERMINISTIC_DEGRADED);
+    }
+
     public ConversationSummary {
         id = Objects.requireNonNull(id, "id must not be null");
         version = Objects.requireNonNull(version, "version must not be null");
@@ -45,7 +89,13 @@ public record ConversationSummary(
         openItems = immutable(openItems, "openItems");
         toolOutcomeReferences =
                 List.copyOf(Objects.requireNonNull(toolOutcomeReferences, "toolOutcomeReferences must not be null"));
-        if (facts.isEmpty() && decisions.isEmpty() && openItems.isEmpty() && toolOutcomeReferences.isEmpty()) {
+        semanticSummary = Objects.requireNonNullElse(semanticSummary, Optional.empty());
+        quality = Objects.requireNonNullElse(quality, CompactionQuality.DETERMINISTIC_DEGRADED);
+        if (facts.isEmpty()
+                && decisions.isEmpty()
+                && openItems.isEmpty()
+                && toolOutcomeReferences.isEmpty()
+                && semanticSummary.isEmpty()) {
             throw new IllegalArgumentException("summary must contain structured content");
         }
         if (estimatedTokens < 1) throw new IllegalArgumentException("estimatedTokens must be positive");
@@ -73,7 +123,9 @@ public record ConversationSummary(
                 policyVersion,
                 compressorVersion,
                 securityLabels,
-                false);
+                false,
+                semanticSummary,
+                quality);
     }
 
     private static List<String> immutable(List<String> values, String field) {
