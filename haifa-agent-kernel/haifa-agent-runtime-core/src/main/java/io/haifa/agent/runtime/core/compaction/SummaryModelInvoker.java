@@ -131,27 +131,29 @@ public final class SummaryModelInvoker {
         // 7. Invoke outside of DB transaction
         AgentChatResponse response = binding.chatModel().invoke(request);
 
-        // 8. Enforce fail-closed check on finish reason
+        // 8. Account for tokens and cost (must record usage even if finishReason != STOP)
+        if (response.usage() != null) {
+            transitions.usage(
+                    run,
+                    new AgentRunUsageDelta(
+                            response.usage().inputTokens(),
+                            response.usage().outputTokens(),
+                            response.usage().cacheHitTokens(),
+                            0,
+                            0,
+                            0,
+                            response.usage().costMinorUnits(),
+                            0));
+        }
+
+        // 9. Enforce fail-closed check on finish reason
         if (response.finishReason() != ModelFinishReason.STOP) {
             throw new SemanticSummaryValidationException(
                     "Model compaction response did not finish with STOP (finishReason=" + response.finishReason() + ")",
                     List.of("UNEXPECTED_FINISH_REASON"));
         }
 
-        // 9. Account for tokens and cost
-        transitions.usage(
-                run,
-                new AgentRunUsageDelta(
-                        response.usage().inputTokens(),
-                        response.usage().outputTokens(),
-                        response.usage().cacheHitTokens(),
-                        0,
-                        0,
-                        0,
-                        response.usage().costMinorUnits(),
-                        0));
-
-        // 9. Extract and parse structured output
+        // 10. Extract and parse structured output
         Map<String, Object> outputMap = null;
         if (response.structuredOutput().isPresent()) {
             outputMap = response.structuredOutput().get();

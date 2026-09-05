@@ -6,17 +6,22 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.budget.ContextWindowBudget;
+import io.haifa.agent.context.compression.CompactionPromptRenderer;
+import io.haifa.agent.context.compression.CompactionQuality;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.ConversationSummary;
 import io.haifa.agent.context.compression.DeterministicContextCompressor;
 import io.haifa.agent.context.compression.SemanticConversationSummaryV1;
+import io.haifa.agent.context.compression.SemanticSummaryValidationException;
 import io.haifa.agent.context.compression.SummaryId;
 import io.haifa.agent.context.compression.SummaryVersion;
 import io.haifa.agent.context.item.ContextItemType;
 import io.haifa.agent.context.item.ConversationSummaryContent;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
+import io.haifa.agent.core.message.MessageCursor;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
@@ -47,6 +52,7 @@ import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.retry.Sleeper;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import java.time.Instant;
@@ -1132,6 +1138,307 @@ class SemanticCompactionCoordinatorTest {
                 config.modelRequestOptions(),
                 config.structuredOutput());
         return new FrozenModelBinding(smallConfig, chatModel, List.of());
+    }
+
+    @Test
+    void deterministicSummaryFeedsHistoricalFactsIntoPrompt() {
+        ConversationSummary deterministic = new ConversationSummary(
+                new SummaryId("sum-det-1"),
+                new SummaryVersion(1),
+                new AgentSessionId("session-det"),
+                new MessageCursor(1),
+                new MessageCursor(3),
+                List.of(new AgentMessageId("m1")),
+                "hash",
+                List.of("Historical fact A", "Historical fact B"),
+                List.of("Historical decision X"),
+                List.of("Historical open item Y"),
+                List.of(),
+                100,
+                NOW,
+                "p1",
+                "c1",
+                java.util.Set.of(),
+                true,
+                Optional.empty(),
+                CompactionQuality.DETERMINISTIC_DEGRADED);
+
+        var projected = new io.haifa.agent.context.compression.ProjectedCompactionSource(
+                "[m002 user completed] Next turn",
+                Map.of("m002", new AgentMessageId("m2")),
+                Map.of(),
+                List.of(new AgentMessageId("m2")),
+                List.of(),
+                java.util.Set.of());
+
+        String prompt = CompactionPromptRenderer.userPromptFromConversationSummary(
+                Optional.of(deterministic), List.of(), projected);
+
+        assertThat(prompt).contains("<previous-summary type=\"deterministic\">");
+        assertThat(prompt).contains("Historical fact A");
+        assertThat(prompt).contains("Historical decision X");
+        assertThat(prompt).contains("Historical open item Y");
+    }
+
+    @Test
+    void atomicCASRejectsWhenSourceMessageRedactedBeforeCommit() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createAndSaveRun(store);
+        AgentSessionId sid = run.sessionId();
+
+        AgentMessage m1 =
+                store.appendSessionMessage(draft("m-cas-1", sid, run.id().value(), MessageRole.USER, "hello"));
+        AgentMessage m2 =
+                store.appendSessionMessage(draft("m-cas-2", sid, run.id().value(), MessageRole.ASSISTANT, "world"));
+
+        ConversationSummary summary = new ConversationSummary(
+                new SummaryId("sum-cas-1"),
+                new SummaryVersion(1),
+                sid,
+                m1.cursor(),
+                m2.cursor(),
+                List.of(m1.id(), m2.id()),
+                "hash",
+                List.of("Fact"),
+                List.of(),
+                List.of(),
+                List.of(),
+                20,
+                NOW,
+                "p1",
+                "c1",
+                java.util.Set.of(),
+                true,
+                Optional.empty(),
+                CompactionQuality.DETERMINISTIC_DEGRADED);
+
+        // First, redact m1
+        store.redactMessage(m1.id());
+
+        // Now attempt compareAndSetValid: must fail closed because m1 is REDACTED
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> store.compareAndSetValid(summary, 0L))
+                .isInstanceOf(OptimisticLockException.class)
+                .hasMessageContaining("redacted");
+    }
+
+    @Test
+    void atomicSnapshotReturnsConsistentVersionAndValidSummary() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRun run = createAndSaveRun(store);
+        AgentSessionId sid = run.sessionId();
+
+        var snapshot0 = store.latestSnapshot(sid);
+        assertThat(snapshot0.latestVersion()).isEqualTo(0L);
+        assertThat(snapshot0.latestValid()).isEmpty();
+
+        AgentMessage m1 =
+                store.appendSessionMessage(draft("m-snap-1", sid, run.id().value(), MessageRole.USER, "msg"));
+        ConversationSummary summary = new ConversationSummary(
+                new SummaryId("sum-snap-1"),
+                new SummaryVersion(1),
+                sid,
+                m1.cursor(),
+                m1.cursor(),
+                List.of(m1.id()),
+                "hash",
+                List.of("Fact"),
+                List.of(),
+                List.of(),
+                List.of(),
+                10,
+                NOW,
+                "p1",
+                "c1",
+                java.util.Set.of(),
+                true,
+                Optional.empty(),
+                CompactionQuality.DETERMINISTIC_DEGRADED);
+
+        store.compareAndSetValid(summary, 0L);
+
+        var snapshot1 = store.latestSnapshot(sid);
+        assertThat(snapshot1.latestVersion()).isEqualTo(1L);
+        assertThat(snapshot1.latestValid()).contains(summary);
+    }
+
+    @Test
+    void modelUsageRecordedBeforeThrowingOnNonStopFinishReason() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+        TimeProvider time = () -> NOW;
+
+        RunAwaiter awaiter = new RunAwaiter();
+        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
+                store,
+                store,
+                store,
+                store,
+                ids,
+                time,
+                awaiter,
+                store,
+                new RetryExecutor(Sleeper.threadSleep()),
+                PersistenceRetryPolicy.none());
+
+        AgentRun run = createAndSaveRun(store);
+
+        AgentChatModel mockModel = req -> new AgentChatResponse(
+                "res-trunc-1",
+                "deepseek-v4-pro",
+                "Truncated output...",
+                List.of(),
+                ModelFinishReason.LENGTH,
+                ModelUsage.unpriced(120, 50),
+                "",
+                Map.of());
+
+        var binding = createBinding(store, run, mockModel);
+        RunControlRegistry controls = new RunControlRegistry();
+        CompressionPolicy policy = CompressionPolicy.defaults().withSemanticCompactionEnabled(true);
+        SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> invoker.invoke(binding, run, 1, "sys", "usr", 0, false))
+                .isInstanceOf(SemanticSummaryValidationException.class)
+                .hasMessageContaining("did not finish with STOP");
+
+        // Verify usage was charged to the run
+        AgentRun updatedRun = store.find(run.id()).orElseThrow();
+        assertThat(updatedRun.usage().inputTokens()).isEqualTo(120);
+        assertThat(updatedRun.usage().outputTokens()).isEqualTo(50);
+    }
+
+    @Test
+    void semanticToDeterministicFallbackPreservesFactsDecisionsAndOpenItems() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        RunControlRegistry controls = new RunControlRegistry();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+        TimeProvider time = () -> NOW;
+
+        CompressionPolicy policy = CompressionPolicy.defaults()
+                .withSemanticCompactionEnabled(true)
+                .withDegradedFallback(true)
+                .withTailTokenBounds(5, 50);
+
+        RunAwaiter awaiter = new RunAwaiter();
+        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
+                store,
+                store,
+                store,
+                store,
+                ids,
+                time,
+                awaiter,
+                store,
+                new RetryExecutor(Sleeper.threadSleep()),
+                PersistenceRetryPolicy.none());
+
+        SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
+        CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
+        DeterministicContextCompressor deterministic = new DeterministicContextCompressor();
+
+        SemanticCompactionCoordinator coordinator = new SemanticCompactionCoordinator(
+                store, store, invoker, evaluator, policy, deterministic, ids, time, store);
+
+        AgentRun run = createAndSaveRun(store);
+        AgentSessionId session = run.sessionId();
+
+        // 1. Pre-populate an existing semantic summary
+        AgentMessage m1 = store.appendSessionMessage(
+                draft("m-prev-1", session, run.id().value(), MessageRole.USER, "First turn"));
+        AgentMessage m2 = store.appendSessionMessage(
+                draft("m-prev-2", session, run.id().value(), MessageRole.ASSISTANT, "First reply"));
+
+        SemanticConversationSummaryV1 prevSemantic = new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(new io.haifa.agent.context.compression.SemanticSummaryItem(
+                        "G-1",
+                        "Original Goal",
+                        List.of("m-prev-1"),
+                        io.haifa.agent.context.compression.SemanticConfidence.OBSERVED)),
+                List.of(new io.haifa.agent.context.compression.SemanticSummaryItem(
+                        "C-1",
+                        "Strict Constraint",
+                        List.of("m-prev-1"),
+                        io.haifa.agent.context.compression.SemanticConfidence.OBSERVED)),
+                new io.haifa.agent.context.compression.SemanticProgress(
+                        List.of(new io.haifa.agent.context.compression.SemanticSummaryItem(
+                                "PC-1",
+                                "Completed Step 1",
+                                List.of("m-prev-2"),
+                                io.haifa.agent.context.compression.SemanticConfidence.OBSERVED)),
+                        List.of(),
+                        List.of()),
+                List.of(new io.haifa.agent.context.compression.SemanticDecisionItem(
+                        "D-1",
+                        "Decided Architecture",
+                        "Rationale",
+                        io.haifa.agent.context.compression.SemanticDecisionStatus.ACCEPTED,
+                        List.of("m-prev-2"))),
+                List.of(),
+                List.of(new io.haifa.agent.context.compression.SemanticSummaryItem(
+                        "CC-1",
+                        "Important Context",
+                        List.of("m-prev-1"),
+                        io.haifa.agent.context.compression.SemanticConfidence.OBSERVED)),
+                List.of(new io.haifa.agent.context.compression.SemanticSummaryItem(
+                        "Q-1",
+                        "Open Question A",
+                        List.of("m-prev-1"),
+                        io.haifa.agent.context.compression.SemanticConfidence.OBSERVED)));
+
+        ConversationSummary existingSummary = new ConversationSummary(
+                new SummaryId("sum-prev"),
+                new SummaryVersion(1),
+                session,
+                m1.cursor(),
+                m2.cursor(),
+                List.of(m1.id(), m2.id()),
+                "hash",
+                List.of("Original Goal", "Strict Constraint"),
+                List.of("Decided Architecture"),
+                List.of("Open Question A"),
+                List.of(),
+                50,
+                NOW,
+                policy.version(),
+                "semantic-v1",
+                java.util.Set.of(),
+                true,
+                Optional.of(prevSemantic),
+                CompactionQuality.SEMANTIC_VALIDATED);
+
+        store.compareAndSetValid(existingSummary, 0L);
+
+        // 2. Add next turn messages (Turn 2 to compact, Turn 3 to retain in tail)
+        store.appendSessionMessage(draft("m-turn2-1", session, run.id().value(), MessageRole.USER, "Turn 2 user"));
+        store.appendSessionMessage(
+                draft("m-turn2-2", session, run.id().value(), MessageRole.ASSISTANT, "Turn 2 reply"));
+        store.appendSessionMessage(draft("m-turn3-1", session, run.id().value(), MessageRole.USER, "Turn 3 user"));
+        store.appendSessionMessage(
+                draft("m-turn3-2", session, run.id().value(), MessageRole.ASSISTANT, "Turn 3 reply"));
+
+        // 3. Model that throws exception to trigger fallback
+        AgentChatModel failingModel = req -> {
+            throw new RuntimeException("Simulated model failure during compaction");
+        };
+
+        var binding = createBindingWithContextWindow(store, run, failingModel, 8192);
+
+        // 4. Force compaction on overflow: semantic fails and falls back to deterministic
+        coordinator.forceCompactOnOverflow(run, 1, binding);
+
+        // 5. Verify fallback merged semantic facts, decisions, and open items
+        ConversationSummary fallback = store.latestValid(session).orElseThrow();
+        assertThat(fallback.quality()).isEqualTo(CompactionQuality.DETERMINISTIC_DEGRADED);
+        assertThat(fallback.version().value()).isEqualTo(2L);
+        assertThat(fallback.facts()).anyMatch(f -> f.contains("Original Goal"));
+        assertThat(fallback.facts()).anyMatch(f -> f.contains("Strict Constraint"));
+        assertThat(fallback.decisions()).anyMatch(d -> d.contains("Decided Architecture"));
+        assertThat(fallback.openItems()).anyMatch(o -> o.contains("Open Question A"));
     }
 
     private static SessionMessageDraft draft(

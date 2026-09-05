@@ -47,17 +47,74 @@ public final class CompactionPromptRenderer {
             List<SemanticSummaryItem> carryForwardItems,
             ProjectedCompactionSource projectedSource) {
         Objects.requireNonNull(previousSummary, "previousSummary must not be null");
+        return userPromptFromConversationSummary(
+                previousSummary.map(s -> new ConversationSummary(
+                        new SummaryId("legacy"),
+                        new SummaryVersion(1),
+                        new io.haifa.agent.core.session.AgentSessionId("session"),
+                        new io.haifa.agent.core.message.MessageCursor(0),
+                        new io.haifa.agent.core.message.MessageCursor(0),
+                        List.of(),
+                        "hash",
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        0,
+                        java.time.Instant.EPOCH,
+                        "p1",
+                        "c1",
+                        java.util.Set.of(),
+                        true,
+                        Optional.of(s),
+                        CompactionQuality.SEMANTIC_VALIDATED)),
+                carryForwardItems,
+                projectedSource);
+    }
+
+    public static String userPromptFromConversationSummary(
+            Optional<ConversationSummary> previousSummary,
+            List<SemanticSummaryItem> carryForwardItems,
+            ProjectedCompactionSource projectedSource) {
+        Objects.requireNonNull(previousSummary, "previousSummary must not be null");
         Objects.requireNonNull(carryForwardItems, "carryForwardItems must not be null");
         Objects.requireNonNull(projectedSource, "projectedSource must not be null");
 
         StringBuilder sb = new StringBuilder();
 
         previousSummary.ifPresent(summary -> {
-            sb.append("<previous-summary schema-version=\"")
-                    .append(summary.schemaVersion())
-                    .append("\">\n")
-                    .append(SemanticSummaryRenderer.renderMarkdown(summary))
-                    .append("\n</previous-summary>\n\n");
+            if (summary.semanticSummary().isPresent()) {
+                SemanticConversationSummaryV1 semantic =
+                        summary.semanticSummary().get();
+                sb.append("<previous-summary schema-version=\"")
+                        .append(semantic.schemaVersion())
+                        .append("\">\n")
+                        .append(SemanticSummaryRenderer.renderMarkdown(semantic))
+                        .append("\n</previous-summary>\n\n");
+            } else if (!summary.facts().isEmpty()
+                    || !summary.decisions().isEmpty()
+                    || !summary.openItems().isEmpty()) {
+                sb.append("<previous-summary type=\"deterministic\">\n");
+                if (!summary.facts().isEmpty()) {
+                    sb.append("## Historical Facts\n");
+                    for (String fact : summary.facts()) {
+                        sb.append("- ").append(fact).append("\n");
+                    }
+                }
+                if (!summary.decisions().isEmpty()) {
+                    sb.append("## Historical Decisions\n");
+                    for (String dec : summary.decisions()) {
+                        sb.append("- ").append(dec).append("\n");
+                    }
+                }
+                if (!summary.openItems().isEmpty()) {
+                    sb.append("## Open Items\n");
+                    for (String item : summary.openItems()) {
+                        sb.append("- ").append(item).append("\n");
+                    }
+                }
+                sb.append("</previous-summary>\n\n");
+            }
         });
 
         if (!carryForwardItems.isEmpty()) {
@@ -98,6 +155,28 @@ public final class CompactionPromptRenderer {
         }
         sb.append("\nPlease correct these errors and regenerate the structured JSON summary.\n\n");
         sb.append(userPrompt(previousSummary, carryForwardItems, projectedSource));
+        return sb.toString();
+    }
+
+    public static String repairPromptFromConversationSummary(
+            SemanticConversationSummaryV1 invalidSummary,
+            List<String> validationErrors,
+            Optional<ConversationSummary> previousSummary,
+            List<SemanticSummaryItem> carryForwardItems,
+            ProjectedCompactionSource projectedSource) {
+        Objects.requireNonNull(invalidSummary, "invalidSummary must not be null");
+        Objects.requireNonNull(validationErrors, "validationErrors must not be null");
+        Objects.requireNonNull(previousSummary, "previousSummary must not be null");
+        Objects.requireNonNull(carryForwardItems, "carryForwardItems must not be null");
+        Objects.requireNonNull(projectedSource, "projectedSource must not be null");
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("The previous summary output failed validation with the following errors:\n");
+        for (String err : validationErrors) {
+            sb.append("- ").append(err).append("\n");
+        }
+        sb.append("\nPlease correct these errors and regenerate the structured JSON summary.\n\n");
+        sb.append(userPromptFromConversationSummary(previousSummary, carryForwardItems, projectedSource));
         return sb.toString();
     }
 }
