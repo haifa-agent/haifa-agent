@@ -569,7 +569,15 @@ final class LocalCodingAgent implements AutoCloseable {
                             })
                     : executionPlatform.repositoryBaselines();
             var operations = new LocalFileToolOperations(
-                    workspaces, files, mutations, identifiers, time, provisioning, sessionLedger, repositoryBaselines);
+                    workspaces,
+                    files,
+                    mutations,
+                    identifiers,
+                    time,
+                    provisioning,
+                    sessionLedger,
+                    repositoryBaselines,
+                    configuredTools.contains("workspace.attach"));
             TrustedWorkspaceEnvironmentCatalog workspaceEnvironment = new TrustedWorkspaceEnvironmentCatalog(
                     workspaceRoot,
                     verificationDiscovery,
@@ -619,6 +627,8 @@ final class LocalCodingAgent implements AutoCloseable {
             Set<String> disclosedToolAliases = catalog.snapshot().bindings().stream()
                     .map(binding -> binding.alias().value())
                     .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            boolean workspaceAttachmentDisclosed = catalog.snapshot().bindings().stream()
+                    .anyMatch(binding -> binding.definition().name().value().equals("workspace.attach"));
             var interactions = persistence.ports().interactions();
             Map<String, ResolvedModelSnapshot> modelSnapshots = configuration.availableModels().stream()
                     .collect(java.util.stream.Collectors.toUnmodifiableMap(
@@ -726,7 +736,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             disclosedToolAliases,
                             configuration.skills().allowedAliases(),
                             Set.of(),
-                            CodingAgentPrompt.forDisclosedToolAliases(disclosedToolAliases).text()
+                            CodingAgentPrompt.forWorkspaceAttachment(workspaceAttachmentDisclosed).text()
                                     + executionEnvironmentPrompt(
                                             executionPlatform == null ? "" : executionPlatform.shellDisplayName())
                                     + workspaceEnvironment
