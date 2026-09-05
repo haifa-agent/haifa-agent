@@ -178,6 +178,9 @@ public final class ModelMessageAssembler {
     }
 
     private String renderSummary(ConversationSummaryContent summary) {
+        if (summary.renderedMarkdown().isPresent()) {
+            return summary.renderedMarkdown().get();
+        }
         List<String> lines = new ArrayList<>();
         lines.add("[conversation-summary " + summary.summaryId() + "@" + summary.version() + "]");
         summary.facts().forEach(value -> lines.add("fact: " + value));
