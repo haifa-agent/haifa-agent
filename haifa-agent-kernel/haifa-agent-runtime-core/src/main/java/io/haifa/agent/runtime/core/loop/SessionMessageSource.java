@@ -8,6 +8,7 @@ import io.haifa.agent.context.compression.CompressionRequest;
 import io.haifa.agent.context.compression.ContextCompressor;
 import io.haifa.agent.context.compression.ConversationSummary;
 import io.haifa.agent.context.compression.ConversationSummaryRepository;
+import io.haifa.agent.context.compression.SemanticSummaryRenderer;
 import io.haifa.agent.context.compression.SummaryId;
 import io.haifa.agent.context.compression.SummaryVersion;
 import io.haifa.agent.context.item.ContextItem;
@@ -356,6 +357,8 @@ public final class SessionMessageSource {
     }
 
     private ContextItem summaryItem(ConversationSummary summary) {
+        Optional<String> renderedMarkdown = summary.semanticSummary()
+                .map(SemanticSummaryRenderer::renderMarkdown);
         return new ContextItem(
                 new ContextItemId("summary-" + summary.id().value() + "-"
                         + summary.version().value()),
@@ -368,7 +371,8 @@ public final class SessionMessageSource {
                         summary.openItems(),
                         summary.toolOutcomeReferences().stream()
                                 .map(ToolCallId::value)
-                                .toList()),
+                                .toList(),
+                        renderedMarkdown),
                 summary.estimatedTokens(),
                 ContextPriority.HIGH,
                 ContextRetention.COMPRESSIBLE,

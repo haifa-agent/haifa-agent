@@ -2,6 +2,7 @@ package io.haifa.agent.context.item;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Structured derived conversation data; it is not a fact source or long-term memory. */
 public record ConversationSummaryContent(
@@ -10,8 +11,20 @@ public record ConversationSummaryContent(
         List<String> facts,
         List<String> decisions,
         List<String> openItems,
-        List<String> toolOutcomeReferences)
+        List<String> toolOutcomeReferences,
+        Optional<String> renderedMarkdown)
         implements ContextContent {
+
+    public ConversationSummaryContent(
+            String summaryId,
+            long version,
+            List<String> facts,
+            List<String> decisions,
+            List<String> openItems,
+            List<String> toolOutcomeReferences) {
+        this(summaryId, version, facts, decisions, openItems, toolOutcomeReferences, Optional.empty());
+    }
+
     public ConversationSummaryContent {
         summaryId = requireText(summaryId, "summaryId");
         if (version < 1) throw new IllegalArgumentException("summary version must be positive");
@@ -19,7 +32,8 @@ public record ConversationSummaryContent(
         decisions = immutable(decisions, "decisions");
         openItems = immutable(openItems, "openItems");
         toolOutcomeReferences = immutable(toolOutcomeReferences, "toolOutcomeReferences");
-        if (facts.isEmpty() && decisions.isEmpty() && openItems.isEmpty() && toolOutcomeReferences.isEmpty()) {
+        renderedMarkdown = Objects.requireNonNullElse(renderedMarkdown, Optional.empty());
+        if (facts.isEmpty() && decisions.isEmpty() && openItems.isEmpty() && toolOutcomeReferences.isEmpty() && renderedMarkdown.isEmpty()) {
             throw new IllegalArgumentException("conversation summary must not be empty");
         }
     }
