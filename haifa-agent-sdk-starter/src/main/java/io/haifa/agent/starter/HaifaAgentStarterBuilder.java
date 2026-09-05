@@ -50,6 +50,16 @@ import java.util.function.Function;
 public final class HaifaAgentStarterBuilder {
     static final String API_KEY_ENVIRONMENT_VARIABLE = "DEEPSEEK_API_KEY";
     static final String MODEL_ID = "deepseek-v4-flash";
+    static final String VISION_MODEL_ID = "deepseek-v4-flash-vision-exp";
+    static final Set<String> SUPPORTED_DEEPSEEK_MODELS = Set.of(
+            MODEL_ID,
+            "deepseek-chat-flash",
+            "deepseek-chat-pro",
+            VISION_MODEL_ID,
+            "deepseek-responses-v4-flash-vision-exp",
+            "deepseek-anthropic-v4-flash-vision-exp");
+    static final Set<String> DEEPSEEK_VISION_MODELS =
+            Set.of(VISION_MODEL_ID, "deepseek-responses-v4-flash-vision-exp", "deepseek-anthropic-v4-flash-vision-exp");
     static final URI ENDPOINT = URI.create("https://api.deepseek.com");
 
     private static final String VERSION = "1.0.0";
@@ -248,7 +258,11 @@ public final class HaifaAgentStarterBuilder {
             throw new IllegalStateException(credentialEnvironmentVariable + " is not configured");
         }
         String modelId = defaultModelId != null ? defaultModelId : MODEL_ID;
-        boolean isVision = modelId.contains("vision");
+        if (!SUPPORTED_DEEPSEEK_MODELS.contains(modelId)) {
+            throw new IllegalArgumentException("unsupported default DeepSeek model: " + modelId
+                    + "; supported models are: " + SUPPORTED_DEEPSEEK_MODELS);
+        }
+        boolean isVision = DEEPSEEK_VISION_MODELS.contains(modelId);
         Set<ModelCapability> capabilities = isVision
                 ? Set.of(
                         ModelCapability.TEXT_CHAT,

@@ -1,5 +1,7 @@
 package io.haifa.agent.sdk.api;
 
+import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.model.api.ImageDataPart;
 import java.security.MessageDigest;
@@ -7,7 +9,6 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Bounded in-memory image store for SDK users, examples, and test environments. */
@@ -16,14 +17,24 @@ public final class InMemoryImageStore implements ModelImageResolver {
     public static final int MAXIMUM_IMAGE_BYTES = 10 * 1024 * 1024;
 
     private final String storeId;
+    private final IdentifierGenerator ids;
     private final Map<String, ImageDataPart> entries = new ConcurrentHashMap<>();
 
     public InMemoryImageStore() {
-        this(DEFAULT_STORE_ID);
+        this(DEFAULT_STORE_ID, new UuidV7IdentifierGenerator());
     }
 
     public InMemoryImageStore(String storeId) {
+        this(storeId, new UuidV7IdentifierGenerator());
+    }
+
+    public InMemoryImageStore(IdentifierGenerator ids) {
+        this(DEFAULT_STORE_ID, ids);
+    }
+
+    public InMemoryImageStore(String storeId, IdentifierGenerator ids) {
         this.storeId = Objects.requireNonNull(storeId, "storeId must not be null");
+        this.ids = Objects.requireNonNull(ids, "ids must not be null");
     }
 
     /**
@@ -41,7 +52,7 @@ public final class InMemoryImageStore implements ModelImageResolver {
         if (bytes.length < 1 || bytes.length > MAXIMUM_IMAGE_BYTES) {
             throw new IllegalArgumentException("image must contain 1 byte to 10 MiB");
         }
-        String id = UUID.randomUUID().toString();
+        String id = ids.nextValue();
         String sha256 = "sha256:" + digest(bytes);
         var part = new StoredImageContentPart(storeId, id, mediaType, bytes.length, sha256, originalFilename);
         entries.put(id, new ImageDataPart(part.mediaType(), bytes.clone()));
