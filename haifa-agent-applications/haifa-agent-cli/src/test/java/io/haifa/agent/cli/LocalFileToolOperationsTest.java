@@ -458,8 +458,8 @@ class LocalFileToolOperationsTest {
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData())
                 .containsEntry("errorCode", "ACCESS_DENIED")
-                .containsEntry("failureCategory", "POLICY_DENIED")
-                .containsEntry("failureActionCode", "REQUEST_DIRECTORY_AUTHORIZATION");
+                .containsEntry("failureCategory", "WORKSPACE_SCOPE_DENIED")
+                .containsEntry("failureActionCode", "USE_AUTHORIZED_WORKSPACE_PATH");
     }
 
     @Test

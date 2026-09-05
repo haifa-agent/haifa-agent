@@ -968,7 +968,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 switch (exception.code()) {
                     case PERMISSION_DENIED -> "POLICY_DENIED";
                     case PATH_ESCAPE_DENIED -> "POLICY_DENIED";
-                    case ACCESS_DENIED -> "POLICY_DENIED";
+                    case ACCESS_DENIED -> "WORKSPACE_SCOPE_DENIED";
                     case INVALID_ARGUMENT -> "INVALID_INPUT";
                     case CROSS_DIRECTORY_MOVE -> "INVALID_INPUT";
                 });
@@ -977,7 +977,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 switch (exception.code()) {
                     case PERMISSION_DENIED -> "REQUEST_WRITE_PERMISSION";
                     case PATH_ESCAPE_DENIED -> "USE_BOUNDED_PATH";
-                    case ACCESS_DENIED -> "REQUEST_DIRECTORY_AUTHORIZATION";
+                    case ACCESS_DENIED -> "USE_AUTHORIZED_WORKSPACE_PATH";
                     case INVALID_ARGUMENT -> "USE_ABSOLUTE_HOST_PATH";
                     case CROSS_DIRECTORY_MOVE -> "USE_CREATE_AND_DELETE";
                 });
