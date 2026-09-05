@@ -2,7 +2,6 @@ package io.haifa.agent.application.project.product.coding.prompt;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class CodingAgentPromptTest {
@@ -71,11 +70,11 @@ class CodingAgentPromptTest {
     }
 
     @Test
-    void rendersWorkspaceAttachmentGuidanceOnlyWhenTheToolIsDisclosed() {
+    void rendersWorkspaceAttachmentGuidanceAccordingToFrozenBuiltInAvailability() {
         CodingAgentPrompt.Snapshot withoutAttachment =
-                CodingAgentPrompt.forDisclosedToolAliases(Set.of("file_read", "execution_run"));
+                CodingAgentPrompt.forWorkspaceAttachment(false);
         CodingAgentPrompt.Snapshot withAttachment =
-                CodingAgentPrompt.forDisclosedToolAliases(Set.of("file_read", "workspace_attach"));
+                CodingAgentPrompt.forWorkspaceAttachment(true);
 
         assertThat(withoutAttachment.text())
                 .contains("does not expose a workspace attachment tool")
