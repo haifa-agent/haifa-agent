@@ -83,8 +83,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     public static final String SYNTHESIS_RUN_PROFILE = "personal-mission-synthesis";
     public static final String RESEARCH_SYNTHESIS_RUN_PROFILE = "personal-mission-research-synthesis";
     public static final String SYNTHESIS_PROTOCOL_VERSION = "v7";
-    public static final String STANDARD_SYNTHESIS_PROTOCOL_VERSION = "v3";
-    public static final String STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION = "v1";
+    public static final String STANDARD_SYNTHESIS_PROTOCOL_VERSION = "v4";
+    public static final String STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION = "v2";
     private static final int SYNTHESIS_MAX_UNVERIFIED_CLAIMS = 320;
     public static final long TASK_MAX_TOOL_CALLS = MissionTaskRunInput.PRIMARY_RESEARCH_TOOL_CALL_HARD_LIMIT;
     public static final long TASK_RESEARCH_TOOL_CALL_TARGET =
@@ -1273,7 +1273,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                                 invalid.structuredOutput(),
                                 violationCode,
                                 violationMessage,
-                                repairAttemptNo),
+                                repairAttemptNo,
+                                availableSources(intent)),
                         List.of(),
                         RuntimeOverrides.NONE));
         try {
@@ -1464,11 +1465,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     }
 
     static String standardSynthesisPrompt(MissionSynthesisIntent intent, List<SourceReference> availableSources) {
-        String sourcesSummary = availableSources.isEmpty()
-                ? "[]"
-                : availableSources.stream()
-                        .map(s -> "[%s] %s (%s)".formatted(s.sourceId(), s.title(), s.locator()))
-                        .collect(java.util.stream.Collectors.joining("\n- ", "\n- ", ""));
+        String sourcesSummary = standardSourceSummary(availableSources);
         return """
                 [mission-synthesis]
                 Produce exactly one JSON object matching pa.mission-final-result/v2. Return JSON only: no Markdown
@@ -1477,8 +1474,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 "answerMarkdown":"...","completedItems":["..."],"failedItems":[],
                 "taskOutcomes":[{"taskId":"...","status":"COMPLETED"}],
                 "acceptanceOutcomes":[{"criterionIndex":0,"status":"SATISFIED","taskIds":["..."]}],
-                "sectionSources":[{"sectionHeading":"...","sourceIds":["src-001"]}],
-                "sources":[{"sourceId":"...","title":"...","locator":"https://..."}],
+                "sectionSources":[],"sources":[],
                 "artifactRefs":[],"sourceRefs":[],"unverifiedClaims":["..."],"unresolvedQuestions":["..."],
                 "residualRisks":["..."],"completionKind":"COMPLETE"}.
 
@@ -1490,10 +1486,9 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 - taskOutcomes: array of {"taskId": "...", "status": "COMPLETED" | "FAILED"} for all authoritative tasks.
                 - acceptanceOutcomes: array of {"criterionIndex": <0-based index>, "status": "SATISFIED" | "UNSATISFIED", "taskIds": ["..."]}
                   indicating which tasks supported each criterion.
-                - sectionSources (optional): array of {"sectionHeading": "<heading>", "sourceIds": ["src-001"]} connecting narrative sections
-                  to available source IDs.
-                - sources: array of {"sourceId": "...", "title": "...", "locator": "https://..."} referencing the authoritative
-                  sources from completed tool calls. Do not fabricate URLs or invent sources not present in the available sources list.
+                - sectionSources (optional): connect narrative sections only to source IDs present in the authoritative available
+                  sources list. Leave it empty when no source is available.
+                - sources must always be an empty array because trusted Publisher code creates the final SourceReference objects.
                 artifactRefs must always be an empty JSON array because only trusted code can publish Artifacts.
                 completionKind must be COMPLETE exactly when failedItems is empty, all taskOutcomes are COMPLETED, and all
                 acceptanceOutcomes are SATISFIED; otherwise PARTIAL (including when failedItems is non-empty).
@@ -1506,7 +1501,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 Frozen Mission ID: %s
                 Mission mode: %s
                 Mission objective: %s
-                Authoritative Task IDs and objectives: %s
+                Authoritative terminal Tasks and statuses: %s
                 Mission acceptance criteria: %s
                 Authoritative settled Task results: %s
                 Failed or cancelled Task items: %s
@@ -1517,7 +1512,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         intent.missionId(),
                         intent.mode(),
                         intent.objective(),
-                        intent.completedTaskObjectives(),
+                        standardTaskSummary(intent),
                         intent.acceptanceCriteria(),
                         intent.taskResults(),
                         intent.failedItems(),
@@ -1530,8 +1525,10 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             String invalidOutput,
             String violationCode,
             String violationMessage,
-            int repairAttemptNo) {
+            int repairAttemptNo,
+            List<SourceReference> availableSources) {
         if (repairAttemptNo != 1) throw new IllegalArgumentException("Only one synthesis repair is supported");
+        String sourcesSummary = standardSourceSummary(availableSources);
         return """
                 [mission-synthesis]
                 This is the single bounded deterministic schema repair attempt. Convert the rejected output into
@@ -1544,8 +1541,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 "answerMarkdown":"...","completedItems":["..."],"failedItems":[],
                 "taskOutcomes":[{"taskId":"...","status":"COMPLETED"}],
                 "acceptanceOutcomes":[{"criterionIndex":0,"status":"SATISFIED","taskIds":["..."]}],
-                "sectionSources":[{"sectionHeading":"...","sourceIds":["src-001"]}],
-                "sources":[{"sourceId":"...","title":"...","locator":"https://..."}],
+                "sectionSources":[],"sources":[],
                 "artifactRefs":[],"sourceRefs":[],"unverifiedClaims":["..."],"unresolvedQuestions":["..."],
                 "residualRisks":["..."],"completionKind":"COMPLETE"}.
 
@@ -1553,16 +1549,20 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 answerMarkdown must be a comprehensive answer in Markdown format.
                 Do NOT copy internal task objectives or acceptance criteria verbatim into the beginning of the narrative;
                 instead record task and acceptance execution in taskOutcomes and acceptanceOutcomes.
+                Populate sectionSources only with IDs from the authoritative available sources list below; leave it empty when
+                no source is available. sources must remain an empty array because trusted Publisher code owns SourceReference.
                 artifactRefs must be empty. completionKind must be COMPLETE exactly when
                 failedItems is empty, all taskOutcomes are COMPLETED, and all acceptanceOutcomes are SATISFIED; otherwise PARTIAL (including when failedItems is non-empty).
                 Do not add any other top-level field.
 
                 Frozen Mission ID: %s
                 Mission objective: %s
-                Authoritative Task IDs and objectives: %s
+                Authoritative terminal Tasks and statuses: %s
                 Mission acceptance criteria: %s
                 Authoritative settled Task results: %s
                 Failed or cancelled Task items: %s
+                Execution as-of time: %s
+                Authoritative available sources from completed Tool calls: %s
                 Rejected source Synthesis Run ID: %s
                 Deterministic validation failure: %s - %s
                 Rejected output:
@@ -1571,14 +1571,43 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 .formatted(
                         intent.missionId(),
                         intent.objective(),
-                        intent.completedTaskObjectives(),
+                        standardTaskSummary(intent),
                         intent.acceptanceCriteria(),
                         intent.taskResults(),
                         intent.failedItems(),
+                        intent.asOf(),
+                        sourcesSummary,
                         invalidRunId,
                         violationCode,
                         violationMessage,
                         invalidOutput);
+    }
+
+    private static String standardSourceSummary(List<SourceReference> availableSources) {
+        if (availableSources == null || availableSources.isEmpty()) return "[]";
+        return availableSources.stream()
+                .map(s -> "[%s] %s (%s)".formatted(s.sourceId(), s.title(), s.locator()))
+                .collect(java.util.stream.Collectors.joining("\n- ", "\n- ", ""));
+    }
+
+    private static String standardTaskSummary(MissionSynthesisIntent intent) {
+        List<String> tasks = new ArrayList<>();
+        for (int index = 0; index < intent.completedTaskIds().size(); index++) {
+            String taskId = intent.completedTaskIds().get(index);
+            String objective = index < intent.completedTaskObjectives().size()
+                    ? intent.completedTaskObjectives().get(index)
+                    : "";
+            tasks.add("[" + taskId + "] status=COMPLETED" + (objective.isBlank() ? "" : " objective=" + objective));
+        }
+        for (String failedItem : intent.failedItems()) {
+            if (failedItem == null || failedItem.isBlank()) continue;
+            int separator = failedItem.indexOf(':');
+            String taskId = (separator < 0 ? failedItem : failedItem.substring(0, separator)).trim();
+            if (!taskId.isBlank()) {
+                tasks.add("[" + taskId + "] status=FAILED detail=" + failedItem.trim());
+            }
+        }
+        return tasks.isEmpty() ? "[]" : tasks.stream().collect(java.util.stream.Collectors.joining("\n- ", "\n- ", ""));
     }
 
     static String initialResearchSynthesisPrompt(MissionSynthesisIntent intent, SkillContent deepResearchSkill) {

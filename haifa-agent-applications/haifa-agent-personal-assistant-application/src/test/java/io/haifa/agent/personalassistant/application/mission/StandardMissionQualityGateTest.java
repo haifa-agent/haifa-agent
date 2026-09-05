@@ -23,18 +23,21 @@ class StandardMissionQualityGateTest {
                 "Summary",
                 answerMarkdown,
                 "COMPLETE",
-                List.of("Architecture review", "Production readiness"),
                 List.of(),
                 List.of(),
-                List.of(),
+                List.of(new StandardMissionQualityGate.TaskOutcome("task-architecture", "COMPLETED")),
+                List.of(new StandardMissionQualityGate.AcceptanceOutcome(0, "SATISFIED", List.of("task-architecture"))),
                 List.of(),
                 List.of("https://ethereum.org"));
 
         StandardMissionQualityGate.Result evaluation = gate.evaluate(
                 candidate,
                 List.of("task result".repeat(400)),
+                List.of("task-architecture"),
+                List.of(),
                 List.of("Architecture review"),
-                List.of("Production readiness"));
+                List.of("Production readiness"),
+                null);
         assertThat(evaluation.passed()).isTrue();
     }
 
@@ -60,14 +63,14 @@ class StandardMissionQualityGateTest {
     }
 
     @Test
-    void requiresV2TaskAndAcceptanceCoverage() {
+    void requiresV2StructuredOutcomesInsteadOfVerbatimCompletedItems() {
         StandardMissionQualityGate gate = new StandardMissionQualityGate();
         var candidate = new StandardMissionQualityGate.Candidate(
                 "pa.mission-final-result/v2",
                 "Summary",
                 "A".repeat(400),
                 "COMPLETE",
-                List.of("Different item"),
+                List.of("Architecture review", "Production readiness"),
                 List.of(),
                 List.of(),
                 List.of(),
@@ -75,10 +78,68 @@ class StandardMissionQualityGateTest {
                 List.of());
 
         StandardMissionQualityGate.Result evaluation = gate.evaluate(
-                candidate, List.of("settled result"), List.of("Architecture review"), List.of("Production readiness"));
+                candidate,
+                List.of("settled result"),
+                List.of("task-architecture"),
+                List.of(),
+                List.of("Architecture review"),
+                List.of("Production readiness"),
+                null);
 
         assertThat(evaluation.failureCodes())
                 .contains("STANDARD_TASK_COVERAGE_MISSING", "STANDARD_ACCEPTANCE_COVERAGE_MISSING");
+    }
+
+    @Test
+    void passesPartialMissionWithAuthoritativeFailedTaskOutcome() {
+        StandardMissionQualityGate gate = new StandardMissionQualityGate();
+        var candidate = new StandardMissionQualityGate.Candidate(
+                "pa.mission-final-result/v2",
+                "Summary",
+                "Substantive partial mission report with completed analysis and explicit remaining work. ".repeat(10),
+                "PARTIAL",
+                List.of(),
+                List.of("task-failed:BLOCKED:SOURCE_UNAVAILABLE"),
+                List.of(
+                        new StandardMissionQualityGate.TaskOutcome("task-complete", "COMPLETED"),
+                        new StandardMissionQualityGate.TaskOutcome("task-failed", "FAILED")),
+                List.of(new StandardMissionQualityGate.AcceptanceOutcome(0, "UNSATISFIED", List.of("task-failed"))),
+                List.of(),
+                List.of());
+
+        StandardMissionQualityGate.Result evaluation = gate.evaluate(
+                candidate,
+                List.of("settled result"),
+                List.of("task-complete"),
+                List.of("task-failed"),
+                List.of("Completed objective"),
+                List.of("Requires the blocked source"),
+                null);
+
+        assertThat(evaluation.passed()).isTrue();
+    }
+
+    @Test
+    void rejectsInventedTaskOutcomeWhenAllAuthoritativeTasksFailed() {
+        StandardMissionQualityGate gate = new StandardMissionQualityGate();
+        var candidate = new StandardMissionQualityGate.Candidate(
+                "pa.mission-final-result/v2",
+                "Summary",
+                "Substantive failure report explaining what was attempted and why no task completed. ".repeat(10),
+                "PARTIAL",
+                List.of(),
+                List.of("task-failed:BLOCKED:SOURCE_UNAVAILABLE"),
+                List.of(new StandardMissionQualityGate.TaskOutcome("invented-task", "FAILED")),
+                List.of(),
+                List.of(),
+                List.of());
+
+        StandardMissionQualityGate.Result evaluation =
+                gate.evaluate(candidate, List.of(), List.of(), List.of("task-failed"), List.of(), List.of(), null);
+
+        assertThat(evaluation.passed()).isFalse();
+        assertThat(evaluation.failureCodes())
+                .contains("STANDARD_TASK_OUTCOME_UNKNOWN_TASK", "STANDARD_TASK_COVERAGE_MISSING");
     }
 
     @Test
