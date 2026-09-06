@@ -1,10 +1,10 @@
 package io.haifa.agent.application.project.checkpoint;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.project.core.snapshot.WorkspaceSnapshotService;
+import io.haifa.agent.project.core.snapshot.WorkspaceSnapshotValidator;
 import io.haifa.agent.project.snapshot.WorkspaceDriftKind;
-import io.haifa.agent.project.snapshot.WorkspaceSnapshotService;
 import io.haifa.agent.project.snapshot.WorkspaceSnapshotStore;
-import io.haifa.agent.project.snapshot.WorkspaceSnapshotValidator;
 import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointCaptureContext;
 import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointCaptureStatus;
 import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointParticipant;

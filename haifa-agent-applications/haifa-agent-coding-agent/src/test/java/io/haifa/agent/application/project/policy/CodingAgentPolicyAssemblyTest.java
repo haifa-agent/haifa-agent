@@ -28,6 +28,15 @@ class CodingAgentPolicyAssemblyTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-26T00:00:00Z"), ZoneOffset.UTC);
 
     @Test
+    void exposesTheSharedPersistentAuthorizationService() {
+        AtomicInteger sequence = new AtomicInteger();
+        var assembly =
+                CodingAgentPolicyAssembly.create(ApprovalMode.ASK, CLOCK, () -> "policy-" + sequence.incrementAndGet());
+
+        assertThat(assembly.authorization().persistentGrantsEnabled()).isTrue();
+    }
+
+    @Test
     void mapsCompatibilityModesToLowAndNeverThresholds() {
         assertThat(decide(
                                 ApprovalMode.ASK,

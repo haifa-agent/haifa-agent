@@ -7,10 +7,20 @@ import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelProxySettings;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.policy.core.InMemoryPolicyStore;
+import io.haifa.agent.runtime.core.policy.RuntimePolicyAuthorizationEvidenceStore;
+import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
+import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
+import io.haifa.agent.sdk.product.ProductCapabilities;
+import io.haifa.agent.sdk.product.ProductContributionCoordinate;
+import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.URI;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -19,6 +29,30 @@ import org.junit.jupiter.api.io.TempDir;
 class PersonalAssistantConfigurationTest {
     @TempDir
     Path directory;
+
+    @Test
+    void installsTheSharedPersistentAuthorizationServiceForPersonalAssistantPolicy() {
+        InMemoryPolicyStore store = new InMemoryPolicyStore();
+        var policy = new PolicyPlatformContribution(
+                new SdkContributionMetadata(
+                        new ProductContributionCoordinate("pa-policy", "1.0.0"),
+                        ProductCapabilities.POLICY,
+                        "sha256:" + "0".repeat(64),
+                        ProductProviderSuitability.PRODUCTION,
+                        "Personal Assistant policy"),
+                store,
+                store,
+                new RuntimePolicyAuthorizationEvidenceStore(),
+                store,
+                store);
+
+        var shared = PersonalAssistantConfiguration.sharedPolicy(
+                policy, Clock.fixed(Instant.parse("2026-09-06T00:00:00Z"), ZoneOffset.UTC), () -> "pa-grant");
+
+        assertThat(shared.authorization().persistentGrantsEnabled()).isTrue();
+        assertThat(shared.approvalGrants()).contains(store);
+        assertThat(shared.projectTrusts()).contains(store);
+    }
 
     @Test
     void routesAntigravityAuthenticationTrafficThroughTheProviderProxy() {

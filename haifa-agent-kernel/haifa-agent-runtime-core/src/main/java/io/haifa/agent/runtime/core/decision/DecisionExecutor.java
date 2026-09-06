@@ -61,6 +61,7 @@ import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import io.haifa.agent.runtime.core.tool.ToolAuthorizationProtocolException;
 import io.haifa.agent.runtime.core.tool.ToolInputValidationException;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPipelineOutcome;
@@ -425,6 +426,9 @@ public final class DecisionExecutor {
             } catch (ToolPolicyDeniedException denial) {
                 rejectPolicyDeniedToolRequest(run, call, step, denial);
                 continue;
+            } catch (ToolAuthorizationProtocolException protocol) {
+                rejectAuthorizationProtocolToolRequest(run, call, step, loopContext, protocol);
+                continue;
             } catch (ToolInputValidationException validation) {
                 rejectToolRequest(
                         run, call, step, loopContext, validation, "Tool request rejected. " + validation.repairHint());
@@ -500,6 +504,26 @@ public final class DecisionExecutor {
                 time.now());
         state.appendStep(step);
         appendToolResult(run, call, "Tool request was denied by policy; choose an authorized capability.");
+    }
+
+    private void rejectAuthorizationProtocolToolRequest(
+            AgentRun run,
+            ToolCall call,
+            AgentStep step,
+            AgentLoopContext loopContext,
+            ToolAuthorizationProtocolException protocol) {
+        repairRetry.check(loopContext.recordRepairAttempt());
+        cancelRejectedCall(call);
+        state.appendToolCall(call);
+        step.fail(
+                new AgentStepError(new AgentError(
+                        AgentErrorCode.TOOL_REQUEST_REJECTED,
+                        Map.of("reason", protocol.reasonCode()),
+                        ids.nextValue(),
+                        time.now())),
+                time.now());
+        state.appendStep(step);
+        appendToolResult(run, call, "Tool request uses an unsupported protocol. " + protocol.safeExplanation());
     }
 
     private void cancelRejectedCall(ToolCall call) {

@@ -34,6 +34,7 @@ import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.ApprovalVerification;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
 import io.haifa.agent.policy.api.PolicyAuthorizationEvidenceStore;
+import io.haifa.agent.policy.api.PolicyAuthorizationService;
 import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.policy.api.PolicySnapshot;
 import io.haifa.agent.policy.api.PolicySnapshotRef;
@@ -195,6 +196,7 @@ public final class RuntimeCoreBuilder {
     private PolicySnapshotStore policySnapshots;
     private PolicyAuthorizationEvidenceStore policyAuthorizationEvidence =
             new RuntimePolicyAuthorizationEvidenceStore();
+    private PolicyAuthorizationService policyAuthorization = PolicyAuthorizationService.decisionOnly();
     private ApprovalVerificationService approvalVerification = (request, responder) -> {
         boolean samePrincipal = request.requester().tenant().equals(responder.tenant())
                 && request.requester().principal().equals(responder.principal());
@@ -402,6 +404,11 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder approvalVerification(ApprovalVerificationService value) {
         approvalVerification = Objects.requireNonNull(value, "value");
+        return this;
+    }
+
+    public RuntimeCoreBuilder policyAuthorization(PolicyAuthorizationService value) {
+        policyAuthorization = Objects.requireNonNull(value, "value");
         return this;
     }
 
@@ -635,7 +642,8 @@ public final class RuntimeCoreBuilder {
                 transitions,
                 toolResultAssets,
                 LargeToolResultPolicy.defaults(),
-                toolRequestCanonicalizer);
+                toolRequestCanonicalizer,
+                policyAuthorization);
         List<AgentRuntimeMiddleware> configuredMiddleware = new ArrayList<>(List.of(
                 new RunMetadataMiddleware(),
                 new SafetyInstructionMiddleware(),
@@ -785,6 +793,7 @@ public final class RuntimeCoreBuilder {
                 persistenceRetry,
                 approvalVerification,
                 policyAuthorizationEvidence,
+                policyAuthorization,
                 policyDecisions,
                 configuredRunInputs,
                 eventFeed,

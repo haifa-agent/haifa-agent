@@ -61,8 +61,11 @@
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-policy-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-policy-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-execution-core</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-execution-host</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-sandbox-host</artifactId></dependency>
-        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project-api</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project-core</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project-host</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-logging</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webflux</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-actuator</artifactId></dependency>

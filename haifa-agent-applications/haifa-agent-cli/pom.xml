@@ -23,7 +23,9 @@
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-policy-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-policy-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-skill-api</artifactId></dependency>
-        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project-api</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project-core</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project-host</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-tool-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-tool-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-credential-api</artifactId></dependency>
@@ -33,6 +35,7 @@
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-coding-agent</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-coding-terminal</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-execution-core</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-execution-host</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-git</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-sandbox-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-sandbox-host</artifactId></dependency>
