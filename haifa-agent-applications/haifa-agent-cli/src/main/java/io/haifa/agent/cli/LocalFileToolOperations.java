@@ -190,7 +190,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 case "file.patch" -> patch(workspaceId, reviewContext, mutationContext, arguments.values());
                 case "file.delete" -> delete(reviewContext, mutationContext, arguments.values());
                 case "file.move" -> move(reviewContext, mutationContext, arguments.values());
-                case "workspace.attach" -> attach(arguments.values());
+                case "workspace.attach" -> attach(arguments.values(), policyDecisionRef);
                 default -> throw new IllegalStateException("CLI does not support tool: " + toolName);
             };
         } catch (HostWorkspaceScopeException exception) {
@@ -797,7 +797,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                         "workspace not found"));
     }
 
-    private ToolResult attach(Map<String, Object> values) {
+    private ToolResult attach(Map<String, Object> values, String policyDecisionRef) {
         String requestedPath = string(values, "path");
         Path requested = Path.of(requestedPath);
         if (!requested.isAbsolute()) {
@@ -821,13 +821,16 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             if (Files.isSymbolicLink(realPath)) {
                 throw new IllegalArgumentException("workspace.attach path must not be a symbolic link");
             }
-            var result = provisioning.authorize(realPath, permission);
+            var result = provisioning.authorizeApprovedAttach(realPath, permission, policyDecisionRef);
+            var view = result.registryView();
             return success(
-                    "Authorized " + realPath + " as " + permission.name(),
+                    "Authorized workspace " + view.safeDisplayName() + " as " + permission.name(),
                     Map.of(
-                            "workspaceId", result.directory().workspaceId().value(),
-                            "path", realPath.toString(),
-                            "permission", permission.name()));
+                            "workspaceRef", view.workspaceRef(),
+                            "safeDisplayName", view.safeDisplayName(),
+                            "permission", permission.name(),
+                            "source", view.source().name(),
+                            "status", view.status().name()));
         } catch (IOException e) {
             throw new IllegalArgumentException("workspace.attach path cannot be accessed");
         }

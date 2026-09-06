@@ -141,8 +141,7 @@ Search/Fetch Tool。Web 的 Provider-neutral Java 接口、Tool adapter、URL Po
 SQLite 模式要求数据库文件绝对路径，并显式选择 `NONE` 或 `AES_GCM` payload protection；后者还要求
 `env://` 形式的稳定 continuation protector 引用。JSONL 模式还要求已存在、可写、非符号链接的受控
 绝对目录。Application 在一次 checksum 校验中组合 Runtime Migration 与自己
-拥有的 `V1000 project_product_session`、`V1001 coding_session_*`、
-`V1002 coding_session_event_cursor` 与 `V1003 coding_session_management` Migration，不修改
+拥有的 `V1000 project_product_session` 至 `V1007 coding_workspace_registry` Migration，不修改
 Runtime Schema。每次进程启动生成新的 worker ID，
 并把完整 `RuntimePersistencePorts`、worker ID 和仅针对安全 `SQLITE_BUSY/LOCKED` 获取失败的有界重试策略
 注入 `RuntimeCoreBuilder`。
@@ -155,6 +154,11 @@ Session 重新核对，漂移时 fail closed。JSONL projector 只在 Runtime �
 Application 自有的 Product/Coding 表通过 MyBatis Mapper XML 接入
 `SqliteRuntimeUnitOfWork`，与 Runtime/Policy 共用同一个 `BEGIN IMMEDIATE` 事务边界；应用层 Store
 不直接使用 JDBC。Mapper 仍经过 SQLite Foundation 的静态 XML 校验，禁止 `${...}` 动态 SQL。
+
+`coding_workspace_registry` 是 CA 自有 Host/Application 持久事实，不进入公共 Runtime/Core。SQLite Adapter
+通过当前持久保护器保存本机根位置，并绑定 project、workspace、location 与 fingerprint；解密失败、目录缺失、
+身份漂移、link/reparse point 或根重叠都会禁用记录而不恢复权限。模型只能看到脱敏 Registry 投影；本地
+`file.*` 继续接收宿主绝对路径并在当前活动 Registry/Scope 中重新解析。
 
 ## Coding Session 产品闭环
 

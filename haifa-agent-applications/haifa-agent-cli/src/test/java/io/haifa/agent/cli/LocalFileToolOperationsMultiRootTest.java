@@ -464,7 +464,7 @@ class LocalFileToolOperationsMultiRootTest {
         assertThat(authorization.successful()).isTrue();
 
         WorkspaceId extraWsId = new WorkspaceId(
-                authorization.structuredData().get("workspaceId").toString());
+                authorization.structuredData().get("workspaceRef").toString());
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         Workspace before = workspaces.find(extraWsId).orElseThrow();
         Workspace customRevision = before.advanceRevision(

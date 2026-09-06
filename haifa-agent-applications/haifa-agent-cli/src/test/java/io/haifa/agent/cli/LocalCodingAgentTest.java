@@ -491,6 +491,109 @@ class LocalCodingAgentTest {
     }
 
     @Test
+    void approvedWorkspaceAttachmentIsPathRedactedAndRestoredForAbsoluteFileTools() throws Exception {
+        Path database = configuredSkillRoot.resolve("workspace-registry-recovery.db");
+        Path attachedDirectory = Files.createDirectory(configuredSkillRoot.resolve("persistent-attached"));
+        Path attachedFile = Files.writeString(attachedDirectory.resolve("restored.txt"), "restored-content");
+        CliConfiguration defaults = CliConfiguration.defaults();
+        var configuration = new CliConfiguration(
+                defaults.model(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                defaults.web(),
+                defaults.skills(),
+                hostExecution(defaults.execution()),
+                ApprovalMode.ASK,
+                Duration.ofSeconds(60),
+                defaults.maxIterations(),
+                defaults.maxToolCalls(),
+                ProjectPersistenceConfiguration.sqlite(database, "env://HAIFA_TEST_CONTINUATION_KEY"));
+        AtomicReference<String> workspaceRef = new AtomicReference<>();
+        AtomicInteger attachCalls = new AtomicInteger();
+        var attachModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            if (attachCalls.incrementAndGet() == 1) {
+                return toolResponse(
+                        "persistent-attach",
+                        "workspace_attach",
+                        Map.of("path", attachedDirectory.toString(), "permission", "read-only"));
+            }
+            var result = request.messages().stream()
+                    .filter(message -> message.role() == ModelMessageRole.TOOL)
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(result.toolResultData())
+                    .containsKeys("workspaceRef", "safeDisplayName", "permission", "source", "status")
+                    .doesNotContainKeys("path", "realPath", "locationRef", "workspaceId");
+            workspaceRef.set(String.valueOf(result.toolResultData().get("workspaceRef")));
+            assertThat(result.content()).doesNotContain(attachedDirectory.toString());
+            return answer("persistent-attach-complete", "attachment persisted");
+        };
+        var protector = new AesGcmModelContinuationProtector(
+                new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom());
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                attachModel,
+                ignored -> {},
+                protector)) {
+            var accepted = agent.start("Attach the requested directory read-only.");
+            var interaction = awaitPendingInteraction(agent, accepted.runId(), Duration.ofSeconds(60));
+            assertThat(interaction.prompt()).contains(attachedDirectory.toString());
+            agent.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId(agent.identifiers().nextValue()),
+                            interaction.id(),
+                            interaction.runId(),
+                            InteractionResponseType.APPROVE,
+                            List.of(),
+                            "approve-" + interaction.id().value(),
+                            agent.time().now()));
+            assertThat(awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(60))
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+        }
+
+        AtomicInteger readCalls = new AtomicInteger();
+        var readModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            if (readCalls.incrementAndGet() == 1) {
+                String system = request.messages().stream()
+                        .filter(message -> message.role() == ModelMessageRole.SYSTEM)
+                        .map(message -> message.content())
+                        .collect(java.util.stream.Collectors.joining("\n"));
+                assertThat(system)
+                        .contains("<workspace_registry", workspaceRef.get(), "persistent-attached", "READ_ONLY")
+                        .doesNotContain(attachedDirectory.toString());
+                return toolResponse(
+                        "persistent-read",
+                        "file_read",
+                        Map.of("path", attachedFile.toAbsolutePath().normalize().toString()));
+            }
+            assertThat(request.messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && "restored-content"
+                                    .equals(message.toolResultData().get("content")));
+            return answer("persistent-read-complete", "restored workspace read");
+        };
+        try (var reopened = LocalCodingAgent.create(
+                workspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                readModel,
+                ignored -> {},
+                new AesGcmModelContinuationProtector(
+                        new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
+            var accepted = reopened.start("Read the restored attached file by absolute path.");
+            assertThat(awaitTerminal(reopened, accepted.runId(), Duration.ofSeconds(60))
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+        }
+        assertThat(attachCalls).hasValue(2);
+        assertThat(readCalls).hasValue(2);
+    }
+
+    @Test
     void sqliteSessionClientApprovalResumesAnExecutionRun() throws Exception {
         Path database = configuredSkillRoot.resolve("session-client-approval.db");
         Path transcripts = Files.createDirectory(configuredSkillRoot.resolve("session-client-approval-transcripts"));

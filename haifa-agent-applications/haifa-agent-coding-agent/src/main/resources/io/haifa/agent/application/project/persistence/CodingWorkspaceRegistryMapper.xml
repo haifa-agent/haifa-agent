@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.haifa.agent.application.project.persistence.CodingWorkspaceRegistryMapper">
+    <resultMap id="workspaceRegistryRow" type="io.haifa.agent.application.project.persistence.CodingWorkspaceRegistryRow">
+        <constructor>
+            <arg column="project_id" javaType="java.lang.String"/>
+            <arg column="workspace_ref" javaType="java.lang.String"/>
+            <arg column="location_ref" javaType="java.lang.String"/>
+            <arg column="safe_display_name" javaType="java.lang.String"/>
+            <arg column="permission" javaType="java.lang.String"/>
+            <arg column="source" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="location_nonce" javaType="[B"/>
+            <arg column="location_ciphertext" javaType="[B"/>
+            <arg column="location_digest" javaType="java.lang.String"/>
+            <arg column="fingerprint" javaType="java.lang.String"/>
+            <arg column="authorization_ref" javaType="java.lang.String"/>
+            <arg column="created_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="validated_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="revoked_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="revocation_reason_code" javaType="java.lang.String"/>
+            <arg column="version" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <select id="find" resultMap="workspaceRegistryRow">
+        SELECT * FROM coding_workspace_registry
+        WHERE project_id = #{projectId} AND workspace_ref = #{workspaceRef}
+    </select>
+
+    <select id="list" resultMap="workspaceRegistryRow">
+        SELECT * FROM coding_workspace_registry
+        WHERE project_id = #{projectId}
+        ORDER BY workspace_ref
+    </select>
+
+    <insert id="insert">
+        INSERT INTO coding_workspace_registry(
+            project_id, workspace_ref, location_ref, safe_display_name, permission, source, status,
+            location_nonce, location_ciphertext, location_digest, fingerprint, authorization_ref,
+            created_at_ms, validated_at_ms, revoked_at_ms, revocation_reason_code, version
+        ) VALUES (
+            #{row.projectId}, #{row.workspaceRef}, #{row.locationRef}, #{row.safeDisplayName},
+            #{row.permission}, #{row.source}, #{row.status}, #{row.locationNonce},
+            #{row.locationCiphertext}, #{row.locationDigest}, #{row.fingerprint},
+            #{row.authorizationRef}, #{row.createdAt}, #{row.validatedAt}, #{row.revokedAt},
+            #{row.revocationReasonCode}, #{row.version}
+        )
+    </insert>
+
+    <update id="update">
+        UPDATE coding_workspace_registry
+        SET location_ref = #{row.locationRef}, safe_display_name = #{row.safeDisplayName},
+            permission = #{row.permission}, source = #{row.source}, status = #{row.status},
+            location_nonce = #{row.locationNonce}, location_ciphertext = #{row.locationCiphertext},
+            location_digest = #{row.locationDigest}, fingerprint = #{row.fingerprint},
+            authorization_ref = #{row.authorizationRef}, validated_at_ms = #{row.validatedAt},
+            revoked_at_ms = #{row.revokedAt}, revocation_reason_code = #{row.revocationReasonCode},
+            version = #{row.version}
+        WHERE project_id = #{row.projectId} AND workspace_ref = #{row.workspaceRef}
+          AND version = #{expectedVersion}
+    </update>
+
+    <update id="disableCorruptLocation">
+        UPDATE coding_workspace_registry
+        SET status = 'DISABLED', revoked_at_ms = #{disabledAt},
+            revocation_reason_code = #{reasonCode}, validated_at_ms = #{disabledAt},
+            version = version + 1
+        WHERE project_id = #{projectId} AND workspace_ref = #{workspaceRef}
+          AND version = #{expectedVersion} AND status = 'ACTIVE'
+    </update>
+</mapper>
