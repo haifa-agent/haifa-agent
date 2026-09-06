@@ -125,7 +125,9 @@ replay-then-tail 订阅。Task 03 的 HTTP/SSE 参考 Adapter 位于 Integration
 访问本模块。
 
 `SessionMessageSource` 把有效 `ConversationSummary` 作为不可变 Context Window Checkpoint；普通消息只从
-`coveredThrough` 之后追加，只有输入 Token 预算达到阈值、强制重建或手动压缩才生成下一代 Summary。
+`coveredThrough` 之后追加。启用语义压缩时，`SemanticCompactionCoordinator` 是自动生成下一代 Summary
+的唯一写入者：它可在一次逻辑压缩中连续 Fold 多个有界批次，全部验证成功后只做一次 CAS；任一批次失败
+不提交中间状态。未启用语义压缩时，输入 Token 阈值与强制重建仍使用确定性压缩；手动入口始终显式可用。
 Tail 按 Token 预算从后向前选择，固定消息组数只作为安全上限，Tool Call/Result 原子组不会被拆开。
 `compact(sessionId)` 是产品手动压缩复用的唯一入口，并与自动切换共用 Policy/version、CAS、Redaction
 校验和原始 Message 保留语义。Context Trace 只记录窗口摘要、代次、触发原因和 Token 数，不记录正文。
