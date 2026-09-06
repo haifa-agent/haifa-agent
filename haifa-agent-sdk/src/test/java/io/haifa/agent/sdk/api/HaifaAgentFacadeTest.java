@@ -4,9 +4,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.ApiStyleId;
+import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelAdapterCoordinate;
+import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelDefinitionId;
+import io.haifa.agent.model.api.ModelErrorCategory;
+import io.haifa.agent.model.api.ModelInvocationException;
+import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.sdk.SdkTestFixtures;
+import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.conversation.ChangeConversationStatusCommand;
 import io.haifa.agent.sdk.conversation.ConversationException;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
@@ -16,13 +29,16 @@ import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductProfile;
+import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
 import io.haifa.agent.sdk.tool.JavaToolSpec;
+import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -201,6 +217,71 @@ public class HaifaAgentFacadeTest {
                     assertThat(error.getMessage()).isEqualTo("AGENT_CLOSED");
                     assertThat(error.getCause()).isNull();
                 });
+    }
+
+    @Test
+    void paymentRequiredModelFailureTerminatesRunWithModelPaymentRequired() throws Exception {
+        ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
+                new ModelProviderId("test"),
+                "1.0",
+                new ModelDefinitionId("test-chat"),
+                "1.0",
+                "test-chat",
+                "test-adapter",
+                "1.0",
+                new ApiStyleId("test-style"),
+                "standard",
+                URI.create("https://model.invalid/v1"),
+                new CredentialRef("credential:test"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT),
+                8_192,
+                1_024,
+                Map.of(),
+                Map.of());
+        AgentChatModel failingModel = request -> {
+            throw new ModelInvocationException(
+                    ModelErrorCategory.PAYMENT_REQUIRED,
+                    false,
+                    402,
+                    "payment_required",
+                    request.callId(),
+                    "请检查 Provider 账户余额、套餐、模型授权或账单状态后重试",
+                    null,
+                    null,
+                    false,
+                    "req-402-test");
+        };
+        ModelContribution failingContribution = new ModelContribution(
+                SdkTestFixtures.metadata(
+                        SdkTestFixtures.MODEL_COORDINATE,
+                        ProductCapabilities.MODEL,
+                        snapshot.configurationDigest(),
+                        ProductProviderSuitability.DEVELOPMENT),
+                Map.of(ModelAdapterCoordinate.from(snapshot), failingModel),
+                snapshot,
+                Map.of(snapshot.modelId().value(), snapshot));
+
+        try (HaifaAgent agent = HaifaAgents.builder()
+                .product(SdkTestFixtures.profile("personal", Map.of()))
+                .contribute(failingContribution)
+                .contribute(SdkTestFixtures.persistenceContribution())
+                .contribute(SdkTestFixtures.conversationContribution())
+                .build()) {
+            var started = agent.conversations()
+                    .start(new StartConversationCommand("start-payment-fail", "Payment test", "hello"));
+            var runId = started.activeRunId().orElseThrow();
+            var finalSnapshot = agent.runs().await(runId);
+            assertThat(finalSnapshot.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(finalSnapshot.error()).isPresent();
+            var agentError = finalSnapshot.error().get();
+            assertThat(agentError.code()).isEqualTo(AgentErrorCode.MODEL_PAYMENT_REQUIRED);
+            assertThat(agentError.details())
+                    .containsEntry("httpStatus", 402)
+                    .containsEntry("modelCategory", "PAYMENT_REQUIRED")
+                    .containsEntry("providerRequestId", "req-402-test")
+                    .containsEntry("retryDecision", "TERMINAL");
+        }
     }
 
     public record WeatherRequest(String city) {}

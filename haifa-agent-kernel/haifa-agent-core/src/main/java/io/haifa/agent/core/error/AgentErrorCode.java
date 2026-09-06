@@ -44,6 +44,11 @@ public enum AgentErrorCode {
             "Model authentication failed",
             AgentErrorCategory.CONFIGURATION,
             Retryability.NOT_RETRYABLE),
+    MODEL_PAYMENT_REQUIRED(
+            "MODEL_PAYMENT_REQUIRED",
+            "Model payment is required",
+            AgentErrorCategory.CONFIGURATION,
+            Retryability.NOT_RETRYABLE),
     MODEL_PERMISSION_DENIED(
             "MODEL_PERMISSION_DENIED", "Model access was denied", AgentErrorCategory.MODEL, Retryability.NOT_RETRYABLE),
     MODEL_RATE_LIMITED(

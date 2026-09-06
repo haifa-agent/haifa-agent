@@ -939,7 +939,8 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                 mapping.safeMessage(),
                 null,
                 mapping.retryAfter().orElse(null),
-                false);
+                false,
+                mapping.providerRequestId().orElse(null));
     }
 
     private static Optional<Duration> parseRetryAfter(String value) {
@@ -977,8 +978,31 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
             Throwable cause,
             Duration retryAfter,
             boolean outputObserved) {
+        return failure(request, category, retryable, status, code, message, cause, retryAfter, outputObserved, null);
+    }
+
+    private ModelInvocationException failure(
+            AgentChatRequest request,
+            ModelErrorCategory category,
+            boolean retryable,
+            int status,
+            String code,
+            String message,
+            Throwable cause,
+            Duration retryAfter,
+            boolean outputObserved,
+            String providerRequestId) {
         return new ModelInvocationException(
-                category, retryable, status, code, request.callId(), message, cause, retryAfter, outputObserved);
+                category,
+                retryable,
+                status,
+                code,
+                request.callId(),
+                message,
+                cause,
+                retryAfter,
+                outputObserved,
+                providerRequestId);
     }
 
     private static String textOr(JsonNode node, String fallback) {
