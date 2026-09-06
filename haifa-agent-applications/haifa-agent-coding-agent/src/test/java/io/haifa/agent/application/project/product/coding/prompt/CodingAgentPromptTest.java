@@ -11,9 +11,9 @@ class CodingAgentPromptTest {
         CodingAgentPrompt.Snapshot second = CodingAgentPrompt.current();
 
         assertThat(second).isEqualTo(first);
-        assertThat(first.version()).isEqualTo("1.5.0");
+        assertThat(first.version()).isEqualTo("1.6.0");
         assertThat(first.digest()).matches("sha256:[0-9a-f]{64}");
-        assertThat(first.identity()).startsWith("coding-agent-prompt@1.5.0#sha256:");
+        assertThat(first.identity()).startsWith("coding-agent-prompt@1.6.0#sha256:");
         assertThat(first.text())
                 .contains(
                         "You are Haifa Coding Agent",
@@ -53,13 +53,10 @@ class CodingAgentPromptTest {
                         "every item against final implementation/evidence",
                         "unresolved items are not complete",
                         "result-verification skill",
-                        "checks, skipped checks, and remaining risks",
-                        "request workspace_attach",
-                        "Use host absolute paths for every file operation",
-                        "relative paths and root aliases are invalid",
-                        "persisted absolute path is not authorization",
-                        "least permission needed")
+                        "checks, skipped checks, and remaining risks")
                 .doesNotContain(
+                        "workspace_attach",
+                        "Use host absolute paths for every file operation",
                         "aider/polyglot_",
                         "deduplication",
                         "rejected-record",
@@ -70,5 +67,19 @@ class CodingAgentPromptTest {
                         "capturedOutputRef",
                         "Case 14",
                         "/Users/");
+    }
+
+    @Test
+    void rendersWorkspaceAttachmentGuidanceAccordingToFrozenBuiltInAvailability() {
+        CodingAgentPrompt.Snapshot withoutAttachment = CodingAgentPrompt.forWorkspaceAttachment(false);
+        CodingAgentPrompt.Snapshot withAttachment = CodingAgentPrompt.forWorkspaceAttachment(true);
+
+        assertThat(withoutAttachment.text())
+                .contains("does not expose a workspace attachment tool")
+                .doesNotContain("request workspace_attach");
+        assertThat(withAttachment.text())
+                .contains("request workspace_attach", "least permission needed")
+                .doesNotContain("does not expose a workspace attachment tool");
+        assertThat(withAttachment.identity()).isNotEqualTo(withoutAttachment.identity());
     }
 }

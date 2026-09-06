@@ -244,14 +244,25 @@ class LocalFileToolOperationsTest {
     }
 
     private Fixture fixture() {
-        return fixture(null, null);
+        return fixture(null, null, false);
     }
 
     private Fixture fixture(InMemorySessionChangeLedger ledger) {
-        return fixture(ledger, null);
+        return fixture(ledger, null, false);
     }
 
     private Fixture fixture(InMemorySessionChangeLedger ledger, RunRepositoryBaselineRegistry repositoryBaselines) {
+        return fixture(ledger, repositoryBaselines, false);
+    }
+
+    private Fixture fixture(boolean workspaceAttachmentDisclosed) {
+        return fixture(null, null, workspaceAttachmentDisclosed);
+    }
+
+    private Fixture fixture(
+            InMemorySessionChangeLedger ledger,
+            RunRepositoryBaselineRegistry repositoryBaselines,
+            boolean workspaceAttachmentDisclosed) {
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         WorkspaceId workspaceId = new WorkspaceId("workspace-file-read");
         ProjectId projectId = new ProjectId("project-file-read");
@@ -316,7 +327,15 @@ class LocalFileToolOperationsTest {
                 identifiers,
                 () -> now);
         var operations = new LocalFileToolOperations(
-                workspaces, files, mutations, identifiers, () -> now, provisioning, ledger, repositoryBaselines);
+                workspaces,
+                files,
+                mutations,
+                identifiers,
+                () -> now,
+                provisioning,
+                ledger,
+                repositoryBaselines,
+                workspaceAttachmentDisclosed);
         return new Fixture(workspaceId, operations);
     }
 
@@ -458,7 +477,26 @@ class LocalFileToolOperationsTest {
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData())
                 .containsEntry("errorCode", "ACCESS_DENIED")
-                .containsEntry("failureCategory", "POLICY_DENIED")
+                .containsEntry("failureCategory", "WORKSPACE_SCOPE_DENIED")
+                .containsEntry("failureActionCode", "USE_AUTHORIZED_WORKSPACE_PATH");
+    }
+
+    @Test
+    void requestsDirectoryAuthorizationForUnauthorizedHostPathWhenAttachmentIsDisclosed() throws Exception {
+        Fixture fixture = fixture(true);
+        Path outside = root.resolveSibling("outside.txt").toAbsolutePath().normalize();
+        var result = fixture.operations.execute(
+                "file.read",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", outside.toString())));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "ACCESS_DENIED")
+                .containsEntry("failureCategory", "WORKSPACE_SCOPE_DENIED")
                 .containsEntry("failureActionCode", "REQUEST_DIRECTORY_AUTHORIZATION");
     }
 
