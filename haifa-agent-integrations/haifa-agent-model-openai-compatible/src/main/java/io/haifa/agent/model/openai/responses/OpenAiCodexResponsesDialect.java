@@ -139,7 +139,8 @@ final class OpenAiCodexResponsesDialect implements OpenAiResponsesDialect {
                         : "ChatGPT Codex usage limit reached for the " + rateLimit.planType() + " plan";
             }
         }
-        return new DialectErrorMapping(standard.category(), retryable, providerCode, safeMessage, retryAfter);
+        return new DialectErrorMapping(
+                standard.category(), retryable, providerCode, safeMessage, retryAfter, standard.providerRequestId());
     }
 
     private static String codexProviderCode(byte[] body) {

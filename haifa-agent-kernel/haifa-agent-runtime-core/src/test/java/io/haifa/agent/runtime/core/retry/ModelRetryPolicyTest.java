@@ -62,6 +62,7 @@ class ModelRetryPolicyTest {
 
         EnumSet.of(
                         ModelErrorCategory.AUTHENTICATION_FAILED,
+                        ModelErrorCategory.PAYMENT_REQUIRED,
                         ModelErrorCategory.PERMISSION_DENIED,
                         ModelErrorCategory.INVALID_REQUEST,
                         ModelErrorCategory.MODEL_NOT_FOUND,

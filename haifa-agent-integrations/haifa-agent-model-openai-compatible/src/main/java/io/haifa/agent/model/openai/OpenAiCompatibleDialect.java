@@ -38,6 +38,7 @@ public interface OpenAiCompatibleDialect {
                         ? ModelErrorCategory.CONTEXT_TOO_LONG
                         : ModelErrorCategory.INVALID_REQUEST;
             case 401 -> ModelErrorCategory.AUTHENTICATION_FAILED;
+            case 402 -> ModelErrorCategory.PAYMENT_REQUIRED;
             case 403 -> ModelErrorCategory.PERMISSION_DENIED;
             case 404 -> ModelErrorCategory.MODEL_NOT_FOUND;
             case 408 -> ModelErrorCategory.TIMEOUT;

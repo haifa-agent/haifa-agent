@@ -943,6 +943,7 @@ public final class DefaultAgentLoop implements AgentLoop {
         }
         return switch (modelError.category()) {
             case AUTHENTICATION_FAILED -> AgentErrorCode.MODEL_AUTHENTICATION_FAILED;
+            case PAYMENT_REQUIRED -> AgentErrorCode.MODEL_PAYMENT_REQUIRED;
             case PERMISSION_DENIED -> AgentErrorCode.MODEL_PERMISSION_DENIED;
             case RATE_LIMITED -> AgentErrorCode.MODEL_RATE_LIMITED;
             case TIMEOUT -> AgentErrorCode.MODEL_TIMEOUT;
@@ -1198,6 +1199,8 @@ public final class DefaultAgentLoop implements AgentLoop {
             if (!modelError.providerCode().isBlank()) details.put("providerCode", modelError.providerCode());
             details.put("outputObserved", modelError.outputObserved());
             modelError.retryAfterMillis().ifPresent(delay -> details.put("retryAfterMillis", delay));
+            details.put("retryDecision", modelError.retryDecision());
+            modelError.providerRequestId().ifPresent(id -> details.put("providerRequestId", id));
             details.put("providerMessage", modelError.getMessage());
         }
         return Map.copyOf(details);
@@ -1240,6 +1243,8 @@ public final class DefaultAgentLoop implements AgentLoop {
             attributes.put("modelCallId", modelError.callId().value());
             attributes.put("outputObserved", modelError.outputObserved());
             modelError.retryAfterMillis().ifPresent(delay -> attributes.put("retryAfterMillis", delay));
+            attributes.put("retryDecision", modelError.retryDecision());
+            modelError.providerRequestId().ifPresent(id -> attributes.put("providerRequestId", id));
             attributes.put("providerMessage", modelError.getMessage());
         }
         return Map.copyOf(attributes);
