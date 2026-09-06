@@ -1271,6 +1271,7 @@ class RuntimeCoreTest {
     void asynchronousToolApprovalPausesWorkerAndResumesSameCallInANewAttempt() {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger toolCalls = new AtomicInteger();
+        AtomicReference<String> dispatchedDecisionRef = new AtomicReference<>();
         InMemoryPolicyStore grants = new InMemoryPolicyStore();
         var authorization = new DefaultApprovalGrantService(
                 grants,
@@ -1297,6 +1298,8 @@ class RuntimeCoreTest {
                         ToolPolicyDecision.REQUIRE_APPROVAL,
                         request -> {
                             toolCalls.incrementAndGet();
+                            dispatchedDecisionRef.set(
+                                    request.policyDecisionRef().orElseThrow());
                             return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
                         }));
 
@@ -1344,6 +1347,9 @@ class RuntimeCoreTest {
                 .isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(toolCalls).hasValue(1);
         assertThat(modelCalls).hasValue(2);
+        assertThat(dispatchedDecisionRef)
+                .hasValue(
+                        interaction.approvalContext().orElseThrow().decisionId().value());
         assertThat(grants.find(new ApprovalGrantId("runtime-grant"))).get().satisfies(grant -> {
             assertThat(grant.state()).isEqualTo(ApprovalGrantState.CONSUMED);
             assertThat(grant.sourceApprovalRequestRef())

@@ -394,6 +394,66 @@ class AuthorizedWorkspaceProvisioningTest {
     }
 
     @Test
+    void registersApprovedProviderWorktreeAndDisablesItOnUnreconciledRecovery() throws IOException {
+        WorkspaceId childId = new WorkspaceId("worktree-child");
+        WorkspaceBindingId childBindingId = new WorkspaceBindingId("worktree-binding");
+        WorkspaceLocationRef childLocationRef = new WorkspaceLocationRef("worktree-location");
+        locations.register(childLocationRef, outsideRoot);
+        WorkspaceBinding childBinding = WorkspaceBinding.provision(
+                        childBindingId,
+                        childLocationRef,
+                        WorkspaceBindingMode.COPY_ON_WRITE,
+                        owner,
+                        io.haifa.agent.project.workspace.WorkspaceCapabilitySet.executionFiles(),
+                        io.haifa.agent.project.workspace.WorkspacePermissionSet.readWriteExecute(),
+                        HostWorkspaceLocationStore.fingerprintFor(outsideRoot),
+                        NOW)
+                .activate(NOW);
+        bindingStore.create(childBinding);
+        workspaceStore.create(Workspace.provision(
+                        childId,
+                        projectId,
+                        WorkspacePurpose.CHILD,
+                        new WorkspaceRoot(ProjectPath.root(), childBindingId, "local-guarded"),
+                        WorkspaceRevision.initial("git:0123456789abcdef"),
+                        NOW)
+                .activate(NOW));
+
+        ProvisioningResult result = provisioning.authorizeApprovedWorktree(
+                initialScope.allowedDirectories().getFirst().workspaceId(),
+                childId,
+                childBindingId,
+                childLocationRef,
+                HostDirectoryPermission.READ_WRITE,
+                "feature-worktree",
+                "policy-decision-worktree");
+
+        assertThat(result.registryView().source()).isEqualTo(HostWorkspaceRegistrySource.APPROVED_WORKTREE_CREATE);
+        assertThat(provisioning.scope().resolveExecutionDirectory(childId, ".").workspaceId())
+                .isEqualTo(childId);
+
+        var reopenedLocations = new HostWorkspaceLocationStore();
+        reopenedLocations.register(new WorkspaceLocationRef("local-location-v1:initial"), initialRoot.toRealPath());
+        var reopened = new AuthorizedWorkspaceProvisioning(
+                projectId,
+                workspaceStore,
+                bindingStore,
+                reopenedLocations,
+                workspaceService,
+                owner,
+                time,
+                initialScope,
+                registry,
+                "workspace-test");
+
+        assertThat(reopened.scope().allowedDirectories()).hasSize(1);
+        assertThat(registry.find(projectId, childId)).get().satisfies(entry -> {
+            assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.DISABLED);
+            assertThat(entry.revocationReasonCode()).contains("REGISTRY_REVALIDATION_FAILED");
+        });
+    }
+
+    @Test
     void revocationIsPersistedAndInitialWorkspaceCannotBeRevoked() {
         ProvisioningResult attached = provisioning.authorizeApprovedAttach(
                 additionalRoot, HostDirectoryPermission.READ_WRITE, "policy-decision-3");

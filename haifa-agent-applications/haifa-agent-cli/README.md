@@ -564,8 +564,7 @@ binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可�
 `HAIFA_CONTINUATION_PROTECTOR_REF`。
 
 `tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_patch`、
-`workspace_attach`、`execution_run`、`request_permissions` 等 Provider-safe function name。`execution.run` 接收完整命令文本、Workspace 相对工作
-目录和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
+`workspace_attach`、`workspace_worktree_create`、`execution_run`、`request_permissions` 等 Provider-safe function name。`execution.run` 接收完整命令文本、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
 命令仅是非穷举示例。Coding Agent 默认使用该通用 OS CLI 路径完成仓库级文件发现、内容搜索、源码
 检查、构建和测试：文件发现优先 `rg --files`，内容搜索优先 `rg`，命令不存在时由模型按当前 Shell
 选择替代方案。产品代码不识别搜索意图，也不拼接 `rg`、`grep` 或其他命令的具体选项。
@@ -682,7 +681,9 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
 
-风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、逻辑 workdir、timeout、Shell 类型及 Host 非强隔离提示。CLI 接受指向当前 Workspace 本身或其子目录的绝对 `workdir`，并在受信装配边界将其规范化为逻辑相对路径；Workspace 外绝对路径仍拒绝。网络或系统 `git` / `gh` 登录环境被 Sandbox 隔离时，模型只能用失败结果中的 `toolCallId` 请求对同一条直接、非破坏性的系统 `git` / `gh` 命令做一次 `HOST_NETWORK_ACCESS` 重试；不能修改命令意图、生成权限或批准自己的请求。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、一次性 Host 权限升级和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution.run` 与 `execution.request_permissions`，模型不可见，底层授权仍 fail closed。
+风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。网络或系统 `git` / `gh` 登录环境被 Sandbox 隔离时，模型只能用失败结果中的 `toolCallId` 请求对同一条直接、非破坏性的系统 `git` / `gh` 命令做一次 `HOST_NETWORK_ACCESS` 重试；不能修改命令意图、生成权限或批准自己的请求。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、一次性 Host 权限升级、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution.run`、`execution.request_permissions` 与 `workspace.worktree.create`，模型不可见，底层授权仍 fail closed。
+
+`workspace.worktree.create` 只接受活动可执行 source `workspaceRef`、不可变 base commit、新分支名、受控 target name、固定 `read-write` 权限和交付意图；模型不能传入目标主机路径。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验和 Registry 登记全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
 
 系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。Tool Result 保留原始退出码，并单独投影命令语义：
 当前本地 Terminal 的 Coding Session 仍默认冻结 `WORKTREE_ONLY`，但该值只作为完成目标和投影元数据，

@@ -280,7 +280,7 @@ final class CliExecutionPlatform implements AutoCloseable {
                 observer,
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                workspaceWorkdirNormalizer(workspaceRoot),
+                workspaceTargetResolver(provisioning),
                 verificationProfiles,
                 repositoryBaselines == null
                         ? io.haifa.agent.application.project.tool.ExecutionRepositoryBaselineObserver.noop()
@@ -299,7 +299,7 @@ final class CliExecutionPlatform implements AutoCloseable {
                 observer,
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                workspaceWorkdirNormalizer(workspaceRoot),
+                workspaceTargetResolver(provisioning),
                 verificationProfiles,
                 repositoryBaselines == null
                         ? io.haifa.agent.application.project.tool.ExecutionRepositoryBaselineObserver.noop()
@@ -325,24 +325,15 @@ final class CliExecutionPlatform implements AutoCloseable {
         return repositoryBaselines == null ? null : repositoryBaselines.registry();
     }
 
-    static java.util.function.UnaryOperator<String> workspaceWorkdirNormalizer(Path workspaceRoot) {
-        Path root = Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null")
-                .toAbsolutePath()
-                .normalize();
-        return requested -> {
-            Objects.requireNonNull(requested, "requested workdir must not be null");
-            final Path candidate;
-            try {
-                candidate = Path.of(requested);
-            } catch (java.nio.file.InvalidPathException ignored) {
-                return requested;
-            }
-            if (!candidate.isAbsolute()) return requested;
-            Path normalized = candidate.normalize();
-            if (!normalized.startsWith(root)) return requested;
-            Path relative = root.relativize(normalized);
-            return relative.toString().isEmpty() ? "." : relative.toString().replace('\\', '/');
-        };
+    static io.haifa.agent.application.project.tool.ExecutionWorkspaceTargetResolver workspaceTargetResolver(
+            AuthorizedWorkspaceProvisioning provisioning) {
+        if (provisioning == null) {
+            return io.haifa.agent.application.project.tool.ExecutionWorkspaceTargetResolver.currentWorkspaceOnly();
+        }
+        return (access, workspaceRef, relativeWorkdir) -> provisioning
+                .scope()
+                .resolveExecutionDirectory(
+                        new io.haifa.agent.project.workspace.WorkspaceId(workspaceRef), relativeWorkdir);
     }
 
     ProjectExecutionToolOperations permissionOperations() {

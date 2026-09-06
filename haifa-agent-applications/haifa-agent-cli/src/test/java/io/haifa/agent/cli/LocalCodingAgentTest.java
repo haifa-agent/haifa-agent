@@ -147,8 +147,9 @@ class LocalCodingAgentTest {
                         "git diff --no-index exit 1 means differences",
                         "rg -F -- <text>",
                         "request_permissions is not a general sandbox bypass",
+                        "workspaceRef, relativeWorkdir, timeout, expectedExitCodes",
                         "Keep command output bounded")
-                .doesNotContain("Host OS:");
+                .doesNotContain("Host OS:", "repeat the exact command, workdir");
         assertThat(LocalCodingAgent.executionEnvironmentPrompt(" ")).isEmpty();
     }
 
@@ -453,7 +454,8 @@ class LocalCodingAgentTest {
                     .contains("Attach additional workspace directory")
                     .contains("Path: " + attachedDirectory)
                     .contains("Permission: read-only")
-                    .contains("this local agent session only");
+                    .contains("this local Coding Agent registry")
+                    .contains("persisted locally and remains revocable");
             awaitCondition(
                     () -> agent.executionSettled(accepted.runId()),
                     Duration.ofSeconds(60),
@@ -618,7 +620,7 @@ class LocalCodingAgentTest {
                         "execution_run",
                         Map.of(
                                 "command", "rg --files",
-                                "workdir", ".",
+                                "relativeWorkdir", ".",
                                 "timeoutMillis", 5000,
                                 "description", "List workspace files",
                                 "operationFamily", "INSPECT"))
@@ -684,7 +686,7 @@ class LocalCodingAgentTest {
     }
 
     @Test
-    void canonicalizesAbsoluteWorkspaceRootBeforePolicyAndRunsThroughTheCliAssembly() throws Exception {
+    void runsStructuredWorkspaceTargetThroughTheCliAssembly() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         String command =
                 isWindows() ? "Set-Content -NoNewline -Path shell-e2e.txt -Value stub" : "printf stub > shell-e2e.txt";
@@ -701,8 +703,8 @@ class LocalCodingAgentTest {
                         Map.of(
                                 "command",
                                 command,
-                                "workdir",
-                                workspace.toAbsolutePath().normalize().toString(),
+                                "relativeWorkdir",
+                                ".",
                                 "timeoutMillis",
                                 5000,
                                 "description",
@@ -721,7 +723,7 @@ class LocalCodingAgentTest {
                         Map.of(
                                 "command",
                                 fileExistsCommand("shell-e2e.txt"),
-                                "workdir",
+                                "relativeWorkdir",
                                 ".",
                                 "timeoutMillis",
                                 5000,
@@ -737,7 +739,7 @@ class LocalCodingAgentTest {
                         Map.of(
                                 "command",
                                 fileExistsCommand("shell-e2e.txt"),
-                                "workdir",
+                                "relativeWorkdir",
                                 ".",
                                 "timeoutMillis",
                                 5000,
@@ -783,6 +785,7 @@ class LocalCodingAgentTest {
             channel.write(ByteBuffer.wrap(new byte[] {0}));
         }
         AtomicInteger calls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> resumedRequest = new AtomicReference<>();
         var traces = new CopyOnWriteArrayList<io.haifa.agent.runtime.core.trace.RuntimeTraceEvent>();
         String command = isWindows() ? "Write-Output APPROVED-EXECUTION" : "printf APPROVED-EXECUTION";
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
@@ -793,7 +796,7 @@ class LocalCodingAgentTest {
                         Map.of(
                                 "command",
                                 command,
-                                "workdir",
+                                "relativeWorkdir",
                                 ".",
                                 "timeoutMillis",
                                 5000,
@@ -802,11 +805,7 @@ class LocalCodingAgentTest {
                                 "operationFamily",
                                 "INSPECT"));
             }
-            assertThat(request.messages())
-                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
-                            && "SUCCEEDED".equals(message.toolResultData().get("status"))
-                            && String.valueOf(message.toolResultData().get("output"))
-                                    .contains("APPROVED-EXECUTION"));
+            resumedRequest.set(request);
             return answer("approved-execution-complete", "approved execution completed");
         };
 
@@ -835,6 +834,14 @@ class LocalCodingAgentTest {
             assertThat(completed.output()).contains("approved execution completed");
         }
         assertThat(calls).hasValue(2);
+        assertThat(resumedRequest.get().messages())
+                .withFailMessage(
+                        "approved execution model messages: %s",
+                        resumedRequest.get().messages())
+                .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                        && "SUCCEEDED".equals(message.toolResultData().get("status"))
+                        && String.valueOf(message.toolResultData().get("output"))
+                                .contains("APPROVED-EXECUTION"));
         assertThat(traces).noneMatch(event -> event.operation().equals("runtime.error"));
     }
 
@@ -867,7 +874,7 @@ class LocalCodingAgentTest {
                         Map.of(
                                 "command",
                                 command,
-                                "workdir",
+                                "relativeWorkdir",
                                 ".",
                                 "timeoutMillis",
                                 5000,
@@ -949,7 +956,11 @@ class LocalCodingAgentTest {
                             Map.of(
                                     "command",
                                     fileExistsCommand("delivered.txt"),
-                                    "workdir",
+                                    "workspaceRef",
+                                    LocalWorkspaceIdentity.resolve(successfulWorkspace)
+                                            .workspaceId()
+                                            .value(),
+                                    "relativeWorkdir",
                                     ".",
                                     "timeoutMillis",
                                     5_000,
@@ -965,7 +976,11 @@ class LocalCodingAgentTest {
                             Map.of(
                                     "command",
                                     fileExistsCommand("delivered.txt"),
-                                    "workdir",
+                                    "workspaceRef",
+                                    LocalWorkspaceIdentity.resolve(successfulWorkspace)
+                                            .workspaceId()
+                                            .value(),
+                                    "relativeWorkdir",
                                     ".",
                                     "timeoutMillis",
                                     5_000,
@@ -1378,7 +1393,15 @@ class LocalCodingAgentTest {
                 id, "stub-model", text, List.of(), ModelFinishReason.STOP, ModelUsage.unpriced(5, 2), "stub", Map.of());
     }
 
-    private static AgentChatResponse toolResponse(String id, String tool, Map<String, Object> arguments) {
+    private AgentChatResponse toolResponse(String id, String tool, Map<String, Object> arguments) {
+        if (tool.equals("execution_run") || tool.equals("request_permissions")) {
+            var structured = new java.util.LinkedHashMap<String, Object>(arguments);
+            structured.putIfAbsent(
+                    "workspaceRef",
+                    LocalWorkspaceIdentity.resolve(workspace).workspaceId().value());
+            structured.putIfAbsent("relativeWorkdir", ".");
+            arguments = Map.copyOf(structured);
+        }
         return new AgentChatResponse(
                 id,
                 "stub-model",

@@ -99,6 +99,42 @@ public record HostWorkspaceScope(List<AuthorizedHostDirectory> allowedDirectorie
         return new ResolvedAuthorizedPath(trimmed, directory, toWorkspacePath(directory, verified), verified);
     }
 
+    /**
+     * Resolves the Coding Agent execution protocol without exposing a host path to the model. The
+     * root must be active in this immutable scope snapshot and the workdir must be a normalized,
+     * existing directory physically contained by that root.
+     */
+    public WorkspacePath resolveExecutionDirectory(WorkspaceId workspaceRef, String relativeWorkdir) {
+        Objects.requireNonNull(workspaceRef, "workspaceRef must not be null");
+        if (relativeWorkdir == null || relativeWorkdir.isBlank()) {
+            throw HostWorkspaceScopeException.invalidArgument(
+                    relativeWorkdir, "relativeWorkdir must be a normalized workspace-relative directory");
+        }
+        AuthorizedHostDirectory directory = allowedDirectories.stream()
+                .filter(candidate -> candidate.workspaceId().equals(workspaceRef))
+                .findFirst()
+                .orElseThrow(() -> HostWorkspaceScopeException.accessDenied(
+                        null, "workspaceRef is not active in the authorized registry"));
+        ProjectPath projectPath;
+        try {
+            projectPath = relativeWorkdir.equals(".") ? ProjectPath.root() : ProjectPath.of(relativeWorkdir);
+        } catch (IllegalArgumentException exception) {
+            throw HostWorkspaceScopeException.invalidArgument(
+                    relativeWorkdir, "relativeWorkdir must be a normalized workspace-relative directory");
+        }
+        if (!projectPath.toString().equals(relativeWorkdir)) {
+            throw HostWorkspaceScopeException.invalidArgument(
+                    relativeWorkdir, "relativeWorkdir must use its canonical workspace-relative form");
+        }
+        Path candidate = directory.realPath().resolve(projectPath.value()).normalize();
+        Path verified = verifyPhysicalContainment(candidate, directory);
+        if (!Files.isDirectory(verified)) {
+            throw HostWorkspaceScopeException.invalidArgument(
+                    relativeWorkdir, "relativeWorkdir must identify an existing directory");
+        }
+        return toWorkspacePath(directory, verified);
+    }
+
     /** Fails closed when the resolved directory does not allow writes. */
     public void requireWritable(AuthorizedHostDirectory directory) {
         Objects.requireNonNull(directory, "directory must not be null");

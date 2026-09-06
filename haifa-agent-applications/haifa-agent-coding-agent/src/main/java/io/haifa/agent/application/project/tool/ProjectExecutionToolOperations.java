@@ -55,11 +55,13 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
+import java.util.regex.Pattern;
 
 /** Adapts the generic project Tool invocation to the single trusted ExecutionBroker path. */
 public final class ProjectExecutionToolOperations {
     private static final int FULL_OUTPUT_BYTES_PER_CHANNEL = 16 * 1024 * 1024;
     private static final int SUMMARY_OUTPUT_CHARS = 12 * 1024;
+    private static final Pattern GIT_DIRECTORY_OVERRIDE = Pattern.compile("(?:^|\\s)[\\\"']?-C[\\\"']?(?:\\s|=)");
 
     private final ExecutionBroker broker;
     private final IdentifierGenerator identifiers;
@@ -74,7 +76,7 @@ public final class ProjectExecutionToolOperations {
     private final ExecutionOutputObserver outputObserver;
     private final UnaryOperator<String> outputSanitizer;
     private final ExecutionScratchSpaceSpec scratchSpace;
-    private final UnaryOperator<String> workdirNormalizer;
+    private final ExecutionWorkspaceTargetResolver workspaceTargets;
     private final CodingVerificationProfileProvider verificationProfiles;
     private final ExecutionRepositoryBaselineObserver repositoryBaselines;
 
@@ -104,7 +106,7 @@ public final class ProjectExecutionToolOperations {
                 outputObserver,
                 UnaryOperator.identity(),
                 ExecutionScratchSpaceSpec.genericRequired(),
-                UnaryOperator.identity());
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
     }
 
     public ProjectExecutionToolOperations(
@@ -134,7 +136,7 @@ public final class ProjectExecutionToolOperations {
                 outputObserver,
                 outputSanitizer,
                 ExecutionScratchSpaceSpec.genericRequired(),
-                UnaryOperator.identity());
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
     }
 
     public ProjectExecutionToolOperations(
@@ -165,7 +167,7 @@ public final class ProjectExecutionToolOperations {
                 outputObserver,
                 outputSanitizer,
                 scratchSpace,
-                UnaryOperator.identity());
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
     }
 
     public ProjectExecutionToolOperations(
@@ -182,7 +184,7 @@ public final class ProjectExecutionToolOperations {
             ExecutionOutputObserver outputObserver,
             UnaryOperator<String> outputSanitizer,
             ExecutionScratchSpaceSpec scratchSpace,
-            UnaryOperator<String> workdirNormalizer) {
+            ExecutionWorkspaceTargetResolver workspaceTargets) {
         this(
                 broker,
                 identifiers,
@@ -197,7 +199,7 @@ public final class ProjectExecutionToolOperations {
                 outputObserver,
                 outputSanitizer,
                 scratchSpace,
-                workdirNormalizer,
+                workspaceTargets,
                 CodingVerificationProfileProvider.empty());
     }
 
@@ -215,7 +217,7 @@ public final class ProjectExecutionToolOperations {
             ExecutionOutputObserver outputObserver,
             UnaryOperator<String> outputSanitizer,
             ExecutionScratchSpaceSpec scratchSpace,
-            UnaryOperator<String> workdirNormalizer,
+            ExecutionWorkspaceTargetResolver workspaceTargets,
             CodingVerificationProfileProvider verificationProfiles) {
         this(
                 broker,
@@ -231,7 +233,7 @@ public final class ProjectExecutionToolOperations {
                 outputObserver,
                 outputSanitizer,
                 scratchSpace,
-                workdirNormalizer,
+                workspaceTargets,
                 verificationProfiles,
                 ExecutionRepositoryBaselineObserver.noop());
     }
@@ -250,7 +252,7 @@ public final class ProjectExecutionToolOperations {
             ExecutionOutputObserver outputObserver,
             UnaryOperator<String> outputSanitizer,
             ExecutionScratchSpaceSpec scratchSpace,
-            UnaryOperator<String> workdirNormalizer,
+            ExecutionWorkspaceTargetResolver workspaceTargets,
             CodingVerificationProfileProvider verificationProfiles,
             ExecutionRepositoryBaselineObserver repositoryBaselines) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
@@ -281,7 +283,7 @@ public final class ProjectExecutionToolOperations {
         this.outputObserver = Objects.requireNonNull(outputObserver, "outputObserver must not be null");
         this.outputSanitizer = Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
         this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
-        this.workdirNormalizer = Objects.requireNonNull(workdirNormalizer, "workdirNormalizer must not be null");
+        this.workspaceTargets = Objects.requireNonNull(workspaceTargets, "workspaceTargets must not be null");
         this.verificationProfiles =
                 Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
         this.repositoryBaselines = Objects.requireNonNull(repositoryBaselines, "repositoryBaselines must not be null");
@@ -295,23 +297,23 @@ public final class ProjectExecutionToolOperations {
         String operationFamily = operationFamily(arguments.get("operationFamily"));
         List<Integer> expectedExitCodes = expectedExitCodes(arguments);
         var commandClassification = SystemGitCliCommandClassifier.classify(command);
+        if (commandClassification.target() == SystemGitCliCommandClassifier.Target.GIT
+                && commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED
+                && GIT_DIRECTORY_OVERRIDE.matcher(command).find()) {
+            return withToolCallId(invocation, workspaceProtocolRequired(operationFamily));
+        }
         if (commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED) {
             return withToolCallId(invocation, rejectedCommandClassification(operationFamily, commandClassification));
         }
         if (hasLeadingAbsoluteDirectoryChange(command)) {
             return withToolCallId(invocation, rejectedAbsoluteDirectoryChange(operationFamily));
         }
-        String requestedWorkdir = optionalText(arguments, "workdir", ".");
-        String canonicalWorkdir = Objects.requireNonNull(
-                workdirNormalizer.apply(requestedWorkdir), "workdirNormalizer must not return null");
-        if (!canonicalWorkdir.equals(requestedWorkdir)) {
-            return withToolCallId(invocation, rejectedWorkdir(operationFamily, "WORKDIR_NOT_CANONICAL"));
-        }
-        String workdir = requestedWorkdir;
-        if (isAbsoluteDirectoryPath(workdir)) {
+        String workspaceRef = requiredText(arguments, "workspaceRef");
+        String relativeWorkdir = requiredText(arguments, "relativeWorkdir");
+        if (isAbsoluteDirectoryPath(relativeWorkdir)) {
             return withToolCallId(invocation, rejectedWorkdir(operationFamily, "ABSOLUTE_WORKDIR_FORBIDDEN"));
         }
-        String repositoryScopeDigest = repositoryScopeDigest(workdir);
+        String repositoryScopeDigest = repositoryScopeDigest(workspaceRef, relativeWorkdir);
         Duration requestedTimeout = Duration.ofMillis(
                 optionalLong(arguments, "timeoutMillis", defaultTimeout.toMillis(), 1, maximumTimeout.toMillis()));
         Duration remaining = Duration.between(time.now(), invocation.deadline());
@@ -322,10 +324,9 @@ public final class ProjectExecutionToolOperations {
         ExecutionId executionId = new ExecutionId(identifiers.nextValue());
         WorkspacePath workingDirectory;
         try {
-            workingDirectory = new WorkspacePath(
-                    access.workspaceId(), workdir.equals(".") ? ProjectPath.root() : ProjectPath.of(workdir));
-        } catch (IllegalArgumentException exception) {
-            return withToolCallId(invocation, rejectedWorkdir(operationFamily, "WORKDIR_INVALID"));
+            workingDirectory = workspaceTargets.resolve(access, workspaceRef, relativeWorkdir);
+        } catch (RuntimeException exception) {
+            return withToolCallId(invocation, rejectedWorkspaceTarget(operationFamily, exception));
         }
         ExecutionRequest request = new ExecutionRequest(
                 executionId,
@@ -342,14 +343,14 @@ public final class ProjectExecutionToolOperations {
                                 .policyDecisionRef()
                                 .orElseThrow(() ->
                                         new SecurityException("execution tool requires a public policy decision"))),
-                access.workspaceId(),
+                workingDirectory.workspaceId(),
                 workingDirectory,
                 ExecutionCommand.shell(command),
                 environmentRef,
                 executionLimits(timeout, operationFamily, commandClassification),
                 sandboxProfileRef,
                 ExecutionInput.none(),
-                invocationDigest(invocation, command, workdir, expectedExitCodes, scratchSpace),
+                invocationDigest(invocation, command, workspaceRef, relativeWorkdir, expectedExitCodes, scratchSpace),
                 scratchSpace);
         try {
             repositoryBaselines.beforeDispatch(
@@ -397,8 +398,16 @@ public final class ProjectExecutionToolOperations {
         String command = requiredText(arguments, "command");
         String operationFamily = operationFamily(arguments.get("operationFamily"));
         List<Integer> expectedExitCodes = expectedExitCodes(arguments);
-        String workdir = optionalText(arguments, "workdir", ".");
-        String expectedWorkingDirectoryDigest = workingDirectoryDigest(access.workspaceId(), workdir);
+        String workspaceRef = requiredText(arguments, "workspaceRef");
+        String relativeWorkdir = requiredText(arguments, "relativeWorkdir");
+        WorkspacePath resolved;
+        try {
+            resolved = workspaceTargets.resolve(access, workspaceRef, relativeWorkdir);
+        } catch (RuntimeException exception) {
+            return ToolReconciliation.stillUnknown("WORKSPACE_TARGET_UNAVAILABLE");
+        }
+        String expectedWorkingDirectoryDigest = workingDirectoryDigest(
+                resolved.workspaceId(), resolved.projectPath().toString());
         if (invocation
                 .dispatchEvidence()
                 .filter(evidence -> !evidence.workingDirectoryDigest().equals(expectedWorkingDirectoryDigest))
@@ -432,7 +441,7 @@ public final class ProjectExecutionToolOperations {
                         classification,
                         sandboxProfileRef,
                         scratchSpace,
-                        repositoryScopeDigest(workdir),
+                        repositoryScopeDigest(workspaceRef, relativeWorkdir),
                         invocation.runId().value(),
                         invocation.toolCallId().value()))
                 .or(() -> invocation.observedResult())
@@ -498,7 +507,8 @@ public final class ProjectExecutionToolOperations {
     private static String invocationDigest(
             ToolInvocationRequest invocation,
             String command,
-            String workdir,
+            String workspaceRef,
+            String relativeWorkdir,
             List<Integer> expectedExitCodes,
             ExecutionScratchSpaceSpec scratchSpace) {
         List<String> fields;
@@ -506,14 +516,15 @@ public final class ProjectExecutionToolOperations {
             Map<String, Object> arguments = invocation.arguments().values();
             fields = List.of(
                     command,
-                    workdir,
+                    workspaceRef,
+                    relativeWorkdir,
                     requiredText(arguments, "priorToolCallId"),
                     requiredText(arguments, "requestedPermission"),
                     requiredText(arguments, "justification"),
                     String.valueOf(arguments.getOrDefault("timeoutMillis", "DEFAULT")),
                     expectedExitCodes.toString());
         } else {
-            fields = List.of(command, workdir, expectedExitCodes.toString());
+            fields = List.of(command, workspaceRef, relativeWorkdir, expectedExitCodes.toString());
         }
         return ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(fields), scratchSpace);
     }
@@ -574,7 +585,7 @@ public final class ProjectExecutionToolOperations {
                 "UNKNOWN",
                 List.of(0),
                 commandClassification,
-                repositoryScopeDigest(workdir),
+                repositoryScopeDigest(access.workspaceId().value(), workdir),
                 null);
     }
 
@@ -922,8 +933,8 @@ public final class ProjectExecutionToolOperations {
     private static ToolResult rejectedAbsoluteDirectoryChange(String operationFamily) {
         return new ToolResult(
                 false,
-                "Command rejected before execution: absolute directory changes are not allowed; omit cd or use the "
-                        + "workspace-relative workdir field.",
+                "Command rejected before execution: absolute directory changes are not allowed; omit cd or use "
+                        + "workspaceRef with relativeWorkdir.",
                 Map.of(
                         "status",
                         "FAILED",
@@ -938,7 +949,7 @@ public final class ProjectExecutionToolOperations {
                         "failureActionCode",
                         "USE_WORKSPACE_RELATIVE_WORKDIR",
                         "failureAction",
-                        "Remove the absolute cd and use the workspace-relative workdir field."),
+                        "Remove the absolute cd and provide workspaceRef with relativeWorkdir."),
                 List.of(),
                 List.of(),
                 false);
@@ -973,8 +984,8 @@ public final class ProjectExecutionToolOperations {
         };
     }
 
-    private static String repositoryScopeDigest(String workdir) {
-        return PolicyDigest.sha256Fields(List.of("coding-delivery-repository-scope-v1", workdir));
+    private static String repositoryScopeDigest(String workspaceRef, String relativeWorkdir) {
+        return PolicyDigest.sha256Fields(List.of("coding-delivery-repository-scope-v2", workspaceRef, relativeWorkdir));
     }
 
     private static String workingDirectoryDigest(
@@ -1000,7 +1011,7 @@ public final class ProjectExecutionToolOperations {
     private static ToolResult rejectedWorkdir(String operationFamily, String stableFailureCode) {
         return new ToolResult(
                 false,
-                "Command rejected before execution: workdir must be a workspace-relative path.",
+                "Command rejected before execution: relativeWorkdir must be a normalized workspace-relative path.",
                 Map.of(
                         "status",
                         "FAILED",
@@ -1015,7 +1026,34 @@ public final class ProjectExecutionToolOperations {
                         "failureActionCode",
                         "USE_WORKSPACE_RELATIVE_WORKDIR",
                         "failureAction",
-                        "Use a normalized path relative to the authorized workspace root."),
+                        "Use workspaceRef with a normalized relativeWorkdir below that authorized root."),
+                List.of(),
+                List.of(),
+                false);
+    }
+
+    private static ToolResult rejectedWorkspaceTarget(String operationFamily, RuntimeException failure) {
+        String stableCode = failure
+                                instanceof io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScopeException scope
+                        && scope.code()
+                                == io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScopeErrorCode.ACCESS_DENIED
+                ? "WORKSPACE_REF_UNAVAILABLE"
+                : "WORKDIR_INVALID";
+        return rejectedWorkdir(operationFamily, stableCode);
+    }
+
+    private static ToolResult workspaceProtocolRequired(String operationFamily) {
+        return new ToolResult(
+                false,
+                "Command uses a directory override that belongs in the structured workspace protocol.",
+                Map.of(
+                        "status", "FAILED",
+                        "operationFamily", operationFamily,
+                        "failureCategory", "PROTOCOL_ERROR",
+                        "stableFailureCode", "WORKSPACE_PROTOCOL_REQUIRED",
+                        "resourceClass", "WORKSPACE",
+                        "failureActionCode", "USE_STRUCTURED_WORKSPACE_TARGET",
+                        "failureAction", "Remove git -C and provide workspaceRef with relativeWorkdir."),
                 List.of(),
                 List.of(),
                 false);
@@ -1104,7 +1142,8 @@ public final class ProjectExecutionToolOperations {
         return switch (stableCode) {
             case "AUTHENTICATION_OVERRIDE_DENIED" ->
                 "Remove the authentication override; use the managed Credential Lease path when available.";
-            case "REPOSITORY_BOUNDARY_DENIED" -> "Use the authorized repository and workspace-relative workdir.";
+            case "REPOSITORY_BOUNDARY_DENIED" ->
+                "Use an active workspaceRef with a relativeWorkdir inside the authorized repository.";
             case "COMMAND_INVALID" -> "Provide a non-empty command using the configured shell syntax.";
             default -> "Remove the executable or command boundary override before retrying.";
         };
