@@ -41,6 +41,7 @@ public final class ProjectToolCatalog {
             Map.entry("file.diff", "file.read"),
             Map.entry("file.patch", "file.write"),
             Map.entry("workspace.attach", "file.read"),
+            Map.entry(ProjectWorktreeToolOperations.TOOL_NAME, "execution.run"),
             Map.entry("execution.run", "execution.run"),
             Map.entry(ProjectPermissionRequestOperations.TOOL_NAME, "execution.run"));
     private static final Set<String> WRITES =
@@ -258,14 +259,20 @@ public final class ProjectToolCatalog {
             throw new IllegalArgumentException(name + " requires a frozen sandbox profile");
         }
         boolean attach = name.equals("workspace.attach");
+        boolean worktree = name.equals(ProjectWorktreeToolOperations.TOOL_NAME);
         boolean write = WRITES.contains(name);
-        ToolRisk risk = execution || attach ? ToolRisk.HIGH : write ? ToolRisk.MEDIUM : ToolRisk.LOW;
+        ToolRisk risk = execution || attach || worktree ? ToolRisk.HIGH : write ? ToolRisk.MEDIUM : ToolRisk.LOW;
         ToolIdempotency idempotency =
-                execution || write || attach ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.PURE;
+                execution || write || attach || worktree ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.PURE;
         Set<ToolSideEffect> effects = attach
                 ? Set.of(ToolSideEffect.FILE_READ, ToolSideEffect.PERMISSION_ELEVATION)
-                : executionEffects(executionProfile, permissionRequest, execution, write);
-        ToolApprovalRequirement approval = attach
+                : worktree
+                        ? Set.of(
+                                ToolSideEffect.FILE_WRITE,
+                                ToolSideEffect.PROCESS_EXECUTION,
+                                ToolSideEffect.PERMISSION_ELEVATION)
+                        : executionEffects(executionProfile, permissionRequest, execution, write);
+        ToolApprovalRequirement approval = attach || worktree
                 ? ToolApprovalRequirement.ALWAYS
                 : execution || write ? ToolApprovalRequirement.POLICY : ToolApprovalRequirement.NEVER;
         ToolResourceRequirements resources = new ToolResourceRequirements(
@@ -276,8 +283,8 @@ public final class ProjectToolCatalog {
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         String version =
                 switch (name) {
-                    case "execution.run" -> "1.8.0";
-                    case ProjectPermissionRequestOperations.TOOL_NAME -> "1.7.0";
+                    case "execution.run" -> "2.0.0";
+                    case ProjectPermissionRequestOperations.TOOL_NAME -> "2.0.0";
                     case "file.list",
                             "file.read",
                             "file.search",
@@ -287,8 +294,9 @@ public final class ProjectToolCatalog {
                             "file.move",
                             "file.diff",
                             "file.patch",
-                            "file.stat",
-                            "workspace.attach" -> "2.0.0";
+                            "file.stat" -> "2.0.0";
+                    case "workspace.attach" -> "2.1.0";
+                    case ProjectWorktreeToolOperations.TOOL_NAME -> "1.0.0";
                     default -> "1.0.0";
                 };
         return new ToolDefinition(
@@ -305,7 +313,7 @@ public final class ProjectToolCatalog {
                 execution ? ToolExecutionMode.HOST_PROCESS : ToolExecutionMode.IN_PROCESS,
                 true,
                 execution ? Duration.ofMinutes(30) : Duration.ofSeconds(30),
-                write || attach ? "per-workspace-write" : "per-workspace-read",
+                write || attach || worktree ? "per-workspace-write" : "per-workspace-read",
                 idempotency,
                 risk,
                 effects,
@@ -341,6 +349,7 @@ public final class ProjectToolCatalog {
             case "file.diff" -> "Preview file diff";
             case "file.patch" -> "Apply workspace patch";
             case "workspace.attach" -> "Attach a user-approved directory";
+            case ProjectWorktreeToolOperations.TOOL_NAME -> "Create a controlled Git worktree";
             case "execution.run" -> "Run a local shell command";
             case ProjectPermissionRequestOperations.TOOL_NAME -> "Request permission for one failed command";
             default -> throw new IllegalArgumentException("unknown project tool " + name);
@@ -351,7 +360,7 @@ public final class ProjectToolCatalog {
         if (name.equals("execution.run")) {
             return "Run complete command text through the frozen "
                     + executionProfile.providerId()
-                    + " execution profile inside the project workspace. This is the general OS CLI path for scalable "
+                    + " execution profile inside an active registered workspace selected by workspaceRef and relativeWorkdir. This is the general OS CLI path for scalable "
                     + "repository discovery, content search, source inspection, system git/gh workflows, builds, "
                     + "tests, and diffs; choose an "
                     + "available CLI and its complete arguments at runtime instead of expecting command-specific "
@@ -366,8 +375,8 @@ public final class ProjectToolCatalog {
         if (name.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
             return "Request user approval to rerun one exact execution.run command that failed in this Run because "
                     + "the isolated profile could not use remote network or host authentication. Only direct, "
-                    + "non-destructive system git or gh commands are eligible. The prior Tool Call, command, workdir, "
-                    + "and timeout must match; the optional operation family remains a diagnostic hint. "
+                    + "non-destructive system git or gh commands are eligible. The prior Tool Call, command, workspaceRef, relativeWorkdir, "
+                    + "timeout, and expected exit codes must match; the optional operation family remains a diagnostic hint. "
                     + "compound, wrapped, path-escaping, credential-overriding, destructive, or outcome-unknown "
                     + "requests remain denied. Approval applies once to this Tool Call and does not create a reusable "
                     + "grant.";
@@ -394,10 +403,15 @@ public final class ProjectToolCatalog {
                     + "and requires a fresh read before regenerating the patch.";
         }
         if (name.equals("workspace.attach")) {
-            return "Request one additional existing local directory for this Coding Agent process only. Supply an "
+            return "Request one additional existing local directory for this Coding Agent registry. Supply an "
                     + "absolute host path and explicit read-only or read-write permission. The user "
                     + "must approve the exact directory and permission before it becomes available in the scope; "
-                    + "attachments are not persisted or restored.";
+                    + "successful attachments are revalidated before restoration and returned as a path-redacted workspaceRef.";
+        }
+        if (name.equals(ProjectWorktreeToolOperations.TOOL_NAME)) {
+            return "Create one managed Git worktree from an active executable workspace after exact user approval. "
+                    + "The immutable base commit, new branch, managed target name, read-write permission, and delivery intent "
+                    + "are approved together; no arbitrary host target path is accepted.";
         }
         if (WRITES.contains(name)) {
             return title(name)
@@ -481,6 +495,22 @@ public final class ProjectToolCatalog {
                 required.add("path");
                 required.add("permission");
             }
+            case ProjectWorktreeToolOperations.TOOL_NAME -> {
+                properties.put("sourceWorkspaceRef", Map.of("type", "string", "minLength", 1, "maxLength", 256));
+                properties.put("baseCommit", Map.of("type", "string", "minLength", 7, "maxLength", 64));
+                properties.put("branchName", Map.of("type", "string", "minLength", 1, "maxLength", 240));
+                properties.put("targetName", Map.of("type", "string", "minLength", 1, "maxLength", 80));
+                properties.put("permission", Map.of("type", "string", "enum", List.of("read-write")));
+                properties.put(
+                        "deliveryIntent", Map.of("type", "string", "enum", List.of("local-change", "pull-request")));
+                required.addAll(List.of(
+                        "sourceWorkspaceRef",
+                        "baseCommit",
+                        "branchName",
+                        "targetName",
+                        "permission",
+                        "deliveryIntent"));
+            }
             case "execution.run", ProjectPermissionRequestOperations.TOOL_NAME -> {
                 properties.put(
                         "command",
@@ -495,7 +525,30 @@ public final class ProjectToolCatalog {
                                 "Complete non-interactive command text for the configured shell. Select available "
                                         + "CLI programs and their options at runtime."));
                 required.add("command");
-                properties.put("workdir", Map.of("type", "string", "minLength", 1, "maxLength", 4096));
+                properties.put(
+                        "workspaceRef",
+                        Map.of(
+                                "type",
+                                "string",
+                                "minLength",
+                                1,
+                                "maxLength",
+                                256,
+                                "description",
+                                "Opaque reference of an active root from the workspace registry."));
+                properties.put(
+                        "relativeWorkdir",
+                        Map.of(
+                                "type",
+                                "string",
+                                "minLength",
+                                1,
+                                "maxLength",
+                                4096,
+                                "description",
+                                "Canonical directory below workspaceRef. Use . for the root; absolute paths, UNC paths, drive paths, and traversal are forbidden."));
+                required.add("workspaceRef");
+                required.add("relativeWorkdir");
                 properties.put("timeoutMillis", Map.of("type", "integer", "minimum", 1, "maximum", 1800000));
                 properties.put(
                         "expectedExitCodes",

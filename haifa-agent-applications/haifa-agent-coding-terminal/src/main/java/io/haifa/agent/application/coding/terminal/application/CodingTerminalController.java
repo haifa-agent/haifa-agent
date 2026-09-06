@@ -17,6 +17,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
+import io.haifa.agent.application.project.product.coding.CodingWorkspaceGrant;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
@@ -969,8 +970,9 @@ public final class CodingTerminalController implements AutoCloseable {
                         () -> loadModels(current, argument, cursor, previousOutputRunId, previousOutputCursor),
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
-            case SETTINGS, TRUST ->
+            case SETTINGS ->
                 apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
+            case TRUST -> workspaceTrust(argument);
             case SESSION -> {
                 List<String> options = state.session()
                         .map(value -> List.of(
@@ -1027,6 +1029,55 @@ public final class CodingTerminalController implements AutoCloseable {
                 },
                 code -> apply(new TerminalUiAction.RecoverableFailure(code)));
         return true;
+    }
+
+    private void workspaceTrust(String argument) {
+        if (argument.isBlank()) {
+            apply(new TerminalUiAction.StatusChanged("Loading workspace trust"));
+            submitEffect(
+                    () -> {
+                        List<String> options = client.workspaces().stream()
+                                .map(CodingTerminalController::workspaceGrantOption)
+                                .toList();
+                        return () -> {
+                            apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                                    "workspace-trust",
+                                    "Workspace trust",
+                                    options.isEmpty() ? List.of("No registered workspaces") : options,
+                                    0)));
+                            apply(new TerminalUiAction.StatusChanged("Workspace trust loaded"));
+                        };
+                    },
+                    code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+            return;
+        }
+        String[] parts = argument.split("\\s+", 2);
+        if (parts.length != 2
+                || !parts[0].equalsIgnoreCase("revoke")
+                || parts[1].isBlank()
+                || parts[1].chars().anyMatch(Character::isWhitespace)) {
+            apply(new TerminalUiAction.RecoverableFailure("WORKSPACE_TRUST_COMMAND_INVALID"));
+            return;
+        }
+        String workspaceRef = parts[1];
+        apply(new TerminalUiAction.StatusChanged("Revoking workspace access"));
+        submitEffect(
+                () -> {
+                    client.revokeWorkspace(workspaceRef);
+                    return () -> apply(new TerminalUiAction.StatusChanged("Workspace access revoked"));
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private static String workspaceGrantOption(CodingWorkspaceGrant grant) {
+        return String.join(
+                        " · ",
+                        grant.safeDisplayName(),
+                        grant.permission(),
+                        grant.status(),
+                        grant.source(),
+                        grant.workspaceRef())
+                + (grant.revocable() ? " · revocable" : "");
     }
 
     private LoadedSession readSession(
@@ -1439,7 +1490,7 @@ public final class CodingTerminalController implements AutoCloseable {
                         },
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
-            case "session" -> apply(new TerminalUiAction.SelectorClosed());
+            case "session", "workspace-trust" -> apply(new TerminalUiAction.SelectorClosed());
             case "model" -> openModelDetails(modelOptions.get(selected));
             case "model-detail" -> selectModelDetailAction(selected);
             case "model-settings" -> selectModelSettingsAction(selected);

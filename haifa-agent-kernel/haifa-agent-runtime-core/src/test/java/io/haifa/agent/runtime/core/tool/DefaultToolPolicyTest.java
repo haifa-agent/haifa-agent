@@ -133,6 +133,29 @@ class DefaultToolPolicyTest {
     }
 
     @Test
+    void executionDigestBindsStructuredWorkspaceTargetWhenPresent() {
+        var request = new ToolRequest(
+                new ToolCallId("call"),
+                new ProviderToolCallCorrelationId("provider-call"),
+                new RuntimeIdempotencyKey("key"),
+                "execution_run",
+                "2.0.0",
+                new ToolArguments(
+                        "execution.input",
+                        "2.0.0",
+                        Map.of(
+                                "command",
+                                "git status --short",
+                                "workspaceRef",
+                                "workspace-docs",
+                                "relativeWorkdir",
+                                "docs")));
+
+        assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution.run", request))
+                .isEqualTo(PolicyDigest.sha256Fields(List.of("git status --short", "workspace-docs", "docs", "[0]")));
+    }
+
+    @Test
     void permissionRequestDigestBindsThePriorFailureAndExactRequestedIntent() {
         var request = new ToolRequest(
                 new ToolCallId("permission-call"),
@@ -170,6 +193,43 @@ class DefaultToolPolicyTest {
                         "Read the configured remote",
                         "5000",
                         "[0, 1]")));
+    }
+
+    @Test
+    void permissionRequestDigestBindsStructuredWorkspaceTarget() {
+        var request = new ToolRequest(
+                new ToolCallId("permission-call"),
+                new ProviderToolCallCorrelationId("provider-permission-call"),
+                new RuntimeIdempotencyKey("permission-key"),
+                "request_permissions",
+                "2.0.0",
+                new ToolArguments(
+                        "permission.input",
+                        "2.0.0",
+                        Map.of(
+                                "command",
+                                "git ls-remote origin",
+                                "workspaceRef",
+                                "workspace-docs",
+                                "relativeWorkdir",
+                                "docs",
+                                "priorToolCallId",
+                                "failed-call",
+                                "requestedPermission",
+                                "HOST_NETWORK_ACCESS",
+                                "justification",
+                                "Read the configured remote")));
+
+        assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution.request_permissions", request))
+                .isEqualTo(PolicyDigest.sha256Fields(List.of(
+                        "git ls-remote origin",
+                        "workspace-docs",
+                        "docs",
+                        "failed-call",
+                        "HOST_NETWORK_ACCESS",
+                        "Read the configured remote",
+                        "DEFAULT",
+                        "[0]")));
     }
 
     private ToolPolicyDecision evaluate(

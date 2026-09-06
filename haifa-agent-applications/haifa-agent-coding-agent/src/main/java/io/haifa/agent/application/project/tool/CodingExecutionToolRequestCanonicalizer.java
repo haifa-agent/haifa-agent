@@ -10,39 +10,50 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.UnaryOperator;
 
-/** Canonicalizes Coding execution workdirs before any policy or approval digest is created. */
+/** Canonicalizes Coding workspace protocol fields before any policy or approval digest is created. */
 public final class CodingExecutionToolRequestCanonicalizer implements ToolRequestCanonicalizer {
     private static final String EXECUTION_RUN = "execution.run";
     private static final Set<String> EXECUTION_TOOLS =
             Set.of(EXECUTION_RUN, ProjectPermissionRequestOperations.TOOL_NAME);
 
-    private final UnaryOperator<String> workspaceWorkdirCanonicalizer;
-
-    public CodingExecutionToolRequestCanonicalizer(UnaryOperator<String> workspaceWorkdirCanonicalizer) {
-        this.workspaceWorkdirCanonicalizer =
-                Objects.requireNonNull(workspaceWorkdirCanonicalizer, "workspaceWorkdirCanonicalizer must not be null");
-    }
+    public CodingExecutionToolRequestCanonicalizer() {}
 
     @Override
     public ToolRequest canonicalize(AgentRun run, FrozenToolBinding binding, ToolRequest request) {
         Objects.requireNonNull(run, "run must not be null");
         Objects.requireNonNull(binding, "binding must not be null");
         Objects.requireNonNull(request, "request must not be null");
-        if (!EXECUTION_TOOLS.contains(binding.definition().name().value())) return request;
+        String toolName = binding.definition().name().value();
+        if (!EXECUTION_TOOLS.contains(toolName) && !ProjectWorktreeToolOperations.TOOL_NAME.equals(toolName)) {
+            return request;
+        }
 
         Map<String, Object> values = request.arguments().values();
-        Object rawWorkdir = values.getOrDefault("workdir", ".");
-        if (!(rawWorkdir instanceof String workdir) || workdir.isBlank()) return request;
-
-        String canonical = canonicalizeWorkdir(workdir, workspaceWorkdirCanonicalizer);
-        if (values.containsKey("workdir") && canonical.equals(rawWorkdir)) return request;
-
         var canonicalValues = new LinkedHashMap<String, Object>(values);
-        canonicalValues.put("workdir", canonical);
+        if (ProjectWorktreeToolOperations.TOOL_NAME.equals(toolName)) {
+            canonicalizeText(canonicalValues, "sourceWorkspaceRef");
+            canonicalizeText(canonicalValues, "baseCommit");
+            canonicalizeText(canonicalValues, "branchName");
+            canonicalizeText(canonicalValues, "targetName");
+            canonicalizeText(canonicalValues, "permission");
+            canonicalizeText(canonicalValues, "deliveryIntent");
+            return withArguments(request, values, canonicalValues);
+        }
+
+        canonicalizeText(canonicalValues, "workspaceRef");
+        Object rawWorkdir = values.get("relativeWorkdir");
+        if (rawWorkdir instanceof String workdir && !workdir.isBlank()) {
+            canonicalValues.put("relativeWorkdir", canonicalizeRelativeWorkdir(workdir));
+        }
+        return withArguments(request, values, canonicalValues);
+    }
+
+    private static ToolRequest withArguments(
+            ToolRequest request, Map<String, Object> original, Map<String, Object> canonical) {
+        if (canonical.equals(original)) return request;
         ToolArguments arguments = new ToolArguments(
-                request.arguments().schemaId(), request.arguments().schemaVersion(), canonicalValues);
+                request.arguments().schemaId(), request.arguments().schemaVersion(), canonical);
         return new ToolRequest(
                 request.toolCallId(),
                 request.providerCorrelationId(),
@@ -52,20 +63,17 @@ public final class CodingExecutionToolRequestCanonicalizer implements ToolReques
                 arguments);
     }
 
-    private static String logicalCanonical(String workdir) {
+    private static void canonicalizeText(Map<String, Object> values, String field) {
+        Object value = values.get(field);
+        if (value instanceof String text) values.put(field, text.trim());
+    }
+
+    static String canonicalizeRelativeWorkdir(String workdir) {
         try {
             return workdir.equals(".") ? "." : ProjectPath.of(workdir).toString();
         } catch (IllegalArgumentException ignored) {
             // Preserve invalid or out-of-workspace targets so the execution boundary rejects them fail-closed.
             return workdir;
         }
-    }
-
-    static String canonicalizeWorkdir(String workdir, UnaryOperator<String> workspaceCanonicalizer) {
-        String workspaceCanonical = Objects.requireNonNull(
-                Objects.requireNonNull(workspaceCanonicalizer, "workspaceCanonicalizer must not be null")
-                        .apply(Objects.requireNonNull(workdir, "workdir must not be null")),
-                "workspaceCanonicalizer must not return null");
-        return logicalCanonical(workspaceCanonical);
     }
 }

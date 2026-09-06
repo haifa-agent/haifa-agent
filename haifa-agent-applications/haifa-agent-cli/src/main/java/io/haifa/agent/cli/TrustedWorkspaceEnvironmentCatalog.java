@@ -157,7 +157,7 @@ final class TrustedWorkspaceEnvironmentCatalog {
                 + environment.executionEnabled()
                 + "\" network=\""
                 + environment.networkPolicy()
-                + "\" workdir=\"workspace-relative\" default_timeout_millis=\""
+                + "\" target=\"workspace-ref-plus-relative-workdir\" default_timeout_millis=\""
                 + environment.defaultTimeoutMillis()
                 + "\" maximum_timeout_millis=\""
                 + environment.maximumTimeoutMillis()

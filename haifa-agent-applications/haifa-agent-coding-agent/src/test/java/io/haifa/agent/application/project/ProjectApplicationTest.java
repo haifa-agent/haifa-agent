@@ -103,7 +103,7 @@ class ProjectApplicationTest {
                 .containsExactly("execution_run", "file_read");
         var execution = disclosed.snapshot().bindings().getFirst();
         var fileRead = disclosed.snapshot().bindings().get(1);
-        assertThat(execution.definition().version().value()).isEqualTo("1.8.0");
+        assertThat(execution.definition().version().value()).isEqualTo("2.0.0");
         assertThat(fileRead.definition().version().value()).isEqualTo("2.0.0");
         @SuppressWarnings("unchecked")
         var properties = (java.util.Map<String, Object>)
@@ -111,9 +111,15 @@ class ProjectApplicationTest {
         assertThat(properties).containsKey("expectedExitCodes");
         assertThat(properties)
                 .containsOnlyKeys(
-                        "command", "workdir", "timeoutMillis", "expectedExitCodes", "description", "operationFamily");
+                        "command",
+                        "workspaceRef",
+                        "relativeWorkdir",
+                        "timeoutMillis",
+                        "expectedExitCodes",
+                        "description",
+                        "operationFamily");
         assertThat(execution.definition().inputSchema().document())
-                .containsEntry("required", List.of("command"))
+                .containsEntry("required", List.of("command", "workspaceRef", "relativeWorkdir"))
                 .containsEntry("additionalProperties", false);
         assertThat(execution.definition().outputSchema().document()).containsEntry("additionalProperties", false);
         @SuppressWarnings("unchecked")
@@ -241,7 +247,7 @@ class ProjectApplicationTest {
                 executionProfile("host-guarded", NetworkPolicy.ALLOW, "two"));
 
         assertThat(frozen.snapshot().bindings())
-                .hasSize(13)
+                .hasSize(14)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
                         "execution_run",
@@ -256,7 +262,8 @@ class ProjectApplicationTest {
                         "file_stat",
                         "file_write",
                         "request_permissions",
-                        "workspace_attach");
+                        "workspace_attach",
+                        "workspace_worktree_create");
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
             assertThat(binding.definition().inputSchema().document()).containsKey("$schema");
             assertThat(binding.definition().outputSchema().document()).containsKey("$schema");
@@ -290,6 +297,31 @@ class ProjectApplicationTest {
                     assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
                     assertThat(binding.definition().sideEffects())
                             .contains(io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
+                });
+        assertThat(frozen.snapshot().bindings())
+                .filteredOn(binding -> binding.alias().value().equals("workspace_worktree_create"))
+                .singleElement()
+                .satisfies(binding -> {
+                    assertThat(binding.definition().approvalRequirement())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.ALWAYS);
+                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
+                    assertThat(binding.definition().sideEffects())
+                            .contains(
+                                    io.haifa.agent.tool.api.ToolSideEffect.FILE_WRITE,
+                                    io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION,
+                                    io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
+                    assertThat(binding.definition()
+                                    .inputSchema()
+                                    .document()
+                                    .get("required")
+                                    .toString())
+                            .contains(
+                                    "sourceWorkspaceRef",
+                                    "baseCommit",
+                                    "branchName",
+                                    "targetName",
+                                    "permission",
+                                    "deliveryIntent");
                 });
         assertThat(frozen.snapshot().bindings())
                 .filteredOn(binding -> binding.alias().value().equals("file_write"))

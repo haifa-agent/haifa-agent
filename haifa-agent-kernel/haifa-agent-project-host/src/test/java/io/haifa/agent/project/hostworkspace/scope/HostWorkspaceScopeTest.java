@@ -73,6 +73,29 @@ class HostWorkspaceScopeTest {
     }
 
     @Test
+    void resolvesNestedExecutionDirectoryByWorkspaceRef() throws IOException {
+        Files.createDirectories(rootA.resolve("docs"));
+
+        var resolved = scope.resolveExecutionDirectory(new WorkspaceId("ws-a"), "docs");
+
+        assertThat(resolved.workspaceId()).isEqualTo(new WorkspaceId("ws-a"));
+        assertThat(resolved.projectPath()).isEqualTo(ProjectPath.of("docs"));
+    }
+
+    @Test
+    void rejectsUnavailableRootAndInvalidRelativeExecutionDirectories() {
+        assertThatThrownBy(() -> scope.resolveExecutionDirectory(new WorkspaceId("ws-missing"), "."))
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, failure -> assertThat(failure.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.ACCESS_DENIED));
+        for (String input : List.of("../outside", "/tmp", "C:\\outside", "docs/../outside", "docs/")) {
+            assertThatThrownBy(() -> scope.resolveExecutionDirectory(new WorkspaceId("ws-a"), input))
+                    .as(input)
+                    .isInstanceOfSatisfying(HostWorkspaceScopeException.class, failure -> assertThat(failure.code())
+                            .isEqualTo(HostWorkspaceScopeErrorCode.INVALID_ARGUMENT));
+        }
+    }
+
+    @Test
     void twoDirectoriesOwningTheSameRelativeFileNameStayDistinct() throws IOException {
         Files.writeString(rootA.resolve("notes.md"), "in a", StandardCharsets.UTF_8);
         Files.writeString(rootB.resolve("notes.md"), "in b", StandardCharsets.UTF_8);
@@ -202,6 +225,15 @@ class HostWorkspaceScopeTest {
 
         assertThatThrownBy(() -> scope.resolve(linkDir.resolve("new-file.txt").toString()))
                 .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(HostWorkspaceScopeErrorCode.PATH_ESCAPE_DENIED));
+    }
+
+    @Test
+    void rejectsExecutionDirectoryThatEscapesViaSymlink() throws IOException {
+        createSymbolicLinkOrSkip(rootA.resolve("escaped-workdir"), outside);
+
+        assertThatThrownBy(() -> scope.resolveExecutionDirectory(new WorkspaceId("ws-a"), "escaped-workdir"))
+                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, failure -> assertThat(failure.code())
                         .isEqualTo(HostWorkspaceScopeErrorCode.PATH_ESCAPE_DENIED));
     }
 
