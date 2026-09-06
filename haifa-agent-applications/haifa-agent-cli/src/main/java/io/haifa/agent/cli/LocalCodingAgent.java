@@ -528,7 +528,16 @@ final class LocalCodingAgent implements AutoCloseable {
                     AuthorizedHostDirectory.of(workspaceId, realRoot, HostDirectoryPermission.READ_WRITE);
             HostWorkspaceScope initialScope = HostWorkspaceScope.initial(initialDir);
             AuthorizedWorkspaceProvisioning provisioning = new AuthorizedWorkspaceProvisioning(
-                    projectId, workspaces, bindings, locations, workspaceService, principal, time, initialScope);
+                    projectId,
+                    workspaces,
+                    bindings,
+                    locations,
+                    workspaceService,
+                    principal,
+                    time,
+                    initialScope,
+                    persistence.workspaceRegistry(),
+                    workspaceIdentity.safeDisplayName());
             var sessionLedger = new InMemorySessionChangeLedger();
             var mutations = new HostWorkspaceMutationService(
                     workspaces,
@@ -739,6 +748,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             Set.of(),
                             CodingAgentPrompt.forWorkspaceAttachment(workspaceAttachmentDisclosed)
                                             .text()
+                                    + CodingWorkspaceRegistryPrompt.render(provisioning.registryViews())
                                     + executionEnvironmentPrompt(
                                             executionPlatform == null ? "" : executionPlatform.shellDisplayName())
                                     + workspaceEnvironment

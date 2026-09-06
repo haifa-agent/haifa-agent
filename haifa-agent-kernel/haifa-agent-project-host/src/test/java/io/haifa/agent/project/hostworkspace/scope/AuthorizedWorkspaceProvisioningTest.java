@@ -20,6 +20,9 @@ import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistrySource;
+import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStatus;
+import io.haifa.agent.project.hostworkspace.registry.InMemoryHostWorkspaceRegistryStore;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning.ProvisioningResult;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.Workspace;
@@ -46,8 +49,15 @@ class AuthorizedWorkspaceProvisioningTest {
     private Path additionalRoot;
     private Path outsideRoot;
     private ProjectId projectId;
+    private InMemoryProjectStore projectStore;
     private HostWorkspaceLocationStore locations;
     private InMemoryWorkspaceStore workspaceStore;
+    private InMemoryWorkspaceBindingStore bindingStore;
+    private WorkspaceService workspaceService;
+    private PrincipalRef owner;
+    private TimeProvider time;
+    private HostWorkspaceScope initialScope;
+    private InMemoryHostWorkspaceRegistryStore registry;
     private AuthorizedWorkspaceProvisioning provisioning;
 
     @BeforeEach
@@ -59,13 +69,13 @@ class AuthorizedWorkspaceProvisioningTest {
         outsideRoot = Files.createDirectories(tempDir.resolve("outside"));
 
         projectId = new ProjectId("local-project-v1-test");
-        var projectStore = new InMemoryProjectStore();
+        projectStore = new InMemoryProjectStore();
         workspaceStore = new InMemoryWorkspaceStore();
-        var bindingStore = new InMemoryWorkspaceBindingStore();
+        bindingStore = new InMemoryWorkspaceBindingStore();
         locations = new HostWorkspaceLocationStore();
 
-        TimeProvider time = () -> NOW;
-        var owner = new PrincipalRef("owner", "user");
+        time = () -> NOW;
+        owner = new PrincipalRef("owner", "user");
         WorkspaceLocationRef initialLocationRef = new WorkspaceLocationRef("local-location-v1:initial");
         locations.register(initialLocationRef, initialRoot.toRealPath());
         WorkspaceBinding initialBinding = WorkspaceBinding.provision(
@@ -100,12 +110,21 @@ class AuthorizedWorkspaceProvisioningTest {
                 .assignDefaultWorkspace(initialWorkspace.id(), NOW);
         projectStore.create(project);
 
-        WorkspaceService workspaceService =
-                new WorkspaceService(projectStore, workspaceStore, bindingStore, () -> "generated-id", time);
-        HostWorkspaceScope initialScope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(
+        workspaceService = new WorkspaceService(projectStore, workspaceStore, bindingStore, () -> "generated-id", time);
+        initialScope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(
                 initialWorkspace.id(), initialRoot.toRealPath(), HostDirectoryPermission.READ_WRITE));
+        registry = new InMemoryHostWorkspaceRegistryStore();
         provisioning = new AuthorizedWorkspaceProvisioning(
-                projectId, workspaceStore, bindingStore, locations, workspaceService, owner, time, initialScope);
+                projectId,
+                workspaceStore,
+                bindingStore,
+                locations,
+                workspaceService,
+                owner,
+                time,
+                initialScope,
+                registry,
+                "workspace-test");
     }
 
     @Test
@@ -271,5 +290,140 @@ class AuthorizedWorkspaceProvisioningTest {
                 .orElseThrow();
 
         assertThat(workspace.purpose()).isEqualTo(WorkspacePurpose.DIRECTORY);
+    }
+
+    @Test
+    void persistsApprovedAttachAndRestoresItIntoANewScope() throws IOException {
+        ProvisioningResult result = provisioning.authorizeApprovedAttach(
+                additionalRoot, HostDirectoryPermission.READ_ONLY, "policy-decision-1");
+
+        assertThat(registry.find(projectId, result.directory().workspaceId()))
+                .get()
+                .satisfies(entry -> {
+                    assertThat(entry.source()).isEqualTo(HostWorkspaceRegistrySource.APPROVED_ATTACH);
+                    assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.ACTIVE);
+                    assertThat(entry.authorizationRef()).isEqualTo("policy-decision-1");
+                    assertThat(entry.safeDisplayName()).doesNotContain(additionalRoot.toString());
+                });
+
+        var reopenedLocations = new HostWorkspaceLocationStore();
+        reopenedLocations.register(new WorkspaceLocationRef("local-location-v1:initial"), initialRoot.toRealPath());
+        var reopened = new AuthorizedWorkspaceProvisioning(
+                projectId,
+                workspaceStore,
+                bindingStore,
+                reopenedLocations,
+                workspaceService,
+                owner,
+                time,
+                initialScope,
+                registry,
+                "workspace-test");
+
+        assertThat(reopened.scope().allowedDirectories())
+                .extracting(AuthorizedHostDirectory::workspaceId)
+                .contains(result.directory().workspaceId());
+        assertThat(reopened.scope()
+                        .resolve(additionalRoot.resolve("restored.txt").toString())
+                        .workspacePath()
+                        .workspaceId())
+                .isEqualTo(result.directory().workspaceId());
+        assertThat(reopened.registryViews())
+                .allSatisfy(view -> assertThat(view.toString()).doesNotContain(additionalRoot.toString()));
+    }
+
+    @Test
+    void missingAttachedDirectoryIsDisabledDuringRecovery() throws IOException {
+        ProvisioningResult result = provisioning.authorizeApprovedAttach(
+                additionalRoot, HostDirectoryPermission.READ_WRITE, "policy-decision-2");
+        Files.delete(additionalRoot);
+
+        var reopenedLocations = new HostWorkspaceLocationStore();
+        reopenedLocations.register(new WorkspaceLocationRef("local-location-v1:initial"), initialRoot.toRealPath());
+        var reopened = new AuthorizedWorkspaceProvisioning(
+                projectId,
+                workspaceStore,
+                bindingStore,
+                reopenedLocations,
+                workspaceService,
+                owner,
+                time,
+                initialScope,
+                registry,
+                "workspace-test");
+
+        assertThat(reopened.scope().allowedDirectories()).hasSize(1);
+        assertThat(registry.find(projectId, result.directory().workspaceId()))
+                .get()
+                .extracting(entry -> entry.status())
+                .isEqualTo(HostWorkspaceRegistryStatus.DISABLED);
+    }
+
+    @Test
+    void fingerprintDriftDisablesAttachedDirectoryDuringRecovery() throws IOException {
+        ProvisioningResult result = provisioning.authorizeApprovedAttach(
+                additionalRoot, HostDirectoryPermission.READ_WRITE, "policy-decision-drift");
+        var persisted =
+                registry.find(projectId, result.directory().workspaceId()).orElseThrow();
+        registry.update(
+                persisted.reactivate(
+                        additionalRoot.toRealPath(), "sha256:unexpected-fingerprint", "policy-decision-drift", NOW),
+                persisted.version());
+
+        var reopenedLocations = new HostWorkspaceLocationStore();
+        reopenedLocations.register(new WorkspaceLocationRef("local-location-v1:initial"), initialRoot.toRealPath());
+        var reopened = new AuthorizedWorkspaceProvisioning(
+                projectId,
+                workspaceStore,
+                bindingStore,
+                reopenedLocations,
+                workspaceService,
+                owner,
+                time,
+                initialScope,
+                registry,
+                "workspace-test");
+
+        assertThat(reopened.scope().allowedDirectories()).hasSize(1);
+        assertThat(registry.find(projectId, result.directory().workspaceId()))
+                .get()
+                .satisfies(entry -> {
+                    assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.DISABLED);
+                    assertThat(entry.revocationReasonCode()).contains("REGISTRY_REVALIDATION_FAILED");
+                });
+    }
+
+    @Test
+    void revocationIsPersistedAndInitialWorkspaceCannotBeRevoked() {
+        ProvisioningResult attached = provisioning.authorizeApprovedAttach(
+                additionalRoot, HostDirectoryPermission.READ_WRITE, "policy-decision-3");
+
+        provisioning.revoke(attached.directory().workspaceId());
+
+        assertThat(registry.find(projectId, attached.directory().workspaceId()))
+                .get()
+                .extracting(entry -> entry.status())
+                .isEqualTo(HostWorkspaceRegistryStatus.REVOKED);
+        assertThatThrownBy(() -> provisioning.revoke(
+                        initialScope.allowedDirectories().getFirst().workspaceId()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("initial workspace");
+
+        var reopenedLocations = new HostWorkspaceLocationStore();
+        reopenedLocations.register(
+                new WorkspaceLocationRef("local-location-v1:initial"),
+                initialRoot.toAbsolutePath().normalize());
+        var reopened = new AuthorizedWorkspaceProvisioning(
+                projectId,
+                workspaceStore,
+                bindingStore,
+                reopenedLocations,
+                workspaceService,
+                owner,
+                time,
+                initialScope,
+                registry,
+                "workspace-test");
+        assertThat(reopened.scope().allowedDirectories()).hasSize(1);
     }
 }

@@ -585,8 +585,11 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 
 只有当 `tools.enabled` 显式包含 `workspace.attach` 时，用户要求读取或修改当前 Workspace 外的目录，模型才可
 请求 `workspace_attach`：必须给出主机绝对路径和最小权限（`read-only` 或 `read-write`）。默认 `ask` 模式会向
-用户展示这两项并等待明确批准；批准后目录只附加到当前本地 Agent 进程，既不写入配置也不在会话间复用。未启用
-该工具的 Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准一个不可调用的工具。主目录
+用户展示这两项并等待明确批准；批准后目录登记到 CA 自有 Workspace Registry。SQLite 模式会保护物理路径并在
+进程重启时重新验证，只有仍满足存在性、fingerprint、link/reparse point 与互斥根规则的 ACTIVE 记录才恢复；
+MEMORY 模式仍只在当前进程有效。Tool 成功结果和新 Run 的模型投影只包含 `workspaceRef`、安全显示名、权限、来源和
+状态，不回显真实路径。未启用该工具的 Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准
+一个不可调用的工具。主目录
 与附加目录的后续文件操作都直接使用主机绝对路径，并统一映射到各自的 `WorkspaceId + WorkspacePath` 后进入同一
 文件服务与 mutation 服务。
 相对路径和 root alias 不再接受；跨授权目录的 patch 与 move 仍明确拒绝。已被现有授权目录覆盖的重复授权

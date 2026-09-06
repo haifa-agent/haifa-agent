@@ -287,8 +287,8 @@ public final class ProjectToolCatalog {
                             "file.move",
                             "file.diff",
                             "file.patch",
-                            "file.stat",
-                            "workspace.attach" -> "2.0.0";
+                            "file.stat" -> "2.0.0";
+                    case "workspace.attach" -> "2.1.0";
                     default -> "1.0.0";
                 };
         return new ToolDefinition(
@@ -394,10 +394,10 @@ public final class ProjectToolCatalog {
                     + "and requires a fresh read before regenerating the patch.";
         }
         if (name.equals("workspace.attach")) {
-            return "Request one additional existing local directory for this Coding Agent process only. Supply an "
+            return "Request one additional existing local directory for this Coding Agent registry. Supply an "
                     + "absolute host path and explicit read-only or read-write permission. The user "
                     + "must approve the exact directory and permission before it becomes available in the scope; "
-                    + "attachments are not persisted or restored.";
+                    + "successful attachments are revalidated before restoration and returned as a path-redacted workspaceRef.";
         }
         if (WRITES.contains(name)) {
             return title(name)
