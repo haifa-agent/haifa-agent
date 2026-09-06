@@ -583,10 +583,12 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 目标已存在时仍以版本和内容哈希保护整体替换。`file.create` 遇到已有目标返回
 `USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。
 
-当用户要求读取或修改当前 Workspace 外的目录时，模型只能请求 `workspace_attach`：必须给出主机绝对路径
-和最小权限（`read-only` 或 `read-write`）。默认 `ask` 模式会向用户展示这两项并等待明确批准；批准后目录
-只附加到当前本地 Agent 进程，既不写入配置也不在会话间复用。主目录与附加目录的后续文件操作都直接
-使用主机绝对路径，并统一映射到各自的 `WorkspaceId + WorkspacePath` 后进入同一文件服务与 mutation 服务。
+只有当 `tools.enabled` 显式包含 `workspace.attach` 时，用户要求读取或修改当前 Workspace 外的目录，模型才可
+请求 `workspace_attach`：必须给出主机绝对路径和最小权限（`read-only` 或 `read-write`）。默认 `ask` 模式会向
+用户展示这两项并等待明确批准；批准后目录只附加到当前本地 Agent 进程，既不写入配置也不在会话间复用。未启用
+该工具的 Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准一个不可调用的工具。主目录
+与附加目录的后续文件操作都直接使用主机绝对路径，并统一映射到各自的 `WorkspaceId + WorkspacePath` 后进入同一
+文件服务与 mutation 服务。
 相对路径和 root alias 不再接受；跨授权目录的 patch 与 move 仍明确拒绝。已被现有授权目录覆盖的重复授权
 复用原边界，不创建第二份目录身份；无法确认物理路径边界时拒绝操作。
 

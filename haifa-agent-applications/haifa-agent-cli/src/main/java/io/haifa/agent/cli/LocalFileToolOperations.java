@@ -77,6 +77,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private final SessionChangeLedger ledger;
     private final AuthorizedWorkspaceProvisioning provisioning;
     private final RunRepositoryBaselineRegistry repositoryBaselines;
+    private final boolean workspaceAttachmentDisclosed;
 
     LocalFileToolOperations(
             WorkspaceStore workspaces,
@@ -86,7 +87,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             TimeProvider time,
             AuthorizedWorkspaceProvisioning provisioning,
             SessionChangeLedger ledger) {
-        this(workspaces, files, mutations, identifiers, time, provisioning, ledger, null);
+        this(workspaces, files, mutations, identifiers, time, provisioning, ledger, null, false);
     }
 
     LocalFileToolOperations(
@@ -98,6 +99,19 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             AuthorizedWorkspaceProvisioning provisioning,
             SessionChangeLedger ledger,
             RunRepositoryBaselineRegistry repositoryBaselines) {
+        this(workspaces, files, mutations, identifiers, time, provisioning, ledger, repositoryBaselines, false);
+    }
+
+    LocalFileToolOperations(
+            WorkspaceStore workspaces,
+            HostWorkspaceFileService files,
+            WorkspaceMutationProvider mutations,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            AuthorizedWorkspaceProvisioning provisioning,
+            SessionChangeLedger ledger,
+            RunRepositoryBaselineRegistry repositoryBaselines,
+            boolean workspaceAttachmentDisclosed) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.files = Objects.requireNonNull(files, "files must not be null");
         this.mutations = Objects.requireNonNull(mutations, "mutations must not be null");
@@ -107,6 +121,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         this.provisioning = Objects.requireNonNull(provisioning, "provisioning must not be null");
         this.ledger = ledger;
         this.repositoryBaselines = repositoryBaselines;
+        this.workspaceAttachmentDisclosed = workspaceAttachmentDisclosed;
     }
 
     HostWorkspaceScope currentScope() {
@@ -958,7 +973,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         return new ToolResult(false, summary, data, List.of(), List.of(), false);
     }
 
-    private static Map<String, Object> workspaceScopeFailure(String toolName, HostWorkspaceScopeException exception) {
+    private Map<String, Object> workspaceScopeFailure(String toolName, HostWorkspaceScopeException exception) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("errorCode", exception.code().name());
         if (exception.path() != null) data.put("path", exception.path());
@@ -968,7 +983,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 switch (exception.code()) {
                     case PERMISSION_DENIED -> "POLICY_DENIED";
                     case PATH_ESCAPE_DENIED -> "POLICY_DENIED";
-                    case ACCESS_DENIED -> "POLICY_DENIED";
+                    case ACCESS_DENIED -> "WORKSPACE_SCOPE_DENIED";
                     case INVALID_ARGUMENT -> "INVALID_INPUT";
                     case CROSS_DIRECTORY_MOVE -> "INVALID_INPUT";
                 });
@@ -977,7 +992,10 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 switch (exception.code()) {
                     case PERMISSION_DENIED -> "REQUEST_WRITE_PERMISSION";
                     case PATH_ESCAPE_DENIED -> "USE_BOUNDED_PATH";
-                    case ACCESS_DENIED -> "REQUEST_DIRECTORY_AUTHORIZATION";
+                    case ACCESS_DENIED ->
+                        workspaceAttachmentDisclosed
+                                ? "REQUEST_DIRECTORY_AUTHORIZATION"
+                                : "USE_AUTHORIZED_WORKSPACE_PATH";
                     case INVALID_ARGUMENT -> "USE_ABSOLUTE_HOST_PATH";
                     case CROSS_DIRECTORY_MOVE -> "USE_CREATE_AND_DELETE";
                 });
