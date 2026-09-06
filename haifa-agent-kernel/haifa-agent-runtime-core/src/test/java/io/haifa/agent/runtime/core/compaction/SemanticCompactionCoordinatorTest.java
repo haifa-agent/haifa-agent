@@ -646,6 +646,11 @@ class SemanticCompactionCoordinatorTest {
         assertThat(selection.summary().get().compressorVersion()).isEqualTo("semantic-v1");
         assertThat(selection.summary().get().semanticSummary()).isPresent();
 
+        var forcedSelection = messageSource.select(run, 1, 1);
+        assertThat(forcedSelection.compacted()).isFalse();
+        assertThat(forcedSelection.summary()).contains(selection.summary().orElseThrow());
+        assertThat(store.latestVersion(session)).isEqualTo(1L);
+
         var summaryItem = selection.items().stream()
                 .filter(item -> item.type() == ContextItemType.CONVERSATION_SUMMARY)
                 .findFirst();
@@ -1378,7 +1383,11 @@ class SemanticCompactionCoordinatorTest {
                         "Rationale",
                         io.haifa.agent.context.compression.SemanticDecisionStatus.ACCEPTED,
                         List.of("m-prev-2"))),
-                List.of(),
+                List.of(new io.haifa.agent.context.compression.SemanticSummaryItem(
+                        "N-1",
+                        "Preserve next action",
+                        List.of("m-prev-2"),
+                        io.haifa.agent.context.compression.SemanticConfidence.OBSERVED)),
                 List.of(new io.haifa.agent.context.compression.SemanticSummaryItem(
                         "CC-1",
                         "Important Context",
@@ -1406,7 +1415,7 @@ class SemanticCompactionCoordinatorTest {
                 NOW,
                 policy.version(),
                 "semantic-v1",
-                java.util.Set.of(),
+                java.util.Set.of("restricted"),
                 true,
                 Optional.of(prevSemantic),
                 CompactionQuality.SEMANTIC_VALIDATED);
@@ -1439,6 +1448,131 @@ class SemanticCompactionCoordinatorTest {
         assertThat(fallback.facts()).anyMatch(f -> f.contains("Strict Constraint"));
         assertThat(fallback.decisions()).anyMatch(d -> d.contains("Decided Architecture"));
         assertThat(fallback.openItems()).anyMatch(o -> o.contains("Open Question A"));
+        assertThat(fallback.openItems()).anyMatch(o -> o.contains("Preserve next action"));
+        assertThat(fallback.sourceMessageIds()).contains(m1.id(), m2.id(), new AgentMessageId("m-turn2-1"));
+        assertThat(fallback.sourceHash()).startsWith("sha256:").isNotEqualTo("hash");
+        assertThat(fallback.securityLabels()).contains("restricted", "user_visible", "agent_visible");
+        assertThat(fallback.estimatedTokens()).isPositive();
+    }
+
+    @Test
+    void multiBatchCompactionCommitsTheWholeEvictedRangeOnce() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
+        SemanticCompactionCoordinator coordinator = coordinator(store, ids, policy);
+        AgentRun run = createAndSaveRun(store);
+
+        for (int turn = 1; turn <= 50; turn++) {
+            store.appendSessionMessage(draft(
+                    "batch-u-" + turn,
+                    run.sessionId(),
+                    run.id().value(),
+                    MessageRole.USER,
+                    "User turn " + turn + " with enough context to exercise batching"));
+            store.appendSessionMessage(draft(
+                    "batch-a-" + turn,
+                    run.sessionId(),
+                    run.id().value(),
+                    MessageRole.ASSISTANT,
+                    "Assistant turn " + turn + " with enough context to exercise batching"));
+        }
+
+        AtomicInteger calls = new AtomicInteger();
+        AgentChatModel model = request -> {
+            calls.incrementAndGet();
+            return response("batch-ok", VALID_SUMMARY_JSON);
+        };
+
+        coordinator.forceCompactOnOverflow(run, 1, createBinding(store, run, model));
+
+        ConversationSummary summary = store.latestValid(run.sessionId()).orElseThrow();
+        assertThat(calls.get()).isGreaterThan(1);
+        assertThat(store.latestVersion(run.sessionId())).isEqualTo(1L);
+        assertThat(summary.sourceMessageIds()).hasSizeGreaterThan(40);
+        assertThat(summary.sourceMessageIds()).contains(new AgentMessageId("batch-u-1"));
+    }
+
+    @Test
+    void laterBatchFailureDoesNotCommitAnEarlierBatch() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger idGen = new AtomicInteger();
+        IdentifierGenerator ids = () -> "id-" + idGen.incrementAndGet();
+        CompressionPolicy policy =
+                CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
+        SemanticCompactionCoordinator coordinator = coordinator(store, ids, policy);
+        AgentRun run = createAndSaveRun(store);
+
+        for (int turn = 1; turn <= 30; turn++) {
+            store.appendSessionMessage(draft(
+                    "atomic-u-" + turn,
+                    run.sessionId(),
+                    run.id().value(),
+                    MessageRole.USER,
+                    "User turn " + turn + " with enough context to exercise batching"));
+            store.appendSessionMessage(draft(
+                    "atomic-a-" + turn,
+                    run.sessionId(),
+                    run.id().value(),
+                    MessageRole.ASSISTANT,
+                    "Assistant turn " + turn + " with enough context to exercise batching"));
+        }
+
+        AtomicInteger calls = new AtomicInteger();
+        AgentChatModel model = request -> {
+            if (calls.incrementAndGet() == 1) {
+                return response("first-batch", VALID_SUMMARY_JSON);
+            }
+            throw new RuntimeException("second batch failed");
+        };
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> coordinator.forceCompactOnOverflow(run, 1, createBinding(store, run, model)))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("second batch failed");
+        assertThat(calls.get()).isEqualTo(2);
+        assertThat(store.latestVersion(run.sessionId())).isZero();
+        assertThat(store.latestValid(run.sessionId())).isEmpty();
+    }
+
+    private static SemanticCompactionCoordinator coordinator(
+            InMemoryRuntimeStore store, IdentifierGenerator ids, CompressionPolicy policy) {
+        TimeProvider time = () -> NOW;
+        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
+                store,
+                store,
+                store,
+                store,
+                ids,
+                time,
+                new RunAwaiter(),
+                store,
+                new RetryExecutor(Sleeper.threadSleep()),
+                PersistenceRetryPolicy.none());
+        return new SemanticCompactionCoordinator(
+                store,
+                store,
+                new SummaryModelInvoker(transitions, new RunControlRegistry(), ids, time, policy),
+                new CompactionTriggerEvaluator(policy),
+                policy,
+                new DeterministicContextCompressor(),
+                ids,
+                time,
+                store);
+    }
+
+    private static AgentChatResponse response(String id, String content) {
+        return new AgentChatResponse(
+                id,
+                "deepseek-v4-pro",
+                content,
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(50, 20),
+                "",
+                Map.of());
     }
 
     private static SessionMessageDraft draft(

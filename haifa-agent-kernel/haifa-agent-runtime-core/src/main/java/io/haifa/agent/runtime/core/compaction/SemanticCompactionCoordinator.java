@@ -41,7 +41,9 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -226,25 +228,14 @@ public final class SemanticCompactionCoordinator {
             return;
         }
 
-        int boundedSplit = boundBatchSplit(activeGroups, split, available);
-        if (boundedSplit <= 0) {
-            return;
-        }
-
-        List<AgentMessage> sourceToCompact = activeGroups.subList(0, boundedSplit).stream()
-                .flatMap(List::stream)
-                .toList();
+        List<AgentMessage> sourceToCompact =
+                activeGroups.subList(0, split).stream().flatMap(List::stream).toList();
         if (sourceToCompact.isEmpty()) {
             return;
         }
 
-        ProjectedCompactionSource projected = CompactionSourceProjector.project(sourceToCompact);
-        Optional<SemanticConversationSummaryV1> prevSemantic =
+        Optional<SemanticConversationSummaryV1> workingSemantic =
                 previousSummary.flatMap(ConversationSummary::semanticSummary);
-        List<SemanticSummaryItem> carryForward = prevSemantic
-                .map(SemanticConversationSummaryV1::mandatoryCarryForwardItems)
-                .orElse(List.of());
-
         Set<String> historicalDurableRefs = new HashSet<>();
         previousSummary.ifPresent(prev -> {
             prev.sourceMessageIds().forEach(id -> historicalDurableRefs.add(id.value()));
@@ -252,47 +243,79 @@ public final class SemanticCompactionCoordinator {
         });
 
         String systemPrompt = CompactionPromptRenderer.systemPrompt();
-        String userPrompt =
-                CompactionPromptRenderer.userPromptFromConversationSummary(previousSummary, carryForward, projected);
-
         int physicalCalls = 0;
-        SemanticConversationSummaryV1 candidate = null;
+        int batchStart = 0;
         try {
-            candidate = invoker.invoke(binding, run, iteration, systemPrompt, userPrompt, physicalCalls++, false);
-            try {
-                SemanticSummaryValidator.validate(
-                        candidate, projected, carryForward, historicalDurableRefs, prevSemantic);
-            } catch (SemanticSummaryValidationException validationEx) {
-                if (physicalCalls < policy.maxCompactionPhysicalCalls()) {
-                    log.info("Compaction validation failed: {}. Attempting repair call.", validationEx.getMessage());
-                    String repairPrompt = CompactionPromptRenderer.repairPromptFromConversationSummary(
-                            candidate, validationEx.validationErrors(), previousSummary, carryForward, projected);
-                    candidate =
-                            invoker.invoke(binding, run, iteration, systemPrompt, repairPrompt, physicalCalls++, true);
-                    SemanticSummaryValidator.validate(
-                            candidate, projected, carryForward, historicalDurableRefs, prevSemantic);
-                } else {
-                    throw validationEx;
+            while (batchStart < split) {
+                int batchEnd = nextBatchEnd(activeGroups, batchStart, split, available);
+                List<AgentMessage> batchSource = activeGroups.subList(batchStart, batchEnd).stream()
+                        .flatMap(List::stream)
+                        .toList();
+                ProjectedCompactionSource projected = CompactionSourceProjector.project(batchSource);
+                List<SemanticSummaryItem> carryForward = workingSemantic
+                        .map(SemanticConversationSummaryV1::mandatoryCarryForwardItems)
+                        .orElse(List.of());
+
+                if (physicalCalls >= policy.maxCompactionPhysicalCalls()) {
+                    throw new SemanticSummaryValidationException(
+                            "compaction batch plan exceeded maxCompactionPhysicalCalls before the evicted range was complete");
                 }
+                String userPrompt = batchStart == 0
+                        ? CompactionPromptRenderer.userPromptFromConversationSummary(
+                                previousSummary, carryForward, projected)
+                        : CompactionPromptRenderer.userPrompt(workingSemantic, carryForward, projected);
+                SemanticConversationSummaryV1 candidate = assignStableIds(
+                        invoker.invoke(binding, run, iteration, systemPrompt, userPrompt, physicalCalls++, false));
+                try {
+                    SemanticSummaryValidator.validate(
+                            candidate, projected, carryForward, historicalDurableRefs, workingSemantic);
+                } catch (SemanticSummaryValidationException validationEx) {
+                    if (physicalCalls >= policy.maxCompactionPhysicalCalls()) {
+                        throw validationEx;
+                    }
+                    log.info("Compaction validation failed: {}. Attempting repair call.", validationEx.getMessage());
+                    String repairPrompt = batchStart == 0
+                            ? CompactionPromptRenderer.repairPromptFromConversationSummary(
+                                    candidate,
+                                    validationEx.validationErrors(),
+                                    previousSummary,
+                                    carryForward,
+                                    projected)
+                            : CompactionPromptRenderer.repairPrompt(
+                                    candidate,
+                                    validationEx.validationErrors(),
+                                    workingSemantic,
+                                    carryForward,
+                                    projected);
+                    candidate = assignStableIds(
+                            invoker.invoke(binding, run, iteration, systemPrompt, repairPrompt, physicalCalls++, true));
+                    SemanticSummaryValidator.validate(
+                            candidate, projected, carryForward, historicalDurableRefs, workingSemantic);
+                }
+                // Keep the complete, validated semantic state only in memory until every batch succeeds.
+                workingSemantic =
+                        Optional.of(resolveAliases(candidate, projected.messageAliases(), projected.toolAliases()));
+                batchSource.forEach(
+                        message -> historicalDurableRefs.add(message.id().value()));
+                projected.toolAliases().values().forEach(id -> historicalDurableRefs.add(id.value()));
+                batchStart = batchEnd;
             }
         } catch (Exception ex) {
             log.warn("Semantic compaction failed: {}", ex.getMessage());
             if (overflow && policy.allowDeterministicDegradedFallback()) {
                 log.info("Falling back to deterministic degraded compaction on overflow");
-                fallbackToDeterministic(run, previousSummary, sourceToCompact, expectedPreviousVersion);
+                fallbackToDeterministic(run, previousSummary, sourceToCompact, visible, expectedPreviousVersion);
                 return;
             }
             throw (ex instanceof RuntimeException re) ? re : new RuntimeException(ex);
         }
 
-        SemanticConversationSummaryV1 resolved = resolveAliases(
-                assignStableIds(candidate, prevSemantic), projected.messageAliases(), projected.toolAliases());
         commitSummary(
                 run,
                 previousSummary,
                 sourceToCompact,
                 visible,
-                resolved,
+                workingSemantic.orElseThrow(),
                 reason,
                 physicalCalls,
                 expectedPreviousVersion);
@@ -302,6 +325,7 @@ public final class SemanticCompactionCoordinator {
             AgentRun run,
             Optional<ConversationSummary> previousSummary,
             List<AgentMessage> sourceToCompact,
+            List<AgentMessage> visible,
             long expectedPreviousVersion) {
         var request = new io.haifa.agent.context.compression.CompressionRequest(
                 new SummaryId(ids.nextValue()),
@@ -314,61 +338,96 @@ public final class SemanticCompactionCoordinator {
         var result = deterministicCompressor.compress(request);
         ConversationSummary baseSummary = result.summary();
 
-        ConversationSummary mergedSummary;
-        if (previousSummary.isPresent()) {
-            ConversationSummary prev = previousSummary.get();
-            List<AgentMessageId> allSourceIds = new ArrayList<>(prev.sourceMessageIds());
-            allSourceIds.addAll(sourceToCompact.stream().map(AgentMessage::id).toList());
+        MessageCursor coveredThrough = sourceToCompact.getLast().cursor();
+        List<AgentMessage> allCoveredMessages = visible.stream()
+                .filter(message -> message.cursor().compareTo(coveredThrough) <= 0)
+                .toList();
+        List<AgentMessageId> allSourceIds =
+                allCoveredMessages.stream().map(AgentMessage::id).distinct().toList();
 
-            List<String> facts = new ArrayList<>(prev.facts());
+        List<String> factValues = new ArrayList<>();
+        List<String> decisionValues = new ArrayList<>();
+        List<String> openItemValues = new ArrayList<>();
+        List<String> priorityFacts = new ArrayList<>();
+        List<String> priorityDecisions = new ArrayList<>();
+        List<String> priorityOpenItems = new ArrayList<>();
+        previousSummary.ifPresent(prev -> {
+            factValues.addAll(prev.facts());
+            decisionValues.addAll(prev.decisions());
+            openItemValues.addAll(prev.openItems());
             prev.semanticSummary().ifPresent(sem -> {
-                sem.goals().forEach(g -> facts.add("Goal: " + g.text()));
-                sem.constraints().forEach(c -> facts.add("Constraint: " + c.text()));
-                sem.progress().completed().forEach(c -> facts.add("Completed: " + c.text()));
-                sem.criticalContext().forEach(c -> facts.add("Context: " + c.text()));
+                sem.goals().forEach(g -> factValues.add("Goal: " + g.text()));
+                sem.constraints().forEach(c -> {
+                    String value = "Constraint: " + c.text();
+                    factValues.add(value);
+                    priorityFacts.add(value);
+                });
+                sem.progress().completed().forEach(c -> factValues.add("Completed: " + c.text()));
+                sem.criticalContext().forEach(c -> factValues.add("Context: " + c.text()));
+                sem.decisions().forEach(d -> {
+                    String value = "Decision: " + d.statement();
+                    decisionValues.add(value);
+                    priorityDecisions.add(value);
+                });
+                sem.unresolvedQuestions()
+                        .forEach(q -> addPriority(openItemValues, priorityOpenItems, "Question: " + q.text()));
+                sem.progress()
+                        .active()
+                        .forEach(a -> addPriority(openItemValues, priorityOpenItems, "Active: " + a.text()));
+                sem.progress()
+                        .blocked()
+                        .forEach(b -> addPriority(openItemValues, priorityOpenItems, "Blocked: " + b.text()));
+                sem.nextSteps().forEach(n -> addPriority(openItemValues, priorityOpenItems, "Next: " + n.text()));
             });
-            facts.addAll(baseSummary.facts());
+        });
+        factValues.addAll(baseSummary.facts());
+        decisionValues.addAll(baseSummary.decisions());
+        openItemValues.addAll(baseSummary.openItems());
+        List<String> facts = boundedDistinct(factValues, priorityFacts, policy.maxSummaryFacts());
+        List<String> decisions = boundedDistinct(decisionValues, priorityDecisions, policy.maxSummaryFacts());
+        List<String> openItems = boundedDistinct(openItemValues, priorityOpenItems, policy.maxSummaryFacts());
 
-            List<String> decisions = new ArrayList<>(prev.decisions());
-            prev.semanticSummary().ifPresent(sem -> {
-                sem.decisions().forEach(d -> decisions.add("Decision: " + d.statement()));
-            });
-            decisions.addAll(baseSummary.decisions());
+        Set<ToolCallId> toolRefs = new LinkedHashSet<>();
+        previousSummary.ifPresent(prev -> toolRefs.addAll(prev.toolOutcomeReferences()));
+        toolRefs.addAll(baseSummary.toolOutcomeReferences());
+        allCoveredMessages.stream()
+                .flatMap(message -> message.contents().stream())
+                .filter(ToolResultPart.class::isInstance)
+                .map(ToolResultPart.class::cast)
+                .map(ToolResultPart::toolCallId)
+                .forEach(toolRefs::add);
 
-            List<String> openItems = new ArrayList<>(prev.openItems());
-            prev.semanticSummary().ifPresent(sem -> {
-                sem.unresolvedQuestions().forEach(q -> openItems.add("Question: " + q.text()));
-                sem.progress().active().forEach(a -> openItems.add("Active: " + a.text()));
-                sem.progress().blocked().forEach(b -> openItems.add("Blocked: " + b.text()));
-            });
-            openItems.addAll(baseSummary.openItems());
+        Set<String> securityLabels = new LinkedHashSet<>();
+        previousSummary.ifPresent(prev -> securityLabels.addAll(prev.securityLabels()));
+        allCoveredMessages.forEach(
+                message -> securityLabels.add(message.visibility().name().toLowerCase(Locale.ROOT)));
+        int estimatedTokens = Math.max(
+                1,
+                HeuristicTokenEstimator.tokens(String.join("\n", facts))
+                        + HeuristicTokenEstimator.tokens(String.join("\n", decisions))
+                        + HeuristicTokenEstimator.tokens(String.join("\n", openItems))
+                        + (toolRefs.size() * 8));
 
-            List<ToolCallId> toolRefs = new ArrayList<>(prev.toolOutcomeReferences());
-            toolRefs.addAll(baseSummary.toolOutcomeReferences());
-
-            mergedSummary = new ConversationSummary(
-                    baseSummary.id(),
-                    baseSummary.version(),
-                    baseSummary.sessionId(),
-                    prev.coveredFrom(),
-                    baseSummary.coveredThrough(),
-                    allSourceIds,
-                    baseSummary.sourceHash(),
-                    facts,
-                    decisions,
-                    openItems,
-                    toolRefs,
-                    baseSummary.estimatedTokens(),
-                    baseSummary.createdAt(),
-                    baseSummary.policyVersion(),
-                    baseSummary.compressorVersion(),
-                    baseSummary.securityLabels(),
-                    baseSummary.valid(),
-                    Optional.empty(),
-                    CompactionQuality.DETERMINISTIC_DEGRADED);
-        } else {
-            mergedSummary = baseSummary;
-        }
+        ConversationSummary mergedSummary = new ConversationSummary(
+                baseSummary.id(),
+                baseSummary.version(),
+                baseSummary.sessionId(),
+                previousSummary.map(ConversationSummary::coveredFrom).orElse(baseSummary.coveredFrom()),
+                coveredThrough,
+                allSourceIds,
+                hashMessages(allCoveredMessages),
+                facts,
+                decisions,
+                openItems,
+                List.copyOf(toolRefs),
+                estimatedTokens,
+                time.now(),
+                baseSummary.policyVersion(),
+                baseSummary.compressorVersion(),
+                Set.copyOf(securityLabels),
+                true,
+                Optional.empty(),
+                CompactionQuality.DETERMINISTIC_DEGRADED);
 
         try {
             summaries.compareAndSetValid(mergedSummary, expectedPreviousVersion);
@@ -533,8 +592,7 @@ public final class SemanticCompactionCoordinator {
                 questions);
     }
 
-    private SemanticConversationSummaryV1 assignStableIds(
-            SemanticConversationSummaryV1 original, Optional<SemanticConversationSummaryV1> prevSemantic) {
+    private SemanticConversationSummaryV1 assignStableIds(SemanticConversationSummaryV1 original) {
         Set<String> usedIds = new HashSet<>();
         AtomicInteger gIdx = new AtomicInteger(1);
         AtomicInteger cIdx = new AtomicInteger(1);
@@ -558,12 +616,12 @@ public final class SemanticCompactionCoordinator {
 
         List<SemanticSummaryItem> completed = new ArrayList<>();
         for (SemanticSummaryItem item : original.progress().completed()) {
-            completed.add(canonicalizeItem(item, "PC-", Set.of("PC-", "PA-"), pcIdx, usedIds));
+            completed.add(canonicalizeItem(item, "PC-", Set.of("PC-", "PA-", "PB-"), pcIdx, usedIds));
         }
 
         List<SemanticSummaryItem> active = new ArrayList<>();
         for (SemanticSummaryItem item : original.progress().active()) {
-            active.add(canonicalizeItem(item, "PA-", Set.of("PA-"), paIdx, usedIds));
+            active.add(canonicalizeItem(item, "PA-", Set.of("PA-", "PB-"), paIdx, usedIds));
         }
 
         List<SemanticSummaryItem> blocked = new ArrayList<>();
@@ -643,18 +701,18 @@ public final class SemanticCompactionCoordinator {
         return new SemanticDecisionItem(id, item.statement(), item.rationale(), item.status(), item.sourceRefs());
     }
 
-    private int boundBatchSplit(List<List<AgentMessage>> activeGroups, int split, long availableTokens) {
-        if (split <= 0) {
-            return 0;
+    private int nextBatchEnd(List<List<AgentMessage>> activeGroups, int start, int split, long availableTokens) {
+        if (start < 0 || start >= split) {
+            throw new IllegalArgumentException("batch start must be within the compaction range");
         }
         int maxBatchGroups = 40;
-        long maxBatchTokens = Math.max(8000L, (availableTokens * 3) / 4);
+        long maxBatchTokens = Math.max(1L, (availableTokens * 3) / 5);
 
         long accumulatedTokens = 0L;
-        int boundedIndex = 0;
-        for (int i = 0; i < split; i++) {
+        int boundedIndex = start;
+        for (int i = start; i < split; i++) {
             long gTokens = estimateGroup(activeGroups.get(i));
-            if (i > 0 && (i >= maxBatchGroups || (accumulatedTokens + gTokens > maxBatchTokens))) {
+            if (i > start && (i - start >= maxBatchGroups || accumulatedTokens + gTokens > maxBatchTokens)) {
                 break;
             }
             accumulatedTokens += gTokens;
@@ -666,13 +724,36 @@ public final class SemanticCompactionCoordinator {
         }
 
         int anchor = boundedIndex;
-        while (anchor > 0 && !isTurnAnchor(activeGroups.get(anchor))) {
+        while (anchor > start && !isTurnAnchor(activeGroups.get(anchor))) {
             anchor--;
         }
-        if (anchor > 0) {
+        if (anchor > start) {
             return anchor;
         }
-        return split;
+        int forward = boundedIndex + 1;
+        while (forward < split && !isTurnAnchor(activeGroups.get(forward))) {
+            forward++;
+        }
+        return Math.min(forward, split);
+    }
+
+    private void addPriority(List<String> values, List<String> priorities, String value) {
+        values.add(value);
+        priorities.add(value);
+    }
+
+    private List<String> boundedDistinct(List<String> values, List<String> priorities, int maximum) {
+        LinkedHashSet<String> selected = new LinkedHashSet<>();
+        for (String priority : priorities) {
+            if (selected.size() >= maximum) {
+                break;
+            }
+            selected.add(priority);
+        }
+        for (int index = values.size() - 1; index >= 0 && selected.size() < maximum; index--) {
+            selected.add(values.get(index));
+        }
+        return List.copyOf(selected);
     }
 
     private int tailSplit(List<List<AgentMessage>> groups, long retainedTailBudget) {

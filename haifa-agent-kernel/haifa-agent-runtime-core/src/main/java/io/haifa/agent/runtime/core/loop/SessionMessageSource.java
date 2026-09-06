@@ -168,6 +168,23 @@ public final class SessionMessageSource {
                     sessionTokenBudget);
         }
 
+        // When semantic compaction is enabled, the coordinator is the sole automatic writer.
+        // Context selection must never replace a validated semantic checkpoint with a separate
+        // deterministic summary after the coordinator has already planned the eviction range.
+        if (policy.semanticCompactionEnabled() && !manual) {
+            return selection(
+                    sessionId,
+                    checkpoint,
+                    activeGroups,
+                    visible.getLast().cursor(),
+                    toolCallsByRun,
+                    false,
+                    CompactionReason.NONE,
+                    0,
+                    activeTokens,
+                    sessionTokenBudget);
+        }
+
         long totalRawTokens = estimateGroups(groups, toolCallsByRun);
         long effectiveBudget = requestedSessionTokenBudget == Long.MAX_VALUE ? totalRawTokens : sessionTokenBudget;
         int retainedPercent =

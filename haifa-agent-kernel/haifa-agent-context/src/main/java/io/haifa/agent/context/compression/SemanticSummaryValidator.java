@@ -49,6 +49,8 @@ public final class SemanticSummaryValidator {
             throw new SemanticSummaryValidationException("summary must not be completely empty");
         }
 
+        validateUniqueStableItemIds(summary);
+
         Set<String> validAliases =
                 new HashSet<>(projectedSource.messageAliases().keySet());
         validAliases.addAll(projectedSource.toolAliases().keySet());
@@ -88,7 +90,7 @@ public final class SemanticSummaryValidator {
         }
 
         // 3. Mandatory carry-forward verification with category and identity continuity
-        validateCarryForwardContinuity(summary, mandatoryCarryForward, previousSummary, projectedSource);
+        validateCarryForwardContinuity(summary, mandatoryCarryForward, projectedSource);
     }
 
     private static void collectAllSourceRefs(SemanticConversationSummaryV1 summary, Set<String> target) {
@@ -106,27 +108,16 @@ public final class SemanticSummaryValidator {
     private static void validateCarryForwardContinuity(
             SemanticConversationSummaryV1 summary,
             List<SemanticSummaryItem> mandatoryCarryForward,
-            java.util.Optional<SemanticConversationSummaryV1> previousSummary,
             ProjectedCompactionSource projectedSource) {
-        Set<String> goalIds = collectIds(summary.goals());
         Set<String> constraintIds = collectIds(summary.constraints());
         Set<String> completedIds = collectIds(summary.progress().completed());
         Set<String> activeIds = collectIds(summary.progress().active());
         Set<String> blockedIds = collectIds(summary.progress().blocked());
-        Set<String> nextStepIds = collectIds(summary.nextSteps());
-        Set<String> criticalIds = collectIds(summary.criticalContext());
         Set<String> questionIds = collectIds(summary.unresolvedQuestions());
 
-        Set<String> allIds = new HashSet<>();
-        allIds.addAll(goalIds);
-        allIds.addAll(constraintIds);
-        allIds.addAll(completedIds);
-        allIds.addAll(activeIds);
-        allIds.addAll(blockedIds);
-        allIds.addAll(nextStepIds);
-        allIds.addAll(criticalIds);
-        allIds.addAll(questionIds);
-        summary.decisions().forEach(d -> allIds.add(d.stableItemId()));
+        Set<String> currentEvidenceRefs =
+                new HashSet<>(projectedSource.messageAliases().keySet());
+        currentEvidenceRefs.addAll(projectedSource.toolAliases().keySet());
 
         // Check each mandatory carry-forward item
         for (SemanticSummaryItem carry : mandatoryCarryForward) {
@@ -135,12 +126,15 @@ public final class SemanticSummaryValidator {
                 continue;
             }
 
-            if (!allIds.contains(carryId)) {
-                // Check if resolved by a decision citing it
+            SemanticSummaryItem preserved = findSummaryItem(summary, carryId);
+            if (preserved == null) {
+                // A carry item may disappear only when a terminal decision explicitly names it and
+                // cites evidence from the current batch. Historical evidence alone cannot resolve it.
                 boolean resolvedInDecisions = summary.decisions().stream()
-                        .anyMatch(d -> d.sourceRefs().contains(carryId)
-                                || d.statement().contains(carryId)
-                                || d.rationale().contains(carryId));
+                        .filter(d -> d.status() != SemanticDecisionStatus.PROPOSED)
+                        .filter(d ->
+                                d.statement().contains(carryId) || d.rationale().contains(carryId))
+                        .anyMatch(d -> d.sourceRefs().stream().anyMatch(currentEvidenceRefs::contains));
                 if (!resolvedInDecisions) {
                     throw new SemanticSummaryValidationException(
                             "mandatory carry-forward item '" + carryId + "' was dropped without resolution");
@@ -169,8 +163,50 @@ public final class SemanticSummaryValidator {
                     throw new SemanticSummaryValidationException(
                             "blocked progress item '" + carryId + "' cannot transition to another category");
                 }
+                if (!preserved.text().equals(carry.text())) {
+                    throw new SemanticSummaryValidationException(
+                            "mandatory carry-forward item '" + carryId + "' changed its text");
+                }
+                if (!preserved.sourceRefs().containsAll(carry.sourceRefs())) {
+                    throw new SemanticSummaryValidationException(
+                            "mandatory carry-forward item '" + carryId + "' dropped supporting sourceRefs");
+                }
             }
         }
+    }
+
+    private static SemanticSummaryItem findSummaryItem(SemanticConversationSummaryV1 summary, String id) {
+        return java.util.stream.Stream.of(
+                        summary.goals(),
+                        summary.constraints(),
+                        summary.progress().completed(),
+                        summary.progress().active(),
+                        summary.progress().blocked(),
+                        summary.nextSteps(),
+                        summary.criticalContext(),
+                        summary.unresolvedQuestions())
+                .flatMap(List::stream)
+                .filter(item -> item.stableItemId().equals(id))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static void validateUniqueStableItemIds(SemanticConversationSummaryV1 summary) {
+        Set<String> ids = new HashSet<>();
+        java.util.function.Consumer<String> add = id -> {
+            if (!ids.add(id)) {
+                throw new SemanticSummaryValidationException("duplicate stableItemId '" + id + "'");
+            }
+        };
+        summary.goals().forEach(i -> add.accept(i.stableItemId()));
+        summary.constraints().forEach(i -> add.accept(i.stableItemId()));
+        summary.progress().completed().forEach(i -> add.accept(i.stableItemId()));
+        summary.progress().active().forEach(i -> add.accept(i.stableItemId()));
+        summary.progress().blocked().forEach(i -> add.accept(i.stableItemId()));
+        summary.decisions().forEach(i -> add.accept(i.stableItemId()));
+        summary.nextSteps().forEach(i -> add.accept(i.stableItemId()));
+        summary.criticalContext().forEach(i -> add.accept(i.stableItemId()));
+        summary.unresolvedQuestions().forEach(i -> add.accept(i.stableItemId()));
     }
 
     private static Set<String> collectIds(List<SemanticSummaryItem> items) {
