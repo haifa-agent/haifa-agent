@@ -13,6 +13,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionExportServ
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryService;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
+import io.haifa.agent.application.project.product.coding.CodingWorkspaceGrant;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
@@ -96,6 +97,8 @@ import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
 import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
+import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistrySource;
+import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStatus;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
 import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
@@ -175,6 +178,7 @@ final class LocalCodingAgent implements AutoCloseable {
     private final CodingSessionService codingSessions;
     private final CodingSessionHistoryService sessionHistory;
     private final TrustedProjectResourceCatalog resources;
+    private final AuthorizedWorkspaceProvisioning workspaceProvisioning;
     private final Optional<CodingShellService> shell;
     private final Optional<CliExecutionPlatform> executionPlatform;
     private final CodingSessionExportService exporter;
@@ -199,6 +203,7 @@ final class LocalCodingAgent implements AutoCloseable {
             CodingSessionService codingSessions,
             CodingSessionHistoryService sessionHistory,
             TrustedProjectResourceCatalog resources,
+            AuthorizedWorkspaceProvisioning workspaceProvisioning,
             Optional<CodingShellService> shell,
             Optional<CliExecutionPlatform> executionPlatform,
             CodingSessionExportService exporter,
@@ -219,6 +224,8 @@ final class LocalCodingAgent implements AutoCloseable {
         this.codingSessions = codingSessions;
         this.sessionHistory = sessionHistory;
         this.resources = resources;
+        this.workspaceProvisioning =
+                Objects.requireNonNull(workspaceProvisioning, "workspaceProvisioning must not be null");
         this.shell = shell;
         this.executionPlatform = executionPlatform;
         this.exporter = exporter;
@@ -855,6 +862,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     codingSessions,
                     sessionHistory,
                     resources,
+                    provisioning,
                     Optional.ofNullable(shell),
                     Optional.ofNullable(executionPlatform),
                     new CliCodingSessionExportService(
@@ -965,6 +973,31 @@ final class LocalCodingAgent implements AutoCloseable {
         return resources.reload().diagnostics();
     }
 
+    List<CodingWorkspaceGrant> workspaceGrants() {
+        return workspaceProvisioning.registryViews().stream()
+                .map(view -> new CodingWorkspaceGrant(
+                        view.workspaceRef(),
+                        view.safeDisplayName(),
+                        enumLabel(view.permission()),
+                        enumLabel(view.source()),
+                        enumLabel(view.status()),
+                        view.source() != HostWorkspaceRegistrySource.INITIAL
+                                && view.status() == HostWorkspaceRegistryStatus.ACTIVE))
+                .toList();
+    }
+
+    void revokeWorkspace(String workspaceRef) {
+        String normalized = requireWorkspaceRef(workspaceRef);
+        CodingWorkspaceGrant grant = workspaceGrants().stream()
+                .filter(candidate -> candidate.workspaceRef().equals(normalized))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("WORKSPACE_GRANT_NOT_FOUND"));
+        if (!grant.revocable()) {
+            throw new IllegalStateException("WORKSPACE_GRANT_NOT_REVOCABLE");
+        }
+        workspaceProvisioning.revoke(new WorkspaceId(normalized));
+    }
+
     Optional<CodingShellService> shell() {
         return shell;
     }
@@ -993,6 +1026,21 @@ final class LocalCodingAgent implements AutoCloseable {
 
     TimeProvider time() {
         return time;
+    }
+
+    private static String enumLabel(Enum<?> value) {
+        return value.name().toLowerCase(Locale.ROOT).replace('_', '-');
+    }
+
+    private static String requireWorkspaceRef(String workspaceRef) {
+        String normalized = Objects.requireNonNull(workspaceRef, "workspaceRef must not be null")
+                .trim();
+        if (normalized.isEmpty()
+                || normalized.length() > 256
+                || normalized.chars().anyMatch(Character::isWhitespace)) {
+            throw new IllegalArgumentException("WORKSPACE_REF_INVALID");
+        }
+        return normalized;
     }
 
     long reasoningTokens(AgentRunId runId) {

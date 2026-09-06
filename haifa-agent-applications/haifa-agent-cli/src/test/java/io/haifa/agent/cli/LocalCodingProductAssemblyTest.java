@@ -84,7 +84,7 @@ class LocalCodingProductAssemblyTest {
                 .contains("Attach additional workspace directory")
                 .contains("Path: D:\\workspace\\haifa-agent-docs")
                 .contains("Permission: read-write")
-                .contains("not persisted or shared");
+                .contains("persisted locally and remains revocable");
     }
 
     @Test
@@ -403,7 +403,9 @@ class LocalCodingProductAssemblyTest {
                 agent::reloadResources,
                 agent.shell(),
                 agent.exporter(),
-                agent.outcomes());
+                agent.outcomes(),
+                agent::workspaceGrants,
+                agent::revokeWorkspace);
     }
 
     private static io.haifa.agent.runtime.api.RunEventPage awaitEvents(

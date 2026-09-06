@@ -15,6 +15,7 @@ public final class TerminalCompletionProvider {
             "/resume",
             "/compact",
             "/session",
+            "/trust",
             "/reload",
             "/rename",
             "/export",
@@ -23,7 +24,7 @@ public final class TerminalCompletionProvider {
             "/commands",
             "/help",
             "/quit");
-    private static final int MAX_CANDIDATES = 16;
+    private static final int MAX_CANDIDATES = 20;
 
     private final Supplier<List<String>> logicalPaths;
 

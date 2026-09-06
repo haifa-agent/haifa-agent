@@ -192,9 +192,9 @@ public final class AuthorizedWorkspaceProvisioning {
             }
         }
 
-        ProvisioningResult provisioned = provisionDirectory(realPath, permission);
-        AuthorizedHostDirectory allowed = provisioned.directory();
         HostDirectoryIdentity identity = HostDirectoryIdentity.resolve(realPath);
+        ProvisioningResult provisioned = provisionDirectory(realPath, permission, identity);
+        AuthorizedHostDirectory allowed = provisioned.directory();
         HostWorkspaceRegistryEntry entry = HostWorkspaceRegistryEntry.active(
                 projectId,
                 allowed.workspaceId(),
@@ -203,14 +203,14 @@ public final class AuthorizedWorkspaceProvisioning {
                 permission,
                 HostWorkspaceRegistrySource.APPROVED_ATTACH,
                 realPath,
-                identity.fingerprint(),
+                identity.physicalFingerprint(),
                 approvedRef,
                 time.now());
         registryMutation.set(true);
         try {
             HostWorkspaceRegistryEntry persisted = registry.find(projectId, allowed.workspaceId())
                     .map(existing -> registry.update(
-                            existing.reactivate(realPath, identity.fingerprint(), approvedRef, time.now()),
+                            existing.reactivate(realPath, identity.physicalFingerprint(), approvedRef, time.now()),
                             existing.version()))
                     .orElseGet(() -> registry.create(entry));
             current = scope.get();
@@ -260,10 +260,11 @@ public final class AuthorizedWorkspaceProvisioning {
         if (!Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS) || HostWorkspacePathSafety.isUnsafeNode(target)) {
             throw new IllegalStateException("provider-created worktree is not a safe directory");
         }
-        String fingerprint = HostWorkspaceLocationStore.fingerprintFor(target);
-        if (!binding.rootFingerprint().equals(fingerprint)) {
+        String bindingFingerprint = HostWorkspaceLocationStore.fingerprintFor(target);
+        if (!binding.rootFingerprint().equals(bindingFingerprint)) {
             throw new IllegalStateException("provider-created worktree fingerprint does not match its binding");
         }
+        String physicalFingerprint = HostDirectoryIdentity.resolve(target).physicalFingerprint();
         AuthorizedHostDirectory directory = AuthorizedHostDirectory.of(childWorkspaceId, target, permission);
         HostWorkspaceScope current = scope.get();
         HostWorkspaceScope updated = current.withDirectory(directory);
@@ -275,7 +276,7 @@ public final class AuthorizedWorkspaceProvisioning {
                 permission,
                 HostWorkspaceRegistrySource.APPROVED_WORKTREE_CREATE,
                 target,
-                fingerprint,
+                physicalFingerprint,
                 approvedRef,
                 time.now());
         registryMutation.set(true);
@@ -316,6 +317,11 @@ public final class AuthorizedWorkspaceProvisioning {
 
     private ProvisioningResult provisionDirectory(Path realPath, HostDirectoryPermission permission) {
         HostDirectoryIdentity identity = HostDirectoryIdentity.resolve(realPath);
+        return provisionDirectory(realPath, permission, identity);
+    }
+
+    private ProvisioningResult provisionDirectory(
+            Path realPath, HostDirectoryPermission permission, HostDirectoryIdentity identity) {
         boolean recovered = workspaces.find(identity.workspaceId()).isPresent();
         WorkspaceBindingMode mode =
                 permission.canWrite() ? WorkspaceBindingMode.DIRECT : WorkspaceBindingMode.READ_ONLY;
@@ -425,7 +431,7 @@ public final class AuthorizedWorkspaceProvisioning {
             HostDirectoryIdentity identity = HostDirectoryIdentity.resolve(verified);
             if (!identity.workspaceId().equals(entry.workspaceRef())
                     || !identity.locationRef().equals(entry.locationRef())
-                    || !identity.fingerprint().equals(entry.fingerprint())) {
+                    || !identity.physicalFingerprint().equals(entry.fingerprint())) {
                 throw new IllegalStateException("registered directory identity has drifted");
             }
             return verified;

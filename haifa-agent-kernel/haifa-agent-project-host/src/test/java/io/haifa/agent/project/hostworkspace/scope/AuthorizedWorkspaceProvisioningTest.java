@@ -394,6 +394,42 @@ class AuthorizedWorkspaceProvisioningTest {
     }
 
     @Test
+    void replacementDirectoryAtTheSamePathIsDisabledDuringRecovery() throws IOException {
+        ProvisioningResult result = provisioning.authorizeApprovedAttach(
+                additionalRoot, HostDirectoryPermission.READ_WRITE, "policy-decision-replacement");
+        HostDirectoryIdentity approvedIdentity = HostDirectoryIdentity.resolve(additionalRoot.toRealPath());
+        Path originalDirectory = tempDir.resolve("original-additional");
+        Files.move(additionalRoot, originalDirectory);
+        Files.createDirectory(additionalRoot);
+        HostDirectoryIdentity replacementIdentity = HostDirectoryIdentity.resolve(additionalRoot.toRealPath());
+
+        assertThat(replacementIdentity.workspaceId()).isEqualTo(approvedIdentity.workspaceId());
+        assertThat(replacementIdentity.physicalFingerprint()).isNotEqualTo(approvedIdentity.physicalFingerprint());
+
+        var reopenedLocations = new HostWorkspaceLocationStore();
+        reopenedLocations.register(new WorkspaceLocationRef("local-location-v1:initial"), initialRoot.toRealPath());
+        var reopened = new AuthorizedWorkspaceProvisioning(
+                projectId,
+                workspaceStore,
+                bindingStore,
+                reopenedLocations,
+                workspaceService,
+                owner,
+                time,
+                initialScope,
+                registry,
+                "workspace-test");
+
+        assertThat(reopened.scope().allowedDirectories()).hasSize(1);
+        assertThat(registry.find(projectId, result.directory().workspaceId()))
+                .get()
+                .satisfies(entry -> {
+                    assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.DISABLED);
+                    assertThat(entry.revocationReasonCode()).contains("REGISTRY_REVALIDATION_FAILED");
+                });
+    }
+
+    @Test
     void registersApprovedProviderWorktreeAndDisablesItOnUnreconciledRecovery() throws IOException {
         WorkspaceId childId = new WorkspaceId("worktree-child");
         WorkspaceBindingId childBindingId = new WorkspaceBindingId("worktree-binding");
