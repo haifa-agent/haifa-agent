@@ -53,7 +53,7 @@ ANALYZE/REVIEW 不会被强制进入 CHANGE；仅修改工作区也
 不会隐式产生 commit、push 或 PR 意图。旧 Checkpoint 不增加 Codec 或 Migration，Resume 直接从权威
 记录重建投影。
 
-`execution.run` 1.8.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
+`execution.run` 2.0.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
 可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
 失败结果同样保留执行状态、可选退出码、墙钟耗时、截断标记、bounded 合并输出和稳定失败/动作码，
@@ -188,8 +188,8 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 实现：偏好保存内部 Model ID 和独立 revision，只允许在无活动 Run/dispatch 时切换，下一新 Run
 冻结对应快照；配置中已删除的模型要求重选，不静默回退。
 
-`ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`execution.run` 与
-`execution.request_permissions` 共 12 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
+`ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`workspace.attach`、
+`workspace.worktree.create`、`execution.run` 与 `execution.request_permissions` 共 14 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
 `github.*` Tool；Git/GitHub 操作由
 `execution.run` 直接调用系统 `git` / `gh`。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、
 幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
@@ -204,7 +204,7 @@ Catalog 保留 `file.search` 供显式配置兼容，但 Coding CLI 默认不冻
 `execution.run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，
 Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一精确 Profile Ref/version。
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于
-新 Profile；模型可见 Schema 包含 command、逻辑 workdir、有界 timeout、安全描述和可选
+新 Profile；模型可见 Schema 包含 command、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir`、有界 timeout、安全描述和可选
 `operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，仅作为交付和诊断 Hint；
 省略时使用 `UNKNOWN`。可信 `SystemGitCliCommandClassifier` 独立解析直接 `git`/`gh` 命令并产出风险事实；Coding
 `ToolPolicyRequestAdapter` 在 Policy 决策前把本地读、写、网络读、外部写和未知形式映射为调用级风险及副作用，
@@ -227,7 +227,7 @@ Wrapper 形式为 HIGH。HIGH 继续进入用户阈值，不是分类失败；�
 它只允许引用同一 Run 中一次以 `NETWORK_PERMISSION_REQUIRED`（兼容读取旧
 `NETWORK_UNAVAILABLE`）、`HOST_AUTHENTICATION_UNAVAILABLE`、
 `GIT_AUTHENTICATION_UNAVAILABLE` 或 `GH_AUTHENTICATION_UNAVAILABLE` 失败的 `execution.run`，并要求逐字段复用该结果
-返回的 `toolCallId`、完整 command、逻辑 workdir 和 timeout；operationFamily 仅是可选诊断 Hint，不参与
+返回的 `toolCallId`、完整 command、`workspaceRef`、`relativeWorkdir` 和 timeout；operationFamily 仅是可选诊断 Hint，不参与
 精确授权绑定。Runtime 为该托管权限升级创建独立 Policy Decision 与审批 Checkpoint；批准后只用受信 Host 配置及其系统
 `git` / `gh` 登录环境的
 `host-guarded + network allow` Profile 执行这一次调用。只有直接、非破坏性的系统 `git` / `gh` 命令
@@ -255,7 +255,7 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 经审查启用的 MCP Tool 由 `McpToolCatalogContribution` 写入同一个 `ToolCatalogBuilder`，不会建立 MCP 专用 Registry。每个 MCP server 使用独立 `mcp.<serverId>` Provider；本地 definition hash 与远端 definition digest 分别冻结，Runtime 只通过 `FrozenToolBinding.providerBindingReference` 恢复精确 binding。
 
 `ProjectToolExecutor` 是 Tool Provider adapter，只接收最小化 `ToolInvocationRequest`，并在委派前重新解析 Run Workspace、Principal 和 capability。文件操作继续走 `ProjectToolOperations`；`ProjectExecutionToolOperations` 把
-`command/workdir/timeoutMillis/description` 及可选 `operationFamily`
+`command/workspaceRef/relativeWorkdir/timeoutMillis/description` 及可选 `operationFamily`
 映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令
 目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。Coding Profile 在产品边界为通用 Scratch 增加
 `GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、
@@ -275,10 +275,17 @@ Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版�
 `expectedExitCodes: [0, 1]` 时，退出 1 才作为 `EXPECTED_VARIANT/DECLARED_EXPECTED_EXIT_CODE` 进入证据。
 无效 revision 的 128 和未声明的 Build/Test 非零退出仍是失败，Timeout/Cancel/未知终止不能通过该字段
 改写为成功，也不得自动重放。
-执行命令已经从受控 Workspace 启动。最高层受信本地装配在 ToolCall 持久化和 Policy 之前，将等于当前
-Workspace 或位于其下的绝对 `workdir` 生成唯一逻辑相对路径；Policy、Approval、Broker 与 Provider
-共用该 canonical target，Provider 只验证 canonical 约束而不再二次改写。Workspace 外绝对目录、绝对路径 `cd ...` 仍在进入 Broker 前以
-`ABSOLUTE_WORKDIR_FORBIDDEN` 结构化拒绝，非法相对路径以 `WORKDIR_INVALID` 拒绝。dispatch 前的确定性
-拒绝直接保存失败 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
+执行命令已经从受控 Workspace 启动。模型必须从安全 Registry 投影选择 `workspaceRef`，并以 `relativeWorkdir`
+表达该活动根下的目录；Host Adapter 再解析为 `WorkspacePath` 与受保护物理目录。绝对 workdir、UNC/盘符、遍历、
+链接逃逸、失效或撤销的 root 都在进入 Broker 前结构化拒绝。直接 `git -C` 返回不产生 Policy Decision 的
+`WORKSPACE_PROTOCOL_REQUIRED`，不再升级成不可批准的权限拒绝。dispatch 前的确定性拒绝直接保存失败
+ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
+
+`workspace.worktree.create` 是 CA 独有的始终审批能力：精确目标同时绑定 source `workspaceRef`、不可变 base
+commit、新分支、受控 target name、`read-write` 权限和交付意图，不接受模型指定的主机目标路径。受信 Git
+Provider 创建并校验 worktree 后，CA 才把新 root 以 `APPROVED_WORKTREE_CREATE` 登记并返回脱敏
+`workspaceRef`；失败时清理且不激活 root。当前重启恢复无法建立受信 Git reconciliation，因此会 fail closed
+禁用对应 root，不能把普通 Registry 测试描述成进程级强隔离证明。`file.*` 仍要求模型传宿主绝对路径并由
+Registry/Scope 映射，未改成相对路径或 root alias。
 
 Workspace Checkpoint Adapter 可由受信 Host 注册为通用 Runtime Capability Checkpoint Participant，并在恢复时重新检查当前授权、Binding、Provider 版本和 Drift；类型存在不等于所有 Host 已完成装配。DIRECT Host 只做 current-state reconcile，永不自动覆盖文件；无人值守 Host 必须使用隔离 Workspace 与可恢复 Snapshot，否则不能声明具备自动恢复等级。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布。`PublishedArtifactRequiredChecker` 只接受 Store 中真实 `PUBLISHED` 的 Artifact；Admin Query 仅返回分页、脱敏、无正文的诊断投影。

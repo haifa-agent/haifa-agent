@@ -96,7 +96,7 @@ class ProjectExecutionToolOperationsTest {
         };
 
         ToolResult result = operations(broker, 1024, 100, CodingVerificationProfileProvider.empty(), baselines)
-                .execute(invocation(Map.of("command", "echo ok", "workdir", "src"), () -> false), access());
+                .execute(invocation(Map.of("command", "echo ok", "relativeWorkdir", "src"), () -> false), access());
 
         assertThat(result.successful()).isTrue();
         assertThat(order).containsExactly("before", "dispatch", "after");
@@ -149,7 +149,7 @@ class ProjectExecutionToolOperationsTest {
                 invocation(
                         Map.of(
                                 "command", "printf 'first\\nsecond\\nthird\\n' | cat > result.txt",
-                                "workdir", "src",
+                                "relativeWorkdir", "src",
                                 "timeoutMillis", 5000,
                                 "operationFamily", "TEST",
                                 "description", "Write representative output"),
@@ -406,6 +406,34 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("stableFailureCode", "PROCESS_LIMIT_EXCEEDED")
                 .containsEntry("observedProcessCount", 1)
                 .doesNotContainKey("runtimeOutcome");
+    }
+
+    @Test
+    void exposesOutputLimitAsAStableExecutionOutcomeWithNarrowingAdvice() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                return resultWithFailure(
+                        request.id(),
+                        ExecutionStatus.OUTPUT_LIMIT_EXCEEDED,
+                        new ExecutionFailure("OUTPUT_LIMIT_EXCEEDED", "output exceeded its bounded capture"));
+            }
+        };
+
+        ToolResult result = operations(broker, 4096, 100)
+                .execute(
+                        invocation(Map.of("command", "rg broad-pattern", "operationFamily", "INSPECT"), () -> false),
+                        access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("status", "OUTPUT_LIMIT_EXCEEDED")
+                .containsEntry("failureCategory", "OUTPUT_LIMIT")
+                .containsEntry("stableFailureCode", "OUTPUT_LIMIT_EXCEEDED")
+                .containsEntry("resourceClass", "OUTPUT")
+                .containsEntry("failureActionCode", "VERIFY_OUTCOME_BEFORE_RETRY");
+        assertThat(result.structuredData().get("failureAction").toString())
+                .contains("narrower fields", "smaller result limit");
     }
 
     @Test
@@ -891,14 +919,18 @@ class ProjectExecutionToolOperationsTest {
 
         var result = operations(broker, 1024, 2000)
                 .execute(
-                        invocation(Map.of("command", "representative command", "workdir", "../outside"), () -> false),
+                        invocation(
+                                Map.of("command", "representative command", "relativeWorkdir", "../outside"),
+                                () -> false),
                         access());
 
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData())
                 .containsEntry("failureCategory", "INVALID_INPUT")
                 .containsEntry("stableFailureCode", "WORKDIR_INVALID")
-                .containsEntry("failureAction", "Use a normalized path relative to the authorized workspace root.");
+                .containsEntry(
+                        "failureAction",
+                        "Use workspaceRef with a normalized relativeWorkdir below that authorized root.");
         assertThat(invoked).isFalse();
     }
 
@@ -927,6 +959,33 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void reportsGitDirectoryOverrideAsWorkspaceProtocolError() {
+        AtomicBoolean invoked = new AtomicBoolean();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                invoked.set(true);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        ToolResult result = operations(broker, 1024, 2000)
+                .execute(
+                        invocation(
+                                Map.of(
+                                        "command", "git -C docs status --short",
+                                        "operationFamily", "INSPECT"),
+                                () -> false),
+                        access());
+
+        assertThat(result.structuredData())
+                .containsEntry("failureCategory", "PROTOCOL_ERROR")
+                .containsEntry("stableFailureCode", "WORKSPACE_PROTOCOL_REQUIRED")
+                .containsEntry("failureActionCode", "USE_STRUCTURED_WORKSPACE_TARGET");
+        assertThat(invoked).isFalse();
+    }
+
+    @Test
     void rejectsAbsoluteWorkdirBeforeCallingTheBroker() {
         AtomicBoolean invoked = new AtomicBoolean();
         ExecutionBroker broker = new StubBroker() {
@@ -940,7 +999,13 @@ class ProjectExecutionToolOperationsTest {
         var result = operations(broker, 1024, 2000)
                 .execute(
                         invocation(
-                                Map.of("command", "go test ./...", "workdir", "/workspace", "operationFamily", "TEST"),
+                                Map.of(
+                                        "command",
+                                        "go test ./...",
+                                        "relativeWorkdir",
+                                        "/workspace",
+                                        "operationFamily",
+                                        "TEST"),
                                 () -> false),
                         access());
 
@@ -952,7 +1017,7 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void rejectsAWorkdirThatWouldStillBeRewrittenAfterPolicy() {
+    void resolvesAnExplicitWorkspaceRefBeforeDispatch() {
         AtomicBoolean invoked = new AtomicBoolean();
         ExecutionBroker broker = new StubBroker() {
             @Override
@@ -975,14 +1040,23 @@ class ProjectExecutionToolOperationsTest {
                 ExecutionOutputObserver.noop(),
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                value -> value.equals("/app") ? "." : value);
+                (access, workspaceRef, relativeWorkdir) -> new WorkspacePath(
+                        new WorkspaceId(workspaceRef),
+                        relativeWorkdir.equals(".")
+                                ? io.haifa.agent.project.path.ProjectPath.root()
+                                : io.haifa.agent.project.path.ProjectPath.of(relativeWorkdir)));
 
         ToolResult result = operations.execute(
-                invocation(Map.of("command", "git status --short", "workdir", "/app"), () -> false), access());
+                invocation(
+                        Map.of(
+                                "command", "git status --short",
+                                "workspaceRef", "workspace-attached",
+                                "relativeWorkdir", "docs"),
+                        () -> false),
+                access());
 
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData()).containsEntry("stableFailureCode", "WORKDIR_NOT_CANONICAL");
-        assertThat(invoked).isFalse();
+        assertThat(result.successful()).isTrue();
+        assertThat(invoked).isTrue();
     }
 
     @Test
@@ -999,7 +1073,9 @@ class ProjectExecutionToolOperationsTest {
 
         ToolResult result = operations(broker, 1024, 2000)
                 .execute(
-                        invocation(Map.of("command", "git push origin feat-delivery", "workdir", "."), () -> false),
+                        invocation(
+                                Map.of("command", "git push origin feat-delivery", "relativeWorkdir", "."),
+                                () -> false),
                         access());
 
         assertThat(invoked).isTrue();
@@ -1018,7 +1094,7 @@ class ProjectExecutionToolOperationsTest {
                 },
                 operations(new StubBroker() {}, 1024, 2000));
         var result = executor.invoke(invocation(
-                Map.of("command", "git status --short", "workdir", "C:\\outside", "operationFamily", "INSPECT"),
+                Map.of("command", "git status --short", "relativeWorkdir", "C:\\outside", "operationFamily", "INSPECT"),
                 () -> false,
                 new ToolInvocationObserver() {
                     @Override
@@ -1227,7 +1303,7 @@ class ProjectExecutionToolOperationsTest {
                 "prior-tool-call",
                 Map.of(
                         "command", "git ls-remote origin",
-                        "workdir", ".",
+                        "relativeWorkdir", ".",
                         "operationFamily", "INSPECT"),
                 "GIT_AUTHENTICATION_UNAVAILABLE"));
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
@@ -1251,7 +1327,7 @@ class ProjectExecutionToolOperationsTest {
                         "Read the configured Git remote",
                         "command",
                         "git ls-remote origin",
-                        "workdir",
+                        "relativeWorkdir",
                         ".")),
                 access());
 
@@ -1435,7 +1511,7 @@ class ProjectExecutionToolOperationsTest {
                 ExecutionOutputObserver.noop(),
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                java.util.function.UnaryOperator.identity(),
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
                 verificationProfiles);
     }
 
@@ -1459,7 +1535,7 @@ class ProjectExecutionToolOperationsTest {
                 ExecutionOutputObserver.noop(),
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                java.util.function.UnaryOperator.identity(),
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
                 verificationProfiles,
                 repositoryBaselines);
     }
@@ -1473,6 +1549,7 @@ class ProjectExecutionToolOperationsTest {
             Map<String, Object> arguments,
             io.haifa.agent.tool.api.ToolCancellation cancellation,
             ToolInvocationObserver observer) {
+        arguments = executionArguments(arguments);
         var binding = new ProjectToolCatalog()
                 .freeze(Set.of("execution.run"), Set.of("execution.run"), true, provider(), executionProfile())
                 .snapshot()
@@ -1494,6 +1571,7 @@ class ProjectExecutionToolOperationsTest {
     }
 
     private static ToolInvocationRequest permissionInvocation(Map<String, Object> arguments) {
+        arguments = executionArguments(arguments);
         var binding = new ProjectToolCatalog()
                 .freeze(
                         Set.of(ProjectPermissionRequestOperations.TOOL_NAME),
@@ -1526,6 +1604,7 @@ class ProjectExecutionToolOperationsTest {
 
     private static ToolCall failedExecutionCall(
             String toolCallId, Map<String, Object> arguments, String stableFailureCode) {
+        arguments = executionArguments(arguments);
         ToolCall call = new ToolCall(
                 new ToolCallId(toolCallId),
                 new AgentRunId("run-1"),
@@ -1572,6 +1651,13 @@ class ProjectExecutionToolOperationsTest {
 
     private static RunWorkspaceAccess access() {
         return new RunWorkspaceAccess(WORKSPACE_ID, Set.of("execution.run"));
+    }
+
+    private static Map<String, Object> executionArguments(Map<String, Object> arguments) {
+        var values = new java.util.LinkedHashMap<String, Object>(arguments);
+        values.putIfAbsent("workspaceRef", WORKSPACE_ID.value());
+        values.putIfAbsent("relativeWorkdir", ".");
+        return Map.copyOf(values);
     }
 
     private static io.haifa.agent.sandbox.api.SandboxProfile executionProfile() {

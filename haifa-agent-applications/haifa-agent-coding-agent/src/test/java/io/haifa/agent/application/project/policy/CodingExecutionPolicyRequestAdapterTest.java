@@ -1,6 +1,7 @@
 package io.haifa.agent.application.project.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -18,6 +19,7 @@ import io.haifa.agent.policy.api.PolicyRiskLevel;
 import io.haifa.agent.policy.api.PolicySideEffect;
 import io.haifa.agent.policy.api.PolicySubject;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
+import io.haifa.agent.runtime.core.tool.ToolAuthorizationProtocolException;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -96,6 +98,15 @@ class CodingExecutionPolicyRequestAdapterTest {
 
         assertThat(generic.risk().level()).isEqualTo(PolicyRiskLevel.HIGH);
         assertThat(generic.risk().sideEffects()).containsExactly(PolicySideEffect.PROCESS_EXECUTION);
+    }
+
+    @Test
+    void reportsGitDirectoryOverrideAsWorkspaceProtocolErrorBeforePolicyDecision() {
+        assertThatThrownBy(() -> adapt("git -C docs status --short"))
+                .isInstanceOfSatisfying(ToolAuthorizationProtocolException.class, failure -> {
+                    assertThat(failure.reasonCode()).isEqualTo("WORKSPACE_PROTOCOL_REQUIRED");
+                    assertThat(failure.safeExplanation()).contains("workspaceRef", "relativeWorkdir");
+                });
     }
 
     private static PolicyRequest adapt(String command) {

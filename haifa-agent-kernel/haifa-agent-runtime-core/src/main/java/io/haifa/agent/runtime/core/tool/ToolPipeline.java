@@ -409,8 +409,8 @@ public final class ToolPipeline {
         if (authorizationResult.classification() == AuthorizationClassification.EXECUTION_OUTCOME) {
             throw new IllegalStateException("execution outcome cannot authorize a tool request");
         }
-        if (currentDecision.effect() == PolicyEffect.ASK && !authorizationResult.authorized()) {
-            if (!approved) {
+        if (currentDecision.effect() == PolicyEffect.ASK) {
+            if (!approved && !authorizationResult.authorized()) {
                 call.waitForApproval();
                 state.appendToolCall(call);
                 return new ToolPipelineOutcome.ApprovalRequired(
@@ -421,15 +421,17 @@ public final class ToolPipeline {
                         currentDecision,
                         authorizationResult);
             }
-            if (approvedDecision == null
-                    || approvedDecision.effect() != PolicyEffect.ASK
-                    || !approvedDecision.requestDigest().equals(currentDecision.requestDigest())
-                    || !approvedDecision.challenge().equals(currentDecision.challenge())) {
-                call.cancel(time.now());
-                state.appendToolCall(call);
-                throw new SecurityException("approved tool policy decision is missing or has drifted");
+            if (approved) {
+                if (approvedDecision == null
+                        || approvedDecision.effect() != PolicyEffect.ASK
+                        || !approvedDecision.requestDigest().equals(currentDecision.requestDigest())
+                        || !approvedDecision.challenge().equals(currentDecision.challenge())) {
+                    call.cancel(time.now());
+                    state.appendToolCall(call);
+                    throw new SecurityException("approved tool policy decision is missing or has drifted");
+                }
+                effectiveDecision = approvedDecision;
             }
-            effectiveDecision = approvedDecision;
         }
         journal.recordIntent(run.id(), request.idempotencyKey(), definition.idempotency());
         call.start(time.now());
@@ -962,7 +964,12 @@ public final class ToolPipeline {
                 event.put(
                         "commandSummary",
                         safeText(call.arguments().values().get("purpose"), "approved command or script"));
-                event.put("logicalWorkdir", safeText(call.arguments().values().get("workdir"), "."));
+                Object workspaceRef = call.arguments().values().get("workspaceRef");
+                if (workspaceRef != null) event.put("workspaceRef", safeText(workspaceRef, "unknown"));
+                Object logicalWorkdir = call.arguments().values().containsKey("relativeWorkdir")
+                        ? call.arguments().values().get("relativeWorkdir")
+                        : call.arguments().values().get("workdir");
+                event.put("logicalWorkdir", safeText(logicalWorkdir, "."));
                 event.put("streamKind", "MERGED");
                 event.put("chunkOrRef", executionOutput(data));
                 event.put("truncated", Boolean.TRUE.equals(data.get("truncated")));

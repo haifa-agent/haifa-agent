@@ -10,16 +10,19 @@ import io.haifa.agent.policy.api.PolicyRisk;
 import io.haifa.agent.policy.api.PolicySideEffect;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
+import io.haifa.agent.runtime.core.tool.ToolAuthorizationProtocolException;
 import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /** Coding-owned execution risk resolver. The execution broker remains the authority for hard boundaries. */
 public final class CodingExecutionPolicyRequestAdapter implements ToolPolicyRequestAdapter {
     static final String EXECUTION_RUN = "execution.run";
     private static final String PRODUCT_ID = "haifa-coding-agent";
+    private static final Pattern GIT_DIRECTORY_OVERRIDE = Pattern.compile("(?:^|\\s)[\\\"']?-C[\\\"']?(?:\\s|=)");
 
     private final DefaultToolPolicyRequestAdapter delegate;
 
@@ -42,6 +45,13 @@ public final class CodingExecutionPolicyRequestAdapter implements ToolPolicyRequ
         var assessment =
                 CodingExecutionRiskResolver.assess(command, baseline.risk().level());
         var classification = assessment.classification();
+        if (classification.target() == SystemGitCliCommandClassifier.Target.GIT
+                && classification.risk() == SystemGitCliCommandClassifier.Risk.DENIED
+                && GIT_DIRECTORY_OVERRIDE.matcher(command).find()) {
+            throw new ToolAuthorizationProtocolException(
+                    "WORKSPACE_PROTOCOL_REQUIRED",
+                    "Use workspaceRef and relativeWorkdir; remove git -C from the command.");
+        }
         PolicyRisk risk = resolveRisk(baseline.risk(), assessment);
         String resolverDigest = PolicyDigest.sha256Fields(List.of(
                 "coding-execution-risk",

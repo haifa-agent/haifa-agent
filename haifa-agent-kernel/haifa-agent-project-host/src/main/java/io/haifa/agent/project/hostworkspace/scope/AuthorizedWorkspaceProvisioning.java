@@ -3,7 +3,9 @@ package io.haifa.agent.project.hostworkspace.scope;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.project.binding.WorkspaceBinding;
+import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
+import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.core.workspace.WorkspaceService;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
@@ -219,6 +221,73 @@ public final class AuthorizedWorkspaceProvisioning {
         }
     }
 
+    /** Registers a trusted provider-created Git worktree only after its exact Tool approval. */
+    public synchronized ProvisioningResult authorizeApprovedWorktree(
+            WorkspaceId parentWorkspaceId,
+            WorkspaceId childWorkspaceId,
+            WorkspaceBindingId childBindingId,
+            WorkspaceLocationRef childLocationRef,
+            HostDirectoryPermission permission,
+            String safeDisplayName,
+            String authorizationRef) {
+        Objects.requireNonNull(parentWorkspaceId, "parentWorkspaceId must not be null");
+        Objects.requireNonNull(childWorkspaceId, "childWorkspaceId must not be null");
+        Objects.requireNonNull(childBindingId, "childBindingId must not be null");
+        Objects.requireNonNull(childLocationRef, "childLocationRef must not be null");
+        Objects.requireNonNull(permission, "permission must not be null");
+        String approvedRef = requireText(authorizationRef, "authorizationRef");
+        if (scope.get().allowedDirectories().stream()
+                .noneMatch(directory -> directory.workspaceId().equals(parentWorkspaceId))) {
+            throw HostWorkspaceScopeException.accessDenied(null, "worktree parent workspace is not active");
+        }
+        Workspace child = workspaces
+                .find(childWorkspaceId)
+                .orElseThrow(() -> new IllegalStateException("provider-created child workspace is unavailable"));
+        WorkspaceBinding binding = bindings.find(childBindingId)
+                .orElseThrow(() -> new IllegalStateException("provider-created child binding is unavailable"));
+        if (!child.root().bindingId().equals(childBindingId)
+                || !binding.locationRef().equals(childLocationRef)
+                || binding.mode() != WorkspaceBindingMode.COPY_ON_WRITE
+                || !binding.capabilities().allows("execution.run")) {
+            throw new IllegalStateException("provider-created worktree authority does not match registration");
+        }
+        Path target;
+        try {
+            target = locations.resolveForTrustedProvider(childLocationRef).toRealPath();
+        } catch (IOException exception) {
+            throw new IllegalStateException("provider-created worktree cannot be resolved", exception);
+        }
+        if (!Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS) || HostWorkspacePathSafety.isUnsafeNode(target)) {
+            throw new IllegalStateException("provider-created worktree is not a safe directory");
+        }
+        String fingerprint = HostWorkspaceLocationStore.fingerprintFor(target);
+        if (!binding.rootFingerprint().equals(fingerprint)) {
+            throw new IllegalStateException("provider-created worktree fingerprint does not match its binding");
+        }
+        AuthorizedHostDirectory directory = AuthorizedHostDirectory.of(childWorkspaceId, target, permission);
+        HostWorkspaceScope current = scope.get();
+        HostWorkspaceScope updated = current.withDirectory(directory);
+        HostWorkspaceRegistryEntry entry = HostWorkspaceRegistryEntry.active(
+                projectId,
+                childWorkspaceId,
+                childLocationRef,
+                safeDisplayName,
+                permission,
+                HostWorkspaceRegistrySource.APPROVED_WORKTREE_CREATE,
+                target,
+                fingerprint,
+                approvedRef,
+                time.now());
+        registryMutation.set(true);
+        try {
+            HostWorkspaceRegistryEntry persisted = registry.create(entry);
+            scope.set(updated);
+            return new ProvisioningResult(directory, false, false, persisted.view());
+        } finally {
+            registryMutation.set(false);
+        }
+    }
+
     /** Revokes the physical authorization of one directory. Logical facts stay untouched. */
     public void revoke(WorkspaceId workspaceId) {
         revoke(workspaceId, "USER_REVOKED");
@@ -329,6 +398,9 @@ public final class AuthorizedWorkspaceProvisioning {
                 continue;
             }
             try {
+                if (entry.source() == HostWorkspaceRegistrySource.APPROVED_WORKTREE_CREATE) {
+                    throw new IllegalStateException("worktree recovery requires trusted Git reconciliation");
+                }
                 Path verified = requireRestorable(entry);
                 ProvisioningResult result = provisionDirectory(verified, entry.permission());
                 recovered = recovered.withDirectory(result.directory());

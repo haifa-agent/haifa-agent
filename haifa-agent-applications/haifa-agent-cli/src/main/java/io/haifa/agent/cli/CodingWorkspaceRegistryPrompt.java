@@ -14,8 +14,8 @@ final class CodingWorkspaceRegistryPrompt {
                 List.copyOf(Objects.requireNonNull(entries, "entries must not be null")).stream()
                         .sorted(Comparator.comparing(HostWorkspaceRegistryView::workspaceRef))
                         .toList();
-        StringBuilder prompt =
-                new StringBuilder("\n\n<workspace_registry path_contract=\"host-absolute-file-paths\">\n");
+        StringBuilder prompt = new StringBuilder("\n\n<workspace_registry path_contract=\"host-absolute-file-paths\""
+                + " execution_target_contract=\"workspace-ref-plus-relative-workdir\">\n");
         for (HostWorkspaceRegistryView entry : ordered) {
             prompt.append("  <workspace ref=\"")
                     .append(xml(entry.workspaceRef()))
