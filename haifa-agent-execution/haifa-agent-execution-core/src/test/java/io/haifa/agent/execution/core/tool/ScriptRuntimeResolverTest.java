@@ -3,7 +3,6 @@ package io.haifa.agent.execution.core.tool;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -12,7 +11,7 @@ class ScriptRuntimeResolverTest {
     void preparesScriptAsDirectArgvAndBoundedStdinWithoutPuttingSourceOnCommandLine() {
         String source = "Write-Output \"script-body\"";
         var resolver = new ScriptRuntimeResolver(
-                ExecutionOperatingSystem.WINDOWS, List.of(ScriptRuntimeResolver.powerShell(Path.of("powershell.exe"))));
+                ExecutionOperatingSystem.WINDOWS, List.of(ScriptRuntimeResolver.powerShell("powershell.exe")));
 
         var prepared = resolver.resolve("PowerShell").prepare(source, List.of("first", "it's-safe"));
 
@@ -33,7 +32,7 @@ class ScriptRuntimeResolverTest {
     @Test
     void unsupportedLanguageFailsClosedWithoutFallback() {
         var resolver = new ScriptRuntimeResolver(
-                ExecutionOperatingSystem.LINUX, List.of(ScriptRuntimeResolver.bash(Path.of("/bin/bash"))));
+                ExecutionOperatingSystem.LINUX, List.of(ScriptRuntimeResolver.bash("/bin/bash")));
 
         assertThatThrownBy(() -> resolver.resolve("python"))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -42,7 +41,7 @@ class ScriptRuntimeResolverTest {
 
     @Test
     void pythonRuntimeForcesUtf8EvenInIsolatedMode() {
-        var prepared = ScriptRuntimeResolver.python(Path.of("python")).prepare("print('中文输出')", List.of());
+        var prepared = ScriptRuntimeResolver.python("python").prepare("print('中文输出')", List.of());
 
         assertThat(prepared.command().argv()).containsExactly("python", "-X", "utf8", "-I", "-");
         assertThat(new String(prepared.input().bytes(), java.nio.charset.StandardCharsets.UTF_8))

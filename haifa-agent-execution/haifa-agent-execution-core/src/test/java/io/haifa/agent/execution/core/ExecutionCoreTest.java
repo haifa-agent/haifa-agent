@@ -19,8 +19,6 @@ import io.haifa.agent.execution.api.ProcessInputChunk;
 import io.haifa.agent.execution.api.ResolvedExecutionEnvironment;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
-import io.haifa.agent.execution.core.change.LocalIncrementalWorkspaceChangeObserver;
-import io.haifa.agent.execution.core.change.WorkspaceChangeIgnorePolicy;
 import io.haifa.agent.execution.core.change.WorkspaceChangeObservation;
 import io.haifa.agent.execution.core.change.WorkspaceChangeObserver;
 import io.haifa.agent.execution.core.change.WorkspaceChangeObserverException;
@@ -33,14 +31,14 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
-import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
 import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
@@ -728,7 +726,7 @@ class ExecutionCoreTest {
                     ignored -> provider,
                     workspaces,
                     bindings,
-                    new LocalIncrementalWorkspaceChangeObserver(workspaceId, root, WorkspaceChangeIgnorePolicy.none()));
+                    ignored -> () -> List.of());
         }
 
         DefaultExecutionBroker broker(

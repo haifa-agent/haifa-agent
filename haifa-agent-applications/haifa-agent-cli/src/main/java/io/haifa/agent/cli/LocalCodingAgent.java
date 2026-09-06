@@ -79,10 +79,16 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.configuration.InMemoryProjectConfigurationStore;
 import io.haifa.agent.project.configuration.ProjectConfiguration;
-import io.haifa.agent.project.configuration.ProjectConfigurationService;
 import io.haifa.agent.project.configuration.ProjectConfigurationVersion;
+import io.haifa.agent.project.core.configuration.InMemoryProjectConfigurationStore;
+import io.haifa.agent.project.core.configuration.ProjectConfigurationService;
+import io.haifa.agent.project.core.ledger.InMemorySessionChangeLedger;
+import io.haifa.agent.project.core.mutation.InMemoryWorkspaceWriteLeaseManager;
+import io.haifa.agent.project.core.store.InMemoryProjectStore;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
+import io.haifa.agent.project.core.workspace.WorkspaceService;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
@@ -94,12 +100,7 @@ import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
 import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
-import io.haifa.agent.project.ledger.InMemorySessionChangeLedger;
-import io.haifa.agent.project.mutation.InMemoryWorkspaceWriteLeaseManager;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.store.InMemoryProjectStore;
-import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
-import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
 import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
@@ -107,7 +108,6 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
-import io.haifa.agent.project.workspace.WorkspaceService;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
@@ -722,6 +722,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     })
                     .policyStores(policy.decisionsStore(), policy.evidence())
                     .approvalVerification(policy.approvalVerification())
+                    .policyAuthorization(policy.authorization())
                     .publicToolPolicy(new DefaultPublicToolPolicy(
                             new io.haifa.agent.application.project.policy.CodingExecutionPolicyRequestAdapter(
                                     policyMode(configuration.approval())),

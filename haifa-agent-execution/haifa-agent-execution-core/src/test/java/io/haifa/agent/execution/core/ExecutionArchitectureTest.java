@@ -15,6 +15,30 @@ import org.junit.jupiter.api.Test;
 @Tag("architecture")
 class ExecutionArchitectureTest {
     @Test
+    void executionCoreDoesNotUseHostFilesystemOrDiscoveryApis() throws IOException {
+        noClasses()
+                .that()
+                .resideInAPackage("io.haifa.agent.execution.core..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("java.nio.file..")
+                .check(new ClassFileImporter()
+                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                        .importPackages("io.haifa.agent.execution.core"));
+
+        Path sourceRoot = repositoryRoot().resolve("haifa-agent-execution/haifa-agent-execution-core/src/main/java");
+        try (var files = Files.walk(sourceRoot)) {
+            for (Path file :
+                    files.filter(path -> path.toString().endsWith(".java")).toList()) {
+                String source = Files.readString(file);
+                org.assertj.core.api.Assertions.assertThat(source)
+                        .as("%s must not discover host state", sourceRoot.relativize(file))
+                        .doesNotContain("System.getProperty(", "System.getenv(");
+            }
+        }
+    }
+
+    @Test
     void onlyConcreteLocalSandboxProvidersCreateProcesses() {
         var classes = new ClassFileImporter()
                 .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)

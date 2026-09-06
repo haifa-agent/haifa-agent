@@ -7,7 +7,7 @@ import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.ProjectRef;
 import io.haifa.agent.core.session.AgentSessionId;
-import io.haifa.agent.project.configuration.ProjectConfigurationService;
+import io.haifa.agent.project.core.configuration.ProjectConfigurationService;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.domain.ProjectStatus;
 import io.haifa.agent.project.store.ProjectStore;

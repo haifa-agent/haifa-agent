@@ -11,13 +11,14 @@ import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
 import io.haifa.agent.execution.core.PolicyDecisionExecutionPolicy;
-import io.haifa.agent.execution.core.change.LocalIncrementalWorkspaceChangeObserver;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.execution.core.tool.ExecutionInvocationScopeResolver.ExecutionInvocationScope;
 import io.haifa.agent.execution.core.tool.ExecutionToolConfiguration;
 import io.haifa.agent.execution.core.tool.ExecutionToolProvider;
 import io.haifa.agent.execution.core.tool.ScriptRuntimeResolver;
+import io.haifa.agent.execution.host.change.LocalIncrementalWorkspaceChangeObserver;
+import io.haifa.agent.execution.host.tool.HostScriptRuntimeResolver;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.policy.api.ApprovalVerification;
@@ -25,13 +26,13 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
-import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
 import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
@@ -100,7 +101,7 @@ public final class PersonalExecutionRuntime {
         HostShell shell = HostShell.auto();
         var host =
                 new HostGuardedSandboxProvider(workspaces, bindings, locations, identifiers, time, shell, scratchRoot);
-        ScriptRuntimeResolver runtimes = ScriptRuntimeResolver.currentHost(
+        ScriptRuntimeResolver runtimes = HostScriptRuntimeResolver.currentHost(
                 configuredPath(properties.pythonPath()), configuredPath(properties.powerShellPath()));
         var resolvedEnvironment = resolveHostEnvironment(
                 System.getenv(),

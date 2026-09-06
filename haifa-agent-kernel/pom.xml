@@ -18,7 +18,9 @@
         <module>haifa-agent-core</module>
         <module>haifa-agent-runtime-api</module>
         <module>haifa-agent-context</module>
-        <module>haifa-agent-project</module>
+        <module>haifa-agent-project-api</module>
+        <module>haifa-agent-project-core</module>
+        <module>haifa-agent-project-host</module>
         <module>haifa-agent-artifact</module>
         <module>haifa-agent-runtime-core</module>
     </modules>

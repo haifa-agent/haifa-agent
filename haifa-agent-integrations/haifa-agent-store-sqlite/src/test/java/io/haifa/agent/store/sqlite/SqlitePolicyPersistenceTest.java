@@ -122,6 +122,24 @@ class SqlitePolicyPersistenceTest {
                 .isEqualTo(ApprovalGrantState.CONSUMED);
     }
 
+    @Test
+    void reasonAwareGrantRevocationAndApprovalSourceSurviveRestart(@TempDir Path directory) {
+        SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory);
+        ApprovalGrant grant = prepareGrantGraph(foundation);
+
+        foundation.approvalGrants().revoke(grant.id(), grant.version(), NOW.plusSeconds(3), "PROJECT_TRUST_REVOKED");
+
+        ApprovalGrant restored = SqliteTestSupport.foundation(directory)
+                .approvalGrants()
+                .find(grant.id())
+                .orElseThrow();
+        assertThat(restored.state()).isEqualTo(ApprovalGrantState.REVOKED);
+        assertThat(restored.revocationReasonCode()).contains("PROJECT_TRUST_REVOKED");
+        assertThat(restored.sourceApprovalRequestRef()).isEqualTo("approval-request");
+        assertThat(restored.sourceApprovalResponseRef()).isEqualTo("approval-response");
+        assertThat(restored.version()).isEqualTo(grant.version() + 1);
+    }
+
     private static boolean consume(SqliteStoreFoundation foundation, ApprovalGrant grant, CountDownLatch start)
             throws InterruptedException {
         start.await();

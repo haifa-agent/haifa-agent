@@ -33,6 +33,10 @@
                                         <exclude>jakarta.persistence:*</exclude>
                                         <exclude>com.openai:*</exclude>
                                         <exclude>io.modelcontextprotocol.sdk:*</exclude>
+                                        <exclude>io.haifa:haifa-agent-project-core</exclude>
+                                        <exclude>io.haifa:haifa-agent-project-host</exclude>
+                                        <exclude>io.haifa:haifa-agent-execution-core</exclude>
+                                        <exclude>io.haifa:haifa-agent-execution-host</exclude>
                                     </excludes>
                                 </bannedDependencies>
                             </rules>
