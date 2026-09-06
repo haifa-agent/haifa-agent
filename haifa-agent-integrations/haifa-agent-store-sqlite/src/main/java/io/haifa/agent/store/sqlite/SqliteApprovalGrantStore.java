@@ -86,12 +86,18 @@ public final class SqliteApprovalGrantStore implements ApprovalGrantStore {
     }
 
     @Override
-    public ApprovalGrant revoke(ApprovalGrantId id, long expectedVersion, Instant revokedAt) {
+    public ApprovalGrant revoke(ApprovalGrantId id, long expectedVersion, Instant revokedAt, String reasonCode) {
         Objects.requireNonNull(id, "id must not be null");
         Objects.requireNonNull(revokedAt, "revokedAt must not be null");
+        Objects.requireNonNull(reasonCode, "reasonCode must not be null");
         return SqlitePolicyStoreSupport.execute(unitOfWork, () -> {
             PolicyStoreMapper mapper = unitOfWork.mapper(PolicyStoreMapper.class);
-            if (mapper.revokeApprovalGrant(id.value(), expectedVersion, revokedAt, "GRANT_REVOKED") != 1) {
+            ApprovalGrantRow existing = mapper.findApprovalGrant(id.value());
+            if (existing == null || fromRow(existing).version() != expectedVersion) {
+                throw new IllegalStateException("grant is unavailable or version-conflicted");
+            }
+            fromRow(existing).revoke(revokedAt, reasonCode);
+            if (mapper.revokeApprovalGrant(id.value(), expectedVersion, revokedAt, reasonCode) != 1) {
                 throw new IllegalStateException("grant is unavailable or version-conflicted");
             }
             return fromRow(mapper.findApprovalGrant(id.value()));

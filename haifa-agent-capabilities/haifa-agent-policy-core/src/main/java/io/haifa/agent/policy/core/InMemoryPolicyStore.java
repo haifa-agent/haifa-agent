@@ -79,10 +79,11 @@ public final class InMemoryPolicyStore
     }
 
     @Override
-    public synchronized ApprovalGrant revoke(ApprovalGrantId id, long expectedVersion, Instant revokedAt) {
+    public synchronized ApprovalGrant revoke(
+            ApprovalGrantId id, long expectedVersion, Instant revokedAt, String reasonCode) {
         ApprovalGrant current = require(grants, id, "grant");
         requireVersion(current.version(), expectedVersion);
-        ApprovalGrant updated = current.revoke(revokedAt);
+        ApprovalGrant updated = current.revoke(revokedAt, reasonCode);
         grants.put(id, updated);
         return updated;
     }

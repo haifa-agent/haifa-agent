@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.execution.core.tool.ExecutionOperatingSystem;
+import io.haifa.agent.execution.host.tool.HostScriptRuntimeResolver;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
@@ -1014,27 +1015,31 @@ class PersonalAssistantWebFluxTest {
     }
 
     private static String expectedScriptLanguage() {
-        return ExecutionOperatingSystem.current() == ExecutionOperatingSystem.WINDOWS ? "powershell" : "bash";
+        return currentOperatingSystem() == ExecutionOperatingSystem.WINDOWS ? "powershell" : "bash";
     }
 
     private static String expectedArgumentEchoScript() {
-        return ExecutionOperatingSystem.current() == ExecutionOperatingSystem.WINDOWS
+        return currentOperatingSystem() == ExecutionOperatingSystem.WINDOWS
                 ? "$args -join '|'"
                 : "printf '%s|%s' \"$1\" \"$2\"";
     }
 
     private static String expectedArgumentEchoPurpose() {
         return "验证 "
-                + (ExecutionOperatingSystem.current() == ExecutionOperatingSystem.WINDOWS ? "PowerShell" : "Bash")
+                + (currentOperatingSystem() == ExecutionOperatingSystem.WINDOWS ? "PowerShell" : "Bash")
                 + " 脚本参数通过 stdin 安全传递";
     }
 
     private static String expectedCpuProbe() {
-        return switch (ExecutionOperatingSystem.current()) {
+        return switch (currentOperatingSystem()) {
             case WINDOWS -> "Get-CimInstance Win32_Processor";
             case MACOS -> "top -l 2 -n 0";
             case LINUX -> "/proc/stat";
         };
+    }
+
+    private static ExecutionOperatingSystem currentOperatingSystem() {
+        return HostScriptRuntimeResolver.currentOperatingSystem();
     }
 
     private JsonNode awaitStatus(String runId, Set<String> expected) throws Exception {

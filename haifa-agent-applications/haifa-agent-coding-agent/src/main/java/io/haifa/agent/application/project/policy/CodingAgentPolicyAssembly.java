@@ -1,10 +1,12 @@
 package io.haifa.agent.application.project.policy;
 
+import io.haifa.agent.policy.api.ApprovalGrantId;
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.ApprovalTargetStatus;
 import io.haifa.agent.policy.api.ApprovalTargetValidation;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
 import io.haifa.agent.policy.api.PolicyAuthorizationEvidenceStore;
+import io.haifa.agent.policy.api.PolicyAuthorizationService;
 import io.haifa.agent.policy.api.PolicyChallenge;
 import io.haifa.agent.policy.api.PolicyDecisionId;
 import io.haifa.agent.policy.api.PolicyDecisionService;
@@ -21,6 +23,8 @@ import io.haifa.agent.policy.api.PolicySideEffect;
 import io.haifa.agent.policy.api.PolicySnapshot;
 import io.haifa.agent.policy.api.PolicySnapshotRef;
 import io.haifa.agent.policy.api.PolicySnapshotStore;
+import io.haifa.agent.policy.core.ApprovalGrantMatcher;
+import io.haifa.agent.policy.core.DefaultApprovalGrantService;
 import io.haifa.agent.policy.core.DefaultApprovalVerificationService;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.policy.core.InMemoryPolicyAuthorizationEvidenceStore;
@@ -44,6 +48,7 @@ public final class CodingAgentPolicyAssembly {
     private final PolicyDecisionService decisions;
     private final PolicySnapshot snapshot;
     private final ApprovalVerificationService approvalVerification;
+    private final PolicyAuthorizationService authorization;
 
     private CodingAgentPolicyAssembly(
             PolicySnapshotStore snapshots,
@@ -51,13 +56,15 @@ public final class CodingAgentPolicyAssembly {
             PolicyAuthorizationEvidenceStore evidence,
             PolicyDecisionService decisions,
             PolicySnapshot snapshot,
-            ApprovalVerificationService approvalVerification) {
+            ApprovalVerificationService approvalVerification,
+            PolicyAuthorizationService authorization) {
         this.snapshots = snapshots;
         this.decisionsStore = decisionsStore;
         this.evidence = evidence;
         this.decisions = decisions;
         this.snapshot = snapshot;
         this.approvalVerification = approvalVerification;
+        this.authorization = authorization;
     }
 
     public static CodingAgentPolicyAssembly create(ApprovalMode mode, Clock clock, Supplier<String> identifiers) {
@@ -108,13 +115,20 @@ public final class CodingAgentPolicyAssembly {
                         "tool",
                         target -> new ApprovalTargetValidation(
                                 ApprovalTargetStatus.CURRENT, "TOOL_TARGET_STRUCTURALLY_CURRENT")));
+        PolicyAuthorizationService authorization = new DefaultApprovalGrantService(
+                persistence.grants(),
+                persistence.projectTrusts(),
+                new ApprovalGrantMatcher(),
+                clock,
+                () -> new ApprovalGrantId(identifiers.get()));
         return new CodingAgentPolicyAssembly(
                 persistence.snapshots(),
                 persistence.decisions(),
                 persistence.authorizationEvidence(),
                 decisions,
                 effectiveSnapshot,
-                verification);
+                verification,
+                authorization);
     }
 
     private static PolicySnapshot snapshot(ApprovalMode mode, CodingApprovalThreshold threshold, Clock clock) {
@@ -294,5 +308,9 @@ public final class CodingAgentPolicyAssembly {
 
     public ApprovalVerificationService approvalVerification() {
         return approvalVerification;
+    }
+
+    public PolicyAuthorizationService authorization() {
+        return authorization;
     }
 }

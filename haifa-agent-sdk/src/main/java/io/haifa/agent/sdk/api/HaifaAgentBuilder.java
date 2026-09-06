@@ -314,6 +314,7 @@ public final class HaifaAgentBuilder {
             }
             if (policy != null) {
                 runtimeBuilder.policyStores(policy.snapshots(), policy.decisions(), policy.authorizationEvidence());
+                runtimeBuilder.policyAuthorization(policy.authorization());
             }
             if (approval != null) {
                 runtimeBuilder.approvalVerification(approval.verification());

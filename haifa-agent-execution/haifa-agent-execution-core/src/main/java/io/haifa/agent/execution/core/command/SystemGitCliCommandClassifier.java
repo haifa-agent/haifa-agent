@@ -1,6 +1,5 @@
 package io.haifa.agent.execution.core.command;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -381,13 +380,11 @@ public final class SystemGitCliCommandClassifier {
     }
 
     private static String basename(String value) {
-        String name;
-        try {
-            Path fileName = Path.of(value).getFileName();
-            name = fileName == null ? value : fileName.toString();
-        } catch (RuntimeException ignored) {
-            name = value;
-        }
+        int end = value.length();
+        while (end > 0 && (value.charAt(end - 1) == '/' || value.charAt(end - 1) == '\\')) end--;
+        int slash = Math.max(value.lastIndexOf('/', end - 1), value.lastIndexOf('\\', end - 1));
+        String name = value.substring(slash + 1, end);
+        if (name.isEmpty()) name = value;
         String lower = name.toLowerCase(Locale.ROOT);
         return lower.endsWith(".exe") ? lower.substring(0, lower.length() - 4) : lower;
     }

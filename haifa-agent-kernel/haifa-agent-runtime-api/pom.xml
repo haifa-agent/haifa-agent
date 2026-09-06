@@ -59,6 +59,8 @@
                                         <exclude>org.springframework.ai:*</exclude>
                                         <exclude>com.alibaba.cloud.ai:*</exclude>
                                         <exclude>io.haifa:haifa-agent-product-*</exclude>
+                                        <exclude>io.haifa:haifa-agent-project-core</exclude>
+                                        <exclude>io.haifa:haifa-agent-project-host</exclude>
                                         <exclude>io.haifa:haifa-agent-runtime-core</exclude>
                                         <exclude>io.haifa:haifa-agent-admin-*</exclude>
                                     </excludes>
