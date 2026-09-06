@@ -18,15 +18,9 @@ public interface ConversationSummaryRepository {
 
     boolean coversValidSource(ConversationSummary summary, MessageCursor through);
 
-    default SummarySnapshot latestSnapshot(AgentSessionId sessionId) {
-        return new SummarySnapshot(
-                latestValid(sessionId).filter(s -> coversValidSource(s, s.coveredThrough())), latestVersion(sessionId));
-    }
+    /** Returns the valid summary and the latest version from one atomic repository snapshot. */
+    SummarySnapshot latestSnapshot(AgentSessionId sessionId);
 
-    default ConversationSummary compareAndSetValid(ConversationSummary summary, long expectedPreviousVersion) {
-        if (!coversValidSource(summary, summary.coveredThrough())) {
-            throw new IllegalStateException("summary source messages are invalid or have been redacted");
-        }
-        return compareAndSet(summary, expectedPreviousVersion);
-    }
+    /** Atomically validates every source message and commits the next summary version. */
+    ConversationSummary compareAndSetValid(ConversationSummary summary, long expectedPreviousVersion);
 }

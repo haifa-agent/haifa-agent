@@ -7,6 +7,11 @@ versioned token-tail percentages; fixed message-group limits are only compaction
 normal trigger for a rolling window. Governed long-term Memory stays in the Memory capability and reaches
 this module only through the closed `MemoryReferenceContent` IR.
 
+Semantic summaries use the normalized `SemanticConversationSummaryV1` schema. Mandatory carry-forward
+items retain stable identity, text, and provenance unless a terminal decision cites new batch evidence.
+`ConversationSummaryRepository` requires atomic snapshot and source-validating compare-and-set operations;
+adapters may not synthesize those operations from separate reads and writes.
+
 The module depends only on Common, Core, and Model API. It never emits provider DTOs and does not
 invoke a model. Runtime is the sole owner of the `AgentContext` to `ModelMessage` conversion.
 

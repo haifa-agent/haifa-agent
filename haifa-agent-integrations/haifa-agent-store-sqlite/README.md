@@ -147,6 +147,8 @@ V1 一次性创建 26 张逻辑表：
 每个 BLOB 都有相邻 `*_schema_version` 与 `*_hash`。时间统一保存为 UTC epoch milliseconds。V1 同时定义
 外键、Run 内序号唯一约束、Session Message 序号、Attempt 编号、Interaction/Idempotency 去重，以及
 同一 Run 最多一个 `QUEUED`/`RUNNING` Attempt 的部分唯一索引。
+Conversation Summary 的有效快照读取，以及来源消息校验加版本 CAS 写入，分别在单个 SQLite UoW 中完成；
+被 Redact 或失效的来源不会产生新的 Summary 版本。
 
 V2 只补充无损恢复所需字段：Run 的 waiting request/termination description，以及 Configuration 与
 Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校验并在 `BEGIN IMMEDIATE` 中执行。

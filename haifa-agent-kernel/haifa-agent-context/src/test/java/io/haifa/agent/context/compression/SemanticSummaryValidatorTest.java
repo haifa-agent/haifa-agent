@@ -251,6 +251,72 @@ class SemanticSummaryValidatorTest {
     }
 
     @Test
+    void rejectsCarryForwardWithChangedTextOrDroppedEvidence() {
+        SemanticSummaryItem carry = new SemanticSummaryItem(
+                "C-1", "Keep the approved discharge limit", List.of("historic-1"), SemanticConfidence.OBSERVED);
+        SemanticConversationSummaryV1 changed = new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(),
+                List.of(new SemanticSummaryItem(
+                        "C-1", "Use a relaxed discharge limit", List.of("m001"), SemanticConfidence.OBSERVED)),
+                SemanticProgress.empty(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
+
+        assertThatThrownBy(() -> SemanticSummaryValidator.validate(
+                        changed, projectedSource, List.of(carry), Set.of("historic-1"), Optional.empty()))
+                .isInstanceOf(SemanticSummaryValidationException.class)
+                .hasMessageContaining("changed its text");
+    }
+
+    @Test
+    void rejectsProposedDecisionAsCarryForwardResolution() {
+        SemanticSummaryItem carry = new SemanticSummaryItem(
+                "Q-1", "Approve the monitoring method?", List.of("historic-1"), SemanticConfidence.OBSERVED);
+        SemanticConversationSummaryV1 proposed =
+                summaryResolvingCarry("Q-1", SemanticDecisionStatus.PROPOSED, List.of("m001"));
+
+        assertThatThrownBy(() -> SemanticSummaryValidator.validate(
+                        proposed, projectedSource, List.of(carry), Set.of("historic-1"), Optional.empty()))
+                .isInstanceOf(SemanticSummaryValidationException.class)
+                .hasMessageContaining("dropped without resolution");
+    }
+
+    @Test
+    void rejectsTerminalCarryForwardResolutionWithoutCurrentBatchEvidence() {
+        SemanticSummaryItem carry = new SemanticSummaryItem(
+                "Q-1", "Approve the monitoring method?", List.of("historic-1"), SemanticConfidence.OBSERVED);
+        SemanticConversationSummaryV1 resolved =
+                summaryResolvingCarry("Q-1", SemanticDecisionStatus.ACCEPTED, List.of("historic-1"));
+
+        assertThatThrownBy(() -> SemanticSummaryValidator.validate(
+                        resolved, projectedSource, List.of(carry), Set.of("historic-1"), Optional.empty()))
+                .isInstanceOf(SemanticSummaryValidationException.class)
+                .hasMessageContaining("dropped without resolution");
+    }
+
+    @Test
+    void rejectsDuplicateStableItemIdsAcrossSections() {
+        SemanticConversationSummaryV1 duplicate = new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(new SemanticSummaryItem("G-1", "Goal", List.of("m001"), SemanticConfidence.OBSERVED)),
+                List.of(new SemanticSummaryItem("G-1", "Constraint", List.of("m001"), SemanticConfidence.OBSERVED)),
+                SemanticProgress.empty(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
+
+        assertThatThrownBy(() -> SemanticSummaryValidator.validate(duplicate, projectedSource, List.of()))
+                .isInstanceOf(SemanticSummaryValidationException.class)
+                .hasMessageContaining("duplicate stableItemId 'G-1'");
+    }
+
+    @Test
     void strictFailClosedSchemaParsingRejectsMissingFields() {
         Map<String, Object> base = Map.of(
                 "schemaVersion", "v1",
@@ -293,5 +359,20 @@ class SemanticSummaryValidatorTest {
         assertThatThrownBy(() -> SemanticConversationSummaryV1.fromMap(missingLang))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("language");
+    }
+
+    private static SemanticConversationSummaryV1 summaryResolvingCarry(
+            String carryId, SemanticDecisionStatus status, List<String> sourceRefs) {
+        return new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(),
+                List.of(),
+                SemanticProgress.empty(),
+                List.of(new SemanticDecisionItem(
+                        "D-1", "Monitoring method approved", "Resolved " + carryId, status, sourceRefs)),
+                List.of(),
+                List.of(),
+                List.of());
     }
 }
