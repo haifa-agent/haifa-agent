@@ -18,6 +18,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
+import io.haifa.agent.application.project.product.coding.CodingWorkspaceGrant;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
 import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjection;
 import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionService;
@@ -38,6 +39,7 @@ import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /** Local product adapter backed by Coding Session services and the stable Runtime API. */
@@ -54,6 +56,8 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     private final java.util.Optional<CodingShellService> shell;
     private final java.util.Optional<CodingSessionExportService> exporter;
     private final java.util.Optional<CodingRunOutcomeProjectionService> outcomes;
+    private final Supplier<List<CodingWorkspaceGrant>> workspaces;
+    private final Consumer<String> workspaceRevoker;
 
     public LocalCodingSessionClient(
             ProjectId projectId,
@@ -160,6 +164,40 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
             java.util.Optional<CodingShellService> shell,
             CodingSessionExportService exporter,
             CodingRunOutcomeProjectionService outcomes) {
+        this(
+                projectId,
+                sessions,
+                history,
+                runtime,
+                identifiers,
+                time,
+                logicalPaths,
+                loadedResources,
+                resourceReloader,
+                shell,
+                exporter,
+                outcomes,
+                List::of,
+                workspaceRef -> {
+                    throw new UnsupportedOperationException("Workspace revocation is unavailable");
+                });
+    }
+
+    public LocalCodingSessionClient(
+            ProjectId projectId,
+            CodingSessionService sessions,
+            CodingSessionHistoryService history,
+            AgentRuntime runtime,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            Supplier<List<String>> logicalPaths,
+            Supplier<List<String>> loadedResources,
+            Supplier<List<String>> resourceReloader,
+            java.util.Optional<CodingShellService> shell,
+            CodingSessionExportService exporter,
+            CodingRunOutcomeProjectionService outcomes,
+            Supplier<List<CodingWorkspaceGrant>> workspaces,
+            Consumer<String> workspaceRevoker) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.sessions = Objects.requireNonNull(sessions, "sessions must not be null");
         this.history = java.util.Optional.ofNullable(history);
@@ -172,6 +210,8 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
         this.shell = Objects.requireNonNull(shell, "shell must not be null");
         this.exporter = java.util.Optional.ofNullable(exporter);
         this.outcomes = java.util.Optional.ofNullable(outcomes);
+        this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
+        this.workspaceRevoker = Objects.requireNonNull(workspaceRevoker, "workspaceRevoker must not be null");
     }
 
     @Override
@@ -409,6 +449,16 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     @Override
     public List<String> logicalPaths() {
         return List.copyOf(logicalPaths.get());
+    }
+
+    @Override
+    public List<CodingWorkspaceGrant> workspaces() {
+        return List.copyOf(workspaces.get());
+    }
+
+    @Override
+    public void revokeWorkspace(String workspaceRef) {
+        workspaceRevoker.accept(workspaceRef);
     }
 
     @Override

@@ -156,9 +156,10 @@ Application 自有的 Product/Coding 表通过 MyBatis Mapper XML 接入
 不直接使用 JDBC。Mapper 仍经过 SQLite Foundation 的静态 XML 校验，禁止 `${...}` 动态 SQL。
 
 `coding_workspace_registry` 是 CA 自有 Host/Application 持久事实，不进入公共 Runtime/Core。SQLite Adapter
-通过当前持久保护器保存本机根位置，并绑定 project、workspace、location 与 fingerprint；解密失败、目录缺失、
+通过当前持久保护器保存本机根位置，并绑定 project、workspace、location 与物理目录身份 fingerprint；解密失败、目录缺失、
 身份漂移、link/reparse point 或根重叠都会禁用记录而不恢复权限。模型只能看到脱敏 Registry 投影；本地
-`file.*` 继续接收宿主绝对路径并在当前活动 Registry/Scope 中重新解析。
+`file.*` 继续接收宿主绝对路径并在当前活动 Registry/Scope 中重新解析。标准 `CodingSessionClient` 还提供
+脱敏授权清单与撤销入口，供受信产品界面移除非初始根的持久授权。
 
 ## Coding Session 产品闭环
 

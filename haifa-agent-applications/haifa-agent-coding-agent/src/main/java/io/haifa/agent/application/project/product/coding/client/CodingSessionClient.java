@@ -12,6 +12,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
+import io.haifa.agent.application.project.product.coding.CodingWorkspaceGrant;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
 import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjection;
 import io.haifa.agent.core.run.AgentRunId;
@@ -157,6 +158,16 @@ public interface CodingSessionClient {
 
     default List<String> logicalPaths() {
         return List.of();
+    }
+
+    /** Returns path-redacted durable workspace grants visible to this product instance. */
+    default List<CodingWorkspaceGrant> workspaces() {
+        return List.of();
+    }
+
+    /** Revokes one non-initial durable workspace grant. */
+    default void revokeWorkspace(String workspaceRef) {
+        throw new UnsupportedOperationException("Workspace revocation is unavailable");
     }
 
     default List<String> loadedResources() {

@@ -240,7 +240,9 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   Transcript 指引展示；Browser Callback 尝试自动打开浏览器，同时始终展示可复制授权 URL 并继续等待本机
   回调，避免系统报告已启动但窗口不可见。API Key 输入使用
   独立掩码缓冲区，不进入 Reducer、Session、Transcript、History 或 Completion；
-- `/settings`、`/trust`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
+- `/trust` 通过标准产品客户端异步展示脱敏的持久 Workspace 授权；
+  `/trust revoke <workspaceRef>` 可撤销非初始根，不暴露宿主路径且不阻塞 UI；
+- `/settings`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
   `CAPABILITY_NOT_IMPLEMENTED`，不显示装饰性选择器；
 - `/quit` 退出；活动 Run 下 EOF 显示明确的退出选择。
 

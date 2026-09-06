@@ -22,6 +22,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
+import io.haifa.agent.application.project.product.coding.CodingWorkspaceGrant;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
@@ -745,8 +746,12 @@ class CodingTerminalControllerTest {
     }
 
     @Test
-    void settingsAndTrustDoNotOpenDecorativeSelectors() {
+    void settingsStaysUnavailableWhileTrustListsAndRevokesDurableWorkspaceGrants() {
         FakeClient client = new FakeClient(view(Optional.empty()));
+        client.workspaces = List.of(
+                new CodingWorkspaceGrant("workspace-initial", "haifa-agent", "read-write", "initial", "active", false),
+                new CodingWorkspaceGrant(
+                        "workspace-docs", "haifa-agent-docs", "read-only", "approved-attach", "active", true));
         var controller = controller(client);
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, "/settings"));
@@ -754,8 +759,48 @@ class CodingTerminalControllerTest {
         assertThat(controller.state().recoverableError()).contains("CAPABILITY_NOT_IMPLEMENTED");
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, "/trust"));
-        assertThat(controller.state().selector()).isEmpty();
-        assertThat(controller.state().recoverableError()).contains("CAPABILITY_NOT_IMPLEMENTED");
+        assertThat(controller.state().selector()).hasValueSatisfying(selector -> {
+            assertThat(selector.kind()).isEqualTo("workspace-trust");
+            assertThat(selector.title()).isEqualTo("Workspace trust");
+            assertThat(selector.options())
+                    .containsExactly(
+                            "haifa-agent · read-write · active · initial · workspace-initial",
+                            "haifa-agent-docs · read-only · active · approved-attach · workspace-docs · revocable");
+        });
+
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/trust revoke workspace-docs"));
+
+        assertThat(client.revokedWorkspaces).containsExactly("workspace-docs");
+        assertThat(controller.state().status()).isEqualTo("Workspace access revoked");
+    }
+
+    @Test
+    void trustRevocationImmediatelyUpdatesUiWhileTheProductCallRunsInTheBackground() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        var queuedEffects = new ArrayDeque<Runnable>();
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                queuedEffects::add);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/trust revoke workspace-docs"));
+
+        assertThat(controller.state().status()).isEqualTo("Revoking workspace access");
+        assertThat(client.revokedWorkspaces).isEmpty();
+        assertThat(queuedEffects).hasSize(1);
+
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "preserved draft", 15));
+        assertThat(controller.state().editorBuffer()).isEqualTo("preserved draft");
+
+        queuedEffects.remove().run();
+        controller.drainEvents();
+
+        assertThat(client.revokedWorkspaces).containsExactly("workspace-docs");
+        assertThat(controller.state().status()).isEqualTo("Workspace access revoked");
     }
 
     @Test
@@ -1260,6 +1305,7 @@ class CodingTerminalControllerTest {
         private List<CodingQueuedMessage> restorable = List.of();
         private List<String> logicalPaths = List.of();
         private List<CodingModelOption> models = List.of();
+        private List<CodingWorkspaceGrant> workspaces = List.of();
         private CodingSessionCreateOptions createOptions = CodingSessionCreateOptions.defaults();
         private ProjectProductException submitFailure;
         private ProjectProductException responseFailure;
@@ -1272,6 +1318,7 @@ class CodingTerminalControllerTest {
         private final List<String> restored = new ArrayList<>();
         private final List<InteractionAction> respondedActions = new ArrayList<>();
         private final List<AgentSessionId> cancelledSessions = new ArrayList<>();
+        private final List<String> revokedWorkspaces = new ArrayList<>();
         private CodingShellPlan.State shellState = CodingShellPlan.State.READY;
         private boolean shellApproved;
         private boolean shellIncludedInContext;
@@ -1307,6 +1354,16 @@ class CodingTerminalControllerTest {
         @Override
         public List<CodingModelOption> models() {
             return models;
+        }
+
+        @Override
+        public List<CodingWorkspaceGrant> workspaces() {
+            return workspaces;
+        }
+
+        @Override
+        public void revokeWorkspace(String workspaceRef) {
+            revokedWorkspaces.add(workspaceRef);
         }
 
         @Override
