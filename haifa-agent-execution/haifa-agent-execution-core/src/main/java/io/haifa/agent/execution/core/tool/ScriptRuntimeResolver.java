@@ -2,16 +2,14 @@ package io.haifa.agent.execution.core.tool;
 
 import io.haifa.agent.execution.api.ExecutionCommand;
 import io.haifa.agent.execution.api.ExecutionInput;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 
-/** Host-owned runtime allowlist. Unsupported languages fail closed without fallback. */
+/** Deployment-neutral runtime allowlist. Host discovery is supplied by an execution-host factory. */
 public final class ScriptRuntimeResolver {
     private final ExecutionOperatingSystem operatingSystem;
     private final Map<String, ScriptRuntimeAdapter> adapters;
@@ -27,20 +25,6 @@ public final class ScriptRuntimeResolver {
             }
         }
         this.adapters = Map.copyOf(indexed);
-    }
-
-    public static ScriptRuntimeResolver currentHost(Optional<Path> python, Optional<Path> powerShell) {
-        ExecutionOperatingSystem os = ExecutionOperatingSystem.current();
-        List<ScriptRuntimeAdapter> adapters = new ArrayList<>();
-        if (os == ExecutionOperatingSystem.WINDOWS) {
-            Path executable = powerShell.orElse(Path.of("powershell.exe"));
-            adapters.add(powerShell(executable));
-        } else {
-            adapters.add(bash(Path.of("/bin/bash")));
-            powerShell.ifPresent(path -> adapters.add(powerShell(path)));
-        }
-        python.ifPresent(path -> adapters.add(python(path)));
-        return new ScriptRuntimeResolver(os, adapters);
     }
 
     public ScriptRuntimeAdapter resolve(String language) {
@@ -71,15 +55,15 @@ public final class ScriptRuntimeResolver {
         return operatingSystem;
     }
 
-    public static ScriptRuntimeAdapter bash(Path executable) {
+    public static ScriptRuntimeAdapter bash(String executable) {
         return new StandardInputRuntimeAdapter("bash", executable, List.of("--noprofile", "--norc", "-s", "--"));
     }
 
-    public static ScriptRuntimeAdapter python(Path executable) {
+    public static ScriptRuntimeAdapter python(String executable) {
         return new StandardInputRuntimeAdapter("python", executable, List.of("-X", "utf8", "-I", "-"));
     }
 
-    public static ScriptRuntimeAdapter powerShell(Path executable) {
+    public static ScriptRuntimeAdapter powerShell(String executable) {
         return new StandardInputRuntimeAdapter(
                 "powershell", executable, List.of("-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "-"));
     }
@@ -92,17 +76,19 @@ public final class ScriptRuntimeResolver {
         return normalized;
     }
 
-    private record StandardInputRuntimeAdapter(String language, Path executablePath, List<String> invocationArguments)
+    private record StandardInputRuntimeAdapter(String language, String executablePath, List<String> invocationArguments)
             implements ScriptRuntimeAdapter {
         private StandardInputRuntimeAdapter {
             language = normalize(language);
-            executablePath = Objects.requireNonNull(executablePath, "executablePath must not be null");
+            executablePath = Objects.requireNonNull(executablePath, "executablePath must not be null")
+                    .trim();
+            if (executablePath.isEmpty()) throw new IllegalArgumentException("executablePath must not be blank");
             invocationArguments = List.copyOf(invocationArguments);
         }
 
         @Override
         public String executable() {
-            return executablePath.toString();
+            return executablePath;
         }
 
         @Override
@@ -110,7 +96,7 @@ public final class ScriptRuntimeResolver {
             Objects.requireNonNull(content, "content must not be null");
             List<String> safeArguments = List.copyOf(arguments);
             List<String> argv = new ArrayList<>();
-            argv.add(executablePath.toString());
+            argv.add(executablePath);
             argv.addAll(invocationArguments);
             String source = content;
             if (language.equals("powershell")) {

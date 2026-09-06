@@ -8,8 +8,9 @@ Tenant、Principal、Run、Action、Execution 请求摘要、Snapshot，以及 `
 Decision 不能覆盖 Broker 既有的 Frozen Capability、Workspace、Profile、Provider、Sandbox、
 deadline、输出和审计硬边界。
 
-实现 `ExecutionBroker`、内存 Journal/输出存储、可替换的 `WorkspaceChangeObserver` 及 `FileChangeSet`
-对账。公共 `LocalIncrementalWorkspaceChangeObserver` 显式绑定一个 `WorkspaceId` 与规范化物理根，首次使用
+实现 `ExecutionBroker`、内存 Journal/输出存储、可替换的 `WorkspaceChangeObserver` 端口及 `FileChangeSet`
+对账。`LocalIncrementalWorkspaceChangeObserver` 的 NIO 实现位于 `haifa-agent-execution-host`，显式绑定一个
+`WorkspaceId` 与规范化物理根，首次使用
 建立基线，正常窗口只处理 WatchService 候选；macOS 对短窗口内遗漏的事件使用元数据索引补齐候选，仍只对
 变化候选计算内容哈希；settle deadline 只在事件持续活跃时触发安全重同步，不把安静轮询期间的 Runner
 调度停顿误判为 overflow；真实 overflow 或状态不确定时仅在该 Workspace 内重同步。产品
@@ -87,8 +88,9 @@ Git Credential 配置/子命令和 GH Token 披露继续硬拒绝；为了覆盖
 
 冻结输入只包含 `mode`、`content`、`language`、`args`、`purpose`、`timeoutMillis`；只有显式允许
 Workspace 的产品配置才可以增加 `workingDirectory`。操作系统、可执行文件和 Provider 均由可信
-装配解析，模型不能选择。脚本正文通过 stdin 传递，PowerShell、Bash 和 Python 由独立 runtime
-adapter 按当前 OS fail closed 解析。
+装配解析，模型不能选择。脚本正文通过 stdin 传递，PowerShell、Bash 和 Python 由独立 runtime adapter
+执行；Host executable 与当前 OS 由 `haifa-agent-execution-host` 的 `HostScriptRuntimeResolver`
+fail closed 解析，Core 仅保存显式传入的 runtime allowlist。
 
 平台定义仍以 HIGH / NON_IDEMPOTENT 作为无法解析时的保守回退。产品可以在 Policy 前通过可信适配器提高或
 降低单次调用的有效风险，但模型声明不能降低风险。审批绑定统一使用 `ToolArgumentsDigest` 的 canonical

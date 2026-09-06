@@ -101,7 +101,9 @@ public record SqliteSdkProductContributions(
                             policyMetadata,
                             foundation.policySnapshots(),
                             foundation.policyDecisions(),
-                            foundation.policyAuthorizationEvidence()),
+                            foundation.policyAuthorizationEvidence(),
+                            foundation.approvalGrants(),
+                            foundation.projectTrusts()),
                     new ArtifactPlatformContribution(
                             new SdkContributionMetadata(
                                     new ProductContributionCoordinate("haifa-sqlite-artifact", "1.0.0"),

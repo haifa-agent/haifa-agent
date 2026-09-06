@@ -5,9 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
-import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
-import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;

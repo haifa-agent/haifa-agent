@@ -12,10 +12,13 @@ import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.RunTerminationReason;
+import io.haifa.agent.policy.api.ApprovalGrantCreationRequest;
 import io.haifa.agent.policy.api.ApprovalResponder;
+import io.haifa.agent.policy.api.ApprovalReuseScope;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
 import io.haifa.agent.policy.api.PolicyAuthorizationEvidence;
 import io.haifa.agent.policy.api.PolicyAuthorizationEvidenceStore;
+import io.haifa.agent.policy.api.PolicyAuthorizationService;
 import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunHandle;
@@ -118,6 +121,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final PersistenceRetryPolicy persistenceRetry;
     private final ApprovalVerificationService approvalVerification;
     private final PolicyAuthorizationEvidenceStore policyAuthorizationEvidence;
+    private final PolicyAuthorizationService policyAuthorization;
     private final PolicyDecisionStore policyDecisions;
     private final RunInputPort runInputs;
     private final RuntimeEventFeed eventFeed;
@@ -150,6 +154,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             PersistenceRetryPolicy persistenceRetry,
             ApprovalVerificationService approvalVerification,
             PolicyAuthorizationEvidenceStore policyAuthorizationEvidence,
+            PolicyAuthorizationService policyAuthorization,
             PolicyDecisionStore policyDecisions,
             RunInputPort runInputs,
             RuntimeEventFeed eventFeed,
@@ -179,6 +184,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
         this.approvalVerification = Objects.requireNonNull(approvalVerification);
         this.policyAuthorizationEvidence = Objects.requireNonNull(policyAuthorizationEvidence);
+        this.policyAuthorization = Objects.requireNonNull(policyAuthorization);
         this.policyDecisions = Objects.requireNonNull(policyDecisions);
         this.runInputs = Objects.requireNonNull(runInputs);
         this.eventFeed = Objects.requireNonNull(eventFeed);
@@ -520,6 +526,22 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                     new ApprovalResponder(caller.tenant(), caller.principal()),
                     approvedAt,
                     approvedAt.plus(APPROVAL_EVIDENCE_TTL)));
+            if (policyAuthorization.persistentGrantsEnabled()) {
+                java.time.Instant grantExpiry = approvedAt.plus(APPROVAL_EVIDENCE_TTL);
+                if (context.expiresAt().isPresent()
+                        && context.expiresAt().orElseThrow().isBefore(grantExpiry)) {
+                    grantExpiry = context.expiresAt().orElseThrow();
+                }
+                policyAuthorization.createGrant(new ApprovalGrantCreationRequest(
+                        decision,
+                        context,
+                        approvalResult,
+                        request.id().value(),
+                        response.responseId().value(),
+                        new ApprovalResponder(caller.tenant(), caller.principal()),
+                        ApprovalReuseScope.ONCE,
+                        grantExpiry));
+            }
         }
         appendInteractionResponseMessage(
                 run, response, toolApproval ? MessageVisibility.INTERNAL : MessageVisibility.AGENT_VISIBLE);

@@ -307,7 +307,10 @@ flowchart TB
   SDK --> RUNTIME["Runtime API + Runtime Core"]
   INTEGRATIONS --> RUNTIME
   RUNTIME --> CAP["Capability APIs: Model / Tool / Skill / Memory / Policy / Credential"]
-  RUNTIME --> KERNEL["Core / Context / Project / Artifact"]
+  RUNTIME --> KERNEL["Core / Context / Project API + Core / Artifact"]
+  APP --> HOST["Project Host / Execution Host / Sandbox Providers"]
+  HOST --> KERNEL
+  HOST --> RUNTIME
   CAP --> CORE["Core + Common"]
   KERNEL --> CORE
   TESTING["Testing"] -.-> APP
@@ -322,9 +325,9 @@ Core、Runtime 或 Capability API。Spring Framework 从适配边界开始引入
 
 | 目录 | 职责 |
 | --- | --- |
-| `haifa-agent-kernel/` | Common、Core、Runtime、Context、Project 与 Artifact。 |
+| `haifa-agent-kernel/` | Common、Core、Runtime、Context、Project API/Core/Host 与 Artifact；Project Host 是唯一物理文件系统边界。 |
 | `haifa-agent-capabilities/` | Model、Tool、Skill、Credential、Memory 与 Policy API/Core。 |
-| `haifa-agent-execution/` | Execution、Sandbox SPI 与本地 Provider。 |
+| `haifa-agent-execution/` | Execution API/Core、窄 Execution Host、Sandbox SPI 与本地 Provider。 |
 | `haifa-agent-integrations/` | 模型、Web、MCP、Git、SQLite、JSONL 与 HTTP Adapter。 |
 | `haifa-agent-sdk/`、`haifa-agent-sdk-starter/` | 高层纯 Java Facade 与安全默认 Quickstart。 |
 | `haifa-agent-spring/` | Spring Boot 自动装配与依赖 Starter。 |

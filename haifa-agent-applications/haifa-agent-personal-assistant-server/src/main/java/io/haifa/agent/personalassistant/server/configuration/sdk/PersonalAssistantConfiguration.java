@@ -16,6 +16,7 @@ import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.codex.CodexLocalCompatibilityRegistrationFactory;
 import io.haifa.agent.auth.localmodel.codex.CodexTokenClient;
+import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -45,10 +46,14 @@ import io.haifa.agent.personalassistant.server.mission.MissionDispatcher;
 import io.haifa.agent.personalassistant.server.mission.MissionOperationsService;
 import io.haifa.agent.personalassistant.server.mission.RuntimeMissionPlanner;
 import io.haifa.agent.personalassistant.server.mission.SqliteMissionStore;
+import io.haifa.agent.policy.api.ApprovalGrantId;
+import io.haifa.agent.policy.core.ApprovalGrantMatcher;
+import io.haifa.agent.policy.core.DefaultApprovalGrantService;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
+import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
@@ -165,6 +170,19 @@ public class PersonalAssistantConfiguration {
                 .build();
     }
 
+    static PolicyPlatformContribution sharedPolicy(
+            PolicyPlatformContribution policy, Clock clock, IdentifierGenerator identifiers) {
+        Objects.requireNonNull(policy, "policy must not be null");
+        Objects.requireNonNull(clock, "clock must not be null");
+        Objects.requireNonNull(identifiers, "identifiers must not be null");
+        return policy.withAuthorization(new DefaultApprovalGrantService(
+                policy.approvalGrants().orElseThrow(),
+                policy.projectTrusts().orElseThrow(),
+                new ApprovalGrantMatcher(),
+                clock,
+                () -> new ApprovalGrantId(identifiers.nextValue())));
+    }
+
     @Bean(destroyMethod = "close")
     PersonalAssistantApplication personalAssistantApplication(
             PersonalAssistantProperties properties,
@@ -189,6 +207,8 @@ public class PersonalAssistantConfiguration {
                 metadata("haifa-personal-conversation", ProductCapabilities.CONVERSATION, "conversation-v1"),
                 metadata("haifa-personal-memory", ProductCapabilities.MEMORY, "memory-v1"),
                 metadata("haifa-personal-policy", ProductCapabilities.POLICY, "policy-v1"));
+        var grantIds = new UuidV7IdentifierGenerator();
+        var sharedPolicy = sharedPolicy(sqlite.policy(), personalClock, grantIds);
         TenantRef tenant = new TenantRef(properties.caller().tenant());
         PrincipalRef principal = new PrincipalRef(properties.caller().principal(), "user");
         SdkCaller caller = new SdkCaller(tenant, principal, Set.of("memory:read", "memory:propose", "memory:review"));
@@ -205,7 +225,7 @@ public class PersonalAssistantConfiguration {
         PersonalExecutionPlatform execution = null;
         try {
             execution = PersonalExecutionRuntime.create(
-                    dataDirectory, principal, properties.execution(), sqlite.policy(), personalClock);
+                    dataDirectory, principal, properties.execution(), sharedPolicy, personalClock);
             var web = "deterministic-stub".equals(properties.mission().plannerMode())
                             && !properties.web().enabled()
                     ? PersonalWebPlatform.deterministicStub()
@@ -243,7 +263,7 @@ public class PersonalAssistantConfiguration {
                     sqlite.persistence(),
                     sqlite.conversation(),
                     sqlite.memory(),
-                    sqlite.policy(),
+                    sharedPolicy,
                     sqlite.artifact(),
                     execution,
                     web,
