@@ -147,8 +147,9 @@ class LocalCodingAgentTest {
                         "git diff --no-index exit 1 means differences",
                         "rg -F -- <text>",
                         "request_permissions is not a general sandbox bypass",
+                        "workspaceRef, relativeWorkdir, timeout, expectedExitCodes",
                         "Keep command output bounded")
-                .doesNotContain("Host OS:");
+                .doesNotContain("Host OS:", "repeat the exact command, workdir");
         assertThat(LocalCodingAgent.executionEnvironmentPrompt(" ")).isEmpty();
     }
 
@@ -453,7 +454,8 @@ class LocalCodingAgentTest {
                     .contains("Attach additional workspace directory")
                     .contains("Path: " + attachedDirectory)
                     .contains("Permission: read-only")
-                    .contains("this local agent session only");
+                    .contains("this local Coding Agent registry")
+                    .contains("persisted locally and remains revocable");
             awaitCondition(
                     () -> agent.executionSettled(accepted.runId()),
                     Duration.ofSeconds(60),
@@ -491,6 +493,109 @@ class LocalCodingAgentTest {
     }
 
     @Test
+    void approvedWorkspaceAttachmentIsPathRedactedAndRestoredForAbsoluteFileTools() throws Exception {
+        Path database = configuredSkillRoot.resolve("workspace-registry-recovery.db");
+        Path attachedDirectory = Files.createDirectory(configuredSkillRoot.resolve("persistent-attached"));
+        Path attachedFile = Files.writeString(attachedDirectory.resolve("restored.txt"), "restored-content");
+        CliConfiguration defaults = CliConfiguration.defaults();
+        var configuration = new CliConfiguration(
+                defaults.model(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                defaults.web(),
+                defaults.skills(),
+                hostExecution(defaults.execution()),
+                ApprovalMode.ASK,
+                Duration.ofSeconds(60),
+                defaults.maxIterations(),
+                defaults.maxToolCalls(),
+                ProjectPersistenceConfiguration.sqlite(database, "env://HAIFA_TEST_CONTINUATION_KEY"));
+        AtomicReference<String> workspaceRef = new AtomicReference<>();
+        AtomicInteger attachCalls = new AtomicInteger();
+        var attachModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            if (attachCalls.incrementAndGet() == 1) {
+                return toolResponse(
+                        "persistent-attach",
+                        "workspace_attach",
+                        Map.of("path", attachedDirectory.toString(), "permission", "read-only"));
+            }
+            var result = request.messages().stream()
+                    .filter(message -> message.role() == ModelMessageRole.TOOL)
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(result.toolResultData())
+                    .containsKeys("workspaceRef", "safeDisplayName", "permission", "source", "status")
+                    .doesNotContainKeys("path", "realPath", "locationRef", "workspaceId");
+            workspaceRef.set(String.valueOf(result.toolResultData().get("workspaceRef")));
+            assertThat(result.content()).doesNotContain(attachedDirectory.toString());
+            return answer("persistent-attach-complete", "attachment persisted");
+        };
+        var protector = new AesGcmModelContinuationProtector(
+                new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom());
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                attachModel,
+                ignored -> {},
+                protector)) {
+            var accepted = agent.start("Attach the requested directory read-only.");
+            var interaction = awaitPendingInteraction(agent, accepted.runId(), Duration.ofSeconds(60));
+            assertThat(interaction.prompt()).contains(attachedDirectory.toString());
+            agent.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId(agent.identifiers().nextValue()),
+                            interaction.id(),
+                            interaction.runId(),
+                            InteractionResponseType.APPROVE,
+                            List.of(),
+                            "approve-" + interaction.id().value(),
+                            agent.time().now()));
+            assertThat(awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(60))
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+        }
+
+        AtomicInteger readCalls = new AtomicInteger();
+        var readModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            if (readCalls.incrementAndGet() == 1) {
+                String system = request.messages().stream()
+                        .filter(message -> message.role() == ModelMessageRole.SYSTEM)
+                        .map(message -> message.content())
+                        .collect(java.util.stream.Collectors.joining("\n"));
+                assertThat(system)
+                        .contains("<workspace_registry", workspaceRef.get(), "persistent-attached", "READ_ONLY")
+                        .doesNotContain(attachedDirectory.toString());
+                return toolResponse(
+                        "persistent-read",
+                        "file_read",
+                        Map.of("path", attachedFile.toAbsolutePath().normalize().toString()));
+            }
+            assertThat(request.messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && "restored-content"
+                                    .equals(message.toolResultData().get("content")));
+            return answer("persistent-read-complete", "restored workspace read");
+        };
+        try (var reopened = LocalCodingAgent.create(
+                workspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                readModel,
+                ignored -> {},
+                new AesGcmModelContinuationProtector(
+                        new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
+            var accepted = reopened.start("Read the restored attached file by absolute path.");
+            assertThat(awaitTerminal(reopened, accepted.runId(), Duration.ofSeconds(60))
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+        }
+        assertThat(attachCalls).hasValue(2);
+        assertThat(readCalls).hasValue(2);
+    }
+
+    @Test
     void sqliteSessionClientApprovalResumesAnExecutionRun() throws Exception {
         Path database = configuredSkillRoot.resolve("session-client-approval.db");
         Path transcripts = Files.createDirectory(configuredSkillRoot.resolve("session-client-approval-transcripts"));
@@ -515,7 +620,7 @@ class LocalCodingAgentTest {
                         "execution_run",
                         Map.of(
                                 "command", "rg --files",
-                                "workdir", ".",
+                                "relativeWorkdir", ".",
                                 "timeoutMillis", 5000,
                                 "description", "List workspace files",
                                 "operationFamily", "INSPECT"))
@@ -581,7 +686,7 @@ class LocalCodingAgentTest {
     }
 
     @Test
-    void canonicalizesAbsoluteWorkspaceRootBeforePolicyAndRunsThroughTheCliAssembly() throws Exception {
+    void runsStructuredWorkspaceTargetThroughTheCliAssembly() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         String command =
                 isWindows() ? "Set-Content -NoNewline -Path shell-e2e.txt -Value stub" : "printf stub > shell-e2e.txt";
@@ -598,8 +703,8 @@ class LocalCodingAgentTest {
                         Map.of(
                                 "command",
                                 command,
-                                "workdir",
-                                workspace.toAbsolutePath().normalize().toString(),
+                                "relativeWorkdir",
+                                ".",
                                 "timeoutMillis",
                                 5000,
                                 "description",
@@ -618,7 +723,7 @@ class LocalCodingAgentTest {
                         Map.of(
                                 "command",
                                 fileExistsCommand("shell-e2e.txt"),
-                                "workdir",
+                                "relativeWorkdir",
                                 ".",
                                 "timeoutMillis",
                                 5000,
@@ -634,7 +739,7 @@ class LocalCodingAgentTest {
                         Map.of(
                                 "command",
                                 fileExistsCommand("shell-e2e.txt"),
-                                "workdir",
+                                "relativeWorkdir",
                                 ".",
                                 "timeoutMillis",
                                 5000,
@@ -680,6 +785,7 @@ class LocalCodingAgentTest {
             channel.write(ByteBuffer.wrap(new byte[] {0}));
         }
         AtomicInteger calls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> resumedRequest = new AtomicReference<>();
         var traces = new CopyOnWriteArrayList<io.haifa.agent.runtime.core.trace.RuntimeTraceEvent>();
         String command = isWindows() ? "Write-Output APPROVED-EXECUTION" : "printf APPROVED-EXECUTION";
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
@@ -690,7 +796,7 @@ class LocalCodingAgentTest {
                         Map.of(
                                 "command",
                                 command,
-                                "workdir",
+                                "relativeWorkdir",
                                 ".",
                                 "timeoutMillis",
                                 5000,
@@ -699,11 +805,7 @@ class LocalCodingAgentTest {
                                 "operationFamily",
                                 "INSPECT"));
             }
-            assertThat(request.messages())
-                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
-                            && "SUCCEEDED".equals(message.toolResultData().get("status"))
-                            && String.valueOf(message.toolResultData().get("output"))
-                                    .contains("APPROVED-EXECUTION"));
+            resumedRequest.set(request);
             return answer("approved-execution-complete", "approved execution completed");
         };
 
@@ -732,6 +834,14 @@ class LocalCodingAgentTest {
             assertThat(completed.output()).contains("approved execution completed");
         }
         assertThat(calls).hasValue(2);
+        assertThat(resumedRequest.get().messages())
+                .withFailMessage(
+                        "approved execution model messages: %s",
+                        resumedRequest.get().messages())
+                .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                        && "SUCCEEDED".equals(message.toolResultData().get("status"))
+                        && String.valueOf(message.toolResultData().get("output"))
+                                .contains("APPROVED-EXECUTION"));
         assertThat(traces).noneMatch(event -> event.operation().equals("runtime.error"));
     }
 
@@ -764,7 +874,7 @@ class LocalCodingAgentTest {
                         Map.of(
                                 "command",
                                 command,
-                                "workdir",
+                                "relativeWorkdir",
                                 ".",
                                 "timeoutMillis",
                                 5000,
@@ -846,7 +956,11 @@ class LocalCodingAgentTest {
                             Map.of(
                                     "command",
                                     fileExistsCommand("delivered.txt"),
-                                    "workdir",
+                                    "workspaceRef",
+                                    LocalWorkspaceIdentity.resolve(successfulWorkspace)
+                                            .workspaceId()
+                                            .value(),
+                                    "relativeWorkdir",
                                     ".",
                                     "timeoutMillis",
                                     5_000,
@@ -862,7 +976,11 @@ class LocalCodingAgentTest {
                             Map.of(
                                     "command",
                                     fileExistsCommand("delivered.txt"),
-                                    "workdir",
+                                    "workspaceRef",
+                                    LocalWorkspaceIdentity.resolve(successfulWorkspace)
+                                            .workspaceId()
+                                            .value(),
+                                    "relativeWorkdir",
                                     ".",
                                     "timeoutMillis",
                                     5_000,
@@ -1275,7 +1393,15 @@ class LocalCodingAgentTest {
                 id, "stub-model", text, List.of(), ModelFinishReason.STOP, ModelUsage.unpriced(5, 2), "stub", Map.of());
     }
 
-    private static AgentChatResponse toolResponse(String id, String tool, Map<String, Object> arguments) {
+    private AgentChatResponse toolResponse(String id, String tool, Map<String, Object> arguments) {
+        if (tool.equals("execution_run") || tool.equals("request_permissions")) {
+            var structured = new java.util.LinkedHashMap<String, Object>(arguments);
+            structured.putIfAbsent(
+                    "workspaceRef",
+                    LocalWorkspaceIdentity.resolve(workspace).workspaceId().value());
+            structured.putIfAbsent("relativeWorkdir", ".");
+            arguments = Map.copyOf(structured);
+        }
         return new AgentChatResponse(
                 id,
                 "stub-model",

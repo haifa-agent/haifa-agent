@@ -15,16 +15,17 @@ public final class ProjectToolExecutor implements ToolProvider {
     private final ProjectToolOperations operations;
     private final ProjectExecutionToolOperations executionOperations;
     private final ProjectPermissionRequestOperations permissionRequestOperations;
+    private final ProjectWorktreeToolOperations worktreeOperations;
 
     public ProjectToolExecutor(RunWorkspaceAccessResolver access, ProjectToolOperations operations) {
-        this(access, operations, null, null);
+        this(access, operations, null, null, null);
     }
 
     public ProjectToolExecutor(
             RunWorkspaceAccessResolver access,
             ProjectToolOperations operations,
             ProjectExecutionToolOperations executionOperations) {
-        this(access, operations, executionOperations, null);
+        this(access, operations, executionOperations, null, null);
     }
 
     public ProjectToolExecutor(
@@ -32,10 +33,20 @@ public final class ProjectToolExecutor implements ToolProvider {
             ProjectToolOperations operations,
             ProjectExecutionToolOperations executionOperations,
             ProjectPermissionRequestOperations permissionRequestOperations) {
+        this(access, operations, executionOperations, permissionRequestOperations, null);
+    }
+
+    public ProjectToolExecutor(
+            RunWorkspaceAccessResolver access,
+            ProjectToolOperations operations,
+            ProjectExecutionToolOperations executionOperations,
+            ProjectPermissionRequestOperations permissionRequestOperations,
+            ProjectWorktreeToolOperations worktreeOperations) {
         this.access = Objects.requireNonNull(access, "access must not be null");
         this.operations = Objects.requireNonNull(operations, "operations must not be null");
         this.executionOperations = executionOperations;
         this.permissionRequestOperations = permissionRequestOperations;
+        this.worktreeOperations = worktreeOperations;
     }
 
     @Override
@@ -62,6 +73,11 @@ public final class ProjectToolExecutor implements ToolProvider {
                 throw new IllegalStateException("request_permissions is not configured for this application");
             }
             return permissionRequestOperations.execute(request, binding);
+        } else if (toolName.equals(ProjectWorktreeToolOperations.TOOL_NAME)) {
+            if (worktreeOperations == null) {
+                throw new IllegalStateException("workspace.worktree.create is not configured for this application");
+            }
+            return worktreeOperations.execute(request, binding);
         } else {
             request.observer().dispatched();
             String policyDecisionRef = request.policyDecisionRef()

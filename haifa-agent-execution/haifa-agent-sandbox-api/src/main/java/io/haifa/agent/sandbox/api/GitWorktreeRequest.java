@@ -15,6 +15,7 @@ public record GitWorktreeRequest(
         WorkspaceLocationRef childLocationRef,
         PrincipalRef owner,
         String baseCommit,
+        String branchName,
         WorkspaceCapabilitySet narrowedCapabilities,
         WorkspacePermissionSet narrowedPermissions) {
     public GitWorktreeRequest {
@@ -27,6 +28,15 @@ public record GitWorktreeRequest(
                 .trim();
         if (!baseCommit.matches("[0-9a-fA-F]{7,64}"))
             throw new IllegalArgumentException("baseCommit must be a hex object id");
+        branchName = Objects.requireNonNull(branchName, "branchName must not be null")
+                .trim();
+        if (branchName.isEmpty()
+                || branchName.startsWith("-")
+                || branchName.length() > 240
+                || branchName.indexOf('\0') >= 0
+                || branchName.chars().anyMatch(Character::isWhitespace)) {
+            throw new IllegalArgumentException("branchName must be a safe non-option Git branch name");
+        }
         narrowedCapabilities = Objects.requireNonNull(narrowedCapabilities, "narrowedCapabilities must not be null");
         narrowedPermissions = Objects.requireNonNull(narrowedPermissions, "narrowedPermissions must not be null");
     }

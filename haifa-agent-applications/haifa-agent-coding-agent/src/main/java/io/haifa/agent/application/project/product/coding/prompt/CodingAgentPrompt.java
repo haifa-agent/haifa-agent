@@ -9,11 +9,11 @@ import java.util.Objects;
 
 /** Versioned product-owned base prompt for Haifa Coding Agent. */
 public final class CodingAgentPrompt {
-    public static final String VERSION = "1.6.0";
+    public static final String VERSION = "1.7.0";
     public static final String RESOURCE = "/META-INF/haifa-agent/prompts/coding-agent-v1.txt";
     private static final String ATTACHMENT_GUIDANCE =
             """
-            - This run discloses workspace_attach. When the user asks to read or edit a directory outside the current workspace, request workspace_attach with the exact absolute directory and the least permission needed. Wait for the user's approval result; never guess host paths or access the directory before it is authorized. Use host absolute paths for every file operation in every authorized directory; relative paths and root aliases are invalid. A previously persisted absolute path is not authorization, so always rely on the current tool result and current workspace scope.""";
+            - This run discloses workspace_attach. When the user asks to read or edit a directory outside the current workspace, request workspace_attach with the exact absolute directory and the least permission needed. Wait for the user's approval result; never guess host paths or access the directory before it is authorized. Use host absolute paths for every file operation in every active registered directory; relative paths and root aliases are invalid. A persisted absolute path is not authorization, so rely on the current registry projection and tool result.""";
     private static final String NO_ATTACHMENT_GUIDANCE =
             """
             - This run does not expose a workspace attachment tool. Do not ask the user to authorize or attach another directory. For a target outside the current workspace, state the scope limitation and continue only with already authorized workspace paths; never guess host paths.""";

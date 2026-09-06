@@ -76,6 +76,17 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
     public static String resourceDigest(String capability, ToolRequest request) {
         if ("execution.run".equals(capability)) {
             Object command = request.arguments().values().get("command");
+            Object workspaceRef = request.arguments().values().get("workspaceRef");
+            Object relativeWorkdir = request.arguments().values().get("relativeWorkdir");
+            if (command instanceof String commandText
+                    && workspaceRef instanceof String workspaceRefText
+                    && relativeWorkdir instanceof String relativeWorkdirText) {
+                return PolicyDigest.sha256Fields(List.of(
+                        commandText,
+                        workspaceRefText,
+                        relativeWorkdirText,
+                        canonicalExpectedExitCodes(request.arguments().values())));
+            }
             Object workdir = request.arguments().values().getOrDefault("workdir", ".");
             if (command instanceof String commandText && workdir instanceof String workdirText) {
                 return PolicyDigest.sha256Fields(List.of(
@@ -87,11 +98,29 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
         if ("execution.request_permissions".equals(capability)) {
             Map<String, Object> values = request.arguments().values();
             Object command = values.get("command");
+            Object workspaceRef = values.get("workspaceRef");
+            Object relativeWorkdir = values.get("relativeWorkdir");
             Object workdir = values.getOrDefault("workdir", ".");
             Object prior = values.get("priorToolCallId");
             Object permission = values.get("requestedPermission");
             Object justification = values.get("justification");
             Object timeout = values.getOrDefault("timeoutMillis", "DEFAULT");
+            if (command instanceof String commandText
+                    && workspaceRef instanceof String workspaceRefText
+                    && relativeWorkdir instanceof String relativeWorkdirText
+                    && prior instanceof String priorText
+                    && permission instanceof String permissionText
+                    && justification instanceof String justificationText) {
+                return PolicyDigest.sha256Fields(List.of(
+                        commandText,
+                        workspaceRefText,
+                        relativeWorkdirText,
+                        priorText,
+                        permissionText,
+                        justificationText,
+                        String.valueOf(timeout),
+                        canonicalExpectedExitCodes(values)));
+            }
             if (command instanceof String commandText
                     && workdir instanceof String workdirText
                     && prior instanceof String priorText

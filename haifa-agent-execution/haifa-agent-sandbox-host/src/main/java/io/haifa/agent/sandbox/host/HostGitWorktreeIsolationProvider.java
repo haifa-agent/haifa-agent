@@ -73,10 +73,13 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
                         .containsAll(request.narrowedPermissions().values())) {
             throw failure("child worktree authority must be narrowed from parent");
         }
+        Path repository = null;
+        Path target = null;
+        boolean worktreeAdded = false;
         try {
             Files.createDirectories(controlledBase);
             Path base = controlledBase.toRealPath(LinkOption.NOFOLLOW_LINKS);
-            Path repository = locations
+            repository = locations
                     .resolveForTrustedProvider(parentBinding.locationRef())
                     .toRealPath(LinkOption.NOFOLLOW_LINKS);
             if (!run(repository, List.of("rev-parse", "--is-inside-work-tree"), Duration.ofSeconds(5))
@@ -85,7 +88,8 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
                 throw new UnsupportedOperationException("COPY_ON_WRITE requires a Git repository");
             }
             run(repository, List.of("cat-file", "-e", request.baseCommit() + "^{commit}"), Duration.ofSeconds(5));
-            Path target = base.resolve(
+            run(repository, List.of("check-ref-format", "--branch", request.branchName()), Duration.ofSeconds(5));
+            target = base.resolve(
                             "worktree-" + safeName(request.childWorkspaceId().value()))
                     .normalize();
             if (!target.startsWith(base) || Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
@@ -98,10 +102,12 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
                             "credential.interactive=never",
                             "worktree",
                             "add",
-                            "--detach",
+                            "-b",
+                            request.branchName(),
                             target.toString(),
                             request.baseCommit()),
                     Duration.ofSeconds(30));
+            worktreeAdded = true;
             locations.register(request.childLocationRef(), target);
             Instant now = time.now();
             WorkspaceBinding binding = WorkspaceBinding.provision(
@@ -140,7 +146,48 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
                     parent.revision(),
                     now);
         } catch (IOException exception) {
+            cleanupFailedCreate(repository, target, request.childLocationRef(), request.branchName(), worktreeAdded);
             throw failure("worktree storage is unavailable");
+        } catch (RuntimeException exception) {
+            cleanupFailedCreate(repository, target, request.childLocationRef(), request.branchName(), worktreeAdded);
+            throw exception;
+        }
+    }
+
+    private void cleanupFailedCreate(
+            Path repository,
+            Path target,
+            io.haifa.agent.project.binding.WorkspaceLocationRef locationRef,
+            String branchName,
+            boolean worktreeAdded) {
+        if (!worktreeAdded || repository == null || target == null) return;
+        try {
+            run(
+                    repository,
+                    List.of("-c", "credential.interactive=never", "worktree", "remove", "--force", target.toString()),
+                    Duration.ofSeconds(30));
+        } catch (RuntimeException ignored) {
+            // Best effort only. The failed child is never returned or registered as an active root.
+        }
+        try {
+            run(
+                    repository,
+                    List.of("-c", "credential.interactive=never", "branch", "-D", branchName),
+                    Duration.ofSeconds(10));
+        } catch (RuntimeException ignored) {
+            // The branch was created by this failed request; best-effort removal keeps an exact retry possible.
+        }
+        if (locations.contains(locationRef)) {
+            try {
+                locations.unregisterForTrustedProvider(locationRef, target);
+            } catch (RuntimeException ignored) {
+                // Keep the failure fail-closed; later reconciliation may remove the local mapping.
+            }
+        }
+        try {
+            safeDeleteIfPresent(target);
+        } catch (RuntimeException ignored) {
+            // A residual directory is not authorized and remains unavailable through the registry.
         }
     }
 

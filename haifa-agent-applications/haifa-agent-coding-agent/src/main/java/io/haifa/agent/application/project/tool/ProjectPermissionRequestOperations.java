@@ -89,13 +89,13 @@ public final class ProjectPermissionRequestOperations {
                     "PERMISSION_REQUEST_NOT_ELIGIBLE",
                     "The prior failure is not eligible for permission escalation: " + failureCode + ".");
         }
-        if (!same(prior.arguments().values(), arguments, "command", "workdir", "timeoutMillis")
+        if (!same(prior.arguments().values(), arguments, "command", "workspaceRef", "relativeWorkdir", "timeoutMillis")
                 || !ProjectExecutionToolOperations.expectedExitCodes(
                                 prior.arguments().values())
                         .equals(ProjectExecutionToolOperations.expectedExitCodes(arguments))) {
             return rejected(
                     "PERMISSION_REQUEST_INTENT_MISMATCH",
-                    "The command, workdir, timeout, and expected exit codes must match the failed Tool Call exactly.");
+                    "The command, workspaceRef, relativeWorkdir, timeout, and expected exit codes must match the failed Tool Call exactly.");
         }
         var classification = SystemGitCliCommandClassifier.classify(requiredText(arguments, "command"));
         if (classification.target() == SystemGitCliCommandClassifier.Target.OTHER
@@ -129,8 +129,8 @@ public final class ProjectPermissionRequestOperations {
 
     private static boolean same(Map<String, Object> prior, Map<String, Object> current, String... keys) {
         for (String key : keys) {
-            Object left = key.equals("workdir") ? prior.getOrDefault(key, ".") : prior.get(key);
-            Object right = key.equals("workdir") ? current.getOrDefault(key, ".") : current.get(key);
+            Object left = prior.get(key);
+            Object right = current.get(key);
             if (!Objects.equals(left, right)) return false;
         }
         return true;

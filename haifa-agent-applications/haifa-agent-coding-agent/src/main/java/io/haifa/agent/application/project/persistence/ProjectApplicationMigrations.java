@@ -39,7 +39,11 @@ final class ProjectApplicationMigrations {
             new ApplicationMigration(
                     1_006,
                     "coding_follow_up_dispatched_run_index",
-                    "/io/haifa/agent/application/project/persistence/V1006__coding_follow_up_dispatched_run_index.sql"));
+                    "/io/haifa/agent/application/project/persistence/V1006__coding_follow_up_dispatched_run_index.sql"),
+            new ApplicationMigration(
+                    1_007,
+                    "coding_workspace_registry",
+                    "/io/haifa/agent/application/project/persistence/V1007__coding_workspace_registry.sql"));
 
     private ProjectApplicationMigrations() {}
 

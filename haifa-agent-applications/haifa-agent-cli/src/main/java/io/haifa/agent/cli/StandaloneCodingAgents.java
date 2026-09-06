@@ -128,7 +128,9 @@ public final class StandaloneCodingAgents {
                     localAgent::reloadResources,
                     localAgent.shell(),
                     localAgent.exporter(),
-                    localAgent.outcomes());
+                    localAgent.outcomes(),
+                    localAgent::workspaceGrants,
+                    localAgent::revokeWorkspace);
             return new StandaloneCodingAgent(localAgent, client, metadata(configuration));
         } catch (RuntimeException exception) {
             localAgent.close();
