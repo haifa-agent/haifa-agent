@@ -622,6 +622,35 @@ class GeminiGenerateContentModelTest {
                 ref -> java.util.Optional.of("my-custom-project"));
     }
 
+    private GeminiGenerateContentModel model(int maxResponseBytes) {
+        return new GeminiGenerateContentModel(
+                HttpClient.newHttpClient(),
+                json,
+                ignored -> new ResolvedCredential("secret-value"),
+                false,
+                maxResponseBytes,
+                true,
+                ref -> java.util.Optional.of("my-custom-project"));
+    }
+
+    @Test
+    void classifiesOversized402ResponseAsPaymentRequired() throws Exception {
+        String huge402Body = "<html><body>" + "A".repeat(5000) + "</body></html>";
+        start(new AtomicReference<>(), new AtomicReference<>(), List.of(new Response(402, "text/html", huge402Body)));
+
+        assertThatThrownBy(() -> model(512)
+                        .invoke(request(
+                                standardSnapshot(),
+                                List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                                List.of())))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.PAYMENT_REQUIRED);
+                    assertThat(failure.httpStatus()).isEqualTo(402);
+                    assertThat(failure.retryable()).isFalse();
+                    assertThat(failure.getMessage()).isEqualTo("请检查 Provider 账户余额、套餐、模型授权或账单状态后重试");
+                });
+    }
+
     @Test
     void directDialectRejectsRequestProjectAndRequiresTrustedCredentialReference() throws Exception {
         start(

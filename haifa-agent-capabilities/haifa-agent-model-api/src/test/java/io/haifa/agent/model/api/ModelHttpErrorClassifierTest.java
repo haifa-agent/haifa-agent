@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.http.HttpHeaders;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -224,5 +225,13 @@ class ModelHttpErrorClassifierTest {
 
         ModelErrorMapping mapping = ModelHttpErrorClassifier.classify(400, emptyHeaders(), hugeBody, null);
         assertThat(mapping.providerCode()).isEqualTo("fast_code");
+    }
+
+    @Test
+    void classifyWithInjectedReferenceInstantForHttpDateRetryAfter() {
+        Instant now = Instant.parse("2026-09-06T12:00:00Z");
+        HttpHeaders headers = headers(Map.of("retry-after", List.of("Sun, 06 Sep 2026 12:01:00 GMT")));
+        ModelErrorMapping mapping = ModelHttpErrorClassifier.classify(429, headers, null, null, now, null);
+        assertThat(mapping.retryAfter()).hasValue(Duration.ofSeconds(60));
     }
 }

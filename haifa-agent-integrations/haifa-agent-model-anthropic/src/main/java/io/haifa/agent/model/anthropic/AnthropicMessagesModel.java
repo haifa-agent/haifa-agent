@@ -86,6 +86,13 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         HttpRequest httpRequest = request(request, dialect, credential, false);
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() == 402) {
+                byte[] safeBody;
+                try (InputStream stream = response.body()) {
+                    safeBody = stream.readNBytes(Math.min(maxResponseBytes, 64 * 1024));
+                }
+                throw httpFailure(request, dialect, response.statusCode(), response.headers(), safeBody);
+            }
             byte[] body;
             try {
                 body = readBounded(response.body(), maxResponseBytes);

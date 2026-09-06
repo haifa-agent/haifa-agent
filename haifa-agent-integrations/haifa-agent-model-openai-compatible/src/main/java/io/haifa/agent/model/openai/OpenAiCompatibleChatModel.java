@@ -120,6 +120,13 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 .build();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() == 402) {
+                byte[] safeBody;
+                try (InputStream stream = response.body()) {
+                    safeBody = stream.readNBytes(Math.min(maxResponseBytes, 64 * 1024));
+                }
+                throw httpFailure(request, response.statusCode(), safeBody, credential.value(), response.headers());
+            }
             byte[] responseBody;
             try (InputStream stream = response.body()) {
                 responseBody = stream.readNBytes(maxResponseBytes + 1);
