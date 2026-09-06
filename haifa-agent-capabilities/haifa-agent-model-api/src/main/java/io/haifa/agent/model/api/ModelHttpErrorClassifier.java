@@ -67,7 +67,15 @@ public final class ModelHttpErrorClassifier {
      */
     public static ModelErrorMapping classify(
             int statusCode, HttpHeaders headers, byte[] body, String credentialToRedact) {
-        return classify(statusCode, headers, body, credentialToRedact, null);
+        return classify(statusCode, headers, body, credentialToRedact, (Instant) null, null);
+    }
+
+    /**
+     * Classifies a non-2xx HTTP response using default policies and an explicit reference instant.
+     */
+    public static ModelErrorMapping classify(
+            int statusCode, HttpHeaders headers, byte[] body, String credentialToRedact, Instant referenceInstant) {
+        return classify(statusCode, headers, body, credentialToRedact, referenceInstant, null);
     }
 
     /**
@@ -75,8 +83,22 @@ public final class ModelHttpErrorClassifier {
      */
     public static ModelErrorMapping classify(
             int statusCode, HttpHeaders headers, byte[] body, String credentialToRedact, DialectCustomizer customizer) {
+        return classify(statusCode, headers, body, credentialToRedact, (Instant) null, customizer);
+    }
+
+    /**
+     * Classifies a non-2xx HTTP response using default policies, reference instant, and optional dialect customization.
+     */
+    public static ModelErrorMapping classify(
+            int statusCode,
+            HttpHeaders headers,
+            byte[] body,
+            String credentialToRedact,
+            Instant referenceInstant,
+            DialectCustomizer customizer) {
         ParsedErrorBody parsed = parseErrorBody(body);
-        ModelErrorMapping defaultMapping = computeDefaultMapping(statusCode, headers, parsed, credentialToRedact);
+        ModelErrorMapping defaultMapping =
+                computeDefaultMapping(statusCode, headers, parsed, credentialToRedact, referenceInstant);
 
         if (statusCode == 402) {
             // Strict 402 contract: never retryable, ignore Retry-After, fixed safe message.
@@ -104,7 +126,11 @@ public final class ModelHttpErrorClassifier {
     }
 
     private static ModelErrorMapping computeDefaultMapping(
-            int statusCode, HttpHeaders headers, ParsedErrorBody parsed, String credentialToRedact) {
+            int statusCode,
+            HttpHeaders headers,
+            ParsedErrorBody parsed,
+            String credentialToRedact,
+            Instant referenceInstant) {
         ModelErrorCategory category = defaultCategory(statusCode);
         boolean retryable = defaultRetryable(statusCode);
 
@@ -113,7 +139,8 @@ public final class ModelHttpErrorClassifier {
 
         Optional<Duration> retryAfter = Optional.empty();
         if (statusCode != 402 && retryable) {
-            retryAfter = RetryAfterParser.parse(headers, Instant.now());
+            Instant now = referenceInstant != null ? referenceInstant : Instant.now();
+            retryAfter = RetryAfterParser.parse(headers, now);
         }
 
         String safeMessage = statusCode == 402

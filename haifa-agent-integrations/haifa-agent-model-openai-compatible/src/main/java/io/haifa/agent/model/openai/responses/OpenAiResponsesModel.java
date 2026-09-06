@@ -234,6 +234,11 @@ public final class OpenAiResponsesModel implements AgentChatModel {
     }
 
     private byte[] readResponseBody(AgentChatRequest request, HttpResponse<InputStream> response) throws IOException {
+        if (response.statusCode() == 402) {
+            try (InputStream body = response.body()) {
+                return body.readNBytes(Math.min(maxResponseBytes, 64 * 1024));
+            }
+        }
         try {
             return readBounded(response.body(), maxResponseBytes);
         } catch (ResponseTooLargeException exception) {

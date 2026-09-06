@@ -136,6 +136,13 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                 .build();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() == 402) {
+                byte[] safeBody;
+                try (InputStream stream = response.body()) {
+                    safeBody = stream.readNBytes(Math.min(maxResponseBytes, 64 * 1024));
+                }
+                throw httpFailure(request, dialect, response.statusCode(), safeBody, response.headers());
+            }
             byte[] responseBody;
             try (InputStream stream = response.body()) {
                 responseBody = stream.readNBytes(maxResponseBytes + 1);
