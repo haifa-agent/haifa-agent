@@ -3,7 +3,14 @@ package io.haifa.agent.store.sqlite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.context.compression.CompactionQuality;
 import io.haifa.agent.context.compression.ConversationSummary;
+import io.haifa.agent.context.compression.SemanticConfidence;
+import io.haifa.agent.context.compression.SemanticConversationSummaryV1;
+import io.haifa.agent.context.compression.SemanticDecisionItem;
+import io.haifa.agent.context.compression.SemanticDecisionStatus;
+import io.haifa.agent.context.compression.SemanticProgress;
+import io.haifa.agent.context.compression.SemanticSummaryItem;
 import io.haifa.agent.context.compression.SummaryId;
 import io.haifa.agent.context.compression.SummaryVersion;
 import io.haifa.agent.core.agent.AgentDefinitionId;
@@ -246,6 +253,73 @@ class SqliteExtendedRuntimeStateTest {
                         .doesNotContain("0123456789abcdef0123456789abcdef");
             }
         }
+    }
+
+    @Test
+    void semanticConversationSummaryV2SurvivesReopen(@TempDir java.nio.file.Path directory) throws Exception {
+        SqliteStoreFoundation first = SqliteTestSupport.foundation(directory);
+        var run = SqliteAggregateTestData.prepareRun(first);
+
+        SemanticSummaryItem goal = new SemanticSummaryItem(
+                "G-1", "Build semantic compaction", List.of("msg-1"), SemanticConfidence.OBSERVED);
+        SemanticSummaryItem completed =
+                new SemanticSummaryItem("P-1", "Phase 1 complete", List.of("msg-1"), SemanticConfidence.OBSERVED);
+        SemanticDecisionItem decision = new SemanticDecisionItem(
+                "D-1",
+                "Store normalized V2 payload",
+                "Avoid redundant markdown",
+                SemanticDecisionStatus.ACCEPTED,
+                List.of("msg-2"));
+        SemanticSummaryItem nextStep =
+                new SemanticSummaryItem("N-1", "Phase 3 coordinator", List.of(), SemanticConfidence.INFERRED);
+        SemanticSummaryItem context =
+                new SemanticSummaryItem("C-1", "Pure Java context", List.of("msg-1"), SemanticConfidence.OBSERVED);
+
+        SemanticConversationSummaryV1 semantic = new SemanticConversationSummaryV1(
+                "v1",
+                "en",
+                List.of(goal),
+                List.of(),
+                new SemanticProgress(List.of(completed), List.of(), List.of()),
+                List.of(decision),
+                List.of(nextStep),
+                List.of(context),
+                List.of());
+
+        ConversationSummary v2Summary = new ConversationSummary(
+                new SummaryId("summary-v2"),
+                new SummaryVersion(1),
+                run.sessionId(),
+                new MessageCursor(1),
+                new MessageCursor(2),
+                List.of(new AgentMessageId("msg-1"), new AgentMessageId("msg-2")),
+                "sha256:source-v2",
+                List.of("Pure Java context"),
+                List.of("Store normalized V2 payload"),
+                List.of("Phase 3 coordinator"),
+                List.of(new ToolCallId("tool-1")),
+                25,
+                NOW,
+                "policy-v2",
+                "compressor-semantic-v1",
+                Set.of("internal"),
+                true,
+                Optional.of(semantic),
+                CompactionQuality.SEMANTIC_VALIDATED);
+
+        first.summaries().compareAndSet(v2Summary, 0);
+
+        SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory);
+        Optional<ConversationSummary> loaded = reopened.summaries().latestValid(run.sessionId());
+        assertThat(loaded).isPresent();
+        ConversationSummary actual = loaded.get();
+        assertThat(actual.id()).isEqualTo(v2Summary.id());
+        assertThat(actual.version()).isEqualTo(v2Summary.version());
+        assertThat(actual.quality()).isEqualTo(CompactionQuality.SEMANTIC_VALIDATED);
+        assertThat(actual.semanticSummary()).isPresent();
+        assertThat(actual.semanticSummary().get()).isEqualTo(semantic);
+        assertThat(actual.semanticSummary().get().goals()).containsExactly(goal);
+        assertThat(actual.semanticSummary().get().decisions()).containsExactly(decision);
     }
 
     private static AesGcmModelContinuationProtector protector(byte[] key) {

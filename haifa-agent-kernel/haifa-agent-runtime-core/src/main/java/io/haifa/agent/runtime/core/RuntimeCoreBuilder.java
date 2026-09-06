@@ -57,6 +57,9 @@ import io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder;
 import io.haifa.agent.runtime.core.checkpoint.MemoryCheckpointValidator;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCheckpointSelector;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCoordinator;
+import io.haifa.agent.runtime.core.compaction.CompactionTriggerEvaluator;
+import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
+import io.haifa.agent.runtime.core.compaction.SummaryModelInvoker;
 import io.haifa.agent.runtime.core.completion.CompletionPolicy;
 import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.completion.DefaultCompletionGuard;
@@ -214,6 +217,7 @@ public final class RuntimeCoreBuilder {
     private PromptDiagnosticsSink promptDiagnostics = PromptDiagnosticsSink.noop();
     private FailureDiagnosticSink failureDiagnostics = FailureDiagnosticSink.noop();
     private RunInputPort runInputs;
+    private CompressionPolicy compressionPolicy = CompressionPolicy.defaults();
     private ToolResultNormalizer toolResultNormalizer = new BoundedToolResultNormalizer(4_000, 100);
     private ToolRequestCanonicalizer toolRequestCanonicalizer = ToolRequestCanonicalizer.identity();
     private OutputContractValidator outputContract =
@@ -305,6 +309,11 @@ public final class RuntimeCoreBuilder {
      */
     public RuntimeCoreBuilder runInputs(RunInputPort value) {
         runInputs = Objects.requireNonNull(value, "runInputs must not be null");
+        return this;
+    }
+
+    public RuntimeCoreBuilder compressionPolicy(CompressionPolicy value) {
+        this.compressionPolicy = Objects.requireNonNull(value, "compressionPolicy must not be null");
         return this;
     }
 
@@ -711,11 +720,24 @@ public final class RuntimeCoreBuilder {
                 toolInvoker,
                 skillContentLoader);
         var compressor = new DeterministicContextCompressor();
-        var compressionPolicy = CompressionPolicy.defaults();
-        var sessionMessageSource = new SessionMessageSource(state, summaries, compressor, compressionPolicy, ids, time);
+        var effectiveCompressionPolicy = compressionPolicy != null ? compressionPolicy : CompressionPolicy.defaults();
+        var sessionMessageSource =
+                new SessionMessageSource(state, summaries, compressor, effectiveCompressionPolicy, ids, time);
         var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state, time);
         RunInputApplier runInputApplier =
                 new RunInputApplier(configuredRunInputs, state, events, outbox, unitOfWork, ids, time);
+        var compactionTriggerEvaluator = new CompactionTriggerEvaluator(effectiveCompressionPolicy);
+        var summaryModelInvoker = new SummaryModelInvoker(transitions, controls, ids, time, effectiveCompressionPolicy);
+        var compactionCoordinator = new SemanticCompactionCoordinator(
+                state,
+                summaries,
+                summaryModelInvoker,
+                compactionTriggerEvaluator,
+                effectiveCompressionPolicy,
+                compressor,
+                ids,
+                time,
+                events);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard(), new LoopDetectionGuard(3)),
@@ -749,7 +771,8 @@ public final class RuntimeCoreBuilder {
                         configuredOwnership,
                         new io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator(state, pipeline, ids, time)),
                 middleware,
-                runInputApplier);
+                runInputApplier,
+                compactionCoordinator);
         AttemptExecutor attemptExecutor = new AttemptExecutor(
                 attempts,
                 loop,

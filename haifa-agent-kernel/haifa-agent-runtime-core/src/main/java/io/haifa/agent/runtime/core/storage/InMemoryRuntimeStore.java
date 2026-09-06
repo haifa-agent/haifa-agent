@@ -748,6 +748,25 @@ public final class InMemoryRuntimeStore
     }
 
     @Override
+    public synchronized io.haifa.agent.context.compression.SummarySnapshot latestSnapshot(
+            io.haifa.agent.core.session.AgentSessionId sessionId) {
+        long version = latestVersion(sessionId);
+        Optional<ConversationSummary> valid =
+                latestValid(sessionId).filter(s -> coversValidSource(s, s.coveredThrough()));
+        return new io.haifa.agent.context.compression.SummarySnapshot(valid, version);
+    }
+
+    @Override
+    public synchronized ConversationSummary compareAndSetValid(
+            ConversationSummary summary, long expectedPreviousVersion) {
+        if (!coversValidSource(summary, summary.coveredThrough())) {
+            throw new OptimisticLockException("summary source messages are invalid or have been redacted for session "
+                    + summary.sessionId().value());
+        }
+        return compareAndSet(summary, expectedPreviousVersion);
+    }
+
+    @Override
     public synchronized void invalidateContaining(
             io.haifa.agent.core.session.AgentSessionId sessionId, AgentMessageId messageId) {
         List<ConversationSummary> stream = summaries.getOrDefault(sessionId, List.of());

@@ -24,6 +24,7 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelRequestId;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
+import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
@@ -94,6 +95,7 @@ public final class DefaultAgentLoop implements AgentLoop {
     private final RuntimeStateReconciler reconciler;
     private final AgentRuntimeMiddlewareChain middleware;
     private final RunInputApplier runInputs;
+    private final SemanticCompactionCoordinator compactionCoordinator;
 
     public DefaultAgentLoop(
             RunControlRegistry controls,
@@ -115,6 +117,50 @@ public final class DefaultAgentLoop implements AgentLoop {
             RuntimeStateReconciler reconciler,
             AgentRuntimeMiddlewareChain middleware,
             RunInputApplier runInputs) {
+        this(
+                controls,
+                guards,
+                contextBuilder,
+                models,
+                validator,
+                decisionExecutor,
+                checkpoints,
+                transitions,
+                state,
+                events,
+                retries,
+                modelRetryPolicy,
+                ids,
+                time,
+                trace,
+                promptDiagnostics,
+                reconciler,
+                middleware,
+                runInputs,
+                null);
+    }
+
+    public DefaultAgentLoop(
+            RunControlRegistry controls,
+            List<AgentLoopGuard> guards,
+            RuntimeContextBuilder contextBuilder,
+            FrozenModelInvoker models,
+            DecisionValidator validator,
+            DecisionExecutor decisionExecutor,
+            CheckpointManager checkpoints,
+            RunTransitionCoordinator transitions,
+            RuntimeStateRepository state,
+            RuntimeEventAppender events,
+            RetryExecutor retries,
+            ModelRetryPolicy modelRetryPolicy,
+            IdentifierGenerator ids,
+            TimeProvider time,
+            TracePort trace,
+            PromptDiagnosticsSink promptDiagnostics,
+            RuntimeStateReconciler reconciler,
+            AgentRuntimeMiddlewareChain middleware,
+            RunInputApplier runInputs,
+            SemanticCompactionCoordinator compactionCoordinator) {
         this.controls = Objects.requireNonNull(controls);
         this.guards = List.copyOf(guards);
         this.contextBuilder = Objects.requireNonNull(contextBuilder);
@@ -134,6 +180,7 @@ public final class DefaultAgentLoop implements AgentLoop {
         this.reconciler = Objects.requireNonNull(reconciler);
         this.middleware = Objects.requireNonNull(middleware);
         this.runInputs = Objects.requireNonNull(runInputs);
+        this.compactionCoordinator = compactionCoordinator;
     }
 
     @Override
@@ -339,6 +386,9 @@ public final class DefaultAgentLoop implements AgentLoop {
                     time.now()));
 
             FrozenModelBinding model = models.bind(run);
+            if (compactionCoordinator != null) {
+                compactionCoordinator.evaluateAndCompactIfNeeded(run, progress.iteration(), model);
+            }
             RuntimeContextBuildResult built = contextBuilder.build(run, progress, model);
             recordPromptDiagnostics(built);
             recordTrace(new RuntimeTraceEvent(
@@ -493,6 +543,9 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         progress.fingerprints(),
                                         progress.forcedContextRebuildAttempts(),
                                         CheckpointType.AUTOMATIC);
+                                if (compactionCoordinator != null) {
+                                    compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
+                                }
                                 builtRef[0] = contextBuilder.build(run, progress, model);
                                 middlewareContextRef[0] = builtRef[0].middlewareContext();
                                 recordTrace(new RuntimeTraceEvent(
