@@ -33,17 +33,8 @@ import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.ApprovalVerification;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
-import io.haifa.agent.policy.api.PolicyChallenge;
 import io.haifa.agent.policy.api.PolicyDecisionService;
-import io.haifa.agent.policy.api.PolicyEffect;
-import io.haifa.agent.policy.api.PolicyRiskLevel;
-import io.haifa.agent.policy.api.PolicyRule;
-import io.haifa.agent.policy.api.PolicyRuleMatcher;
-import io.haifa.agent.policy.api.PolicyRuleRef;
 import io.haifa.agent.policy.api.PolicyRuleSet;
-import io.haifa.agent.policy.api.PolicyRuleSource;
-import io.haifa.agent.policy.api.PolicySideEffect;
-import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointParticipant;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
 import io.haifa.agent.runtime.core.bootstrap.ConfigurationSnapshotFactory;
@@ -196,11 +187,11 @@ public final class RuntimeCoreBuilder {
     private PublicToolPolicy publicToolPolicy;
     private java.util.function.UnaryOperator<PublicToolPolicy> publicToolPolicyDecorator =
             java.util.function.UnaryOperator.identity();
-    private PolicyDecisionService policyEvaluator = new DefaultPolicyDecisionService();
-    private PolicyRuleSet policyRules = defaultPolicyRules();
-    private ApprovalVerificationService approvalVerification = (request, responder) -> {
-        boolean samePrincipal = request.requester().tenant().equals(responder.tenant())
-                && request.requester().principal().equals(responder.principal());
+    private PolicyDecisionService policyEvaluator;
+    private PolicyRuleSet policyRules;
+    private ApprovalVerificationService approvalVerification = (requester, target, responder) -> {
+        boolean samePrincipal = requester.tenant().equals(responder.tenant())
+                && requester.principal().equals(responder.principal());
         return new ApprovalVerification(
                 samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
     };
@@ -580,8 +571,14 @@ public final class RuntimeCoreBuilder {
                 new DefaultToolPolicyRequestAdapter(policyProductId, ApprovalMode.ASK);
         if (publicToolPolicy != null) {
             configuredToolPolicy = publicToolPolicy;
-        } else {
+        } else if (policyEvaluator != null && policyRules != null) {
             configuredToolPolicy = new DefaultPublicToolPolicy(policyRequests, policyEvaluator, policyRules);
+        } else if (toolNames.isEmpty()) {
+            configuredToolPolicy = (run, binding, request) -> {
+                throw new IllegalStateException("tool policy is unavailable");
+            };
+        } else {
+            throw new IllegalStateException("non-empty tool catalog requires an explicit product policy");
         }
         if (!skillTrust.scriptExecutionGrants().isEmpty()) {
             configuredToolPolicy =
@@ -799,78 +796,4 @@ public final class RuntimeCoreBuilder {
         return result;
     }
 
-    private static PolicyRuleSet defaultPolicyRules() {
-        List<PolicyRule> rules = new ArrayList<>();
-        rules.add(new PolicyRule(
-                new PolicyRuleRef("runtime-critical-risk", "1"),
-                PolicyRuleSource.MANAGED,
-                200,
-                new PolicyRuleMatcher(
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.of(PolicyRiskLevel.CRITICAL),
-                        Set.of()),
-                PolicyEffect.DENY,
-                Optional.empty(),
-                "CRITICAL_RISK_DENY",
-                "Critical operations are denied"));
-        for (PolicySideEffect effect : List.of(
-                PolicySideEffect.FILE_WRITE,
-                PolicySideEffect.PROCESS_EXECUTION,
-                PolicySideEffect.NETWORK_ACCESS,
-                PolicySideEffect.EXTERNAL_SYSTEM_MUTATION,
-                PolicySideEffect.PERMISSION_ELEVATION)) {
-            rules.add(new PolicyRule(
-                    new PolicyRuleRef("runtime-ask-" + effect.name().toLowerCase(java.util.Locale.ROOT), "1"),
-                    PolicyRuleSource.MANAGED,
-                    100,
-                    new PolicyRuleMatcher(
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Set.of(effect)),
-                    PolicyEffect.ASK,
-                    Optional.of(PolicyChallenge.APPROVAL),
-                    "SIDE_EFFECT_APPROVAL_REQUIRED",
-                    "Approval is required"));
-        }
-        rules.add(new PolicyRule(
-                new PolicyRuleRef("runtime-credential-reauth", "1"),
-                PolicyRuleSource.MANAGED,
-                150,
-                new PolicyRuleMatcher(
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Set.of(PolicySideEffect.CREDENTIAL_USE)),
-                PolicyEffect.ASK,
-                Optional.of(PolicyChallenge.REAUTHENTICATE),
-                "CREDENTIAL_REAUTHENTICATION_REQUIRED",
-                "Reauthentication is required"));
-        PolicyRule defaultRule = new PolicyRule(
-                new PolicyRuleRef("runtime-default", "1"),
-                PolicyRuleSource.MANAGED,
-                0,
-                PolicyRuleMatcher.any(),
-                PolicyEffect.ALLOW,
-                Optional.empty(),
-                "DEFAULT_ALLOW",
-                "Allowed by default policy");
-        return PolicyRuleSet.of(rules, Optional.of(defaultRule), ApprovalMode.ASK);
-    }
 }

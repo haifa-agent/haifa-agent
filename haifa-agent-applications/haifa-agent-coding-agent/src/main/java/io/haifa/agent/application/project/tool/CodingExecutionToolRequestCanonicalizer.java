@@ -9,13 +9,10 @@ import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 /** Canonicalizes Coding workspace protocol fields before any policy or approval digest is created. */
 public final class CodingExecutionToolRequestCanonicalizer implements ToolRequestCanonicalizer {
     private static final String EXECUTION_RUN = "execution.run";
-    private static final Set<String> EXECUTION_TOOLS =
-            Set.of(EXECUTION_RUN, ProjectPermissionRequestOperations.TOOL_NAME);
 
     public CodingExecutionToolRequestCanonicalizer() {}
 
@@ -25,7 +22,7 @@ public final class CodingExecutionToolRequestCanonicalizer implements ToolReques
         Objects.requireNonNull(binding, "binding must not be null");
         Objects.requireNonNull(request, "request must not be null");
         String toolName = binding.definition().name().value();
-        if (!EXECUTION_TOOLS.contains(toolName) && !ProjectWorktreeToolOperations.TOOL_NAME.equals(toolName)) {
+        if (!EXECUTION_RUN.equals(toolName) && !ProjectWorktreeToolOperations.TOOL_NAME.equals(toolName)) {
             return request;
         }
 

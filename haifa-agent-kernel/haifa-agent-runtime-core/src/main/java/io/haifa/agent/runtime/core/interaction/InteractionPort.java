@@ -1,10 +1,8 @@
 package io.haifa.agent.runtime.core.interaction;
 
 import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.policy.api.ApprovalVerification;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
-import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import java.time.Instant;
@@ -54,6 +52,4 @@ public interface InteractionPort {
             InteractionRequestId requestId, long expectedRevision, String reasonCode, Instant at) {
         throw new UnsupportedOperationException("interaction invalidation is not supported");
     }
-
-    default void recordApprovalVerification(InteractionResponseId responseId, ApprovalVerification verification) {}
 }

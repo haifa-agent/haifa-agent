@@ -206,8 +206,7 @@ class InMemoryInteractionPortTest {
                 new GenericInteractionTarget("clarification"),
                 NOW,
                 NOW.plusSeconds(60),
-                InteractionExpirationOutcome.RETURN_TO_AGENT,
-                java.util.Optional.empty());
+                InteractionExpirationOutcome.RETURN_TO_AGENT);
         assertThat(resumable.expirationOutcome()).isEqualTo(InteractionExpirationOutcome.RETURN_TO_AGENT);
 
         assertThatThrownBy(() -> new InteractionRequest(
@@ -221,8 +220,7 @@ class InMemoryInteractionPortTest {
                         new GenericInteractionTarget("approval"),
                         NOW,
                         NOW.plusSeconds(60),
-                        InteractionExpirationOutcome.RETURN_TO_AGENT,
-                        java.util.Optional.empty()))
+                        InteractionExpirationOutcome.RETURN_TO_AGENT))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must not return");
     }

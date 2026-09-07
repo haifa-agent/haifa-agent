@@ -314,8 +314,7 @@ public final class InMemoryInteractionPort implements InteractionPort {
             throw new RuntimeContractException(
                     RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
-        if (!request.tenant().equals(caller.tenant())
-                || (request.approvalContext().isEmpty() && !request.requester().equals(caller.principal()))) {
+        if (!request.tenant().equals(caller.tenant()) || !request.requester().equals(caller.principal())) {
             throw new RuntimeContractException(
                     RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
@@ -331,8 +330,7 @@ public final class InMemoryInteractionPort implements InteractionPort {
         if (!request.runId().equals(responseRunId)) {
             throw new IllegalArgumentException("response run does not match interaction");
         }
-        if (!request.tenant().equals(caller.tenant())
-                || (request.approvalContext().isEmpty() && !request.requester().equals(caller.principal()))) {
+        if (!request.tenant().equals(caller.tenant()) || !request.requester().equals(caller.principal())) {
             throw new SecurityException("caller is not allowed to respond to interaction");
         }
         if (request.expiresAt()

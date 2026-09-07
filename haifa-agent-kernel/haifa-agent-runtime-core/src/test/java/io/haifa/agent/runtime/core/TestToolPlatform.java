@@ -103,7 +103,7 @@ final class TestToolPlatform {
             }
         };
         var catalog = new ToolCatalogBuilder()
-                .register(new ToolAlias(definition.name().value()), definition, "runtime-test", provider)
+                .register(alias(definition.name().value()), definition, "runtime-test", provider)
                 .freeze();
         return builder.publicToolPolicy((run, binding, request) -> policyDecision(decision))
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
@@ -147,7 +147,7 @@ final class TestToolPlatform {
         };
         return new ToolCatalogBuilder()
                 .register(
-                        new ToolAlias(name), definition(name, version, inputSchemaId, sideEffecting), "test", provider)
+                        alias(name), definition(name, version, inputSchemaId, sideEffecting), "test", provider)
                 .freeze()
                 .snapshot()
                 .bindings()
@@ -201,6 +201,10 @@ final class TestToolPlatform {
 
     private static Map<String, Object> objectSchema() {
         return Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+    }
+
+    private static ToolAlias alias(String name) {
+        return new ToolAlias(name.replace('.', '_'));
     }
 
     private static PolicyDecision policyDecision(ToolPolicyDecision decision) {

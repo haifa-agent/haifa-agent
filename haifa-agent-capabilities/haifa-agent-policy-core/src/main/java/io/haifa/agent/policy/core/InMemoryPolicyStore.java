@@ -1,9 +1,5 @@
 package io.haifa.agent.policy.core;
 
-import io.haifa.agent.policy.api.ApprovalGrant;
-import io.haifa.agent.policy.api.ApprovalGrantId;
-import io.haifa.agent.policy.api.ApprovalGrantQuery;
-import io.haifa.agent.policy.api.ApprovalGrantStore;
 import io.haifa.agent.policy.api.PolicySnapshot;
 import io.haifa.agent.policy.api.PolicySnapshotRef;
 import io.haifa.agent.policy.api.PolicySnapshotStore;
@@ -11,15 +7,13 @@ import io.haifa.agent.policy.api.ProjectTrust;
 import io.haifa.agent.policy.api.ProjectTrustRef;
 import io.haifa.agent.policy.api.ProjectTrustStore;
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-public final class InMemoryPolicyStore implements PolicySnapshotStore, ApprovalGrantStore, ProjectTrustStore {
+public final class InMemoryPolicyStore implements PolicySnapshotStore, ProjectTrustStore {
     private final Map<PolicySnapshotRef, PolicySnapshot> snapshots = new ConcurrentHashMap<>();
-    private final Map<ApprovalGrantId, ApprovalGrant> grants = new ConcurrentHashMap<>();
     private final Map<ProjectTrustRef, ProjectTrust> trusts = new ConcurrentHashMap<>();
 
     @Override
@@ -30,47 +24,6 @@ public final class InMemoryPolicyStore implements PolicySnapshotStore, ApprovalG
     @Override
     public Optional<PolicySnapshot> find(PolicySnapshotRef ref) {
         return Optional.ofNullable(snapshots.get(Objects.requireNonNull(ref, "ref must not be null")));
-    }
-
-    @Override
-    public void save(ApprovalGrant grant) {
-        putExact(grants, grant.id(), grant, "grant");
-    }
-
-    @Override
-    public Optional<ApprovalGrant> find(ApprovalGrantId id) {
-        return Optional.ofNullable(grants.get(Objects.requireNonNull(id, "id must not be null")));
-    }
-
-    @Override
-    public List<ApprovalGrant> findCandidates(ApprovalGrantQuery query) {
-        Objects.requireNonNull(query, "query must not be null");
-        return grants.values().stream()
-                .filter(grant -> grant.subject().equals(query.subject()))
-                .filter(grant -> grant.action().equals(query.action()))
-                .filter(grant ->
-                        grant.target().targetType().equals(query.target().targetType()))
-                .sorted((left, right) -> left.id().value().compareTo(right.id().value()))
-                .toList();
-    }
-
-    @Override
-    public synchronized ApprovalGrant consumeOnce(ApprovalGrantId id, long expectedVersion, Instant consumedAt) {
-        ApprovalGrant current = require(grants, id, "grant");
-        requireVersion(current.version(), expectedVersion);
-        ApprovalGrant updated = current.consume(consumedAt);
-        grants.put(id, updated);
-        return updated;
-    }
-
-    @Override
-    public synchronized ApprovalGrant revoke(
-            ApprovalGrantId id, long expectedVersion, Instant revokedAt, String reasonCode) {
-        ApprovalGrant current = require(grants, id, "grant");
-        requireVersion(current.version(), expectedVersion);
-        ApprovalGrant updated = current.revoke(revokedAt, reasonCode);
-        grants.put(id, updated);
-        return updated;
     }
 
     @Override

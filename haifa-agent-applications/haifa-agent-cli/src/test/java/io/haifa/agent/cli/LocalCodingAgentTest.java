@@ -129,7 +129,8 @@ class LocalCodingAgentTest {
                 .contains("execution.run")
                 .doesNotContain("execution.request_permissions");
         assertThat(LocalCodingAgent.effectiveBuiltInTools(isolated))
-                .contains("execution.run", "execution.request_permissions");
+                .contains("execution.run")
+                .doesNotContain("execution.request_permissions");
     }
 
     @Test
@@ -146,8 +147,8 @@ class LocalCodingAgentTest {
                         "rg exit 1 means no matches",
                         "git diff --no-index exit 1 means differences",
                         "rg -F -- <text>",
-                        "request_permissions is not a general sandbox bypass",
-                        "workspaceRef, relativeWorkdir, timeout, expectedExitCodes",
+                        "Runtime-owned recovery interaction",
+                        "Do not copy or resubmit the command",
                         "Keep command output bounded")
                 .doesNotContain("Host OS:", "repeat the exact command, workdir");
         assertThat(LocalCodingAgent.executionEnvironmentPrompt(" ")).isEmpty();
@@ -1394,7 +1395,7 @@ class LocalCodingAgentTest {
     }
 
     private AgentChatResponse toolResponse(String id, String tool, Map<String, Object> arguments) {
-        if (tool.equals("execution_run") || tool.equals("request_permissions")) {
+        if (tool.equals("execution_run")) {
             var structured = new java.util.LinkedHashMap<String, Object>(arguments);
             structured.putIfAbsent(
                     "workspaceRef",

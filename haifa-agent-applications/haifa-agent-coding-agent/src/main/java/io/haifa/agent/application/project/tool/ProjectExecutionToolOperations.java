@@ -21,6 +21,7 @@ import io.haifa.agent.execution.api.ExecutionInput;
 import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.execution.api.ExecutionOutput;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
@@ -39,7 +40,9 @@ import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.tool.api.ToolCancellation;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
+import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
+import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolReconciliation;
 import io.haifa.agent.tool.api.ToolReconciliationRequest;
@@ -62,6 +65,13 @@ public final class ProjectExecutionToolOperations {
     private static final int FULL_OUTPUT_BYTES_PER_CHANNEL = 16 * 1024 * 1024;
     private static final int SUMMARY_OUTPUT_CHARS = 12 * 1024;
     private static final Pattern GIT_DIRECTORY_OVERRIDE = Pattern.compile("(?:^|\\s)[\\\"']?-C[\\\"']?(?:\\s|=)");
+    private static final Set<String> RECOVERABLE_PREFLIGHT_CODES = Set.of(
+            "NETWORK_PERMISSION_REQUIRED", "GIT_AUTHENTICATION_UNAVAILABLE", "GH_AUTHENTICATION_UNAVAILABLE");
+    private static final Set<SystemGitCliCommandClassifier.Risk> RECOVERABLE_RISKS = Set.of(
+            SystemGitCliCommandClassifier.Risk.LOCAL_READ,
+            SystemGitCliCommandClassifier.Risk.LOCAL_WRITE,
+            SystemGitCliCommandClassifier.Risk.NETWORK_READ,
+            SystemGitCliCommandClassifier.Risk.EXTERNAL_WRITE);
 
     private final ExecutionBroker broker;
     private final IdentifierGenerator identifiers;
@@ -510,20 +520,7 @@ public final class ProjectExecutionToolOperations {
             List<Integer> expectedExitCodes,
             ExecutionScratchSpaceSpec scratchSpace) {
         List<String> fields;
-        if (invocation.binding().definition().name().value().equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
-            Map<String, Object> arguments = invocation.arguments().values();
-            fields = List.of(
-                    command,
-                    workspaceRef,
-                    relativeWorkdir,
-                    requiredText(arguments, "priorToolCallId"),
-                    requiredText(arguments, "requestedPermission"),
-                    requiredText(arguments, "justification"),
-                    String.valueOf(arguments.getOrDefault("timeoutMillis", "DEFAULT")),
-                    expectedExitCodes.toString());
-        } else {
-            fields = List.of(command, workspaceRef, relativeWorkdir, expectedExitCodes.toString());
-        }
+        fields = List.of(command, workspaceRef, relativeWorkdir, expectedExitCodes.toString());
         return ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(fields), scratchSpace);
     }
 
@@ -638,7 +635,7 @@ public final class ProjectExecutionToolOperations {
                     request.context().runRef(),
                     reviewToolCallRef);
         } catch (ExecutionPreflightException exception) {
-            return toFailedToolResult(
+            return preflightFailure(
                     request,
                     merged,
                     exception.code(),
@@ -650,7 +647,7 @@ public final class ProjectExecutionToolOperations {
                     repositoryScopeDigest,
                     reviewToolCallRef);
         } catch (io.haifa.agent.execution.core.ExecutionRejectedException exception) {
-            return toFailedToolResult(
+            return preflightFailure(
                     request,
                     merged,
                     exception.code(),
@@ -662,7 +659,7 @@ public final class ProjectExecutionToolOperations {
                     repositoryScopeDigest,
                     reviewToolCallRef);
         } catch (io.haifa.agent.sandbox.api.SandboxException exception) {
-            return toFailedToolResult(
+            return preflightFailure(
                     request,
                     merged,
                     exception.code(),
@@ -736,6 +733,45 @@ public final class ProjectExecutionToolOperations {
                 repositoryScopeDigest,
                 request.context().runRef(),
                 reviewToolCallRef);
+    }
+
+    private ToolResult preflightFailure(
+            ExecutionRequest request,
+            MergedTailObserver merged,
+            String failureCode,
+            String errorMessage,
+            String command,
+            String operationFamily,
+            List<Integer> expectedExitCodes,
+            SystemGitCliCommandClassifier.Classification commandClassification,
+            String repositoryScopeDigest,
+            String reviewToolCallRef) {
+        ToolResult failure = toFailedToolResult(
+                request,
+                merged,
+                failureCode,
+                errorMessage,
+                command,
+                operationFamily,
+                expectedExitCodes,
+                commandClassification,
+                repositoryScopeDigest,
+                reviewToolCallRef);
+        Object stableCode = failure.structuredData().get("stableFailureCode");
+        boolean directGitOrGh = commandClassification.target() != SystemGitCliCommandClassifier.Target.OTHER;
+        boolean eligible = request.context().origin() == ExecutionOrigin.RUNTIME_TOOL
+                && !merged.dispatched()
+                && directGitOrGh
+                && RECOVERABLE_RISKS.contains(commandClassification.risk())
+                && stableCode instanceof String code
+                && RECOVERABLE_PREFLIGHT_CODES.contains(code);
+        if (eligible) {
+            throw new ToolInvocationException(
+                    (String) stableCode,
+                    ToolDispatchState.NOT_DISPATCHED,
+                    "Execution was not dispatched because required host access is unavailable.");
+        }
+        return failure;
     }
 
     private ToolResult toToolResult(

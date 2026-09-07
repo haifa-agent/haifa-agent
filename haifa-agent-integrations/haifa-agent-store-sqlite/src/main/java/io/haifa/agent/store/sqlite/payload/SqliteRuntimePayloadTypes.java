@@ -53,8 +53,6 @@ public final class SqliteRuntimePayloadTypes {
             new PayloadType<>("policy-snapshot", "1", io.haifa.agent.policy.api.PolicySnapshot.class);
     public static final PayloadType<io.haifa.agent.policy.api.PolicyRequest> POLICY_REQUEST =
             new PayloadType<>("policy-request", "1", io.haifa.agent.policy.api.PolicyRequest.class);
-    public static final PayloadType<io.haifa.agent.policy.api.ApprovalRequestContext> APPROVAL_REQUEST_CONTEXT =
-            new PayloadType<>("approval-request-context", "1", io.haifa.agent.policy.api.ApprovalRequestContext.class);
 
     private SqliteRuntimePayloadTypes() {}
 
@@ -83,7 +81,6 @@ public final class SqliteRuntimePayloadTypes {
                 .register(SKILL_ACTIVATION)
                 .register(POLICY_SNAPSHOT)
                 .register(POLICY_REQUEST)
-                .register(APPROVAL_REQUEST_CONTEXT)
                 .build();
     }
 }

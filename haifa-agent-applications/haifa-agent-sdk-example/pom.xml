@@ -27,6 +27,10 @@
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-store-sqlite</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-policy-core</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>

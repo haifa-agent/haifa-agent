@@ -43,7 +43,6 @@ public final class CodingAgentPolicyAssembly {
         Objects.requireNonNull(threshold, "threshold must not be null");
         ApprovalVerificationService verification = new DefaultApprovalVerificationService(
                 new LocalCapabilityAuthorityVerifier(),
-                Map.of(),
                 Map.of(
                         "tool",
                         target -> new ApprovalTargetValidation(

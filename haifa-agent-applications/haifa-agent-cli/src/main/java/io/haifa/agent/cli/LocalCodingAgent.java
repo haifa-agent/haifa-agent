@@ -30,11 +30,11 @@ import io.haifa.agent.application.project.product.coding.verification.CodingVeri
 import io.haifa.agent.application.project.product.coding.verification.PersistedCodingVerificationProfileProvider;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
-import io.haifa.agent.application.project.tool.ProjectPermissionRequestOperations;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
 import io.haifa.agent.application.project.workspace.WorkspaceAccess;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethod;
@@ -133,6 +133,7 @@ import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
 import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
+import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.skill.api.SkillAlias;
@@ -611,13 +612,7 @@ final class LocalCodingAgent implements AutoCloseable {
                                             .name(),
                             configuration.execution().defaultTimeout(),
                             configuration.execution().maximumTimeout()));
-            var permissionRequests = executionPlatform == null
-                    ? null
-                    : new ProjectPermissionRequestOperations(
-                            persistence.ports().state(),
-                            executionPlatform.permissionOperations(),
-                            executionPlatform.profile(),
-                            executionPlatform.permissionProfile());
+            var interactions = persistence.ports().interactions();
             var worktreeOperations = executionPlatform == null
                             || !configuredTools.contains(
                                     io.haifa.agent.application.project.tool.ProjectWorktreeToolOperations.TOOL_NAME)
@@ -633,19 +628,32 @@ final class LocalCodingAgent implements AutoCloseable {
                             provisioning,
                             identifiers,
                             persistence.workspaceAccess());
-            var provider = new ProjectToolExecutor(
+            io.haifa.agent.application.project.tool.RunWorkspaceAccessResolver workspaceAccessResolver =
                     (runId, requestedPrincipal) -> {
                         if (!principal.equals(requestedPrincipal)) {
                             throw new SecurityException("WORKSPACE_ACCESS_OWNER_MISMATCH");
                         }
-                        persistence.workspaceAccess().require(tenant, principal, workspaceId, WorkspaceAccessMode.READ);
+                        WorkspaceAccess current = persistence
+                                .workspaceAccess()
+                                .require(tenant, principal, workspaceId, WorkspaceAccessMode.READ);
+                        Set<String> currentCapabilities = current.mode() == WorkspaceAccessMode.READ
+                                ? Set.of("file.read")
+                                : effectiveCapabilities;
                         return new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
-                                workspaceId, effectiveCapabilities);
-                    },
-                    operations,
-                    executionPlatform == null ? null : executionPlatform.operations(),
-                    permissionRequests,
-                    worktreeOperations);
+                                workspaceId, currentCapabilities);
+                    };
+            var provider = executionPlatform == null
+                    ? new ProjectToolExecutor(workspaceAccessResolver, operations, null, worktreeOperations)
+                    : ProjectToolExecutor.withExecutionRecovery(
+                            workspaceAccessResolver,
+                            operations,
+                            executionPlatform.operations(),
+                            executionPlatform.permissionOperations(),
+                            persistence.ports().state(),
+                            interactions,
+                            executionPlatform.profile(),
+                            executionPlatform.permissionProfile(),
+                            worktreeOperations);
             var skillService = new DefaultSkillActivationService(
                     persistence.ports().runs(), persistence.ports().state(), skillPlatform.contentLoader(), time);
             List<SkillToolCatalogContribution> skillTools =
@@ -662,14 +670,12 @@ final class LocalCodingAgent implements AutoCloseable {
                             webPlatform.contributions(),
                             skillTools,
                             executionPlatform == null ? null : executionPlatform.profile(),
-                            executionPlatform == null ? null : executionPlatform.permissionProfile(),
                             CodingToolchainEnvironmentProfile.defaultScratchSpace());
             Set<String> disclosedToolAliases = catalog.snapshot().bindings().stream()
                     .map(binding -> binding.alias().value())
                     .collect(java.util.stream.Collectors.toUnmodifiableSet());
             boolean workspaceAttachmentDisclosed = catalog.snapshot().bindings().stream()
                     .anyMatch(binding -> binding.definition().name().value().equals("workspace.attach"));
-            var interactions = persistence.ports().interactions();
             Map<String, ResolvedModelSnapshot> modelSnapshots = configuration.availableModels().stream()
                     .collect(java.util.stream.Collectors.toUnmodifiableMap(
                             CliConfiguration.Model::id, LocalCodingAgent::modelSnapshot));
@@ -729,8 +735,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             return workspaceWorktreeApprovalPrompt(
                                     call.arguments().values());
                         }
-                        if (!toolName.equals("execution.run")
-                                && !toolName.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
+                        if (!toolName.equals("execution.run")) {
                             return io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter
                                     .defaultFormatter()
                                     .format(binding, call, reauthentication);
@@ -742,36 +747,28 @@ final class LocalCodingAgent implements AutoCloseable {
                         Object timeout = arguments.getOrDefault(
                                 "timeoutMillis",
                                 configuration.execution().defaultTimeout().toMillis());
-                        boolean permissionRequest = toolName.equals(ProjectPermissionRequestOperations.TOOL_NAME);
                         String description = safeApprovalText(String.valueOf(arguments.getOrDefault(
-                                permissionRequest ? "justification" : "description",
-                                permissionRequest ? "Request one-time host network access" : "Run shell command")));
-                        String permissionDetails = permissionRequest
-                                ? "\nPrior failed Tool Call: "
-                                        + safeApprovalText(String.valueOf(arguments.get("priorToolCallId")))
-                                        + "\nRequested permission: "
-                                        + safeApprovalText(String.valueOf(arguments.get("requestedPermission")))
-                                        + "\nScope: this exact command once; no reusable grant"
-                                : "";
+                                "description", "Run shell command")));
                         return description + "\nCommand: " + safeApprovalText(command) + "\nWorkspace: "
                                 + safeApprovalText(workspaceRef) + "\nRelative workdir: "
                                 + safeApprovalText(relativeWorkdir) + "\nTimeout: " + timeout + " ms\nShell: "
                                 + (executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName())
-                                + permissionDetails
                                 + "\nSecurity: "
                                 + (executionPlatform == null
                                         ? "execution unavailable"
-                                        : permissionRequest
-                                                ? "approved host execution, network=ALLOW, current OS user; workspace "
-                                                        + "and hard command denials remain enforced"
-                                                : executionPlatform.securitySummary());
+                                        : executionPlatform.securitySummary());
                     })
                     .approvalVerification(policy.approvalVerification())
-                    .publicToolPolicy(new DefaultPublicToolPolicy(
-                            new io.haifa.agent.application.project.policy.CodingExecutionPolicyRequestAdapter(
-                                    policyMode(configuration.approval())),
-                            policy.evaluator(),
-                            policy.rules()))
+                    .publicToolPolicy(workspaceAccessPolicy(
+                            new DefaultPublicToolPolicy(
+                                    new io.haifa.agent.application.project.policy.CodingExecutionPolicyRequestAdapter(
+                                            policyMode(configuration.approval())),
+                                    policy.evaluator(),
+                                    policy.rules()),
+                            persistence.workspaceAccess(),
+                            tenant,
+                            principal,
+                            workspaceId))
                     .definitions((id, requested) -> new ResolvedDefinition(
                             id,
                             requested.orElse(new AgentDefinitionVersion(1, 0, 0)),
@@ -924,10 +921,9 @@ final class LocalCodingAgent implements AutoCloseable {
                 + "means differences. Use [0, 1] only when that result is the intended observation. For literal rg searches, "
                 + "prefer rg -F -- <text>; use regex only when intended.\n"
                 + "- Keep command output bounded and relevant. Narrow an overly broad query before repeating it.\n"
-                + "- request_permissions is not a general sandbox bypass. Use it only after execution_run returns an eligible "
-                + "stable remote-access or host-authentication code for a direct system git or gh command, and repeat the exact command, "
-                + "workspaceRef, relativeWorkdir, timeout, expectedExitCodes, and prior Tool Call ID. operationFamily is only an optional diagnostic hint. Compound commands, wrappers, path "
-                + "escape, credential override, destructive commands, and unknown outcomes cannot be elevated.";
+                + "- A trusted pre-dispatch network or host-authentication failure may pause for one exact Runtime-owned "
+                + "recovery interaction. Do not copy or resubmit the command; compound commands, wrappers, path escape, "
+                + "credential override, destructive commands, and unknown outcomes remain ineligible.";
     }
 
     AgentRunSnapshot start(String message) {
@@ -1086,12 +1082,6 @@ final class LocalCodingAgent implements AutoCloseable {
         java.util.Set<String> configuredTools = new java.util.HashSet<>(configuration.enabledTools());
         if (configuration.approval() == ApprovalMode.DENY) {
             configuredTools.remove("execution.run");
-            configuredTools.remove(ProjectPermissionRequestOperations.TOOL_NAME);
-        } else if (configuredTools.contains("execution.run")
-                && !configuration.execution().provider().equals(HostGuardedSandboxProvider.PROVIDER_ID)) {
-            configuredTools.add(ProjectPermissionRequestOperations.TOOL_NAME);
-        } else {
-            configuredTools.remove(ProjectPermissionRequestOperations.TOOL_NAME);
         }
         return Set.copyOf(configuredTools);
     }
@@ -1351,6 +1341,21 @@ final class LocalCodingAgent implements AutoCloseable {
                 model.maxOutputTokens(),
                 Map.copyOf(providerOptions),
                 Map.copyOf(invocationOptions));
+    }
+
+    private static PublicToolPolicy workspaceAccessPolicy(
+            PublicToolPolicy delegate,
+            WorkspaceAccessStore access,
+            TenantRef tenant,
+            PrincipalRef principal,
+            WorkspaceId workspaceId) {
+        return (run, binding, request) -> {
+            String toolName = binding.definition().name().value();
+            if (toolName.equals("execution.run")) {
+                access.require(tenant, principal, workspaceId, WorkspaceAccessMode.DEVELOP);
+            }
+            return delegate.evaluate(run, binding, request);
+        };
     }
 
     private static ResolvedModelSnapshot bailianModelSnapshot(CliConfiguration.Model model) {
