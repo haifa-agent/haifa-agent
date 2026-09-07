@@ -1,7 +1,6 @@
 package io.haifa.agent.runtime.core.tool;
 
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.policy.api.AuthorizationResult;
 import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.Objects;
@@ -15,19 +14,11 @@ public sealed interface ToolPipelineOutcome
     }
 
     record ApprovalRequired(
-            FrozenToolBinding binding,
-            String argumentsDigest,
-            boolean reauthentication,
-            PolicyDecision decision,
-            AuthorizationResult authorization)
+            FrozenToolBinding binding, String argumentsDigest, boolean reauthentication, PolicyDecision decision)
             implements ToolPipelineOutcome {
         public ApprovalRequired {
             Objects.requireNonNull(binding, "binding");
             Objects.requireNonNull(decision, "decision");
-            Objects.requireNonNull(authorization, "authorization");
-            if (!authorization.approvable()) {
-                throw new IllegalArgumentException("approval outcome requires an approvable authorization result");
-            }
             if (argumentsDigest == null || argumentsDigest.isBlank()) {
                 throw new IllegalArgumentException("argumentsDigest must not be blank");
             }

@@ -7,6 +7,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionFailure;
 import io.haifa.agent.execution.api.ExecutionId;
+import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutput;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
@@ -200,7 +201,12 @@ class GitTopologyIntegrationTest {
 
     private static TrustedExecutionContext trusted(String runRef) {
         return new TrustedExecutionContext(
-                runRef, new PrincipalRef("actor", "user"), Set.of("execution.run", "git.read"), "allow");
+                new io.haifa.agent.core.reference.TenantRef("tenant"),
+                runRef,
+                new PrincipalRef("actor", "user"),
+                Set.of("execution.run", "git.read"),
+                ExecutionOrigin.PRODUCT_INTERNAL,
+                Optional.empty());
     }
 
     private static String digest(byte[] value) {

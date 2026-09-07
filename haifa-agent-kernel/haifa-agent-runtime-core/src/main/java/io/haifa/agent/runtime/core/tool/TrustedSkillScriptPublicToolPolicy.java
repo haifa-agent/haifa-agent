@@ -1,16 +1,10 @@
 package io.haifa.agent.runtime.core.tool;
 
-import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.policy.api.PolicyDecision;
-import io.haifa.agent.policy.api.PolicyDecisionId;
-import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.policy.api.PolicyRequest;
-import io.haifa.agent.policy.api.PolicyRequestDigest;
-import io.haifa.agent.policy.api.PolicyRuleRef;
-import io.haifa.agent.policy.api.PolicySnapshotRef;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
@@ -53,23 +47,17 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
     private final PublicToolPolicy delegate;
     private final RuntimeStateRepository state;
     private final ToolPolicyRequestAdapter requests;
-    private final IdentifierGenerator ids;
     private final TimeProvider time;
-    private final PolicyDecisionStore decisions;
 
     public TrustedSkillScriptPublicToolPolicy(
             PublicToolPolicy delegate,
             RuntimeStateRepository state,
             ToolPolicyRequestAdapter requests,
-            IdentifierGenerator ids,
-            TimeProvider time,
-            PolicyDecisionStore decisions) {
+            TimeProvider time) {
         this.delegate = Objects.requireNonNull(delegate, "delegate must not be null");
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.requests = Objects.requireNonNull(requests, "requests must not be null");
-        this.ids = Objects.requireNonNull(ids, "ids must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
-        this.decisions = Objects.requireNonNull(decisions, "decisions must not be null");
     }
 
     @Override
@@ -79,20 +67,13 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
         if (evidence.isEmpty()) return delegate.evaluate(run, tool, request);
 
         TrustedEvidence trusted = evidence.orElseThrow();
+        PolicyDecision evaluated = delegate.evaluate(run, tool, request);
         PolicyDecision decision = new PolicyDecision(
-                new PolicyDecisionId(ids.nextValue()),
-                Optional.of(policyRequest),
-                PolicyRequestDigest.compute(policyRequest),
                 PolicyEffect.ALLOW,
                 Optional.empty(),
                 REASON_CODE,
                 "Exact reviewed Skill package and script execution grants matched",
-                new PolicySnapshotRef(
-                        "trusted-skill-" + trusted.manifestDigest().substring("sha256:".length(), 24)),
-                Optional.of(new PolicyRuleRef(
-                        trusted.scriptGrant().id(), trusted.packageGrant().id())),
-                time.now());
-        decisions.save(decision);
+                evaluated.requirementDigest());
         LOGGER.info(
                 "Trusted Skill script auto-approved runId={} toolCallId={} tool={} packageGrant={} scriptGrant={}",
                 run.id().value(),

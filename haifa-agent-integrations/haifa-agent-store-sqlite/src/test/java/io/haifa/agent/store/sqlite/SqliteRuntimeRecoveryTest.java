@@ -37,9 +37,9 @@ import io.haifa.agent.model.api.ModelStreamSink;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
-import io.haifa.agent.policy.api.ApprovalMode;
-import io.haifa.agent.policy.api.PolicySnapshot;
-import io.haifa.agent.policy.api.PolicySnapshotRef;
+import io.haifa.agent.policy.api.PolicyChallenge;
+import io.haifa.agent.policy.api.PolicyDecision;
+import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
@@ -380,6 +380,7 @@ class SqliteRuntimeRecoveryTest {
                                     .equals("provider-tool-call"));
             assertThat(processB.ports().attempts().attemptsFor(runId).getLast().resumedFromCheckpointId())
                     .isPresent();
+            assertLegacyPolicyFamiliesEmpty(reopened.connections());
         }
 
         try (var paths = java.nio.file.Files.list(directory)) {
@@ -387,6 +388,48 @@ class SqliteRuntimeRecoveryTest {
                 assertThat(new String(java.nio.file.Files.readAllBytes(path), StandardCharsets.ISO_8859_1))
                         .doesNotContain("checkpoint-private-reasoning");
             }
+        }
+    }
+
+    @Test
+    void rejectsRestartedToolApprovalWhenTheRequirementDigestChanges() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AgentRunId runId;
+        InteractionRequestId interactionId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = toolRuntime(
+                    first,
+                    model(toolResponse()),
+                    "digest-process-a",
+                    new TestIds("digest-a"),
+                    providerCalls,
+                    ToolPolicyDecision.REQUIRE_APPROVAL);
+            runId = processA.runtime().start(request("digest-restart")).runId();
+            processA.scheduler().runAll();
+            interactionId =
+                    processA.ports().interactions().pending(runId).orElseThrow().id();
+        }
+
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            PolicyDecision changedRequirement = new PolicyDecision(
+                    PolicyEffect.ASK,
+                    Optional.of(PolicyChallenge.APPROVAL),
+                    "TEST_APPROVAL_REQUIRED",
+                    "Test policy requires approval",
+                    "sha256:changed-requirement");
+            RuntimeInstance processB = toolRuntime(
+                    reopened,
+                    finalModel("must-not-run"),
+                    "digest-process-b",
+                    new TestIds("digest-b"),
+                    providerCalls,
+                    changedRequirement);
+
+            processB.runtime().respond(approvalResponse(runId, interactionId, "digest-approval"));
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(providerCalls).hasValue(0);
         }
     }
 
@@ -887,29 +930,28 @@ class SqliteRuntimeRecoveryTest {
             AtomicInteger providerCalls,
             ToolPolicyDecision decision,
             TimeProvider time) {
-        foundation
-                .policySnapshots()
-                .save(new PolicySnapshot(
-                        new PolicySnapshotRef("legacy-tool-policy-v1"),
-                        List.of(),
-                        Optional.empty(),
-                        ApprovalMode.ASK,
-                        "legacy-tool-policy",
-                        Optional.empty(),
-                        "legacy-tool-policy-v1",
-                        NOW));
         return runtime(
-                foundation,
-                model,
-                workerId,
-                ids,
-                builder -> installTool(builder, providerCalls, decision)
-                        .policyStores(foundation.policyDecisions(), foundation.policyAuthorizationEvidence()),
-                time);
+                foundation, model, workerId, ids, builder -> installTool(builder, providerCalls, decision), time);
+    }
+
+    private RuntimeInstance toolRuntime(
+            SqliteStoreFoundation foundation,
+            AgentChatModel model,
+            String workerId,
+            IdentifierGenerator ids,
+            AtomicInteger providerCalls,
+            PolicyDecision decision) {
+        return runtime(
+                foundation, model, workerId, ids, builder -> installTool(builder, providerCalls, decision), TIME);
     }
 
     private static RuntimeCoreBuilder installTool(
             RuntimeCoreBuilder builder, AtomicInteger providerCalls, ToolPolicyDecision decision) {
+        return installTool(builder, providerCalls, policyDecision(decision));
+    }
+
+    private static RuntimeCoreBuilder installTool(
+            RuntimeCoreBuilder builder, AtomicInteger providerCalls, PolicyDecision decision) {
         ToolProviderId providerId = new ToolProviderId("sqlite-runtime-test");
         Map<String, Object> objectSchema =
                 Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
@@ -949,8 +991,41 @@ class SqliteRuntimeRecoveryTest {
         var catalog = new ToolCatalogBuilder()
                 .register(new ToolAlias("write"), definition, "sqlite-runtime-test", provider)
                 .freeze();
-        return builder.toolPolicy((run, binding, request) -> decision)
+        return builder.publicToolPolicy((run, binding, request) -> decision)
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
+    }
+
+    private static PolicyDecision policyDecision(ToolPolicyDecision decision) {
+        return switch (decision) {
+            case ALLOW ->
+                new PolicyDecision(
+                        PolicyEffect.ALLOW,
+                        Optional.empty(),
+                        "TEST_ALLOW",
+                        "Test policy allowed the tool",
+                        "sha256:sqlite-test-allow");
+            case REQUIRE_APPROVAL ->
+                new PolicyDecision(
+                        PolicyEffect.ASK,
+                        Optional.of(PolicyChallenge.APPROVAL),
+                        "TEST_APPROVAL_REQUIRED",
+                        "Test policy requires approval",
+                        "sha256:sqlite-test-approval");
+            case REQUIRE_REAUTHENTICATION ->
+                new PolicyDecision(
+                        PolicyEffect.ASK,
+                        Optional.of(PolicyChallenge.REAUTHENTICATE),
+                        "TEST_REAUTHENTICATION_REQUIRED",
+                        "Test policy requires reauthentication",
+                        "sha256:sqlite-test-reauthentication");
+            case DENY ->
+                new PolicyDecision(
+                        PolicyEffect.DENY,
+                        Optional.empty(),
+                        "TEST_DENY",
+                        "Test policy denied the tool",
+                        "sha256:sqlite-test-deny");
+        };
     }
 
     private static RuntimeCoreBuilder installCredentialTool(RuntimeCoreBuilder builder, String secret) {
@@ -1022,7 +1097,7 @@ class SqliteRuntimeRecoveryTest {
             }
         };
         return builder.credentialBroker(broker)
-                .toolPolicy((run, binding, request) -> ToolPolicyDecision.ALLOW)
+                .publicToolPolicy((run, binding, request) -> policyDecision(ToolPolicyDecision.ALLOW))
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
     }
 
@@ -1307,6 +1382,19 @@ class SqliteRuntimeRecoveryTest {
                 ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
             assertThat(result.next()).isTrue();
             return result.getLong(1);
+        }
+    }
+
+    private static void assertLegacyPolicyFamiliesEmpty(SqliteConnectionFactory connections) throws Exception {
+        try (Connection connection = connections.openConnection()) {
+            for (String table : List.of(
+                    "policy_snapshot",
+                    "policy_decision",
+                    "policy_authorization_evidence",
+                    "approval_grant",
+                    "project_trust")) {
+                assertThat(count(connection, table)).as(table).isZero();
+            }
         }
     }
 

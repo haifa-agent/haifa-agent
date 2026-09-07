@@ -313,8 +313,7 @@ public final class HaifaAgentBuilder {
                 runtimeBuilder.memory(memory.service(), memory.retriever(), memory.audit());
             }
             if (policy != null) {
-                runtimeBuilder.policyStores(policy.snapshots(), policy.decisions(), policy.authorizationEvidence());
-                runtimeBuilder.policyAuthorization(policy.authorization());
+                runtimeBuilder.policy(policy.rules(), policy.evaluator());
             }
             if (approval != null) {
                 runtimeBuilder.approvalVerification(approval.verification());

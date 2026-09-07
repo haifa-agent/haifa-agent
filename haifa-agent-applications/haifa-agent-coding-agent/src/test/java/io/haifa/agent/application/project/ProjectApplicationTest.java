@@ -363,9 +363,8 @@ class ProjectApplicationTest {
         ProjectToolExecutor executor = new ProjectToolExecutor(
                 (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
                         workspaceId, Set.of("file.read")),
-                (toolName, workspace, actor, runRef, policy, arguments) -> {
-                    observed.set(toolName + "|" + workspace.value() + "|" + actor.principalId() + "|" + runRef + "|"
-                            + policy);
+                (toolName, workspace, actor, runRef, arguments) -> {
+                    observed.set(toolName + "|" + workspace.value() + "|" + actor.principalId() + "|" + runRef);
                     return new ToolResult(true, "read", java.util.Map.of(), List.of(), List.of(), false);
                 });
         var request = new ToolInvocationRequest(
@@ -377,17 +376,16 @@ class ProjectApplicationTest {
                 new ToolArguments("haifa.file.read.input", "1.1.0", java.util.Map.of("path", "README.md")),
                 NOW.plusSeconds(30),
                 Optional.of("key"),
-                Optional.of("policy-1"),
                 () -> false,
                 List.of(),
                 io.haifa.agent.tool.api.ToolInvocationObserver.noop());
 
         assertThat(executor.invoke(request).successful()).isTrue();
-        assertThat(observed).hasValue("file.read|workspace-tool|operator|run-tool|policy-1");
+        assertThat(observed).hasValue("file.read|workspace-tool|operator|run-tool");
 
         ProjectToolExecutor denied = new ProjectToolExecutor(
                 (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(workspaceId, Set.of()),
-                (toolName, workspace, actor, runRef, policy, arguments) -> {
+                (toolName, workspace, actor, runRef, arguments) -> {
                     throw new AssertionError("unauthorized operation must not execute");
                 });
         assertThatThrownBy(() -> denied.invoke(request)).isInstanceOf(SecurityException.class);

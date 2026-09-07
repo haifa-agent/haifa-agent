@@ -10,7 +10,6 @@ import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.SandboxProfileRef;
-import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.project.path.WorkspacePath;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -43,7 +42,7 @@ final class ExecutionBrokerGitReadClient {
         argv.addAll(arguments);
         String id = identifiers.nextValue();
         String idempotencyKey = "git-read:" + id + ":" + sequence.incrementAndGet();
-        ExecutionRequest planned = new ExecutionRequest(
+        ExecutionRequest request = new ExecutionRequest(
                 new ExecutionId(id),
                 idempotencyKey,
                 context.executionContext(),
@@ -53,28 +52,6 @@ final class ExecutionBrokerGitReadClient {
                 ExecutionEnvironmentRef.empty(),
                 new ExecutionLimits(Duration.ofSeconds(15), outputBudget, 64 * 1024, 4),
                 profile);
-        String policyDecisionRef = Objects.requireNonNull(
-                        context.authorizer().authorize(planned), "Git authorizer must not return null")
-                .trim();
-        if (policyDecisionRef.isEmpty()) {
-            throw new IllegalStateException("Git authorizer returned a blank policy decision");
-        }
-        TrustedExecutionContext base = planned.context();
-        TrustedExecutionContext authorized = new TrustedExecutionContext(
-                base.tenant(), base.runRef(), base.actor(), base.frozenCapabilities(), policyDecisionRef);
-        ExecutionRequest request = new ExecutionRequest(
-                planned.id(),
-                planned.idempotencyKey(),
-                authorized,
-                planned.workspaceId(),
-                planned.workingDirectory(),
-                planned.command(),
-                planned.environmentRef(),
-                planned.limits(),
-                planned.sandboxProfileRef(),
-                planned.input(),
-                planned.invocationDigest(),
-                planned.scratchSpace());
         return broker.execute(request);
     }
 }

@@ -294,15 +294,14 @@ class AuthorizedWorkspaceProvisioningTest {
 
     @Test
     void persistsApprovedAttachAndRestoresItIntoANewScope() throws IOException {
-        ProvisioningResult result = provisioning.authorizeApprovedAttach(
-                additionalRoot, HostDirectoryPermission.READ_ONLY, "policy-decision-1");
+        ProvisioningResult result =
+                provisioning.authorizeApprovedAttach(additionalRoot, HostDirectoryPermission.READ_ONLY);
 
         assertThat(registry.find(projectId, result.directory().workspaceId()))
                 .get()
                 .satisfies(entry -> {
                     assertThat(entry.source()).isEqualTo(HostWorkspaceRegistrySource.APPROVED_ATTACH);
                     assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.ACTIVE);
-                    assertThat(entry.authorizationRef()).isEqualTo("policy-decision-1");
                     assertThat(entry.safeDisplayName()).doesNotContain(additionalRoot.toString());
                 });
 
@@ -334,8 +333,8 @@ class AuthorizedWorkspaceProvisioningTest {
 
     @Test
     void missingAttachedDirectoryIsDisabledDuringRecovery() throws IOException {
-        ProvisioningResult result = provisioning.authorizeApprovedAttach(
-                additionalRoot, HostDirectoryPermission.READ_WRITE, "policy-decision-2");
+        ProvisioningResult result =
+                provisioning.authorizeApprovedAttach(additionalRoot, HostDirectoryPermission.READ_WRITE);
         Files.delete(additionalRoot);
 
         var reopenedLocations = new HostWorkspaceLocationStore();
@@ -361,13 +360,12 @@ class AuthorizedWorkspaceProvisioningTest {
 
     @Test
     void fingerprintDriftAtTheSameSafePathRefreshesTheMountWithoutRevokingAccess() throws IOException {
-        ProvisioningResult result = provisioning.authorizeApprovedAttach(
-                additionalRoot, HostDirectoryPermission.READ_WRITE, "policy-decision-drift");
+        ProvisioningResult result =
+                provisioning.authorizeApprovedAttach(additionalRoot, HostDirectoryPermission.READ_WRITE);
         var persisted =
                 registry.find(projectId, result.directory().workspaceId()).orElseThrow();
         registry.update(
-                persisted.reactivate(
-                        additionalRoot.toRealPath(), "sha256:unexpected-fingerprint", "policy-decision-drift", NOW),
+                persisted.reactivate(additionalRoot.toRealPath(), "sha256:unexpected-fingerprint", NOW),
                 persisted.version());
 
         var reopenedLocations = new HostWorkspaceLocationStore();
@@ -398,8 +396,8 @@ class AuthorizedWorkspaceProvisioningTest {
 
     @Test
     void replacementDirectoryAtTheSameSafePathNaturallyInheritsAccessDuringRecovery() throws IOException {
-        ProvisioningResult result = provisioning.authorizeApprovedAttach(
-                additionalRoot, HostDirectoryPermission.READ_WRITE, "policy-decision-replacement");
+        ProvisioningResult result =
+                provisioning.authorizeApprovedAttach(additionalRoot, HostDirectoryPermission.READ_WRITE);
         HostDirectoryIdentity approvedIdentity = HostDirectoryIdentity.resolve(additionalRoot.toRealPath());
         Path originalDirectory = tempDir.resolve("original-additional");
         Files.move(additionalRoot, originalDirectory);
@@ -466,8 +464,7 @@ class AuthorizedWorkspaceProvisioningTest {
                 childBindingId,
                 childLocationRef,
                 HostDirectoryPermission.READ_WRITE,
-                "feature-worktree",
-                "policy-decision-worktree");
+                "feature-worktree");
 
         assertThat(result.registryView().source()).isEqualTo(HostWorkspaceRegistrySource.APPROVED_WORKTREE_CREATE);
         assertThat(provisioning.scope().resolveExecutionDirectory(childId, ".").workspaceId())
@@ -496,8 +493,8 @@ class AuthorizedWorkspaceProvisioningTest {
 
     @Test
     void revocationIsPersistedAndInitialWorkspaceCannotBeRevoked() {
-        ProvisioningResult attached = provisioning.authorizeApprovedAttach(
-                additionalRoot, HostDirectoryPermission.READ_WRITE, "policy-decision-3");
+        ProvisioningResult attached =
+                provisioning.authorizeApprovedAttach(additionalRoot, HostDirectoryPermission.READ_WRITE);
 
         provisioning.revoke(attached.directory().workspaceId());
 

@@ -3,14 +3,12 @@ package io.haifa.agent.project.mutation;
 import io.haifa.agent.core.reference.PrincipalRef;
 import java.util.Objects;
 
-public record MutationContext(
-        String operationId, String runRef, String toolCallRef, PrincipalRef actor, String securityDecisionRef) {
+public record MutationContext(String operationId, String runRef, String toolCallRef, PrincipalRef actor) {
     public MutationContext {
         operationId = requireText(operationId, "operationId");
         runRef = normalize(runRef);
         toolCallRef = normalize(toolCallRef);
         actor = Objects.requireNonNull(actor, "actor must not be null");
-        securityDecisionRef = requireText(securityDecisionRef, "securityDecisionRef");
     }
 
     private static String requireText(String value, String field) {

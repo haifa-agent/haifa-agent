@@ -203,7 +203,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", hostPath)));
         assertThat(res.successful()).isTrue();
         assertThat(res.structuredData()).containsEntry("content", "public class App {}");
@@ -213,7 +212,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", "App.java")));
         assertThat(resImplicit.successful()).isFalse();
         assertThat(resImplicit.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
@@ -223,7 +221,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", "main:App.java")));
         assertThat(resExplicit.successful()).isFalse();
         assertThat(resExplicit.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
@@ -241,21 +238,18 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", rootPath)));
         var read = operations.execute(
                 "file.read",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", filePath)));
         var searched = operations.execute(
                 "file.search",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", rootPath, "query", "needle")));
 
         assertThat(listed.successful()).isTrue();
@@ -319,12 +313,7 @@ class LocalFileToolOperationsMultiRootTest {
 
     private ToolResult execute(String toolName, Map<String, Object> values) {
         return operations.execute(
-                toolName,
-                workspaceId,
-                new PrincipalRef("operator", "user"),
-                "run-ledger",
-                "policy-1",
-                arguments(values));
+                toolName, workspaceId, new PrincipalRef("operator", "user"), "run-ledger", arguments(values));
     }
 
     private static List<Object> resultPaths(Object entries) {
@@ -342,7 +331,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", docPath)));
         assertThat(res.successful()).isTrue();
         assertThat(res.structuredData()).containsEntry("path", docPath);
@@ -357,7 +345,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", docPath, "content", "# Guide")));
         assertThat(createRes.successful()).isFalse();
         assertThat(createRes.structuredData())
@@ -371,7 +358,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", docPath, "content", "# Updated")));
         assertThat(writeRes.successful()).isFalse();
         assertThat(writeRes.structuredData()).containsEntry("errorCode", "PERMISSION_DENIED");
@@ -381,7 +367,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", docPath)));
         assertThat(deleteRes.successful()).isFalse();
         assertThat(deleteRes.structuredData()).containsEntry("errorCode", "PERMISSION_DENIED");
@@ -457,7 +442,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", path, "content", "created by write")));
 
         assertThat(written.successful()).isTrue();
@@ -478,7 +462,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", path, "content", "first")));
         assertThat(created.successful()).isTrue();
         assertThat(created.structuredData()).containsEntry("path", path);
@@ -489,7 +472,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", path, "content", "second")));
         assertThat(written.successful()).isTrue();
         assertThat(Files.readString(target)).isEqualTo("second");
@@ -499,7 +481,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", path)));
         assertThat(deleted.successful()).isTrue();
         assertThat(target).doesNotExist();
@@ -519,7 +500,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
         String notePath =
                 extraDir.resolve("note.txt").toAbsolutePath().normalize().toString();
@@ -528,7 +508,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", notePath, "content", "authorized")));
 
         assertThat(authorization.successful()).isTrue();
@@ -553,7 +532,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
         assertThat(authorization.successful()).isTrue();
 
@@ -572,7 +550,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", notePath, "content", "content in extra")));
 
         assertThat(created.successful()).isTrue();
@@ -597,7 +574,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
         assertThat(authorization.successful()).isTrue();
         assertThat(operations.currentScope().version()).isGreaterThan(initialScope.version());
@@ -614,7 +590,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", workspaceDir.toString(), "permission", "read-only")));
 
         assertThat(result.successful()).isTrue();
@@ -651,7 +626,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("source", srcPath, "destination", dstPath)));
 
         assertThat(result.successful()).isFalse();
@@ -681,7 +655,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("patch", patch)));
 
         assertThat(result.successful()).isFalse();
@@ -711,7 +684,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("patch", patch)));
 
         assertThat(result.successful()).isTrue();
@@ -745,7 +717,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("patch", patch)));
 
         assertThat(result.successful()).isFalse();
@@ -785,7 +756,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("patch", patch)));
 
         assertThat(result.successful()).isFalse();
@@ -825,7 +795,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("patch", patch)));
 
         assertThat(result.successful()).isFalse();
@@ -850,7 +819,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", generated.toAbsolutePath().normalize().toString())));
 
         assertThat(rejected.successful()).isFalse();
@@ -865,7 +833,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of(
                         "path",
                         configDir
@@ -885,7 +852,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", "unregistered:data.csv")));
         assertThat(res.successful()).isFalse();
         assertThat(res.structuredData())
@@ -903,7 +869,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", outsidePath)));
         assertThat(res.successful()).isFalse();
         assertThat(res.structuredData())
@@ -919,7 +884,6 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", "main:../../etc/passwd")));
         assertThat(res.successful()).isFalse();
         assertThat(res.structuredData())

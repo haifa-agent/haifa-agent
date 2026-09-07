@@ -322,8 +322,7 @@ public final class PatchService {
                 parent.operationId() + ":" + suffix + ":" + index,
                 parent.runRef(),
                 parent.toolCallRef(),
-                parent.actor(),
-                parent.securityDecisionRef());
+                parent.actor());
     }
 
     private static PatchApplyResult conflict(

@@ -339,10 +339,8 @@ public final class ProjectExecutionToolOperations {
                         invocation.runId().value(),
                         invocation.principal(),
                         access.capabilities(),
-                        invocation
-                                .policyDecisionRef()
-                                .orElseThrow(() ->
-                                        new SecurityException("execution tool requires a public policy decision"))),
+                        io.haifa.agent.execution.api.ExecutionOrigin.RUNTIME_TOOL,
+                        Optional.of(invocation.toolCallId())),
                 workingDirectory.workspaceId(),
                 workingDirectory,
                 ExecutionCommand.shell(command),
@@ -541,8 +539,7 @@ public final class ProjectExecutionToolOperations {
             String command,
             String workdir,
             Duration timeout,
-            String idempotencyKey,
-            String policyDecisionRef) {
+            String idempotencyKey) {
         Objects.requireNonNull(auditRunId, "auditRunId must not be null");
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
@@ -565,7 +562,8 @@ public final class ProjectExecutionToolOperations {
                         auditRunId.value(),
                         principal,
                         access.capabilities(),
-                        Objects.requireNonNull(policyDecisionRef, "policyDecisionRef must not be null")),
+                        io.haifa.agent.execution.api.ExecutionOrigin.PRODUCT_USER_COMMAND,
+                        Optional.empty()),
                 access.workspaceId(),
                 new WorkspacePath(
                         access.workspaceId(), workdir.equals(".") ? ProjectPath.root() : ProjectPath.of(workdir)),

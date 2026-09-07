@@ -4,9 +4,6 @@ import io.haifa.agent.policy.api.ApprovalGrant;
 import io.haifa.agent.policy.api.ApprovalGrantId;
 import io.haifa.agent.policy.api.ApprovalGrantQuery;
 import io.haifa.agent.policy.api.ApprovalGrantStore;
-import io.haifa.agent.policy.api.PolicyDecision;
-import io.haifa.agent.policy.api.PolicyDecisionId;
-import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.policy.api.PolicySnapshot;
 import io.haifa.agent.policy.api.PolicySnapshotRef;
 import io.haifa.agent.policy.api.PolicySnapshotStore;
@@ -20,10 +17,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-public final class InMemoryPolicyStore
-        implements PolicySnapshotStore, PolicyDecisionStore, ApprovalGrantStore, ProjectTrustStore {
+public final class InMemoryPolicyStore implements PolicySnapshotStore, ApprovalGrantStore, ProjectTrustStore {
     private final Map<PolicySnapshotRef, PolicySnapshot> snapshots = new ConcurrentHashMap<>();
-    private final Map<PolicyDecisionId, PolicyDecision> decisions = new ConcurrentHashMap<>();
     private final Map<ApprovalGrantId, ApprovalGrant> grants = new ConcurrentHashMap<>();
     private final Map<ProjectTrustRef, ProjectTrust> trusts = new ConcurrentHashMap<>();
 
@@ -35,16 +30,6 @@ public final class InMemoryPolicyStore
     @Override
     public Optional<PolicySnapshot> find(PolicySnapshotRef ref) {
         return Optional.ofNullable(snapshots.get(Objects.requireNonNull(ref, "ref must not be null")));
-    }
-
-    @Override
-    public void save(PolicyDecision decision) {
-        putExact(decisions, decision.id(), decision, "decision");
-    }
-
-    @Override
-    public Optional<PolicyDecision> find(PolicyDecisionId id) {
-        return Optional.ofNullable(decisions.get(Objects.requireNonNull(id, "id must not be null")));
     }
 
     @Override

@@ -1,6 +1,9 @@
 package io.haifa.agent.runtime.core;
 
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.policy.api.PolicyChallenge;
+import io.haifa.agent.policy.api.PolicyDecision;
+import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.SemanticVersion;
@@ -25,6 +28,7 @@ import io.haifa.agent.tool.core.ToolCatalogBuilder;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 final class TestToolPlatform {
@@ -101,7 +105,7 @@ final class TestToolPlatform {
         var catalog = new ToolCatalogBuilder()
                 .register(new ToolAlias(definition.name().value()), definition, "runtime-test", provider)
                 .freeze();
-        return builder.toolPolicy((run, binding, request) -> decision)
+        return builder.publicToolPolicy((run, binding, request) -> policyDecision(decision))
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
     }
 
@@ -197,6 +201,39 @@ final class TestToolPlatform {
 
     private static Map<String, Object> objectSchema() {
         return Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+    }
+
+    private static PolicyDecision policyDecision(ToolPolicyDecision decision) {
+        return switch (decision) {
+            case ALLOW ->
+                new PolicyDecision(
+                        PolicyEffect.ALLOW,
+                        Optional.empty(),
+                        "TEST_ALLOW",
+                        "Test policy allowed the tool",
+                        "sha256:test-allow");
+            case REQUIRE_APPROVAL ->
+                new PolicyDecision(
+                        PolicyEffect.ASK,
+                        Optional.of(PolicyChallenge.APPROVAL),
+                        "TEST_APPROVAL_REQUIRED",
+                        "Test policy requires approval",
+                        "sha256:test-approval");
+            case REQUIRE_REAUTHENTICATION ->
+                new PolicyDecision(
+                        PolicyEffect.ASK,
+                        Optional.of(PolicyChallenge.REAUTHENTICATE),
+                        "TEST_REAUTHENTICATION_REQUIRED",
+                        "Test policy requires reauthentication",
+                        "sha256:test-reauthentication");
+            case DENY ->
+                new PolicyDecision(
+                        PolicyEffect.DENY,
+                        Optional.empty(),
+                        "TEST_DENY",
+                        "Test policy denied the tool",
+                        "sha256:test-deny");
+        };
     }
 
     @FunctionalInterface

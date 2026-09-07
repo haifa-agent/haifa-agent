@@ -23,9 +23,6 @@ import io.haifa.agent.core.session.AgentSession;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.core.session.SessionScope;
-import io.haifa.agent.policy.api.PolicyPersistencePorts;
-import io.haifa.agent.policy.core.InMemoryPolicyAuthorizationEvidenceStore;
-import io.haifa.agent.policy.core.InMemoryPolicyStore;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStore;
 import io.haifa.agent.project.hostworkspace.registry.InMemoryHostWorkspaceRegistryStore;
 import io.haifa.agent.runtime.api.AgentRuntime;
@@ -65,7 +62,6 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
     private final String workerId;
     private final SqliteStoreFoundation sqlite;
     private final JsonlTranscriptProjector projector;
-    private final PolicyPersistencePorts policy;
     private final HostWorkspaceRegistryStore workspaceRegistry;
     private final WorkspaceAccessStore workspaceAccess;
     private final AtomicBoolean closing = new AtomicBoolean();
@@ -78,7 +74,6 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
             String workerId,
             SqliteStoreFoundation sqlite,
             JsonlTranscriptProjector projector,
-            PolicyPersistencePorts policy,
             HostWorkspaceRegistryStore workspaceRegistry,
             WorkspaceAccessStore workspaceAccess) {
         this.mode = mode;
@@ -88,7 +83,6 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         this.workerId = workerId;
         this.sqlite = sqlite;
         this.projector = projector;
-        this.policy = Objects.requireNonNull(policy, "policy must not be null");
         this.workspaceRegistry = Objects.requireNonNull(workspaceRegistry, "workspaceRegistry must not be null");
         this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
     }
@@ -106,7 +100,6 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
             InMemoryRuntimeStore store = new InMemoryRuntimeStore();
             RuntimePersistencePorts ports = RuntimePersistencePorts.inMemory(
                     store, new InMemoryToolExecutionJournal(), new InMemoryInteractionPort());
-            var policyStore = new InMemoryPolicyStore();
             return new ProjectPersistenceAssembly(
                     configuration.mode(),
                     ports,
@@ -115,12 +108,6 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                     workerId,
                     null,
                     null,
-                    new PolicyPersistencePorts(
-                            policyStore,
-                            policyStore,
-                            new InMemoryPolicyAuthorizationEvidenceStore(),
-                            policyStore,
-                            policyStore),
                     new InMemoryHostWorkspaceRegistryStore(),
                     new InMemoryWorkspaceAccessStore());
         }
@@ -165,12 +152,6 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                     workerId,
                     foundation,
                     projector,
-                    new PolicyPersistencePorts(
-                            foundation.policySnapshots(),
-                            foundation.policyDecisions(),
-                            foundation.policyAuthorizationEvidence(),
-                            foundation.approvalGrants(),
-                            foundation.projectTrusts()),
                     new SqliteHostWorkspaceRegistryStore(foundation.unitOfWork(), effectiveProtector, clock),
                     new SqliteWorkspaceAccessStore(foundation.unitOfWork()));
         } catch (RuntimeException | Error exception) {
@@ -243,10 +224,6 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
 
     public String workerId() {
         return workerId;
-    }
-
-    public PolicyPersistencePorts policy() {
-        return policy;
     }
 
     public HostWorkspaceRegistryStore workspaceRegistry() {

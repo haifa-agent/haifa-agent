@@ -20,10 +20,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.policy.api.ApprovalRequester;
-import io.haifa.agent.policy.api.ApprovalResponder;
 import io.haifa.agent.policy.api.PolicyAction;
-import io.haifa.agent.policy.api.PolicyAuthorizationEvidence;
 import io.haifa.agent.policy.api.PolicyContext;
 import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.policy.api.PolicyRequest;
@@ -110,7 +107,7 @@ final class CliCodingShellService implements CodingShellService {
                         Optional.of(sessionId.value()),
                         Optional.of(auditRunId.value()),
                         Optional.empty(),
-                        policy.snapshot().approvalMode(),
+                        policy.rules().approvalMode(),
                         Optional.empty(),
                         Optional.of(profileDigest)),
                 new PolicyAction("execution.run", "invoke"),
@@ -124,16 +121,8 @@ final class CliCodingShellService implements CodingShellService {
                         Set.of(PolicySideEffect.PROCESS_EXECUTION, PolicySideEffect.NETWORK_ACCESS),
                         false,
                         Optional.empty()));
-        var decision = policy.decisions().evaluate(request, policy.snapshot());
-        policy.decisionsStore().save(decision);
-        Pending value = new Pending(
-                token,
-                sessionId,
-                auditRunId,
-                safeCommand,
-                includeInContext,
-                decision.id().value(),
-                decision);
+        var decision = policy.evaluator().evaluate(request, policy.rules());
+        Pending value = new Pending(token, sessionId, auditRunId, safeCommand, includeInContext, decision);
         pending.put(token, value);
         CodingShellPlan.State state = planState(decision.effect());
         return new CodingShellPlan(token, sessionId, safeCommand, includeInContext, state, decision.reasonCode());
@@ -146,19 +135,8 @@ final class CliCodingShellService implements CodingShellService {
         if (value.decision().effect() == PolicyEffect.DENY) {
             throw new SecurityException("POLICY_DENIED");
         }
-        if (value.decision().effect() == PolicyEffect.ASK) {
-            // This service is reachable only after the terminal owner typed the exact
-            // command and pressed Enter. That explicit input is the approval action;
-            // retain exact decision/evidence binding without asking the same user twice.
-            var now = time.now();
-            policy.evidence()
-                    .save(new PolicyAuthorizationEvidence(
-                            value.decision().id(),
-                            value.decision().requestDigest(),
-                            new ApprovalRequester(tenant, principal),
-                            new ApprovalResponder(tenant, principal),
-                            now,
-                            now.plus(Duration.ofMinutes(5))));
+        if (value.decision().effect() == PolicyEffect.ASK && !approved) {
+            throw new SecurityException("APPROVAL_REQUIRED");
         }
         var result = operations.executeUserInitiated(
                 value.auditRunId(),
@@ -168,8 +146,7 @@ final class CliCodingShellService implements CodingShellService {
                 value.command(),
                 ".",
                 timeout,
-                "terminal-shell-" + value.token(),
-                value.policyDecisionRef());
+                "terminal-shell-" + value.token());
         String status = String.valueOf(result.structuredData().getOrDefault("status", "UNKNOWN"));
         Optional<Integer> exitCode = Optional.ofNullable(result.structuredData().get("exitCode"))
                 .filter(Number.class::isInstance)
@@ -268,6 +245,5 @@ final class CliCodingShellService implements CodingShellService {
             AgentRunId auditRunId,
             String command,
             boolean includeInContext,
-            String policyDecisionRef,
             io.haifa.agent.policy.api.PolicyDecision decision) {}
 }

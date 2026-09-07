@@ -132,15 +132,13 @@ public final class AuthorizedWorkspaceProvisioning {
      * swallow an existing boundary, the request is rejected fail closed.
      */
     public ProvisioningResult authorize(Path directory, HostDirectoryPermission permission) {
-        return authorizeApprovedAttach(directory, permission, "legacy-approved-attach");
+        return authorizeApprovedAttach(directory, permission);
     }
 
-    /** Registers an attach only after Runtime supplied the exact approved policy decision reference. */
-    public synchronized ProvisioningResult authorizeApprovedAttach(
-            Path directory, HostDirectoryPermission permission, String authorizationRef) {
+    /** Registers an attach reached through the trusted product-controlled approval path. */
+    public synchronized ProvisioningResult authorizeApprovedAttach(Path directory, HostDirectoryPermission permission) {
         Objects.requireNonNull(directory, "directory must not be null");
         Objects.requireNonNull(permission, "permission must not be null");
-        String approvedRef = requireText(authorizationRef, "authorizationRef");
         if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
             throw HostWorkspaceScopeException.invalidArgument(
                     directory.toString(), "Authorized directory must be an existing directory");
@@ -204,13 +202,12 @@ public final class AuthorizedWorkspaceProvisioning {
                 HostWorkspaceRegistrySource.APPROVED_ATTACH,
                 realPath,
                 identity.physicalFingerprint(),
-                approvedRef,
                 time.now());
         registryMutation.set(true);
         try {
             HostWorkspaceRegistryEntry persisted = registry.find(projectId, allowed.workspaceId())
                     .map(existing -> registry.update(
-                            existing.reactivate(realPath, identity.physicalFingerprint(), approvedRef, time.now()),
+                            existing.reactivate(realPath, identity.physicalFingerprint(), time.now()),
                             existing.version()))
                     .orElseGet(() -> registry.create(entry));
             current = scope.get();
@@ -221,21 +218,19 @@ public final class AuthorizedWorkspaceProvisioning {
         }
     }
 
-    /** Registers a trusted provider-created Git worktree only after its exact Tool approval. */
+    /** Registers a trusted provider-created Git worktree reached through the approved Tool path. */
     public synchronized ProvisioningResult authorizeApprovedWorktree(
             WorkspaceId parentWorkspaceId,
             WorkspaceId childWorkspaceId,
             WorkspaceBindingId childBindingId,
             WorkspaceLocationRef childLocationRef,
             HostDirectoryPermission permission,
-            String safeDisplayName,
-            String authorizationRef) {
+            String safeDisplayName) {
         Objects.requireNonNull(parentWorkspaceId, "parentWorkspaceId must not be null");
         Objects.requireNonNull(childWorkspaceId, "childWorkspaceId must not be null");
         Objects.requireNonNull(childBindingId, "childBindingId must not be null");
         Objects.requireNonNull(childLocationRef, "childLocationRef must not be null");
         Objects.requireNonNull(permission, "permission must not be null");
-        String approvedRef = requireText(authorizationRef, "authorizationRef");
         if (scope.get().allowedDirectories().stream()
                 .noneMatch(directory -> directory.workspaceId().equals(parentWorkspaceId))) {
             throw HostWorkspaceScopeException.accessDenied(null, "worktree parent workspace is not active");
@@ -277,7 +272,6 @@ public final class AuthorizedWorkspaceProvisioning {
                 HostWorkspaceRegistrySource.APPROVED_WORKTREE_CREATE,
                 target,
                 physicalFingerprint,
-                approvedRef,
                 time.now());
         registryMutation.set(true);
         try {
@@ -393,7 +387,6 @@ public final class AuthorizedWorkspaceProvisioning {
                     HostWorkspaceRegistrySource.INITIAL,
                     initial.realPath(),
                     binding.rootFingerprint(),
-                    "initial-workspace",
                     now));
         }
 

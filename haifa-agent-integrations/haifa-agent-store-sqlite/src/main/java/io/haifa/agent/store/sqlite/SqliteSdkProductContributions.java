@@ -11,7 +11,6 @@ import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
-import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
@@ -26,13 +25,11 @@ public record SqliteSdkProductContributions(
         SqliteSdkPersistenceContribution persistence,
         SqliteSdkConversationContribution conversation,
         MemoryPlatformContribution memory,
-        PolicyPlatformContribution policy,
         ArtifactPlatformContribution artifact) {
     public SqliteSdkProductContributions {
         Objects.requireNonNull(persistence);
         Objects.requireNonNull(conversation);
         Objects.requireNonNull(memory);
-        Objects.requireNonNull(policy);
         Objects.requireNonNull(artifact);
     }
 
@@ -43,29 +40,6 @@ public record SqliteSdkProductContributions(
             SdkContributionMetadata persistenceMetadata,
             SdkContributionMetadata conversationMetadata,
             SdkContributionMetadata memoryMetadata) {
-        return initialize(
-                configuration,
-                clock,
-                protector,
-                persistenceMetadata,
-                conversationMetadata,
-                memoryMetadata,
-                new SdkContributionMetadata(
-                        new ProductContributionCoordinate("haifa-sqlite-policy", "1.0.0"),
-                        ProductCapabilities.POLICY,
-                        SdkConfigurationDigest.sha256("sqlite-policy-v1"),
-                        ProductProviderSuitability.PRODUCTION,
-                        "SQLite Policy decision and authorization evidence"));
-    }
-
-    public static SqliteSdkProductContributions initialize(
-            SqliteStoreConfiguration configuration,
-            Clock clock,
-            ModelContinuationProtector protector,
-            SdkContributionMetadata persistenceMetadata,
-            SdkContributionMetadata conversationMetadata,
-            SdkContributionMetadata memoryMetadata,
-            SdkContributionMetadata policyMetadata) {
         SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(configuration, clock);
         try {
             SqliteMemoryStore store =
@@ -97,13 +71,6 @@ public record SqliteSdkProductContributions(
                     new SqliteSdkPersistenceContribution(persistenceMetadata, foundation, protector),
                     new SqliteSdkConversationContribution(conversationMetadata, foundation),
                     new MemoryPlatformContribution(memoryMetadata, service, retriever, store),
-                    new PolicyPlatformContribution(
-                            policyMetadata,
-                            foundation.policySnapshots(),
-                            foundation.policyDecisions(),
-                            foundation.policyAuthorizationEvidence(),
-                            foundation.approvalGrants(),
-                            foundation.projectTrusts()),
                     new ArtifactPlatformContribution(
                             new SdkContributionMetadata(
                                     new ProductContributionCoordinate("haifa-sqlite-artifact", "1.0.0"),

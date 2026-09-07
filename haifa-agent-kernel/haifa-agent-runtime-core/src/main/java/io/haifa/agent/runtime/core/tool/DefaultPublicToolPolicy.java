@@ -2,17 +2,14 @@ package io.haifa.agent.runtime.core.tool;
 
 import io.haifa.agent.policy.api.PolicyChallenge;
 import io.haifa.agent.policy.api.PolicyDecision;
-import io.haifa.agent.policy.api.PolicyDecisionIdGenerator;
 import io.haifa.agent.policy.api.PolicyDecisionService;
-import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.policy.api.PolicyRequest;
-import io.haifa.agent.policy.api.PolicyRequestDigest;
-import io.haifa.agent.policy.api.PolicySnapshot;
+import io.haifa.agent.policy.api.PolicyRequirementDigest;
+import io.haifa.agent.policy.api.PolicyRuleSet;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
 import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSideEffect;
-import java.time.Clock;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -20,24 +17,13 @@ import java.util.Optional;
 public final class DefaultPublicToolPolicy implements PublicToolPolicy {
     private final ToolPolicyRequestAdapter requests;
     private final PolicyDecisionService decisions;
-    private final PolicyDecisionStore store;
-    private final PolicySnapshot snapshot;
-    private final PolicyDecisionIdGenerator ids;
-    private final Clock clock;
+    private final PolicyRuleSet rules;
 
     public DefaultPublicToolPolicy(
-            ToolPolicyRequestAdapter requests,
-            PolicyDecisionService decisions,
-            PolicyDecisionStore store,
-            PolicySnapshot snapshot,
-            PolicyDecisionIdGenerator ids,
-            Clock clock) {
+            ToolPolicyRequestAdapter requests, PolicyDecisionService decisions, PolicyRuleSet rules) {
         this.requests = Objects.requireNonNull(requests, "requests must not be null");
         this.decisions = Objects.requireNonNull(decisions, "decisions must not be null");
-        this.store = Objects.requireNonNull(store, "store must not be null");
-        this.snapshot = Objects.requireNonNull(snapshot, "snapshot must not be null");
-        this.ids = Objects.requireNonNull(ids, "ids must not be null");
-        this.clock = Objects.requireNonNull(clock, "clock must not be null");
+        this.rules = Objects.requireNonNull(rules, "rules must not be null");
     }
 
     @Override
@@ -67,17 +53,17 @@ public final class DefaultPublicToolPolicy implements PublicToolPolicy {
         } else if (definition.approvalRequirement() == ToolApprovalRequirement.REAUTHENTICATE) {
             decision = explicit(
                     policyRequest,
-                    snapshot.approvalMode() == io.haifa.agent.policy.api.ApprovalMode.DENY
+                    rules.approvalMode() == io.haifa.agent.policy.api.ApprovalMode.DENY
                             ? PolicyEffect.DENY
                             : PolicyEffect.ASK,
-                    snapshot.approvalMode() == io.haifa.agent.policy.api.ApprovalMode.DENY
+                    rules.approvalMode() == io.haifa.agent.policy.api.ApprovalMode.DENY
                             ? Optional.empty()
                             : Optional.of(PolicyChallenge.REAUTHENTICATE),
                     "TOOL_REAUTHENTICATION_REQUIRED",
                     "Tool use requires reauthentication");
         } else if (definition.approvalRequirement() == ToolApprovalRequirement.ALWAYS) {
             PolicyEffect effect =
-                    switch (snapshot.approvalMode()) {
+                    switch (rules.approvalMode()) {
                         case ASK -> PolicyEffect.ASK;
                         case AUTO -> PolicyEffect.ALLOW;
                         case DENY -> PolicyEffect.DENY;
@@ -89,9 +75,8 @@ public final class DefaultPublicToolPolicy implements PublicToolPolicy {
                     "TOOL_APPROVAL_REQUIRED",
                     "Tool use requires confirmation");
         } else {
-            decision = decisions.evaluate(policyRequest, snapshot);
+            decision = decisions.evaluate(policyRequest, rules);
         }
-        store.save(decision);
         return decision;
     }
 
@@ -102,15 +87,6 @@ public final class DefaultPublicToolPolicy implements PublicToolPolicy {
             String reasonCode,
             String explanation) {
         return new PolicyDecision(
-                ids.nextId(),
-                Optional.of(request),
-                PolicyRequestDigest.compute(request),
-                effect,
-                challenge,
-                reasonCode,
-                explanation,
-                snapshot.ref(),
-                Optional.empty(),
-                java.time.Instant.ofEpochMilli(clock.millis()));
+                effect, challenge, reasonCode, explanation, PolicyRequirementDigest.compute(request, rules));
     }
 }

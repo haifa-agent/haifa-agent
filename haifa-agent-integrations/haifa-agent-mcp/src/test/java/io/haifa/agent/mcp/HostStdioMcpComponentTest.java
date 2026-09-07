@@ -8,6 +8,7 @@ import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ManagedProcessRequest;
@@ -51,6 +52,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -158,7 +160,13 @@ class HostStdioMcpComponentTest {
         return new ManagedProcessRequest(new ExecutionRequest(
                 executionId,
                 "mcp-stdio-host-key",
-                new TrustedExecutionContext("mcp-control", McpTestFixtures.PRINCIPAL, Set.of("execution.run"), "allow"),
+                new TrustedExecutionContext(
+                        new io.haifa.agent.core.reference.TenantRef("tenant"),
+                        "mcp-control",
+                        McpTestFixtures.PRINCIPAL,
+                        Set.of("execution.run"),
+                        ExecutionOrigin.PRODUCT_INTERNAL,
+                        Optional.empty()),
                 workspaceId,
                 WorkspacePath.root(workspaceId),
                 new ExecutionCommand(
