@@ -1,5 +1,8 @@
 package io.haifa.agent.application.project.tool;
 
+import io.haifa.agent.application.project.workspace.WorkspaceAccess;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.policy.api.PolicyDigest;
@@ -25,14 +28,17 @@ public final class ProjectWorktreeToolOperations {
     private final GitWorktreeIsolationProvider provider;
     private final AuthorizedWorkspaceProvisioning provisioning;
     private final IdentifierGenerator identifiers;
+    private final WorkspaceAccessStore workspaceAccess;
 
     public ProjectWorktreeToolOperations(
             GitWorktreeIsolationProvider provider,
             AuthorizedWorkspaceProvisioning provisioning,
-            IdentifierGenerator identifiers) {
+            IdentifierGenerator identifiers,
+            WorkspaceAccessStore workspaceAccess) {
         this.provider = Objects.requireNonNull(provider, "provider must not be null");
         this.provisioning = Objects.requireNonNull(provisioning, "provisioning must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
+        this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -48,6 +54,7 @@ public final class ProjectWorktreeToolOperations {
         if (!permission.equals("read-write")) {
             throw new IllegalArgumentException("workspace worktrees currently require read-write permission");
         }
+        workspaceAccess.require(invocation.tenant(), invocation.principal(), parent, WorkspaceAccessMode.DEVELOP);
         provisioning.scope().resolveExecutionDirectory(parent, ".");
         String identity = PolicyDigest.sha256Fields(List.of(
                 "coding-worktree-v1",
@@ -84,6 +91,11 @@ public final class ProjectWorktreeToolOperations {
                     HostDirectoryPermission.READ_WRITE,
                     targetName,
                     authorizationRef);
+            workspaceAccess.replace(new WorkspaceAccess(
+                    invocation.tenant(),
+                    invocation.principal(),
+                    registered.directory().workspaceId(),
+                    WorkspaceAccessMode.DEVELOP));
             invocation.observer().acknowledged();
             var view = registered.registryView();
             return new ToolResult(
@@ -104,6 +116,11 @@ public final class ProjectWorktreeToolOperations {
                     false);
         } catch (RuntimeException failure) {
             if (isolated != null) {
+                try {
+                    workspaceAccess.delete(invocation.tenant(), invocation.principal(), isolated.childWorkspaceId());
+                } catch (RuntimeException cleanupFailure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
                 try {
                     provider.releaseWorktree(isolated.childWorkspaceId(), true);
                 } catch (RuntimeException cleanupFailure) {

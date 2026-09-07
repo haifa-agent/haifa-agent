@@ -1,7 +1,12 @@
 package io.haifa.agent.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.tool.RunWorkspaceAccess;
+import io.haifa.agent.application.project.workspace.InMemoryWorkspaceAccessStore;
+import io.haifa.agent.application.project.workspace.WorkspaceAccess;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
@@ -44,6 +49,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,6 +72,12 @@ class LocalFileToolOperationsMultiRootTest {
     private InMemoryWorkspaceBindingStore bindings;
     private HostWorkspaceLocationStore locations;
     private InMemorySessionChangeLedger ledger;
+    private InMemoryWorkspaceAccessStore workspaceAccess;
+    private WorkspaceId docsWorkspaceId;
+    private WorkspaceId configWorkspaceId;
+    private TenantRef tenant;
+    private PrincipalRef owner;
+    private AuthorizedWorkspaceProvisioning provisioning;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -83,18 +95,20 @@ class LocalFileToolOperationsMultiRootTest {
         workspaces = new InMemoryWorkspaceStore();
         locations = new HostWorkspaceLocationStore();
         ProjectId projectId = new ProjectId("proj-multiroot");
-        PrincipalRef owner = new PrincipalRef("owner", "user");
+        owner = new PrincipalRef("owner", "user");
+        tenant = new TenantRef("local");
         registerWorkspace(workspaceId, workspaceDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.PRIMARY, now);
-        WorkspaceId docsWorkspaceId = new WorkspaceId("ws-docs");
-        registerWorkspace(docsWorkspaceId, docsDir, HostDirectoryPermission.READ_ONLY, WorkspacePurpose.DIRECTORY, now);
-        WorkspaceId configWorkspaceId = new WorkspaceId("ws-config");
+        docsWorkspaceId = new WorkspaceId("ws-docs");
+        registerWorkspace(
+                docsWorkspaceId, docsDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.DIRECTORY, now);
+        configWorkspaceId = new WorkspaceId("ws-config");
         registerWorkspace(
                 configWorkspaceId, configDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.DIRECTORY, now);
 
         var projects = new InMemoryProjectStore();
         projects.create(Project.create(
                         projectId,
-                        new TenantRef("local"),
+                        tenant,
                         owner,
                         "multi-root-test",
                         "test project",
@@ -111,11 +125,11 @@ class LocalFileToolOperationsMultiRootTest {
                         AuthorizedHostDirectory.of(
                                 workspaceId, workspaceDir.toRealPath(), HostDirectoryPermission.READ_WRITE),
                         AuthorizedHostDirectory.of(
-                                docsWorkspaceId, docsDir.toRealPath(), HostDirectoryPermission.READ_ONLY),
+                                docsWorkspaceId, docsDir.toRealPath(), HostDirectoryPermission.READ_WRITE),
                         AuthorizedHostDirectory.of(
                                 configWorkspaceId, configDir.toRealPath(), HostDirectoryPermission.READ_WRITE)),
                 1L);
-        var provisioning = new AuthorizedWorkspaceProvisioning(
+        provisioning = new AuthorizedWorkspaceProvisioning(
                 projectId, workspaces, bindings, locations, workspaceService, owner, () -> now, scope);
 
         var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
@@ -128,9 +142,24 @@ class LocalFileToolOperationsMultiRootTest {
                 identifiers,
                 () -> now);
         ledger = new InMemorySessionChangeLedger();
+        workspaceAccess = new InMemoryWorkspaceAccessStore();
+        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, workspaceId, WorkspaceAccessMode.DEVELOP));
+        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, docsWorkspaceId, WorkspaceAccessMode.READ));
+        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, configWorkspaceId, WorkspaceAccessMode.DEVELOP));
 
         operations = new LocalFileToolOperations(
-                workspaces, files, mutations, identifiers, () -> now, provisioning, ledger, null, true);
+                workspaces,
+                files,
+                mutations,
+                identifiers,
+                () -> now,
+                provisioning,
+                ledger,
+                null,
+                true,
+                workspaceAccess,
+                tenant,
+                owner);
     }
 
     private void registerWorkspace(
@@ -333,6 +362,7 @@ class LocalFileToolOperationsMultiRootTest {
         assertThat(createRes.successful()).isFalse();
         assertThat(createRes.structuredData())
                 .containsEntry("errorCode", "PERMISSION_DENIED")
+                .containsEntry("stableFailureCode", "WORKSPACE_ACCESS_MODE_DENIED")
                 .containsEntry("failureCategory", "POLICY_DENIED")
                 .containsEntry("failureActionCode", "REQUEST_WRITE_PERMISSION");
 
@@ -355,6 +385,64 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("path", docPath)));
         assertThat(deleteRes.successful()).isFalse();
         assertThat(deleteRes.structuredData()).containsEntry("errorCode", "PERMISSION_DENIED");
+    }
+
+    @Test
+    void currentAccessDeletionRejectsAReadEvenWhileTheMountRemainsActive() throws IOException {
+        Files.writeString(configDir.resolve("revoked.txt"), "content", StandardCharsets.UTF_8);
+        assertThat(workspaceAccess.delete(tenant, owner, configWorkspaceId)).isTrue();
+
+        ToolResult result = execute(
+                "file.read",
+                Map.of(
+                        "path",
+                        configDir
+                                .resolve("revoked.txt")
+                                .toAbsolutePath()
+                                .normalize()
+                                .toString()));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "ACCESS_DENIED")
+                .containsEntry("stableFailureCode", "WORKSPACE_ACCESS_UNAVAILABLE");
+        assertThat(operations.currentScope().allowedDirectories())
+                .extracting(directory -> directory.workspaceId())
+                .contains(configWorkspaceId);
+    }
+
+    @Test
+    void accessUpgradeEnablesFileMutationAndExecutionWithoutChangingTheMount() throws IOException {
+        var resolver = CliExecutionPlatform.workspaceTargetResolver(provisioning, workspaceAccess, tenant, owner);
+        RunWorkspaceAccess runAccess = new RunWorkspaceAccess(workspaceId, Set.of("execution.run"));
+
+        assertThatThrownBy(() -> resolver.resolve(runAccess, docsWorkspaceId.value(), "."))
+                .isInstanceOf(SecurityException.class)
+                .hasMessage("WORKSPACE_ACCESS_MODE_DENIED");
+
+        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, docsWorkspaceId, WorkspaceAccessMode.DEVELOP));
+
+        assertThat(resolver.resolve(runAccess, docsWorkspaceId.value(), ".").workspaceId())
+                .isEqualTo(docsWorkspaceId);
+        ToolResult write = execute(
+                "file.write",
+                Map.of(
+                        "path",
+                        docsDir.resolve("after-upgrade.txt")
+                                .toAbsolutePath()
+                                .normalize()
+                                .toString(),
+                        "content",
+                        "allowed"));
+        assertThat(write.successful()).isTrue();
+        assertThat(Files.readString(docsDir.resolve("after-upgrade.txt"))).isEqualTo("allowed");
+    }
+
+    @Test
+    void executionWorkspaceResolverRejectsMissingWorkspaceAccessAuthority() {
+        assertThatThrownBy(() -> CliExecutionPlatform.workspaceTargetResolver(provisioning, null, tenant, owner))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("workspaceAccess must not be null");
     }
 
     @ParameterizedTest(name = "{0}")
@@ -445,6 +533,12 @@ class LocalFileToolOperationsMultiRootTest {
 
         assertThat(authorization.successful()).isTrue();
         assertThat(authorization.structuredData()).containsEntry("permission", "READ_WRITE");
+        WorkspaceId attachedWorkspace = new WorkspaceId(
+                authorization.structuredData().get("workspaceRef").toString());
+        assertThat(workspaceAccess.find(tenant, owner, attachedWorkspace))
+                .get()
+                .extracting(WorkspaceAccess::mode)
+                .isEqualTo(WorkspaceAccessMode.DEVELOP);
         assertThat(created.successful()).isTrue();
         assertThat(Files.readString(extraDir.resolve("note.txt"))).isEqualTo("authorized");
     }
@@ -525,6 +619,23 @@ class LocalFileToolOperationsMultiRootTest {
 
         assertThat(result.successful()).isTrue();
         assertThat(operations.currentScope().allowedDirectories()).hasSize(originalDirectoryCount);
+        assertThat(workspaceAccess.find(tenant, owner, workspaceId))
+                .get()
+                .extracting(WorkspaceAccess::mode)
+                .isEqualTo(WorkspaceAccessMode.READ);
+        ToolResult denied = execute(
+                "file.write",
+                Map.of(
+                        "path",
+                        workspaceDir
+                                .resolve("after-downgrade.txt")
+                                .toAbsolutePath()
+                                .normalize()
+                                .toString(),
+                        "content",
+                        "denied"));
+        assertThat(denied.successful()).isFalse();
+        assertThat(denied.structuredData()).containsEntry("stableFailureCode", "WORKSPACE_ACCESS_MODE_DENIED");
     }
 
     @Test

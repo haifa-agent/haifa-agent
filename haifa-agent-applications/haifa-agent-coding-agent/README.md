@@ -141,7 +141,7 @@ Search/Fetch Tool。Web 的 Provider-neutral Java 接口、Tool adapter、URL Po
 SQLite 模式要求数据库文件绝对路径，并显式选择 `NONE` 或 `AES_GCM` payload protection；后者还要求
 `env://` 形式的稳定 continuation protector 引用。JSONL 模式还要求已存在、可写、非符号链接的受控
 绝对目录。Application 在一次 checksum 校验中组合 Runtime Migration 与自己
-拥有的 `V1000 project_product_session` 至 `V1007 coding_workspace_registry` Migration，不修改
+拥有的 `V1000 project_product_session` 至 `V1008 coding_workspace_access` Migration，不修改
 Runtime Schema。每次进程启动生成新的 worker ID，
 并把完整 `RuntimePersistencePorts`、worker ID 和仅针对安全 `SQLITE_BUSY/LOCKED` 获取失败的有界重试策略
 注入 `RuntimeCoreBuilder`。
@@ -160,6 +160,14 @@ Application 自有的 Product/Coding 表通过 MyBatis Mapper XML 接入
 身份漂移、link/reparse point 或根重叠都会禁用记录而不恢复权限。模型只能看到脱敏 Registry 投影；本地
 `file.*` 继续接收宿主绝对路径并在当前活动 Registry/Scope 中重新解析。标准 `CodingSessionClient` 还提供
 脱敏授权清单与撤销入口，供受信产品界面移除非初始根的持久授权。
+
+`coding_workspace_access` 是 CA 唯一持续用户授权关系。领域对象只由现有 `TenantRef + PrincipalRef` 组成的
+owner、`WorkspaceId` 与 `READ / DEVELOP` mode 构成；SQLite 表也严格只有对应五列。`READ` 只允许文件读取，
+`DEVELOP` 才允许文件 mutation 与 execution 进入后续 Policy/Sandbox/Credential 门。启动时只在初始 Access
+缺失时创建 `DEVELOP`，不得覆盖已降级值；attach/worktree 由受信控制面替换 mode，撤销先删除 Access。
+每次文件操作和 execution workspace 解析都会读取当前 Access，即使旧 Scope 或 Registry 仍有活动 mount，
+缺失/降级也会 fail closed。Registry 的 `permission` 列在 Phase 32D M5 清理前仅是兼容的 mount 派生数据，
+不再是用户授权事实。该 Store 不进入公共 Runtime/SDK/Execution 或 Personal Assistant。
 
 ## Coding Session 产品闭环
 

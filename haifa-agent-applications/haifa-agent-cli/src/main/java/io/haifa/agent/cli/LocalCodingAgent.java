@@ -33,6 +33,8 @@ import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile
 import io.haifa.agent.application.project.tool.ProjectPermissionRequestOperations;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
+import io.haifa.agent.application.project.workspace.WorkspaceAccess;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethod;
@@ -518,6 +520,9 @@ final class LocalCodingAgent implements AutoCloseable {
                             WorkspaceRevision.initial("cli-initial"),
                             time.now())
                     .activate(time.now()));
+            persistence
+                    .workspaceAccess()
+                    .createIfAbsent(new WorkspaceAccess(tenant, principal, workspaceId, WorkspaceAccessMode.DEVELOP));
 
             SensitivePathPolicy sensitivePaths = SensitivePathPolicy.defaults();
             var files = new HostWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
@@ -569,7 +574,10 @@ final class LocalCodingAgent implements AutoCloseable {
                             output,
                             resolvedEnvironment,
                             verificationProfiles,
-                            provisioning)
+                            provisioning,
+                            persistence.workspaceAccess(),
+                            tenant,
+                            principal)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
             var repositoryBaselines = executionPlatform == null
@@ -590,7 +598,10 @@ final class LocalCodingAgent implements AutoCloseable {
                     provisioning,
                     sessionLedger,
                     repositoryBaselines,
-                    configuredTools.contains("workspace.attach"));
+                    configuredTools.contains("workspace.attach"),
+                    persistence.workspaceAccess(),
+                    tenant,
+                    principal);
             TrustedWorkspaceEnvironmentCatalog workspaceEnvironment = new TrustedWorkspaceEnvironmentCatalog(
                     workspaceRoot,
                     verificationDiscovery,
@@ -626,10 +637,17 @@ final class LocalCodingAgent implements AutoCloseable {
                                     "git",
                                     time),
                             provisioning,
-                            identifiers);
+                            identifiers,
+                            persistence.workspaceAccess());
             var provider = new ProjectToolExecutor(
-                    (runId, ignoredPrincipal) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
-                            workspaceId, effectiveCapabilities),
+                    (runId, requestedPrincipal) -> {
+                        if (!principal.equals(requestedPrincipal)) {
+                            throw new SecurityException("WORKSPACE_ACCESS_OWNER_MISMATCH");
+                        }
+                        persistence.workspaceAccess().require(tenant, principal, workspaceId, WorkspaceAccessMode.READ);
+                        return new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
+                                workspaceId, effectiveCapabilities);
+                    },
                     operations,
                     executionPlatform == null ? null : executionPlatform.operations(),
                     permissionRequests,
@@ -975,14 +993,19 @@ final class LocalCodingAgent implements AutoCloseable {
 
     List<CodingWorkspaceGrant> workspaceGrants() {
         return workspaceProvisioning.registryViews().stream()
-                .map(view -> new CodingWorkspaceGrant(
-                        view.workspaceRef(),
-                        view.safeDisplayName(),
-                        enumLabel(view.permission()),
-                        enumLabel(view.source()),
-                        enumLabel(view.status()),
-                        view.source() != HostWorkspaceRegistrySource.INITIAL
-                                && view.status() == HostWorkspaceRegistryStatus.ACTIVE))
+                .flatMap(view ->
+                        persistence
+                                .workspaceAccess()
+                                .find(tenant, principal, new WorkspaceId(view.workspaceRef()))
+                                .stream()
+                                .map(access -> new CodingWorkspaceGrant(
+                                        view.workspaceRef(),
+                                        view.safeDisplayName(),
+                                        access.mode() == WorkspaceAccessMode.READ ? "read-only" : "read-write",
+                                        enumLabel(view.source()),
+                                        enumLabel(view.status()),
+                                        view.source() != HostWorkspaceRegistrySource.INITIAL
+                                                && view.status() == HostWorkspaceRegistryStatus.ACTIVE)))
                 .toList();
     }
 
@@ -995,7 +1018,14 @@ final class LocalCodingAgent implements AutoCloseable {
         if (!grant.revocable()) {
             throw new IllegalStateException("WORKSPACE_GRANT_NOT_REVOCABLE");
         }
-        workspaceProvisioning.revoke(new WorkspaceId(normalized));
+        WorkspaceId workspaceId = new WorkspaceId(normalized);
+        persistence.ports().unitOfWork().execute(() -> {
+            if (!persistence.workspaceAccess().delete(tenant, principal, workspaceId)) {
+                throw new IllegalStateException("WORKSPACE_ACCESS_NOT_FOUND");
+            }
+            workspaceProvisioning.revoke(workspaceId);
+            return null;
+        });
     }
 
     Optional<CodingShellService> shell() {

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.haifa.agent.application.project.persistence.CodingWorkspaceAccessMapper">
+    <resultMap id="workspaceAccessRow" type="io.haifa.agent.application.project.persistence.CodingWorkspaceAccessRow">
+        <constructor>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="principal_type" javaType="java.lang.String"/>
+            <arg column="principal_id" javaType="java.lang.String"/>
+            <arg column="workspace_id" javaType="java.lang.String"/>
+            <arg column="mode" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <select id="find" resultMap="workspaceAccessRow">
+        SELECT tenant_id, principal_type, principal_id, workspace_id, mode
+        FROM coding_workspace_access
+        WHERE tenant_id = #{tenantId} AND principal_type = #{principalType}
+          AND principal_id = #{principalId} AND workspace_id = #{workspaceId}
+    </select>
+
+    <select id="list" resultMap="workspaceAccessRow">
+        SELECT tenant_id, principal_type, principal_id, workspace_id, mode
+        FROM coding_workspace_access
+        WHERE tenant_id = #{tenantId} AND principal_type = #{principalType} AND principal_id = #{principalId}
+        ORDER BY workspace_id
+    </select>
+
+    <insert id="insertIfAbsent">
+        INSERT INTO coding_workspace_access(tenant_id, principal_type, principal_id, workspace_id, mode)
+        VALUES (#{row.tenantId}, #{row.principalType}, #{row.principalId}, #{row.workspaceId}, #{row.mode})
+        ON CONFLICT(tenant_id, principal_type, principal_id, workspace_id) DO NOTHING
+    </insert>
+
+    <insert id="replace">
+        INSERT INTO coding_workspace_access(tenant_id, principal_type, principal_id, workspace_id, mode)
+        VALUES (#{row.tenantId}, #{row.principalType}, #{row.principalId}, #{row.workspaceId}, #{row.mode})
+        ON CONFLICT(tenant_id, principal_type, principal_id, workspace_id)
+        DO UPDATE SET mode = excluded.mode
+    </insert>
+
+    <delete id="delete">
+        DELETE FROM coding_workspace_access
+        WHERE tenant_id = #{tenantId} AND principal_type = #{principalType}
+          AND principal_id = #{principalId} AND workspace_id = #{workspaceId}
+    </delete>
+</mapper>

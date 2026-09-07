@@ -10,6 +10,8 @@ import io.haifa.agent.application.project.product.coding.CodingSessionCompactor;
 import io.haifa.agent.application.project.product.coding.CodingSessionLifecycle;
 import io.haifa.agent.application.project.product.coding.CodingSessionStore;
 import io.haifa.agent.application.project.product.coding.InMemoryCodingSessionStore;
+import io.haifa.agent.application.project.workspace.InMemoryWorkspaceAccessStore;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.compression.CompressionPolicy;
@@ -65,6 +67,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
     private final JsonlTranscriptProjector projector;
     private final PolicyPersistencePorts policy;
     private final HostWorkspaceRegistryStore workspaceRegistry;
+    private final WorkspaceAccessStore workspaceAccess;
     private final AtomicBoolean closing = new AtomicBoolean();
 
     private ProjectPersistenceAssembly(
@@ -76,7 +79,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
             SqliteStoreFoundation sqlite,
             JsonlTranscriptProjector projector,
             PolicyPersistencePorts policy,
-            HostWorkspaceRegistryStore workspaceRegistry) {
+            HostWorkspaceRegistryStore workspaceRegistry,
+            WorkspaceAccessStore workspaceAccess) {
         this.mode = mode;
         this.ports = ports;
         this.productSessions = productSessions;
@@ -86,6 +90,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         this.projector = projector;
         this.policy = Objects.requireNonNull(policy, "policy must not be null");
         this.workspaceRegistry = Objects.requireNonNull(workspaceRegistry, "workspaceRegistry must not be null");
+        this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
     }
 
     public static ProjectPersistenceAssembly open(
@@ -116,7 +121,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                             new InMemoryPolicyAuthorizationEvidenceStore(),
                             policyStore,
                             policyStore),
-                    new InMemoryHostWorkspaceRegistryStore());
+                    new InMemoryHostWorkspaceRegistryStore(),
+                    new InMemoryWorkspaceAccessStore());
         }
         ModelContinuationProtector effectiveProtector = protector;
         if (configuration.protection() == ProjectPersistenceProtection.NONE && effectiveProtector == null) {
@@ -165,7 +171,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                             foundation.policyAuthorizationEvidence(),
                             foundation.approvalGrants(),
                             foundation.projectTrusts()),
-                    new SqliteHostWorkspaceRegistryStore(foundation.unitOfWork(), effectiveProtector, clock));
+                    new SqliteHostWorkspaceRegistryStore(foundation.unitOfWork(), effectiveProtector, clock),
+                    new SqliteWorkspaceAccessStore(foundation.unitOfWork()));
         } catch (RuntimeException | Error exception) {
             if (foundation != null) {
                 try {
@@ -244,6 +251,10 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
 
     public HostWorkspaceRegistryStore workspaceRegistry() {
         return workspaceRegistry;
+    }
+
+    public WorkspaceAccessStore workspaceAccess() {
+        return workspaceAccess;
     }
 
     public RuntimeCoreBuilder configure(RuntimeCoreBuilder builder) {

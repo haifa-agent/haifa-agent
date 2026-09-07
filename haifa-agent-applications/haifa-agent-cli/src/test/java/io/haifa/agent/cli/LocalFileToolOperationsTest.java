@@ -6,6 +6,9 @@ import io.haifa.agent.application.project.product.coding.delivery.AttributionSta
 import io.haifa.agent.application.project.product.coding.delivery.RepositoryBaseline;
 import io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry;
 import io.haifa.agent.application.project.tool.ProjectToolCallContext;
+import io.haifa.agent.application.project.workspace.InMemoryWorkspaceAccessStore;
+import io.haifa.agent.application.project.workspace.WorkspaceAccess;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
@@ -326,6 +329,9 @@ class LocalFileToolOperationsTest {
                 new InMemoryWorkspaceWriteLeaseManager(),
                 identifiers,
                 () -> now);
+        TenantRef tenant = new TenantRef("local");
+        var workspaceAccess = new InMemoryWorkspaceAccessStore();
+        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, workspaceId, WorkspaceAccessMode.DEVELOP));
         var operations = new LocalFileToolOperations(
                 workspaces,
                 files,
@@ -335,7 +341,10 @@ class LocalFileToolOperationsTest {
                 provisioning,
                 ledger,
                 repositoryBaselines,
-                workspaceAttachmentDisclosed);
+                workspaceAttachmentDisclosed,
+                workspaceAccess,
+                tenant,
+                owner);
         return new Fixture(workspaceId, operations);
     }
 

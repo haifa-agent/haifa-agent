@@ -43,7 +43,11 @@ final class ProjectApplicationMigrations {
             new ApplicationMigration(
                     1_007,
                     "coding_workspace_registry",
-                    "/io/haifa/agent/application/project/persistence/V1007__coding_workspace_registry.sql"));
+                    "/io/haifa/agent/application/project/persistence/V1007__coding_workspace_registry.sql"),
+            new ApplicationMigration(
+                    1_008,
+                    "coding_workspace_access",
+                    "/io/haifa/agent/application/project/persistence/V1008__coding_workspace_access.sql"));
 
     private ProjectApplicationMigrations() {}
 
