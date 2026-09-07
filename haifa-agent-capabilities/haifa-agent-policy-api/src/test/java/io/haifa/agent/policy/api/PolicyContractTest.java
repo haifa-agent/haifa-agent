@@ -160,6 +160,18 @@ class PolicyContractTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void policyDecisionIsATransientValueWithoutIdentitySnapshotOrPersistenceTime() {
+        var accessorNames = java.util.Arrays.stream(PolicyDecision.class.getDeclaredMethods())
+                .filter(method -> method.getParameterCount() == 0)
+                .map(java.lang.reflect.Method::getName)
+                .collect(java.util.stream.Collectors.toSet());
+
+        assertThat(accessorNames)
+                .contains("effect", "challenge", "reasonCode", "safeExplanation")
+                .doesNotContain("id", "request", "snapshot", "decidedAt");
+    }
+
     private static PolicyDecision decision(PolicyEffect effect, Optional<PolicyChallenge> challenge) {
         return new PolicyDecision(
                 new PolicyDecisionId("decision"),

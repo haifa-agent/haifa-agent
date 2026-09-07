@@ -57,6 +57,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1414,6 +1415,50 @@ class ProjectExecutionToolOperationsTest {
 
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData()).containsEntry("stableFailureCode", "PERMISSION_REQUEST_INTENT_MISMATCH");
+    }
+
+    @Test
+    void controlledPermissionRequestRequiresTheExactWorkspaceWorkdirAndTimeout() {
+        Map<String, Object> priorArguments = Map.of(
+                "command",
+                "git ls-remote origin",
+                "workspaceRef",
+                WORKSPACE_ID.value(),
+                "relativeWorkdir",
+                "src",
+                "timeoutMillis",
+                30_000L,
+                "operationFamily",
+                "INSPECT");
+        Map<String, Object> mismatches = Map.of(
+                "workspaceRef", "other-workspace",
+                "relativeWorkdir", "docs",
+                "timeoutMillis", 60_000L);
+
+        for (Map.Entry<String, Object> mismatch : mismatches.entrySet()) {
+            InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+            store.appendToolCall(failedExecutionCall("prior-tool-call", priorArguments, "NETWORK_UNAVAILABLE"));
+            ExecutionBroker broker = new StubBroker() {
+                @Override
+                public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                    throw new AssertionError("a changed " + mismatch.getKey() + " must not execute");
+                }
+            };
+            var permissionOperations = new ProjectPermissionRequestOperations(
+                    store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
+            var requestArguments = new LinkedHashMap<>(priorArguments);
+            requestArguments.put(mismatch.getKey(), mismatch.getValue());
+            requestArguments.put("priorToolCallId", "prior-tool-call");
+            requestArguments.put("requestedPermission", ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS);
+            requestArguments.put("justification", "Retry the exact failed read");
+
+            ToolResult result = permissionOperations.execute(permissionInvocation(requestArguments), access());
+
+            assertThat(result.successful()).as(mismatch.getKey()).isFalse();
+            assertThat(result.structuredData())
+                    .as(mismatch.getKey())
+                    .containsEntry("stableFailureCode", "PERMISSION_REQUEST_INTENT_MISMATCH");
+        }
     }
 
     @Test

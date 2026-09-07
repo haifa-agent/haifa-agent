@@ -237,7 +237,7 @@ class ProjectApplicationTest {
     }
 
     @Test
-    void publishesProjectToolsIncludingControlledPermissionRequests() {
+    void keepsExecutionRecoveryInsideRuntimeInsteadOfPublishingAPermissionRequestTool() {
         var catalog = new ProjectToolCatalog();
         var frozen = catalog.freeze(
                 catalog.names(),
@@ -247,7 +247,7 @@ class ProjectApplicationTest {
                 executionProfile("host-guarded", NetworkPolicy.ALLOW, "two"));
 
         assertThat(frozen.snapshot().bindings())
-                .hasSize(14)
+                .hasSize(13)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
                         "execution_run",
@@ -261,7 +261,6 @@ class ProjectApplicationTest {
                         "file_search",
                         "file_stat",
                         "file_write",
-                        "request_permissions",
                         "workspace_attach",
                         "workspace_worktree_create");
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
@@ -273,21 +272,8 @@ class ProjectApplicationTest {
             assertThat(binding.coordinate().definitionHash().value()).matches("[0-9a-f]{64}");
         });
         assertThat(frozen.snapshot().bindings())
-                .filteredOn(binding -> binding.alias().value().equals("request_permissions"))
-                .singleElement()
-                .satisfies(binding -> {
-                    assertThat(binding.definition().approvalRequirement())
-                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.POLICY);
-                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
-                    assertThat(binding.definition().sideEffects())
-                            .contains(io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
-                    assertThat(binding.definition()
-                                    .inputSchema()
-                                    .document()
-                                    .get("required")
-                                    .toString())
-                            .contains("priorToolCallId", "requestedPermission", "justification");
-                });
+                .extracting(binding -> binding.alias().value())
+                .doesNotContain("request_permissions");
         assertThat(frozen.snapshot().bindings())
                 .filteredOn(binding -> binding.alias().value().equals("workspace_attach"))
                 .singleElement()

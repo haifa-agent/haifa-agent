@@ -327,7 +327,8 @@ class ExecutionCoreTest {
     void managedSessionUsesTheSameAuthorizationRedactionAuditAndCompletionPath() throws Exception {
         Fixture fixture = fixture();
         var provider = managedProvider();
-        DefaultExecutionBroker broker = fixture.broker(provider, request -> {});
+        AtomicInteger policyCalls = new AtomicInteger();
+        DefaultExecutionBroker broker = fixture.broker(provider, request -> policyCalls.incrementAndGet());
         ExecutionRequest request =
                 fixture.request("managed-execution", "managed-key", Set.of("execution.run"), List.of("fake"));
 
@@ -349,6 +350,9 @@ class ExecutionCoreTest {
         var result = broker.find(request.id()).orElseThrow();
         assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
         assertThat(result.stdout().summary()).doesNotContain("remote-secret");
+        assertThat(policyCalls)
+                .as("managed execution must pass the same final ExecutionPolicy choke point")
+                .hasValue(1);
     }
 
     @Test

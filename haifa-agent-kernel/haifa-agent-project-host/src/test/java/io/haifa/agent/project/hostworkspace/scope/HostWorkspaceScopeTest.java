@@ -73,6 +73,20 @@ class HostWorkspaceScopeTest {
     }
 
     @Test
+    void keepsTheWorkspaceIdentityWhenASafeDirectoryIsRecreatedAtTheSameCanonicalPath() throws IOException {
+        Path approvedPath = rootA;
+        deleteRecursively(rootA);
+        Files.createDirectories(approvedPath);
+        Path replacement = Files.writeString(approvedPath.resolve("replacement.txt"), "new contents");
+
+        ResolvedAuthorizedPath resolved = scope.resolve(replacement.toString());
+
+        assertThat(resolved.directory().workspaceId()).isEqualTo(new WorkspaceId("ws-a"));
+        assertThat(resolved.workspacePath().workspaceId()).isEqualTo(new WorkspaceId("ws-a"));
+        assertThat(resolved.workspacePath().projectPath()).isEqualTo(ProjectPath.of("replacement.txt"));
+    }
+
+    @Test
     void resolvesNestedExecutionDirectoryByWorkspaceRef() throws IOException {
         Files.createDirectories(rootA.resolve("docs"));
 
