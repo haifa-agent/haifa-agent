@@ -198,7 +198,7 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 冻结对应快照；配置中已删除的模型要求重选，不静默回退。
 
 `ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`workspace.attach`、
-`workspace.worktree.create`、`execution.run` 与 `execution.request_permissions` 共 14 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
+`workspace.worktree.create` 与 `execution.run` 共 13 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
 `github.*` Tool；Git/GitHub 操作由
 `execution.run` 直接调用系统 `git` / `gh`。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、
 幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
@@ -232,16 +232,7 @@ Git/GH 只保留基础分级：`status/diff/log/show/grep/ls-files/rev-parse` �
 `fetch/pull`、GH 远端读取为 MEDIUM；Push、远端写入、破坏性操作、`gh api`、未知子命令和任意复合/
 Wrapper 形式为 HIGH。HIGH 继续进入用户阈值，不是分类失败；产品不维护完整 Git/GH 参数 DSL。
 
-`execution.request_permissions -> request_permissions` 不是通用 Sandbox 绕过入口，也不授予可复用权限。
-它只允许引用同一 Run 中一次以 `NETWORK_PERMISSION_REQUIRED`（兼容读取旧
-`NETWORK_UNAVAILABLE`）、`HOST_AUTHENTICATION_UNAVAILABLE`、
-`GIT_AUTHENTICATION_UNAVAILABLE` 或 `GH_AUTHENTICATION_UNAVAILABLE` 失败的 `execution.run`，并要求逐字段复用该结果
-返回的 `toolCallId`、完整 command、`workspaceRef`、`relativeWorkdir` 和 timeout；operationFamily 仅是可选诊断 Hint，不参与
-精确授权绑定。Runtime 为该托管权限升级创建独立 Policy Decision 与审批 Checkpoint；批准后只用受信 Host 配置及其系统
-`git` / `gh` 登录环境的
-`host-guarded + network allow` Profile 执行这一次调用。只有直接、非破坏性的系统 `git` / `gh` 命令
-可申请；未知、复合、包装、凭据覆盖、路径逃逸、破坏性或结果未知的命令不可升级；Agent 不能创建
-Profile、改变 Policy Decision 或批准自己的申请。
+模型目录不包含权限申请 Tool。只有 CA 受信 preflight 对一条直接 Git/GH 调用产生候选网络/认证错误码，且 Tool exception 与 Journal 同时证明 `NOT_DISPATCHED`，Runtime 才创建确定性的 `execution-recovery` Interaction。原 ToolCall/Step/错误保持 FAILED；批准后从原 canonical arguments 与 frozen binding 创建至多一个 successor，不从模型或 Interaction 接受参数副本。CA 仅在 successor ID、同 owner 原调用、已 APPLIED 的 exact target、direct Git/GH 分类和 frozen profile pair 全部重验通过时选择 `host-guarded + network allow` recovery profile；当前 WorkspaceAccess、路径、Policy、Broker、Sandbox 和 Credential 仍实时检查。普通失败结果、已 dispatch/未知结果、复合或伪造 correlation 都 fail closed，successor 不能再次进入 recovery。
 
 `ProjectSkillPlatform` 从受信 Discovery/Visibility Context 组装 Skill Catalog 与精确内容 Loader。它提供
 `task-planning`、`result-verification`、共享 `git`/`github` 与 Coding `git-delivery` Classpath Skill，
@@ -256,8 +247,7 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 进入冻结 binding；Provider 不读取环境变量、不保存 Credential、不执行 fallback。
 
 配置、权限和精确 Tool 身份继续使用点号命名；模型披露使用 Provider-safe Alias，例如
-`file.read -> file_read`、`execution.run -> execution_run` 和
-`execution.request_permissions -> request_permissions`。Alias 只影响模型协议，不改变 Provider
+`file.read -> file_read` 和 `execution.run -> execution_run`。Alias 只影响模型协议，不改变 Provider
 执行时收到的精确 Tool 名称。历史 frozen Run 中旧 `git.*` identity 仅用于读取持久化交付证据，不能进入
 新 Run 的 Tool Catalog。
 

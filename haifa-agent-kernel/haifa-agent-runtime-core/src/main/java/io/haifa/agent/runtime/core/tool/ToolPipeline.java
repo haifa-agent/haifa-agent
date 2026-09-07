@@ -28,6 +28,7 @@ import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
+import io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.retry.ToolRetryPolicy;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -755,6 +756,69 @@ public final class ToolPipeline {
         if (current.effect() != PolicyEffect.ASK || !current.requirementDigest().equals(target.requirementDigest())) {
             throw new SecurityException("tool approval requirement changed");
         }
+    }
+
+    public boolean isExecutionRecoverySource(AgentRun run, ToolCall call) {
+        Objects.requireNonNull(run, "run must not be null");
+        Objects.requireNonNull(call, "call must not be null");
+        if (call.status() != ToolCallStatus.FAILED) return false;
+        ToolRequest request = canonicalize(run, request(call));
+        FrozenToolBinding binding = binding(run, request);
+        return "execution.run".equals(binding.definition().name().value())
+                && journal.state(run.id(), call.idempotencyKey())
+                        .filter(value -> value == ToolJournalState.FAILED)
+                        .isPresent();
+    }
+
+    public ToolApprovalTarget executionRecoveryTarget(AgentRun run, ToolCall call, String failureCode) {
+        ToolRequest request = canonicalize(run, request(call));
+        FrozenToolBinding binding = binding(run, request);
+        String argumentsDigest = argumentsDigest(request);
+        String principalScope = principalScope(run);
+        return new ToolApprovalTarget(
+                call.id(),
+                binding.coordinate().externalForm(),
+                binding.coordinate().definitionHash().value(),
+                argumentsDigest,
+                principalScope,
+                ExecutionRecoveryKeys.requirementDigest(
+                        run.id(),
+                        call.id(),
+                        binding.coordinate().externalForm(),
+                        binding.coordinate().definitionHash().value(),
+                        argumentsDigest,
+                        run.configurationSnapshot().contentHash(),
+                        failureCode,
+                        principalScope));
+    }
+
+    public void validateExecutionRecoveryTarget(
+            AgentRun run, ToolCall call, String failureCode, ToolApprovalTarget target) {
+        if (!isExecutionRecoverySource(run, call)) {
+            throw new SecurityException("execution recovery source is no longer eligible");
+        }
+        ToolApprovalTarget current = executionRecoveryTarget(run, call, failureCode);
+        if (!current.equals(target)) {
+            throw new SecurityException("execution recovery target drifted from the frozen invocation");
+        }
+        ToolRequest request = canonicalize(run, request(call));
+        FrozenToolBinding binding = binding(run, request);
+        if (!capabilityAuthorizer.isAllowed(run, binding)) {
+            throw new SecurityException("execution recovery capability is no longer allowed");
+        }
+        ToolSchemaValidationResult inputValidation =
+                schemaValidator.validate(binding.definition().inputSchema(), request.arguments().values());
+        if (!inputValidation.valid()) {
+            throw new SecurityException("execution recovery input no longer matches the frozen schema");
+        }
+        if (policy.evaluate(run, binding, request).effect() == PolicyEffect.DENY) {
+            throw new SecurityException("execution recovery is denied by current policy");
+        }
+    }
+
+    private static String principalScope(AgentRun run) {
+        return run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
+                + run.principal().principalId();
     }
 
     private ToolResult persistResult(

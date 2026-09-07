@@ -430,17 +430,8 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             io.haifa.agent.runtime.core.interaction.InteractionRequest request,
             io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext caller) {
         if (!request.approval()) return null;
-        if (request.approvalContext().isPresent()) {
-            var verification = approvalVerification.verify(
-                    request.approvalContext().orElseThrow(),
-                    new ApprovalResponder(caller.tenant(), caller.principal()));
-            if (!verification.accepted()) {
-                throw new SecurityException("approval verification failed: " + verification.reasonCode());
-            }
-            return verification;
-        }
         if (request.target() instanceof io.haifa.agent.runtime.core.interaction.ToolApprovalTarget target) {
-            var verification = approvalVerification.verifyLocal(
+            var verification = approvalVerification.verify(
                     new ApprovalRequester(request.tenant(), request.requester()),
                     new ApprovalTargetRef(
                             "tool",
@@ -486,9 +477,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             boolean toolApproval) {
         if (!newlyRecorded) return;
         if (approvalResult != null) {
-            if (request.approvalContext().isPresent()) {
-                interactions.recordApprovalVerification(response.responseId(), approvalResult);
-            }
             var securityAt = time.now();
             appendSecurityEvent(
                     run,

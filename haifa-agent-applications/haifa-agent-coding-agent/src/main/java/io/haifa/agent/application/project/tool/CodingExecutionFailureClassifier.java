@@ -57,7 +57,7 @@ final class CodingExecutionFailureClassifier {
                     permissionEligible ? "NETWORK_PERMISSION_REQUIRED" : "NETWORK_UNAVAILABLE",
                     "NETWORK",
                     permissionEligible
-                            ? "If request_permissions is disclosed, request one exact retry of this Git/GH command; otherwise ask the user to restore network access."
+                            ? "Runtime may create one exact recovery interaction when trusted pre-dispatch evidence is available."
                             : "Check the trusted host network and proxy configuration, then retry if authorized.");
         }
         if (output.contains("permission denied (publickey)")

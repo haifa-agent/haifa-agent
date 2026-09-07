@@ -160,9 +160,9 @@ public final class PersonalExecutionRuntime {
                     provider,
                     profile,
                     runtimes,
-                    (request, responder) -> {
-                        boolean samePrincipal = request.requester().tenant().equals(responder.tenant())
-                                && request.requester().principal().equals(responder.principal());
+                    (requester, target, responder) -> {
+                        boolean samePrincipal = requester.tenant().equals(responder.tenant())
+                                && requester.principal().equals(responder.principal());
                         return new ApprovalVerification(
                                 samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
                     },

@@ -1,6 +1,7 @@
 package io.haifa.agent.application.project.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
 import io.haifa.agent.application.project.product.coding.delivery.RepositoryBaselineUnavailableException;
@@ -45,6 +46,15 @@ import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.api.InteractionRequestId;
+import io.haifa.agent.runtime.api.InteractionResponse;
+import io.haifa.agent.runtime.api.InteractionResponseId;
+import io.haifa.agent.runtime.api.InteractionResponseType;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
+import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
+import io.haifa.agent.runtime.core.interaction.InteractionRequest;
+import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
+import io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
@@ -1259,6 +1269,154 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void raisesTrustedNotDispatchedFailureOnlyForEligibleDirectGitPreflight() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new ExecutionPreflightException(
+                        "NETWORK_DENIED", "network is unavailable before process dispatch", null);
+            }
+        };
+
+        assertThatThrownBy(() -> operations(broker, 1024, 2000)
+                        .execute(invocation(Map.of("command", "git ls-remote origin"), () -> false), access()))
+                .isInstanceOf(io.haifa.agent.tool.api.ToolInvocationException.class)
+                .satisfies(failure -> {
+                    var invocation = (io.haifa.agent.tool.api.ToolInvocationException) failure;
+                    assertThat(invocation.failureCode()).isEqualTo("NETWORK_PERMISSION_REQUIRED");
+                    assertThat(invocation.dispatchState())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
+                });
+    }
+
+    @Test
+    void mapsDirectGitAndGithubAuthenticationPreflightToProductSpecificRecoveryCodes() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new ExecutionPreflightException(
+                        "AUTHENTICATION_UNAVAILABLE", "authentication failed before process dispatch", null);
+            }
+        };
+        ProjectExecutionToolOperations operations = operations(broker, 1024, 2000);
+
+        assertThatThrownBy(() -> operations.execute(
+                        invocation(Map.of("command", "git fetch origin"), () -> false), access()))
+                .isInstanceOf(io.haifa.agent.tool.api.ToolInvocationException.class)
+                .satisfies(failure -> assertThat(
+                                ((io.haifa.agent.tool.api.ToolInvocationException) failure).failureCode())
+                        .isEqualTo("GIT_AUTHENTICATION_UNAVAILABLE"));
+        assertThatThrownBy(() -> operations.execute(
+                        invocation(Map.of("command", "gh repo view"), () -> false), access()))
+                .isInstanceOf(io.haifa.agent.tool.api.ToolInvocationException.class)
+                .satisfies(failure -> assertThat(
+                                ((io.haifa.agent.tool.api.ToolInvocationException) failure).failureCode())
+                        .isEqualTo("GH_AUTHENTICATION_UNAVAILABLE"));
+    }
+
+    @Test
+    void leavesOtherTargetPreflightFailureAsOrdinaryUnsuccessfulResult() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new ExecutionPreflightException(
+                        "NETWORK_DENIED", "network is unavailable before process dispatch", null);
+            }
+        };
+
+        ToolResult result = operations(broker, 1024, 2000)
+                .execute(invocation(Map.of("command", "curl https://example.invalid"), () -> false), access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("stableFailureCode", "NETWORK_UNAVAILABLE");
+    }
+
+    @Test
+    void leavesGenericHostAuthenticationPreflightFailureIneligibleForDirectGitRecovery() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new ExecutionPreflightException(
+                        "HOST_AUTHENTICATION_UNAVAILABLE", "host authentication is unavailable", null);
+            }
+        };
+
+        ToolResult result = operations(broker, 1024, 2000)
+                .execute(invocation(Map.of("command", "git ls-remote origin"), () -> false), access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("stableFailureCode", "HOST_AUTHENTICATION_UNAVAILABLE");
+    }
+
+    @Test
+    void selectsRecoveryProfileOnlyForAppliedExactDeterministicSuccessor() {
+        InMemoryRuntimeStore state = new InMemoryRuntimeStore();
+        InMemoryInteractionPort interactions = new InMemoryInteractionPort();
+        ProjectExecutionToolOperations normal = operations(new StubBroker() {}, 1024, 100);
+        ProjectExecutionToolOperations recovery = operations(new StubBroker() {}, 2048, 200);
+        var selector = new ProjectExecutionRecoverySelector(
+                state, interactions, normal, recovery, deniedExecutionProfile(), executionProfile());
+        ToolInvocationRequest originalInvocation =
+                invocation(Map.of("command", "git ls-remote origin", "timeoutMillis", 30_000L), () -> false);
+        ToolCall source = failedRecoverySource(originalInvocation, "NETWORK_PERMISSION_REQUIRED");
+        state.appendToolCall(source);
+        ToolApprovalTarget target = recoveryTarget(source);
+        applyRecoveryInteraction(interactions, source, target);
+        var keys = ExecutionRecoveryKeys.successor(source.runId(), source.id(), target.argumentsDigest());
+        ToolInvocationRequest successor = invocationWithIdentity(originalInvocation, keys, originalInvocation.arguments());
+
+        assertThat(selector.select(successor)).isSameAs(recovery);
+        assertThat(selector.select(originalInvocation)).isSameAs(normal);
+
+        ToolArguments changed = new ToolArguments(
+                originalInvocation.arguments().schemaId(),
+                originalInvocation.arguments().schemaVersion(),
+                executionArguments(Map.of("command", "git fetch origin", "timeoutMillis", 30_000L)));
+        assertThatThrownBy(() -> selector.select(invocationWithIdentity(originalInvocation, keys, changed)))
+                .isInstanceOf(SecurityException.class);
+    }
+
+    @Test
+    void rejectsForgedOrIneligibleRecoveryCorrelation() {
+        InMemoryRuntimeStore state = new InMemoryRuntimeStore();
+        InMemoryInteractionPort interactions = new InMemoryInteractionPort();
+        ProjectExecutionToolOperations normal = operations(new StubBroker() {}, 1024, 100);
+        ProjectExecutionToolOperations recovery = operations(new StubBroker() {}, 2048, 200);
+        var selector = new ProjectExecutionRecoverySelector(
+                state, interactions, normal, recovery, deniedExecutionProfile(), executionProfile());
+        ToolInvocationRequest base = invocation(Map.of("command", "git clean -fd"), () -> false);
+        ToolCall source = failedRecoverySource(base, "NETWORK_PERMISSION_REQUIRED");
+        state.appendToolCall(source);
+        ToolApprovalTarget target = recoveryTarget(source);
+        applyRecoveryInteraction(interactions, source, target);
+        var keys = ExecutionRecoveryKeys.successor(source.runId(), source.id(), target.argumentsDigest());
+
+        assertThatThrownBy(() -> selector.select(invocationWithIdentity(base, keys, base.arguments())))
+                .isInstanceOf(SecurityException.class);
+
+        var forged = new ExecutionRecoveryKeys.Successor(
+                new ToolCallId("execution-recovery-tool:v1:" + "0".repeat(64)),
+                keys.stepId(),
+                keys.providerCorrelationId(),
+                keys.idempotencyKey());
+        assertThatThrownBy(() -> selector.select(invocationWithIdentity(base, forged, base.arguments())))
+                .isInstanceOf(SecurityException.class);
+
+        InMemoryRuntimeStore genericState = new InMemoryRuntimeStore();
+        InMemoryInteractionPort genericInteractions = new InMemoryInteractionPort();
+        var genericSelector = new ProjectExecutionRecoverySelector(
+                genericState, genericInteractions, normal, recovery, deniedExecutionProfile(), executionProfile());
+        ToolCall genericHostFailure = failedRecoverySource(base, "HOST_AUTHENTICATION_UNAVAILABLE");
+        genericState.appendToolCall(genericHostFailure);
+        ToolApprovalTarget genericTarget = recoveryTarget(genericHostFailure);
+        applyRecoveryInteraction(genericInteractions, genericHostFailure, genericTarget);
+        var genericKeys = ExecutionRecoveryKeys.successor(
+                genericHostFailure.runId(), genericHostFailure.id(), genericTarget.argumentsDigest());
+        assertThatThrownBy(() -> genericSelector.select(invocationWithIdentity(base, genericKeys, base.arguments())))
+                .isInstanceOf(SecurityException.class);
+    }
+
+    @Test
     void preservesStableSandboxFailureCodeAsFailedToolResult() {
         ExecutionBroker broker = new StubBroker() {
             @Override
@@ -1296,241 +1454,6 @@ class ProjectExecutionToolOperationsTest {
         assertThat(result.structuredData()).containsEntry("expectedExitCodes", List.of(0, 1));
         assertThat(result.summary()).contains("Command timed out");
         assertThat(result.structuredData().get("output").toString()).contains("Command timed out");
-    }
-
-    @Test
-    void controlledPermissionRequestRerunsOnlyTheExactEligibleRemoteFailure() {
-        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
-        store.appendToolCall(failedExecutionCall(
-                "prior-tool-call",
-                Map.of(
-                        "command", "git ls-remote origin",
-                        "relativeWorkdir", ".",
-                        "operationFamily", "INSPECT"),
-                "GIT_AUTHENTICATION_UNAVAILABLE"));
-        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
-        ExecutionBroker broker = new StubBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                captured.set(request);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
-            }
-        };
-        var permissionOperations = new ProjectPermissionRequestOperations(
-                store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
-
-        var result = permissionOperations.execute(
-                permissionInvocation(Map.of(
-                        "priorToolCallId",
-                        "prior-tool-call",
-                        "requestedPermission",
-                        ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS,
-                        "justification",
-                        "Read the configured Git remote",
-                        "command",
-                        "git ls-remote origin",
-                        "relativeWorkdir",
-                        ".")),
-                access());
-
-        assertThat(captured.get()).isNotNull();
-        assertThat(captured.get().command().shellCommand()).isEqualTo("git ls-remote origin");
-        assertThat(result.successful()).isTrue();
-        assertThat(result.structuredData())
-                .containsEntry("toolCallId", "permission-tool-call")
-                .containsEntry("priorToolCallId", "prior-tool-call")
-                .containsEntry("requestedPermission", ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS)
-                .containsEntry("permissionEscalated", true)
-                .containsEntry("declaredOperationFamily", "UNKNOWN")
-                .containsEntry("effectiveOperationFamily", "INSPECT");
-    }
-
-    @Test
-    void controlledPermissionRequestCannotInventOrChangeThePriorIntent() {
-        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
-        store.appendToolCall(failedExecutionCall(
-                "prior-tool-call",
-                Map.of("command", "git ls-remote origin", "operationFamily", "INSPECT"),
-                "NETWORK_UNAVAILABLE"));
-        ExecutionBroker broker = new StubBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                throw new AssertionError("an ineligible request must not reach elevated execution");
-            }
-        };
-        var permissionOperations = new ProjectPermissionRequestOperations(
-                store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
-
-        var result = permissionOperations.execute(
-                permissionInvocation(Map.of(
-                        "priorToolCallId",
-                        "prior-tool-call",
-                        "requestedPermission",
-                        ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS,
-                        "justification",
-                        "Change the command",
-                        "command",
-                        "git fetch origin",
-                        "operationFamily",
-                        "MUTATE")),
-                access());
-
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData()).containsEntry("stableFailureCode", "PERMISSION_REQUEST_INTENT_MISMATCH");
-    }
-
-    @Test
-    void controlledPermissionRequestCannotChangeExpectedExitCodes() {
-        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
-        store.appendToolCall(failedExecutionCall(
-                "prior-tool-call",
-                Map.of(
-                        "command", "git ls-remote origin",
-                        "operationFamily", "INSPECT",
-                        "expectedExitCodes", List.of(0, 1)),
-                "NETWORK_UNAVAILABLE"));
-        ExecutionBroker broker = new StubBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                throw new AssertionError("a mismatched permission request must not execute");
-            }
-        };
-        var permissionOperations = new ProjectPermissionRequestOperations(
-                store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
-
-        var result = permissionOperations.execute(
-                permissionInvocation(Map.of(
-                        "priorToolCallId",
-                        "prior-tool-call",
-                        "requestedPermission",
-                        ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS,
-                        "justification",
-                        "Change expected exits",
-                        "command",
-                        "git ls-remote origin",
-                        "operationFamily",
-                        "INSPECT",
-                        "expectedExitCodes",
-                        List.of(0))),
-                access());
-
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData()).containsEntry("stableFailureCode", "PERMISSION_REQUEST_INTENT_MISMATCH");
-    }
-
-    @Test
-    void controlledPermissionRequestRequiresTheExactWorkspaceWorkdirAndTimeout() {
-        Map<String, Object> priorArguments = Map.of(
-                "command",
-                "git ls-remote origin",
-                "workspaceRef",
-                WORKSPACE_ID.value(),
-                "relativeWorkdir",
-                "src",
-                "timeoutMillis",
-                30_000L,
-                "operationFamily",
-                "INSPECT");
-        Map<String, Object> mismatches = Map.of(
-                "workspaceRef", "other-workspace",
-                "relativeWorkdir", "docs",
-                "timeoutMillis", 60_000L);
-
-        for (Map.Entry<String, Object> mismatch : mismatches.entrySet()) {
-            InMemoryRuntimeStore store = new InMemoryRuntimeStore();
-            store.appendToolCall(failedExecutionCall("prior-tool-call", priorArguments, "NETWORK_UNAVAILABLE"));
-            ExecutionBroker broker = new StubBroker() {
-                @Override
-                public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                    throw new AssertionError("a changed " + mismatch.getKey() + " must not execute");
-                }
-            };
-            var permissionOperations = new ProjectPermissionRequestOperations(
-                    store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
-            var requestArguments = new LinkedHashMap<>(priorArguments);
-            requestArguments.put(mismatch.getKey(), mismatch.getValue());
-            requestArguments.put("priorToolCallId", "prior-tool-call");
-            requestArguments.put("requestedPermission", ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS);
-            requestArguments.put("justification", "Retry the exact failed read");
-
-            ToolResult result = permissionOperations.execute(permissionInvocation(requestArguments), access());
-
-            assertThat(result.successful()).as(mismatch.getKey()).isFalse();
-            assertThat(result.structuredData())
-                    .as(mismatch.getKey())
-                    .containsEntry("stableFailureCode", "PERMISSION_REQUEST_INTENT_MISMATCH");
-        }
-    }
-
-    @Test
-    void controlledPermissionRequestCannotReuseAnAlreadyConsumedAttempt() {
-        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
-        store.appendToolCall(failedExecutionCall(
-                "prior-tool-call",
-                Map.of("command", "git ls-remote origin", "operationFamily", "INSPECT"),
-                "NETWORK_UNAVAILABLE"));
-        store.appendToolCall(completedPermissionCall("first-permission-call", "prior-tool-call"));
-        ExecutionBroker broker = new StubBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                throw new AssertionError("a consumed permission attempt must not execute again");
-            }
-        };
-        var permissionOperations = new ProjectPermissionRequestOperations(
-                store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
-
-        var result = permissionOperations.execute(
-                permissionInvocation(Map.of(
-                        "priorToolCallId",
-                        "prior-tool-call",
-                        "requestedPermission",
-                        ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS,
-                        "justification",
-                        "Retry again",
-                        "command",
-                        "git ls-remote origin",
-                        "operationFamily",
-                        "INSPECT")),
-                access());
-
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData()).containsEntry("stableFailureCode", "PERMISSION_REQUEST_ALREADY_USED");
-    }
-
-    @Test
-    void controlledPermissionRequestRejectsNonGitAndDestructiveCommands() {
-        for (String command : List.of("curl https://example.test", "git clean -fd")) {
-            InMemoryRuntimeStore store = new InMemoryRuntimeStore();
-            store.appendToolCall(failedExecutionCall(
-                    "prior-tool-call", Map.of("command", command, "operationFamily", "MUTATE"), "NETWORK_UNAVAILABLE"));
-            ExecutionBroker broker = new StubBroker() {
-                @Override
-                public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                    throw new AssertionError("an ineligible command must not reach elevated execution");
-                }
-            };
-            var permissionOperations = new ProjectPermissionRequestOperations(
-                    store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
-
-            var result = permissionOperations.execute(
-                    permissionInvocation(Map.of(
-                            "priorToolCallId",
-                            "prior-tool-call",
-                            "requestedPermission",
-                            ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS,
-                            "justification",
-                            "Try an ineligible command",
-                            "command",
-                            command,
-                            "operationFamily",
-                            "MUTATE")),
-                    access());
-
-            assertThat(result.successful()).as(command).isFalse();
-            assertThat(result.structuredData())
-                    .as(command)
-                    .containsEntry("stableFailureCode", "PERMISSION_REQUEST_NOT_ELIGIBLE");
-        }
     }
 
     private static ProjectExecutionToolOperations operations(
@@ -1615,82 +1538,84 @@ class ProjectExecutionToolOperationsTest {
                 observer);
     }
 
-    private static ToolInvocationRequest permissionInvocation(Map<String, Object> arguments) {
-        arguments = executionArguments(arguments);
-        var binding = new ProjectToolCatalog()
-                .freeze(
-                        Set.of(ProjectPermissionRequestOperations.TOOL_NAME),
-                        Set.of("execution.run"),
-                        true,
-                        provider(),
-                        List.of(),
-                        List.of(),
-                        List.of(),
-                        deniedExecutionProfile(),
-                        executionProfile(),
-                        CodingToolchainEnvironmentProfile.defaultScratchSpace())
-                .snapshot()
-                .bindings()
-                .getFirst();
-        return new ToolInvocationRequest(
-                binding,
-                new ToolCallId("permission-tool-call"),
-                new AgentRunId("run-1"),
-                new TenantRef("tenant-1"),
-                new PrincipalRef("operator", "user"),
-                new ToolArguments("haifa.execution.request_permissions.input", "1.0.0", arguments),
-                NOW.plusSeconds(30),
-                Optional.of("permission-key"),
-                () -> false,
-                List.of(),
-                ToolInvocationObserver.noop());
-    }
-
-    private static ToolCall failedExecutionCall(
-            String toolCallId, Map<String, Object> arguments, String stableFailureCode) {
-        arguments = executionArguments(arguments);
+    private static ToolCall failedRecoverySource(ToolInvocationRequest invocation, String failureCode) {
         ToolCall call = new ToolCall(
-                new ToolCallId(toolCallId),
-                new AgentRunId("run-1"),
-                new AgentStepId("step-1"),
-                new ProviderToolCallCorrelationId("provider-" + toolCallId),
-                new RuntimeIdempotencyKey("idempotency-" + toolCallId),
-                "execution.run",
-                "1.0.0",
-                new ToolArguments("haifa.execution.run.input", "1.0.0", arguments),
+                new ToolCallId("source-tool-call"),
+                invocation.runId(),
+                new AgentStepId("source-step"),
+                new ProviderToolCallCorrelationId("source-correlation"),
+                new RuntimeIdempotencyKey("source-idempotency"),
+                "execution_run",
+                invocation.binding().definition().version().value(),
+                invocation.arguments(),
                 NOW.minusSeconds(2));
         call.beginValidation();
         call.beginPolicyCheck();
         call.start(NOW.minusSeconds(1));
         call.fail(
                 new ToolExecutionError(new AgentError(
-                        AgentErrorCode.TOOL_BUSINESS_FAILURE,
-                        Map.of("stableFailureCode", stableFailureCode),
-                        "diagnostic-tool-failure",
+                        AgentErrorCode.TOOL_INVOCATION_FAILED,
+                        Map.of(
+                                "failureCode", failureCode,
+                                "dispatchState", "NOT_DISPATCHED"),
+                        "recovery-source-error",
                         NOW)),
                 NOW);
         return call;
     }
 
-    private static ToolCall completedPermissionCall(String toolCallId, String priorToolCallId) {
-        ToolCall call = new ToolCall(
-                new ToolCallId(toolCallId),
-                new AgentRunId("run-1"),
-                new AgentStepId("permission-step-1"),
-                new ProviderToolCallCorrelationId("provider-" + toolCallId),
-                new RuntimeIdempotencyKey("idempotency-" + toolCallId),
-                ProjectPermissionRequestOperations.TOOL_NAME,
-                "1.0.0",
-                new ToolArguments(
-                        "haifa.execution.request_permissions.input",
-                        "1.0.0",
-                        Map.of("priorToolCallId", priorToolCallId)),
-                NOW.minusSeconds(2));
-        call.beginValidation();
-        call.beginPolicyCheck();
-        call.start(NOW.minusSeconds(1));
-        call.complete(new ToolResult(true, "done", Map.of(), List.of(), List.of(), false), NOW);
-        return call;
+    private static ToolApprovalTarget recoveryTarget(ToolCall source) {
+        return new ToolApprovalTarget(
+                source.id(),
+                "haifa-project:execution.run:2.0.0:test",
+                "sha256:" + "1".repeat(64),
+                "sha256:" + "2".repeat(64),
+                "tenant-1:user:operator",
+                "sha256:" + "3".repeat(64));
+    }
+
+    private static void applyRecoveryInteraction(
+            InMemoryInteractionPort interactions, ToolCall source, ToolApprovalTarget target) {
+        InteractionRequestId requestId = ExecutionRecoveryKeys.requestId(source.runId(), source.id());
+        interactions.create(new InteractionRequest(
+                requestId,
+                source.runId(),
+                new TenantRef("tenant-1"),
+                new PrincipalRef("operator", "user"),
+                "execution-recovery",
+                "Approve one exact retry.",
+                true,
+                target,
+                NOW,
+                Optional.empty()));
+        interactions.respond(
+                new InteractionResponse(
+                        new InteractionResponseId("response-1"),
+                        requestId,
+                        source.runId(),
+                        InteractionResponseType.APPROVE,
+                        List.of(),
+                        "response-key",
+                        NOW),
+                new RuntimeCallerContext(new TenantRef("tenant-1"), new PrincipalRef("operator", "user")),
+                NOW);
+        interactions.markResolutionApplied(requestId);
+    }
+
+    private static ToolInvocationRequest invocationWithIdentity(
+            ToolInvocationRequest base, ExecutionRecoveryKeys.Successor keys, ToolArguments arguments) {
+        return new ToolInvocationRequest(
+                base.binding(),
+                keys.toolCallId(),
+                base.runId(),
+                base.tenant(),
+                base.principal(),
+                arguments,
+                base.deadline(),
+                Optional.of(keys.idempotencyKey().value()),
+                base.cancellation(),
+                base.credentialLeases(),
+                base.observer());
     }
 
     private static RunWorkspaceAccess access() {

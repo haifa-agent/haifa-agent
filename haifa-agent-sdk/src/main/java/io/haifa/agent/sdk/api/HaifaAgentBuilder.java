@@ -5,6 +5,17 @@ import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.policy.api.ApprovalMode;
+import io.haifa.agent.policy.api.PolicyChallenge;
+import io.haifa.agent.policy.api.PolicyEffect;
+import io.haifa.agent.policy.api.PolicyRiskLevel;
+import io.haifa.agent.policy.api.PolicyRule;
+import io.haifa.agent.policy.api.PolicyRuleMatcher;
+import io.haifa.agent.policy.api.PolicyRuleRef;
+import io.haifa.agent.policy.api.PolicyRuleSet;
+import io.haifa.agent.policy.api.PolicyRuleSource;
+import io.haifa.agent.policy.api.PolicySideEffect;
+import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedCapability;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
@@ -314,6 +325,8 @@ public final class HaifaAgentBuilder {
             }
             if (policy != null) {
                 runtimeBuilder.policy(policy.rules(), policy.evaluator());
+            } else if (tool != null) {
+                runtimeBuilder.policy(defaultSdkPolicyRules(), new DefaultPolicyDecisionService());
             }
             if (approval != null) {
                 runtimeBuilder.approvalVerification(approval.verification());
@@ -495,6 +508,63 @@ public final class HaifaAgentBuilder {
                     "Capability " + capability.value() + " requires " + expectedType.getSimpleName());
         }
         return expectedType.cast(value);
+    }
+
+    private static PolicyRuleSet defaultSdkPolicyRules() {
+        List<PolicyRule> rules = new ArrayList<>();
+        rules.add(new PolicyRule(
+                new PolicyRuleRef("sdk-critical-risk", "1"),
+                PolicyRuleSource.MANAGED,
+                200,
+                new PolicyRuleMatcher(
+                        java.util.Optional.empty(),
+                        java.util.Optional.empty(),
+                        java.util.Optional.empty(),
+                        java.util.Optional.empty(),
+                        java.util.Optional.empty(),
+                        java.util.Optional.empty(),
+                        java.util.Optional.empty(),
+                        java.util.Optional.of(PolicyRiskLevel.CRITICAL),
+                        Set.of()),
+                PolicyEffect.DENY,
+                java.util.Optional.empty(),
+                "SDK_CRITICAL_RISK_DENY",
+                "Critical operations are denied"));
+        for (PolicySideEffect effect : List.of(
+                PolicySideEffect.FILE_WRITE,
+                PolicySideEffect.PROCESS_EXECUTION,
+                PolicySideEffect.NETWORK_ACCESS,
+                PolicySideEffect.EXTERNAL_SYSTEM_MUTATION,
+                PolicySideEffect.PERMISSION_ELEVATION)) {
+            rules.add(new PolicyRule(
+                    new PolicyRuleRef("sdk-ask-" + effect.name().toLowerCase(java.util.Locale.ROOT), "1"),
+                    PolicyRuleSource.MANAGED,
+                    100,
+                    new PolicyRuleMatcher(
+                            java.util.Optional.empty(),
+                            java.util.Optional.empty(),
+                            java.util.Optional.empty(),
+                            java.util.Optional.empty(),
+                            java.util.Optional.empty(),
+                            java.util.Optional.empty(),
+                            java.util.Optional.empty(),
+                            java.util.Optional.empty(),
+                            Set.of(effect)),
+                    PolicyEffect.ASK,
+                    java.util.Optional.of(PolicyChallenge.APPROVAL),
+                    "SDK_SIDE_EFFECT_APPROVAL_REQUIRED",
+                    "Approval is required"));
+        }
+        PolicyRule defaultRule = new PolicyRule(
+                new PolicyRuleRef("sdk-default", "1"),
+                PolicyRuleSource.MANAGED,
+                0,
+                PolicyRuleMatcher.any(),
+                PolicyEffect.ALLOW,
+                java.util.Optional.empty(),
+                "SDK_DEFAULT_ALLOW",
+                "Allowed by default SDK policy");
+        return PolicyRuleSet.of(rules, java.util.Optional.of(defaultRule), ApprovalMode.ASK);
     }
 
     private static void closeAfterFailedBuild(

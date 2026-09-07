@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import java.util.Optional;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class PolicyContractTest {
@@ -23,85 +22,6 @@ class PolicyContractTest {
         assertThat(decision(PolicyEffect.ASK, Optional.of(PolicyChallenge.REAUTHENTICATE))
                         .challenge())
                 .contains(PolicyChallenge.REAUTHENTICATE);
-    }
-
-    @Test
-    void businessAuthorizationOnlyAllowsOnceAndRequiresAuthority() {
-        assertThatThrownBy(() -> approval(
-                        ApprovalSemantics.BUSINESS_AUTHORIZATION,
-                        Set.of(ApprovalReuseScope.SESSION),
-                        Optional.of(new ApprovalAuthorityRequirementRef("enterprise", "manager", "1"))))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> approval(
-                        ApprovalSemantics.BUSINESS_AUTHORIZATION, Set.of(ApprovalReuseScope.ONCE), Optional.empty()))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThat(approval(
-                                ApprovalSemantics.BUSINESS_AUTHORIZATION,
-                                Set.of(ApprovalReuseScope.ONCE),
-                                Optional.of(new ApprovalAuthorityRequirementRef("enterprise", "manager", "1")))
-                        .allowedReuseScopes())
-                .containsExactly(ApprovalReuseScope.ONCE);
-    }
-
-    @Test
-    void businessAuthorizationCannotBecomeAGrant() {
-        assertThatThrownBy(() -> grant(
-                        ApprovalSemantics.BUSINESS_AUTHORIZATION,
-                        ApprovalReuseScope.ONCE,
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("business authorization");
-    }
-
-    @Test
-    void capabilityConfirmationMayWaitWithoutExpiryButBusinessAuthorizationMayNot() {
-        ApprovalRequestContext capability = new ApprovalRequestContext(
-                new PolicyDecisionId("decision"),
-                ApprovalSemantics.CAPABILITY_CONFIRMATION,
-                Set.of(ApprovalReuseScope.ONCE),
-                new ApprovalRequester(TENANT, PRINCIPAL),
-                target(),
-                Optional.empty(),
-                NOW,
-                Optional.empty(),
-                Optional.empty());
-
-        assertThat(capability.expiresAt()).isEmpty();
-        assertThatThrownBy(() -> new ApprovalRequestContext(
-                        new PolicyDecisionId("decision"),
-                        ApprovalSemantics.BUSINESS_AUTHORIZATION,
-                        Set.of(ApprovalReuseScope.ONCE),
-                        new ApprovalRequester(TENANT, PRINCIPAL),
-                        target(),
-                        Optional.of(new ApprovalAuthorityRequirementRef("enterprise", "manager", "1")),
-                        NOW,
-                        Optional.empty(),
-                        Optional.empty()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("requires an expiry");
-    }
-
-    @Test
-    void scopedGrantsRequireTheirScopeIdentity() {
-        assertThatThrownBy(() -> grant(
-                        ApprovalSemantics.CAPABILITY_CONFIRMATION,
-                        ApprovalReuseScope.SESSION,
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty()))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> grant(
-                        ApprovalSemantics.CAPABILITY_CONFIRMATION,
-                        ApprovalReuseScope.PROJECT,
-                        Optional.empty(),
-                        Optional.of("project"),
-                        Optional.empty(),
-                        Optional.empty()))
-                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -181,51 +101,6 @@ class PolicyContractTest {
 
     private static PolicyDecision decision(PolicyEffect effect, Optional<PolicyChallenge> challenge) {
         return new PolicyDecision(effect, challenge, "REASON", "Safe explanation", "sha256:requirement");
-    }
-
-    private static ApprovalRequestContext approval(
-            ApprovalSemantics semantics,
-            Set<ApprovalReuseScope> scopes,
-            Optional<ApprovalAuthorityRequirementRef> authority) {
-        return new ApprovalRequestContext(
-                new PolicyDecisionId("decision"),
-                semantics,
-                scopes,
-                new ApprovalRequester(TENANT, PRINCIPAL),
-                target(),
-                authority,
-                NOW,
-                NOW.plusSeconds(60),
-                Optional.empty());
-    }
-
-    private static ApprovalGrant grant(
-            ApprovalSemantics semantics,
-            ApprovalReuseScope scope,
-            Optional<String> sessionRef,
-            Optional<String> projectRef,
-            Optional<ProjectTrustRef> trustRef,
-            Optional<String> configurationDigest) {
-        return new ApprovalGrant(
-                new ApprovalGrantId("grant"),
-                semantics,
-                scope,
-                new PolicySubject(TENANT, PRINCIPAL, "coding"),
-                new PolicyAction("workspace.file", "write"),
-                target(),
-                sessionRef,
-                projectRef,
-                trustRef,
-                configurationDigest,
-                new PolicyDecisionId("decision"),
-                "approval-request",
-                new ApprovalResponder(TENANT, PRINCIPAL),
-                NOW,
-                Optional.of(NOW.plusSeconds(60)),
-                ApprovalGrantState.ACTIVE,
-                Optional.empty(),
-                Optional.empty(),
-                0);
     }
 
     private static ApprovalTargetRef target() {
