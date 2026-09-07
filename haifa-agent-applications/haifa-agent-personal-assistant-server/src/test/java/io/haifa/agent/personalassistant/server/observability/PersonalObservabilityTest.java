@@ -104,6 +104,39 @@ class PersonalObservabilityTest {
     }
 
     @Test
+    void modelLogsPaymentRequiredFailureWithoutSensitivePayloads() {
+        LogCapture capture = attach(LoggingAgentChatModel.class);
+        AgentChatRequest request = request();
+
+        try {
+            assertThatThrownBy(() -> new LoggingAgentChatModel(ignored -> {
+                                throw new ModelInvocationException(
+                                        ModelErrorCategory.PAYMENT_REQUIRED,
+                                        false,
+                                        402,
+                                        "insufficient_quota",
+                                        request.callId(),
+                                        "请检查 Provider 账户余额、套餐、模型授权或账单状态后重试",
+                                        null);
+                            })
+                            .invoke(request))
+                    .isInstanceOf(ModelInvocationException.class);
+
+            assertThat(formatted(capture))
+                    .contains(
+                            "event=model.call.failed",
+                            "category=PAYMENT_REQUIRED",
+                            "retryable=false",
+                            "httpStatus=402",
+                            "providerCode=insufficient_quota",
+                            "safeMessage=请检查 Provider 账户余额、套餐、模型授权或账单状态后重试")
+                    .doesNotContain(SECRET_PROMPT, SECRET_FAILURE);
+        } finally {
+            detach(capture);
+        }
+    }
+
+    @Test
     void modelLogsMediaSourceCountsWithoutImagePayloadsOrUrls() {
         LogCapture capture = attach(LoggingAgentChatModel.class);
         AgentChatResponse response = new AgentChatResponse(

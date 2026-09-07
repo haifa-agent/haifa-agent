@@ -340,6 +340,11 @@ public final class FrozenModelInvoker {
             data.put("retryable", failure.retryable());
             data.put("outputObserved", failure.outputObserved());
             data.put("retryAfterMillis", failure.retryAfterMillis().orElse(0L));
+            if (failure.httpStatus() > 0) {
+                data.put("httpStatus", failure.httpStatus());
+            }
+            data.put("retryDecision", failure.retryDecision());
+            failure.providerRequestId().ifPresent(id -> data.put("providerRequestId", id));
         }
         events.append(run.id(), type, data, time.now());
     }

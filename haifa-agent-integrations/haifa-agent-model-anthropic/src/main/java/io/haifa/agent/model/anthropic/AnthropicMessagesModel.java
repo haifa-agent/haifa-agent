@@ -86,6 +86,13 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         HttpRequest httpRequest = request(request, dialect, credential, false);
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() == 402) {
+                byte[] safeBody;
+                try (InputStream stream = response.body()) {
+                    safeBody = stream.readNBytes(Math.min(maxResponseBytes, 64 * 1024));
+                }
+                throw httpFailure(request, dialect, response.statusCode(), response.headers(), safeBody);
+            }
             byte[] body;
             try {
                 body = readBounded(response.body(), maxResponseBytes);
@@ -1064,7 +1071,8 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                 mapping.safeMessage(),
                 null,
                 mapping.retryAfter().orElse(null),
-                false);
+                false,
+                mapping.providerRequestId().orElse(null));
     }
 
     private static ModelInvocationException malformed(AgentChatRequest request, String message) {
@@ -1100,8 +1108,32 @@ public final class AnthropicMessagesModel implements AgentChatModel {
             Throwable cause,
             Duration retryAfter,
             boolean outputObserved) {
+        return failure(
+                request, category, retryable, status, code, safeMessage, cause, retryAfter, outputObserved, null);
+    }
+
+    private static ModelInvocationException failure(
+            AgentChatRequest request,
+            ModelErrorCategory category,
+            boolean retryable,
+            int status,
+            String code,
+            String safeMessage,
+            Throwable cause,
+            Duration retryAfter,
+            boolean outputObserved,
+            String providerRequestId) {
         return new ModelInvocationException(
-                category, retryable, status, code, request.callId(), safeMessage, cause, retryAfter, outputObserved);
+                category,
+                retryable,
+                status,
+                code,
+                request.callId(),
+                safeMessage,
+                cause,
+                retryAfter,
+                outputObserved,
+                providerRequestId);
     }
 
     private enum BlockType {

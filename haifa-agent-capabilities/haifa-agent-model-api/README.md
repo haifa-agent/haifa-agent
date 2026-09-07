@@ -33,6 +33,14 @@ must not treat the transport object itself as successful task completion.
 failures separately and may attach a typed `retryAfter` plus `outputObserved`; they never decide the Runtime retry
 count or switch the frozen provider/model binding.
 
+## HTTP 错误分类与安全归一化
+
+`ModelHttpErrorClassifier` 提供跨 Provider Adapter 的统一 HTTP 非 2xx 响应分类与安全归一化：
+- HTTP 402 专项：归一化为 `PAYMENT_REQUIRED`，不可重试（`retryable=false`），忽略 `Retry-After`，安全提示固定为“请检查 Provider 账户余额、套餐、模型授权或账单状态后重试”。
+- 确定性 4xx（400/422, 401, 403, 404, 413 及未识别 4xx）默认不可重试。
+- 瞬时状态码（408, 429, 5xx）可重试，支持解析有效 `Retry-After`。
+- 采用零依赖纯 Java 内存安全 JSON 状态机解析 Provider 返回体（严格限制深度与大小），兜底降级到 `http_<status>`，严格脱敏 Authorization/Bearer 凭据。
+
 纯 Java、供应商无关的模型能力契约。
 
 本模块定义：

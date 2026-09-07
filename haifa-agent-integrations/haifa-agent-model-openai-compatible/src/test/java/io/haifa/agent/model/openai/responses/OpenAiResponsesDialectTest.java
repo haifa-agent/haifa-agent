@@ -55,6 +55,13 @@ class OpenAiResponsesDialectTest {
         assertThat(mapping.category()).isEqualTo(ModelErrorCategory.RATE_LIMITED);
         assertThat(mapping.retryable()).isTrue();
         assertThat(mapping.retryAfter()).contains(Duration.ofSeconds(10));
+
+        HttpHeaders headers402 = HttpHeaders.of(Map.of("Retry-After", List.of("120")), (k, v) -> true);
+        DialectErrorMapping mapping402 = dialect.classifyError(402, headers402, new byte[0], null);
+        assertThat(mapping402.category()).isEqualTo(ModelErrorCategory.PAYMENT_REQUIRED);
+        assertThat(mapping402.retryable()).isFalse();
+        assertThat(mapping402.retryAfter()).isEmpty();
+        assertThat(mapping402.safeMessage()).isEqualTo("请检查 Provider 账户余额、套餐、模型授权或账单状态后重试");
     }
 
     @Test

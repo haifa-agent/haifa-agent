@@ -816,6 +816,22 @@ class OpenAiCompatibleChatModelTest {
         assertThat(provider.status()).isEqualTo(ProviderStatus.ACTIVE);
     }
 
+    @Test
+    void classifiesOversized402ResponseAsPaymentRequired() {
+        String huge402Body = "<html><body>" + "A".repeat(5000) + "</body></html>";
+        response.set(new Response(402, "text/html", huge402Body));
+
+        assertThatThrownBy(() -> model(100).invoke(simpleRequest()))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException invocation = (ModelInvocationException) error;
+                    assertThat(invocation.category()).isEqualTo(ModelErrorCategory.PAYMENT_REQUIRED);
+                    assertThat(invocation.httpStatus()).isEqualTo(402);
+                    assertThat(invocation.retryable()).isFalse();
+                    assertThat(invocation.getMessage()).isEqualTo("请检查 Provider 账户余额、套餐、模型授权或账单状态后重试");
+                });
+    }
+
     private void assertMalformed() {
         assertThatThrownBy(() -> model().invoke(simpleRequest()))
                 .isInstanceOf(ModelInvocationException.class)
