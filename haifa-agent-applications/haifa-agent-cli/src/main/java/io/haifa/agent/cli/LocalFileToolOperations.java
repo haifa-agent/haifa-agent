@@ -5,9 +5,13 @@ import io.haifa.agent.application.project.product.coding.delivery.RepositoryRunC
 import io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry;
 import io.haifa.agent.application.project.tool.ProjectToolCallContext;
 import io.haifa.agent.application.project.tool.ProjectToolOperations;
+import io.haifa.agent.application.project.workspace.WorkspaceAccess;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.project.core.patch.ApplyPatchParser;
@@ -78,29 +82,9 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private final AuthorizedWorkspaceProvisioning provisioning;
     private final RunRepositoryBaselineRegistry repositoryBaselines;
     private final boolean workspaceAttachmentDisclosed;
-
-    LocalFileToolOperations(
-            WorkspaceStore workspaces,
-            HostWorkspaceFileService files,
-            WorkspaceMutationProvider mutations,
-            IdentifierGenerator identifiers,
-            TimeProvider time,
-            AuthorizedWorkspaceProvisioning provisioning,
-            SessionChangeLedger ledger) {
-        this(workspaces, files, mutations, identifiers, time, provisioning, ledger, null, false);
-    }
-
-    LocalFileToolOperations(
-            WorkspaceStore workspaces,
-            HostWorkspaceFileService files,
-            WorkspaceMutationProvider mutations,
-            IdentifierGenerator identifiers,
-            TimeProvider time,
-            AuthorizedWorkspaceProvisioning provisioning,
-            SessionChangeLedger ledger,
-            RunRepositoryBaselineRegistry repositoryBaselines) {
-        this(workspaces, files, mutations, identifiers, time, provisioning, ledger, repositoryBaselines, false);
-    }
+    private final WorkspaceAccessStore workspaceAccess;
+    private final TenantRef tenant;
+    private final PrincipalRef principal;
 
     LocalFileToolOperations(
             WorkspaceStore workspaces,
@@ -111,7 +95,10 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             AuthorizedWorkspaceProvisioning provisioning,
             SessionChangeLedger ledger,
             RunRepositoryBaselineRegistry repositoryBaselines,
-            boolean workspaceAttachmentDisclosed) {
+            boolean workspaceAttachmentDisclosed,
+            WorkspaceAccessStore workspaceAccess,
+            TenantRef tenant,
+            PrincipalRef principal) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.files = Objects.requireNonNull(files, "files must not be null");
         this.mutations = Objects.requireNonNull(mutations, "mutations must not be null");
@@ -122,6 +109,9 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         this.ledger = ledger;
         this.repositoryBaselines = repositoryBaselines;
         this.workspaceAttachmentDisclosed = workspaceAttachmentDisclosed;
+        this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
+        this.tenant = Objects.requireNonNull(tenant, "tenant must not be null");
+        this.principal = Objects.requireNonNull(principal, "principal must not be null");
     }
 
     HostWorkspaceScope currentScope() {
@@ -225,6 +215,19 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                             "failureCategory", "LOCAL_ENVIRONMENT_UNAVAILABLE",
                             "failureActionCode", "CHECK_GIT_AVAILABILITY",
                             "retryable", false));
+        } catch (SecurityException exception) {
+            boolean insufficientMode = "WORKSPACE_ACCESS_MODE_DENIED".equals(exception.getMessage());
+            return failure(
+                    insufficientMode
+                            ? "Workspace access is read-only for this operation"
+                            : "Workspace access is unavailable for the current owner",
+                    Map.of(
+                            "errorCode", insufficientMode ? "PERMISSION_DENIED" : "ACCESS_DENIED",
+                            "stableFailureCode",
+                                    insufficientMode ? "WORKSPACE_ACCESS_MODE_DENIED" : "WORKSPACE_ACCESS_UNAVAILABLE",
+                            "failureCategory", "POLICY_DENIED",
+                            "failureActionCode", insufficientMode ? "REQUEST_WRITE_PERMISSION" : "READ_CURRENT_STATE",
+                            "retryable", false));
         } catch (IllegalArgumentException exception) {
             return failure(
                     "Workspace file arguments are invalid",
@@ -251,7 +254,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private ToolResult list(Map<String, Object> values) {
         String pathStr = string(values, "path");
-        ResolvedTarget target = resolveTarget(pathStr, HostDirectoryPermission.READ_ONLY);
+        ResolvedTarget target = resolveTarget(pathStr, WorkspaceAccessMode.READ);
         TargetListing listing = listEntries(target);
         return success(
                 "Listed " + listing.entries().size() + " workspace entries",
@@ -260,7 +263,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private ToolResult stat(Map<String, Object> values) {
         String pathStr = string(values, "path");
-        ResolvedTarget target = resolveTarget(pathStr, HostDirectoryPermission.READ_ONLY);
+        ResolvedTarget target = resolveTarget(pathStr, WorkspaceAccessMode.READ);
         TargetMetadata metadata = inspectExisting(target);
         return success(
                 "Inspected " + target.displayPath(),
@@ -273,7 +276,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private ToolResult read(Map<String, Object> values) {
         String pathStr = string(values, "path");
-        ResolvedTarget target = resolveTarget(pathStr, HostDirectoryPermission.READ_ONLY);
+        ResolvedTarget target = resolveTarget(pathStr, WorkspaceAccessMode.READ);
         String pathText = target.displayPath();
         ReadCursor cursor = decodeCursor(optionalString(values, "cursor"), pathText);
         int maxBytes = boundedInteger(values, "maxBytes", DEFAULT_READ_BYTES, MAX_READ_BYTES);
@@ -309,7 +312,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private ToolResult search(Map<String, Object> values) {
         String query = string(values, "query");
         String pathStr = string(values, "path");
-        ResolvedTarget target = resolveTarget(pathStr, HostDirectoryPermission.READ_ONLY);
+        ResolvedTarget target = resolveTarget(pathStr, WorkspaceAccessMode.READ);
         List<Map<String, Object>> results = searchEntries(target, query, integer(values, "maxResults", 100));
         return success("Found " + results.size() + " matches", Map.of("results", results));
     }
@@ -317,7 +320,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private ToolResult create(
             RepositoryRunContext reviewContext, MutationContext mutationContext, Map<String, Object> values) {
         String pathStr = string(values, "path");
-        ResolvedTarget target = resolveTarget(pathStr, HostDirectoryPermission.READ_WRITE);
+        ResolvedTarget target = resolveTarget(pathStr, WorkspaceAccessMode.DEVELOP);
         prepareBaseline(reviewContext, target);
         byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
         ensureAbsent(target);
@@ -329,7 +332,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private ToolResult write(
             RepositoryRunContext reviewContext, MutationContext mutationContext, Map<String, Object> values) {
         String pathStr = string(values, "path");
-        ResolvedTarget target = resolveTarget(pathStr, HostDirectoryPermission.READ_WRITE);
+        ResolvedTarget target = resolveTarget(pathStr, WorkspaceAccessMode.DEVELOP);
         prepareBaseline(reviewContext, target);
         byte[] bytes = string(values, "content").getBytes(StandardCharsets.UTF_8);
 
@@ -350,7 +353,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private ToolResult delete(
             RepositoryRunContext reviewContext, MutationContext mutationContext, Map<String, Object> values) {
         String pathStr = string(values, "path");
-        ResolvedTarget target = resolveTarget(pathStr, HostDirectoryPermission.READ_WRITE);
+        ResolvedTarget target = resolveTarget(pathStr, WorkspaceAccessMode.DEVELOP);
         prepareBaseline(reviewContext, target);
         if (target.workspacePath().projectPath().isRoot()) {
             throw new WorkspaceMutationException(
@@ -372,8 +375,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             RepositoryRunContext reviewContext, MutationContext mutationContext, Map<String, Object> values) {
         String srcStr = string(values, "source");
         String dstStr = string(values, "destination");
-        ResolvedTarget srcTarget = resolveTarget(srcStr, HostDirectoryPermission.READ_WRITE);
-        ResolvedTarget dstTarget = resolveTarget(dstStr, HostDirectoryPermission.READ_WRITE);
+        ResolvedTarget srcTarget = resolveTarget(srcStr, WorkspaceAccessMode.DEVELOP);
+        ResolvedTarget dstTarget = resolveTarget(dstStr, WorkspaceAccessMode.DEVELOP);
         prepareBaseline(reviewContext, srcTarget);
         prepareBaseline(reviewContext, dstTarget);
         if (!srcTarget
@@ -481,6 +484,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private void validateScopeUnchanged(ResolvedTarget target) {
         if (target == null || target.scope() == null) return;
+        workspaceAccess.require(tenant, principal, target.workspacePath().workspaceId(), target.requiredMode());
         provisioning.requireUnchanged(target.scope());
     }
 
@@ -590,7 +594,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
             if (prefix != null) {
                 String rawPath = line.substring(prefix.length()).trim();
-                ResolvedTarget target = resolveTarget(rawPath, HostDirectoryPermission.READ_WRITE);
+                ResolvedTarget target = resolveTarget(rawPath, WorkspaceAccessMode.DEVELOP);
                 prepareBaseline(reviewContext, target);
                 WorkspaceId targetWorkspace = target.workspacePath().workspaceId();
                 if (patchWorkspace != null && !patchWorkspace.equals(targetWorkspace)) {
@@ -821,7 +825,15 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             if (Files.isSymbolicLink(realPath)) {
                 throw new IllegalArgumentException("workspace.attach path must not be a symbolic link");
             }
-            var result = provisioning.authorizeApprovedAttach(realPath, permission, policyDecisionRef);
+            var result = provisioning.authorizeApprovedAttach(
+                    realPath, HostDirectoryPermission.READ_WRITE, policyDecisionRef);
+            workspaceAccess.replace(new WorkspaceAccess(
+                    tenant,
+                    principal,
+                    result.directory().workspaceId(),
+                    permission == HostDirectoryPermission.READ_ONLY
+                            ? WorkspaceAccessMode.READ
+                            : WorkspaceAccessMode.DEVELOP));
             var view = result.registryView();
             return success(
                     "Authorized workspace " + view.safeDisplayName() + " as " + permission.name(),
@@ -841,7 +853,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             WorkspacePath workspacePath,
             String displayPath,
             HostWorkspaceScope scope,
-            ResolvedAuthorizedPath resolved) {}
+            ResolvedAuthorizedPath resolved,
+            WorkspaceAccessMode requiredMode) {}
 
     private record PatchPlanItem(
             FilePatch file, ResolvedTarget target, byte[] content, String beforeHash, long beforeSize) {}
@@ -854,19 +867,18 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private record TargetListing(List<Map<String, Object>> entries, boolean truncated) {}
 
-    private ResolvedTarget resolveTarget(String pathInput, HostDirectoryPermission requiredPermission) {
+    private ResolvedTarget resolveTarget(String pathInput, WorkspaceAccessMode requiredMode) {
         String safeInput = (pathInput == null || pathInput.isBlank()) ? "" : pathInput.trim();
         HostWorkspaceScope scope = currentScope();
         ResolvedAuthorizedPath resolved = scope.resolve(safeInput);
-        if (requiredPermission == HostDirectoryPermission.READ_WRITE) {
-            scope.requireWritable(resolved.directory());
-        }
+        workspaceAccess.require(tenant, principal, resolved.directory().workspaceId(), requiredMode);
         return new ResolvedTarget(
                 resolved.directory().realPath(),
                 resolved.workspacePath(),
                 resolved.hostPath().toString(),
                 scope,
-                resolved);
+                resolved,
+                requiredMode);
     }
 
     private void prepareBaseline(RepositoryRunContext context, ResolvedTarget target) {

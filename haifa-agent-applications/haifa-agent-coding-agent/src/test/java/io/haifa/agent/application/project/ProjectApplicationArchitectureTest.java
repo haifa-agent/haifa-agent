@@ -1,10 +1,12 @@
 package io.haifa.agent.application.project;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import io.haifa.agent.application.project.product.ProjectProductService;
+import io.haifa.agent.application.project.workspace.WorkspaceAccess;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.core.DefaultModelParameterResolver;
 import io.haifa.agent.project.workspace.WorkspaceId;
@@ -84,6 +86,32 @@ class ProjectApplicationArchitectureTest {
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage("io.haifa.agent.personalassistant..")
+                .check(classes);
+    }
+
+    @Test
+    void workspaceAccessRemainsACodingOwnedMinimalRelation() {
+        assertThat(Arrays.stream(WorkspaceAccess.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList())
+                .containsExactly("tenant", "principal", "workspaceId", "mode");
+        assertThat(Arrays.stream(WorkspaceAccess.class.getRecordComponents())
+                        .map(component -> component.getType().getSimpleName())
+                        .toList())
+                .containsExactly("TenantRef", "PrincipalRef", "WorkspaceId", "WorkspaceAccessMode");
+
+        var classes = new ClassFileImporter()
+                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("io.haifa.agent.application.project.workspace");
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(
+                        "io.haifa.agent.runtime..",
+                        "io.haifa.agent.policy..",
+                        "io.haifa.agent.execution..",
+                        "io.haifa.agent.sandbox..",
+                        "io.haifa.agent.personalassistant..")
                 .check(classes);
     }
 

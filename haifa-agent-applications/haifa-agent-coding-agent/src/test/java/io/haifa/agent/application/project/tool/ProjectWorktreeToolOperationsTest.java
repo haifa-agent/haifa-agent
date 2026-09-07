@@ -1,7 +1,11 @@
 package io.haifa.agent.application.project.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.workspace.InMemoryWorkspaceAccessStore;
+import io.haifa.agent.application.project.workspace.WorkspaceAccess;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -140,8 +144,12 @@ class ProjectWorktreeToolOperationsTest {
         AtomicReference<GitWorktreeRequest> captured = new AtomicReference<>();
         AtomicInteger dispatched = new AtomicInteger();
         AtomicInteger acknowledged = new AtomicInteger();
+        var workspaceAccess = new InMemoryWorkspaceAccessStore();
+        workspaceAccess.replace(new WorkspaceAccess(
+                new TenantRef("tenant"), OWNER, initialWorkspace.id(), WorkspaceAccessMode.DEVELOP));
         GitWorktreeIsolationProvider provider = provider(captured, new AtomicBoolean());
-        var operations = new ProjectWorktreeToolOperations(provider, provisioning, () -> "identity-seed");
+        var operations =
+                new ProjectWorktreeToolOperations(provider, provisioning, () -> "identity-seed", workspaceAccess);
 
         ToolResult result = operations.execute(
                 invocation(Optional.of("policy-worktree"), new ToolInvocationObserver() {
@@ -170,6 +178,9 @@ class ProjectWorktreeToolOperationsTest {
                 new WorkspaceId(result.structuredData().get("workspaceRef").toString());
         assertThat(provisioning.scope().resolveExecutionDirectory(child, ".").workspaceId())
                 .isEqualTo(child);
+        assertThat(workspaceAccess.find(new TenantRef("tenant"), OWNER, child))
+                .get()
+                .satisfies(access -> assertThat(access.mode()).isEqualTo(WorkspaceAccessMode.DEVELOP));
         assertThat(captured.get().branchName()).isEqualTo("feat/controlled-worktree");
         assertThat(captured.get().baseCommit()).isEqualTo("0123456789abcdef");
         assertThat(dispatched).hasValue(1);
@@ -179,8 +190,11 @@ class ProjectWorktreeToolOperationsTest {
     @Test
     void removesProviderWorktreeWhenApprovalEvidenceIsUnavailableAfterCreation() {
         AtomicBoolean released = new AtomicBoolean();
+        var workspaceAccess = new InMemoryWorkspaceAccessStore();
+        workspaceAccess.replace(new WorkspaceAccess(
+                new TenantRef("tenant"), OWNER, initialWorkspace.id(), WorkspaceAccessMode.DEVELOP));
         var operations = new ProjectWorktreeToolOperations(
-                provider(new AtomicReference<>(), released), provisioning, () -> "identity-seed");
+                provider(new AtomicReference<>(), released), provisioning, () -> "identity-seed", workspaceAccess);
 
         ToolResult result = operations.execute(invocation(Optional.empty(), ToolInvocationObserver.noop()), access());
 
@@ -189,7 +203,38 @@ class ProjectWorktreeToolOperationsTest {
                 .containsEntry("stableFailureCode", "WORKTREE_CREATE_FAILED")
                 .containsEntry("retryable", false);
         assertThat(released).isTrue();
+        assertThat(workspaceAccess.list(new TenantRef("tenant"), OWNER))
+                .containsExactly(new WorkspaceAccess(
+                        new TenantRef("tenant"), OWNER, initialWorkspace.id(), WorkspaceAccessMode.DEVELOP));
         assertThat(provisioning.scope().allowedDirectories()).hasSize(1);
+    }
+
+    @Test
+    void missingParentDevelopAccessRejectsWorktreeCreationBeforeProviderDispatch() {
+        AtomicReference<GitWorktreeRequest> captured = new AtomicReference<>();
+        var operations = new ProjectWorktreeToolOperations(
+                provider(captured, new AtomicBoolean()),
+                provisioning,
+                () -> "identity-seed",
+                new InMemoryWorkspaceAccessStore());
+
+        assertThatThrownBy(() -> operations.execute(
+                        invocation(Optional.of("policy-worktree"), ToolInvocationObserver.noop()), access()))
+                .isInstanceOf(SecurityException.class)
+                .hasMessage("WORKSPACE_ACCESS_UNAVAILABLE");
+        assertThat(captured.get()).isNull();
+        assertThat(provisioning.scope().allowedDirectories()).hasSize(1);
+    }
+
+    @Test
+    void constructionRejectsMissingWorkspaceAccessAuthority() {
+        assertThatThrownBy(() -> new ProjectWorktreeToolOperations(
+                        provider(new AtomicReference<>(), new AtomicBoolean()),
+                        provisioning,
+                        () -> "identity-seed",
+                        null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("workspaceAccess must not be null");
     }
 
     private GitWorktreeIsolationProvider provider(

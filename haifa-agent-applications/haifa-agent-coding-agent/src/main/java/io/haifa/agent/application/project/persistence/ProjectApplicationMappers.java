@@ -15,11 +15,17 @@ final class ProjectApplicationMappers {
             "/io/haifa/agent/application/project/persistence/ProjectProductSessionMapper.xml";
     private static final String WORKSPACE_REGISTRY_MAPPER =
             "/io/haifa/agent/application/project/persistence/CodingWorkspaceRegistryMapper.xml";
+    private static final String WORKSPACE_ACCESS_MAPPER =
+            "/io/haifa/agent/application/project/persistence/CodingWorkspaceAccessMapper.xml";
 
     private ProjectApplicationMappers() {}
 
     static List<MapperXml> all() {
-        return List.of(read(PRODUCT_SESSION_MAPPER), read(CODING_SESSION_MAPPER), read(WORKSPACE_REGISTRY_MAPPER));
+        return List.of(
+                read(PRODUCT_SESSION_MAPPER),
+                read(CODING_SESSION_MAPPER),
+                read(WORKSPACE_REGISTRY_MAPPER),
+                read(WORKSPACE_ACCESS_MAPPER));
     }
 
     private static MapperXml read(String resource) {
