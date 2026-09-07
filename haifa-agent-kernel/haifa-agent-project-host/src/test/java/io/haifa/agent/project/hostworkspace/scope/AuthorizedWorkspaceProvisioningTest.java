@@ -360,7 +360,7 @@ class AuthorizedWorkspaceProvisioningTest {
     }
 
     @Test
-    void fingerprintDriftDisablesAttachedDirectoryDuringRecovery() throws IOException {
+    void fingerprintDriftAtTheSameSafePathRefreshesTheMountWithoutRevokingAccess() throws IOException {
         ProvisioningResult result = provisioning.authorizeApprovedAttach(
                 additionalRoot, HostDirectoryPermission.READ_WRITE, "policy-decision-drift");
         var persisted =
@@ -384,17 +384,20 @@ class AuthorizedWorkspaceProvisioningTest {
                 registry,
                 "workspace-test");
 
-        assertThat(reopened.scope().allowedDirectories()).hasSize(1);
+        assertThat(reopened.scope().allowedDirectories())
+                .extracting(AuthorizedHostDirectory::workspaceId)
+                .contains(result.directory().workspaceId());
         assertThat(registry.find(projectId, result.directory().workspaceId()))
                 .get()
                 .satisfies(entry -> {
-                    assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.DISABLED);
-                    assertThat(entry.revocationReasonCode()).contains("REGISTRY_REVALIDATION_FAILED");
+                    assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.ACTIVE);
+                    assertThat(entry.fingerprint())
+                            .isEqualTo(HostWorkspaceLocationStore.fingerprintFor(additionalRoot.toRealPath()));
                 });
     }
 
     @Test
-    void replacementDirectoryAtTheSamePathIsDisabledDuringRecovery() throws IOException {
+    void replacementDirectoryAtTheSameSafePathNaturallyInheritsAccessDuringRecovery() throws IOException {
         ProvisioningResult result = provisioning.authorizeApprovedAttach(
                 additionalRoot, HostDirectoryPermission.READ_WRITE, "policy-decision-replacement");
         HostDirectoryIdentity approvedIdentity = HostDirectoryIdentity.resolve(additionalRoot.toRealPath());
@@ -420,12 +423,14 @@ class AuthorizedWorkspaceProvisioningTest {
                 registry,
                 "workspace-test");
 
-        assertThat(reopened.scope().allowedDirectories()).hasSize(1);
+        assertThat(reopened.scope().allowedDirectories())
+                .extracting(AuthorizedHostDirectory::workspaceId)
+                .contains(result.directory().workspaceId());
         assertThat(registry.find(projectId, result.directory().workspaceId()))
                 .get()
                 .satisfies(entry -> {
-                    assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.DISABLED);
-                    assertThat(entry.revocationReasonCode()).contains("REGISTRY_REVALIDATION_FAILED");
+                    assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.ACTIVE);
+                    assertThat(entry.fingerprint()).isEqualTo(replacementIdentity.physicalFingerprint());
                 });
     }
 

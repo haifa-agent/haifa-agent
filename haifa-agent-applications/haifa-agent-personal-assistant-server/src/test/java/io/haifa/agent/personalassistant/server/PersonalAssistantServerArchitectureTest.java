@@ -47,4 +47,13 @@ class PersonalAssistantServerArchitectureTest {
                         "org.springframework.web.servlet..", "jakarta.servlet..", "io.haifa.agent.testing..")
                 .check(classes);
     }
+
+    @Test
+    void serverDoesNotDependOnCodingAgentWorkspaceAccessOrProductPackages() {
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("io.haifa.agent.application.project..")
+                .check(classes);
+    }
 }

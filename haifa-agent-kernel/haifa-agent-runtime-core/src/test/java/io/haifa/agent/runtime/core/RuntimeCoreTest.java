@@ -1087,29 +1087,69 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void preservesKnownNotDispatchedToolFailureThroughTheAttemptBoundary() {
+    void eligibleKnownNotDispatchedFailureCreatesOneDeterministicSuccessorWithoutModelReplay() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
         ToolRequest request = toolRequest(
                 "observer-unavailable", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
         Fixture fixture = fixture(
-                model(new ToolCallDecision(List.of(request))),
+                ignored -> response(
+                        modelCalls.incrementAndGet() == 1
+                                ? new ToolCallDecision(List.of(request))
+                                : finalDecision("recovered")),
                 builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
-                    throw new io.haifa.agent.tool.api.ToolInvocationException(
-                            "WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE",
-                            io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
-                            "workspace change observation could not be established before execution");
+                    if (toolCalls.incrementAndGet() == 1) {
+                        throw new io.haifa.agent.tool.api.ToolInvocationException(
+                                "WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE",
+                                io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
+                                "workspace change observation could not be established before execution");
+                    }
+                    return new ToolResult(true, "written after recovery", Map.of(), List.of(), List.of(), false);
                 }));
 
-        var failed = fixture.runtime.start(request("observer-unavailable"));
+        var accepted = fixture.runtime.start(request("observer-unavailable"));
         fixture.scheduler.runAll();
 
-        assertThat(fixture.runtime.find(failed.runId()).orElseThrow()).satisfies(run -> {
-            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(run.error().orElseThrow().code())
-                    .isEqualTo(AgentErrorCode.WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE);
-        });
-        assertThat(fixture.store.toolCalls(failed.runId())).singleElement().satisfies(call -> assertThat(
-                        call.error().orElseThrow().error().code())
-                .isEqualTo(AgentErrorCode.WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE));
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.WAITING_INTERACTION);
+        assertThat(modelCalls).hasValue(1);
+        assertThat(toolCalls).hasValue(1);
+        var original = fixture.store.toolCalls(accepted.runId()).getFirst();
+        assertThat(original.status().name()).isEqualTo("FAILED");
+        assertThat(original.error().orElseThrow().error().code())
+                .isEqualTo(AgentErrorCode.WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE);
+        var recovery = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        assertThat(recovery.id().value()).startsWith("execution-recovery:v1:");
+        assertThat(recovery.type()).isEqualTo("execution-recovery");
+        assertThat(recovery.target()).isInstanceOf(ToolApprovalTarget.class);
+        assertThat(((ToolApprovalTarget) recovery.target()).toolCallId()).isEqualTo(original.id());
+
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("recovery-response"),
+                recovery.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "recovery-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(modelCalls).hasValue(2);
+        assertThat(toolCalls).hasValue(2);
+        assertThat(fixture.store.toolCalls(accepted.runId()))
+                .hasSize(2)
+                .satisfiesExactly(
+                        first -> {
+                            assertThat(first.id()).isEqualTo(original.id());
+                            assertThat(first.status().name()).isEqualTo("FAILED");
+                        },
+                        successor -> {
+                            assertThat(successor.id()).isNotEqualTo(original.id());
+                            assertThat(successor.status().name()).isEqualTo("COMPLETED");
+                            assertThat(successor.arguments()).isEqualTo(original.arguments());
+                        });
     }
 
     @Test

@@ -97,6 +97,18 @@ class ExecutionArchitectureTest {
         }
     }
 
+    @Test
+    void trustedExecutionContextUsesToolCallCorrelationInsteadOfADecisionBearer() {
+        var componentNames = java.util.Arrays.stream(
+                        io.haifa.agent.execution.api.TrustedExecutionContext.class.getRecordComponents())
+                .map(java.lang.reflect.RecordComponent::getName)
+                .toList();
+
+        org.assertj.core.api.Assertions.assertThat(componentNames)
+                .contains("sourceToolCallId")
+                .doesNotContain("policyDecisionRef");
+    }
+
     private static Path repositoryRoot() {
         Path current = Path.of(System.getProperty("user.dir")).toAbsolutePath();
         while (current != null) {

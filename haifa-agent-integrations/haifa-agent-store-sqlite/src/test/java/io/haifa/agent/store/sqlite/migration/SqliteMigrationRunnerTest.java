@@ -36,6 +36,21 @@ class SqliteMigrationRunnerTest {
     }
 
     @Test
+    void cleanBaselineOmitsLegacyDecisionEvidenceGrantAndTrustTables() throws Exception {
+        SqliteConnectionFactory connections = initializedConnections();
+        new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK).migrate(RuntimeStoreMigrations.all());
+
+        try (Connection connection = connections.openConnection()) {
+            assertThat(queryLong(
+                            connection,
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN "
+                                    + "('policy_snapshot', 'policy_decision', 'policy_authorization_evidence', "
+                                    + "'approval_grant', 'project_trust')"))
+                    .isZero();
+        }
+    }
+
+    @Test
     void upgradesAnExistingV3DatabaseToCurrentSchemaWithoutReapplyingHistory() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
