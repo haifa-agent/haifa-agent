@@ -14,6 +14,7 @@ public final class ModelInvocationException extends RuntimeException {
     private final ModelCallId callId;
     private final Duration retryAfter;
     private final boolean outputObserved;
+    private final String providerRequestId;
 
     public ModelInvocationException(
             ModelErrorCategory category,
@@ -23,7 +24,7 @@ public final class ModelInvocationException extends RuntimeException {
             ModelCallId callId,
             String safeMessage,
             Throwable cause) {
-        this(category, retryable, httpStatus, providerCode, callId, safeMessage, cause, null, false);
+        this(category, retryable, httpStatus, providerCode, callId, safeMessage, cause, null, false, null);
     }
 
     public ModelInvocationException(
@@ -36,6 +37,30 @@ public final class ModelInvocationException extends RuntimeException {
             Throwable cause,
             Duration retryAfter,
             boolean outputObserved) {
+        this(
+                category,
+                retryable,
+                httpStatus,
+                providerCode,
+                callId,
+                safeMessage,
+                cause,
+                retryAfter,
+                outputObserved,
+                null);
+    }
+
+    public ModelInvocationException(
+            ModelErrorCategory category,
+            boolean retryable,
+            int httpStatus,
+            String providerCode,
+            ModelCallId callId,
+            String safeMessage,
+            Throwable cause,
+            Duration retryAfter,
+            boolean outputObserved,
+            String providerRequestId) {
         super(ModelValues.text(safeMessage, "safeMessage"), cause);
         this.category = Objects.requireNonNull(category, "category must not be null");
         this.retryable = retryable;
@@ -48,6 +73,8 @@ public final class ModelInvocationException extends RuntimeException {
         }
         this.retryAfter = retryAfter;
         this.outputObserved = outputObserved;
+        this.providerRequestId =
+                providerRequestId != null && !providerRequestId.isBlank() ? providerRequestId.trim() : null;
     }
 
     public ModelErrorCategory category() {
@@ -74,6 +101,14 @@ public final class ModelInvocationException extends RuntimeException {
         return Optional.ofNullable(retryAfter);
     }
 
+    public Optional<String> providerRequestId() {
+        return Optional.ofNullable(providerRequestId);
+    }
+
+    public String retryDecision() {
+        return retryable && !outputObserved ? "RETRYABLE" : "TERMINAL";
+    }
+
     /** Safe diagnostic projection that saturates instead of overflowing on an untrusted duration. */
     public OptionalLong retryAfterMillis() {
         if (retryAfter == null) return OptionalLong.empty();
@@ -91,7 +126,16 @@ public final class ModelInvocationException extends RuntimeException {
     public ModelInvocationException withOutputObserved() {
         if (outputObserved) return this;
         return new ModelInvocationException(
-                category, retryable, httpStatus, providerCode, callId, getMessage(), this, retryAfter, true);
+                category,
+                retryable,
+                httpStatus,
+                providerCode,
+                callId,
+                getMessage(),
+                this,
+                retryAfter,
+                true,
+                providerRequestId);
     }
 
     public ModelInvocationException asPartialResponse() {
@@ -105,6 +149,7 @@ public final class ModelInvocationException extends RuntimeException {
                 getMessage(),
                 this,
                 retryAfter,
-                true);
+                true,
+                providerRequestId);
     }
 }

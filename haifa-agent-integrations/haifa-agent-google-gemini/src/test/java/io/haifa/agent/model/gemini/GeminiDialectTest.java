@@ -73,6 +73,13 @@ class GeminiDialectTest {
         assertThat(mapping.retryable()).isFalse();
         assertThat(mapping.providerCode()).isEqualTo("quota_exhausted");
         assertThat(mapping.retryAfter()).contains(Duration.ofSeconds(60));
+
+        HttpHeaders headers402 = HttpHeaders.of(Map.of("Retry-After", List.of("60")), (k, v) -> true);
+        DialectErrorMapping mapping402 = dialect.classifyError(402, headers402, new byte[0], null);
+        assertThat(mapping402.category()).isEqualTo(ModelErrorCategory.PAYMENT_REQUIRED);
+        assertThat(mapping402.retryable()).isFalse();
+        assertThat(mapping402.retryAfter()).isEmpty();
+        assertThat(mapping402.safeMessage()).isEqualTo("请检查 Provider 账户余额、套餐、模型授权或账单状态后重试");
     }
 
     @Test

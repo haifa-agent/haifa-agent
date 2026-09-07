@@ -234,6 +234,11 @@ public final class OpenAiResponsesModel implements AgentChatModel {
     }
 
     private byte[] readResponseBody(AgentChatRequest request, HttpResponse<InputStream> response) throws IOException {
+        if (response.statusCode() == 402) {
+            try (InputStream body = response.body()) {
+                return body.readNBytes(Math.min(maxResponseBytes, 64 * 1024));
+            }
+        }
         try {
             return readBounded(response.body(), maxResponseBytes);
         } catch (ResponseTooLargeException exception) {
@@ -993,7 +998,8 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                 mapping.safeMessage(),
                 null,
                 mapping.retryAfter().orElse(null),
-                false);
+                false,
+                mapping.providerRequestId().orElse(null));
     }
 
     private static ModelInvocationException malformed(AgentChatRequest request, String message) {
@@ -1029,7 +1035,31 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             Throwable cause,
             Duration retryAfter,
             boolean outputObserved) {
+        return failure(
+                request, category, retryable, status, code, safeMessage, cause, retryAfter, outputObserved, null);
+    }
+
+    private static ModelInvocationException failure(
+            AgentChatRequest request,
+            ModelErrorCategory category,
+            boolean retryable,
+            int status,
+            String code,
+            String safeMessage,
+            Throwable cause,
+            Duration retryAfter,
+            boolean outputObserved,
+            String providerRequestId) {
         return new ModelInvocationException(
-                category, retryable, status, code, request.callId(), safeMessage, cause, retryAfter, outputObserved);
+                category,
+                retryable,
+                status,
+                code,
+                request.callId(),
+                safeMessage,
+                cause,
+                retryAfter,
+                outputObserved,
+                providerRequestId);
     }
 }

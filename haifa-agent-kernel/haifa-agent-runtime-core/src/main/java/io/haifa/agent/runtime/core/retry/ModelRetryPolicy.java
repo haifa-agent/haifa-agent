@@ -98,6 +98,7 @@ public record ModelRetryPolicy(
             case EMPTY_RESPONSE, RATE_LIMITED, TIMEOUT, PROVIDER_UNAVAILABLE, SERVER_ERROR, TRANSPORT_ERROR -> true;
             case MALFORMED_RESPONSE -> true;
             case AUTHENTICATION_FAILED,
+                    PAYMENT_REQUIRED,
                     PERMISSION_DENIED,
                     INVALID_REQUEST,
                     MODEL_NOT_FOUND,

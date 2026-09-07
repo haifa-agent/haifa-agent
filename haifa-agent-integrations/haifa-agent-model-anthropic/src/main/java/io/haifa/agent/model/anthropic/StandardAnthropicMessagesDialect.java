@@ -2,16 +2,12 @@ package io.haifa.agent.model.anthropic;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
-import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.net.http.HttpHeaders;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 
 final class StandardAnthropicMessagesDialect implements AnthropicMessagesDialect {
     static final StandardAnthropicMessagesDialect INSTANCE = new StandardAnthropicMessagesDialect();
@@ -85,25 +81,7 @@ final class StandardAnthropicMessagesDialect implements AnthropicMessagesDialect
 
     @Override
     public DialectErrorMapping classifyError(int statusCode, HttpHeaders headers, byte[] body, JsonNode errorRoot) {
-        ModelErrorCategory category =
-                switch (statusCode) {
-                    case 400, 413, 422 -> ModelErrorCategory.INVALID_REQUEST;
-                    case 401 -> ModelErrorCategory.AUTHENTICATION_FAILED;
-                    case 403 -> ModelErrorCategory.PERMISSION_DENIED;
-                    case 404 -> ModelErrorCategory.MODEL_NOT_FOUND;
-                    case 408, 504 -> ModelErrorCategory.TIMEOUT;
-                    case 429 -> ModelErrorCategory.RATE_LIMITED;
-                    case 500, 502, 503, 529 -> ModelErrorCategory.SERVER_ERROR;
-                    default -> ModelErrorCategory.UNKNOWN_PROVIDER_ERROR;
-                };
-        boolean retryable =
-                statusCode == 408 || statusCode == 429 || statusCode == 504 || statusCode == 529 || statusCode >= 500;
-        Duration retryAfter = RetryAfterParser.parse(headers, Instant.now()).orElse(null);
-        return new DialectErrorMapping(
-                category,
-                retryable,
-                "http_" + statusCode,
-                "model provider rejected the request",
-                Optional.ofNullable(retryAfter));
+        var mapping = io.haifa.agent.model.api.ModelHttpErrorClassifier.classify(statusCode, headers, body, null);
+        return DialectErrorMapping.from(mapping);
     }
 }

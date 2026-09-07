@@ -4,6 +4,7 @@ package io.haifa.agent.model.api;
 public enum ModelErrorCategory {
     AUTHENTICATION_FAILED,
     PERMISSION_DENIED,
+    PAYMENT_REQUIRED,
     RATE_LIMITED,
     TIMEOUT,
     PROVIDER_UNAVAILABLE,

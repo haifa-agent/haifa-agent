@@ -12,7 +12,9 @@ import io.haifa.agent.model.api.CredentialResolver;
 import io.haifa.agent.model.api.ImageDataPart;
 import io.haifa.agent.model.api.ImageUrlPart;
 import io.haifa.agent.model.api.ModelErrorCategory;
+import io.haifa.agent.model.api.ModelErrorMapping;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelHttpErrorClassifier;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
@@ -36,7 +38,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
@@ -119,6 +120,13 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 .build();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() == 402) {
+                byte[] safeBody;
+                try (InputStream stream = response.body()) {
+                    safeBody = stream.readNBytes(Math.min(maxResponseBytes, 64 * 1024));
+                }
+                throw httpFailure(request, response.statusCode(), safeBody, credential.value(), response.headers());
+            }
             byte[] responseBody;
             try (InputStream stream = response.body()) {
                 responseBody = stream.readNBytes(maxResponseBytes + 1);
@@ -1171,24 +1179,45 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
 
     private ModelInvocationException httpFailure(
             AgentChatRequest request, int status, byte[] body, String credential, HttpHeaders headers) {
-        String providerCode = "http_" + status;
-        String safeDetail = "";
-        try {
-            JsonNode error = json.readTree(body).path("error");
-            providerCode = truncate(error.path("code").asText(providerCode), 80).replace(credential, "[REDACTED]");
-            safeDetail = truncate(error.path("message").asText(""), 240).replace(credential, "[REDACTED]");
-        } catch (IOException ignored) {
-            // The raw response is intentionally not propagated.
-        }
-        ModelErrorCategory category = dialect(request).classifyError(status, providerCode, safeDetail);
-        if (status >= 500 && category == ModelErrorCategory.PROVIDER_UNAVAILABLE) {
-            category = ModelErrorCategory.SERVER_ERROR;
-        }
-        boolean retryable = status >= 500 || dialect(request).retryable(status, category, providerCode);
-        String safeMessage = "model provider request failed with HTTP " + status;
-        if (!safeDetail.isBlank()) safeMessage += ": " + safeDetail;
-        Duration retryAfter = RetryAfterParser.parse(headers, Instant.now()).orElse(null);
-        return failure(request, category, retryable, status, providerCode, safeMessage, null, retryAfter, false);
+        ModelHttpErrorClassifier.DialectCustomizer customizer = (statusCode, hdrs, parsed, defaultMapping) -> {
+            String code = defaultMapping.providerCode();
+            String detail = parsed.message() != null ? parsed.message() : "";
+            ModelErrorCategory category = dialect(request).classifyError(statusCode, code, detail);
+            if (statusCode >= 500 && category == ModelErrorCategory.PROVIDER_UNAVAILABLE) {
+                category = ModelErrorCategory.SERVER_ERROR;
+            }
+            boolean retryable = statusCode >= 500 || dialect(request).retryable(statusCode, category, code);
+            String safeMessage = defaultMapping.safeMessage();
+            if (!detail.isBlank() && statusCode != 402) {
+                String safeDetail = truncate(detail, 240);
+                if (credential != null && !credential.isBlank()) {
+                    safeDetail = safeDetail.replace(credential, "[REDACTED]");
+                }
+                if (!safeDetail.isBlank()) {
+                    safeMessage = "model provider request failed with HTTP " + statusCode + ": " + safeDetail;
+                }
+            }
+            return new ModelErrorMapping(
+                    category,
+                    retryable,
+                    statusCode,
+                    defaultMapping.providerCode(),
+                    safeMessage,
+                    defaultMapping.retryAfter(),
+                    defaultMapping.providerRequestId());
+        };
+        ModelErrorMapping mapping = ModelHttpErrorClassifier.classify(status, headers, body, credential, customizer);
+        return failure(
+                request,
+                mapping.category(),
+                mapping.retryable(),
+                mapping.httpStatus(),
+                mapping.providerCode(),
+                mapping.safeMessage(),
+                null,
+                mapping.retryAfter().orElse(null),
+                false,
+                mapping.providerRequestId().orElse(null));
     }
 
     private static boolean retainReasoning(AgentChatRequest request, ModelFinishReason finishReason) {
@@ -1223,7 +1252,30 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             Throwable cause,
             Duration retryAfter,
             boolean outputObserved) {
+        return failure(request, category, retryable, status, code, message, cause, retryAfter, outputObserved, null);
+    }
+
+    private ModelInvocationException failure(
+            AgentChatRequest request,
+            ModelErrorCategory category,
+            boolean retryable,
+            int status,
+            String code,
+            String message,
+            Throwable cause,
+            Duration retryAfter,
+            boolean outputObserved,
+            String providerRequestId) {
         return new ModelInvocationException(
-                category, retryable, status, code, request.callId(), message, cause, retryAfter, outputObserved);
+                category,
+                retryable,
+                status,
+                code,
+                request.callId(),
+                message,
+                cause,
+                retryAfter,
+                outputObserved,
+                providerRequestId);
     }
 }
