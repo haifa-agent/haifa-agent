@@ -1,7 +1,7 @@
 # Haifa Agent SQLite Runtime Store
 
 `SqliteSdkProductContributions` 打开一个 SQLite Foundation，并共同提供 Persistence、Conversation、
-Memory、Policy 与 Artifact。应用应在自己的装配层选择这些 Contribution；仓库不会为某个 Store 发布
+Memory 与 Artifact。Action Policy rules 及 evaluator contribution 由产品装配层提供；仓库不会为某个 Store 发布
 独立生产 Starter。单机持久化参考代码见 `haifa-agent-sdk-example` 的
 `SqliteDurableReferenceAssemblyExample`；示例模块不是发布制品或 Stable API。
 
@@ -67,11 +67,12 @@ SQLite 仍是 Client Event Page、Interaction、Run Input、Checkpoint 和 Runti
 `technicalDetailRef` 迁移为 `diagnosticId`。本次不修改既有 Migration。
 进程内 Subscription 只接收提交后唤醒，并始终返回 SQLite 范围读取。
 
-## V3 Policy / Approval / Security
+## V3 legacy Policy / Approval / Security
 
-Runtime Migration V3 追加 `policy_snapshot`、`policy_decision`、`approval_request_metadata`、`approval_response_metadata`、`policy_authorization_evidence`、`approval_grant` 与 `project_trust`。固定查询列、外键、状态 CHECK、版本/hash 交叉校验和条件更新共同构成权威恢复边界；JSONL/Event 仍只是提交后的安全投影，不参与恢复。
-
-`SqliteStoreFoundation` 暴露与 Policy API 对齐的 Store。Project Application 和 CLI 在 SQLite 模式下把同一组实例同时注入 Policy、Runtime Tool 与 Execution，避免进程内 Store 和 SQLite 各持一份授权事实。
+Runtime Migration V3 仍包含 `policy_snapshot`、`policy_decision`、
+`policy_authorization_evidence`、`approval_grant` 与 `project_trust` 等旧表，供 M7 一次性 clean
+baseline/database cutover 处理。M3 生产 Foundation 不再暴露这五类 Store，正常新流程保持零写；
+普通 Tool ASK 的恢复事实由 Interaction target/response 持有。不得把旧表重新接回生产装配。
 
 本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V6 Migration、
 版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
@@ -153,7 +154,7 @@ Conversation Summary 的有效快照读取，以及来源消息校验加版本 C
 V2 只补充无损恢复所需字段：Run 的 waiting request/termination description，以及 Configuration 与
 Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校验并在 `BEGIN IMMEDIATE` 中执行。
 
-V3 提供 Policy/Approval/Trust 权威表。V4 提供稳定 Event Journal range/head/earliest、Interaction
+V3 保留待 M7 删除的 legacy Policy/Approval/Trust 表。V4 提供稳定 Event Journal range/head/earliest、Interaction
 revision/state 和 durable Run Input；旧库通过连续 Migration 升级，重复启动只校验 name/checksum。
 V9 将 `interaction_request.expires_at` 迁移为可空列；既有请求保留原截止时间，新建无截止时间的请求
 不会进入 due/expire 查询，响应、取消、revision 与恢复语义保持不变。

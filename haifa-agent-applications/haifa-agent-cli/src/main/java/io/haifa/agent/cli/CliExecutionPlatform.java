@@ -1,6 +1,6 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
+import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
@@ -16,7 +16,6 @@ import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
-import io.haifa.agent.execution.core.PolicyDecisionExecutionPolicy;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.execution.host.change.LocalIncrementalWorkspaceChangeObserver;
@@ -44,7 +43,6 @@ import io.haifa.agent.sandbox.localnative.LocalNativeSandboxProvider;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -88,8 +86,6 @@ final class CliExecutionPlatform implements AutoCloseable {
             HostWorkspaceFileService files,
             IdentifierGenerator identifiers,
             TimeProvider time,
-            Clock clock,
-            CodingAgentPolicyAssembly policy,
             WorkspaceId workspaceId,
             Path workspaceRoot,
             PrintStream output,
@@ -173,15 +169,14 @@ final class CliExecutionPlatform implements AutoCloseable {
                 requestedEnvironment -> requestedEnvironment.equals(permissionEnvironmentRef)
                         ? io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(permissionEnvironment)
                         : io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
-                new PolicyDecisionExecutionPolicy(
-                        policy.decisionsStore(), policy.snapshots(), policy.evidence(), clock),
+                new CodingAgentExecutionPolicy(),
                 profileRegistry,
                 providerRegistry,
                 workspaces,
                 bindings,
                 workspaceChanges);
         CliRepositoryBaselineSupport repositoryBaselines =
-                CliRepositoryBaselineSupport.create(broker, identifiers, profile.ref(), policy, provisioning);
+                CliRepositoryBaselineSupport.create(broker, identifiers, profile.ref(), provisioning);
         ExecutionOutputObserver observer = new CliOutputObserver(output);
         var operations = new ProjectExecutionToolOperations(
                 broker,

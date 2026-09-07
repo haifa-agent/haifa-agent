@@ -80,17 +80,13 @@ public final class ProjectWorktreeToolOperations {
                     branchName,
                     WorkspaceCapabilitySet.executionFiles(),
                     WorkspacePermissionSet.readWriteExecute()));
-            String authorizationRef = invocation
-                    .policyDecisionRef()
-                    .orElseThrow(() -> new SecurityException("worktree creation requires a policy decision"));
             var registered = provisioning.authorizeApprovedWorktree(
                     isolated.parentWorkspaceId(),
                     isolated.childWorkspaceId(),
                     isolated.bindingId(),
                     isolated.locationRef(),
                     HostDirectoryPermission.READ_WRITE,
-                    targetName,
-                    authorizationRef);
+                    targetName);
             workspaceAccess.replace(new WorkspaceAccess(
                     invocation.tenant(),
                     invocation.principal(),
@@ -118,6 +114,11 @@ public final class ProjectWorktreeToolOperations {
             if (isolated != null) {
                 try {
                     workspaceAccess.delete(invocation.tenant(), invocation.principal(), isolated.childWorkspaceId());
+                } catch (RuntimeException cleanupFailure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
+                try {
+                    provisioning.revoke(isolated.childWorkspaceId(), "WORKTREE_CREATE_COMPENSATED");
                 } catch (RuntimeException cleanupFailure) {
                     failure.addSuppressed(cleanupFailure);
                 }

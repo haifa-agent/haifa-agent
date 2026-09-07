@@ -45,7 +45,6 @@ class SqliteHostWorkspaceRegistryStoreTest {
                 HostWorkspaceRegistrySource.APPROVED_ATTACH,
                 root,
                 HostWorkspaceLocationStore.fingerprintFor(root),
-                "policy-decision-registry",
                 NOW);
 
         try (ProjectPersistenceAssembly first = ProjectPersistenceAssembly.open(
@@ -83,7 +82,6 @@ class SqliteHostWorkspaceRegistryStoreTest {
                 HostWorkspaceRegistrySource.APPROVED_ATTACH,
                 root,
                 HostWorkspaceLocationStore.fingerprintFor(root),
-                "policy-decision-corrupt",
                 NOW);
         try (ProjectPersistenceAssembly first = ProjectPersistenceAssembly.open(
                 ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"),

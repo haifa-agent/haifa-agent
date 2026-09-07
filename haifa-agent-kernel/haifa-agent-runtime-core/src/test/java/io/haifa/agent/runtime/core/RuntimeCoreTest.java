@@ -36,13 +36,6 @@ import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
-import io.haifa.agent.policy.api.ApprovalGrantId;
-import io.haifa.agent.policy.api.ApprovalGrantState;
-import io.haifa.agent.policy.api.AuthorizationResult;
-import io.haifa.agent.policy.api.PolicyAuthorizationService;
-import io.haifa.agent.policy.core.ApprovalGrantMatcher;
-import io.haifa.agent.policy.core.DefaultApprovalGrantService;
-import io.haifa.agent.policy.core.InMemoryPolicyStore;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
@@ -85,10 +78,8 @@ import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolReconciliation;
 import io.haifa.agent.tool.api.ToolSchema;
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
@@ -1311,14 +1302,7 @@ class RuntimeCoreTest {
     void asynchronousToolApprovalPausesWorkerAndResumesSameCallInANewAttempt() {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger toolCalls = new AtomicInteger();
-        AtomicReference<String> dispatchedDecisionRef = new AtomicReference<>();
-        InMemoryPolicyStore grants = new InMemoryPolicyStore();
-        var authorization = new DefaultApprovalGrantService(
-                grants,
-                grants,
-                new ApprovalGrantMatcher(),
-                Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC),
-                () -> new ApprovalGrantId("runtime-grant"));
+        AtomicReference<ToolCallId> dispatchedToolCallId = new AtomicReference<>();
         AgentChatModel model = ignored -> response(
                 modelCalls.incrementAndGet() == 1
                         ? new ToolCallDecision(List.of(toolRequest(
@@ -1330,7 +1314,7 @@ class RuntimeCoreTest {
         Fixture fixture = fixture(
                 model,
                 builder -> TestToolPlatform.install(
-                        builder.policyAuthorization(authorization),
+                        builder,
                         "write",
                         "1.0.0",
                         "write.input",
@@ -1338,8 +1322,7 @@ class RuntimeCoreTest {
                         ToolPolicyDecision.REQUIRE_APPROVAL,
                         request -> {
                             toolCalls.incrementAndGet();
-                            dispatchedDecisionRef.set(
-                                    request.policyDecisionRef().orElseThrow());
+                            dispatchedToolCallId.set(request.toolCallId());
                             return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
                         }));
 
@@ -1387,16 +1370,8 @@ class RuntimeCoreTest {
                 .isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(toolCalls).hasValue(1);
         assertThat(modelCalls).hasValue(2);
-        assertThat(dispatchedDecisionRef)
-                .hasValue(
-                        interaction.approvalContext().orElseThrow().decisionId().value());
-        assertThat(grants.find(new ApprovalGrantId("runtime-grant"))).get().satisfies(grant -> {
-            assertThat(grant.state()).isEqualTo(ApprovalGrantState.CONSUMED);
-            assertThat(grant.sourceApprovalRequestRef())
-                    .isEqualTo(interaction.id().value());
-            assertThat(grant.sourceApprovalResponseRef())
-                    .isEqualTo(response.responseId().value());
-        });
+        assertThat(dispatchedToolCallId).hasValue(originalToolCallId);
+        assertThat(interaction.approvalContext()).isEmpty();
         assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> assertThat(call.id())
                 .isEqualTo(originalToolCallId));
         assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
@@ -1413,43 +1388,23 @@ class RuntimeCoreTest {
     @Test
     void authorizationProtocolErrorReturnsSafeRepairFeedbackWithoutCreatingApproval() {
         AtomicInteger modelCalls = new AtomicInteger();
-        PolicyAuthorizationService protocol = new PolicyAuthorizationService() {
-            @Override
-            public AuthorizationResult authorize(
-                    io.haifa.agent.policy.api.PolicyDecision decision,
-                    io.haifa.agent.policy.api.ApprovalTargetRef target,
-                    Optional<io.haifa.agent.policy.api.ProjectTrustExpectation> projectExpectation) {
-                return AuthorizationResult.protocolError(
-                        "WORKSPACE_PROTOCOL_REQUIRED", "Use the structured workspace fields");
-            }
-
-            @Override
-            public io.haifa.agent.policy.api.ApprovalGrant createGrant(
-                    io.haifa.agent.policy.api.ApprovalGrantCreationRequest request) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public io.haifa.agent.policy.api.ApprovalGrantRevocation revoke(
-                    ApprovalGrantId id, long expectedVersion, String reasonCode) {
-                throw new UnsupportedOperationException();
-            }
-        };
         AgentChatModel model = ignored -> response(
                 modelCalls.incrementAndGet() == 1
                         ? new ToolCallDecision(List.of(toolRequest(
                                 "protocol", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of("v", 1)))))
                         : finalDecision("repaired"));
-        Fixture fixture = fixture(
-                model,
-                builder -> TestToolPlatform.install(
-                        builder.policyAuthorization(protocol),
+        Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
+                        builder,
                         "write",
                         "1.0.0",
                         "write.input",
                         true,
                         ToolPolicyDecision.REQUIRE_APPROVAL,
-                        request -> new ToolResult(true, "not called", Map.of(), List.of(), List.of(), false)));
+                        request -> new ToolResult(true, "not called", Map.of(), List.of(), List.of(), false))
+                .publicToolPolicy((run, binding, request) -> {
+                    throw new io.haifa.agent.runtime.core.tool.ToolAuthorizationProtocolException(
+                            "WORKSPACE_PROTOCOL_REQUIRED", "Use the structured workspace fields");
+                }));
 
         var accepted = fixture.runtime.start(request("protocol-error"));
         fixture.scheduler.runAll();

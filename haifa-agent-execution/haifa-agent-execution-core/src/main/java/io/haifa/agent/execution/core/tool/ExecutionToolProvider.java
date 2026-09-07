@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Shared Tool provider that is the only command/script adapter above ExecutionBroker. */
@@ -218,10 +219,8 @@ public final class ExecutionToolProvider implements ToolProvider {
                         invocation.runId().value(),
                         invocation.principal(),
                         scope.capabilities(),
-                        invocation
-                                .policyDecisionRef()
-                                .orElseThrow(() ->
-                                        new SecurityException("execution tool requires a public policy decision"))),
+                        io.haifa.agent.execution.api.ExecutionOrigin.RUNTIME_TOOL,
+                        Optional.of(invocation.toolCallId())),
                 scope.workspaceId(),
                 workingDirectory,
                 parsed.command,

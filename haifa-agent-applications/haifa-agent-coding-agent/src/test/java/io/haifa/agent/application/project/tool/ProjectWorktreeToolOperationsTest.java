@@ -152,7 +152,7 @@ class ProjectWorktreeToolOperationsTest {
                 new ProjectWorktreeToolOperations(provider, provisioning, () -> "identity-seed", workspaceAccess);
 
         ToolResult result = operations.execute(
-                invocation(Optional.of("policy-worktree"), new ToolInvocationObserver() {
+                invocation(new ToolInvocationObserver() {
                     @Override
                     public void dispatched() {
                         dispatched.incrementAndGet();
@@ -188,7 +188,7 @@ class ProjectWorktreeToolOperationsTest {
     }
 
     @Test
-    void removesProviderWorktreeWhenApprovalEvidenceIsUnavailableAfterCreation() {
+    void removesProviderWorktreeWhenPostCreationAcknowledgementFails() {
         AtomicBoolean released = new AtomicBoolean();
         var workspaceAccess = new InMemoryWorkspaceAccessStore();
         workspaceAccess.replace(new WorkspaceAccess(
@@ -196,7 +196,17 @@ class ProjectWorktreeToolOperationsTest {
         var operations = new ProjectWorktreeToolOperations(
                 provider(new AtomicReference<>(), released), provisioning, () -> "identity-seed", workspaceAccess);
 
-        ToolResult result = operations.execute(invocation(Optional.empty(), ToolInvocationObserver.noop()), access());
+        ToolResult result = operations.execute(
+                invocation(new ToolInvocationObserver() {
+                    @Override
+                    public void dispatched() {}
+
+                    @Override
+                    public void acknowledged() {
+                        throw new IllegalStateException("acknowledgement failed");
+                    }
+                }),
+                access());
 
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData())
@@ -218,8 +228,7 @@ class ProjectWorktreeToolOperationsTest {
                 () -> "identity-seed",
                 new InMemoryWorkspaceAccessStore());
 
-        assertThatThrownBy(() -> operations.execute(
-                        invocation(Optional.of("policy-worktree"), ToolInvocationObserver.noop()), access()))
+        assertThatThrownBy(() -> operations.execute(invocation(ToolInvocationObserver.noop()), access()))
                 .isInstanceOf(SecurityException.class)
                 .hasMessage("WORKSPACE_ACCESS_UNAVAILABLE");
         assertThat(captured.get()).isNull();
@@ -280,7 +289,7 @@ class ProjectWorktreeToolOperationsTest {
         };
     }
 
-    private ToolInvocationRequest invocation(Optional<String> policyDecisionRef, ToolInvocationObserver observer) {
+    private ToolInvocationRequest invocation(ToolInvocationObserver observer) {
         var binding = new ProjectToolCatalog()
                 .freeze(
                         Set.of(ProjectWorktreeToolOperations.TOOL_NAME),
@@ -314,7 +323,6 @@ class ProjectWorktreeToolOperationsTest {
                                 "pull-request")),
                 NOW.plusSeconds(30),
                 Optional.of("worktree-key"),
-                policyDecisionRef,
                 () -> false,
                 List.of(),
                 observer);

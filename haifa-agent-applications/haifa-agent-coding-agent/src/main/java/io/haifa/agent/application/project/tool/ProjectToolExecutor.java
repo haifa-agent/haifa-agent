@@ -80,8 +80,6 @@ public final class ProjectToolExecutor implements ToolProvider {
             return worktreeOperations.execute(request, binding);
         } else {
             request.observer().dispatched();
-            String policyDecisionRef = request.policyDecisionRef()
-                    .orElseThrow(() -> new SecurityException("policy decision reference is required"));
             result = operations.execute(
                     new ProjectToolCallContext(
                             request.tenant(),
@@ -89,8 +87,7 @@ public final class ProjectToolExecutor implements ToolProvider {
                             request.principal(),
                             request.runId().value(),
                             request.toolCallId().value(),
-                            request.idempotencyKey().orElse(request.toolCallId().value()),
-                            policyDecisionRef),
+                            request.idempotencyKey().orElse(request.toolCallId().value())),
                     toolName,
                     request.arguments());
             request.observer().acknowledged();

@@ -93,7 +93,7 @@ class TrustedScriptExecutionToolProviderTest {
         assertThat(new String(execution.input().bytes(), StandardCharsets.UTF_8))
                 .isEqualTo("print('FROZEN_SCRIPT')\n")
                 .doesNotContain("MODEL_VALUE");
-        assertThat(execution.context().policyDecisionRef()).isEqualTo("policy-decision");
+        assertThat(execution.context().sourceToolCallId()).contains(new ToolCallId("call"));
         assertThat(execution.limits().timeout()).isEqualTo(Duration.ofSeconds(5));
     }
 
@@ -361,7 +361,6 @@ class TrustedScriptExecutionToolProviderTest {
                 new ToolArguments("fixture.input", "1.0.0", Map.of("value", "MODEL_VALUE")),
                 NOW.plusSeconds(30),
                 Optional.of("idempotency"),
-                Optional.of("policy-decision"),
                 () -> false,
                 List.of(),
                 observer);

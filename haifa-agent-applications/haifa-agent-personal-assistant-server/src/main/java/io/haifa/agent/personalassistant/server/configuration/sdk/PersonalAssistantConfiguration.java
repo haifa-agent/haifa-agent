@@ -16,7 +16,6 @@ import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.codex.CodexLocalCompatibilityRegistrationFactory;
 import io.haifa.agent.auth.localmodel.codex.CodexTokenClient;
-import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -30,6 +29,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionApplicationSe
 import io.haifa.agent.personalassistant.application.mission.MissionExecutionCoordinator;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanValidator;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanner;
+import io.haifa.agent.personalassistant.application.policy.PersonalAssistantPolicyRules;
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.personalassistant.server.audio.PersonalAudioStore;
 import io.haifa.agent.personalassistant.server.configuration.execution.PersonalExecutionRuntime;
@@ -46,9 +46,6 @@ import io.haifa.agent.personalassistant.server.mission.MissionDispatcher;
 import io.haifa.agent.personalassistant.server.mission.MissionOperationsService;
 import io.haifa.agent.personalassistant.server.mission.RuntimeMissionPlanner;
 import io.haifa.agent.personalassistant.server.mission.SqliteMissionStore;
-import io.haifa.agent.policy.api.ApprovalGrantId;
-import io.haifa.agent.policy.core.ApprovalGrantMatcher;
-import io.haifa.agent.policy.core.DefaultApprovalGrantService;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.sdk.api.SdkCaller;
@@ -170,19 +167,6 @@ public class PersonalAssistantConfiguration {
                 .build();
     }
 
-    static PolicyPlatformContribution sharedPolicy(
-            PolicyPlatformContribution policy, Clock clock, IdentifierGenerator identifiers) {
-        Objects.requireNonNull(policy, "policy must not be null");
-        Objects.requireNonNull(clock, "clock must not be null");
-        Objects.requireNonNull(identifiers, "identifiers must not be null");
-        return policy.withAuthorization(new DefaultApprovalGrantService(
-                policy.approvalGrants().orElseThrow(),
-                policy.projectTrusts().orElseThrow(),
-                new ApprovalGrantMatcher(),
-                clock,
-                () -> new ApprovalGrantId(identifiers.nextValue())));
-    }
-
     @Bean(destroyMethod = "close")
     PersonalAssistantApplication personalAssistantApplication(
             PersonalAssistantProperties properties,
@@ -205,10 +189,11 @@ public class PersonalAssistantConfiguration {
                 protector,
                 metadata("haifa-personal-sqlite", ProductCapabilities.PERSISTENCE, "runtime-v1"),
                 metadata("haifa-personal-conversation", ProductCapabilities.CONVERSATION, "conversation-v1"),
-                metadata("haifa-personal-memory", ProductCapabilities.MEMORY, "memory-v1"),
-                metadata("haifa-personal-policy", ProductCapabilities.POLICY, "policy-v1"));
-        var grantIds = new UuidV7IdentifierGenerator();
-        var sharedPolicy = sharedPolicy(sqlite.policy(), personalClock, grantIds);
+                metadata("haifa-personal-memory", ProductCapabilities.MEMORY, "memory-v1"));
+        var sharedPolicy = new PolicyPlatformContribution(
+                metadata("haifa-personal-policy", ProductCapabilities.POLICY, "policy-v1"),
+                PersonalAssistantPolicyRules.conservative(),
+                new io.haifa.agent.policy.core.DefaultPolicyDecisionService());
         TenantRef tenant = new TenantRef(properties.caller().tenant());
         PrincipalRef principal = new PrincipalRef(properties.caller().principal(), "user");
         SdkCaller caller = new SdkCaller(tenant, principal, Set.of("memory:read", "memory:propose", "memory:review"));
@@ -224,8 +209,8 @@ public class PersonalAssistantConfiguration {
                                 .normalize());
         PersonalExecutionPlatform execution = null;
         try {
-            execution = PersonalExecutionRuntime.create(
-                    dataDirectory, principal, properties.execution(), sharedPolicy, personalClock);
+            execution =
+                    PersonalExecutionRuntime.create(dataDirectory, principal, properties.execution(), personalClock);
             var web = "deterministic-stub".equals(properties.mission().plannerMode())
                             && !properties.web().enabled()
                     ? PersonalWebPlatform.deterministicStub()

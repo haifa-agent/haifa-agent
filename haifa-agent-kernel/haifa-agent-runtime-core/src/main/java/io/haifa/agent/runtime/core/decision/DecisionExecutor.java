@@ -27,11 +27,7 @@ import io.haifa.agent.core.step.AgentStepType;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.policy.api.ApprovalRequestContext;
-import io.haifa.agent.policy.api.ApprovalRequester;
-import io.haifa.agent.policy.api.ApprovalReuseScope;
 import io.haifa.agent.policy.api.ApprovalSemantics;
-import io.haifa.agent.policy.api.ApprovalTargetRef;
-import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
@@ -88,7 +84,6 @@ public final class DecisionExecutor {
     private final RunControlRegistry controls;
     private final RepairRetryPolicy repairRetry;
     private final ToolApprovalPromptFormatter approvalPrompts;
-    private final PolicyDecisionStore policyDecisions;
     private final RuntimeUnitOfWork unitOfWork;
     private final RuntimeEventAppender events;
     private final RuntimeOutboxPublisher outbox;
@@ -107,7 +102,6 @@ public final class DecisionExecutor {
             RunControlRegistry controls,
             RepairRetryPolicy repairRetry,
             ToolApprovalPromptFormatter approvalPrompts,
-            PolicyDecisionStore policyDecisions,
             RuntimeUnitOfWork unitOfWork,
             RuntimeEventAppender events,
             RuntimeOutboxPublisher outbox) {
@@ -124,7 +118,6 @@ public final class DecisionExecutor {
         this.controls = Objects.requireNonNull(controls);
         this.repairRetry = Objects.requireNonNull(repairRetry);
         this.approvalPrompts = Objects.requireNonNull(approvalPrompts);
-        this.policyDecisions = Objects.requireNonNull(policyDecisions);
         this.unitOfWork = Objects.requireNonNull(unitOfWork);
         this.events = Objects.requireNonNull(events);
         this.outbox = Objects.requireNonNull(outbox);
@@ -541,22 +534,6 @@ public final class DecisionExecutor {
         var binding = approval.binding();
         String interactionType = approval.reauthentication() ? "tool-reauthentication" : "tool-approval";
         var createdAt = time.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
-        var approvalContext = new ApprovalRequestContext(
-                approval.decision().id(),
-                ApprovalSemantics.CAPABILITY_CONFIRMATION,
-                java.util.Set.of(ApprovalReuseScope.ONCE),
-                new ApprovalRequester(run.tenant(), run.principal()),
-                new ApprovalTargetRef(
-                        "tool",
-                        call.id().value(),
-                        binding.coordinate().definitionHash().value(),
-                        "invoke",
-                        approval.argumentsDigest(),
-                        binding.definition().title()),
-                Optional.empty(),
-                createdAt,
-                Optional.empty(),
-                Optional.empty());
         unitOfWork.execute(() -> {
             interactions.create(new InteractionRequest(
                     new InteractionRequestId(requestId),
@@ -572,10 +549,11 @@ public final class DecisionExecutor {
                             binding.coordinate().definitionHash().value(),
                             approval.argumentsDigest(),
                             run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
-                                    + run.principal().principalId()),
+                                    + run.principal().principalId(),
+                            approval.decision().requirementDigest()),
                     createdAt,
                     Optional.empty(),
-                    Optional.of(approvalContext)));
+                    Optional.empty()));
             checkpoints.capture(
                     run,
                     loopContext.iteration(),
@@ -587,10 +565,6 @@ public final class DecisionExecutor {
                     run,
                     "policy.decision.made",
                     Map.of(
-                            "decisionId",
-                            approval.decision().id().value(),
-                            "snapshotId",
-                            approval.decision().snapshot().value(),
                             "effect",
                             approval.decision().effect().name(),
                             "challenge",
@@ -604,8 +578,6 @@ public final class DecisionExecutor {
                     Map.of(
                             "requestId",
                             requestId,
-                            "decisionId",
-                            approval.decision().id().value(),
                             "challenge",
                             approval.reauthentication() ? "REAUTHENTICATE" : "APPROVAL",
                             "semantics",
@@ -754,12 +726,6 @@ public final class DecisionExecutor {
                 .orElseThrow(() -> new IllegalArgumentException("tool approval target is unavailable"));
         tools.validateApprovalTarget(run, call, requestFrom(call), target);
         if (responseType == InteractionResponseType.APPROVE) {
-            ApprovalRequestContext context =
-                    approvalContext.orElseThrow(() -> new SecurityException("approval context is unavailable"));
-            var decision = policyDecisions
-                    .find(context.decisionId())
-                    .orElseThrow(() -> new SecurityException("policy decision is unavailable"));
-            tools.recordApprovedDecision(call, decision);
             call.approve();
             state.appendToolCall(call);
             return;

@@ -10,7 +10,6 @@ CREATE TABLE coding_workspace_registry (
     location_ciphertext BLOB NOT NULL,
     location_digest TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
-    authorization_ref TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL,
     validated_at_ms INTEGER NOT NULL,
     revoked_at_ms INTEGER,

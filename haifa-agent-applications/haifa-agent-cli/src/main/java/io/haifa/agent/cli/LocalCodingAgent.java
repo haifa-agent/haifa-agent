@@ -461,11 +461,7 @@ final class LocalCodingAgent implements AutoCloseable {
             locations.register(locationRef, workspaceRoot);
             Set<String> configuredTools = effectiveBuiltInTools(configuration);
             var policy = CodingAgentPolicyAssembly.create(
-                    policyMode(configuration.approval()),
-                    configuration.approvalThreshold(),
-                    clock,
-                    identifiers::nextValue,
-                    persistence.policy());
+                    policyMode(configuration.approval()), configuration.approvalThreshold());
             boolean executionEnabled = configuredTools.contains("execution.run");
             Set<String> effectiveCapabilities = executionEnabled
                     ? Set.of("file.read", "file.write", "execution.run")
@@ -567,8 +563,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             files,
                             identifiers,
                             time,
-                            clock,
-                            policy,
                             workspaceId,
                             workspaceRoot,
                             output,
@@ -772,17 +766,12 @@ final class LocalCodingAgent implements AutoCloseable {
                                                         + "and hard command denials remain enforced"
                                                 : executionPlatform.securitySummary());
                     })
-                    .policyStores(policy.decisionsStore(), policy.evidence())
                     .approvalVerification(policy.approvalVerification())
-                    .policyAuthorization(policy.authorization())
                     .publicToolPolicy(new DefaultPublicToolPolicy(
                             new io.haifa.agent.application.project.policy.CodingExecutionPolicyRequestAdapter(
                                     policyMode(configuration.approval())),
-                            policy.decisions(),
-                            policy.decisionsStore(),
-                            policy.snapshot(),
-                            () -> new io.haifa.agent.policy.api.PolicyDecisionId(identifiers.nextValue()),
-                            clock))
+                            policy.evaluator(),
+                            policy.rules()))
                     .definitions((id, requested) -> new ResolvedDefinition(
                             id,
                             requested.orElse(new AgentDefinitionVersion(1, 0, 0)),

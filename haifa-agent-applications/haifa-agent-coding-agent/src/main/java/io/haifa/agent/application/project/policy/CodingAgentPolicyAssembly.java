@@ -1,113 +1,46 @@
 package io.haifa.agent.application.project.policy;
 
-import io.haifa.agent.policy.api.ApprovalGrantId;
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.ApprovalTargetStatus;
 import io.haifa.agent.policy.api.ApprovalTargetValidation;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
-import io.haifa.agent.policy.api.PolicyAuthorizationEvidenceStore;
-import io.haifa.agent.policy.api.PolicyAuthorizationService;
 import io.haifa.agent.policy.api.PolicyChallenge;
-import io.haifa.agent.policy.api.PolicyDecisionId;
 import io.haifa.agent.policy.api.PolicyDecisionService;
-import io.haifa.agent.policy.api.PolicyDecisionStore;
-import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.policy.api.PolicyEffect;
-import io.haifa.agent.policy.api.PolicyPersistencePorts;
 import io.haifa.agent.policy.api.PolicyRiskLevel;
 import io.haifa.agent.policy.api.PolicyRule;
 import io.haifa.agent.policy.api.PolicyRuleMatcher;
 import io.haifa.agent.policy.api.PolicyRuleRef;
+import io.haifa.agent.policy.api.PolicyRuleSet;
 import io.haifa.agent.policy.api.PolicyRuleSource;
 import io.haifa.agent.policy.api.PolicySideEffect;
-import io.haifa.agent.policy.api.PolicySnapshot;
-import io.haifa.agent.policy.api.PolicySnapshotRef;
-import io.haifa.agent.policy.api.PolicySnapshotStore;
-import io.haifa.agent.policy.core.ApprovalGrantMatcher;
-import io.haifa.agent.policy.core.DefaultApprovalGrantService;
 import io.haifa.agent.policy.core.DefaultApprovalVerificationService;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
-import io.haifa.agent.policy.core.InMemoryPolicyAuthorizationEvidenceStore;
-import io.haifa.agent.policy.core.InMemoryPolicyStore;
 import io.haifa.agent.policy.core.LocalCapabilityAuthorityVerifier;
-import java.time.Clock;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Supplier;
 
-/** Product-owned local assembly. It contains no organization or workflow model. */
+/** Storeless Coding Agent policy assembly. Product rules are immutable and share only the evaluator mechanism. */
 public final class CodingAgentPolicyAssembly {
-    private final PolicySnapshotStore snapshots;
-    private final PolicyDecisionStore decisionsStore;
-    private final PolicyAuthorizationEvidenceStore evidence;
-    private final PolicyDecisionService decisions;
-    private final PolicySnapshot snapshot;
+    private final PolicyDecisionService evaluator;
+    private final PolicyRuleSet rules;
     private final ApprovalVerificationService approvalVerification;
-    private final PolicyAuthorizationService authorization;
 
     private CodingAgentPolicyAssembly(
-            PolicySnapshotStore snapshots,
-            PolicyDecisionStore decisionsStore,
-            PolicyAuthorizationEvidenceStore evidence,
-            PolicyDecisionService decisions,
-            PolicySnapshot snapshot,
-            ApprovalVerificationService approvalVerification,
-            PolicyAuthorizationService authorization) {
-        this.snapshots = snapshots;
-        this.decisionsStore = decisionsStore;
-        this.evidence = evidence;
-        this.decisions = decisions;
-        this.snapshot = snapshot;
-        this.approvalVerification = approvalVerification;
-        this.authorization = authorization;
+            PolicyDecisionService evaluator, PolicyRuleSet rules, ApprovalVerificationService approvalVerification) {
+        this.evaluator = Objects.requireNonNull(evaluator, "evaluator must not be null");
+        this.rules = Objects.requireNonNull(rules, "rules must not be null");
+        this.approvalVerification =
+                Objects.requireNonNull(approvalVerification, "approvalVerification must not be null");
     }
 
-    public static CodingAgentPolicyAssembly create(ApprovalMode mode, Clock clock, Supplier<String> identifiers) {
-        return create(mode, CodingApprovalThreshold.compatibleWith(mode), clock, identifiers);
-    }
-
-    public static CodingAgentPolicyAssembly create(
-            ApprovalMode mode, CodingApprovalThreshold threshold, Clock clock, Supplier<String> identifiers) {
-        var store = new InMemoryPolicyStore();
-        return create(
-                mode,
-                threshold,
-                clock,
-                identifiers,
-                new PolicyPersistencePorts(store, store, new InMemoryPolicyAuthorizationEvidenceStore(), store, store));
-    }
-
-    public static CodingAgentPolicyAssembly create(
-            ApprovalMode mode, Clock clock, Supplier<String> identifiers, PolicyPersistencePorts persistence) {
-        return create(mode, CodingApprovalThreshold.compatibleWith(mode), clock, identifiers, persistence);
-    }
-
-    public static CodingAgentPolicyAssembly create(
-            ApprovalMode mode,
-            CodingApprovalThreshold threshold,
-            Clock clock,
-            Supplier<String> identifiers,
-            PolicyPersistencePorts persistence) {
-        Objects.requireNonNull(persistence, "persistence must not be null");
+    public static CodingAgentPolicyAssembly create(ApprovalMode mode, CodingApprovalThreshold threshold) {
+        Objects.requireNonNull(mode, "mode must not be null");
         Objects.requireNonNull(threshold, "threshold must not be null");
-        var snapshot = snapshot(mode, threshold, clock);
-        PolicySnapshot effectiveSnapshot =
-                persistence.snapshots().find(snapshot.ref()).orElse(null);
-        if (effectiveSnapshot == null) {
-            persistence.snapshots().save(snapshot);
-            effectiveSnapshot = snapshot;
-        } else if (effectiveSnapshot.approvalMode() != snapshot.approvalMode()
-                || !effectiveSnapshot.productProfileRef().equals(snapshot.productProfileRef())
-                || !effectiveSnapshot.contentDigest().equals(snapshot.contentDigest())) {
-            throw new IllegalStateException("persisted coding policy snapshot has incompatible content");
-        }
-        PolicyDecisionService decisions =
-                new DefaultPolicyDecisionService(clock, () -> new PolicyDecisionId(identifiers.get()));
         ApprovalVerificationService verification = new DefaultApprovalVerificationService(
                 new LocalCapabilityAuthorityVerifier(),
                 Map.of(),
@@ -115,23 +48,10 @@ public final class CodingAgentPolicyAssembly {
                         "tool",
                         target -> new ApprovalTargetValidation(
                                 ApprovalTargetStatus.CURRENT, "TOOL_TARGET_STRUCTURALLY_CURRENT")));
-        PolicyAuthorizationService authorization = new DefaultApprovalGrantService(
-                persistence.grants(),
-                persistence.projectTrusts(),
-                new ApprovalGrantMatcher(),
-                clock,
-                () -> new ApprovalGrantId(identifiers.get()));
-        return new CodingAgentPolicyAssembly(
-                persistence.snapshots(),
-                persistence.decisions(),
-                persistence.authorizationEvidence(),
-                decisions,
-                effectiveSnapshot,
-                verification,
-                authorization);
+        return new CodingAgentPolicyAssembly(new DefaultPolicyDecisionService(), rules(mode, threshold), verification);
     }
 
-    private static PolicySnapshot snapshot(ApprovalMode mode, CodingApprovalThreshold threshold, Clock clock) {
+    private static PolicyRuleSet rules(ApprovalMode mode, CodingApprovalThreshold threshold) {
         List<PolicyRule> rules = new ArrayList<>();
         rules.add(rule(
                 "coding-critical-risk",
@@ -227,20 +147,7 @@ public final class CodingAgentPolicyAssembly {
                 PolicyEffect.ALLOW,
                 Optional.empty(),
                 "CODING_RISK_BELOW_THRESHOLD_ALLOW");
-        String digest = PolicyDigest.sha256Fields(List.of("haifa-coding-agent", mode.name(), threshold.name(), "v3"));
-        String refSuffix = mode.name().toLowerCase(java.util.Locale.ROOT)
-                + "-"
-                + threshold.name().toLowerCase(java.util.Locale.ROOT)
-                + "-v3";
-        return new PolicySnapshot(
-                new PolicySnapshotRef("coding-" + refSuffix),
-                rules,
-                Optional.of(defaultRule),
-                mode,
-                "coding-default-" + refSuffix,
-                Optional.empty(),
-                digest,
-                Instant.ofEpochMilli(clock.millis()));
+        return PolicyRuleSet.of(rules, Optional.of(defaultRule), mode);
     }
 
     private static PolicyRuleMatcher sideEffectMatcher(PolicySideEffect effect) {
@@ -286,31 +193,15 @@ public final class CodingAgentPolicyAssembly {
                 "Coding Agent product policy");
     }
 
-    public PolicySnapshotStore snapshots() {
-        return snapshots;
+    public PolicyDecisionService evaluator() {
+        return evaluator;
     }
 
-    public PolicyDecisionStore decisionsStore() {
-        return decisionsStore;
-    }
-
-    public PolicyAuthorizationEvidenceStore evidence() {
-        return evidence;
-    }
-
-    public PolicyDecisionService decisions() {
-        return decisions;
-    }
-
-    public PolicySnapshot snapshot() {
-        return snapshot;
+    public PolicyRuleSet rules() {
+        return rules;
     }
 
     public ApprovalVerificationService approvalVerification() {
         return approvalVerification;
-    }
-
-    public PolicyAuthorizationService authorization() {
-        return authorization;
     }
 }

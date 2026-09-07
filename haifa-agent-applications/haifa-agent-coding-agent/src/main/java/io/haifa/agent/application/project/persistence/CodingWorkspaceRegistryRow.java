@@ -14,7 +14,6 @@ public record CodingWorkspaceRegistryRow(
         byte[] locationCiphertext,
         String locationDigest,
         String fingerprint,
-        String authorizationRef,
         Instant createdAt,
         Instant validatedAt,
         Instant revokedAt,

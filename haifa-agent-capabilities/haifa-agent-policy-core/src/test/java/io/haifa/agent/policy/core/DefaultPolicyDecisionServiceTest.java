@@ -9,7 +9,6 @@ import io.haifa.agent.policy.api.PolicyAction;
 import io.haifa.agent.policy.api.PolicyChallenge;
 import io.haifa.agent.policy.api.PolicyContext;
 import io.haifa.agent.policy.api.PolicyDecision;
-import io.haifa.agent.policy.api.PolicyDecisionId;
 import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.policy.api.PolicyRequest;
 import io.haifa.agent.policy.api.PolicyResource;
@@ -18,24 +17,18 @@ import io.haifa.agent.policy.api.PolicyRiskLevel;
 import io.haifa.agent.policy.api.PolicyRule;
 import io.haifa.agent.policy.api.PolicyRuleMatcher;
 import io.haifa.agent.policy.api.PolicyRuleRef;
+import io.haifa.agent.policy.api.PolicyRuleSet;
 import io.haifa.agent.policy.api.PolicyRuleSource;
 import io.haifa.agent.policy.api.PolicySideEffect;
-import io.haifa.agent.policy.api.PolicySnapshot;
-import io.haifa.agent.policy.api.PolicySnapshotRef;
 import io.haifa.agent.policy.api.PolicySubject;
 import io.haifa.agent.policy.api.ProjectTrustRef;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class DefaultPolicyDecisionServiceTest {
-    private static final Instant NOW = Instant.parse("2026-07-26T00:00:00Z");
-    private static final DefaultPolicyDecisionService SERVICE =
-            new DefaultPolicyDecisionService(Clock.fixed(NOW, ZoneOffset.UTC), () -> new PolicyDecisionId("decision"));
+    private static final DefaultPolicyDecisionService SERVICE = new DefaultPolicyDecisionService();
 
     @Test
     void denyWinsOverAskAndAllowIndependentOfRegistrationOrder() {
@@ -48,7 +41,6 @@ class DefaultPolicyDecisionServiceTest {
         PolicyDecision second = SERVICE.evaluate(request(Optional.empty()), snapshot(List.of(deny, allow, ask)));
 
         assertThat(first.effect()).isEqualTo(PolicyEffect.DENY);
-        assertThat(first.matchedRule()).contains(deny.ref());
         assertThat(second).isEqualTo(first);
     }
 
@@ -75,20 +67,21 @@ class DefaultPolicyDecisionServiceTest {
 
         assertThat(decision.effect()).isEqualTo(PolicyEffect.DENY);
         assertThat(decision.reasonCode()).isEqualTo("POLICY_NO_MATCH");
-        assertThat(decision.matchedRule()).isEmpty();
+        assertThat(decision.requirementDigest()).startsWith("sha256:");
     }
 
     @Test
-    void untrustedProjectAllowDoesNotGrantCapability() {
+    void legacyProjectTrustReferenceDoesNotChangeTransientRuleEvaluation() {
         PolicyRule projectAllow =
                 rule("project-allow", PolicyRuleSource.PROJECT, PolicyEffect.ALLOW, Optional.empty(), 0);
 
-        assertThat(SERVICE.evaluate(request(Optional.empty()), snapshot(List.of(projectAllow)))
-                        .effect())
-                .isEqualTo(PolicyEffect.DENY);
-        assertThat(SERVICE.evaluate(request(Optional.of(new ProjectTrustRef("trust"))), snapshot(List.of(projectAllow)))
-                        .effect())
-                .isEqualTo(PolicyEffect.ALLOW);
+        PolicyDecision withoutLegacyTrust =
+                SERVICE.evaluate(request(Optional.empty()), snapshot(List.of(projectAllow)));
+        PolicyDecision withLegacyTrust =
+                SERVICE.evaluate(request(Optional.of(new ProjectTrustRef("trust"))), snapshot(List.of(projectAllow)));
+
+        assertThat(withoutLegacyTrust.effect()).isEqualTo(PolicyEffect.ALLOW);
+        assertThat(withLegacyTrust).isEqualTo(withoutLegacyTrust);
     }
 
     @Test
@@ -151,15 +144,7 @@ class DefaultPolicyDecisionServiceTest {
                 "Safe " + id);
     }
 
-    private static PolicySnapshot snapshot(List<PolicyRule> rules) {
-        return new PolicySnapshot(
-                new PolicySnapshotRef("snapshot"),
-                rules,
-                Optional.empty(),
-                ApprovalMode.ASK,
-                "coding",
-                Optional.empty(),
-                "sha256:snapshot",
-                NOW);
+    private static PolicyRuleSet snapshot(List<PolicyRule> rules) {
+        return PolicyRuleSet.of(rules, Optional.empty(), ApprovalMode.ASK);
     }
 }

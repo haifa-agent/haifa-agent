@@ -111,16 +111,16 @@ Broker 前置交付门禁。系统仍从 Tool 结果投影有界交付证据；�
 Evaluation/Trace Replay 继续独立使用隐藏验收、Workspace 快照与 Scratch 清理事实，不与生产完成门禁
 共享模型声明。
 
-## Policy 持久化装配
-
-`ProjectPersistenceAssembly.policy()` 是应用级 Policy 权威 Store 组合：内存模式共享同一 `InMemoryPolicyStore`，SQLite 模式复用 `SqliteStoreFoundation` 的 Snapshot、Decision、Evidence、Grant 与 Trust Store。Coding Agent 重启时复用内容一致的固定 Policy Snapshot；不在应用层实现企业组织或审批工作流。
-
 ## Policy assembly
 
-`CodingAgentPolicyAssembly` 是产品装配边界：创建 Coding Agent 默认规则 Snapshot、内存
-Decision/Approval evidence Store 和本地同主体 Verifier。它不包含组织、审批路由、待办或业务
-状态机。`ProjectExecutionToolOperations` 只接受上游 Tool Pipeline 传入的真实
-`policyDecisionRef`；缺少引用时 fail closed，Broker 复核同一 Decision 而不再次询问用户。
+`CodingAgentPolicyAssembly` 是产品装配边界：创建 Coding Agent 自有的 immutable
+`PolicyRuleSet`、共享的纯 evaluator 和独立 Approval verifier。它不创建 Snapshot/Decision/Evidence/
+Grant/Trust Store，也不包含组织、审批路由、待办或业务状态机。
+
+`CodingAgentExecutionPolicy` 在 Broker 最终门按可信 `ExecutionOrigin` 分类当前已支持入口：
+Runtime Tool 必须关联 `sourceToolCallId`，用户终端命令不能携带 Tool Call，内部只读 Git 必须是
+`PRODUCT_INTERNAL + git.read`。相关键不是授权凭据；WorkspaceAccess、path、Sandbox、Credential 与
+Broker enforcement 仍实时执行，未知入口 fail closed。
 
 组合 Project Index、Context Source、既有 Runtime Tool Pipeline 与 Project-only 产品外观。普通产品请求只携带 ProjectId 和消息；默认 Workspace、Profile、Context Source 与 Tool disclosure 从可信版本化配置解析。
 

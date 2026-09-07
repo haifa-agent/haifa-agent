@@ -54,7 +54,6 @@
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-policy-core</artifactId>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>io.haifa</groupId>

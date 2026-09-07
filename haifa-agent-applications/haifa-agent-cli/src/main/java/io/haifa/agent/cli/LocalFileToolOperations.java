@@ -120,14 +120,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     @Override
     public ToolResult execute(
-            String toolName,
-            WorkspaceId workspaceId,
-            PrincipalRef actor,
-            String runRef,
-            String policyDecisionRef,
-            ToolArguments arguments) {
-        return execute(
-                toolName, workspaceId, actor, runRef, null, identifiers.nextValue(), policyDecisionRef, arguments);
+            String toolName, WorkspaceId workspaceId, PrincipalRef actor, String runRef, ToolArguments arguments) {
+        return execute(toolName, workspaceId, actor, runRef, null, identifiers.nextValue(), arguments);
     }
 
     @Override
@@ -138,10 +132,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             String runRef,
             String toolCallRef,
             String idempotencyKey,
-            String policyDecisionRef,
             ToolArguments arguments) {
-        return execute(
-                toolName, workspaceId, actor, runRef, toolCallRef, idempotencyKey, policyDecisionRef, arguments, null);
+        return execute(toolName, workspaceId, actor, runRef, toolCallRef, idempotencyKey, arguments, null);
     }
 
     @Override
@@ -153,7 +145,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 call.runRef(),
                 call.toolCallRef(),
                 call.idempotencyKey(),
-                call.policyDecisionRef(),
                 arguments,
                 new RepositoryRunContext(call.tenant(), call.runRef(), call.actor()));
     }
@@ -165,10 +156,9 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             String runRef,
             String toolCallRef,
             String idempotencyKey,
-            String policyDecisionRef,
             ToolArguments arguments,
             RepositoryRunContext reviewContext) {
-        MutationContext mutationContext = context(idempotencyKey, runRef, toolCallRef, actor, policyDecisionRef);
+        MutationContext mutationContext = context(idempotencyKey, runRef, toolCallRef, actor);
         try {
             return switch (toolName) {
                 case "file.list" -> list(arguments.values());
@@ -180,7 +170,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 case "file.patch" -> patch(workspaceId, reviewContext, mutationContext, arguments.values());
                 case "file.delete" -> delete(reviewContext, mutationContext, arguments.values());
                 case "file.move" -> move(reviewContext, mutationContext, arguments.values());
-                case "workspace.attach" -> attach(arguments.values(), policyDecisionRef);
+                case "workspace.attach" -> attach(arguments.values());
                 default -> throw new IllegalStateException("CLI does not support tool: " + toolName);
             };
         } catch (HostWorkspaceScopeException exception) {
@@ -801,7 +791,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                         "workspace not found"));
     }
 
-    private ToolResult attach(Map<String, Object> values, String policyDecisionRef) {
+    private ToolResult attach(Map<String, Object> values) {
         String requestedPath = string(values, "path");
         Path requested = Path.of(requestedPath);
         if (!requested.isAbsolute()) {
@@ -825,8 +815,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             if (Files.isSymbolicLink(realPath)) {
                 throw new IllegalArgumentException("workspace.attach path must not be a symbolic link");
             }
-            var result = provisioning.authorizeApprovedAttach(
-                    realPath, HostDirectoryPermission.READ_WRITE, policyDecisionRef);
+            var result = provisioning.authorizeApprovedAttach(realPath, HostDirectoryPermission.READ_WRITE);
             workspaceAccess.replace(new WorkspaceAccess(
                     tenant,
                     principal,
@@ -976,8 +965,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private record ReadCursor(long offset, int startLine, String sourceVersion, String path) {}
 
     private static MutationContext context(
-            String idempotencyKey, String runRef, String toolCallRef, PrincipalRef actor, String decisionRef) {
-        return new MutationContext(idempotencyKey, runRef, toolCallRef, actor, decisionRef);
+            String idempotencyKey, String runRef, String toolCallRef, PrincipalRef actor) {
+        return new MutationContext(idempotencyKey, runRef, toolCallRef, actor);
     }
 
     private static ToolResult success(String summary, Map<String, Object> data) {

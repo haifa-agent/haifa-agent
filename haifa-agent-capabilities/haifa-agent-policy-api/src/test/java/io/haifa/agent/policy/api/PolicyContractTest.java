@@ -5,13 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
-import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class PolicyContractTest {
-    private static final Instant NOW = Instant.parse("2026-07-26T00:00:00Z");
+    private static final java.time.Instant NOW = java.time.Instant.parse("2026-07-26T00:00:00Z");
     private static final TenantRef TENANT = new TenantRef("tenant");
     private static final PrincipalRef PRINCIPAL = new PrincipalRef("user", "local");
 
@@ -168,20 +167,20 @@ class PolicyContractTest {
                 .collect(java.util.stream.Collectors.toSet());
 
         assertThat(accessorNames)
-                .contains("effect", "challenge", "reasonCode", "safeExplanation")
-                .doesNotContain("id", "request", "snapshot", "decidedAt");
+                .contains("effect", "challenge", "reasonCode", "safeExplanation", "requirementDigest")
+                .doesNotContain("id", "request", "requestDigest", "snapshot", "matchedRule", "decidedAt");
+    }
+
+    @Test
+    void approvalTargetRejectsHostAbsolutePathIdentity() {
+        assertThatThrownBy(() -> new ApprovalTargetRef(
+                        "workspace", "C:\\secret\\repo", "1", "attach", "sha256:root", "Attach workspace"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("host absolute path");
     }
 
     private static PolicyDecision decision(PolicyEffect effect, Optional<PolicyChallenge> challenge) {
-        return new PolicyDecision(
-                new PolicyDecisionId("decision"),
-                effect,
-                challenge,
-                "REASON",
-                "Safe explanation",
-                new PolicySnapshotRef("snapshot"),
-                Optional.empty(),
-                NOW);
+        return new PolicyDecision(effect, challenge, "REASON", "Safe explanation", "sha256:requirement");
     }
 
     private static ApprovalRequestContext approval(

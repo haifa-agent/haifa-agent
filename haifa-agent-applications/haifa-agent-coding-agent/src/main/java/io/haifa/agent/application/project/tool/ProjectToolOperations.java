@@ -11,12 +11,7 @@ import java.util.Objects;
 @FunctionalInterface
 public interface ProjectToolOperations {
     ToolResult execute(
-            String toolName,
-            WorkspaceId workspaceId,
-            PrincipalRef actor,
-            String runRef,
-            String policyDecisionRef,
-            ToolArguments arguments);
+            String toolName, WorkspaceId workspaceId, PrincipalRef actor, String runRef, ToolArguments arguments);
 
     default ToolResult execute(ProjectToolCallContext context, String toolName, ToolArguments arguments) {
         Objects.requireNonNull(context, "context must not be null");
@@ -27,7 +22,6 @@ public interface ProjectToolOperations {
                 context.runRef(),
                 context.toolCallRef(),
                 context.idempotencyKey(),
-                context.policyDecisionRef(),
                 arguments);
     }
 
@@ -38,9 +32,8 @@ public interface ProjectToolOperations {
             String runRef,
             String toolCallRef,
             String idempotencyKey,
-            String policyDecisionRef,
             ToolArguments arguments) {
-        return execute(toolName, workspaceId, actor, runRef, policyDecisionRef, arguments);
+        return execute(toolName, workspaceId, actor, runRef, arguments);
     }
 
     default ToolReconciliation reconcile(

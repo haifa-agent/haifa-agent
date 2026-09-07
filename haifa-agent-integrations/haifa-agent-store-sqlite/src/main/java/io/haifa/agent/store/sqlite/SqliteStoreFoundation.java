@@ -141,26 +141,6 @@ public final class SqliteStoreFoundation implements AutoCloseable {
         return new SqliteRunInputPort(unitOfWork, runtimeCodecs);
     }
 
-    public SqlitePolicySnapshotStore policySnapshots() {
-        return new SqlitePolicySnapshotStore(unitOfWork, runtimeCodecs);
-    }
-
-    public SqlitePolicyDecisionStore policyDecisions() {
-        return new SqlitePolicyDecisionStore(unitOfWork, runtimeCodecs);
-    }
-
-    public SqlitePolicyAuthorizationEvidenceStore policyAuthorizationEvidence() {
-        return new SqlitePolicyAuthorizationEvidenceStore(unitOfWork);
-    }
-
-    public SqliteApprovalGrantStore approvalGrants() {
-        return new SqliteApprovalGrantStore(unitOfWork);
-    }
-
-    public SqliteProjectTrustStore projectTrusts() {
-        return new SqliteProjectTrustStore(unitOfWork);
-    }
-
     public SqliteConversationSummaryRepository summaries() {
         return new SqliteConversationSummaryRepository(unitOfWork, runtimeCodecs);
     }

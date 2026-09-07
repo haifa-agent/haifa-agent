@@ -23,7 +23,6 @@ public record HostWorkspaceRegistryEntry(
         HostWorkspaceRegistryStatus status,
         Path realPath,
         String fingerprint,
-        String authorizationRef,
         Instant createdAt,
         Instant validatedAt,
         Optional<Instant> revokedAt,
@@ -42,7 +41,6 @@ public record HostWorkspaceRegistryEntry(
                 .toAbsolutePath()
                 .normalize();
         fingerprint = required(fingerprint, "fingerprint");
-        authorizationRef = required(authorizationRef, "authorizationRef");
         createdAt = Objects.requireNonNull(createdAt, "createdAt must not be null");
         validatedAt = Objects.requireNonNull(validatedAt, "validatedAt must not be null");
         revokedAt = Objects.requireNonNull(revokedAt, "revokedAt must not be null");
@@ -70,7 +68,6 @@ public record HostWorkspaceRegistryEntry(
             HostWorkspaceRegistrySource source,
             Path realPath,
             String fingerprint,
-            String authorizationRef,
             Instant at) {
         return new HostWorkspaceRegistryEntry(
                 projectId,
@@ -82,7 +79,6 @@ public record HostWorkspaceRegistryEntry(
                 HostWorkspaceRegistryStatus.ACTIVE,
                 realPath,
                 fingerprint,
-                authorizationRef,
                 at,
                 at,
                 Optional.empty(),
@@ -101,7 +97,6 @@ public record HostWorkspaceRegistryEntry(
                 HostWorkspaceRegistryStatus.ACTIVE,
                 verifiedRealPath,
                 fingerprint,
-                authorizationRef,
                 createdAt,
                 at,
                 Optional.empty(),
@@ -109,8 +104,7 @@ public record HostWorkspaceRegistryEntry(
                 version + 1);
     }
 
-    public HostWorkspaceRegistryEntry reactivate(
-            Path verifiedRealPath, String currentFingerprint, String currentAuthorizationRef, Instant at) {
+    public HostWorkspaceRegistryEntry reactivate(Path verifiedRealPath, String currentFingerprint, Instant at) {
         return new HostWorkspaceRegistryEntry(
                 projectId,
                 workspaceRef,
@@ -121,7 +115,6 @@ public record HostWorkspaceRegistryEntry(
                 HostWorkspaceRegistryStatus.ACTIVE,
                 verifiedRealPath,
                 currentFingerprint,
-                currentAuthorizationRef,
                 createdAt,
                 at,
                 Optional.empty(),
@@ -146,7 +139,7 @@ public record HostWorkspaceRegistryEntry(
         return "HostWorkspaceRegistryEntry[projectId=" + projectId.value() + ", workspaceRef="
                 + workspaceRef.value() + ", safeDisplayName=" + safeDisplayName + ", permission=" + permission
                 + ", source=" + source + ", status=" + status + ", fingerprint=" + fingerprint
-                + ", authorizationRef=" + authorizationRef + ", version=" + version + "]";
+                + ", version=" + version + "]";
     }
 
     private HostWorkspaceRegistryEntry inactive(HostWorkspaceRegistryStatus target, String reasonCode, Instant at) {
@@ -163,7 +156,6 @@ public record HostWorkspaceRegistryEntry(
                 target,
                 realPath,
                 fingerprint,
-                authorizationRef,
                 createdAt,
                 at,
                 Optional.of(at),

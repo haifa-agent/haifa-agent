@@ -30,6 +30,7 @@ import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionFailure;
 import io.haifa.agent.execution.api.ExecutionId;
+import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutput;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
@@ -1090,7 +1091,7 @@ class ProjectExecutionToolOperationsTest {
         AtomicInteger acknowledgements = new AtomicInteger();
         var executor = new ProjectToolExecutor(
                 (runId, principal) -> access(),
-                (toolName, workspaceId, principal, runRef, policyDecisionRef, arguments) -> {
+                (toolName, workspaceId, principal, runRef, arguments) -> {
                     throw new AssertionError("file operations must not run");
                 },
                 operations(new StubBroker() {}, 1024, 2000));
@@ -1116,7 +1117,7 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void userInitiatedCommandUsesTheSameBrokerAndPolicyReference() {
+    void userInitiatedCommandUsesTheSameBrokerWithAProductOwnedOrigin() {
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {
             @Override
@@ -1136,10 +1137,10 @@ class ProjectExecutionToolOperationsTest {
                         "git status --short",
                         ".",
                         Duration.ofSeconds(5),
-                        "terminal-key",
-                        "policy-terminal-1");
+                        "terminal-key");
 
-        assertThat(captured.get().context().policyDecisionRef()).isEqualTo("policy-terminal-1");
+        assertThat(captured.get().context().origin()).isEqualTo(ExecutionOrigin.PRODUCT_USER_COMMAND);
+        assertThat(captured.get().context().sourceToolCallId()).isEmpty();
         assertThat(captured.get().context().runRef()).isEqualTo("terminal-audit-1");
         assertThat(captured.get().workingDirectory().projectPath().isRoot()).isTrue();
         assertThat(result.summary()).contains("Command succeeded", "terminal output");
@@ -1609,7 +1610,6 @@ class ProjectExecutionToolOperationsTest {
                 new ToolArguments("haifa.execution.run.input", "1.0.0", arguments),
                 NOW.plusSeconds(30),
                 Optional.of("execution-key"),
-                Optional.of("policy-1"),
                 cancellation,
                 List.of(),
                 observer);
@@ -1641,7 +1641,6 @@ class ProjectExecutionToolOperationsTest {
                 new ToolArguments("haifa.execution.request_permissions.input", "1.0.0", arguments),
                 NOW.plusSeconds(30),
                 Optional.of("permission-key"),
-                Optional.of("permission-policy-1"),
                 () -> false,
                 List.of(),
                 ToolInvocationObserver.noop());

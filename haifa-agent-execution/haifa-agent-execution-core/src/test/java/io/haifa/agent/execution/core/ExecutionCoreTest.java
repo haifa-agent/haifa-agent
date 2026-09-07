@@ -9,6 +9,7 @@ import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionPreflightException;
@@ -754,7 +755,13 @@ class ExecutionCoreTest {
             return new ExecutionRequest(
                     new ExecutionId(id),
                     key,
-                    new TrustedExecutionContext("run-1", new PrincipalRef("actor", "user"), capabilities, "allow-1"),
+                    new TrustedExecutionContext(
+                            new io.haifa.agent.core.reference.TenantRef("tenant"),
+                            "run-1",
+                            new PrincipalRef("actor", "user"),
+                            capabilities,
+                            ExecutionOrigin.PRODUCT_USER_COMMAND,
+                            Optional.empty()),
                     workspaceId,
                     WorkspacePath.root(workspaceId),
                     new ExecutionCommand(ExecutionCommandMode.DIRECT, argv),
