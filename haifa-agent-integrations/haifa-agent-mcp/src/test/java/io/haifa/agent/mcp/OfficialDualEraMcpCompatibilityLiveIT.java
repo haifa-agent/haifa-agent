@@ -8,6 +8,7 @@ import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
@@ -146,7 +147,12 @@ class OfficialDualEraMcpCompatibilityLiveIT {
                 new ExecutionId("official-mcp-live-" + sequence),
                 "official-mcp-live-" + sequence,
                 new TrustedExecutionContext(
-                        "mcp-live-test", McpTestFixtures.PRINCIPAL, Set.of("execution.run"), "test-only"),
+                        McpTestFixtures.TENANT,
+                        "mcp-control",
+                        McpTestFixtures.PRINCIPAL,
+                        Set.of("execution.run"),
+                        ExecutionOrigin.PRODUCT_INTERNAL,
+                        Optional.empty()),
                 workspaceId,
                 WorkspacePath.root(workspaceId),
                 new ExecutionCommand(ExecutionCommandMode.DIRECT, command),
