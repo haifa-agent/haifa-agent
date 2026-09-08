@@ -121,15 +121,19 @@ public record Tui4jTerminalIo(
         // mappings for modified Enter; other CSI-u control keys can leak trailing text
         // into the editor (for example Ctrl+O becoming "5u"). Traditional control-key
         // input keeps Ctrl+O as keySI while the registered Enter fallbacks remain usable.
-        // Keep mouse reporting disabled. The host terminal must own ordinary drag selection and
-        // clipboard copy; transcript navigation remains available through PageUp/PageDown.
-        return new Program(model, options.toArray(ProgramOption[]::new)).withAltScreen();
+        options.add(ProgramOption.withAltScreen());
+        options.add(ProgramOption.withMouseCellMotion());
+        return new Program(model, options.toArray(ProgramOption[]::new)).withMouseSelectionCursor();
     }
 
     void run(Program program) {
         Objects.requireNonNull(program, "program must not be null");
         resetMouseReporting();
         try {
+            // Program options configure the input parser before terminal initialization. Reapply
+            // the runtime setting after our stale-mode reset so system terminals receive the
+            // enable sequences through the initialized renderer as well.
+            program.withMouseCellMotion().withMouseSelectionCursor();
             program.run();
         } finally {
             resetMouseReporting();

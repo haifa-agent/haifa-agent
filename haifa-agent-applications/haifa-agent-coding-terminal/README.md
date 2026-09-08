@@ -170,9 +170,9 @@ message，也不显示异常类或堆栈。
 - viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
   Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随；用户
   明确提交新消息或 Steer 时也会恢复自动跟随，避免上一轮回翻状态把新一轮输出持续藏在下方。
-- 终端不启用鼠标事件上报，并在 Program 启动前和退出清理时显式关闭可能由旧进程遗留的鼠标模式；
-  普通拖拽由宿主终端原生选择和复制文字；Transcript 使用
-  PageUp/PageDown 回翻，PageDown 到底部后恢复自动跟随。方向键 Up/Down 继续保留单行输入历史和
+- 终端启用 SGR cell-motion 鼠标事件上报。滚轮只路由到 Transcript viewport，普通左键拖拽由应用
+  按终端 cell 选择并高亮 Transcript，释放时通过 tui4j clipboard command 交给宿主系统剪贴板；拖到
+  viewport 上下边缘会持续回看。`PageUp/PageDown` 仍是键盘回退，方向键 Up/Down 继续保留单行输入历史和
   多行光标移动语义。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
@@ -181,13 +181,16 @@ View。空闲输入期间仍可归约 Runtime 事件和刷新界面。队列溢�
 权威 Session View 重新对账并按持久 Cursor 重建订阅，避免界面永久停留在 `Working/RUNNING`。
 事件 Cursor 在每个 UI tick 合并为一次最新进度写入；瞬时持久化失败只保留待确认 Cursor 并在后续
 tick 重试，不会终止渲染轮询或截断后续回复。
+流式 Transcript 新增显式换行或因终端宽度自动折行时，只更新 Viewport 内容，不发送全屏清除命令；
+自动跟随、PageUp 回看和 `new output below` 提示继续由既有状态控制。
 
 启动 UI 时进入 alternate screen 并清空独立屏幕缓冲区，因此启动命令和初始化日志不占用 TUI 行；
 正常退出或异常关闭时退出 alternate screen，并恢复主屏内容、Attributes、Signal Handler、回显、
 keypad 和光标。
 
-alternate screen 不提供可靠的终端原生历史回滚。生产配置不启用鼠标事件上报，普通拖拽由宿主终端
-原生选择和复制文字；Transcript 使用 `PageUp/PageDown` 回看，PageDown 到底部后恢复自动跟随。
+alternate screen 不提供可靠的终端原生历史回滚，因此 Transcript viewport 由应用拥有：鼠标滚轮回看、
+左键拖拽选择并在释放时复制，`PageUp/PageDown` 提供等价键盘导航。选择复制按 grapheme 与终端 cell
+边界处理 CJK、emoji 和 combining mark；窗口尺寸变化、进入安全输入或按 Escape 会清除当前选择。
 
 Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、surrogate pair、emoji ZWJ
 序列和 combining mark 的左右移动、退格与删除不会拆分可见字符；多行上下移动按终端 cell width
@@ -298,8 +301,9 @@ key，并在所有重启间保持不变。
     Selector 消费。
 13. Active Enter 后观察 Steer 从 accepted 保持到 applied；Alt+Enter 后观察持久 Follow-up Queue，
     Alt+Up 恢复且重启后不重复。
-14. PageUp 离开底部后产生新输出，确认 viewport 不跳动且出现 `new output below`；PageDown 回到底部
-    后提示消失。先以大窗口渲染、再缩小窗口并用 PageUp 回翻；同时确认鼠标拖拽可由宿主终端选择文字。
+14. 用 PageUp 或 Transcript 区域内滚轮离开底部后产生新输出，确认 viewport 不跳动且出现
+    `new output below`；PageDown 或滚轮回到底部后提示消失。左键拖拽确认应用高亮选区、释放后可粘贴
+    复制文本；覆盖跨行、CJK/emoji、拖到上下边缘持续滚动、Escape 取消和窗口 Resize 清除选择。
 15. 分别粘贴带 bracketed-paste 标记和不带标记的多行文本，确认所有行停留在 Editor，末尾换行也不
     提交；随后单独按 Enter 才提交一次。
 16. PageUp 回翻后直接提交新消息，确认新一轮自动回到底部且不显示陈旧的 `new output below`；模型交互

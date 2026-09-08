@@ -20,7 +20,7 @@ function parseArguments(values) {
     if (!key?.startsWith("--") || value == null) {
       throw new Error(
         "Usage: node haifa-agent-testing/scripts/terminal-ui-conpty-acceptance.mjs " +
-          "--run-root <outside-repository-path> --attempt <1|2|3> " +
+          "--run-root <outside-repository-path> --attempt <positive-integer> " +
           "[--jar <path>] [--node-pty <module-directory>]",
       );
     }
@@ -71,6 +71,26 @@ function stripTerminalControls(value) {
     .replace(/\uFFFF/g, "")
     .replace(/\r/g, "")
     .replace(/[ \t]+\n/g, "\n");
+}
+
+function sgrMouse(buttonCode, column, row, release = false) {
+  return `\u001b[<${buttonCode};${column + 1};${row + 1}${release ? "m" : "M"}`;
+}
+
+function visibleMarkerCoordinate(screen, markerPattern) {
+  const lines = screen.text().split("\n");
+  for (let row = 4; row < Math.min(lines.length - 5, 30); row += 1) {
+    const match = markerPattern.exec(lines[row]);
+    if (match) return { row, column: match.index, text: match[0] };
+  }
+  return null;
+}
+
+function osc52Payload(value) {
+  const matches = [
+    ...value.matchAll(/\u001b\]52;[^;]*;([A-Za-z0-9+/=]*)(?:\u0007|\u001b\\)/g),
+  ];
+  return matches.at(-1)?.[1] ?? null;
 }
 
 function sleep(milliseconds) {
@@ -193,16 +213,24 @@ function writeConfiguration(file, databasePath, approvalMode, provider) {
     file,
     [
       "models:",
-      "  default: conpty-test-model",
+      "  default: deepseek-chat-pro",
       "  providers:",
       "    - id: deepseek",
       "      displayName: ConPTY Test Provider",
+      "      nativeStreaming: true",
       `      endpoint: ${provider.endpoint}`,
       `      credentialRef: env://${provider.credentialEnvironment}`,
+      "      apiBindings:",
+      "        - style: openai-chat-completions",
+      "          dialect: deepseek-openai-chat",
       "      models:",
-      "        - id: conpty-test-model",
+      "        - id: deepseek-chat-pro",
       "          displayName: ConPTY Test Model",
-      "          providerModelId: deepseek-chat",
+      "          providerModelId: deepseek-v4-pro",
+      "          style: openai-chat-completions",
+      "          capabilities: [TEXT_CHAT, TOOL_CALLING]",
+      "          contextWindow: 131072",
+      "          maxOutputTokens: 8192",
       "",
       "tools:",
       "  enabled:",
@@ -222,7 +250,7 @@ function writeConfiguration(file, databasePath, approvalMode, provider) {
       "execution:",
       "  provider: host-guarded",
       "  network: allow",
-      "  shell: powershell",
+      `  shell: ${process.platform === "win32" ? "powershell" : "auto"}`,
       "  defaultTimeoutMillis: 120000",
       "  maxTimeoutMillis: 600000",
       "  maxOutputLines: 2000",
@@ -259,7 +287,7 @@ async function startStubProvider() {
   const server = http.createServer((request, response) => {
     const chunks = [];
     request.on("data", (chunk) => chunks.push(chunk));
-    request.on("end", () => {
+    request.on("end", async () => {
       let body = {};
       try {
         body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -267,21 +295,15 @@ async function startStubProvider() {
         // The response below remains deterministic; malformed input is recorded without echoing it.
       }
       const messages = Array.isArray(body.messages) ? body.messages : [];
-      const latestUser = messages
-        .toReversed()
-        .find((message) => message?.role === "user" && typeof message?.content === "string");
-      const longOutput = latestUser?.content?.includes("GATE_B_LONG_OUTPUT") === true;
-      const governanceReadOnly = messages.some(
-        (message) => message?.role === "user" && message?.content?.includes("GOVERNANCE_READ_ONLY"),
-      );
+      const serializedMessages = JSON.stringify(messages);
+      const longOutput = serializedMessages.includes("GATE_B_LONG_OUTPUT");
+      const governanceReadOnly = serializedMessages.includes("GOVERNANCE_READ_ONLY");
       const governanceToolObserved = messages.some((message) => message?.role === "tool");
       const requestGovernanceTool = governanceReadOnly && !governanceToolObserved;
-      const content = longOutput
-        ? Array.from(
-            { length: 40 },
-            (_, index) => `STUB-LONG-LINE-${String(index + 1).padStart(2, "0")} ${"x".repeat(72)}`,
-          ).join("\n")
-        : "READY";
+      const longOutputLines = Array.from(
+        { length: 40 },
+        (_, index) => `STUB-LONG-LINE-${String(index + 1).padStart(2, "0")} ${"x".repeat(72)}`,
+      );
       requests.push({
         method: request.method,
         path: request.url,
@@ -290,49 +312,74 @@ async function startStubProvider() {
         longOutput,
         requestGovernanceTool,
       });
-      const events = [
-        requestGovernanceTool
-          ? {
-              id: `gate-b-stub-${requests.length}`,
-              model: "deepseek-chat",
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: "governance-read-only-1",
-                        type: "function",
-                        function: {
-                          name: "file_search",
-                          arguments: '{"path":".","query":"Clamp","maxResults":10}',
-                        },
+      let events;
+      if (requestGovernanceTool) {
+        events = [
+          {
+            id: `gate-b-stub-${requests.length}`,
+            model: "deepseek-chat",
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "governance-read-only-1",
+                      type: "function",
+                      function: {
+                        name: "file_search",
+                        arguments: '{"path":".","query":"Clamp","maxResults":10}',
                       },
-                    ],
-                  },
-                  finish_reason: "tool_calls",
+                    },
+                  ],
                 },
-              ],
-            }
-          : {
-              id: `gate-b-stub-${requests.length}`,
-              model: "deepseek-chat",
-              choices: [{ index: 0, delta: { content }, finish_reason: "stop" }],
-            },
-        {
+                finish_reason: "tool_calls",
+              },
+            ],
+          },
+        ];
+      } else if (longOutput) {
+        events = longOutputLines.map((line, index) => ({
           id: `gate-b-stub-${requests.length}`,
           model: "deepseek-chat",
-          choices: [],
-          usage: { prompt_tokens: 8, completion_tokens: longOutput ? 320 : 1 },
-        },
-      ];
+          choices: [
+            {
+              index: 0,
+              delta: { content: `${index === 0 ? "" : "\n"}${line}` },
+              finish_reason: null,
+            },
+          ],
+        }));
+        events.push({
+          id: `gate-b-stub-${requests.length}`,
+          model: "deepseek-chat",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        });
+      } else {
+        events = [
+          {
+            id: `gate-b-stub-${requests.length}`,
+            model: "deepseek-chat",
+            choices: [{ index: 0, delta: { content: "READY" }, finish_reason: "stop" }],
+          },
+        ];
+      }
+      events.push({
+        id: `gate-b-stub-${requests.length}`,
+        model: "deepseek-chat",
+        choices: [],
+        usage: { prompt_tokens: 8, completion_tokens: longOutput ? 320 : 1 },
+      });
       response.writeHead(200, {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache",
         Connection: "close",
       });
-      for (const event of events) response.write(`data: ${JSON.stringify(event)}\n\n`);
+      for (const event of events) {
+        response.write(`data: ${JSON.stringify(event)}\n\n`);
+        if (longOutput) await sleep(30);
+      }
       response.end("data: [DONE]\n\n");
     });
   });
@@ -488,16 +535,22 @@ class VirtualScreen {
 const argumentsByName = parseArguments(process.argv.slice(2));
 const runRoot = requireAbsolutePath(argumentsByName.get("--run-root"), "--run-root");
 const attempt = Number(argumentsByName.get("--attempt"));
-if (!Number.isInteger(attempt) || attempt < 1 || attempt > 3) {
-  throw new Error("--attempt must be 1, 2, or 3");
+if (!Number.isInteger(attempt) || attempt < 1 || attempt > 30) {
+  throw new Error("--attempt must be between 1 and 30");
 }
 const mode = argumentsByName.get("--mode") ?? "full";
-if (!["full", "approval", "viewport", "governance"].includes(mode)) {
-  throw new Error("--mode must be full, approval, viewport, or governance");
+if (!["full", "approval", "viewport", "governance", "mouse", "streaming"].includes(mode)) {
+  throw new Error("--mode must be full, approval, viewport, governance, mouse, or streaming");
 }
 const providerMode = argumentsByName.get("--provider") ?? "deepseek";
 if (!["deepseek", "stub"].includes(providerMode)) {
   throw new Error("--provider must be deepseek or stub");
+}
+if (mode === "mouse" && providerMode !== "stub") {
+  throw new Error("--mode mouse requires --provider stub");
+}
+if (mode === "mouse" && process.platform === "win32") {
+  throw new Error("--mode mouse requires a POSIX PTY because ConPTY text writes cannot synthesize mouse input");
 }
 const approvalMode = mode === "approval" || mode === "governance" ? "ask" : "auto";
 const jar = path.resolve(
@@ -654,7 +707,11 @@ async function sendPaste(text, label, settleMillis = 500) {
 async function sendAndWait(text, label, marker, timeoutMillis) {
   const start = terminalOutput.length;
   await send(text, label);
-  await waitFor(() => terminalOutput.slice(start).includes(marker), timeoutMillis, `${label}: ${marker}`);
+  await waitFor(
+    () => terminalOutput.slice(start).includes(marker) || screen.text().includes(marker),
+    timeoutMillis,
+    `${label}: ${marker}`,
+  );
   // A marker can arrive before the remainder of the same tui4j diff frame.
   await sleep(300);
   captureScreen(`${label}:observed`);
@@ -676,8 +733,14 @@ async function sendAndWaitForTraceStop(text, label, timeoutMillis) {
 const observations = {};
 try {
   await waitFor(() => hasTerminalText("Haifa Coding Agent"), 20_000, "Terminal UI startup");
+  await waitFor(
+    () => screen.text().includes("IDLE") && !screen.text().includes("Loading most recent session"),
+    20_000,
+    "initial session lookup",
+  );
   captureScreen("startup");
 
+  if (mode !== "streaming") {
   let start = terminalOutput.length;
   await send("/help\r", "help");
   observations.helpOpened = terminalOutput.slice(start).includes("Commands");
@@ -689,7 +752,12 @@ try {
     hasTerminalText("UNBRACKETED-FIRST") &&
     hasTerminalText("UNBRACKETED-SECOND") &&
     (!fs.existsSync(traceFile) || fs.readFileSync(traceFile, "utf8").length === traceBeforePaste);
-  await send("\u0003", "clear-unbracketed-multiline-paste");
+  await send("\u0015".repeat(4), "clear-unbracketed-multiline-paste");
+  await waitFor(
+    () => !screen.text().includes("UNBRACKETED-FIRST"),
+    5_000,
+    "unbracketed multiline draft to clear",
+  );
 
   await sendPaste(
     "\u001b[200~BRACKETED-FIRST\r\nBRACKETED-SECOND\u001b[201~",
@@ -699,7 +767,12 @@ try {
     hasTerminalText("BRACKETED-FIRST") &&
     hasTerminalText("BRACKETED-SECOND") &&
     (!fs.existsSync(traceFile) || fs.readFileSync(traceFile, "utf8").length === traceBeforePaste);
-  await send("\u0003", "clear-bracketed-multiline-paste");
+  await send("\u0015".repeat(4), "clear-bracketed-multiline-paste");
+  await waitFor(
+    () => !screen.text().includes("BRACKETED-FIRST"),
+    5_000,
+    "bracketed multiline draft to clear",
+  );
 
   await sendAndWait("/commands\r", "commands", "Commands", 5_000);
   await send("\u001b", "commands-close");
@@ -712,6 +785,7 @@ try {
     120_000,
   );
   observations.seedRunCompleted = true;
+  }
 
   if (mode === "viewport") {
     for (let index = 1; index <= 12; index += 1) {
@@ -795,6 +869,7 @@ try {
     observations.windowsCommandResolutionCompleted =
       terminalOutput.includes("javac 21") && terminalOutput.includes("NESTED-POWERSHELL");
   } else {
+  if (mode === "full") {
   await sendAndWait("/rename conpty-live-session\r", "rename", "Session renamed", 10_000);
 
   await sendAndWait("/resume conpty-live\r", "resume", "Resume session", 10_000);
@@ -830,7 +905,9 @@ try {
     "Session exported",
     20_000,
   );
+  }
   if (providerMode === "stub") {
+    const streamingOutputStart = terminalOutput.length;
     await sendAndWaitForTraceStop(
       "GATE_B_LONG_OUTPUT：输出 40 行有编号的安全测试文本。\r",
       "long-model-output",
@@ -844,6 +921,56 @@ try {
     await sleep(300);
     captureScreen("long-model-output:final");
     observations.longModelOutputCompleted = true;
+    const streamingOutput = terminalOutput.slice(streamingOutputStart);
+    observations.streamingAvoidedFullScreenClear =
+      !streamingOutput.includes("\u001b[2J") && !streamingOutput.includes("\u001b[3J");
+
+    if (mode === "mouse") {
+      const bottomFrame = screen.text();
+      await send(
+        sgrMouse(64, 1, 4) + sgrMouse(64, 1, 4),
+        "mouse-wheel-up-transcript",
+        800,
+      );
+      const scrolledFrame = screen.text();
+      observations.mouseWheelScrolledTranscript =
+        scrolledFrame !== bottomFrame && !scrolledFrame.includes("STUB-LONG-LINE-40");
+
+      const selectionTarget = visibleMarkerCoordinate(screen, /STUB-LONG-LINE-\d{2}/);
+      if (!selectionTarget) throw new Error("No visible long-output marker was available for mouse selection");
+      const selectionOutputStart = terminalOutput.length;
+      await send(
+        sgrMouse(0, selectionTarget.column, selectionTarget.row),
+        "mouse-selection-press",
+        100,
+      );
+      await send(
+        sgrMouse(
+          32,
+          selectionTarget.column + selectionTarget.text.length - 1,
+          selectionTarget.row,
+        ),
+        "mouse-selection-drag",
+        100,
+      );
+      await send(
+        sgrMouse(
+          0,
+          selectionTarget.column + selectionTarget.text.length - 1,
+          selectionTarget.row,
+          true,
+        ),
+        "mouse-selection-release",
+        500,
+      );
+      const selectionOutput = terminalOutput.slice(selectionOutputStart);
+      const encodedSelection = osc52Payload(selectionOutput);
+      observations.mouseSelectionHighlighted = selectionOutput.includes("\u001b[7m");
+      observations.mouseSelectionOsc52Observed =
+        encodedSelection != null &&
+        Buffer.from(encodedSelection, "base64").toString("utf8") === selectionTarget.text;
+      await send("\u001b", "mouse-selection-clear", 100);
+    }
   } else {
     await sendAndWaitForTraceStop(
       "修复 src/main/java/sample/Clamp.java：小于 minimum 时返回 minimum，大于 maximum 时返回 maximum，" +
@@ -853,17 +980,19 @@ try {
     );
     observations.liveCodingCompleted = true;
   }
-  await sleep(1_000);
-  captureScreen("full-final-stable");
-  const finalFrame = screen.text();
-  observations.finalFrameHeaderVisible = finalFrame.includes("HAIFA CODING AGENT");
-  observations.finalFrameFooterVisible = finalFrame.includes("Footer  Enter sends");
-  const finalFooterLines = finalFrame
-    .split("\n")
-    .filter((line) => line.includes("sandbox: frozen profile"));
-  observations.finalFrameLifecycleConsistent =
-    finalFooterLines.some((line) => line.includes("COMPLETED")) &&
-    finalFooterLines.every((line) => !line.includes("RUNNING"));
+  if (mode === "full") {
+    await sleep(1_000);
+    captureScreen("full-final-stable");
+    const finalFrame = screen.text();
+    observations.finalFrameHeaderVisible = finalFrame.includes("HAIFA CODING AGENT");
+    observations.finalFrameFooterVisible = finalFrame.includes("Footer  Enter sends");
+    const finalFooterLines = finalFrame
+      .split("\n")
+      .filter((line) => line.includes("sandbox: frozen profile"));
+    observations.finalFrameLifecycleConsistent =
+      finalFooterLines.some((line) => line.includes("COMPLETED")) &&
+      finalFooterLines.every((line) => !line.includes("RUNNING"));
+  }
   }
   await send("/quit\r", "quit");
   await Promise.race([
@@ -927,6 +1056,7 @@ const commonAssertions = {
   started: hasTerminalText("Haifa Coding Agent"),
   alternateScreenEntered: terminalOutput.includes("\u001b[?1049h"),
   alternateScreenExited: terminalOutput.includes("\u001b[?1049l"),
+  mouseAnyMotionDisabled: !terminalOutput.includes("\u001b[?1003h"),
   helpOpened: observations.helpOpened === true,
   commandSelectorVisible: terminalOutput.includes("Commands"),
   unbracketedMultilinePasteStayedDraft: observations.unbracketedMultilinePasteStayedDraft === true,
@@ -935,8 +1065,33 @@ const commonAssertions = {
   noCommandUnknown: !terminalOutput.includes("COMMAND_UNKNOWN"),
   noKeyLeak: keyLeakFiles.length === 0,
   exitedSuccessfully: exited?.exitCode === 0,
+  ...(providerMode === "stub"
+    ? { streamingAvoidedFullScreenClear: observations.streamingAvoidedFullScreenClear === true }
+    : {}),
 };
-const assertions = mode === "viewport" ? {
+const streamingAssertions = {
+  started: hasTerminalText("Haifa Coding Agent"),
+  alternateScreenEntered: terminalOutput.includes("\u001b[?1049h"),
+  alternateScreenExited: terminalOutput.includes("\u001b[?1049l"),
+  mouseAnyMotionDisabled: !terminalOutput.includes("\u001b[?1003h"),
+  noKeyLeak: keyLeakFiles.length === 0,
+  exitedSuccessfully: exited?.exitCode === 0,
+  streamingAvoidedFullScreenClear: observations.streamingAvoidedFullScreenClear === true,
+  longModelOutputCompleted: observations.longModelOutputCompleted === true,
+  longModelOutputVisible: terminalOutput.includes("STUB-LONG-LINE-40"),
+};
+const assertions = mode === "mouse" ? {
+  ...commonAssertions,
+  mouseCellMotionEnabled:
+    terminalOutput.includes("\u001b[?1002h") && terminalOutput.includes("\u001b[?1006h"),
+  mouseCellMotionReset:
+    terminalOutput.includes("\u001b[?1002l") && terminalOutput.includes("\u001b[?1006l"),
+  longModelOutputCompleted: observations.longModelOutputCompleted === true,
+  longModelOutputVisible: terminalOutput.includes("STUB-LONG-LINE-40"),
+  mouseWheelScrolledTranscript: observations.mouseWheelScrolledTranscript === true,
+  mouseSelectionHighlighted: observations.mouseSelectionHighlighted === true,
+  sqliteCreated: fs.existsSync(database) && fs.statSync(database).size > 0,
+} : mode === "streaming" ? streamingAssertions : mode === "viewport" ? {
   ...commonAssertions,
   viewportBounded: observations.viewportBounded === true,
   latestViewportLineVisible: terminalOutput.includes("VIEWPORT-LINE-12"),
@@ -1016,6 +1171,15 @@ const manifest = {
     requestCount: provider.requests.length,
     requests: provider.requests,
   },
+  ...(mode === "mouse"
+    ? {
+        clipboardObservation: {
+          osc52MatchedSelectedText: observations.mouseSelectionOsc52Observed === true,
+          gated: false,
+          reason: "Local clipboard APIs are not observable through a headless PTY; exact copy text is unit-tested",
+        },
+      }
+    : {}),
   artifacts: {
     ansi: ansiFile,
     text: textFile,
