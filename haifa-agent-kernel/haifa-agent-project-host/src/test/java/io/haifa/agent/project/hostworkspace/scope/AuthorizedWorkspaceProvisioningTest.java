@@ -20,6 +20,7 @@ import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryEntry;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistrySource;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStatus;
 import io.haifa.agent.project.hostworkspace.registry.InMemoryHostWorkspaceRegistryStore;
@@ -264,7 +265,7 @@ class AuthorizedWorkspaceProvisioningTest {
 
     @Test
     void persistsApprovedAttachAndRestoresItIntoANewScope() throws IOException {
-        ProvisioningResult result = provisioning.authorizeApprovedAttach(additionalRoot);
+        ProvisioningResult result = provisioning.authorize(additionalRoot);
 
         assertThat(registry.find(projectId, result.directory().workspaceId()))
                 .get()
@@ -301,8 +302,43 @@ class AuthorizedWorkspaceProvisioningTest {
     }
 
     @Test
+    void activatesAccessAfterRegistryWriteAndBeforeScopePublication() {
+        ProvisioningResult result = provisioning.authorizeApprovedAttach(additionalRoot, directory -> {
+            assertThat(registry.find(projectId, directory.workspaceId()))
+                    .get()
+                    .extracting(HostWorkspaceRegistryEntry::status)
+                    .isEqualTo(HostWorkspaceRegistryStatus.ACTIVE);
+            assertThatThrownBy(provisioning::scope)
+                    .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
+                            .isEqualTo(HostWorkspaceScopeErrorCode.ACCESS_DENIED));
+        });
+
+        assertThat(provisioning.scope().findEnclosingDirectory(additionalRoot)).isEqualTo(result.directory());
+    }
+
+    @Test
+    void failedAccessActivationDoesNotPublishTheScopeAndDisablesTheRegistryEntry() {
+        WorkspaceId expectedWorkspaceId =
+                HostDirectoryIdentity.resolve(additionalRoot).workspaceId();
+
+        assertThatThrownBy(() -> provisioning.authorizeApprovedAttach(additionalRoot, ignored -> {
+                    throw new IllegalStateException("simulated access store failure");
+                }))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("simulated access store failure");
+
+        assertThat(provisioning.scope().allowedDirectories())
+                .extracting(AuthorizedHostDirectory::workspaceId)
+                .doesNotContain(expectedWorkspaceId);
+        assertThat(registry.find(projectId, expectedWorkspaceId)).get().satisfies(entry -> {
+            assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.DISABLED);
+            assertThat(entry.revocationReasonCode()).contains("WORKSPACE_ACCESS_ACTIVATION_FAILED");
+        });
+    }
+
+    @Test
     void missingAttachedDirectoryIsDisabledDuringRecovery() throws IOException {
-        ProvisioningResult result = provisioning.authorizeApprovedAttach(additionalRoot);
+        ProvisioningResult result = provisioning.authorize(additionalRoot);
         Files.delete(additionalRoot);
 
         var reopenedLocations = new HostWorkspaceLocationStore();
@@ -328,7 +364,7 @@ class AuthorizedWorkspaceProvisioningTest {
 
     @Test
     void fingerprintDriftAtTheSameSafePathRefreshesTheMountWithoutRevokingAccess() throws IOException {
-        ProvisioningResult result = provisioning.authorizeApprovedAttach(additionalRoot);
+        ProvisioningResult result = provisioning.authorize(additionalRoot);
         var persisted =
                 registry.find(projectId, result.directory().workspaceId()).orElseThrow();
         registry.update(
@@ -364,7 +400,7 @@ class AuthorizedWorkspaceProvisioningTest {
 
     @Test
     void replacementDirectoryAtTheSameSafePathNaturallyInheritsAccessDuringRecovery() throws IOException {
-        ProvisioningResult result = provisioning.authorizeApprovedAttach(additionalRoot);
+        ProvisioningResult result = provisioning.authorize(additionalRoot);
         HostDirectoryIdentity approvedIdentity = HostDirectoryIdentity.resolve(additionalRoot.toRealPath());
         Path originalDirectory = tempDir.resolve("original-additional");
         Files.move(additionalRoot, originalDirectory);
@@ -459,7 +495,7 @@ class AuthorizedWorkspaceProvisioningTest {
 
     @Test
     void revocationIsPersistedAndInitialWorkspaceCannotBeRevoked() {
-        ProvisioningResult attached = provisioning.authorizeApprovedAttach(additionalRoot);
+        ProvisioningResult attached = provisioning.authorize(additionalRoot);
 
         provisioning.revoke(attached.directory().workspaceId());
 

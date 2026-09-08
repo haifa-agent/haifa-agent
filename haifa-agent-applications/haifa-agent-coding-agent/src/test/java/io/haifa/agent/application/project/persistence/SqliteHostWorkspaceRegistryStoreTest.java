@@ -4,10 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryEntry;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistrySource;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStatus;
+import io.haifa.agent.project.hostworkspace.scope.HostDirectoryIdentity;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import java.nio.charset.StandardCharsets;
@@ -42,7 +42,7 @@ class SqliteHostWorkspaceRegistryStoreTest {
                 "attached-root",
                 HostWorkspaceRegistrySource.APPROVED_ATTACH,
                 root,
-                HostWorkspaceLocationStore.fingerprintFor(root),
+                HostDirectoryIdentity.resolve(root).physicalFingerprint(),
                 NOW);
 
         try (ProjectPersistenceAssembly first = ProjectPersistenceAssembly.open(
@@ -78,7 +78,7 @@ class SqliteHostWorkspaceRegistryStoreTest {
                 "corrupt-root",
                 HostWorkspaceRegistrySource.APPROVED_ATTACH,
                 root,
-                HostWorkspaceLocationStore.fingerprintFor(root),
+                HostDirectoryIdentity.resolve(root).physicalFingerprint(),
                 NOW);
         try (ProjectPersistenceAssembly first = ProjectPersistenceAssembly.open(
                 ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"),
