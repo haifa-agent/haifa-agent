@@ -76,6 +76,7 @@ final class Tui4jTerminalView {
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
     private final IncrementalTerminalMarkdownRenderer markdown = new IncrementalTerminalMarkdownRenderer(theme);
     private final TerminalShortcutProfile shortcuts;
+    private TranscriptRegion transcriptRegion = new TranscriptRegion(0, 0);
 
     Tui4jTerminalView() {
         this(TerminalShortcutProfile.standard());
@@ -113,6 +114,7 @@ final class Tui4jTerminalView {
             Duration activityElapsed,
             int requestedScrollRows) {
         if (state.columns() < MIN_COLUMNS || state.rows() < MIN_ROWS) {
+            transcriptRegion = new TranscriptRegion(0, 0);
             return String.join(
                     "\n",
                     "Haifa Coding Agent",
@@ -127,6 +129,7 @@ final class Tui4jTerminalView {
         List<String> after =
                 lowerRegions(state, editor, newOutputPending && !followTranscript, compact, activityElapsed);
         int viewportRows = Math.max(1, state.rows() - visualRows(before) - visualRows(after));
+        transcriptRegion = new TranscriptRegion(visualRows(before), viewportRows);
         transcript.setWidth(state.columns());
         transcript.setHeight(viewportRows);
         if (followTranscript) {
@@ -143,6 +146,25 @@ final class Tui4jTerminalView {
         lines.add(transcript.view());
         lines.addAll(after);
         return lines.stream().map(value -> clip(value, state.columns())).collect(Collectors.joining("\n"));
+    }
+
+    TranscriptRegion transcriptRegion() {
+        return transcriptRegion;
+    }
+
+    record TranscriptRegion(int topRow, int height) {
+        boolean contains(int row) {
+            return height > 0 && row >= topRow && row < topRow + height;
+        }
+
+        int bottomRow() {
+            return topRow + Math.max(0, height - 1);
+        }
+
+        int relativeRow(int row) {
+            if (height < 1) return 0;
+            return Math.max(0, Math.min(height - 1, row - topRow));
+        }
     }
 
     String transcriptContent(TerminalUiState state) {
@@ -189,7 +211,7 @@ final class Tui4jTerminalView {
                         + shortcuts.restoreQueuedMessage()
                         + " restore queued message"));
             }
-            lines.add(theme.muted("mouse wheel/page up/down scroll · shift+drag select"));
+            lines.add(theme.muted("mouse wheel/page up/down scroll · drag select/copy"));
         }
         resources(state).ifPresent(lines::add);
         return lines;
