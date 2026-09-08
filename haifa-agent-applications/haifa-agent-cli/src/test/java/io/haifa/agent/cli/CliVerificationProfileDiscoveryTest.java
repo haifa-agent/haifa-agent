@@ -46,6 +46,24 @@ class CliVerificationProfileDiscoveryTest {
         assertThat(discovery.diagnostics()).contains("pom.xml:INVALID", "pyproject.toml:INVALID");
     }
 
+    @Test
+    void freezesTheExistingPlatformVerificationEntryForTheCurrentOperatingSystem() throws Exception {
+        Files.writeString(root.resolve("verify.ps1"), "exit 0");
+        Files.writeString(root.resolve("verify.sh"), "exit 0");
+
+        var windows = CliVerificationProfileDiscovery.discoverWithSignals(root, "Windows 11");
+        var linux = CliVerificationProfileDiscovery.discoverWithSignals(root, "Linux");
+
+        assertThat(windows.profile().candidates())
+                .extracting(candidate -> candidate.command())
+                .containsExactly("powershell -NoProfile -File verify.ps1");
+        assertThat(linux.profile().candidates())
+                .extracting(candidate -> candidate.command())
+                .containsExactly("sh verify.sh");
+        assertThat(windows.projectSignals()).containsExactly("verify.ps1", "verify.sh");
+        assertThat(linux.projectSignals()).containsExactly("verify.ps1", "verify.sh");
+    }
+
     private static void createSymbolicLinkOrSkip(Path link, Path target) throws Exception {
         try {
             Files.createSymbolicLink(link, target);
