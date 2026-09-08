@@ -7,6 +7,7 @@ import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponseId;
@@ -225,6 +226,36 @@ class InMemoryInteractionPortTest {
                 .hasMessageContaining("must not return");
     }
 
+    @Test
+    void readsOnlyApprovalRecordsForTheRequestedRunAndToolCall() {
+        InMemoryInteractionPort port = new InMemoryInteractionPort();
+        ToolCallId source = new ToolCallId("tool-call-1");
+        InteractionRequest exact = approvalRequest("approval-1", "run-1", source);
+        port.create(exact);
+        port.respond(
+                new InteractionResponseSubmission(
+                        new InteractionResponseId("approval-response-1"),
+                        exact.id(),
+                        exact.runId(),
+                        0,
+                        InteractionAction.APPROVE,
+                        List.of(),
+                        "approval-key-1",
+                        NOW.plusSeconds(1)),
+                CALLER,
+                NOW.plusSeconds(1));
+        port.markResolutionApplied(exact.id());
+
+        InteractionRequest other = approvalRequest("approval-2", "run-1", new ToolCallId("tool-call-2"));
+        port.create(other);
+
+        assertThat(port.toolApprovalRecords(new AgentRunId("run-1"), source))
+                .extracting(record -> record.request().id().value())
+                .containsExactly("approval-1");
+        assertThat(port.toolApprovalRecords(new AgentRunId("other-run"), source))
+                .isEmpty();
+    }
+
     private static InteractionRequest request(String requestId, String runId, boolean approval) {
         return new InteractionRequest(
                 new InteractionRequestId(requestId),
@@ -237,6 +268,26 @@ class InMemoryInteractionPortTest {
                 new GenericInteractionTarget(approval ? "approval" : "clarification"),
                 NOW,
                 NOW.plusSeconds(60));
+    }
+
+    private static InteractionRequest approvalRequest(String requestId, String runId, ToolCallId toolCallId) {
+        return new InteractionRequest(
+                new InteractionRequestId(requestId),
+                new AgentRunId(runId),
+                TENANT,
+                OWNER,
+                "tool-approval",
+                "Safe public prompt",
+                true,
+                new ToolApprovalTarget(
+                        toolCallId,
+                        "provider/tool@1",
+                        "definition-hash",
+                        "arguments-digest",
+                        "tenant-1:user:owner-1",
+                        "requirement-digest"),
+                NOW,
+                java.util.Optional.empty());
     }
 
     private static InteractionResponseSubmission submission(

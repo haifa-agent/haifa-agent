@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.interaction;
 
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
@@ -25,6 +26,9 @@ public interface InteractionPort {
     }
 
     Optional<ResolvedInteraction> unappliedToolResolution(AgentRunId runId);
+
+    /** Reads existing approval lifecycle records for one persisted Tool Call; it creates no new authority. */
+    List<InteractionRecord> toolApprovalRecords(AgentRunId runId, ToolCallId toolCallId);
 
     void markResolutionApplied(InteractionRequestId requestId);
 

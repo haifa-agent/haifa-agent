@@ -20,12 +20,10 @@ public final class ExecutionRecoveryKeys {
     private ExecutionRecoveryKeys() {}
 
     public static InteractionRequestId requestId(AgentRunId runId, ToolCallId originalToolCallId) {
-        return new InteractionRequestId(
-                "execution-recovery:v1:" + digest(runId.value(), originalToolCallId.value()));
+        return new InteractionRequestId("execution-recovery:v1:" + digest(runId.value(), originalToolCallId.value()));
     }
 
-    public static Successor successor(
-            AgentRunId runId, ToolCallId originalToolCallId, String canonicalIntentDigest) {
+    public static Successor successor(AgentRunId runId, ToolCallId originalToolCallId, String canonicalIntentDigest) {
         String digest = digest(runId.value(), originalToolCallId.value(), require(canonicalIntentDigest));
         return new Successor(
                 new ToolCallId("execution-recovery-tool:v1:" + digest),
@@ -62,7 +60,8 @@ public final class ExecutionRecoveryKeys {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             for (String field : fields) {
                 byte[] value = require(field).getBytes(StandardCharsets.UTF_8);
-                digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(value.length).array());
+                digest.update(
+                        ByteBuffer.allocate(Integer.BYTES).putInt(value.length).array());
                 digest.update(value);
             }
             return HexFormat.of().formatHex(digest.digest());

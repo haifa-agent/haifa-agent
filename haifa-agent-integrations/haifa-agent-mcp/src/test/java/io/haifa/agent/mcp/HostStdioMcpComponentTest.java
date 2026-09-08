@@ -147,7 +147,7 @@ class HostStdioMcpComponentTest {
                         System.getProperty("java.home"),
                         "PATH",
                         Path.of(System.getProperty("java.home"), "bin").toString())),
-                ignored -> {},
+                (request, entryPoint) -> {},
                 ignored -> profile,
                 ignored -> host,
                 workspaces,

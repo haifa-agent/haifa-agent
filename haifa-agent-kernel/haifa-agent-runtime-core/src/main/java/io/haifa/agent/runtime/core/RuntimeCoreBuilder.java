@@ -145,7 +145,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 
 /** Convenience assembly for a local, dependency-free Runtime. */
@@ -795,5 +794,4 @@ public final class RuntimeCoreBuilder {
         if (result < 1) throw new IllegalArgumentException(key + " must be positive");
         return result;
     }
-
 }

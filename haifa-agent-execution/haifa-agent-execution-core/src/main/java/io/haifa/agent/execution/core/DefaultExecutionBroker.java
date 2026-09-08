@@ -86,11 +86,11 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             if (!sameIntent(previous, request))
                 throw reject("IDEMPOTENCY_CONFLICT", "idempotency key has different intent");
             authorize(request);
-            policy.authorize(request);
+            policy.authorize(request, ExecutionPolicyEntryPoint.IDEMPOTENT_REPLAY);
             return replay.orElseThrow().asReplay();
         }
         authorize(request);
-        policy.authorize(request);
+        policy.authorize(request, ExecutionPolicyEntryPoint.FIRST_EXECUTION);
         ResolvedSandbox resolved = resolveSandbox(request, false);
         ResolvedExecutionEnvironment environment = environments.resolve(request.environmentRef());
         List<byte[]> secrets = RedactingExecutionOutputObserver.extractSecrets(environment);
@@ -175,7 +175,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             throw reject("MANAGED_SESSION_REPLAY_DENIED", "managed process sessions cannot be replayed");
         }
         authorize(request);
-        policy.authorize(request);
+        policy.authorize(request, ExecutionPolicyEntryPoint.MANAGED_SESSION);
         ResolvedSandbox resolved = resolveSandbox(request, true);
         ResolvedExecutionEnvironment environment = environments.resolve(request.environmentRef());
         List<byte[]> secrets = RedactingExecutionOutputObserver.extractSecrets(environment);

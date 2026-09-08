@@ -209,8 +209,14 @@ public class PersonalAssistantConfiguration {
                                 .normalize());
         PersonalExecutionPlatform execution = null;
         try {
-            execution =
-                    PersonalExecutionRuntime.create(dataDirectory, principal, properties.execution(), personalClock);
+            execution = PersonalExecutionRuntime.create(
+                    dataDirectory,
+                    tenant,
+                    principal,
+                    properties.execution(),
+                    personalClock,
+                    sqlite.persistence().runtimePersistence(),
+                    sharedPolicy);
             var web = "deterministic-stub".equals(properties.mission().plannerMode())
                             && !properties.web().enabled()
                     ? PersonalWebPlatform.deterministicStub()

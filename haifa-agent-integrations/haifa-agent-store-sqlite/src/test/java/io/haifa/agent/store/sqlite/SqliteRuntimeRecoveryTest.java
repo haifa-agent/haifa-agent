@@ -653,6 +653,15 @@ class SqliteRuntimeRecoveryTest {
                     .isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(processB.ports().state().toolCalls(runId).getFirst().result())
                     .hasValueSatisfying(result -> assertThat(result.summary()).isEqualTo("persisted"));
+            var source = processB.ports().state().toolCalls(runId).getFirst();
+            assertThat(processB.ports().interactions().toolApprovalRecords(runId, source.id()))
+                    .singleElement()
+                    .satisfies(record ->
+                            assertThat(record.state()).isEqualTo(io.haifa.agent.runtime.api.InteractionState.APPLIED));
+            assertThat(processB.ports()
+                            .interactions()
+                            .toolApprovalRecords(runId, new io.haifa.agent.core.tool.ToolCallId("other-call")))
+                    .isEmpty();
         }
     }
 

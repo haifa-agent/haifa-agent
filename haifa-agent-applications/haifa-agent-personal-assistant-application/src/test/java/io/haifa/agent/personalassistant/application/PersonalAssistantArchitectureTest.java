@@ -27,6 +27,17 @@ class PersonalAssistantArchitectureTest {
     }
 
     @Test
+    void personalExecutionDoesNotDependOnCodingWorkspaceAccess() {
+        noClasses()
+                .that()
+                .resideInAnyPackage("..application.execution..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("io.haifa.agent.application.project.workspace..")
+                .check(classes);
+    }
+
+    @Test
     void missionRemainsProductLocalWithoutDeferredDomainTypes() {
         noClasses()
                 .that()

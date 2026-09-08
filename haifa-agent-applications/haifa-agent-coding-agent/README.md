@@ -120,7 +120,10 @@ Grant/Trust Store，也不包含组织、审批路由、待办或业务状态机
 `CodingAgentExecutionPolicy` 在 Broker 最终门按可信 `ExecutionOrigin` 分类当前已支持入口：
 Runtime Tool 必须关联 `sourceToolCallId`，用户终端命令不能携带 Tool Call，内部只读 Git 必须是
 `PRODUCT_INTERNAL + git.read`。相关键不是授权凭据；WorkspaceAccess、path、Sandbox、Credential 与
-Broker enforcement 仍实时执行，未知入口 fail closed。
+Broker enforcement 仍实时执行，未知入口 fail closed。Runtime 来源会重新读取 Run、运行中的 frozen
+ToolCall、configuration、当前 Policy 与唯一有效的 exact Interaction；CLI 用户命令和模型触发执行要求
+DEVELOP。只有产品内部固定的 8 条只读 Git probe 可在 READ 下执行，任何 argv、profile、environment、
+scratch、timeout、output family 或 working-directory 扩张均拒绝。CA/PA 当前均拒绝 managed session。
 
 组合 Project Index、Context Source、既有 Runtime Tool Pipeline 与 Project-only 产品外观。普通产品请求只携带 ProjectId 和消息；默认 Workspace、Profile、Context Source 与 Tool disclosure 从可信版本化配置解析。
 

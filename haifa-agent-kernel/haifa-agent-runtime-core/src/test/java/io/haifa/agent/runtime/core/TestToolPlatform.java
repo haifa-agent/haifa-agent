@@ -146,8 +146,7 @@ final class TestToolPlatform {
             }
         };
         return new ToolCatalogBuilder()
-                .register(
-                        alias(name), definition(name, version, inputSchemaId, sideEffecting), "test", provider)
+                .register(alias(name), definition(name, version, inputSchemaId, sideEffecting), "test", provider)
                 .freeze()
                 .snapshot()
                 .bindings()

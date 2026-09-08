@@ -33,8 +33,18 @@ public record InteractionRequest(
             Instant createdAt,
             Instant expiresAt,
             InteractionExpirationOutcome expirationOutcome) {
-        this(id, runId, tenant, requester, type, prompt, approval, target, createdAt,
-                Optional.of(Objects.requireNonNull(expiresAt, "expiresAt must not be null")), expirationOutcome);
+        this(
+                id,
+                runId,
+                tenant,
+                requester,
+                type,
+                prompt,
+                approval,
+                target,
+                createdAt,
+                Optional.of(Objects.requireNonNull(expiresAt, "expiresAt must not be null")),
+                expirationOutcome);
     }
 
     public InteractionRequest(
@@ -48,7 +58,16 @@ public record InteractionRequest(
             InteractionTarget target,
             Instant createdAt,
             Instant expiresAt) {
-        this(id, runId, tenant, requester, type, prompt, approval, target, createdAt,
+        this(
+                id,
+                runId,
+                tenant,
+                requester,
+                type,
+                prompt,
+                approval,
+                target,
+                createdAt,
                 Optional.of(Objects.requireNonNull(expiresAt, "expiresAt must not be null")),
                 approval ? InteractionExpirationOutcome.CANCEL_RUN : InteractionExpirationOutcome.FAIL_RUN);
     }
@@ -64,7 +83,17 @@ public record InteractionRequest(
             InteractionTarget target,
             Instant createdAt,
             Optional<Instant> expiresAt) {
-        this(id, runId, tenant, requester, type, prompt, approval, target, createdAt, expiresAt,
+        this(
+                id,
+                runId,
+                tenant,
+                requester,
+                type,
+                prompt,
+                approval,
+                target,
+                createdAt,
+                expiresAt,
                 approval ? InteractionExpirationOutcome.CANCEL_RUN : InteractionExpirationOutcome.FAIL_RUN);
     }
 
@@ -78,8 +107,18 @@ public record InteractionRequest(
             boolean approval,
             Instant createdAt,
             Optional<Instant> expiresAt) {
-        this(id, runId, tenant, requester, type, prompt, approval, new GenericInteractionTarget(type), createdAt,
-                expiresAt, approval ? InteractionExpirationOutcome.CANCEL_RUN : InteractionExpirationOutcome.FAIL_RUN);
+        this(
+                id,
+                runId,
+                tenant,
+                requester,
+                type,
+                prompt,
+                approval,
+                new GenericInteractionTarget(type),
+                createdAt,
+                expiresAt,
+                approval ? InteractionExpirationOutcome.CANCEL_RUN : InteractionExpirationOutcome.FAIL_RUN);
     }
 
     public InteractionRequest(
@@ -92,7 +131,16 @@ public record InteractionRequest(
             boolean approval,
             Instant createdAt,
             Instant expiresAt) {
-        this(id, runId, tenant, requester, type, prompt, approval, new GenericInteractionTarget(type), createdAt,
+        this(
+                id,
+                runId,
+                tenant,
+                requester,
+                type,
+                prompt,
+                approval,
+                new GenericInteractionTarget(type),
+                createdAt,
                 Optional.of(Objects.requireNonNull(expiresAt, "expiresAt must not be null")),
                 approval ? InteractionExpirationOutcome.CANCEL_RUN : InteractionExpirationOutcome.FAIL_RUN);
     }
@@ -123,7 +171,8 @@ public record InteractionRequest(
     }
 
     private static String requireText(String value, String field) {
-        String normalized = Objects.requireNonNull(value, field + " must not be null").trim();
+        String normalized =
+                Objects.requireNonNull(value, field + " must not be null").trim();
         if (normalized.isEmpty()) throw new IllegalArgumentException(field + " must not be blank");
         return normalized;
     }

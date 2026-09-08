@@ -1083,7 +1083,10 @@ class RuntimeCoreTest {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger toolCalls = new AtomicInteger();
         ToolRequest request = toolRequest(
-                "network-permission", "execution_run", "1.0.0", new ToolArguments("execution.run.input", "1.0", Map.of()));
+                "network-permission",
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.run.input", "1.0", Map.of()));
         Fixture fixture = fixture(
                 ignored -> response(
                         modelCalls.incrementAndGet() == 1
@@ -1091,14 +1094,15 @@ class RuntimeCoreTest {
                                 : finalDecision("recovered")),
                 builder -> TestToolPlatform.install(
                         builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
-                    if (toolCalls.incrementAndGet() == 1) {
-                        throw new io.haifa.agent.tool.api.ToolInvocationException(
-                                "NETWORK_PERMISSION_REQUIRED",
-                                io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
-                                "host network access requires operator approval before execution");
-                    }
-                    return new ToolResult(true, "written after recovery", Map.of(), List.of(), List.of(), false);
-                }));
+                            if (toolCalls.incrementAndGet() == 1) {
+                                throw new io.haifa.agent.tool.api.ToolInvocationException(
+                                        "NETWORK_PERMISSION_REQUIRED",
+                                        io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
+                                        "host network access requires operator approval before execution");
+                            }
+                            return new ToolResult(
+                                    true, "written after recovery", Map.of(), List.of(), List.of(), false);
+                        }));
 
         var accepted = fixture.runtime.start(request("network-permission"));
         fixture.scheduler.runAll();
@@ -1109,8 +1113,7 @@ class RuntimeCoreTest {
         assertThat(toolCalls).hasValue(1);
         var original = fixture.store.toolCalls(accepted.runId()).getFirst();
         assertThat(original.status().name()).isEqualTo("FAILED");
-        assertThat(original.error().orElseThrow().error().code())
-                .isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
+        assertThat(original.error().orElseThrow().error().code()).isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
         assertThat(original.error().orElseThrow().error().details())
                 .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
                 .containsEntry("dispatchState", "NOT_DISPATCHED");
@@ -1257,9 +1260,8 @@ class RuntimeCoreTest {
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.FAILED);
         assertThat(fixture.interactions.pending(accepted.runId())).isEmpty();
-        assertThat(fixture.store.toolCalls(accepted.runId()))
-                .hasSize(2)
-                .allSatisfy(call -> assertThat(call.status()).isEqualTo(ToolCallStatus.FAILED));
+        assertThat(fixture.store.toolCalls(accepted.runId())).hasSize(2).allSatisfy(call -> assertThat(call.status())
+                .isEqualTo(ToolCallStatus.FAILED));
         assertThat(modelCalls).hasValue(1);
         assertThat(toolCalls).hasValue(2);
     }
@@ -1296,8 +1298,9 @@ class RuntimeCoreTest {
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(fixture.interactions.pending(accepted.runId())).isEmpty();
-        assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call ->
-                assertThat(call.status()).isEqualTo(ToolCallStatus.FAILED));
+        assertThat(fixture.store.toolCalls(accepted.runId()))
+                .singleElement()
+                .satisfies(call -> assertThat(call.status()).isEqualTo(ToolCallStatus.FAILED));
         assertThat(modelCalls).hasValue(2);
         assertThat(toolCalls).hasValue(1);
     }
@@ -1887,8 +1890,8 @@ class RuntimeCoreTest {
         assertThat(fixture.store.steps(accepted.runId()))
                 .filteredOn(step -> step.type() == AgentStepType.TOOL_EXECUTION)
                 .singleElement()
-                .satisfies(step -> assertThat(step.error().orElseThrow().error().details())
-                        .containsEntry("reason", "LEGACY_TOOL_POLICY_DENY"));
+                .satisfies(step ->
+                        assertThat(step.error().orElseThrow().error().details()).containsEntry("reason", "TEST_DENY"));
     }
 
     @Test
