@@ -38,9 +38,12 @@ node .\haifa-agent-testing\scripts\terminal-ui-conpty-acceptance.mjs `
   --attempt 1
 ```
 
-`--mode` 支持 `full`、`approval`、`viewport` 和 `governance`。`governance` 由 Autonomous Delivery
-专用 Stub Gate 调用，在 ASK 模式下同时验证一次拒绝、included/excluded Shell 批准、Windows 命令
-解析和 SQLite 权威证据；它不选择 Coding Case。运行根必须位于源码仓库之外且事先不存在。
+`--mode` 支持 `full`、`approval`、`viewport`、`governance`、`streaming` 和 `mouse`。`streaming`
+使用 Stub Provider，在启动期 Session 查询结束后直接发送唯一一次长流式请求，跳过命令、粘贴和 seed
+流程，用于检查流式期间没有全屏清除以及退出恢复。`mouse` 只用于能注入真实 SGR 鼠标事件的 POSIX PTY。
+`governance` 由 Autonomous Delivery 专用 Stub Gate 调用，在 ASK 模式下同时验证一次拒绝、
+included/excluded Shell 批准、Windows 命令解析和 SQLite 权威证据；它不选择 Coding Case。运行根
+必须位于源码仓库之外且事先不存在。
 
 ## Terminal UI Phase C 确定性质量门禁
 

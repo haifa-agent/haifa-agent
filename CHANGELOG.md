@@ -1,5 +1,9 @@
 # Changelog
 
+- Coding Terminal 流式 Transcript 增长不再按渲染行数变化触发全屏清除；模型输出新增换行或自动折行时
+  继续由 tui4j 正常更新 Viewport，避免每新增一行闪烁一次，同时保留自动跟随和 PageUp 回看语义。
+- Coding Terminal 在 alternate screen 中启用应用拥有的 Transcript 鼠标交互：滚轮回看，左键拖拽按
+  terminal cell 高亮并复制，支持 CJK/emoji、跨行选择和 viewport 边缘自动滚动，Editor 键盘路由保持独立。
 - MCP Client 对 Streamable HTTP 与 ExecutionBroker-backed stdio 增加 `2025-03-26`、`2025-06-18`
   和 `2026-07-28` 精确协议配置；2026 使用无会话 `server/discover`、per-request metadata 和标准 HTTP
   routing/parameter headers，`2024-11-05` 与未知历史版本继续 fail closed；晚于 `2026-07-28` 的有效日期

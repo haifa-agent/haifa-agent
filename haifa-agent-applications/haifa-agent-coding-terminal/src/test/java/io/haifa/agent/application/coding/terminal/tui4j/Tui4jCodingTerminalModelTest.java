@@ -2,8 +2,11 @@ package io.haifa.agent.application.coding.terminal.tui4j;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.williamcallahan.tui4j.compat.bubbletea.BatchMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.ClearScreenMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.Command;
 import com.williamcallahan.tui4j.compat.bubbletea.KeyPressMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.Message;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
@@ -12,6 +15,7 @@ import com.williamcallahan.tui4j.compat.bubbletea.input.MouseMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.Key;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.KeyType;
 import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
+import com.williamcallahan.tui4j.message.CopyToClipboardMessage;
 import com.williamcallahan.tui4j.message.EnterKeyModifier;
 import com.williamcallahan.tui4j.message.EnterKeyModifierMessage;
 import com.williamcallahan.tui4j.term.TerminalInfo;
@@ -225,6 +229,42 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void doesNotClearTheScreenWhenStreamingAddsAnExplicitLine() {
+        var fixture = fixture();
+        fixture.model.init();
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "first line"))));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(2, new RunEventPayloads.AssistantTextDelta("generation-1", "\nsecond line"))));
+        var streamed = fixture.model.update(new WindowSizeMessage(80, 24));
+
+        assertThat(emitsClearScreen(streamed.command())).isFalse();
+        assertThat(fixture.model.view()).contains("first line", "second line");
+    }
+
+    @Test
+    void doesNotClearTheScreenWhenStreamingWrapsOntoAnotherVisualLine() {
+        var fixture = fixture();
+        fixture.model.init();
+        fixture.model.update(new WindowSizeMessage(60, 24));
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "short"))));
+        fixture.model.update(new WindowSizeMessage(60, 24));
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                2,
+                new RunEventPayloads.AssistantTextDelta(
+                        "generation-1",
+                        " text that grows beyond the narrow terminal width while streaming continues"))));
+        var streamed = fixture.model.update(new WindowSizeMessage(60, 24));
+
+        assertThat(emitsClearScreen(streamed.command())).isFalse();
+        assertThat(fixture.model.view()).contains("short text");
+    }
+
+    @Test
     void routesMouseWheelToTranscriptWithoutBrowsingEditorHistory() {
         var fixture = fixture();
         fixture.model.init();
@@ -349,10 +389,93 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(new WindowSizeMessage(80, 24));
         assertThat(fixture.model.view()).contains("history-30");
 
-        fixture.model.update(MouseMessage.parseSGRMouseEvent(64, 2, 2, false));
-        fixture.model.update(MouseMessage.parseSGRMouseEvent(64, 2, 2, false));
+        fixture.model.update(MouseMessage.parseSGRMouseEvent(64, 2, 5, false));
+        fixture.model.update(MouseMessage.parseSGRMouseEvent(64, 2, 5, false));
 
         assertThat(fixture.model.view()).contains("history-23").doesNotContain("history-30");
+    }
+
+    @Test
+    void selectsHighlightsAndCopiesOnlyVisibleTranscriptText() {
+        var fixture = fixture();
+        fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("message-1", "alpha beta"));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        fixture.model.view();
+
+        fixture.model.update(mouse(3, 4, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(7, 4, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        assertThat(fixture.model.view()).contains("\u001B[7m", "\u001B[27m");
+
+        var released = fixture.model.update(mouse(7, 4, MouseAction.MouseActionRelease, MouseButton.MouseButtonNone));
+
+        assertThat(released.command().execute())
+                .isInstanceOfSatisfying(CopyToClipboardMessage.class, copied -> assertThat(copied.text())
+                        .isEqualTo("alpha"));
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
+    void keepsSelectionAcrossAppendOnlyStreamingAndLetsEscapeCancelIt() {
+        var fixture = fixture();
+        fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("message-1", "alpha beta"));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        fixture.model.view();
+        fixture.model.update(mouse(3, 4, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(7, 4, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "streamed suffix"))));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+
+        assertThat(fixture.model.view()).contains("\u001B[7m", "streamed suffix");
+
+        fixture.model.update(key(KeyType.keyESC));
+
+        assertThat(fixture.model.view()).doesNotContain("\u001B[7m");
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
+    void ignoresWheelOutsideTranscriptAndClearsSelectionOnResize() {
+        var fixture = fixture();
+        for (int index = 1; index <= 30; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("message-" + index, "history-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        String initial = fixture.model.view();
+
+        fixture.model.update(mouse(1, 0, MouseAction.MouseActionPress, MouseButton.MouseButtonWheelUp));
+        assertThat(fixture.model.view()).isEqualTo(initial);
+
+        fixture.model.update(mouse(3, 3, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+        fixture.model.update(mouse(7, 3, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft));
+        assertThat(fixture.model.view()).contains("\u001B[7m");
+
+        fixture.model.update(new WindowSizeMessage(81, 24));
+        assertThat(fixture.model.view()).doesNotContain("\u001B[7m");
+    }
+
+    @Test
+    void autoScrollsTheTranscriptWhileDraggingAlongTheViewportEdge() {
+        var fixture = fixture();
+        for (int index = 1; index <= 30; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("message-" + index, "history-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("history-30").doesNotContain("history-24");
+        fixture.model.update(mouse(3, 7, MouseAction.MouseActionPress, MouseButton.MouseButtonLeft));
+
+        Command scrolling = fixture.model
+                .update(mouse(3, 3, MouseAction.MouseActionMotion, MouseButton.MouseButtonLeft))
+                .command();
+        for (int tick = 0; tick < 4; tick++) {
+            scrolling = fixture.model.update(scrolling.execute()).command();
+            fixture.model.view();
+        }
+
+        assertThat(fixture.model.view()).contains("history-24", "\u001B[7m");
+        fixture.model.update(mouse(3, 3, MouseAction.MouseActionRelease, MouseButton.MouseButtonNone));
     }
 
     @Test
@@ -492,12 +615,37 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(guarded.command().execute());
     }
 
+    private boolean emitsClearScreen(Command command) {
+        if (Command.isNone(command)) {
+            return false;
+        }
+        return emitsClearScreen(command.execute());
+    }
+
+    private boolean emitsClearScreen(Message message) {
+        if (message instanceof ClearScreenMessage) {
+            return true;
+        }
+        if (message instanceof BatchMessage batch) {
+            for (Command command : batch.commands()) {
+                if (emitsClearScreen(command)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private KeyPressMessage runes(char value) {
         return new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {value}));
     }
 
     private MouseMessage wheel(MouseButton button) {
-        return new MouseMessage(1, 1, false, false, false, MouseAction.MouseActionPress, button);
+        return mouse(1, 4, MouseAction.MouseActionPress, button);
+    }
+
+    private MouseMessage mouse(int column, int row, MouseAction action, MouseButton button) {
+        return new MouseMessage(column, row, false, false, false, action, button);
     }
 
     private AgentRunEvent event(long sequence, AgentRunEvent.Payload payload) {
