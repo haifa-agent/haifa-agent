@@ -101,14 +101,15 @@ models:
           maxOutputTokens: 128000
 ```
 
-The packaged trusted catalog also contains `gpt-5.6-terra` and `gpt-5.6-luna`. `/model` lists this safe static catalog;
+The packaged trusted catalog also contains `gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-5.3-codex-spark`. `/model` lists this safe static catalog;
 credential readiness remains a separate `/account` concern and does not remove models from the picker. The model IDs,
 originator, user agent, redirect registration, and Client ID remain deployment inputs governed by the OpenAI/Haifa
 contract; the example does not claim an approved production registration.
 
 ## Google Antigravity Direct Gemini dialect
 
-The packaged catalog contains `antigravity-gemini`, but the loader hides it unless
+The packaged catalog contains `antigravity-gemini` plus exact bindings for `gemini-3.8-flash`, `gemini-3.7-flash`,
+and `gemini-3.1-pro-preview`, but the loader hides all Antigravity bindings unless
 `HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true`. Direct login additionally requires externally injected
 `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_ID` and `HAIFA_ANTIGRAVITY_OAUTH_CLIENT_SECRET`; no registration is compiled into the
 distribution. With that registration enabled, the Terminal's `Connect a model` selector includes

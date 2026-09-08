@@ -9,6 +9,7 @@ import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProfileStatus;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelReasoningBehavior;
+import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.net.URI;
@@ -22,7 +23,7 @@ class GeminiModelProfileFactoryTest {
     @Test
     void verifiesAllRegisteredGovernedGeminiAdmissions() {
         var admissions = GeminiBindingRegistry.admissions();
-        assertThat(admissions).hasSize(3);
+        assertThat(admissions).hasSize(5);
 
         for (var admission : admissions) {
             ResolvedModelSnapshot reasoningSnapshot = ResolvedModelSnapshot.create(
@@ -49,7 +50,7 @@ class GeminiModelProfileFactoryTest {
                     .as("Admitted Gemini binding %s must be VERIFIED", admission)
                     .isEqualTo(ModelProfileStatus.VERIFIED);
             assertThat(reasoningProfile.selectable()).isTrue();
-            assertThat(reasoningProfile.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.OPTIONAL);
+            assertThat(reasoningProfile.reasoningBehavior()).isNotEqualTo(ModelReasoningBehavior.NONE);
             assertThat(reasoningProfile.allowedReasoningModes()).contains(ModelReasoningMode.ENABLED);
             assertThat(reasoningProfile.toolReasoningContinuationRequired()).isTrue();
             assertThat(reasoningProfile.executionLimits().contextWindowTokens())
@@ -89,6 +90,21 @@ class GeminiModelProfileFactoryTest {
             assertThat(nonReasoningProfile.toolReasoningContinuationRequired()).isFalse();
             assertThat(nonReasoningProfile.imageInput()).isPresent();
             assertThat(nonReasoningProfile.imageInput().get().maxTotalBytes()).isEqualTo(12 * 1024 * 1024L);
+        }
+
+        for (String providerModelId :
+                Set.of("gemini-3.8-flash-tiered", "gemini-3.7-flash-tiered", "gemini-pro-agent")) {
+            var admission = GeminiBindingRegistry.find(
+                            "google-antigravity",
+                            providerModelId,
+                            ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                            GeminiDialects.ANTIGRAVITY_DIRECT)
+                    .orElseThrow();
+            assertThat(admission.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.ALWAYS);
+            assertThat(admission.allowedReasoningModes()).containsExactly(ModelReasoningMode.ENABLED);
+            assertThat(admission.allowedReasoningEfforts())
+                    .containsExactlyInAnyOrder(
+                            ModelReasoningEffort.LOW, ModelReasoningEffort.MEDIUM, ModelReasoningEffort.HIGH);
         }
     }
 
@@ -165,7 +181,7 @@ class GeminiModelProfileFactoryTest {
     }
 
     private static ResolvedModelSnapshot snapshot(String provider, String dialect) {
-        return snapshot(provider, dialect, "gemini-3.7-flash");
+        return snapshot(provider, dialect, "gemini-3.7-flash-tiered");
     }
 
     private static ResolvedModelSnapshot snapshot(String provider, String dialect, String providerModelId) {

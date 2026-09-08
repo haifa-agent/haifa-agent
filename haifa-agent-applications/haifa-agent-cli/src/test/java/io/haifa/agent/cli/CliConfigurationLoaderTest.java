@@ -197,6 +197,7 @@ class CliConfigurationLoaderTest {
                         "gpt-5.6-sol",
                         "gpt-5.6-terra",
                         "gpt-5.6-luna",
+                        "gpt-5.3-codex-spark",
                         "qwen3.8-max-0902",
                         "qwen3.8-max",
                         "qwen3.8-flash",
@@ -274,11 +275,19 @@ class CliConfigurationLoaderTest {
                 })
                 .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
         assertThat(antigravityEnabled.availableModels())
-                .filteredOn(model -> model.id().equals("antigravity-gemini"))
+                .filteredOn(model -> model.providerId().equals("google-antigravity"))
+                .extracting(CliConfiguration.Model::id)
+                .containsExactly(
+                        "antigravity-gemini",
+                        "antigravity-gemini-3-8-flash",
+                        "antigravity-gemini-3-7-flash",
+                        "antigravity-gemini-3-1-pro-preview");
+        assertThat(antigravityEnabled.availableModels())
+                .filteredOn(model -> model.id().equals("antigravity-gemini-3-8-flash"))
                 .singleElement()
                 .satisfies(model -> {
                     assertThat(model.providerId()).isEqualTo("google-antigravity");
-                    assertThat(model.modelId()).isEqualTo("gemini-3-flash");
+                    assertThat(model.modelId()).isEqualTo("gemini-3.8-flash-tiered");
                     assertThat(model.endpoint()).hasToString("https://daily-cloudcode-pa.googleapis.com/v1internal");
                     assertThat(model.credentialRef()).isEqualTo("model-auth://google-antigravity/default");
                     assertThat(model.dialect()).isEqualTo("antigravity-direct");
@@ -296,7 +305,7 @@ class CliConfigurationLoaderTest {
                                 new io.haifa.agent.core.reference.TenantRef("local"),
                                 new io.haifa.agent.core.reference.PrincipalRef("user", "user")))
                 .extracting(io.haifa.agent.application.project.product.coding.CodingModelOption::id)
-                .contains("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
+                .contains("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.3-codex-spark")
                 .doesNotContain("local-openai-responses");
         assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
         assertThat(result.approvalThreshold()).isEqualTo(CodingApprovalThreshold.LOW);
