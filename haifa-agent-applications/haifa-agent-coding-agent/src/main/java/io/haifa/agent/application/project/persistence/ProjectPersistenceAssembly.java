@@ -127,8 +127,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                 database, configuration.busyTimeoutMillis(), configuration.maximumPayloadBytes());
         SqliteStoreFoundation foundation = null;
         try {
-            foundation = SqliteStoreFoundation.initialize(
-                    sqliteConfiguration, clock, ProjectApplicationMigrations.all(), ProjectApplicationMappers.all());
+            foundation = SqliteStoreFoundation.initializeWithAdditionalMappers(
+                    sqliteConfiguration, clock, ProjectApplicationMappers.all());
             RuntimePersistencePorts ports = foundation.persistencePorts(effectiveProtector);
             ProjectProductSessionStore productSessions =
                     new SqliteProjectProductSessionStore(foundation.unitOfWork(), ports.sessions());

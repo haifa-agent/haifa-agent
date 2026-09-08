@@ -52,8 +52,9 @@ final class CodingWorkspaceLocationCodec {
         }
     }
 
-    static String binding(String projectId, String workspaceRef, String locationRef, String fingerprint) {
-        return "coding-workspace-location|" + projectId + "|" + workspaceRef + "|" + locationRef + "|" + fingerprint;
+    static String binding(String projectId, String workspaceRef, String locationRef, String physicalFingerprint) {
+        return "coding-workspace-location|" + projectId + "|" + workspaceRef + "|" + locationRef + "|"
+                + physicalFingerprint;
     }
 
     private static void requireSize(byte[] bytes) {

@@ -108,7 +108,6 @@ final class CliCodingShellService implements CodingShellService {
                         Optional.of(auditRunId.value()),
                         Optional.empty(),
                         policy.rules().approvalMode(),
-                        Optional.empty(),
                         Optional.of(profileDigest)),
                 new PolicyAction("execution.run", "invoke"),
                 new PolicyResource(

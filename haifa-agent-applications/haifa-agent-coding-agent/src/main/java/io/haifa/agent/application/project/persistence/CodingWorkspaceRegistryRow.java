@@ -12,7 +12,7 @@ public record CodingWorkspaceRegistryRow(
         byte[] locationNonce,
         byte[] locationCiphertext,
         String locationDigest,
-        String fingerprint,
+        String physicalFingerprint,
         Instant createdAt,
         Instant validatedAt,
         Instant revokedAt,

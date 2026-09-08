@@ -21,7 +21,6 @@ import io.haifa.agent.policy.api.PolicyRuleSet;
 import io.haifa.agent.policy.api.PolicyRuleSource;
 import io.haifa.agent.policy.api.PolicySideEffect;
 import io.haifa.agent.policy.api.PolicySubject;
-import io.haifa.agent.policy.api.ProjectTrustRef;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -37,8 +36,8 @@ class DefaultPolicyDecisionServiceTest {
                 rule("ask", PolicyRuleSource.MANAGED, PolicyEffect.ASK, Optional.of(PolicyChallenge.APPROVAL), 10);
         PolicyRule deny = rule("deny", PolicyRuleSource.SYSTEM, PolicyEffect.DENY, Optional.empty(), 0);
 
-        PolicyDecision first = SERVICE.evaluate(request(Optional.empty()), snapshot(List.of(allow, ask, deny)));
-        PolicyDecision second = SERVICE.evaluate(request(Optional.empty()), snapshot(List.of(deny, allow, ask)));
+        PolicyDecision first = SERVICE.evaluate(request(), snapshot(List.of(allow, ask, deny)));
+        PolicyDecision second = SERVICE.evaluate(request(), snapshot(List.of(deny, allow, ask)));
 
         assertThat(first.effect()).isEqualTo(PolicyEffect.DENY);
         assertThat(second).isEqualTo(first);
@@ -47,7 +46,7 @@ class DefaultPolicyDecisionServiceTest {
     @Test
     void askWinsOverAllowAndCarriesChallenge() {
         PolicyDecision decision = SERVICE.evaluate(
-                request(Optional.empty()),
+                request(),
                 snapshot(List.of(
                         rule("allow", PolicyRuleSource.USER, PolicyEffect.ALLOW, Optional.empty(), 10),
                         rule(
@@ -63,25 +62,11 @@ class DefaultPolicyDecisionServiceTest {
 
     @Test
     void missingRuleAndDefaultFailsClosed() {
-        PolicyDecision decision = SERVICE.evaluate(request(Optional.empty()), snapshot(List.of()));
+        PolicyDecision decision = SERVICE.evaluate(request(), snapshot(List.of()));
 
         assertThat(decision.effect()).isEqualTo(PolicyEffect.DENY);
         assertThat(decision.reasonCode()).isEqualTo("POLICY_NO_MATCH");
         assertThat(decision.requirementDigest()).startsWith("sha256:");
-    }
-
-    @Test
-    void legacyProjectTrustReferenceDoesNotChangeTransientRuleEvaluation() {
-        PolicyRule projectAllow =
-                rule("project-allow", PolicyRuleSource.PROJECT, PolicyEffect.ALLOW, Optional.empty(), 0);
-
-        PolicyDecision withoutLegacyTrust =
-                SERVICE.evaluate(request(Optional.empty()), snapshot(List.of(projectAllow)));
-        PolicyDecision withLegacyTrust =
-                SERVICE.evaluate(request(Optional.of(new ProjectTrustRef("trust"))), snapshot(List.of(projectAllow)));
-
-        assertThat(withoutLegacyTrust.effect()).isEqualTo(PolicyEffect.ALLOW);
-        assertThat(withLegacyTrust).isEqualTo(withoutLegacyTrust);
     }
 
     @Test
@@ -106,12 +91,11 @@ class DefaultPolicyDecisionServiceTest {
                 "FILE_WRITE_CONFIRM",
                 "Confirm a workspace write");
 
-        assertThat(SERVICE.evaluate(request(Optional.empty()), snapshot(List.of(matched)))
-                        .effect())
+        assertThat(SERVICE.evaluate(request(), snapshot(List.of(matched))).effect())
                 .isEqualTo(PolicyEffect.ASK);
     }
 
-    private static PolicyRequest request(Optional<ProjectTrustRef> trust) {
+    private static PolicyRequest request() {
         return new PolicyRequest(
                 new PolicySubject(new TenantRef("tenant"), new PrincipalRef("user", "local"), "coding"),
                 new PolicyContext(
@@ -120,7 +104,6 @@ class DefaultPolicyDecisionServiceTest {
                         Optional.of("run"),
                         Optional.of("attempt"),
                         ApprovalMode.ASK,
-                        trust,
                         Optional.of("sha256:config")),
                 new PolicyAction("workspace.file", "write"),
                 new PolicyResource("file", "workspace:README.md", Optional.of("sha256:resource"), "Write README"),

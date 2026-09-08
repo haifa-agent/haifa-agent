@@ -1,5 +1,5 @@
 -- Task 02: stable Runtime Journal identity/range reads and durable HITL/Steer state.
--- Existing V1-V3 data is upgraded in place; prior migrations remain immutable.
+-- The clean baseline applies this after V1-V2; version 3 is intentionally absent.
 
 ALTER TABLE runtime_event ADD COLUMN event_schema_version TEXT NOT NULL DEFAULT '1';
 ALTER TABLE runtime_event ADD COLUMN correlation_id TEXT;
@@ -119,26 +119,17 @@ SET action = CASE response_type
         FROM interaction_request request
         WHERE request.request_id = interaction_response.request_id
     ),
-    responder_tenant_id = COALESCE(
-        (SELECT metadata.responder_tenant_id
-         FROM approval_response_metadata metadata
-         WHERE metadata.response_id = interaction_response.response_id),
-        (SELECT request.tenant_id FROM interaction_request request
-         WHERE request.request_id = interaction_response.request_id)
+    responder_tenant_id = (
+        SELECT request.tenant_id FROM interaction_request request
+        WHERE request.request_id = interaction_response.request_id
     ),
-    responder_principal_id = COALESCE(
-        (SELECT metadata.responder_principal_id
-         FROM approval_response_metadata metadata
-         WHERE metadata.response_id = interaction_response.response_id),
-        (SELECT request.principal_id FROM interaction_request request
-         WHERE request.request_id = interaction_response.request_id)
+    responder_principal_id = (
+        SELECT request.principal_id FROM interaction_request request
+        WHERE request.request_id = interaction_response.request_id
     ),
-    responder_principal_type = COALESCE(
-        (SELECT metadata.responder_principal_type
-         FROM approval_response_metadata metadata
-         WHERE metadata.response_id = interaction_response.response_id),
-        (SELECT request.principal_type FROM interaction_request request
-         WHERE request.request_id = interaction_response.request_id)
+    responder_principal_type = (
+        SELECT request.principal_type FROM interaction_request request
+        WHERE request.request_id = interaction_response.request_id
     );
 
 CREATE UNIQUE INDEX uq_interaction_response_idempotency

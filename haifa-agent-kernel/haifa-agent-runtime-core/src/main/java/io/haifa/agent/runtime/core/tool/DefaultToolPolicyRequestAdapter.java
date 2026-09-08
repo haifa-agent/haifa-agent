@@ -57,7 +57,6 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
                         Optional.of(run.id().value()),
                         Optional.empty(),
                         approvalMode,
-                        Optional.empty(),
                         Optional.empty()),
                 new PolicyAction(execution ? "execution.run" : definition.name().value(), "invoke"),
                 new PolicyResource(

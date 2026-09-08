@@ -143,9 +143,9 @@ Search/Fetch Tool。Web 的 Provider-neutral Java 接口、Tool adapter、URL Po
 
 SQLite 模式要求数据库文件绝对路径，并显式选择 `NONE` 或 `AES_GCM` payload protection；后者还要求
 `env://` 形式的稳定 continuation protector 引用。JSONL 模式还要求已存在、可写、非符号链接的受控
-绝对目录。Application 在一次 checksum 校验中组合 Runtime Migration 与自己
-拥有的 `V1000 project_product_session` 至 `V1008 coding_workspace_access` Migration，不修改
-Runtime Schema。每次进程启动生成新的 worker ID，
+绝对目录。Application 使用共享 SQLite 边界唯一的 `HaifaAgentStoreMigrations`；V1000～V1007 已由该
+统一 registry 拥有，WorkspaceAccess 建表已折入 V1007，CA 不再维护产品侧 migration 追加链。
+每次进程启动生成新的 worker ID，
 并把完整 `RuntimePersistencePorts`、worker ID 和仅针对安全 `SQLITE_BUSY/LOCKED` 获取失败的有界重试策略
 注入 `RuntimeCoreBuilder`。
 
@@ -155,11 +155,11 @@ Session 重新核对，漂移时 fail closed。JSONL projector 只在 Runtime �
 再冲刷投影，最后关闭 SQLite 连接。
 
 Application 自有的 Product/Coding 表通过 MyBatis Mapper XML 接入
-`SqliteRuntimeUnitOfWork`，与 Runtime/Policy 共用同一个 `BEGIN IMMEDIATE` 事务边界；应用层 Store
+`SqliteRuntimeUnitOfWork`，与 Runtime 共用同一个 `BEGIN IMMEDIATE` 事务边界；应用层 Store
 不直接使用 JDBC。Mapper 仍经过 SQLite Foundation 的静态 XML 校验，禁止 `${...}` 动态 SQL。
 
 `coding_workspace_registry` 是 CA 自有 Host/Application 持久事实，不进入公共 Runtime/Core。SQLite Adapter
-通过当前持久保护器保存本机根位置，并绑定 project、workspace、location 与物理目录身份 fingerprint；解密失败、目录缺失、
+通过当前持久保护器保存本机根位置，并绑定 project、workspace、location 与物理目录身份 physical fingerprint；解密失败、目录缺失、
 canonical 身份漂移、link/reparse point 或根重叠都会禁用记录而不恢复挂载。同一安全 canonical path 删除后重建时，
 ACTIVE 条目保留 workspace identity 并刷新 physical fingerprint；REVOKED、DISABLED、不同 canonical path 或不可验证路径
 都不会自动恢复。模型只能看到脱敏 Registry 与当前 Access 的交集投影；本地
@@ -172,8 +172,8 @@ owner、`WorkspaceId` 与 `READ / DEVELOP` mode 构成；SQLite 表也严格只�
 缺失时创建 `DEVELOP`，不得覆盖已降级值；attach/worktree 由受信控制面替换 mode，撤销先删除 Access。
 每次文件操作和 execution workspace 解析都会读取当前 Access，即使旧 Scope 或 Registry 仍有活动 mount，
 缺失/降级也会 fail closed。Registry、Host Scope 和技术 Binding 均不携带或推导用户权限；CA mount 的
-Binding 固定提供技术读写上限，只能进一步拒绝，不能在 Access 缺失时放行。Registry 当前列名 `fingerprint`
-表示 host-only physical fingerprint；M5 不新增第二个字段，也不做命名清理。该 Store 不进入公共
+Binding 固定提供技术读写上限，只能进一步拒绝，不能在 Access 缺失时放行。Registry 终态字段为
+`physicalFingerprint` / `physical_fingerprint`，且不新增第二个 fingerprint。该 Store 不进入公共
 Runtime/SDK/Execution 或 Personal Assistant。
 
 ## Coding Session 产品闭环

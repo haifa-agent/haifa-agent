@@ -15,7 +15,6 @@ import io.haifa.agent.policy.api.PolicyRiskLevel;
 import io.haifa.agent.policy.api.PolicyRuleSet;
 import io.haifa.agent.policy.api.PolicySideEffect;
 import io.haifa.agent.policy.api.PolicySubject;
-import io.haifa.agent.policy.api.ProjectTrustRef;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -25,10 +24,9 @@ class PolicyRequirementDigestTest {
     private static final PolicyRuleSet RULES = PolicyRuleSet.of(List.of(), Optional.empty(), ApprovalMode.ASK);
 
     @Test
-    void excludesAttemptTrustPrincipalAndRunIdentityFromApprovalRequirement() {
-        PolicyRequest baseline = request("local", "run-a", "attempt-a", Optional.empty());
-        PolicyRequest changed =
-                request("other-principal", "run-b", "attempt-b", Optional.of(new ProjectTrustRef("trust")));
+    void excludesAttemptPrincipalAndRunIdentityFromApprovalRequirement() {
+        PolicyRequest baseline = request("local", "run-a", "attempt-a");
+        PolicyRequest changed = request("other-principal", "run-b", "attempt-b");
 
         assertThat(PolicyRequirementDigest.compute(baseline, RULES))
                 .isEqualTo(PolicyRequirementDigest.compute(changed, RULES));
@@ -36,10 +34,10 @@ class PolicyRequirementDigestTest {
 
     @Test
     void includesFrozenRuleMatchTargetSecurityAndRiskFacts() {
-        String baseline = PolicyRequirementDigest.compute(request("local", "run", "attempt", Optional.empty()), RULES);
+        String baseline = PolicyRequirementDigest.compute(request("local", "run", "attempt"), RULES);
         PolicyRequest changedTarget = new PolicyRequest(
                 new PolicySubject(new TenantRef("tenant"), new PrincipalRef("user", "local"), "coding"),
-                context("run", "attempt", Optional.empty()),
+                context("run", "attempt"),
                 new PolicyAction("workspace.file", "write"),
                 new PolicyResource("file", "workspace:OTHER", Optional.of("sha256:other"), "Write other"),
                 new PolicyRisk(
@@ -49,24 +47,22 @@ class PolicyRequirementDigestTest {
         assertThat(baseline).startsWith("sha256:");
     }
 
-    private static PolicyRequest request(
-            String principalId, String runRef, String attemptRef, Optional<ProjectTrustRef> trustRef) {
+    private static PolicyRequest request(String principalId, String runRef, String attemptRef) {
         return new PolicyRequest(
                 new PolicySubject(new TenantRef("tenant"), new PrincipalRef("user", principalId), "coding"),
-                context(runRef, attemptRef, trustRef),
+                context(runRef, attemptRef),
                 new PolicyAction("workspace.file", "write"),
                 new PolicyResource("file", "workspace:README.md", Optional.of("sha256:resource"), "Write README"),
                 new PolicyRisk(PolicyRiskLevel.HIGH, Set.of(PolicySideEffect.FILE_WRITE), false, Optional.empty()));
     }
 
-    private static PolicyContext context(String runRef, String attemptRef, Optional<ProjectTrustRef> trustRef) {
+    private static PolicyContext context(String runRef, String attemptRef) {
         return new PolicyContext(
                 Optional.of("project"),
                 Optional.of("session"),
                 Optional.of(runRef),
                 Optional.of(attemptRef),
                 ApprovalMode.ASK,
-                trustRef,
                 Optional.of("sha256:config"));
     }
 }

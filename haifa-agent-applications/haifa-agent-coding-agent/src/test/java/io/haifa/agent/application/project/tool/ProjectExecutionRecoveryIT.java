@@ -84,7 +84,6 @@ import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
-import java.sql.Statement;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -142,7 +141,7 @@ class ProjectExecutionRecoveryIT {
             assertThat(instance.ports().state().toolCalls(runId)).hasSize(1);
             assertThat(modelCalls).hasValue(1);
             assertThat(brokerCalls).hasValue(1);
-            assertLegacyRowsRemainZero(database);
+            assertLegacyTablesAbsent(database);
         }
 
         try (ProjectPersistenceAssembly reopened = persistence(database)) {
@@ -168,7 +167,7 @@ class ProjectExecutionRecoveryIT {
             assertThat(instance.ports().state().toolCalls(runId)).hasSize(1);
             assertThat(modelCalls).hasValue(1);
             assertThat(brokerCalls).hasValue(1);
-            assertLegacyRowsRemainZero(database);
+            assertLegacyTablesAbsent(database);
         }
 
         try (ProjectPersistenceAssembly recovered = persistence(database)) {
@@ -214,7 +213,7 @@ class ProjectExecutionRecoveryIT {
             assertThat(brokerCalls).hasValue(2);
             assertThat(observedProfiles)
                     .containsExactly(new SandboxProfileRef("normal", "1"), new SandboxProfileRef("recovery", "1"));
-            assertLegacyRowsRemainZero(database);
+            assertLegacyTablesAbsent(database);
         }
     }
 
@@ -262,7 +261,7 @@ class ProjectExecutionRecoveryIT {
                     .isEqualTo("INVALIDATED");
             assertThat(modelCalls).hasValue(1);
             assertThat(brokerCalls).hasValue(1);
-            assertLegacyRowsRemainZero(database);
+            assertLegacyTablesAbsent(database);
         }
     }
 
@@ -569,7 +568,7 @@ class ProjectExecutionRecoveryIT {
                 protector());
     }
 
-    private static void assertLegacyRowsRemainZero(Path database) throws Exception {
+    private static void assertLegacyTablesAbsent(Path database) throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database)) {
             for (String table : List.of(
                     "policy_snapshot",
@@ -579,10 +578,13 @@ class ProjectExecutionRecoveryIT {
                     "project_trust",
                     "approval_request_metadata",
                     "approval_response_metadata")) {
-                try (Statement statement = connection.createStatement();
-                        ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
-                    assertThat(result.next()).isTrue();
-                    assertThat(result.getLong(1)).as(table).isZero();
+                try (var statement = connection.prepareStatement(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?")) {
+                    statement.setString(1, table);
+                    try (ResultSet result = statement.executeQuery()) {
+                        assertThat(result.next()).isTrue();
+                        assertThat(result.getLong(1)).as(table).isZero();
+                    }
                 }
             }
         }

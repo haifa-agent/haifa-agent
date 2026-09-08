@@ -8,7 +8,7 @@ CREATE TABLE coding_workspace_registry (
     location_nonce BLOB NOT NULL,
     location_ciphertext BLOB NOT NULL,
     location_digest TEXT NOT NULL,
-    fingerprint TEXT NOT NULL,
+    physical_fingerprint TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL,
     validated_at_ms INTEGER NOT NULL,
     revoked_at_ms INTEGER,
@@ -22,3 +22,12 @@ CREATE TABLE coding_workspace_registry (
 
 CREATE INDEX idx_coding_workspace_registry_project_status
     ON coding_workspace_registry(project_id, status, workspace_ref);
+
+CREATE TABLE coding_workspace_access (
+    tenant_id TEXT NOT NULL,
+    principal_type TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('READ', 'DEVELOP')),
+    PRIMARY KEY (tenant_id, principal_type, principal_id, workspace_id)
+);

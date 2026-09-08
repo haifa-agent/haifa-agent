@@ -36,8 +36,6 @@ public final class SqliteMyBatisSessionFactory {
             "/io/haifa/agent/store/sqlite/mybatis/MigrationMetadataMapper.xml";
     private static final String RUNTIME_STORE_MAPPER_RESOURCE =
             "/io/haifa/agent/store/sqlite/mybatis/RuntimeStoreMapper.xml";
-    private static final String POLICY_STORE_MAPPER_RESOURCE =
-            "/io/haifa/agent/store/sqlite/mybatis/PolicyStoreMapper.xml";
     private static final String SDK_CONVERSATION_MAPPER_RESOURCE =
             "/io/haifa/agent/store/sqlite/mybatis/SdkConversationMapper.xml";
 
@@ -134,7 +132,6 @@ public final class SqliteMyBatisSessionFactory {
         return List.of(
                 loadMapper(MIGRATION_MAPPER_RESOURCE),
                 loadMapper(RUNTIME_STORE_MAPPER_RESOURCE),
-                loadMapper(POLICY_STORE_MAPPER_RESOURCE),
                 loadMapper(SDK_CONVERSATION_MAPPER_RESOURCE));
     }
 

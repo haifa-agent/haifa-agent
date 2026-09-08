@@ -27,7 +27,7 @@ DENY > ASK > ALLOW
 
 No match fails closed with `POLICY_NO_MATCH`. `PolicyRuleSet.contentDigest` is derived only from RuleSet content.
 `PolicyRequirementDigest` additionally includes the exact secret-free request fields that can change the approval
-requirement; it excludes principal, Run, attempt, project-trust reference, display text, and all live security
+requirement; it excludes principal, Run, attempt, display text, and all live security
 authorities.
 
 ## Approval boundary
@@ -52,5 +52,5 @@ haifa-agent-policy-core
 Architecture tests prohibit Runtime, Tool, Execution, Store, Application, Spring, Jackson, MyBatis, JDBC, and product
 dependencies.
 
-Legacy Snapshot/Decision-ID/Evidence/Grant/Trust implementations remain only for later source/database removal work.
-They are absent from current production assembly and must not be used by new code.
+Legacy Snapshot/Decision-ID/Evidence/Grant/Trust implementations and the in-memory legacy Store have been removed;
+this module contains only the shared pure evaluator and approval verification mechanisms.
