@@ -57,7 +57,7 @@ models:
       nativeStreaming: true
       allowedBindings: [antigravity-gemini, antigravity-gemini-3-8-flash, antigravity-gemini-3-7-flash, antigravity-gemini-3-1-pro-preview]
 tools:
-  enabled: [file.list, file.stat, file.read, file.create, file.write, file.patch, file.delete, file.move, execution.run]
+  enabled: [file.list, file.stat, file.read, file.create, file.write, file.patch, file.delete, file.move,  workspace.attach, workspace.worktree.create,execution.run]
 skills:
   allowed: [task-planning, result-verification, git, github, git-delivery]
 approval:
@@ -75,10 +75,10 @@ execution:
   inheritEnvironment: ["*"]
   extraPathPolicies: []
 runtime:
-  maxIterations: 50
-  maxModelCalls: 64
-  maxToolCalls: 32
-  maxWallTimeMillis: 300000
+  maxIterations: 256
+  maxModelCalls: 256
+  maxToolCalls: 256
+  maxWallTimeMillis: 3600000
 persistence:
   mode: SQLITE_WITH_JSONL
   databasePath: __HAIFA_SQLITE_DATABASE_PATH__
