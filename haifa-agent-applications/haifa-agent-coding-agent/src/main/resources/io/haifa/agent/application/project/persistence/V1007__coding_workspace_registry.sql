@@ -3,7 +3,6 @@ CREATE TABLE coding_workspace_registry (
     workspace_ref TEXT NOT NULL,
     location_ref TEXT NOT NULL,
     safe_display_name TEXT NOT NULL,
-    permission TEXT NOT NULL CHECK (permission IN ('READ_ONLY', 'READ_WRITE')),
     source TEXT NOT NULL CHECK (source IN ('INITIAL', 'APPROVED_ATTACH', 'APPROVED_WORKTREE_CREATE')),
     status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'DISABLED', 'REVOKED')),
     location_nonce BLOB NOT NULL,

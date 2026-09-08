@@ -18,8 +18,8 @@ import java.util.Objects;
 /**
  * Stable, path-redacted identity of one authorized local directory. The host path never appears in
  * the derived identifiers; one canonical location derives stable logical workspace facts, while a
- * separate filesystem identity signal prevents a replacement directory at that location from
- * inheriting durable authorization.
+ * separate filesystem identity signal records physical replacement at that location for host-only
+ * validation and audit. Authorization remains the responsibility of current WorkspaceAccess.
  */
 public final class HostDirectoryIdentity {
     private static final String NAMESPACE = "io.haifa.agent.project.local-authorized-directory/v1";
@@ -73,7 +73,7 @@ public final class HostDirectoryIdentity {
         return fingerprint;
     }
 
-    /** Host-only identity signal used to reject replacement directories during durable restore. */
+    /** Host-only physical identity signal refreshed after safe same-canonical-path validation. */
     public String physicalFingerprint() {
         return physicalFingerprint;
     }

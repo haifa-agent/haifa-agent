@@ -5,26 +5,24 @@ import java.nio.file.Path;
 import java.util.Objects;
 
 /**
- * One peer authorized directory of the host workspace scope. There is no main or attached role:
- * every directory carries its own logical {@link WorkspaceId} and permission. The host real path
- * exists only inside Host Workspace Access and must never reach Core DTOs, persistence, logs or
- * Admin.
+ * One peer directory mounted into the host workspace scope. There is no main or attached role:
+ * every directory carries its own logical {@link WorkspaceId}. The host real path remains inside
+ * the host adapter and its protected Registry persistence; it must never reach Core DTOs, logs,
+ * model prompts or Admin projections. This record does not grant user access.
  */
-public record AuthorizedHostDirectory(WorkspaceId workspaceId, Path realPath, HostDirectoryPermission permission) {
+public record AuthorizedHostDirectory(WorkspaceId workspaceId, Path realPath) {
 
     public AuthorizedHostDirectory {
         Objects.requireNonNull(workspaceId, "workspaceId must not be null");
         Objects.requireNonNull(realPath, "realPath must not be null");
-        Objects.requireNonNull(permission, "permission must not be null");
         if (!realPath.isAbsolute()) {
             throw new IllegalArgumentException("realPath must be absolute: " + realPath);
         }
         realPath = realPath.normalize();
     }
 
-    public static AuthorizedHostDirectory of(
-            WorkspaceId workspaceId, Path realPath, HostDirectoryPermission permission) {
-        return new AuthorizedHostDirectory(workspaceId, realPath, permission);
+    public static AuthorizedHostDirectory of(WorkspaceId workspaceId, Path realPath) {
+        return new AuthorizedHostDirectory(workspaceId, realPath);
     }
 
     public boolean encloses(Path candidateRealPath) {

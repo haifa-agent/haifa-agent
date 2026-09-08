@@ -32,7 +32,6 @@ import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
 import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.Workspace;
@@ -97,13 +96,11 @@ class LocalFileToolOperationsMultiRootTest {
         ProjectId projectId = new ProjectId("proj-multiroot");
         owner = new PrincipalRef("owner", "user");
         tenant = new TenantRef("local");
-        registerWorkspace(workspaceId, workspaceDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.PRIMARY, now);
+        registerWorkspace(workspaceId, workspaceDir, WorkspacePurpose.PRIMARY, now);
         docsWorkspaceId = new WorkspaceId("ws-docs");
-        registerWorkspace(
-                docsWorkspaceId, docsDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.DIRECTORY, now);
+        registerWorkspace(docsWorkspaceId, docsDir, WorkspacePurpose.DIRECTORY, now);
         configWorkspaceId = new WorkspaceId("ws-config");
-        registerWorkspace(
-                configWorkspaceId, configDir, HostDirectoryPermission.READ_WRITE, WorkspacePurpose.DIRECTORY, now);
+        registerWorkspace(configWorkspaceId, configDir, WorkspacePurpose.DIRECTORY, now);
 
         var projects = new InMemoryProjectStore();
         projects.create(Project.create(
@@ -122,12 +119,9 @@ class LocalFileToolOperationsMultiRootTest {
         var workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, () -> now);
         var scope = new HostWorkspaceScope(
                 List.of(
-                        AuthorizedHostDirectory.of(
-                                workspaceId, workspaceDir.toRealPath(), HostDirectoryPermission.READ_WRITE),
-                        AuthorizedHostDirectory.of(
-                                docsWorkspaceId, docsDir.toRealPath(), HostDirectoryPermission.READ_WRITE),
-                        AuthorizedHostDirectory.of(
-                                configWorkspaceId, configDir.toRealPath(), HostDirectoryPermission.READ_WRITE)),
+                        AuthorizedHostDirectory.of(workspaceId, workspaceDir.toRealPath()),
+                        AuthorizedHostDirectory.of(docsWorkspaceId, docsDir.toRealPath()),
+                        AuthorizedHostDirectory.of(configWorkspaceId, configDir.toRealPath())),
                 1L);
         provisioning = new AuthorizedWorkspaceProvisioning(
                 projectId, workspaces, bindings, locations, workspaceService, owner, () -> now, scope);
@@ -162,8 +156,7 @@ class LocalFileToolOperationsMultiRootTest {
                 owner);
     }
 
-    private void registerWorkspace(
-            WorkspaceId id, Path directory, HostDirectoryPermission permission, WorkspacePurpose purpose, Instant now)
+    private void registerWorkspace(WorkspaceId id, Path directory, WorkspacePurpose purpose, Instant now)
             throws IOException {
         WorkspaceLocationRef locationRef = new WorkspaceLocationRef("loc-" + id.value());
         WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-" + id.value());
@@ -174,10 +167,8 @@ class LocalFileToolOperationsMultiRootTest {
                         locationRef,
                         WorkspaceBindingMode.DIRECT,
                         new PrincipalRef("owner", "user"),
-                        permission.canWrite()
-                                ? WorkspaceCapabilitySet.readWriteFiles()
-                                : WorkspaceCapabilitySet.readOnlyFiles(),
-                        permission.canWrite() ? WorkspacePermissionSet.readWrite() : WorkspacePermissionSet.readOnly(),
+                        WorkspaceCapabilitySet.readWriteFiles(),
+                        WorkspacePermissionSet.readWrite(),
                         HostWorkspaceLocationStore.fingerprintFor(realPath),
                         now)
                 .activate(now);
@@ -500,7 +491,7 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
+                arguments(Map.of("path", extraDir.toString(), "mode", "develop")));
         String notePath =
                 extraDir.resolve("note.txt").toAbsolutePath().normalize().toString();
         var created = operations.execute(
@@ -511,7 +502,7 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("path", notePath, "content", "authorized")));
 
         assertThat(authorization.successful()).isTrue();
-        assertThat(authorization.structuredData()).containsEntry("permission", "READ_WRITE");
+        assertThat(authorization.structuredData()).containsEntry("mode", "DEVELOP");
         WorkspaceId attachedWorkspace = new WorkspaceId(
                 authorization.structuredData().get("workspaceRef").toString());
         assertThat(workspaceAccess.find(tenant, owner, attachedWorkspace))
@@ -532,7 +523,7 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
+                arguments(Map.of("path", extraDir.toString(), "mode", "develop")));
         assertThat(authorization.successful()).isTrue();
 
         WorkspaceId extraWsId = new WorkspaceId(
@@ -574,7 +565,7 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                arguments(Map.of("path", extraDir.toString(), "permission", "read-write")));
+                arguments(Map.of("path", extraDir.toString(), "mode", "develop")));
         assertThat(authorization.successful()).isTrue();
         assertThat(operations.currentScope().version()).isGreaterThan(initialScope.version());
         assertThat(initialScope.version())
@@ -590,7 +581,7 @@ class LocalFileToolOperationsMultiRootTest {
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                arguments(Map.of("path", workspaceDir.toString(), "permission", "read-only")));
+                arguments(Map.of("path", workspaceDir.toString(), "mode", "read")));
 
         assertThat(result.successful()).isTrue();
         assertThat(operations.currentScope().allowedDirectories()).hasSize(originalDirectoryCount);

@@ -7,7 +7,6 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.project.hostworkspace.HostGitInspectionStatus;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.nio.file.Files;
@@ -30,8 +29,7 @@ class RunRepositoryBaselineRegistryTest {
         tempDir = tempDir.toRealPath();
         workspaceId = new WorkspaceId("workspace");
         context = new RepositoryRunContext(new TenantRef("local"), "run-1", new PrincipalRef("operator", "user"));
-        scope = HostWorkspaceScope.initial(
-                AuthorizedHostDirectory.of(workspaceId, tempDir, HostDirectoryPermission.READ_WRITE));
+        scope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(workspaceId, tempDir));
     }
 
     @Test

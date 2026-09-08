@@ -283,6 +283,9 @@ class ProjectApplicationTest {
                     assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
                     assertThat(binding.definition().sideEffects())
                             .contains(io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
+                    assertThat(binding.definition().inputSchema().document().toString())
+                            .contains("path", "mode", "read", "develop")
+                            .doesNotContain("permission", "read-only", "read-write");
                 });
         assertThat(frozen.snapshot().bindings())
                 .filteredOn(binding -> binding.alias().value().equals("workspace_worktree_create"))
@@ -301,13 +304,10 @@ class ProjectApplicationTest {
                                     .document()
                                     .get("required")
                                     .toString())
-                            .contains(
-                                    "sourceWorkspaceRef",
-                                    "baseCommit",
-                                    "branchName",
-                                    "targetName",
-                                    "permission",
-                                    "deliveryIntent");
+                            .contains("sourceWorkspaceRef", "baseCommit", "branchName", "targetName", "deliveryIntent")
+                            .doesNotContain("permission");
+                    assertThat(binding.definition().inputSchema().document().toString())
+                            .doesNotContain("permission", "read-write");
                 });
         assertThat(frozen.snapshot().bindings())
                 .filteredOn(binding -> binding.alias().value().equals("file_write"))

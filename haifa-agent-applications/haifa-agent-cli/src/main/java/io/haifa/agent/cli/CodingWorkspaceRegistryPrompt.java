@@ -1,6 +1,6 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryView;
+import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -9,24 +9,24 @@ import java.util.Objects;
 final class CodingWorkspaceRegistryPrompt {
     private CodingWorkspaceRegistryPrompt() {}
 
-    static String render(List<HostWorkspaceRegistryView> entries) {
-        List<HostWorkspaceRegistryView> ordered =
+    static String render(List<CodingWorkspaceView> entries) {
+        List<CodingWorkspaceView> ordered =
                 List.copyOf(Objects.requireNonNull(entries, "entries must not be null")).stream()
-                        .sorted(Comparator.comparing(HostWorkspaceRegistryView::workspaceRef))
+                        .sorted(Comparator.comparing(CodingWorkspaceView::workspaceRef))
                         .toList();
         StringBuilder prompt = new StringBuilder("\n\n<workspace_registry path_contract=\"host-absolute-file-paths\""
                 + " execution_target_contract=\"workspace-ref-plus-relative-workdir\">\n");
-        for (HostWorkspaceRegistryView entry : ordered) {
+        for (CodingWorkspaceView entry : ordered) {
             prompt.append("  <workspace ref=\"")
                     .append(xml(entry.workspaceRef()))
                     .append("\" name=\"")
                     .append(xml(entry.safeDisplayName()))
-                    .append("\" permission=\"")
-                    .append(entry.permission())
+                    .append("\" mode=\"")
+                    .append(xml(entry.mode()))
                     .append("\" source=\"")
-                    .append(entry.source())
+                    .append(xml(entry.source()))
                     .append("\" status=\"")
-                    .append(entry.status())
+                    .append(xml(entry.status()))
                     .append("\" />\n");
         }
         return prompt.append("</workspace_registry>").toString();

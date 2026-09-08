@@ -3,7 +3,6 @@ package io.haifa.agent.project.hostworkspace;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.nio.file.Files;
@@ -25,7 +24,7 @@ class HostRepositoryLocatorTest {
     void setUp() throws Exception {
         tempDir = tempDir.toRealPath();
         workspaceId = new WorkspaceId("workspace");
-        directory = AuthorizedHostDirectory.of(workspaceId, tempDir, HostDirectoryPermission.READ_WRITE);
+        directory = AuthorizedHostDirectory.of(workspaceId, tempDir);
     }
 
     @Test
@@ -53,7 +52,7 @@ class HostRepositoryLocatorTest {
         Path allowed = Files.createDirectories(parent.resolve("allowed"));
         Path source = Files.createDirectories(allowed.resolve("src")).resolve("App.java");
         Files.writeString(source, "class App {}");
-        var allowedDirectory = AuthorizedHostDirectory.of(workspaceId, allowed, HostDirectoryPermission.READ_WRITE);
+        var allowedDirectory = AuthorizedHostDirectory.of(workspaceId, allowed);
         Set<Path> inspected = new HashSet<>();
         var locator = new HostRepositoryLocator((ignored, candidate) -> {
             inspected.add(candidate);

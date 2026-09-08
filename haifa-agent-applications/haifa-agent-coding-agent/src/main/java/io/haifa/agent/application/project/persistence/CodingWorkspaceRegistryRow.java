@@ -7,7 +7,6 @@ public record CodingWorkspaceRegistryRow(
         String workspaceRef,
         String locationRef,
         String safeDisplayName,
-        String permission,
         String source,
         String status,
         byte[] locationNonce,

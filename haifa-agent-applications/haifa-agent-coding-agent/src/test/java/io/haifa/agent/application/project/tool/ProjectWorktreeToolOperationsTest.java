@@ -30,7 +30,6 @@ import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistrySource
 import io.haifa.agent.project.hostworkspace.registry.InMemoryHostWorkspaceRegistryStore;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.Workspace;
@@ -124,8 +123,7 @@ class ProjectWorktreeToolOperationsTest {
                         Map.of())
                 .assignDefaultWorkspace(initialWorkspace.id(), NOW));
         var workspaceService = new WorkspaceService(projects, workspaces, bindings, () -> "unused", time);
-        var initialScope = HostWorkspaceScope.initial(
-                AuthorizedHostDirectory.of(initialWorkspace.id(), initialRoot, HostDirectoryPermission.READ_WRITE));
+        var initialScope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(initialWorkspace.id(), initialRoot));
         provisioning = new AuthorizedWorkspaceProvisioning(
                 projectId,
                 workspaces,
@@ -317,8 +315,6 @@ class ProjectWorktreeToolOperationsTest {
                                 "feat/controlled-worktree",
                                 "targetName",
                                 "feature-target",
-                                "permission",
-                                "read-write",
                                 "deliveryIntent",
                                 "pull-request")),
                 NOW.plusSeconds(30),

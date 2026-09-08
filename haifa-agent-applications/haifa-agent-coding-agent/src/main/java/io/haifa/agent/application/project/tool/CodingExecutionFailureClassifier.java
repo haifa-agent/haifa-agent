@@ -88,7 +88,7 @@ final class CodingExecutionFailureClassifier {
                     "FILESYSTEM_DENIED",
                     "FILESYSTEM_ACCESS_DENIED",
                     resource,
-                    "Use an authorized workspace path or request the required permission from the user.");
+                    "Use an authorized workspace path or request the required workspace access from the user.");
         }
         if (isConfirmedMissingExecutable(providerCode)) {
             String code =

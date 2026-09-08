@@ -33,7 +33,6 @@ public final class CodingExecutionToolRequestCanonicalizer implements ToolReques
             canonicalizeText(canonicalValues, "baseCommit");
             canonicalizeText(canonicalValues, "branchName");
             canonicalizeText(canonicalValues, "targetName");
-            canonicalizeText(canonicalValues, "permission");
             canonicalizeText(canonicalValues, "deliveryIntent");
             return withArguments(request, values, canonicalValues);
         }

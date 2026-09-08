@@ -157,17 +157,21 @@ Application 自有的 Product/Coding 表通过 MyBatis Mapper XML 接入
 
 `coding_workspace_registry` 是 CA 自有 Host/Application 持久事实，不进入公共 Runtime/Core。SQLite Adapter
 通过当前持久保护器保存本机根位置，并绑定 project、workspace、location 与物理目录身份 fingerprint；解密失败、目录缺失、
-身份漂移、link/reparse point 或根重叠都会禁用记录而不恢复权限。模型只能看到脱敏 Registry 投影；本地
+canonical 身份漂移、link/reparse point 或根重叠都会禁用记录而不恢复挂载。同一安全 canonical path 删除后重建时，
+ACTIVE 条目保留 workspace identity 并刷新 physical fingerprint；REVOKED、DISABLED、不同 canonical path 或不可验证路径
+都不会自动恢复。模型只能看到脱敏 Registry 与当前 Access 的交集投影；本地
 `file.*` 继续接收宿主绝对路径并在当前活动 Registry/Scope 中重新解析。标准 `CodingSessionClient` 还提供
-脱敏授权清单与撤销入口，供受信产品界面移除非初始根的持久授权。
+脱敏 workspace 清单与撤销入口，供受信产品界面移除非初始根的持久 Access 和挂载。
 
 `coding_workspace_access` 是 CA 唯一持续用户授权关系。领域对象只由现有 `TenantRef + PrincipalRef` 组成的
 owner、`WorkspaceId` 与 `READ / DEVELOP` mode 构成；SQLite 表也严格只有对应五列。`READ` 只允许文件读取，
 `DEVELOP` 才允许文件 mutation 与 execution 进入后续 Policy/Sandbox/Credential 门。启动时只在初始 Access
 缺失时创建 `DEVELOP`，不得覆盖已降级值；attach/worktree 由受信控制面替换 mode，撤销先删除 Access。
 每次文件操作和 execution workspace 解析都会读取当前 Access，即使旧 Scope 或 Registry 仍有活动 mount，
-缺失/降级也会 fail closed。Registry 的 `permission` 列在 Phase 32D M5 清理前仅是兼容的 mount 派生数据，
-不再是用户授权事实。该 Store 不进入公共 Runtime/SDK/Execution 或 Personal Assistant。
+缺失/降级也会 fail closed。Registry、Host Scope 和技术 Binding 均不携带或推导用户权限；CA mount 的
+Binding 固定提供技术读写上限，只能进一步拒绝，不能在 Access 缺失时放行。Registry 当前列名 `fingerprint`
+表示 host-only physical fingerprint；M5 不新增第二个字段，也不做命名清理。该 Store 不进入公共
+Runtime/SDK/Execution 或 Personal Assistant。
 
 ## Coding Session 产品闭环
 
@@ -281,8 +285,9 @@ Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版�
 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
 
 `workspace.worktree.create` 是 CA 独有的始终审批能力：精确目标同时绑定 source `workspaceRef`、不可变 base
-commit、新分支、受控 target name、`read-write` 权限和交付意图，不接受模型指定的主机目标路径。受信 Git
-Provider 创建并校验 worktree 后，CA 才把新 root 以 `APPROVED_WORKTREE_CREATE` 登记并返回脱敏
+commit、新分支、受控 target name 和交付意图，不接受模型指定的主机目标路径或权限；source 必须具有当前
+`DEVELOP` Access。受信 Git Provider 创建并校验 worktree 后，CA 才把新 root 以
+`APPROVED_WORKTREE_CREATE` 登记、写入新 workspace 的 `DEVELOP` Access 并返回脱敏
 `workspaceRef`；失败时清理且不激活 root。当前重启恢复无法建立受信 Git reconciliation，因此会 fail closed
 禁用对应 root，不能把普通 Registry 测试描述成进程级强隔离证明。`file.*` 仍要求模型传宿主绝对路径并由
 Registry/Scope 映射，未改成相对路径或 root alias。

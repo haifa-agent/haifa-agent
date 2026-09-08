@@ -10,7 +10,6 @@ import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.core.ledger.InMemorySessionChangeLedger;
 import io.haifa.agent.project.hostworkspace.HostGitInspectionStatus;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
 import io.haifa.agent.project.path.ProjectPath;
@@ -113,8 +112,7 @@ class OnDemandChangeReviewServiceTest {
         Path serviceA = Files.createDirectories(root.resolve("service-a"));
         Path serviceB = Files.createDirectories(root.resolve("service-b"));
         WorkspaceId workspaceId = new WorkspaceId("workspace-case-a");
-        HostWorkspaceScope scope = HostWorkspaceScope.initial(
-                AuthorizedHostDirectory.of(workspaceId, root, HostDirectoryPermission.READ_WRITE));
+        HostWorkspaceScope scope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(workspaceId, root));
         RepositoryRunContext context =
                 new RepositoryRunContext(new TenantRef("tenant"), "run-case-a", new PrincipalRef("actor", "user"));
         var registry = new RunRepositoryBaselineRegistry(
@@ -164,8 +162,7 @@ class OnDemandChangeReviewServiceTest {
         Path library = Files.createDirectories(root.resolve("vendor/lib-x"));
         Path generator = Files.createDirectories(root.resolve("tools/generator"));
         WorkspaceId workspaceId = new WorkspaceId("workspace-case-b");
-        HostWorkspaceScope scope = HostWorkspaceScope.initial(
-                AuthorizedHostDirectory.of(workspaceId, root, HostDirectoryPermission.READ_WRITE));
+        HostWorkspaceScope scope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(workspaceId, root));
         RepositoryRunContext context =
                 new RepositoryRunContext(new TenantRef("tenant"), "run-case-b", new PrincipalRef("actor", "user"));
         var registry = new RunRepositoryBaselineRegistry(
@@ -218,8 +215,7 @@ class OnDemandChangeReviewServiceTest {
         Path nestedTool = Files.createDirectories(project.resolve("nested-tool"));
         Path notes = Files.createDirectories(root.resolve("notes"));
         WorkspaceId workspaceId = new WorkspaceId("workspace-case-c");
-        HostWorkspaceScope scope = HostWorkspaceScope.initial(
-                AuthorizedHostDirectory.of(workspaceId, root, HostDirectoryPermission.READ_WRITE));
+        HostWorkspaceScope scope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(workspaceId, root));
         RepositoryRunContext context =
                 new RepositoryRunContext(new TenantRef("tenant"), "run-case-c", new PrincipalRef("actor", "user"));
         var registry = new RunRepositoryBaselineRegistry(
@@ -263,8 +259,7 @@ class OnDemandChangeReviewServiceTest {
         root = root.toRealPath();
         Path repository = Files.createDirectories(root.resolve("project-a"));
         WorkspaceId workspaceId = new WorkspaceId("workspace-dirty");
-        HostWorkspaceScope scope = HostWorkspaceScope.initial(
-                AuthorizedHostDirectory.of(workspaceId, root, HostDirectoryPermission.READ_WRITE));
+        HostWorkspaceScope scope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(workspaceId, root));
         RepositoryRunContext context =
                 new RepositoryRunContext(new TenantRef("tenant"), "run-dirty", new PrincipalRef("actor", "user"));
         var registry = new RunRepositoryBaselineRegistry(
