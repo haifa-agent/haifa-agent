@@ -12,6 +12,7 @@ import java.util.Set;
 /** Reviewed Zhipu general OpenAI Chat contract. */
 final class ZhipuOpenAiChatDialect implements OpenAiCompatibleDialect {
     static final ZhipuOpenAiChatDialect INSTANCE = new ZhipuOpenAiChatDialect();
+
     private ZhipuOpenAiChatDialect() {}
 
     @Override
@@ -28,17 +29,14 @@ final class ZhipuOpenAiChatDialect implements OpenAiCompatibleDialect {
     public void validateProvider(ModelProviderDefinition provider, boolean allowInsecureHttp) {
         validateEndpoint(provider.endpoint(), allowInsecureHttp);
         provider.models()
-                .forEach(model -> validateProfile(
-                        model.options(),
-                        model.capabilities().contains(ModelCapability.REASONING)));
+                .forEach(model ->
+                        validateProfile(model.options(), model.capabilities().contains(ModelCapability.REASONING)));
     }
 
     @Override
     public void validateSnapshot(ResolvedModelSnapshot snapshot, boolean allowInsecureHttp) {
         validateEndpoint(snapshot.endpoint(), allowInsecureHttp);
-        validateProfile(
-                snapshot.invocationOptions(),
-                snapshot.capabilities().contains(ModelCapability.REASONING));
+        validateProfile(snapshot.invocationOptions(), snapshot.capabilities().contains(ModelCapability.REASONING));
     }
 
     @Override
