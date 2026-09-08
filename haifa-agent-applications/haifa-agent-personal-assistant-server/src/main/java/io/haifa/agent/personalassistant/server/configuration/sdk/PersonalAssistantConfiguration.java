@@ -118,26 +118,30 @@ public class PersonalAssistantConfiguration {
         var store = FileLocalModelAuthStore.defaultStore(mapper);
         var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(environment);
         var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(environment);
-        HttpClient codexHttp = authenticationHttpClient(proxySettings, "openai-codex");
-        HttpClient antigravityHttp = authenticationHttpClient(proxySettings, "google-antigravity");
         List<ExternalLoginMethod> methods = new java.util.ArrayList<>();
-        codexRegistration.ifPresent(value -> methods.add(new CodexExternalLoginMethod(
-                value,
-                new CodexTokenClient(codexHttp, mapper, personalClock, Duration.ofSeconds(30), value),
-                codexHttp,
-                mapper,
-                SecureRandom::new,
-                Duration.ofMinutes(5),
-                CodexDeviceLoginOperation.Sleeper.system())));
-        antigravityRegistration.ifPresent(value -> methods.add(new AntigravityExternalLoginMethod(
-                value,
-                new AntigravityTokenClient(antigravityHttp, mapper, personalClock, Duration.ofSeconds(30), value),
-                antigravityHttp,
-                mapper,
-                SecureRandom::new,
-                Duration.ofMinutes(5),
-                projection -> antigravityProjects.record(
-                        new CredentialRef("model-auth://google-antigravity/default"), projection))));
+        codexRegistration.ifPresent(value -> {
+            HttpClient codexHttp = authenticationHttpClient(proxySettings, "openai-codex");
+            methods.add(new CodexExternalLoginMethod(
+                    value,
+                    new CodexTokenClient(codexHttp, mapper, personalClock, Duration.ofSeconds(30), value),
+                    codexHttp,
+                    mapper,
+                    SecureRandom::new,
+                    Duration.ofMinutes(5),
+                    CodexDeviceLoginOperation.Sleeper.system()));
+        });
+        antigravityRegistration.ifPresent(value -> {
+            HttpClient antigravityHttp = authenticationHttpClient(proxySettings, "google-antigravity");
+            methods.add(new AntigravityExternalLoginMethod(
+                    value,
+                    new AntigravityTokenClient(antigravityHttp, mapper, personalClock, Duration.ofSeconds(30), value),
+                    antigravityHttp,
+                    mapper,
+                    SecureRandom::new,
+                    Duration.ofMinutes(5),
+                    projection -> antigravityProjects.record(
+                            new CredentialRef("model-auth://google-antigravity/default"), projection)));
+        });
         var registry = new ExternalLoginRegistry(methods);
         var resolver = new LocalModelCredentialResolver(
                 environment::get, store, registry, personalClock, Duration.ofMinutes(5));
