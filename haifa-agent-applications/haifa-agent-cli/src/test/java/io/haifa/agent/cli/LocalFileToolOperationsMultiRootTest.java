@@ -605,6 +605,41 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
+    void nestedAttachCannotExpandOrDowngradeTheEnclosingWorkspaceAccess() throws IOException {
+        Path nested = Files.createDirectories(docsDir.resolve("approved-child"));
+
+        ToolResult expansion = operations.execute(
+                "workspace.attach",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of("path", nested.toString(), "mode", "develop")));
+
+        assertThat(expansion.successful()).isFalse();
+        assertThat(expansion.structuredData())
+                .containsEntry("stableFailureCode", "NESTED_WORKSPACE_MODE_EXPANSION_DENIED");
+        assertThat(workspaceAccess.find(tenant, owner, docsWorkspaceId))
+                .get()
+                .extracting(WorkspaceAccess::mode)
+                .isEqualTo(WorkspaceAccessMode.READ);
+
+        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, docsWorkspaceId, WorkspaceAccessMode.DEVELOP));
+        ToolResult narrowerRequest = operations.execute(
+                "workspace.attach",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of("path", nested.toString(), "mode", "read")));
+
+        assertThat(narrowerRequest.successful()).isTrue();
+        assertThat(narrowerRequest.structuredData()).containsEntry("mode", "DEVELOP");
+        assertThat(workspaceAccess.find(tenant, owner, docsWorkspaceId))
+                .get()
+                .extracting(WorkspaceAccess::mode)
+                .isEqualTo(WorkspaceAccessMode.DEVELOP);
+    }
+
+    @Test
     void rejectsCrossRootMoveWithoutChangingEitherDirectory() throws IOException {
         Files.writeString(configDir.resolve("move.txt"), "source", StandardCharsets.UTF_8);
 

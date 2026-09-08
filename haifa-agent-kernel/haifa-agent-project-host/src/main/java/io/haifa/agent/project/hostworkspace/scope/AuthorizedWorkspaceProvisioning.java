@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * Trusted local product boundary that turns an approved directory into a peer member of the
@@ -132,13 +133,20 @@ public final class AuthorizedWorkspaceProvisioning {
      * the request is rejected fail closed. User authorization remains in WorkspaceAccess outside
      * this Host mount boundary.
      */
-    public ProvisioningResult authorize(Path directory) {
-        return authorizeApprovedAttach(directory);
+    ProvisioningResult authorize(Path directory) {
+        return authorizeApprovedAttach(directory, ignored -> {});
     }
 
-    /** Registers an attach reached through the trusted product-controlled approval path. */
-    public synchronized ProvisioningResult authorizeApprovedAttach(Path directory) {
+    /**
+     * Registers an approved attach and invokes the product-owned access activation after the
+     * Registry write but before the new directory is published in the live Scope. During this
+     * sequence {@link #scope()} fails closed, so no observer can combine a new mount with stale
+     * access.
+     */
+    public synchronized ProvisioningResult authorizeApprovedAttach(
+            Path directory, Consumer<AuthorizedHostDirectory> accessActivation) {
         Objects.requireNonNull(directory, "directory must not be null");
+        Objects.requireNonNull(accessActivation, "accessActivation must not be null");
         if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
             throw HostWorkspaceScopeException.invalidArgument(
                     directory.toString(), "Authorized directory must be an existing directory");
@@ -173,6 +181,7 @@ public final class AuthorizedWorkspaceProvisioning {
                                         ? HostWorkspaceRegistrySource.INITIAL
                                         : HostWorkspaceRegistrySource.APPROVED_ATTACH,
                                 HostWorkspaceRegistryStatus.ACTIVE));
+                accessActivation.accept(existing);
                 return new ProvisioningResult(existing, true, false, view);
             }
             if (existing.realPath().startsWith(realPath)) {
@@ -203,6 +212,17 @@ public final class AuthorizedWorkspaceProvisioning {
                             existing.reactivate(realPath, identity.physicalFingerprint(), time.now()),
                             existing.version()))
                     .orElseGet(() -> registry.create(entry));
+            try {
+                accessActivation.accept(allowed);
+            } catch (RuntimeException activationFailure) {
+                try {
+                    registry.update(
+                            persisted.disable("WORKSPACE_ACCESS_ACTIVATION_FAILED", time.now()), persisted.version());
+                } catch (RuntimeException compensationFailure) {
+                    activationFailure.addSuppressed(compensationFailure);
+                }
+                throw activationFailure;
+            }
             current = scope.get();
             scope.set(current.withDirectory(allowed));
             return new ProvisioningResult(allowed, false, provisioned.recovered(), persisted.view());

@@ -20,6 +20,7 @@ import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryEntry;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStatus;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
@@ -34,11 +35,13 @@ import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Optional;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -63,14 +66,13 @@ class WorkspaceRegistryPathRecoveryIT {
 
         try (ProjectPersistenceAssembly first = persistence(database)) {
             Fixture fixture = fixture(initial, first);
-            var result = fixture.provisioning.authorizeApprovedAttach(attached);
+            var result = fixture.provisioning.authorizeApprovedAttach(attached, mounted -> first.workspaceAccess()
+                    .replace(new WorkspaceAccess(TENANT, OWNER, mounted.workspaceId(), WorkspaceAccessMode.DEVELOP)));
             workspaceId = result.directory().workspaceId();
             originalPhysicalFingerprint = first.workspaceRegistry()
                     .find(PROJECT, workspaceId)
                     .orElseThrow()
                     .fingerprint();
-            first.workspaceAccess()
-                    .replace(new WorkspaceAccess(TENANT, OWNER, workspaceId, WorkspaceAccessMode.DEVELOP));
         }
 
         Files.move(attached, directory.resolve("same-path-original"));
@@ -105,7 +107,7 @@ class WorkspaceRegistryPathRecoveryIT {
         try (ProjectPersistenceAssembly first = persistence(database)) {
             Fixture fixture = fixture(initial, first);
             originalId = fixture.provisioning
-                    .authorizeApprovedAttach(original)
+                    .authorizeApprovedAttach(original, ignored -> {})
                     .directory()
                     .workspaceId();
             first.workspaceAccess().replace(new WorkspaceAccess(TENANT, OWNER, originalId, WorkspaceAccessMode.READ));
@@ -114,7 +116,7 @@ class WorkspaceRegistryPathRecoveryIT {
         try (ProjectPersistenceAssembly reopened = persistence(database)) {
             Fixture fixture = fixture(initial, reopened);
             WorkspaceId differentId = fixture.provisioning
-                    .authorizeApprovedAttach(different)
+                    .authorizeApprovedAttach(different, ignored -> {})
                     .directory()
                     .workspaceId();
             assertThat(differentId).isNotEqualTo(originalId);
@@ -135,11 +137,11 @@ class WorkspaceRegistryPathRecoveryIT {
         try (ProjectPersistenceAssembly first = persistence(database)) {
             Fixture fixture = fixture(initial, first);
             workspaceId = fixture.provisioning
-                    .authorizeApprovedAttach(attached)
+                    .authorizeApprovedAttach(attached, mounted -> first.workspaceAccess()
+                            .replace(new WorkspaceAccess(
+                                    TENANT, OWNER, mounted.workspaceId(), WorkspaceAccessMode.DEVELOP)))
                     .directory()
                     .workspaceId();
-            first.workspaceAccess()
-                    .replace(new WorkspaceAccess(TENANT, OWNER, workspaceId, WorkspaceAccessMode.DEVELOP));
             assertThat(first.workspaceAccess().delete(TENANT, OWNER, workspaceId))
                     .isTrue();
             fixture.provisioning.revoke(workspaceId);
@@ -169,11 +171,11 @@ class WorkspaceRegistryPathRecoveryIT {
         try (ProjectPersistenceAssembly first = persistence(database)) {
             Fixture fixture = fixture(initial, first);
             workspaceId = fixture.provisioning
-                    .authorizeApprovedAttach(attached)
+                    .authorizeApprovedAttach(attached, mounted -> first.workspaceAccess()
+                            .replace(new WorkspaceAccess(
+                                    TENANT, OWNER, mounted.workspaceId(), WorkspaceAccessMode.DEVELOP)))
                     .directory()
                     .workspaceId();
-            first.workspaceAccess()
-                    .replace(new WorkspaceAccess(TENANT, OWNER, workspaceId, WorkspaceAccessMode.DEVELOP));
         }
         Files.delete(attached);
 
@@ -188,6 +190,105 @@ class WorkspaceRegistryPathRecoveryIT {
                     .isEqualTo(HostWorkspaceRegistryStatus.DISABLED);
             assertThat(reopened.workspaceAccess().find(TENANT, OWNER, workspaceId))
                     .contains(new WorkspaceAccess(TENANT, OWNER, workspaceId, WorkspaceAccessMode.DEVELOP));
+        }
+
+        try (ProjectPersistenceAssembly reopenedAgain = persistence(database)) {
+            Fixture fixture = fixture(initial, reopenedAgain);
+            assertThat(fixture.provisioning.scope().allowedDirectories())
+                    .extracting(AuthorizedHostDirectory::workspaceId)
+                    .doesNotContain(workspaceId);
+            assertThat(reopenedAgain.workspaceRegistry().find(PROJECT, workspaceId))
+                    .get()
+                    .extracting(entry -> entry.status())
+                    .isEqualTo(HostWorkspaceRegistryStatus.DISABLED);
+        }
+    }
+
+    @Test
+    void unsafeLinkAtPersistedRegistryPathFailsClosed() throws Exception {
+        Path database = directory.resolve("unsafe-link.db");
+        Path initial = Files.createDirectory(directory.resolve("unsafe-link-initial"));
+        Path attached = Files.createDirectory(directory.resolve("unsafe-link-attached"));
+        Path outside = Files.createDirectory(directory.resolve("unsafe-link-outside"));
+        WorkspaceId workspaceId;
+
+        try (ProjectPersistenceAssembly first = persistence(database)) {
+            Fixture fixture = fixture(initial, first);
+            workspaceId = fixture.provisioning
+                    .authorizeApprovedAttach(attached, mounted -> first.workspaceAccess()
+                            .replace(new WorkspaceAccess(
+                                    TENANT, OWNER, mounted.workspaceId(), WorkspaceAccessMode.DEVELOP)))
+                    .directory()
+                    .workspaceId();
+        }
+        Files.move(attached, directory.resolve("unsafe-link-original"));
+        createUnsafeDirectoryLink(attached, outside);
+
+        try {
+            try (ProjectPersistenceAssembly reopened = persistence(database)) {
+                Fixture fixture = fixture(initial, reopened);
+                assertThat(fixture.provisioning.scope().allowedDirectories())
+                        .extracting(AuthorizedHostDirectory::workspaceId)
+                        .doesNotContain(workspaceId);
+                assertThat(reopened.workspaceRegistry().find(PROJECT, workspaceId))
+                        .get()
+                        .extracting(HostWorkspaceRegistryEntry::status)
+                        .isEqualTo(HostWorkspaceRegistryStatus.DISABLED);
+                assertThat(reopened.workspaceAccess().find(TENANT, OWNER, workspaceId))
+                        .contains(new WorkspaceAccess(TENANT, OWNER, workspaceId, WorkspaceAccessMode.DEVELOP));
+            }
+        } finally {
+            Files.deleteIfExists(attached);
+        }
+    }
+
+    @Test
+    void persistedLocationIdentityMismatchFailsClosed() throws Exception {
+        Path database = directory.resolve("identity-mismatch.db");
+        Path initial = Files.createDirectory(directory.resolve("identity-mismatch-initial"));
+        Path attached = Files.createDirectory(directory.resolve("identity-mismatch-attached"));
+        WorkspaceId workspaceId;
+
+        try (ProjectPersistenceAssembly first = persistence(database)) {
+            Fixture fixture = fixture(initial, first);
+            workspaceId = fixture.provisioning
+                    .authorizeApprovedAttach(attached, mounted -> first.workspaceAccess()
+                            .replace(new WorkspaceAccess(
+                                    TENANT, OWNER, mounted.workspaceId(), WorkspaceAccessMode.READ)))
+                    .directory()
+                    .workspaceId();
+            HostWorkspaceRegistryEntry persisted =
+                    first.workspaceRegistry().find(PROJECT, workspaceId).orElseThrow();
+            first.workspaceRegistry()
+                    .update(
+                            new HostWorkspaceRegistryEntry(
+                                    persisted.projectId(),
+                                    persisted.workspaceRef(),
+                                    new WorkspaceLocationRef("mismatched-location-ref"),
+                                    persisted.safeDisplayName(),
+                                    persisted.source(),
+                                    persisted.status(),
+                                    persisted.realPath(),
+                                    persisted.fingerprint(),
+                                    persisted.createdAt(),
+                                    persisted.validatedAt(),
+                                    Optional.empty(),
+                                    Optional.empty(),
+                                    persisted.version() + 1),
+                            persisted.version());
+        }
+
+        try (ProjectPersistenceAssembly reopened = persistence(database)) {
+            Fixture fixture = fixture(initial, reopened);
+            assertThat(fixture.provisioning.scope().allowedDirectories())
+                    .extracting(AuthorizedHostDirectory::workspaceId)
+                    .doesNotContain(workspaceId);
+            assertThat(reopened.workspaceRegistry().find(PROJECT, workspaceId))
+                    .get()
+                    .extracting(HostWorkspaceRegistryEntry::status)
+                    .isEqualTo(HostWorkspaceRegistryStatus.DISABLED);
+            assertThat(reopened.workspaceAccess().find(TENANT, OWNER, workspaceId))
+                    .contains(new WorkspaceAccess(TENANT, OWNER, workspaceId, WorkspaceAccessMode.READ));
         }
     }
 
@@ -252,6 +353,18 @@ class WorkspaceRegistryPathRecoveryIT {
                 () -> "m5-persistence",
                 new AesGcmModelContinuationProtector(
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()));
+    }
+
+    private static void createUnsafeDirectoryLink(Path link, Path target) throws Exception {
+        if (System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win")) {
+            Process process = new ProcessBuilder("cmd.exe", "/c", "mklink", "/J", link.toString(), target.toString())
+                    .redirectErrorStream(true)
+                    .start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(process.waitFor()).as(output).isZero();
+            return;
+        }
+        Files.createSymbolicLink(link, target);
     }
 
     private record Fixture(AuthorizedWorkspaceProvisioning provisioning) {}

@@ -205,15 +205,22 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                             "failureActionCode", "CHECK_GIT_AVAILABILITY",
                             "retryable", false));
         } catch (SecurityException exception) {
+            boolean nestedExpansion = "NESTED_WORKSPACE_MODE_EXPANSION_DENIED".equals(exception.getMessage());
             boolean insufficientMode = "WORKSPACE_ACCESS_MODE_DENIED".equals(exception.getMessage());
             return failure(
-                    insufficientMode
-                            ? "Workspace access is read-only for this operation"
-                            : "Workspace access is unavailable for the current owner",
+                    nestedExpansion
+                            ? "A nested directory cannot expand its enclosing workspace access"
+                            : insufficientMode
+                                    ? "Workspace access is read-only for this operation"
+                                    : "Workspace access is unavailable for the current owner",
                     Map.of(
-                            "errorCode", insufficientMode ? "PERMISSION_DENIED" : "ACCESS_DENIED",
+                            "errorCode", nestedExpansion || insufficientMode ? "PERMISSION_DENIED" : "ACCESS_DENIED",
                             "stableFailureCode",
-                                    insufficientMode ? "WORKSPACE_ACCESS_MODE_DENIED" : "WORKSPACE_ACCESS_UNAVAILABLE",
+                                    nestedExpansion
+                                            ? "NESTED_WORKSPACE_MODE_EXPANSION_DENIED"
+                                            : insufficientMode
+                                                    ? "WORKSPACE_ACCESS_MODE_DENIED"
+                                                    : "WORKSPACE_ACCESS_UNAVAILABLE",
                             "failureCategory", "POLICY_DENIED",
                             "failureActionCode", insufficientMode ? "REQUEST_WRITE_PERMISSION" : "READ_CURRENT_STATE",
                             "retryable", false));
@@ -814,16 +821,31 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             if (Files.isSymbolicLink(realPath)) {
                 throw new IllegalArgumentException("workspace.attach path must not be a symbolic link");
             }
-            var result = provisioning.authorizeApprovedAttach(realPath);
-            workspaceAccess.replace(
-                    new WorkspaceAccess(tenant, principal, result.directory().workspaceId(), mode));
+            var result = provisioning.authorizeApprovedAttach(realPath, attachedDirectory -> {
+                WorkspaceAccessMode activationMode = mode;
+                if (!attachedDirectory.realPath().equals(realPath)) {
+                    WorkspaceAccess currentAccess = workspaceAccess
+                            .find(tenant, principal, attachedDirectory.workspaceId())
+                            .orElseThrow(() -> new SecurityException("WORKSPACE_ACCESS_UNAVAILABLE"));
+                    if (!currentAccess.mode().allows(mode)) {
+                        throw new SecurityException("NESTED_WORKSPACE_MODE_EXPANSION_DENIED");
+                    }
+                    activationMode = currentAccess.mode();
+                }
+                workspaceAccess.replace(
+                        new WorkspaceAccess(tenant, principal, attachedDirectory.workspaceId(), activationMode));
+            });
+            WorkspaceAccessMode activatedMode = workspaceAccess
+                    .find(tenant, principal, result.directory().workspaceId())
+                    .orElseThrow(() -> new SecurityException("WORKSPACE_ACCESS_UNAVAILABLE"))
+                    .mode();
             var view = result.registryView();
             return success(
-                    "Authorized workspace " + view.safeDisplayName() + " as " + mode.name(),
+                    "Authorized workspace " + view.safeDisplayName() + " as " + activatedMode.name(),
                     Map.of(
                             "workspaceRef", view.workspaceRef(),
                             "safeDisplayName", view.safeDisplayName(),
-                            "mode", mode.name(),
+                            "mode", activatedMode.name(),
                             "source", view.source().name(),
                             "status", view.status().name()));
         } catch (IOException e) {
