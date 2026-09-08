@@ -126,6 +126,7 @@ def parser() -> argparse.ArgumentParser:
     windows = os.name == "nt"
     home = Path.home()
     workspace = Path("D:/workspace") if windows else home / "workspace"
+    secret_files = workspace / "secrets"
     agents = Path("D:/agents") if windows else home / "agents"
     software = Path("D:/dev/software") if windows else home / "dev/software"
     result = argparse.ArgumentParser(
@@ -133,7 +134,7 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument(
         "--deepseek-key-file",
-        default=os.getenv("HAIFA_DEEPSEEK_KEY_FILE", str(workspace / "ss-deepseek.txt")),
+        default=os.getenv("HAIFA_DEEPSEEK_KEY_FILE", str(secret_files / "ss-deepseek.env")),
     )
     result.add_argument(
         "--default-model-id",
@@ -141,7 +142,7 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument(
         "--bailian-key-file",
-        default=os.getenv("HAIFA_BAILIAN_KEY_FILE", str(workspace / "ss-bailian.txt")),
+        default=os.getenv("HAIFA_BAILIAN_KEY_FILE", str(secret_files / "ss-bailian.env")),
     )
     result.add_argument(
         "--bailian-region",
@@ -149,27 +150,33 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument(
         "--kimi-key-file",
-        default=os.getenv("HAIFA_KIMI_KEY_FILE", str(workspace / "ss-kimi.txt")),
+        default=os.getenv("HAIFA_KIMI_KEY_FILE", str(secret_files / "ss-kimi.env")),
     )
     result.add_argument(
         "--bigmodel-key-file",
-        default=os.getenv("HAIFA_BIGMODEL_KEY_FILE", str(workspace / "ss-bigmodel.txt")),
+        default=os.getenv("HAIFA_BIGMODEL_KEY_FILE", str(secret_files / "ss-bigmodel.env")),
     )
     result.add_argument(
         "--siliconflow-key-file",
-        default=os.getenv("HAIFA_SILICONFLOW_KEY_FILE", str(workspace / "ss-siliconflow.txt")),
+        default=os.getenv(
+            "HAIFA_SILICONFLOW_KEY_FILE", str(secret_files / "ss-siliconflow.env")
+        ),
     )
     result.add_argument(
         "--aliyun-iqs-key-file",
-        default=os.getenv("HAIFA_ALIYUN_IQS_KEY_FILE", str(workspace / "ss-aliyun-iqs.txt")),
+        default=os.getenv(
+            "HAIFA_ALIYUN_IQS_KEY_FILE", str(secret_files / "ss-aliyun-iqs.env")
+        ),
     )
     result.add_argument(
         "--browserless-key-file",
-        default=os.getenv("HAIFA_BROWSERLESS_KEY_FILE", str(workspace / "ss-browserless.txt")),
+        default=os.getenv(
+            "HAIFA_BROWSERLESS_KEY_FILE", str(secret_files / "ss-browserless.env")
+        ),
     )
     result.add_argument(
         "--tavily-key-file",
-        default=os.getenv("HAIFA_TAVILY_KEY_FILE", str(workspace / "ss-tavily.txt")),
+        default=os.getenv("HAIFA_TAVILY_KEY_FILE", str(secret_files / "ss-tavily.env")),
     )
     result.add_argument(
         "--web-search-provider",
@@ -185,7 +192,7 @@ def parser() -> argparse.ArgumentParser:
         "--continuation-key-file",
         default=os.getenv(
             "HAIFA_PERSONAL_CONTINUATION_KEY_FILE",
-            str(workspace / "ss-haifa-personal-continuation.txt"),
+            str(secret_files / "ss-haifa-personal-continuation.env"),
         ),
     )
     result.add_argument(
@@ -382,13 +389,42 @@ def wait_for_http(
     fail(f"{name} did not become healthy within {timeout_seconds} seconds. Logs: {stdout_path} ; {stderr_path}")
 
 
-def read_secret_file(value: str, label: str) -> str:
+ENVIRONMENT_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def read_env_file(path: Path, label: str, allowed_names: set[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line.removeprefix("export ").lstrip()
+        if "=" not in line:
+            fail(f"{label} key file line {line_number} must use KEY=VALUE format.")
+        name, raw_value = (part.strip() for part in line.split("=", 1))
+        if not ENVIRONMENT_NAME_PATTERN.fullmatch(name) or name not in allowed_names:
+            fail(f"{label} key file line {line_number} contains an unexpected variable name.")
+        if name in values:
+            fail(f"{label} key file contains duplicate {name}.")
+        if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in {'"', "'"}:
+            raw_value = raw_value[1:-1]
+        elif raw_value.startswith(('"', "'")) or raw_value.endswith(('"', "'")):
+            fail(f"{label} key file line {line_number} contains unmatched quotes.")
+        if not raw_value:
+            fail(f"{label} key file variable {name} is empty.")
+        values[name] = raw_value
+    return values
+
+
+def read_secret_file(value: str, label: str, environment_name: str) -> str:
     path = Path(value).expanduser()
     if not path.is_file():
         fail(f"{label} key file was not found: {path}")
-    secret = path.read_text(encoding="utf-8").strip()
+    values = read_env_file(path, label, {environment_name})
+    secret = values.get(environment_name, "")
     if not secret:
-        fail(f"{label} key file is empty: {path}")
+        fail(f"{label} key file does not define {environment_name}: {path}")
     return secret
 
 
@@ -399,24 +435,7 @@ def optional_secret_file(value: str, label: str, environment_name: str) -> str |
     path = Path(value).expanduser()
     if not path.exists():
         return None
-    return read_secret_file(value, label)
-
-
-def read_key_value_file(path: Path, label: str) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if ":" not in line:
-            fail(f"{label} key file line {line_number} must use KEY:VALUE format.")
-        name, value = (part.strip() for part in line.split(":", 1))
-        if name not in {"API_KEY", "WORKSPACE_ID", "REGION"} or not value:
-            fail(f"{label} key file line {line_number} is invalid.")
-        if name in values:
-            fail(f"{label} key file contains duplicate {name}.")
-        values[name] = value
-    return values
+    return read_secret_file(value, label, environment_name)
 
 
 def environment_value(name: str) -> str:
@@ -480,15 +499,24 @@ def optional_bailian_configuration(
     path = Path(key_file).expanduser()
     file_values: dict[str, str] = {}
     if path.is_file():
-        file_values = read_key_value_file(path, "Bailian")
-    source["DASHSCOPE_API_KEY"] = source["DASHSCOPE_API_KEY"] or file_values.get("API_KEY", "")
+        file_values = read_env_file(
+            path,
+            "Bailian",
+            {"DASHSCOPE_API_KEY", "ALIYUN_BAILIAN_WORKSPACE_ID", "ALIYUN_BAILIAN_REGION"},
+        )
+    source["DASHSCOPE_API_KEY"] = (
+        source["DASHSCOPE_API_KEY"] or file_values.get("DASHSCOPE_API_KEY", "")
+    )
     source["ALIYUN_BAILIAN_WORKSPACE_ID"] = (
-        source["ALIYUN_BAILIAN_WORKSPACE_ID"] or file_values.get("WORKSPACE_ID", "")
+        source["ALIYUN_BAILIAN_WORKSPACE_ID"]
+        or file_values.get("ALIYUN_BAILIAN_WORKSPACE_ID", "")
     )
     if not source["DASHSCOPE_API_KEY"] and not source["ALIYUN_BAILIAN_WORKSPACE_ID"]:
         return None
     source["ALIYUN_BAILIAN_REGION"] = (
-        source["ALIYUN_BAILIAN_REGION"] or file_values.get("REGION", "") or default_region.strip()
+        source["ALIYUN_BAILIAN_REGION"]
+        or file_values.get("ALIYUN_BAILIAN_REGION", "")
+        or default_region.strip()
     )
     configured = [name for name, value in source.items() if value]
     if not configured:
@@ -534,10 +562,10 @@ def continuation_key(value: str) -> str:
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         encoded = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
-        path.write_text(encoded, encoding="ascii")
+        path.write_text(f"HAIFA_PERSONAL_CONTINUATION_KEY={encoded}\n", encoding="ascii")
         restrict_secret_file(path)
         print(f"Created a persistent continuation key file: {path}")
-    result = path.read_text(encoding="ascii").strip()
+    result = read_secret_file(value, "Continuation", "HAIFA_PERSONAL_CONTINUATION_KEY")
     try:
         decoded = base64.b64decode(result, validate=True)
     except ValueError as exception:
@@ -1020,20 +1048,20 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         if not trusted_manifest.is_file():
             fail(f"Trusted script manifest is not a file: {trusted_manifest}")
 
-    deepseek_key = read_secret_file(args.deepseek_key_file, "DeepSeek")
+    deepseek_key = read_secret_file(args.deepseek_key_file, "DeepSeek", "DEEPSEEK_API_KEY")
     selected_web_providers = {args.web_search_provider, args.web_fetch_provider}
     aliyun_key = (
-        read_secret_file(args.aliyun_iqs_key_file, "Aliyun IQS")
+        read_secret_file(args.aliyun_iqs_key_file, "Aliyun IQS", "ALIYUN_IQS_API_KEY")
         if "aliyun" in selected_web_providers
         else ""
     )
     browserless_token = (
-        read_secret_file(args.browserless_key_file, "Browserless")
+        read_secret_file(args.browserless_key_file, "Browserless", "BROWSERLESS_TOKEN")
         if "browserless" in selected_web_providers
         else None
     )
     tavily_key = (
-        read_secret_file(args.tavily_key_file, "Tavily")
+        read_secret_file(args.tavily_key_file, "Tavily", "TAVILY_API_KEY")
         if "tavily" in selected_web_providers
         else None
     )
