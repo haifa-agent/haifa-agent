@@ -47,7 +47,9 @@ final class CliVerificationProfileDiscovery {
             "go.work",
             "CMakeLists.txt",
             "Makefile",
-            "meson.build");
+            "meson.build",
+            "verify.ps1",
+            "verify.sh");
     private static final List<String> DIRECTORY_SIGNALS = List.of("src/test", "test", "tests", "__tests__");
 
     private CliVerificationProfileDiscovery() {}
@@ -80,6 +82,10 @@ final class CliVerificationProfileDiscovery {
         if (signals.contains("package.json")) add(build, "npm test", "package.json");
         if (signals.contains("Cargo.toml")) add(build, "cargo test", "Cargo.toml");
         if (signals.contains("go.mod")) add(build, "go test ./...", "go.mod");
+        String verificationEntry = windows ? "verify.ps1" : "verify.sh";
+        if (signals.contains(verificationEntry)) {
+            add(build, windows ? "powershell -NoProfile -File verify.ps1" : "sh verify.sh", verificationEntry);
+        }
         signals.stream()
                 .filter(CliVerificationProfileDiscovery::isDotnetSignal)
                 .findFirst()

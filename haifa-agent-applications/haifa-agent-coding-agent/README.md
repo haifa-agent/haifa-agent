@@ -82,7 +82,9 @@ Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/R
 Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影响模块和最终门禁。TEST/BUILD Tool Result
 保留每次结构化 Validation Attempt；候选在 Coding Session 创建时由可信 Host 冻结到 Session metadata，
 重启后按摘要与精确命令匹配恢复来源和 scope。runner stdout/stderr 不作为数量或 scope 的可信来源，当前
-统一报告 `COUNTS_UNAVAILABLE`，也不会扩展 runner 专用解析器来制造虚假的完整覆盖。
+统一报告 `COUNTS_UNAVAILABLE`，也不会扩展 runner 专用解析器来制造虚假的完整覆盖。CLI Host 会把根目录
+现存且非符号链接的 `verify.ps1` 或 `verify.sh` 作为当前 OS 的平台验证候选冻结；精确命中该候选的执行即使
+没有模型提供的可选 operation-family hint，也可产生验证证据，其他未知命令不能据此冒充验证。
 
 可信本机产品宿主可以在 Definition instructions 中冻结一个产品私有、Agent-visible 的 L0-L2 Workspace
 环境块，用于表达已经由宿主掌握的安全边界、根仓库/instructions 状态、根静态项目标记和 frozen validation
