@@ -37,6 +37,9 @@ public final class SdkMcpClientFactory implements McpClientFactory {
         if (!(server.transport() instanceof StreamableHttpDefinition http)) {
             throw new IllegalArgumentException("SDK HTTP factory only accepts Streamable HTTP definitions");
         }
+        if (server.protocol().requiresAdaptation()) {
+            return new PendingAdaptationMcpClientFacade(server, telemetry);
+        }
         if (server.protocol().isModern()) {
             var objectMapper = new ObjectMapper();
             var transport = new ModernHttpMcpTransport(server, http, objectMapper);
