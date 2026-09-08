@@ -79,6 +79,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class PersonalModelFactory {
     private static final ModelCatalogManifest PACKAGED_CATALOG =
             PackagedModelCatalog.load(PersonalModelFactory.class.getClassLoader());
+
     private PersonalModelFactory() {}
 
     public static Platform createPlatform(
@@ -228,8 +229,7 @@ public final class PersonalModelFactory {
         PersonalModelProductDefaults productDefaults = new PersonalModelProductDefaults();
         Map<String, ModelBindingProfile> profiles = snapshots.values().stream()
                 .collect(java.util.stream.Collectors.toUnmodifiableMap(
-                        value -> value.modelId().value(),
-                        value -> profile(value, catalogDeployment)));
+                        value -> value.modelId().value(), value -> profile(value, catalogDeployment)));
         StaticModelPlatform modelPlatform = modelPlatform(providers, adapters, profiles);
         if (!profiles.get(selected.model().id()).selectable()) {
             throw new IllegalArgumentException("default Personal model profile is not verified");
@@ -583,13 +583,11 @@ public final class PersonalModelFactory {
 
     private static ModelBindingProfile profile(ResolvedModelSnapshot snapshot, boolean catalogDeployment) {
         if (catalogDeployment) return PACKAGED_CATALOG.profileFor(snapshot).orElseThrow();
-        return
-                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(snapshot.apiStyle())
-                        ? GeminiModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 24))
-                        : ModelApiStyles.ANTHROPIC_MESSAGES.equals(snapshot.apiStyle())
-                                ? AnthropicModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 30))
-                                : OpenAiCompatibleModelProfileFactory.fromSnapshot(
-                                        snapshot, LocalDate.of(2026, 8, 13));
+        return ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(snapshot.apiStyle())
+                ? GeminiModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 24))
+                : ModelApiStyles.ANTHROPIC_MESSAGES.equals(snapshot.apiStyle())
+                        ? AnthropicModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 30))
+                        : OpenAiCompatibleModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 13));
     }
 
     private static StaticModelPlatform modelPlatform(
