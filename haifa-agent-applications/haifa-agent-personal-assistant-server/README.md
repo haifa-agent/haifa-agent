@@ -178,11 +178,13 @@ Workspace ID 和 region；Kimi、智谱与硅基流动分别使用 `env://KIMI_A
 实际 Provider Model ID 与完整 Snapshot 不返回浏览器。检测到可选 Provider 时只扩展目录，默认仍是
 `deepseek-chat-flash`；只有显式传入 `--default-model-id` 才改变默认 Binding。
 
-真实环境脚本固定装配独立的 `google-antigravity` Provider 与 `antigravity-gemini` Binding；
+真实环境脚本固定装配独立的 `google-antigravity` Provider，以及 `antigravity-gemini`、
+`antigravity-gemini-3-8-flash`、`antigravity-gemini-3-7-flash` 和
+`antigravity-gemini-3-1-pro-preview` Binding；
 `HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true` 只控制能否发起新的本地兼容 OAuth 登录。该 Binding 使用
 已登录的共享本地认证引用，默认
 访问 Daily Endpoint，并通过 `HAIFA_ANTIGRAVITY_PROXY_URL`（默认 `http://127.0.0.1:2081`）连接；
-`--default-model-id antigravity-gemini` 可将其设为默认模型。登录状态不会再只显示在连接面板而缺少对应模型。
+`--default-model-id` 可将其中一个 Binding 设为默认模型。登录状态不会再只显示在连接面板而缺少对应模型。
 
 百炼目录提供 Qwen Chat 与已验证的 Max/Plus Responses；Kimi 只提供官方 API Key Chat；智谱提供通用
 OpenAI Chat，并仅为 GLM-5.2 提供通过 Contract 的 Anthropic Messages 高级连接方式。所有可见状态、
