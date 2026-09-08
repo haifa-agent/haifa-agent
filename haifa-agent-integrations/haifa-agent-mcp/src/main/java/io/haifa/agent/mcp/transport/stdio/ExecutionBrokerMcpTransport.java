@@ -5,7 +5,6 @@ import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ManagedProcessSession;
 import io.haifa.agent.execution.api.ProcessInputChunk;
 import io.haifa.agent.mcp.client.McpConnectionIdentity;
-import io.haifa.agent.mcp.config.McpProtocolProfile;
 import io.haifa.agent.mcp.config.McpServerDefinition;
 import io.haifa.agent.mcp.config.StdioDefinition;
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -109,7 +108,7 @@ public final class ExecutionBrokerMcpTransport implements McpClientTransport {
 
     @Override
     public List<String> protocolVersions() {
-        return List.of(McpProtocolProfile.VERSION_2025_11_25);
+        return List.of(server.protocol().targetVersion());
     }
 
     private ManagedProcessSession ensureSession(List<io.haifa.agent.credential.api.CredentialLease> leases) {

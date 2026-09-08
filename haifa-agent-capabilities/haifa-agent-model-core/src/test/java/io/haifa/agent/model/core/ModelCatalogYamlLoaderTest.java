@@ -113,6 +113,26 @@ class ModelCatalogYamlLoaderTest {
                 .contains(ModelCapability.STRUCTURED_OUTPUT);
         assertThat(catalog.binding("gpt-5.6-luna").orElseThrow().definition().capabilities())
                 .contains(ModelCapability.STRUCTURED_OUTPUT);
+        assertThat(catalog.binding("gpt-5.3-codex-spark")
+                        .orElseThrow()
+                        .profile()
+                        .contextWindowTokens())
+                .isEqualTo(128_000);
+        assertThat(catalog.binding("antigravity-gemini-3-8-flash")
+                        .orElseThrow()
+                        .profile()
+                        .contextWindowTokens())
+                .isEqualTo(1_048_576);
+        assertThat(catalog.binding("antigravity-gemini-3-7-flash")
+                        .orElseThrow()
+                        .profile()
+                        .maximumOutputTokens())
+                .isEqualTo(65_536);
+        assertThat(catalog.binding("antigravity-gemini-3-1-pro-preview")
+                        .orElseThrow()
+                        .definition()
+                        .providerModelId())
+                .isEqualTo("gemini-pro-agent");
     }
 
     @Test

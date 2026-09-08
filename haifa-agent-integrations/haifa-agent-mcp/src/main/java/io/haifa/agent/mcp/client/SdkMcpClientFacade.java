@@ -58,7 +58,13 @@ final class SdkMcpClientFacade implements McpClientFacade {
         try {
             transportFailures.clearFailure();
             McpSchema.InitializeResult result = credentials.withCredentials(leases, client::initialize);
-            if (!McpProtocolProfile.VERSION_2025_11_25.equals(result.protocolVersion())) {
+            if (!server.protocol().targetVersion().equals(result.protocolVersion())) {
+                if (McpProtocolProfile.isFutureVersion(result.protocolVersion())) {
+                    throw new ToolInvocationException(
+                            "MCP_PROTOCOL_VERSION_PENDING_ADAPTATION",
+                            ToolDispatchState.ACKNOWLEDGED,
+                            McpProtocolProfile.adaptationNotice(result.protocolVersion()));
+                }
                 throw new ToolInvocationException(
                         "MCP_PROTOCOL_VERSION_MISMATCH",
                         ToolDispatchState.ACKNOWLEDGED,
@@ -207,6 +213,16 @@ final class SdkMcpClientFacade implements McpClientFacade {
         if (exception instanceof ToolInvocationException invocation) {
             telemetry.operationFailed(server.serverId(), invocation.failureCode());
             return invocation;
+        }
+        var future = McpProtocolProfile.findFutureProtocolVersion(
+                io.modelcontextprotocol.spec.McpError.aggregateExceptionMessages(exception));
+        if (future.isPresent()) {
+            telemetry.operationFailed(server.serverId(), "MCP_PROTOCOL_VERSION_PENDING_ADAPTATION");
+            return new ToolInvocationException(
+                    "MCP_PROTOCOL_VERSION_PENDING_ADAPTATION",
+                    dispatchState,
+                    McpProtocolProfile.adaptationNotice(future.orElseThrow()),
+                    exception);
         }
         if (isProtocolVersionMismatch(exception)) {
             telemetry.operationFailed(server.serverId(), "MCP_PROTOCOL_VERSION_MISMATCH");

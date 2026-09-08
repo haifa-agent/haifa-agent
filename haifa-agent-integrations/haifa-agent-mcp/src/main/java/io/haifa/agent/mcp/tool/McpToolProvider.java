@@ -3,7 +3,6 @@ package io.haifa.agent.mcp.tool;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.mcp.client.McpConnection;
 import io.haifa.agent.mcp.client.McpConnectionManager;
-import io.haifa.agent.mcp.config.McpProtocolProfile;
 import io.haifa.agent.mcp.config.McpServerId;
 import io.haifa.agent.mcp.config.StdioDefinition;
 import io.haifa.agent.tool.api.ToolDispatchState;
@@ -66,8 +65,8 @@ public final class McpToolProvider implements ToolProvider {
         if (!binding.serverId().equals(serverId.value())
                 || !binding.serverBindingVersion().equals(server.bindingVersion())
                 || !binding.serverBindingDigest().equals(server.bindingDigest())
-                || !binding.targetProtocolVersion().equals(McpProtocolProfile.VERSION_2025_11_25)
-                || !binding.negotiatedProtocolVersion().equals(McpProtocolProfile.VERSION_2025_11_25)
+                || !binding.targetProtocolVersion().equals(server.protocol().targetVersion())
+                || !binding.negotiatedProtocolVersion().equals(binding.targetProtocolVersion())
                 || !binding.transportIdentityReference()
                         .equals(server.transport().identityReference())
                 || !binding.localDefinitionHash()
