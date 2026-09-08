@@ -33,6 +33,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class StreamableHttpMcpComponentTest {
     @Test
@@ -87,10 +89,27 @@ class StreamableHttpMcpComponentTest {
         };
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"2025-03-26", "2025-06-18", "2025-11-25"})
+    void negotiatesEachSupportedLegacyProtocolVersion(String version) throws Exception {
+        try (StubServer stub = new StubServer(version)) {
+            var definition = McpTestFixtures.httpServer(
+                    stub.endpoint(), Set.of("time_now"), new io.haifa.agent.mcp.config.McpProtocolProfile(version));
+            var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
+
+            assertThat(client.initialize(List.of()).negotiatedProtocolVersion()).isEqualTo(version);
+            assertThat(client.listTools(null, List.of()).tools())
+                    .extracting(tool -> tool.name())
+                    .contains("time_now");
+            client.close();
+        }
+    }
+
     @Test
-    void rejectsNegotiationToAnyOtherProtocolVersionDeterministically() throws Exception {
+    void rejectsLegacyNegotiationThatDoesNotMatchPinnedVersion() throws Exception {
         try (StubServer stub = new StubServer("2025-03-26")) {
-            var definition = McpTestFixtures.httpServer(stub.endpoint(), Set.of("time_now"));
+            var definition = McpTestFixtures.httpServer(
+                    stub.endpoint(), Set.of("time_now"), io.haifa.agent.mcp.config.McpProtocolProfile.FIXED_2025_06_18);
             List<String> telemetry = new CopyOnWriteArrayList<>();
             var client = new SdkMcpClientFactory(serverId -> {}, telemetry(telemetry))
                     .create(definition, McpTestFixtures.IDENTITY);
