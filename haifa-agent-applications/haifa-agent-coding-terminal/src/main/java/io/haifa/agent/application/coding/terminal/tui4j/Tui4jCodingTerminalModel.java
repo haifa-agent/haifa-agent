@@ -174,8 +174,7 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
 
-        if (mouse.getAction() == MouseAction.MouseActionPress
-                && mouse.getButton() == MouseButton.MouseButtonLeft) {
+        if (mouse.getAction() == MouseAction.MouseActionPress && mouse.getButton() == MouseButton.MouseButtonLeft) {
             Optional<TerminalTextSelection.Point> point = transcriptPoint(mouse, false);
             if (point.isEmpty()) {
                 clearSelection();
@@ -192,7 +191,8 @@ final class Tui4jCodingTerminalModel implements Model {
         if (mouse.getAction() == MouseAction.MouseActionRelease && selection.selecting()) {
             transcriptPoint(mouse, true).ifPresent(selection::finish);
             stopSelectionAutoScroll();
-            return selection.range()
+            return selection
+                    .range()
                     .flatMap(range -> TerminalScreenCells.selectedText(transcriptContent, range))
                     .map(Command::copyToClipboard)
                     .orElseGet(Command::none);
@@ -203,7 +203,8 @@ final class Tui4jCodingTerminalModel implements Model {
     @Override
     public String view() {
         TerminalUiState state = controller.state();
-        String desiredTranscript = selection.range()
+        String desiredTranscript = selection
+                .range()
                 .map(range -> TerminalScreenCells.highlight(transcriptContent, range))
                 .orElse(transcriptContent);
         if (!desiredTranscript.equals(displayedTranscriptContent)) {
@@ -252,7 +253,9 @@ final class Tui4jCodingTerminalModel implements Model {
             }
         }
         TerminalUiState state = controller.state();
-        if (key.type() == KeyType.keyESC && state.selector().isEmpty() && selection.range().isPresent()) {
+        if (key.type() == KeyType.keyESC
+                && state.selector().isEmpty()
+                && selection.range().isPresent()) {
             clearSelection();
             return Command.none();
         }
@@ -463,11 +466,8 @@ final class Tui4jCodingTerminalModel implements Model {
         return Optional.of(new TerminalTextSelection.Point(logicalRow, column));
     }
 
-    private Command updateSelectionAutoScroll(
-            MouseMessage mouse, Tui4jTerminalView.TranscriptRegion region) {
-        int direction = mouse.row() <= region.topRow()
-                ? -1
-                : mouse.row() >= region.bottomRow() ? 1 : 0;
+    private Command updateSelectionAutoScroll(MouseMessage mouse, Tui4jTerminalView.TranscriptRegion region) {
+        int direction = mouse.row() <= region.topRow() ? -1 : mouse.row() >= region.bottomRow() ? 1 : 0;
         selectionAutoScrollColumn = Math.max(0, mouse.column());
         if (direction == 0) {
             stopSelectionAutoScroll();
@@ -493,19 +493,15 @@ final class Tui4jCodingTerminalModel implements Model {
         requestTranscriptScroll(selectionAutoScrollDirection);
         Tui4jTerminalView.TranscriptRegion region = view.transcriptRegion();
         int nextOffset = Math.max(
-                0,
-                Math.min(
-                        transcript.getMaxYOffset(), transcript.getYOffset() + selectionAutoScrollDirection));
+                0, Math.min(transcript.getMaxYOffset(), transcript.getYOffset() + selectionAutoScrollDirection));
         int visibleRow = selectionAutoScrollDirection < 0 ? 0 : Math.max(0, region.height() - 1);
-        int row = Math.min(
-                TerminalScreenCells.lineCount(transcriptContent) - 1, nextOffset + visibleRow);
+        int row = Math.min(TerminalScreenCells.lineCount(transcriptContent) - 1, nextOffset + visibleRow);
         selection.extend(new TerminalTextSelection.Point(Math.max(0, row), selectionAutoScrollColumn));
         return selectionAutoScrollTick(scrolling.sequence());
     }
 
     private Command selectionAutoScrollTick(long sequence) {
-        return Command.tick(
-                SELECTION_AUTO_SCROLL_INTERVAL, ignored -> new SelectionAutoScrollMessage(sequence));
+        return Command.tick(SELECTION_AUTO_SCROLL_INTERVAL, ignored -> new SelectionAutoScrollMessage(sequence));
     }
 
     private void stopSelectionAutoScroll() {
