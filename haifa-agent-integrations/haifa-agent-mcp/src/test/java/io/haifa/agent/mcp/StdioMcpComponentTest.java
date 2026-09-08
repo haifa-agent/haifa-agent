@@ -52,8 +52,54 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class StdioMcpComponentTest {
+    @ParameterizedTest
+    @ValueSource(strings = {"2025-03-26", "2025-06-18", "2025-11-25"})
+    void negotiatesEachSupportedLegacyProtocolVersion(String version) {
+        var server = stdioServer(List.of(), new McpProtocolProfile(version));
+        var broker = new StubExecutionBroker();
+        var client = new SdkMcpStdioClientFactory(
+                        broker,
+                        (definition, identity, credentials) ->
+                                new McpManagedProcessLaunch(request(new ExecutionEnvironmentRef(List.of())), () -> {}))
+                .create(server, McpTestFixtures.IDENTITY);
+
+        assertThat(client.initialize(List.of()).negotiatedProtocolVersion()).isEqualTo(version);
+        client.close();
+    }
+
+    @Test
+    void usesDiscoveryAndPerRequestMetadataFor2026StdioProtocol() {
+        var server = stdioServer(List.of(), McpProtocolProfile.FIXED_2026_07_28);
+        var broker = new StubExecutionBroker();
+        var client = new SdkMcpStdioClientFactory(
+                        broker,
+                        (definition, identity, credentials) ->
+                                new McpManagedProcessLaunch(request(new ExecutionEnvironmentRef(List.of())), () -> {}))
+                .create(server, McpTestFixtures.IDENTITY);
+
+        var snapshot = client.initialize(List.of());
+        var tools = client.listTools(null, List.of());
+        AtomicInteger dispatched = new AtomicInteger();
+        var result = client.callTool("echo", Map.of("value", "hello"), List.of(), observer(dispatched));
+        client.close();
+
+        assertThat(snapshot.negotiatedProtocolVersion()).isEqualTo("2026-07-28");
+        assertThat(tools.tools()).extracting(tool -> tool.name()).containsExactly("echo");
+        assertThat(result.structuredContent()).containsEntry("value", "hello");
+        assertThat(dispatched).hasValue(1);
+        assertThat(broker.session.methods()).containsExactly("server/discover", "tools/list", "tools/call");
+        assertThat(broker.session.requests()).allSatisfy(request -> assertThat(request)
+                .extractingByKey("params")
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                .extractingByKey("_meta")
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                .containsEntry("io.modelcontextprotocol/protocolVersion", "2026-07-28"));
+    }
+
     @Test
     void bridgesJsonRpcThroughExecutionBrokerManagedSessionAndClosesProcessOwner() {
         var server = stdioServer(List.of());
@@ -141,11 +187,16 @@ class StdioMcpComponentTest {
     }
 
     private static McpServerDefinition stdioServer(List<McpCredentialInjection> credentials) {
+        return stdioServer(credentials, McpProtocolProfile.FIXED_2025_11_25);
+    }
+
+    private static McpServerDefinition stdioServer(
+            List<McpCredentialInjection> credentials, McpProtocolProfile protocol) {
         return McpServerDefinition.create(
                 new McpServerId("stdio"),
                 "Stdio stub",
                 true,
-                McpProtocolProfile.FIXED_2025_11_25,
+                protocol,
                 new StdioDefinition(
                         "stub-mcp",
                         List.of("--stdio"),
@@ -224,6 +275,7 @@ class StdioMcpComponentTest {
         private final ObjectMapper mapper = new ObjectMapper();
         private final LinkedBlockingQueue<ProcessOutputChunk> output = new LinkedBlockingQueue<>();
         private final CompletableFuture<ProcessExit> exit = new CompletableFuture<>();
+        private final List<Map<String, Object>> requests = new java.util.concurrent.CopyOnWriteArrayList<>();
         private volatile boolean closed;
         private final SessionMode mode;
 
@@ -241,6 +293,7 @@ class StdioMcpComponentTest {
             try {
                 String frame = new String(input.bytes(), StandardCharsets.UTF_8).trim();
                 Map<String, Object> request = mapper.readValue(frame, new TypeReference<>() {});
+                requests.add(request);
                 if (!request.containsKey("id")) return;
                 if (mode == SessionMode.STDERR_BEFORE_RESPONSE) {
                     output.add(new ProcessOutputChunk(
@@ -257,13 +310,24 @@ class StdioMcpComponentTest {
                 String method = String.valueOf(request.get("method"));
                 Object result =
                         switch (method) {
+                            case "server/discover" ->
+                                Map.of(
+                                        "resultType", "complete",
+                                        "supportedVersions", List.of("2026-07-28"),
+                                        "capabilities", Map.of("tools", Map.of("listChanged", false)),
+                                        "_meta",
+                                                Map.of(
+                                                        "io.modelcontextprotocol/serverInfo",
+                                                        Map.of("name", "stdio-stub", "version", "1.0.0")));
                             case "initialize" ->
                                 Map.of(
-                                        "protocolVersion", "2025-11-25",
+                                        "protocolVersion", ((Map<?, ?>) request.get("params")).get("protocolVersion"),
                                         "capabilities", Map.of("tools", Map.of("listChanged", false)),
                                         "serverInfo", Map.of("name", "stdio-stub", "version", "1.0.0"));
                             case "tools/list" ->
                                 Map.of(
+                                        "resultType",
+                                        "complete",
                                         "tools",
                                         List.of(Map.of(
                                                 "name",
@@ -276,9 +340,14 @@ class StdioMcpComponentTest {
                                                 Map.of("type", "object"))));
                             case "tools/call" ->
                                 Map.of(
-                                        "content", List.of(Map.of("type", "text", "text", "hello")),
-                                        "structuredContent", Map.of("value", "hello"),
-                                        "isError", false);
+                                        "resultType",
+                                        "complete",
+                                        "content",
+                                        List.of(Map.of("type", "text", "text", "hello")),
+                                        "structuredContent",
+                                        Map.of("value", "hello"),
+                                        "isError",
+                                        false);
                             default -> throw new IllegalStateException(method);
                         };
                 byte[] response = (mapper.writeValueAsString(
@@ -289,6 +358,17 @@ class StdioMcpComponentTest {
             } catch (Exception exception) {
                 throw new IllegalStateException(exception);
             }
+        }
+
+        private List<Map<String, Object>> requests() {
+            return List.copyOf(requests);
+        }
+
+        private List<String> methods() {
+            return requests.stream()
+                    .filter(request -> request.containsKey("id"))
+                    .map(request -> String.valueOf(request.get("method")))
+                    .toList();
         }
 
         @Override

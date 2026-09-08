@@ -1,0 +1,28 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: gpt-5.3-codex-spark
+version: "2026-09-m3"
+providerModelId: gpt-5.3-codex-spark
+displayName: GPT-5.3-Codex-Spark
+status: ACTIVE
+apiStyle: openai-responses
+dialect: openai-codex-responses
+capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+profile:
+  version: "2.0"
+  reasoningBehavior: ALWAYS
+  allowedReasoningModes: [ENABLED]
+  allowedReasoningEfforts: [LOW, MEDIUM, HIGH]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 128000
+  contextWindowTokens: 128000
+  toolReasoningContinuationRequired: false
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: false
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT]
+  outputModalities: [TEXT]
+  imageInput: null
+  status: VERIFIED
+  lastVerifiedOn: "2026-09-08"

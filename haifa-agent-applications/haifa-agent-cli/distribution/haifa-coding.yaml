@@ -18,7 +18,7 @@ models:
       nativeStreaming: true
       originator: ${HAIFA_CODEX_ORIGINATOR:haifa}
       userAgent: ${HAIFA_CODEX_USER_AGENT:haifa-agent/1}
-      allowedBindings: [gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna]
+      allowedBindings: [gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.3-codex-spark]
     - id: aliyun-bailian
       endpoint: https://default-workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
       credentialRef: env://DASHSCOPE_API_KEY
@@ -55,7 +55,7 @@ models:
       endpoint: ${HAIFA_ANTIGRAVITY_MODEL_ENDPOINT:https://daily-cloudcode-pa.googleapis.com/v1internal}
       credentialRef: model-auth://google-antigravity/default
       nativeStreaming: true
-      allowedBindings: [antigravity-gemini]
+      allowedBindings: [antigravity-gemini, antigravity-gemini-3-8-flash, antigravity-gemini-3-7-flash, antigravity-gemini-3-1-pro-preview]
 tools:
   enabled: [file.list, file.stat, file.read, file.create, file.write, file.patch, file.delete, file.move, execution.run]
 skills:

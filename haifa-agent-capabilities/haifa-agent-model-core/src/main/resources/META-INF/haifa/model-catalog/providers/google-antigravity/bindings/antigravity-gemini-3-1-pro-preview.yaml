@@ -1,0 +1,36 @@
+schemaVersion: haifa.model-catalog-binding/v1
+bindingId: antigravity-gemini-3-1-pro-preview
+version: "2026-09-m1"
+providerModelId: gemini-pro-agent
+displayName: Gemini 3.1 Pro Preview via Antigravity Direct
+status: ACTIVE
+apiStyle: google-gemini-generate-content
+dialect: antigravity-direct
+capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING, IMAGE_UPLOAD_INPUT]
+profile:
+  version: "2.0"
+  reasoningBehavior: ALWAYS
+  allowedReasoningModes: [ENABLED]
+  allowedReasoningEfforts: [LOW, MEDIUM, HIGH]
+  maximumReasoningTokens: null
+  minimumOutputTokens: 1
+  maximumOutputTokens: 65535
+  contextWindowTokens: 1048576
+  toolReasoningContinuationRequired: true
+  nativeStreaming: true
+  usageStreaming: true
+  reasoningStreaming: false
+  partialOutputFailureBehavior: NON_RETRYABLE
+  inputModalities: [TEXT, IMAGE]
+  outputModalities: [TEXT]
+  imageInput:
+    allowedSources: [UPLOAD]
+    supportedMediaTypes: [image/png, image/jpeg, image/webp, image/gif, application/pdf]
+    maxImagesPerRequest: 4
+    maxBytesPerItem: 10485760
+    maxTotalBytes: 12582912
+    maxUrlCharacters: 2048
+    detailSupported: false
+    allowedDetails: []
+  status: VERIFIED
+  lastVerifiedOn: "2026-09-08"
