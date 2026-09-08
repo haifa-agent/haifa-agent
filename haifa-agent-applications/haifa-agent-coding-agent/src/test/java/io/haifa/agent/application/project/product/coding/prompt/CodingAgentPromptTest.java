@@ -78,7 +78,7 @@ class CodingAgentPromptTest {
                 .contains("does not expose a workspace attachment tool")
                 .doesNotContain("request workspace_attach");
         assertThat(withAttachment.text())
-                .contains("request workspace_attach", "least permission needed")
+                .contains("request workspace_attach", "least access mode needed")
                 .doesNotContain("does not expose a workspace attachment tool");
         assertThat(withAttachment.identity()).isNotEqualTo(withoutAttachment.identity());
     }
