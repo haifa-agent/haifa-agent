@@ -112,6 +112,16 @@ final class OpenAiResponsesBindingRegistry {
                     Set.of(ModelReasoningEffort.HIGH),
                     false);
         }
+        register(
+                map,
+                "openai-codex",
+                "gpt-5.3-codex-spark",
+                ModelApiStyles.OPENAI_RESPONSES,
+                OpenAiResponsesDialects.OPENAI_CODEX,
+                ModelReasoningBehavior.ALWAYS,
+                Set.of(ModelReasoningMode.ENABLED),
+                Set.of(ModelReasoningEffort.LOW, ModelReasoningEffort.MEDIUM, ModelReasoningEffort.HIGH),
+                false);
 
         return Map.copyOf(map);
     }

@@ -8,7 +8,7 @@ the respective protocol registries:
 - `OpenAiCompatibleBindingRegistry`: Chat completions for DeepSeek (`deepseek-v4-flash`, `deepseek-v4-pro`),
   the reviewed SiliconFlow DeepSeek V4 Flash Chat binding, TokenRhythm DeepSeek V4 Flash Chat binding, selected Bailian Qwen bindings,
   Kimi K3/K2.7/K2.6, selected Zhipu GLM bindings, and the `personal-local` test fixture.
-- `OpenAiResponsesBindingRegistry`: Responses bindings for DeepSeek, Bailian Qwen Max/Plus, and OpenAI Codex (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`).
+- `OpenAiResponsesBindingRegistry`: Responses bindings for DeepSeek, Bailian Qwen Max/Plus, and OpenAI Codex (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.3-codex-spark`).
 
 Unknown vendor bindings, unverified model IDs, or style/dialect mutations fail closed as `UNVERIFIED`
 instead of inheriting capabilities merely because they share a transport. Product exposure can

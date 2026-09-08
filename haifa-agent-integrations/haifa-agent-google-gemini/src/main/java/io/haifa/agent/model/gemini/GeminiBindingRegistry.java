@@ -93,15 +93,28 @@ final class GeminiBindingRegistry {
                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
                 GeminiDialects.ANTIGRAVITY_DIRECT);
 
-        // gemini-3.7-flash (supports hybrid thinking, low/medium/high effort)
+        // Antigravity Gemini 3.7 Flash (upstream tiered route; supports low/medium/high thinking levels)
         var direct37Key = new AdmissionKey(
                 "google-antigravity",
-                "gemini-3.7-flash",
+                "gemini-3.7-flash-tiered",
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                GeminiDialects.ANTIGRAVITY_DIRECT);
+
+        var direct38Key = new AdmissionKey(
+                "google-antigravity",
+                "gemini-3.8-flash-tiered",
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                GeminiDialects.ANTIGRAVITY_DIRECT);
+
+        var direct31ProKey = new AdmissionKey(
+                "google-antigravity",
+                "gemini-pro-agent",
                 ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
                 GeminiDialects.ANTIGRAVITY_DIRECT);
 
         var efforts37 = Set.of(ModelReasoningEffort.LOW, ModelReasoningEffort.MEDIUM, ModelReasoningEffort.HIGH);
         var modes = Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED);
+        var requiredThinkingModes = Set.of(ModelReasoningMode.ENABLED);
 
         return Map.of(
                 direct36Key,
@@ -116,6 +129,24 @@ final class GeminiBindingRegistry {
                                 direct3Key, ModelReasoningBehavior.OPTIONAL, modes, efforts37, geminiIoProfile),
                 direct37Key,
                         new AdmittedBinding(
-                                direct37Key, ModelReasoningBehavior.OPTIONAL, modes, efforts37, geminiIoProfile));
+                                direct37Key,
+                                ModelReasoningBehavior.ALWAYS,
+                                requiredThinkingModes,
+                                efforts37,
+                                geminiIoProfile),
+                direct38Key,
+                        new AdmittedBinding(
+                                direct38Key,
+                                ModelReasoningBehavior.ALWAYS,
+                                requiredThinkingModes,
+                                efforts37,
+                                geminiIoProfile),
+                direct31ProKey,
+                        new AdmittedBinding(
+                                direct31ProKey,
+                                ModelReasoningBehavior.ALWAYS,
+                                requiredThinkingModes,
+                                efforts37,
+                                geminiIoProfile));
     }
 }

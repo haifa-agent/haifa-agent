@@ -138,6 +138,17 @@ class OpenAiResponsesDialectTest {
                 "model-auth://openai-codex/user-1");
         dialect.validateSnapshot(valid, false);
 
+        ResolvedModelSnapshot spark = snapshot(
+                "openai-codex",
+                OpenAiResponsesDialects.OPENAI_CODEX,
+                "https://chatgpt.com/backend-api/codex",
+                Map.of(
+                        OpenAiResponsesDialects.CODEX_ORIGINATOR_OPTION, "codex_cli",
+                        OpenAiResponsesDialects.CODEX_USER_AGENT_OPTION, "HaifaCodex/1.0"),
+                "gpt-5.3-codex-spark",
+                "model-auth://openai-codex/user-1");
+        dialect.validateSnapshot(spark, false);
+
         // Header decoration
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create("https://chatgpt.com/backend-api/codex"));
         AgentChatRequest request = new AgentChatRequest(
