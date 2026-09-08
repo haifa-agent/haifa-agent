@@ -44,7 +44,7 @@ final class AutonomousDeliveryGateCoordinator {
             throws Exception {
         Objects.requireNonNull(context, "context must not be null");
         AutonomousDeliverySuiteManifest suite = context.suite();
-        AutonomousDeliveryProgressReporter progress = new AutonomousDeliveryProgressReporter(progressOutput);
+        AutonomousDeliveryProgressReporter progress = new AutonomousDeliveryProgressReporter(progressOutput, suite);
         AutonomousDeliveryPhasePolicy phasePolicy = AutonomousDeliveryPhasePolicy.resolve(suite);
         int phaseNumber = phasePolicy.phaseNumber();
         progress.phaseStarted(suite.phase());
