@@ -35,13 +35,33 @@ final class McpTestFixtures {
         return httpServer(endpoint, allowedTools, Duration.ofSeconds(3), 1024 * 1024, 16 * 1024);
     }
 
+    static McpServerDefinition httpServer(URI endpoint, Set<String> allowedTools, McpProtocolProfile protocol) {
+        return httpServer(endpoint, allowedTools, protocol, Duration.ofSeconds(3), 1024 * 1024, 16 * 1024);
+    }
+
     static McpServerDefinition httpServer(
             URI endpoint, Set<String> allowedTools, Duration requestTimeout, int maxBodyBytes, int maxHeaderBytes) {
+        return httpServer(
+                endpoint,
+                allowedTools,
+                McpProtocolProfile.FIXED_2025_11_25,
+                requestTimeout,
+                maxBodyBytes,
+                maxHeaderBytes);
+    }
+
+    private static McpServerDefinition httpServer(
+            URI endpoint,
+            Set<String> allowedTools,
+            McpProtocolProfile protocol,
+            Duration requestTimeout,
+            int maxBodyBytes,
+            int maxHeaderBytes) {
         return McpServerDefinition.create(
                 new McpServerId("utility"),
                 "Utility",
                 true,
-                McpProtocolProfile.FIXED_2025_11_25,
+                protocol,
                 new StreamableHttpDefinition(
                         endpoint,
                         true,

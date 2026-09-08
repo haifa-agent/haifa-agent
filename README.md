@@ -257,7 +257,9 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 
 - 类型化 `JavaTool<I, O>`、Java record Schema/Codec、受限 JSON Schema Draft 2020-12 子集、
   精确 Tool Binding 和统一 Tool Catalog；
-- 固定协议 `2025-11-25` 的 MCP Client，支持 Streamable HTTP 与由 `ExecutionBroker` 托管的 stdio；
+- 可精确固定到 `2025-03-26`、`2025-06-18`、`2025-11-25` 或 `2026-07-28` 的 MCP Client，
+  支持 Streamable HTTP 与由 `ExecutionBroker` 托管的 stdio；明确不支持 `2024-11-05`，晚于当前适配
+  上限的有效日期版本会返回待适配提示且不猜测其协议行为；
 - 兼容 `SKILL.md` 的 Skill API/Core/Base，支持分层发现、内容寻址冻结、摘要披露、Run 级激活和
   资源按需读取；
 - 共享 `git` / `github` CLI Skill，以及 Coding `git-delivery` 和 Personal Assistant
