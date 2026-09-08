@@ -66,18 +66,14 @@ final class TerminalScreenCells {
             int from = row == range.start().row()
                     ? indexAtCell(plain, range.start().column(), false)
                     : 0;
-            int to = row == range.end().row()
-                    ? indexAtCell(plain, range.end().column(), true)
-                    : plain.length();
+            int to = row == range.end().row() ? indexAtCell(plain, range.end().column(), true) : plain.length();
             highlighted.add(highlightPlainRange(styledLines[row], from, to));
         }
         return String.join("\n", highlighted);
     }
 
     private static boolean valid(TerminalTextSelection.Range range, int lineCount) {
-        return lineCount > 0
-                && range.start().row() < lineCount
-                && range.end().row() < lineCount;
+        return lineCount > 0 && range.start().row() < lineCount && range.end().row() < lineCount;
     }
 
     private static List<String> plainLines(String styledContent) {

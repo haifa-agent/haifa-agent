@@ -14,7 +14,8 @@ class TerminalScreenCellsTest {
         var range = new TerminalTextSelection.Range(
                 new TerminalTextSelection.Point(0, 1), new TerminalTextSelection.Point(1, 2));
 
-        String selected = TerminalScreenCells.selectedText(content, range, 65_536).orElseThrow();
+        String selected =
+                TerminalScreenCells.selectedText(content, range, 65_536).orElseThrow();
 
         assertThat(selected).isEqualTo("中" + family + "e\u0301Z\nnex");
         assertThat(selected).doesNotContain(ESC);
@@ -36,10 +37,7 @@ class TerminalScreenCellsTest {
 
         String highlighted = TerminalScreenCells.highlight(content, range);
 
-        assertThat(highlighted)
-                .contains(ESC + "[31m")
-                .contains(ESC + "[7m")
-                .contains(ESC + "[27m");
+        assertThat(highlighted).contains(ESC + "[31m").contains(ESC + "[7m").contains(ESC + "[27m");
         assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(highlighted))
                 .isEqualTo("red plain");
     }

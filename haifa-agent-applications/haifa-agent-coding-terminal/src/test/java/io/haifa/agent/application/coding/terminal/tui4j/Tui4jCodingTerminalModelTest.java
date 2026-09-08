@@ -14,8 +14,8 @@ import com.williamcallahan.tui4j.compat.bubbletea.input.MouseButton;
 import com.williamcallahan.tui4j.compat.bubbletea.input.MouseMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.Key;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.KeyType;
-import com.williamcallahan.tui4j.message.CopyToClipboardMessage;
 import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
+import com.williamcallahan.tui4j.message.CopyToClipboardMessage;
 import com.williamcallahan.tui4j.message.EnterKeyModifier;
 import com.williamcallahan.tui4j.message.EnterKeyModifierMessage;
 import com.williamcallahan.tui4j.term.TerminalInfo;
@@ -256,7 +256,8 @@ class Tui4jCodingTerminalModelTest {
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
                 2,
                 new RunEventPayloads.AssistantTextDelta(
-                        "generation-1", " text that grows beyond the narrow terminal width while streaming continues"))));
+                        "generation-1",
+                        " text that grows beyond the narrow terminal width while streaming continues"))));
         var streamed = fixture.model.update(new WindowSizeMessage(60, 24));
 
         assertThat(emitsClearScreen(streamed.command())).isFalse();
@@ -406,12 +407,11 @@ class Tui4jCodingTerminalModelTest {
 
         assertThat(fixture.model.view()).contains("\u001B[7m", "\u001B[27m");
 
-        var released = fixture.model.update(
-                mouse(7, 4, MouseAction.MouseActionRelease, MouseButton.MouseButtonNone));
+        var released = fixture.model.update(mouse(7, 4, MouseAction.MouseActionRelease, MouseButton.MouseButtonNone));
 
         assertThat(released.command().execute())
-                .isInstanceOfSatisfying(CopyToClipboardMessage.class, copied ->
-                        assertThat(copied.text()).isEqualTo("alpha"));
+                .isInstanceOfSatisfying(CopyToClipboardMessage.class, copied -> assertThat(copied.text())
+                        .isEqualTo("alpha"));
         assertThat(fixture.controller.state().editorBuffer()).isEmpty();
     }
 
