@@ -439,7 +439,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                             target.definitionHash(),
                             "invoke",
                             target.argumentsDigest(),
-                            request.prompt()),
+                            "Tool approval"),
                     new ApprovalResponder(caller.tenant(), caller.principal()));
             if (!verification.accepted()) {
                 throw new SecurityException("approval verification failed: " + verification.reasonCode());

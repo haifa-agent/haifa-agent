@@ -1961,13 +1961,17 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void oversizedLegacyApprovalPromptStillProjectsAsABoundedPublicInteraction() {
+    void oversizedApprovalPromptProjectsAsBoundedAndCanBeApproved() {
         String oversizedPrompt = "Approve execution\nFull content:\n" + "Write-Output 'test'\n".repeat(300);
-        AgentChatModel model = model(new ToolCallDecision(List.of(toolRequest(
-                "legacy-approval",
-                "write",
-                "1.0.0",
-                new ToolArguments("write.input", "1.0", Map.of("value", "test"))))));
+        AtomicInteger modelCalls = new AtomicInteger();
+        AgentChatModel model = ignored -> response(
+                modelCalls.incrementAndGet() == 1
+                        ? new ToolCallDecision(List.of(toolRequest(
+                                "oversized-approval",
+                                "write",
+                                "1.0.0",
+                                new ToolArguments("write.input", "1.0", Map.of("value", "test")))))
+                        : finalDecision("completed after approval"));
         Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
                         builder,
                         "write",
@@ -1989,6 +1993,21 @@ class RuntimeCoreTest {
                         .safePrompt())
                 .hasSizeLessThanOrEqualTo(2_048)
                 .contains("Approve execution", "Prompt truncated for safe display", "original length=");
+        var interaction = fixture.interactions.pending(accepted.runId()).orElseThrow();
+
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("oversized-approval-response"),
+                interaction.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "oversized-approval-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(modelCalls).hasValue(2);
     }
 
     private static Fixture fixture(AgentChatModel model) {
