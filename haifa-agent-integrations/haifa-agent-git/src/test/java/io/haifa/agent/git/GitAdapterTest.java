@@ -16,7 +16,6 @@ import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.project.hostworkspace.HostGitInspectionStatus;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.nio.file.Path;
@@ -86,7 +85,7 @@ class GitAdapterTest {
     void bindsHostInspectionToAnExactlyAuthorizedBrokerRequest() throws Exception {
         Path root = tempDir.toRealPath();
         WorkspaceId workspaceId = new WorkspaceId("workspace-host");
-        var boundary = AuthorizedHostDirectory.of(workspaceId, root, HostDirectoryPermission.READ_WRITE);
+        var boundary = AuthorizedHostDirectory.of(workspaceId, root);
         List<ExecutionRequest> requests = new ArrayList<>();
         ExecutionBroker broker = broker(requests, request -> result(request.id(), root + System.lineSeparator(), 0));
         AtomicInteger ids = new AtomicInteger();
@@ -107,7 +106,7 @@ class GitAdapterTest {
     void distinguishesPlainDirectoryFromUnavailableGitExecution() throws Exception {
         Path root = tempDir.toRealPath();
         WorkspaceId workspaceId = new WorkspaceId("workspace-inspection-failure");
-        var boundary = AuthorizedHostDirectory.of(workspaceId, root, HostDirectoryPermission.READ_WRITE);
+        var boundary = AuthorizedHostDirectory.of(workspaceId, root);
         AtomicInteger calls = new AtomicInteger();
         ExecutionBroker broker =
                 broker(new ArrayList<>(), request -> result(request.id(), "", calls.incrementAndGet() == 1 ? 128 : 1));

@@ -283,8 +283,8 @@ public final class ProjectToolCatalog {
                             "file.diff",
                             "file.patch",
                             "file.stat" -> "2.0.0";
-                    case "workspace.attach" -> "2.1.0";
-                    case ProjectWorktreeToolOperations.TOOL_NAME -> "1.0.0";
+                    case "workspace.attach" -> "3.0.0";
+                    case ProjectWorktreeToolOperations.TOOL_NAME -> "2.0.0";
                     default -> "1.0.0";
                 };
         return new ToolDefinition(
@@ -381,13 +381,13 @@ public final class ProjectToolCatalog {
         }
         if (name.equals("workspace.attach")) {
             return "Request one additional existing local directory for this Coding Agent registry. Supply an "
-                    + "absolute host path and explicit read-only or read-write permission. The user "
-                    + "must approve the exact directory and permission before it becomes available in the scope; "
+                    + "absolute host path and explicit read or develop mode. The user "
+                    + "must approve the exact directory and mode before it becomes available in the scope; "
                     + "successful attachments are revalidated before restoration and returned as a path-redacted workspaceRef.";
         }
         if (name.equals(ProjectWorktreeToolOperations.TOOL_NAME)) {
             return "Create one managed Git worktree from an active executable workspace after exact user approval. "
-                    + "The immutable base commit, new branch, managed target name, read-write permission, and delivery intent "
+                    + "The immutable base commit, new branch, managed target name, and delivery intent "
                     + "are approved together; no arbitrary host target path is accepted.";
         }
         if (WRITES.contains(name)) {
@@ -468,25 +468,19 @@ public final class ProjectToolCatalog {
                                 4096,
                                 "description",
                                 "Absolute path of the user-requested existing local directory."));
-                properties.put("permission", Map.of("type", "string", "enum", List.of("read-only", "read-write")));
+                properties.put("mode", Map.of("type", "string", "enum", List.of("read", "develop")));
                 required.add("path");
-                required.add("permission");
+                required.add("mode");
             }
             case ProjectWorktreeToolOperations.TOOL_NAME -> {
                 properties.put("sourceWorkspaceRef", Map.of("type", "string", "minLength", 1, "maxLength", 256));
                 properties.put("baseCommit", Map.of("type", "string", "minLength", 7, "maxLength", 64));
                 properties.put("branchName", Map.of("type", "string", "minLength", 1, "maxLength", 240));
                 properties.put("targetName", Map.of("type", "string", "minLength", 1, "maxLength", 80));
-                properties.put("permission", Map.of("type", "string", "enum", List.of("read-write")));
                 properties.put(
                         "deliveryIntent", Map.of("type", "string", "enum", List.of("local-change", "pull-request")));
-                required.addAll(List.of(
-                        "sourceWorkspaceRef",
-                        "baseCommit",
-                        "branchName",
-                        "targetName",
-                        "permission",
-                        "deliveryIntent"));
+                required.addAll(
+                        List.of("sourceWorkspaceRef", "baseCommit", "branchName", "targetName", "deliveryIntent"));
             }
             case "execution.run" -> {
                 properties.put(

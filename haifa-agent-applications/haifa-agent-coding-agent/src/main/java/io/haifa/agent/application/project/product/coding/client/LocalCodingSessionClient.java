@@ -18,7 +18,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
-import io.haifa.agent.application.project.product.coding.CodingWorkspaceGrant;
+import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
 import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjection;
 import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionService;
@@ -56,7 +56,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     private final java.util.Optional<CodingShellService> shell;
     private final java.util.Optional<CodingSessionExportService> exporter;
     private final java.util.Optional<CodingRunOutcomeProjectionService> outcomes;
-    private final Supplier<List<CodingWorkspaceGrant>> workspaces;
+    private final Supplier<List<CodingWorkspaceView>> workspaces;
     private final Consumer<String> workspaceRevoker;
 
     public LocalCodingSessionClient(
@@ -196,7 +196,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
             java.util.Optional<CodingShellService> shell,
             CodingSessionExportService exporter,
             CodingRunOutcomeProjectionService outcomes,
-            Supplier<List<CodingWorkspaceGrant>> workspaces,
+            Supplier<List<CodingWorkspaceView>> workspaces,
             Consumer<String> workspaceRevoker) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.sessions = Objects.requireNonNull(sessions, "sessions must not be null");
@@ -452,7 +452,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
-    public List<CodingWorkspaceGrant> workspaces() {
+    public List<CodingWorkspaceView> workspaces() {
         return List.copyOf(workspaces.get());
     }
 

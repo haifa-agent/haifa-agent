@@ -9,7 +9,6 @@ import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.project.workspace.WorkspacePermissionSet;
@@ -49,11 +48,7 @@ public final class ProjectWorktreeToolOperations {
         String baseCommit = text(values, "baseCommit");
         String branchName = text(values, "branchName");
         String targetName = safeTargetName(text(values, "targetName"));
-        String permission = text(values, "permission");
         String deliveryIntent = deliveryIntent(text(values, "deliveryIntent"));
-        if (!permission.equals("read-write")) {
-            throw new IllegalArgumentException("workspace worktrees currently require read-write permission");
-        }
         workspaceAccess.require(invocation.tenant(), invocation.principal(), parent, WorkspaceAccessMode.DEVELOP);
         provisioning.scope().resolveExecutionDirectory(parent, ".");
         String identity = PolicyDigest.sha256Fields(List.of(
@@ -85,7 +80,6 @@ public final class ProjectWorktreeToolOperations {
                     isolated.childWorkspaceId(),
                     isolated.bindingId(),
                     isolated.locationRef(),
-                    HostDirectoryPermission.READ_WRITE,
                     targetName);
             workspaceAccess.replace(new WorkspaceAccess(
                     invocation.tenant(),
@@ -103,7 +97,7 @@ public final class ProjectWorktreeToolOperations {
                             "sourceWorkspaceRef", parent.value(),
                             "baseCommit", baseCommit,
                             "branchName", branchName,
-                            "permission", permission,
+                            "mode", WorkspaceAccessMode.DEVELOP.name(),
                             "deliveryIntent", deliveryIntent,
                             "source", view.source().name(),
                             "status", view.status().name()),

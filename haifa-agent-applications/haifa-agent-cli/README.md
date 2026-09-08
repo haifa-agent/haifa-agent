@@ -581,11 +581,13 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 `USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。
 
 只有当 `tools.enabled` 显式包含 `workspace.attach` 时，用户要求读取或修改当前 Workspace 外的目录，模型才可
-请求 `workspace_attach`：必须给出主机绝对路径和最小权限（`read-only` 或 `read-write`）。默认 `ask` 模式会向
-用户展示这两项并等待明确批准；批准后目录登记到 CA 自有 Workspace Registry。SQLite 模式会保护物理路径并在
-进程重启时重新验证，只有仍满足存在性、物理目录身份 fingerprint、link/reparse point 与互斥根规则的 ACTIVE 记录才恢复；
-MEMORY 模式仍只在当前进程有效。Tool 成功结果和新 Run 的模型投影只包含 `workspaceRef`、安全显示名、权限、来源和
-状态，不回显真实路径。未启用该工具的 Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准
+请求 `workspace_attach`：必须给出主机绝对路径和最小 Access mode（`read` 或 `develop`）。默认 `ask` 模式会向
+用户展示这两项并等待明确批准；批准后目录挂载到 CA 自有 Workspace Registry，并由 CA 控制面写入当前用户的
+`WorkspaceAccess`。SQLite 模式会保护物理路径并在进程重启时重新验证；只有状态仍为 ACTIVE、workspace/location
+身份精确匹配、canonical path 未改变且通过 link/reparse point 与互斥根规则的记录才恢复。同一安全 canonical path
+删除后重建可保留 workspace identity 与既有 Access，并只刷新 physical fingerprint；换路径或不可验证时 fail closed。
+MEMORY 模式仍只在当前进程有效。Tool 成功结果和新 Run 的模型投影只包含 `workspaceRef`、安全显示名、当前
+`READ / DEVELOP` mode、来源和状态，不回显真实路径或 fingerprint。未启用该工具的 Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准
 一个不可调用的工具。Terminal 的 `/trust` 展示同一份脱敏授权清单，`/trust revoke <workspaceRef>` 可立即撤销
 非初始根；撤销不会删除用户文件或历史逻辑事实。主目录
 与附加目录的后续文件操作都直接使用主机绝对路径，并统一映射到各自的 `WorkspaceId + WorkspacePath` 后进入同一
@@ -682,7 +684,7 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以允许的网络/认证错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会创建确定性的 `execution-recovery` Interaction；批准后从原 FAILED ToolCall 创建至多一个同参数 successor，重新检查当前 DEVELOP WorkspaceAccess、Policy、路径、Sandbox 与 Credential，再由内部 correlation 选择冻结的 recovery profile。模型不接收恢复 Tool，successor 也不能再次触发恢复。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution.run` 与 `workspace.worktree.create`，模型不可见，底层授权仍 fail closed。
 
-`workspace.worktree.create` 只接受活动可执行 source `workspaceRef`、不可变 base commit、新分支名、受控 target name、固定 `read-write` 权限和交付意图；模型不能传入目标主机路径。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验和 Registry 登记全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
+`workspace.worktree.create` 只接受具有当前 `DEVELOP` Access 的 source `workspaceRef`、不可变 base commit、新分支名、受控 target name 和交付意图；模型不能传入目标主机路径或权限。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验、Registry 登记和新 workspace 的 `DEVELOP` Access 写入全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
 
 系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。Tool Result 保留原始退出码，并单独投影命令语义：
 当前本地 Terminal 的 Coding Session 仍默认冻结 `WORKTREE_ONLY`，但该值只作为完成目标和投影元数据，

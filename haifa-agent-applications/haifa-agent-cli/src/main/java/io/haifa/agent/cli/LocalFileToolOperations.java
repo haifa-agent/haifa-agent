@@ -24,7 +24,6 @@ import io.haifa.agent.project.filesystem.WorkspaceFileErrorCode;
 import io.haifa.agent.project.filesystem.WorkspaceFileException;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScopeException;
 import io.haifa.agent.project.hostworkspace.scope.ResolvedAuthorizedPath;
@@ -797,11 +796,11 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         if (!requested.isAbsolute()) {
             throw new IllegalArgumentException("workspace.attach path must be an absolute host directory");
         }
-        HostDirectoryPermission permission =
-                switch (string(values, "permission")) {
-                    case "read-only" -> HostDirectoryPermission.READ_ONLY;
-                    case "read-write" -> HostDirectoryPermission.READ_WRITE;
-                    default -> throw new IllegalArgumentException("permission must be read-only or read-write");
+        WorkspaceAccessMode mode =
+                switch (string(values, "mode")) {
+                    case "read" -> WorkspaceAccessMode.READ;
+                    case "develop" -> WorkspaceAccessMode.DEVELOP;
+                    default -> throw new IllegalArgumentException("mode must be read or develop");
                 };
         try {
             Path normalizedPath = requested.toAbsolutePath().normalize();
@@ -815,21 +814,16 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             if (Files.isSymbolicLink(realPath)) {
                 throw new IllegalArgumentException("workspace.attach path must not be a symbolic link");
             }
-            var result = provisioning.authorizeApprovedAttach(realPath, HostDirectoryPermission.READ_WRITE);
-            workspaceAccess.replace(new WorkspaceAccess(
-                    tenant,
-                    principal,
-                    result.directory().workspaceId(),
-                    permission == HostDirectoryPermission.READ_ONLY
-                            ? WorkspaceAccessMode.READ
-                            : WorkspaceAccessMode.DEVELOP));
+            var result = provisioning.authorizeApprovedAttach(realPath);
+            workspaceAccess.replace(
+                    new WorkspaceAccess(tenant, principal, result.directory().workspaceId(), mode));
             var view = result.registryView();
             return success(
-                    "Authorized workspace " + view.safeDisplayName() + " as " + permission.name(),
+                    "Authorized workspace " + view.safeDisplayName() + " as " + mode.name(),
                     Map.of(
                             "workspaceRef", view.workspaceRef(),
                             "safeDisplayName", view.safeDisplayName(),
-                            "permission", permission.name(),
+                            "mode", mode.name(),
                             "source", view.source().name(),
                             "status", view.status().name()));
         } catch (IOException e) {

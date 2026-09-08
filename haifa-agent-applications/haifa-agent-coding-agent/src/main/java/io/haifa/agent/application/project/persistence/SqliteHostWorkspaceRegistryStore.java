@@ -6,7 +6,6 @@ import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryEntry;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistrySource;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStatus;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStore;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.store.sqlite.SqliteRuntimeUnitOfWork;
@@ -91,7 +90,6 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
                     new WorkspaceId(row.workspaceRef()),
                     new WorkspaceLocationRef(row.locationRef()),
                     row.safeDisplayName(),
-                    HostDirectoryPermission.valueOf(row.permission()),
                     HostWorkspaceRegistrySource.valueOf(row.source()),
                     HostWorkspaceRegistryStatus.valueOf(row.status()),
                     locations.decode(row.locationNonce(), row.locationCiphertext(), row.locationDigest(), binding),
@@ -128,7 +126,6 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
                 entry.workspaceRef().value(),
                 entry.locationRef().value(),
                 entry.safeDisplayName(),
-                entry.permission().name(),
                 entry.source().name(),
                 entry.status().name(),
                 protectedLocation.nonce(),

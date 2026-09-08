@@ -9,7 +9,6 @@
             <arg column="workspace_ref" javaType="java.lang.String"/>
             <arg column="location_ref" javaType="java.lang.String"/>
             <arg column="safe_display_name" javaType="java.lang.String"/>
-            <arg column="permission" javaType="java.lang.String"/>
             <arg column="source" javaType="java.lang.String"/>
             <arg column="status" javaType="java.lang.String"/>
             <arg column="location_nonce" javaType="[B"/>
@@ -40,12 +39,12 @@
 
     <insert id="insert">
         INSERT INTO coding_workspace_registry(
-            project_id, workspace_ref, location_ref, safe_display_name, permission, source, status,
+            project_id, workspace_ref, location_ref, safe_display_name, source, status,
             location_nonce, location_ciphertext, location_digest, fingerprint,
             created_at_ms, validated_at_ms, revoked_at_ms, revocation_reason_code, version
         ) VALUES (
             #{row.projectId}, #{row.workspaceRef}, #{row.locationRef}, #{row.safeDisplayName},
-            #{row.permission}, #{row.source}, #{row.status}, #{row.locationNonce},
+            #{row.source}, #{row.status}, #{row.locationNonce},
             #{row.locationCiphertext}, #{row.locationDigest}, #{row.fingerprint},
             #{row.createdAt}, #{row.validatedAt}, #{row.revokedAt},
             #{row.revocationReasonCode}, #{row.version}
@@ -55,7 +54,7 @@
     <update id="update">
         UPDATE coding_workspace_registry
         SET location_ref = #{row.locationRef}, safe_display_name = #{row.safeDisplayName},
-            permission = #{row.permission}, source = #{row.source}, status = #{row.status},
+            source = #{row.source}, status = #{row.status},
             location_nonce = #{row.locationNonce}, location_ciphertext = #{row.locationCiphertext},
             location_digest = #{row.locationDigest}, fingerprint = #{row.fingerprint},
             validated_at_ms = #{row.validatedAt},

@@ -12,8 +12,8 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Immutable snapshot of the peer authorized directories of one host session. Roots must be strictly
- * disjoint so a target can never match two permissions; overlap between a parent and a child
+ * Immutable snapshot of the peer mounted directories of one host session. Roots must be strictly
+ * disjoint so a target can never match two roots; overlap between a parent and a child
  * directory is rejected at construction time instead of being resolved by prefix order. Resolution
  * accepts host absolute paths only, verifies physical containment via real paths (symlink and
  * reparse-point defense, including the nearest existing ancestor for targets that do not exist yet)
@@ -93,7 +93,7 @@ public record HostWorkspaceScope(List<AuthorizedHostDirectory> allowedDirectorie
         AuthorizedHostDirectory directory = findEnclosingDirectory(normalized);
         if (directory == null) {
             throw HostWorkspaceScopeException.accessDenied(
-                    trimmed, "Path is outside every authorized directory: " + normalized);
+                    trimmed, "Path is outside every active workspace directory: " + normalized);
         }
         Path verified = verifyPhysicalContainment(normalized, directory);
         return new ResolvedAuthorizedPath(trimmed, directory, toWorkspacePath(directory, verified), verified);
@@ -114,7 +114,7 @@ public record HostWorkspaceScope(List<AuthorizedHostDirectory> allowedDirectorie
                 .filter(candidate -> candidate.workspaceId().equals(workspaceRef))
                 .findFirst()
                 .orElseThrow(() -> HostWorkspaceScopeException.accessDenied(
-                        null, "workspaceRef is not active in the authorized registry"));
+                        null, "workspaceRef is not active in the workspace registry"));
         ProjectPath projectPath;
         try {
             projectPath = relativeWorkdir.equals(".") ? ProjectPath.root() : ProjectPath.of(relativeWorkdir);
@@ -133,15 +133,6 @@ public record HostWorkspaceScope(List<AuthorizedHostDirectory> allowedDirectorie
                     relativeWorkdir, "relativeWorkdir must identify an existing directory");
         }
         return toWorkspacePath(directory, verified);
-    }
-
-    /** Fails closed when the resolved directory does not allow writes. */
-    public void requireWritable(AuthorizedHostDirectory directory) {
-        Objects.requireNonNull(directory, "directory must not be null");
-        if (!directory.permission().canWrite()) {
-            throw HostWorkspaceScopeException.permissionDenied(
-                    directory.realPath().toString(), "Authorized directory is read-only: " + directory.realPath());
-        }
     }
 
     private Path verifyPhysicalContainment(Path normalized, AuthorizedHostDirectory directory) {

@@ -2,7 +2,6 @@ package io.haifa.agent.project.hostworkspace.registry;
 
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -18,7 +17,6 @@ public record HostWorkspaceRegistryEntry(
         WorkspaceId workspaceRef,
         WorkspaceLocationRef locationRef,
         String safeDisplayName,
-        HostDirectoryPermission permission,
         HostWorkspaceRegistrySource source,
         HostWorkspaceRegistryStatus status,
         Path realPath,
@@ -34,7 +32,6 @@ public record HostWorkspaceRegistryEntry(
         workspaceRef = Objects.requireNonNull(workspaceRef, "workspaceRef must not be null");
         locationRef = Objects.requireNonNull(locationRef, "locationRef must not be null");
         safeDisplayName = safeDisplayName(safeDisplayName);
-        permission = Objects.requireNonNull(permission, "permission must not be null");
         source = Objects.requireNonNull(source, "source must not be null");
         status = Objects.requireNonNull(status, "status must not be null");
         realPath = Objects.requireNonNull(realPath, "realPath must not be null")
@@ -64,7 +61,6 @@ public record HostWorkspaceRegistryEntry(
             WorkspaceId workspaceRef,
             WorkspaceLocationRef locationRef,
             String safeDisplayName,
-            HostDirectoryPermission permission,
             HostWorkspaceRegistrySource source,
             Path realPath,
             String fingerprint,
@@ -74,7 +70,6 @@ public record HostWorkspaceRegistryEntry(
                 workspaceRef,
                 locationRef,
                 safeDisplayName,
-                permission,
                 source,
                 HostWorkspaceRegistryStatus.ACTIVE,
                 realPath,
@@ -86,17 +81,16 @@ public record HostWorkspaceRegistryEntry(
                 0);
     }
 
-    public HostWorkspaceRegistryEntry revalidated(Path verifiedRealPath, Instant at) {
+    public HostWorkspaceRegistryEntry revalidated(Path verifiedRealPath, String currentFingerprint, Instant at) {
         return new HostWorkspaceRegistryEntry(
                 projectId,
                 workspaceRef,
                 locationRef,
                 safeDisplayName,
-                permission,
                 source,
                 HostWorkspaceRegistryStatus.ACTIVE,
                 verifiedRealPath,
-                fingerprint,
+                currentFingerprint,
                 createdAt,
                 at,
                 Optional.empty(),
@@ -110,7 +104,6 @@ public record HostWorkspaceRegistryEntry(
                 workspaceRef,
                 locationRef,
                 safeDisplayName,
-                permission,
                 source,
                 HostWorkspaceRegistryStatus.ACTIVE,
                 verifiedRealPath,
@@ -131,14 +124,14 @@ public record HostWorkspaceRegistryEntry(
     }
 
     public HostWorkspaceRegistryView view() {
-        return new HostWorkspaceRegistryView(workspaceRef.value(), safeDisplayName, permission, source, status);
+        return new HostWorkspaceRegistryView(workspaceRef.value(), safeDisplayName, source, status);
     }
 
     @Override
     public String toString() {
         return "HostWorkspaceRegistryEntry[projectId=" + projectId.value() + ", workspaceRef="
-                + workspaceRef.value() + ", safeDisplayName=" + safeDisplayName + ", permission=" + permission
-                + ", source=" + source + ", status=" + status + ", fingerprint=" + fingerprint
+                + workspaceRef.value() + ", safeDisplayName=" + safeDisplayName + ", source=" + source
+                + ", status=" + status + ", fingerprint=" + fingerprint
                 + ", version=" + version + "]";
     }
 
@@ -151,7 +144,6 @@ public record HostWorkspaceRegistryEntry(
                 workspaceRef,
                 locationRef,
                 safeDisplayName,
-                permission,
                 source,
                 target,
                 realPath,
