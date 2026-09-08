@@ -392,7 +392,7 @@ class AuthorizedWorkspaceProvisioningTest {
                 .get()
                 .satisfies(entry -> {
                     assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.ACTIVE);
-                    assertThat(entry.fingerprint())
+                    assertThat(entry.physicalFingerprint())
                             .isEqualTo(HostDirectoryIdentity.resolve(additionalRoot.toRealPath())
                                     .physicalFingerprint());
                 });
@@ -431,7 +431,7 @@ class AuthorizedWorkspaceProvisioningTest {
                 .get()
                 .satisfies(entry -> {
                     assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.ACTIVE);
-                    assertThat(entry.fingerprint()).isEqualTo(replacementIdentity.physicalFingerprint());
+                    assertThat(entry.physicalFingerprint()).isEqualTo(replacementIdentity.physicalFingerprint());
                 });
     }
 

@@ -14,7 +14,7 @@
             <arg column="location_nonce" javaType="[B"/>
             <arg column="location_ciphertext" javaType="[B"/>
             <arg column="location_digest" javaType="java.lang.String"/>
-            <arg column="fingerprint" javaType="java.lang.String"/>
+            <arg column="physical_fingerprint" javaType="java.lang.String"/>
             <arg column="created_at_ms" javaType="java.time.Instant"
                  typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
             <arg column="validated_at_ms" javaType="java.time.Instant"
@@ -40,12 +40,12 @@
     <insert id="insert">
         INSERT INTO coding_workspace_registry(
             project_id, workspace_ref, location_ref, safe_display_name, source, status,
-            location_nonce, location_ciphertext, location_digest, fingerprint,
+            location_nonce, location_ciphertext, location_digest, physical_fingerprint,
             created_at_ms, validated_at_ms, revoked_at_ms, revocation_reason_code, version
         ) VALUES (
             #{row.projectId}, #{row.workspaceRef}, #{row.locationRef}, #{row.safeDisplayName},
             #{row.source}, #{row.status}, #{row.locationNonce},
-            #{row.locationCiphertext}, #{row.locationDigest}, #{row.fingerprint},
+            #{row.locationCiphertext}, #{row.locationDigest}, #{row.physicalFingerprint},
             #{row.createdAt}, #{row.validatedAt}, #{row.revokedAt},
             #{row.revocationReasonCode}, #{row.version}
         )
@@ -56,7 +56,7 @@
         SET location_ref = #{row.locationRef}, safe_display_name = #{row.safeDisplayName},
             source = #{row.source}, status = #{row.status},
             location_nonce = #{row.locationNonce}, location_ciphertext = #{row.locationCiphertext},
-            location_digest = #{row.locationDigest}, fingerprint = #{row.fingerprint},
+            location_digest = #{row.locationDigest}, physical_fingerprint = #{row.physicalFingerprint},
             validated_at_ms = #{row.validatedAt},
             revoked_at_ms = #{row.revokedAt}, revocation_reason_code = #{row.revocationReasonCode},
             version = #{row.version}

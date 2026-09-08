@@ -68,7 +68,6 @@ public final class CodingExecutionPolicyRequestAdapter implements ToolPolicyRequ
                 original.runRef(),
                 original.attemptRef(),
                 original.approvalMode(),
-                original.projectTrustRef(),
                 Optional.of(resolverDigest));
         return new PolicyRequest(baseline.subject(), context, baseline.action(), baseline.resource(), risk);
     }

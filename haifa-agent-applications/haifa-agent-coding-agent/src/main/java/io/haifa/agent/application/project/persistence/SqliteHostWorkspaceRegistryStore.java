@@ -93,7 +93,7 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
                     HostWorkspaceRegistrySource.valueOf(row.source()),
                     HostWorkspaceRegistryStatus.valueOf(row.status()),
                     locations.decode(row.locationNonce(), row.locationCiphertext(), row.locationDigest(), binding),
-                    row.fingerprint(),
+                    row.physicalFingerprint(),
                     row.createdAt(),
                     row.validatedAt(),
                     Optional.ofNullable(row.revokedAt()),
@@ -119,7 +119,7 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
                 entry.projectId().value(),
                 entry.workspaceRef().value(),
                 entry.locationRef().value(),
-                entry.fingerprint());
+                entry.physicalFingerprint());
         CodingWorkspaceLocationCodec.ProtectedLocation protectedLocation = locations.encode(entry.realPath(), binding);
         return new CodingWorkspaceRegistryRow(
                 entry.projectId().value(),
@@ -131,7 +131,7 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
                 protectedLocation.nonce(),
                 protectedLocation.ciphertext(),
                 protectedLocation.digest(),
-                entry.fingerprint(),
+                entry.physicalFingerprint(),
                 entry.createdAt(),
                 entry.validatedAt(),
                 entry.revokedAt().orElse(null),
@@ -141,7 +141,7 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
 
     private static String binding(CodingWorkspaceRegistryRow row) {
         return CodingWorkspaceLocationCodec.binding(
-                row.projectId(), row.workspaceRef(), row.locationRef(), row.fingerprint());
+                row.projectId(), row.workspaceRef(), row.locationRef(), row.physicalFingerprint());
     }
 
     private CodingWorkspaceRegistryMapper mapper() {

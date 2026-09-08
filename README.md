@@ -271,8 +271,8 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
   不返回 Prompt、用户消息、Memory 或 Tool 正文；
 - Run、Session、User Scope 的 Memory API/Core，以及 SQLite 中全人工确认的 Candidate、正式 Memory
   和最小 Audit；
-- SQLite V1～V7 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、
-  Conversation、Policy/Approval/Trust 与 Artifact 单机存储；
+- CA、PA 与显式 SQLite SDK 共用唯一 `HaifaAgentStoreMigrations` clean baseline 和 V1.0 初始化 artifact，
+  提供版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、Conversation 与 Artifact 单机存储；
 - JSONL 是可删除、可重建的安全 Transcript Outbox 投影，不是恢复事实源。
 
 ### Project、Execution 与安全
@@ -284,8 +284,8 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 - 模型通过受控 `execution.run` 直接调用系统 `git` / `gh`；Java Git Integration 只保留不向模型披露的
   Worktree、Patch 合并、Revision Probe，以及供 Path-local Review 使用的有界仓库检查和只读证据采集，
   不再注册 `git.*` / `github.*` 子命令 Tool；
-- 请求绑定的 Policy Decision、`DENY > ASK > ALLOW`、Approval Grant、Project Trust、AES-GCM
-  本地 Credential Store 与短生命周期 Lease。
+- 五字段瞬态 Policy Decision、`DENY > ASK > ALLOW`、Interaction-owned ASK 恢复、CA WorkspaceAccess、
+  AES-GCM 本地 Credential Store 与短生命周期 Lease；不持久化 Decision/Snapshot/Grant/Project Trust。
 
 ### SDK、协议与产品
 

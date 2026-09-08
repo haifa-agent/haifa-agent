@@ -3,8 +3,7 @@ package io.haifa.agent.store.sqlite;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.store.sqlite.codec.VersionedPayloadCodecRegistry;
-import io.haifa.agent.store.sqlite.migration.RuntimeStoreMigrations;
-import io.haifa.agent.store.sqlite.migration.SqliteMigration;
+import io.haifa.agent.store.sqlite.migration.HaifaAgentStoreMigrations;
 import io.haifa.agent.store.sqlite.migration.SqliteMigrationRunner;
 import io.haifa.agent.store.sqlite.mybatis.MapperXml;
 import io.haifa.agent.store.sqlite.mybatis.SqliteMyBatisSessionFactory;
@@ -41,33 +40,18 @@ public final class SqliteStoreFoundation implements AutoCloseable {
     }
 
     public static SqliteStoreFoundation initialize(SqliteStoreConfiguration configuration, Clock clock) {
-        return initialize(configuration, clock, RuntimeStoreMigrations.all());
+        return initializeWithAdditionalMappers(configuration, clock, List.of());
     }
 
-    /**
-     * Initializes the Runtime adapter with an application-owned migration set.
-     *
-     * <p>The supplied list must include the Runtime migrations unchanged. This overload lets an
-     * application validate its complete schema history in one pass, including migrations that
-     * belong above Runtime.
-     */
-    public static SqliteStoreFoundation initialize(
-            SqliteStoreConfiguration configuration, Clock clock, List<SqliteMigration> migrations) {
-        return initialize(configuration, clock, migrations, List.of());
-    }
-
-    public static SqliteStoreFoundation initialize(
-            SqliteStoreConfiguration configuration,
-            Clock clock,
-            List<SqliteMigration> migrations,
-            List<MapperXml> additionalMappers) {
+    /** Initializes the shared schema with product-owned MyBatis mappings, without extending it. */
+    public static SqliteStoreFoundation initializeWithAdditionalMappers(
+            SqliteStoreConfiguration configuration, Clock clock, List<MapperXml> additionalMappers) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         Objects.requireNonNull(clock, "clock must not be null");
-        Objects.requireNonNull(migrations, "migrations must not be null");
         Objects.requireNonNull(additionalMappers, "additionalMappers must not be null");
         SqliteConnectionFactory connections = new SqliteConnectionFactory(configuration);
         connections.initialize();
-        new SqliteMigrationRunner(connections, clock).migrate(migrations);
+        new SqliteMigrationRunner(connections, clock).migrate(HaifaAgentStoreMigrations.all());
         SqliteMyBatisSessionFactory myBatis = SqliteMyBatisSessionFactory.withAdditionalMappers(
                 configuration.maximumPayloadBytes(), additionalMappers);
         SqliteRuntimeUnitOfWork unitOfWork = new SqliteRuntimeUnitOfWork(connections, myBatis);

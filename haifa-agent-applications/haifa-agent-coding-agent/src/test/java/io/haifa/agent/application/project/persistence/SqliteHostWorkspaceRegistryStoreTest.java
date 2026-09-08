@@ -132,7 +132,7 @@ class SqliteHostWorkspaceRegistryStoreTest {
             while (columns.next()) {
                 names.add(columns.getString("name"));
             }
-            assertThat(names).contains("fingerprint").doesNotContain("permission", "physical_fingerprint");
+            assertThat(names).contains("physical_fingerprint").doesNotContain("permission", "fingerprint");
         }
     }
 

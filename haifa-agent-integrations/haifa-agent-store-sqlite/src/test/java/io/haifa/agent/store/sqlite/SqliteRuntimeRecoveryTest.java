@@ -380,7 +380,7 @@ class SqliteRuntimeRecoveryTest {
                                     .equals("provider-tool-call"));
             assertThat(processB.ports().attempts().attemptsFor(runId).getLast().resumedFromCheckpointId())
                     .isPresent();
-            assertLegacyPolicyFamiliesEmpty(reopened.connections());
+            assertLegacyPolicyFamiliesAbsent(reopened.connections());
         }
 
         try (var paths = java.nio.file.Files.list(directory)) {
@@ -1394,15 +1394,24 @@ class SqliteRuntimeRecoveryTest {
         }
     }
 
-    private static void assertLegacyPolicyFamiliesEmpty(SqliteConnectionFactory connections) throws Exception {
+    private static void assertLegacyPolicyFamiliesAbsent(SqliteConnectionFactory connections) throws Exception {
         try (Connection connection = connections.openConnection()) {
             for (String table : List.of(
                     "policy_snapshot",
                     "policy_decision",
                     "policy_authorization_evidence",
                     "approval_grant",
-                    "project_trust")) {
-                assertThat(count(connection, table)).as(table).isZero();
+                    "project_trust",
+                    "approval_request_metadata",
+                    "approval_response_metadata")) {
+                try (var statement = connection.prepareStatement(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?")) {
+                    statement.setString(1, table);
+                    try (ResultSet result = statement.executeQuery()) {
+                        assertThat(result.next()).isTrue();
+                        assertThat(result.getLong(1)).as(table).isZero();
+                    }
+                }
             }
         }
     }

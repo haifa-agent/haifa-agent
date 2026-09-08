@@ -17,10 +17,8 @@ Provider-neutral, pure-Java contracts for transient Action Policy evaluation and
 Public effects are `ALLOW`, `ASK`, and `DENY`. An `ASK` must carry a challenge; only an `ASK` may carry one.
 Policy cannot expand Tool capabilities, Workspace access, Credential scope, Sandbox availability, or host-path safety.
 
-## Legacy removal boundary
-
-Snapshot, Decision-ID, Evidence, Grant, and Project Trust types remain source-level database compatibility material
-until the later removal milestones. They are not exposed by current SDK or production SQLite assembly and normal
-production flows do not write them. Do not use those types for new integrations.
+Snapshot, Decision-ID/Store, Evidence, Grant, Project Trust, and the obsolete full-request digest have been removed.
+`PolicyContext` contains only live request context needed by the pure evaluator; CA authorization comes from current
+WorkspaceAccess and path safety, while PA keeps its own product facts.
 
 This module does not depend on Runtime, Tool, Execution, databases, frameworks, or product-specific policy.

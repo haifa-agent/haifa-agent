@@ -3,16 +3,10 @@ package io.haifa.agent.policy.api;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.TenantRef;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class PolicyContractTest {
-    private static final java.time.Instant NOW = java.time.Instant.parse("2026-07-26T00:00:00Z");
-    private static final TenantRef TENANT = new TenantRef("tenant");
-    private static final PrincipalRef PRINCIPAL = new PrincipalRef("user", "local");
-
     @Test
     void askRequiresChallengeAndOtherEffectsRejectIt() {
         assertThatThrownBy(() -> decision(PolicyEffect.ASK, Optional.empty()))
@@ -25,52 +19,18 @@ class PolicyContractTest {
     }
 
     @Test
-    void projectTrustFailsClosedOnConfigurationOrSubjectDrift() {
-        ProjectTrust trust = new ProjectTrust(
-                new ProjectTrustRef("trust"),
-                TENANT,
-                PRINCIPAL,
-                "project",
-                "project-identity",
-                "root-identity",
-                "sha256:config",
-                "coding",
-                ProjectTrustState.TRUSTED,
-                NOW,
-                Optional.of(NOW.plusSeconds(60)),
-                Optional.empty(),
-                0);
-
-        assertThat(trust.matches(
-                        TENANT,
-                        PRINCIPAL,
-                        "project",
-                        "project-identity",
-                        "root-identity",
-                        "sha256:config",
-                        "coding",
-                        NOW))
-                .isTrue();
-        assertThat(trust.matches(
-                        TENANT,
-                        PRINCIPAL,
-                        "project",
-                        "project-identity",
-                        "root-identity",
-                        "sha256:changed",
-                        "coding",
-                        NOW))
-                .isFalse();
-        assertThat(trust.matches(
-                        new TenantRef("other"),
-                        PRINCIPAL,
-                        "project",
-                        "project-identity",
-                        "root-identity",
-                        "sha256:config",
-                        "coding",
-                        NOW))
-                .isFalse();
+    void legacyDecisionSnapshotAndProjectTrustTypesAreAbsent() {
+        assertThat(java.util.Arrays.stream(PolicyContext.class.getRecordComponents())
+                        .map(java.lang.reflect.RecordComponent::getName))
+                .doesNotContain("projectTrustRef");
+        assertThatThrownBy(() -> Class.forName("io.haifa.agent.policy.api.PolicyDecisionId"))
+                .isInstanceOf(ClassNotFoundException.class);
+        assertThatThrownBy(() -> Class.forName("io.haifa.agent.policy.api.PolicySnapshot"))
+                .isInstanceOf(ClassNotFoundException.class);
+        assertThatThrownBy(() -> Class.forName("io.haifa.agent.policy.api.ProjectTrust"))
+                .isInstanceOf(ClassNotFoundException.class);
+        assertThatThrownBy(() -> Class.forName("io.haifa.agent.policy.api.PolicyRequestDigest"))
+                .isInstanceOf(ClassNotFoundException.class);
     }
 
     @Test

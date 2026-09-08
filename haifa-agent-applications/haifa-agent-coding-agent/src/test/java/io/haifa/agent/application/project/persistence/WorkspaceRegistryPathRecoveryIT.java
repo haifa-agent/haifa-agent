@@ -72,7 +72,7 @@ class WorkspaceRegistryPathRecoveryIT {
             originalPhysicalFingerprint = first.workspaceRegistry()
                     .find(PROJECT, workspaceId)
                     .orElseThrow()
-                    .fingerprint();
+                    .physicalFingerprint();
         }
 
         Files.move(attached, directory.resolve("same-path-original"));
@@ -89,7 +89,7 @@ class WorkspaceRegistryPathRecoveryIT {
                     .get()
                     .satisfies(entry -> {
                         assertThat(entry.status()).isEqualTo(HostWorkspaceRegistryStatus.ACTIVE);
-                        assertThat(entry.fingerprint()).isEqualTo(replacementFingerprint);
+                        assertThat(entry.physicalFingerprint()).isEqualTo(replacementFingerprint);
                     });
             assertThat(reopened.workspaceAccess().find(TENANT, OWNER, workspaceId))
                     .contains(new WorkspaceAccess(TENANT, OWNER, workspaceId, WorkspaceAccessMode.DEVELOP));
@@ -269,7 +269,7 @@ class WorkspaceRegistryPathRecoveryIT {
                                     persisted.source(),
                                     persisted.status(),
                                     persisted.realPath(),
-                                    persisted.fingerprint(),
+                                    persisted.physicalFingerprint(),
                                     persisted.createdAt(),
                                     persisted.validatedAt(),
                                     Optional.empty(),

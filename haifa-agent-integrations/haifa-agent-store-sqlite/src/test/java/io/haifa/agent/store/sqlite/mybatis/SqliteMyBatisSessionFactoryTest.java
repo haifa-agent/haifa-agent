@@ -6,7 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.store.sqlite.SqliteConnectionFactory;
 import io.haifa.agent.store.sqlite.SqliteStoreException;
 import io.haifa.agent.store.sqlite.SqliteTestSupport;
-import io.haifa.agent.store.sqlite.migration.RuntimeStoreMigrations;
+import io.haifa.agent.store.sqlite.migration.HaifaAgentStoreMigrations;
 import io.haifa.agent.store.sqlite.migration.SqliteMigrationRunner;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -75,7 +75,7 @@ class SqliteMyBatisSessionFactoryTest {
         SqliteMyBatisSessionFactory myBatis = new SqliteMyBatisSessionFactory(1_024, List.of(badColumn));
         SqliteConnectionFactory connections = new SqliteConnectionFactory(SqliteTestSupport.configuration(directory));
         connections.initialize();
-        new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK).migrate(RuntimeStoreMigrations.all());
+        new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK).migrate(HaifaAgentStoreMigrations.all());
 
         try (Connection connection = connections.openConnection();
                 SqlSession session = myBatis.openSession(connection)) {
