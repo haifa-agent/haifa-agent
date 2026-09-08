@@ -1,8 +1,7 @@
 package io.haifa.agent.cli;
 
-import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThat;
 
-import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.execution.api.ExecutionCommand;
@@ -43,7 +42,7 @@ class CliRepositoryBaselineSupportTest {
                 new ExecutionLimits(Duration.ofSeconds(15), 4096, 4096, 1),
                 new SandboxProfileRef("git-read", "1"));
 
-        assertThatCode(() -> new CodingAgentExecutionPolicy().authorize(request))
-                .doesNotThrowAnyException();
+        assertThat(request.context().origin()).isEqualTo(ExecutionOrigin.PRODUCT_INTERNAL);
+        assertThat(request.context().sourceToolCallId()).isEmpty();
     }
 }

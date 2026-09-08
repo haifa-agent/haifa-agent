@@ -445,8 +445,7 @@ public final class DecisionExecutor {
                         "Tool request rejected; repair the arguments or choose another capability.");
                 continue;
             } catch (RuntimeException failure) {
-                AgentExecutionFailureException classified =
-                        failToolAndCancelPendingSiblings(run, call, step, failure);
+                AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
                 if (createExecutionRecovery(run, call, classified, loopContext)) {
                     return AgentLoopDirective.WAIT;
                 }
@@ -557,14 +556,8 @@ public final class DecisionExecutor {
                     interactionType,
                     approvalPrompts.format(binding, call, approval.reauthentication()),
                     true,
-                    new ToolApprovalTarget(
-                            call.id(),
-                            binding.coordinate().externalForm(),
-                            binding.coordinate().definitionHash().value(),
-                            approval.argumentsDigest(),
-                            run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
-                                    + run.principal().principalId(),
-                            approval.decision().requirementDigest()),
+                    io.haifa.agent.runtime.core.interaction.ToolApprovalTargets.ordinary(
+                            run, call.id(), binding, requestFrom(call), approval.decision()),
                     createdAt,
                     Optional.empty()));
             checkpoints.capture(
@@ -635,8 +628,7 @@ public final class DecisionExecutor {
             try {
                 outcome = tools.execute(run, call, request, loopContext.iteration(), loopContext.traceContext());
             } catch (RuntimeException failure) {
-                AgentExecutionFailureException classified =
-                        failToolAndCancelPendingSiblings(run, call, step, failure);
+                AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
                 if (createExecutionRecovery(run, call, classified, loopContext)) {
                     return Optional.of(AgentLoopDirective.WAIT);
                 }
@@ -734,10 +726,7 @@ public final class DecisionExecutor {
     }
 
     private boolean createExecutionRecovery(
-            AgentRun run,
-            ToolCall source,
-            AgentExecutionFailureException failure,
-            AgentLoopContext loopContext) {
+            AgentRun run, ToolCall source, AgentExecutionFailureException failure, AgentLoopContext loopContext) {
         String failureCode = recoveryFailureCode(source, failure);
         if (failureCode == null || !tools.isExecutionRecoverySource(run, source) || isRecoverySuccessor(run, source)) {
             return false;
@@ -785,10 +774,14 @@ public final class DecisionExecutor {
                     run,
                     "execution.recovery.requested",
                     Map.of(
-                            "requestId", requestId.value(),
-                            "sourceToolCallId", source.id().value(),
-                            "failureCode", failureCode,
-                            "dispatchState", "NOT_DISPATCHED"),
+                            "requestId",
+                            requestId.value(),
+                            "sourceToolCallId",
+                            source.id().value(),
+                            "failureCode",
+                            failureCode,
+                            "dispatchState",
+                            "NOT_DISPATCHED"),
                     createdAt);
             return true;
         });
@@ -808,7 +801,8 @@ public final class DecisionExecutor {
     }
 
     private String recoveryFailureCode(ToolCall source, AgentExecutionFailureException failure) {
-        Map<String, Object> details = source.error().map(value -> value.error().details()).orElse(Map.of());
+        Map<String, Object> details =
+                source.error().map(value -> value.error().details()).orElse(Map.of());
         Object codeValue = details.get("failureCode");
         if (!(codeValue instanceof String code)
                 || !EXECUTION_RECOVERY_FAILURE_CODES.contains(code)
@@ -838,10 +832,7 @@ public final class DecisionExecutor {
                 && call.id().value().startsWith("execution-recovery-tool:v1:");
     }
 
-    public void resolveToolApproval(
-            AgentRun run,
-            ToolApprovalTarget target,
-            InteractionResponseType responseType) {
+    public void resolveToolApproval(AgentRun run, ToolApprovalTarget target, InteractionResponseType responseType) {
         ToolCall call = state.toolCalls(run.id()).stream()
                 .filter(candidate -> candidate.id().equals(target.toolCallId()))
                 .findFirst()
@@ -879,13 +870,14 @@ public final class DecisionExecutor {
                 ToolApprovalTarget target =
                         (ToolApprovalTarget) resolution.request().target();
                 if (EXECUTION_RECOVERY_TYPE.equals(resolution.request().type())) {
-                    applyExecutionRecovery(run, resolution.request(), target, resolution.response().type());
+                    applyExecutionRecovery(
+                            run,
+                            resolution.request(),
+                            target,
+                            resolution.response().type());
                     return;
                 }
-                resolveToolApproval(
-                        run,
-                        target,
-                        resolution.response().type());
+                resolveToolApproval(run, target, resolution.response().type());
                 interactions.markResolutionApplied(resolution.request().id());
             });
             return null;
@@ -893,10 +885,7 @@ public final class DecisionExecutor {
     }
 
     private void applyExecutionRecovery(
-            AgentRun run,
-            InteractionRequest request,
-            ToolApprovalTarget target,
-            InteractionResponseType responseType) {
+            AgentRun run, InteractionRequest request, ToolApprovalTarget target, InteractionResponseType responseType) {
         if (responseType != InteractionResponseType.APPROVE) {
             interactions.markResolutionApplied(request.id());
             if (!run.status().isTerminal()) {
@@ -965,7 +954,8 @@ public final class DecisionExecutor {
     }
 
     private static String persistedRecoveryFailureCode(ToolCall source) {
-        Map<String, Object> details = source.error().map(value -> value.error().details()).orElse(Map.of());
+        Map<String, Object> details =
+                source.error().map(value -> value.error().details()).orElse(Map.of());
         Object code = details.get("failureCode");
         return code instanceof String value
                         && EXECUTION_RECOVERY_FAILURE_CODES.contains(value)

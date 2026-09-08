@@ -806,8 +806,8 @@ public final class ToolPipeline {
         if (!capabilityAuthorizer.isAllowed(run, binding)) {
             throw new SecurityException("execution recovery capability is no longer allowed");
         }
-        ToolSchemaValidationResult inputValidation =
-                schemaValidator.validate(binding.definition().inputSchema(), request.arguments().values());
+        ToolSchemaValidationResult inputValidation = schemaValidator.validate(
+                binding.definition().inputSchema(), request.arguments().values());
         if (!inputValidation.valid()) {
             throw new SecurityException("execution recovery input no longer matches the frozen schema");
         }

@@ -59,6 +59,7 @@ class ExecutionArchitectureTest {
                         "io.haifa.agent.policy.core..",
                         "io.haifa.agent.runtime.core..",
                         "io.haifa.agent.tool.core..",
+                        "io.haifa.agent.application..",
                         "io.haifa.agent.personalassistant..")
                 .check(classes);
         noClasses()

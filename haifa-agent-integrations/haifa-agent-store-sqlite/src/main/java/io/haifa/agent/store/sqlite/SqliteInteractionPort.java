@@ -3,6 +3,7 @@ package io.haifa.agent.store.sqlite;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
@@ -134,6 +135,18 @@ public final class SqliteInteractionPort implements InteractionPort {
             if (response == null) throw new IllegalStateException("resolved interaction response is missing");
             return Optional.of(new ResolvedInteraction(fromRequestRow(request), fromResponseRow(response)));
         });
+    }
+
+    @Override
+    public List<InteractionRecord> toolApprovalRecords(AgentRunId runId, ToolCallId toolCallId) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        Objects.requireNonNull(toolCallId, "toolCallId must not be null");
+        return execute(
+                () -> unitOfWork.mapper(RuntimeStoreMapper.class).toolApprovalInteractions(runId.value()).stream()
+                        .map(this::fromRecordRow)
+                        .filter(record -> record.request().target() instanceof ToolApprovalTarget target
+                                && target.toolCallId().equals(toolCallId))
+                        .toList());
     }
 
     @Override

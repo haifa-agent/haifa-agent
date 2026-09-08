@@ -1,8 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.runtime.core.interaction.InteractionPort;
-import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
@@ -57,8 +55,7 @@ public final class ProjectToolExecutor implements ToolProvider {
             ProjectToolOperations operations,
             ProjectExecutionToolOperations normalExecution,
             ProjectExecutionToolOperations recoveryExecution,
-            RuntimeStateRepository state,
-            InteractionPort interactions,
+            ProjectExecutionRecoveryAuthorization recoveryAuthorization,
             SandboxProfile normalProfile,
             SandboxProfile recoveryProfile,
             ProjectWorktreeToolOperations worktreeOperations) {
@@ -67,12 +64,7 @@ public final class ProjectToolExecutor implements ToolProvider {
                 operations,
                 normalExecution,
                 new ProjectExecutionRecoverySelector(
-                        state,
-                        interactions,
-                        normalExecution,
-                        recoveryExecution,
-                        normalProfile,
-                        recoveryProfile),
+                        recoveryAuthorization, normalExecution, recoveryExecution, normalProfile, recoveryProfile),
                 worktreeOperations);
     }
 
@@ -94,9 +86,8 @@ public final class ProjectToolExecutor implements ToolProvider {
             if (executionOperations == null) {
                 throw new IllegalStateException("execution.run is not configured for this application");
             }
-            ProjectExecutionToolOperations selected = executionRecovery == null
-                    ? executionOperations
-                    : executionRecovery.select(request);
+            ProjectExecutionToolOperations selected =
+                    executionRecovery == null ? executionOperations : executionRecovery.select(request);
             return selected.execute(request, binding);
         } else if (toolName.equals(ProjectWorktreeToolOperations.TOOL_NAME)) {
             if (worktreeOperations == null) {

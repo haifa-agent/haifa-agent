@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceAssembly;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
+import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
+import io.haifa.agent.application.project.policy.CodingExecutionRecoveryPolicy;
 import io.haifa.agent.application.project.workspace.WorkspaceAccess;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.common.id.IdentifierGenerator;
@@ -17,7 +19,6 @@ import io.haifa.agent.core.session.AgentSession;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.SessionScope;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
-import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionId;
@@ -26,8 +27,11 @@ import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
+import io.haifa.agent.execution.api.SandboxProfileRef;
+import io.haifa.agent.execution.core.ExecutionPolicyEntryPoint;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
@@ -35,7 +39,27 @@ import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.policy.api.PolicyEffect;
+import io.haifa.agent.project.binding.WorkspaceBinding;
+import io.haifa.agent.project.binding.WorkspaceBindingId;
+import io.haifa.agent.project.binding.WorkspaceBindingMode;
+import io.haifa.agent.project.binding.WorkspaceLocationRef;
+import io.haifa.agent.project.core.store.InMemoryProjectStore;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
+import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
+import io.haifa.agent.project.core.workspace.WorkspaceService;
+import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
+import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
+import io.haifa.agent.project.path.ProjectPath;
+import io.haifa.agent.project.workspace.Workspace;
+import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.project.workspace.WorkspacePermissionSet;
+import io.haifa.agent.project.workspace.WorkspacePurpose;
+import io.haifa.agent.project.workspace.WorkspaceRevision;
+import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
@@ -47,14 +71,13 @@ import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
+import io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
 import io.haifa.agent.sandbox.api.SandboxFilesystemPolicy;
 import io.haifa.agent.sandbox.api.SandboxProfile;
-import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
-import io.haifa.agent.execution.api.SandboxProfileRef;
-import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import java.nio.file.Path;
@@ -63,8 +86,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.time.Duration;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayDeque;
@@ -111,7 +134,11 @@ class ProjectExecutionRecoveryIT {
 
             assertThat(instance.runtime().find(runId).orElseThrow().status())
                     .isEqualTo(AgentRunStatus.WAITING_INTERACTION);
-            assertThat(instance.ports().interactions().pending(runId).orElseThrow().type())
+            assertThat(instance.ports()
+                            .interactions()
+                            .pending(runId)
+                            .orElseThrow()
+                            .type())
                     .isEqualTo("execution-recovery");
             assertThat(instance.ports().state().toolCalls(runId)).hasSize(1);
             assertThat(modelCalls).hasValue(1);
@@ -122,14 +149,15 @@ class ProjectExecutionRecoveryIT {
         try (ProjectPersistenceAssembly reopened = persistence(database)) {
             RuntimeInstance instance = runtime(reopened, model, broker, identifiers, "m4-worker-b");
             var recovery = instance.ports().interactions().pending(runId).orElseThrow();
-            instance.runtime().respond(new InteractionResponse(
-                    new InteractionResponseId("execution-recovery-response"),
-                    recovery.id(),
-                    runId,
-                    InteractionResponseType.APPROVE,
-                    List.of(),
-                    "execution-recovery-response-key",
-                    NOW));
+            instance.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId("execution-recovery-response"),
+                            recovery.id(),
+                            runId,
+                            InteractionResponseType.APPROVE,
+                            List.of(),
+                            "execution-recovery-response-key",
+                            NOW));
 
             assertThat(instance.ports()
                             .interactions()
@@ -146,15 +174,16 @@ class ProjectExecutionRecoveryIT {
 
         try (ProjectPersistenceAssembly recovered = persistence(database)) {
             RuntimeInstance instance = runtime(recovered, model, broker, identifiers, "m4-worker-c");
-            var recovery = instance.ports().interactions().record(
-                            io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys.requestId(
-                                    runId, instance.ports().state().toolCalls(runId).getFirst().id()))
+            var recovery = instance.ports()
+                    .interactions()
+                    .record(io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys.requestId(
+                            runId,
+                            instance.ports().state().toolCalls(runId).getFirst().id()))
                     .orElseThrow();
             instance.runtime().recover(runId);
             instance.scheduler().runAll();
 
-            assertThat(instance.runtime().find(runId).orElseThrow().status())
-                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(instance.ports().state().toolCalls(runId)).hasSize(2);
             assertThat(instance.ports()
                             .interactions()
@@ -181,7 +210,8 @@ class ProjectExecutionRecoveryIT {
         Path database = directory.resolve("runtime.db").toAbsolutePath();
 
         try (ProjectPersistenceAssembly persistence = persistence(database)) {
-            persistence.workspaceAccess()
+            persistence
+                    .workspaceAccess()
                     .createIfAbsent(new WorkspaceAccess(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP));
             RuntimeInstance instance = runtime(
                     persistence, model(modelCalls), broker(brokerCalls, new ArrayList<>()), identifiers, "m4-worker");
@@ -189,22 +219,28 @@ class ProjectExecutionRecoveryIT {
             instance.scheduler().runAll();
             var recovery = instance.ports().interactions().pending(runId).orElseThrow();
 
-            persistence.workspaceAccess()
+            persistence
+                    .workspaceAccess()
                     .replace(new WorkspaceAccess(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.READ));
-            instance.runtime().respond(new InteractionResponse(
-                    new InteractionResponseId("execution-recovery-downgrade-response"),
-                    recovery.id(),
-                    runId,
-                    InteractionResponseType.APPROVE,
-                    List.of(),
-                    "execution-recovery-downgrade-key",
-                    NOW));
+            instance.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId("execution-recovery-downgrade-response"),
+                            recovery.id(),
+                            runId,
+                            InteractionResponseType.APPROVE,
+                            List.of(),
+                            "execution-recovery-downgrade-key",
+                            NOW));
             instance.scheduler().runAll();
 
-            assertThat(instance.runtime().find(runId).orElseThrow().status())
-                    .isEqualTo(AgentRunStatus.FAILED);
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
             assertThat(instance.ports().state().toolCalls(runId)).hasSize(1);
-            assertThat(instance.ports().interactions().record(recovery.id()).orElseThrow().state().name())
+            assertThat(instance.ports()
+                            .interactions()
+                            .record(recovery.id())
+                            .orElseThrow()
+                            .state()
+                            .name())
                     .isEqualTo("INVALIDATED");
             assertThat(modelCalls).hasValue(1);
             assertThat(brokerCalls).hasValue(1);
@@ -221,12 +257,49 @@ class ProjectExecutionRecoveryIT {
         RuntimePersistencePorts ports = persistence.ports();
         ensureSession(ports);
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
-        ProjectExecutionToolOperations normal = operations(broker, new SandboxProfileRef("normal", "1"));
-        ProjectExecutionToolOperations recovery = operations(broker, new SandboxProfileRef("recovery", "1"));
+        InteractionPort interactions = ports.interactions();
+        var recoveryAuthorization = new ProjectExecutionRecoveryAuthorization(ports.state(), interactions);
+        PublicToolPolicy publicPolicy = new CodingExecutionRecoveryPolicy(
+                (run, binding, request) -> {
+                    persistence.workspaceAccess().require(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP);
+                    boolean successor = request.toolCallId().value().startsWith("execution-recovery-tool:v1:");
+                    return new PolicyDecision(
+                            successor ? PolicyEffect.ASK : PolicyEffect.ALLOW,
+                            successor
+                                    ? Optional.of(io.haifa.agent.policy.api.PolicyChallenge.APPROVAL)
+                                    : Optional.empty(),
+                            successor ? "M6_RECOVERY_TEST_ASK" : "M4_TEST_ALLOW",
+                            successor
+                                    ? "M6 recovery integration requires its existing approval"
+                                    : "M4 integration policy allowed the tool",
+                            "sha256:m4-integration-allow");
+                },
+                recoveryAuthorization);
+        var canonicalizer = new CodingExecutionToolRequestCanonicalizer();
+        var runtimeVerifier = new RuntimeToolExecutionVerifier(
+                ports.runs(), ports.state(), interactions, canonicalizer, publicPolicy);
+        var executionPolicy = new CodingAgentExecutionPolicy(
+                runtimeVerifier,
+                recoveryAuthorization,
+                persistence.workspaceAccess(),
+                provisioning(),
+                TENANT,
+                PRINCIPAL,
+                new ExecutionEnvironmentRef(List.of("test-environment")),
+                new ExecutionEnvironmentRef(List.of("test-environment")),
+                normalProfile().ref(),
+                recoveryProfile().ref(),
+                ExecutionScratchSpaceSpec.genericRequired(),
+                Duration.ofMinutes(1),
+                Duration.ofMinutes(2),
+                8_192,
+                4);
+        ExecutionBroker guardedBroker = authorizeBeforeDispatch(broker, executionPolicy);
+        ProjectExecutionToolOperations normal = operations(guardedBroker, new SandboxProfileRef("normal", "1"));
+        ProjectExecutionToolOperations recovery = operations(guardedBroker, new SandboxProfileRef("recovery", "1"));
         ProjectToolOperations unreachable = (toolName, workspaceId, actor, runRef, arguments) -> {
             throw new AssertionError("unexpected non-execution tool");
         };
-        InteractionPort interactions = ports.interactions();
         ProjectToolExecutor provider = ProjectToolExecutor.withExecutionRecovery(
                 (runId, principal) -> {
                     WorkspaceAccess current = persistence
@@ -241,8 +314,7 @@ class ProjectExecutionRecoveryIT {
                 unreachable,
                 normal,
                 recovery,
-                ports.state(),
-                interactions,
+                recoveryAuthorization,
                 normalProfile(),
                 recoveryProfile(),
                 null);
@@ -255,17 +327,8 @@ class ProjectExecutionRecoveryIT {
                 .identifierGenerator(identifiers)
                 .timeProvider(TIME)
                 .workerId(workerId)
-                .publicToolPolicy((run, binding, request) -> {
-                    persistence
-                            .workspaceAccess()
-                            .require(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP);
-                    return new PolicyDecision(
-                            PolicyEffect.ALLOW,
-                            Optional.empty(),
-                            "M4_TEST_ALLOW",
-                            "M4 integration policy allowed the tool",
-                            "sha256:m4-integration-allow");
-                })
+                .toolRequestCanonicalizer(canonicalizer)
+                .publicToolPolicy(publicPolicy)
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
                 .build();
         return new RuntimeInstance(runtime, scheduler, ports);
@@ -289,8 +352,7 @@ class ProjectExecutionRecoveryIT {
                 ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
     }
 
-    private static ExecutionBroker broker(
-            AtomicInteger calls, List<SandboxProfileRef> observedProfiles) {
+    private static ExecutionBroker broker(AtomicInteger calls, List<SandboxProfileRef> observedProfiles) {
         return new ExecutionBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request) {
@@ -318,6 +380,75 @@ class ProjectExecutionRecoveryIT {
                 return Optional.empty();
             }
         };
+    }
+
+    private static ExecutionBroker authorizeBeforeDispatch(
+            ExecutionBroker delegate, CodingAgentExecutionPolicy policy) {
+        return new ExecutionBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request) {
+                return execute(request, ExecutionOutputObserver.noop());
+            }
+
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                policy.authorize(request, ExecutionPolicyEntryPoint.FIRST_EXECUTION);
+                return delegate.execute(request, observer);
+            }
+
+            @Override
+            public boolean cancel(ExecutionId id) {
+                return delegate.cancel(id);
+            }
+
+            @Override
+            public Optional<ExecutionResult> find(ExecutionId id) {
+                return delegate.find(id);
+            }
+        };
+    }
+
+    private static AuthorizedWorkspaceProvisioning provisioning() {
+        try {
+            Path root = Path.of(System.getProperty("java.io.tmpdir")).toRealPath();
+            var projects = new InMemoryProjectStore();
+            var workspaces = new InMemoryWorkspaceStore();
+            var bindings = new InMemoryWorkspaceBindingStore();
+            var locations = new HostWorkspaceLocationStore();
+            ProjectId projectId = new ProjectId("m6-project");
+            WorkspaceBindingId bindingId = new WorkspaceBindingId("m6-binding");
+            WorkspaceLocationRef locationRef = new WorkspaceLocationRef("m6-location");
+            locations.register(locationRef, root);
+            bindings.create(WorkspaceBinding.provision(
+                            bindingId,
+                            locationRef,
+                            WorkspaceBindingMode.DIRECT,
+                            PRINCIPAL,
+                            WorkspaceCapabilitySet.executionFiles(),
+                            WorkspacePermissionSet.readWriteExecute(),
+                            HostWorkspaceLocationStore.fingerprintFor(root),
+                            NOW)
+                    .activate(NOW));
+            workspaces.create(Workspace.provision(
+                            WORKSPACE,
+                            projectId,
+                            WorkspacePurpose.PRIMARY,
+                            new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
+                            WorkspaceRevision.initial("m6-revision"),
+                            NOW)
+                    .activate(NOW));
+            return new AuthorizedWorkspaceProvisioning(
+                    projectId,
+                    workspaces,
+                    bindings,
+                    locations,
+                    new WorkspaceService(projects, workspaces, bindings, () -> "m6-id", () -> NOW),
+                    PRINCIPAL,
+                    () -> NOW,
+                    HostWorkspaceScope.initial(AuthorizedHostDirectory.of(WORKSPACE, root)));
+        } catch (java.io.IOException exception) {
+            throw new IllegalStateException("test workspace root is unavailable", exception);
+        }
     }
 
     private static AgentChatModel model(AtomicInteger calls) {
@@ -392,8 +523,8 @@ class ProjectExecutionRecoveryIT {
     private static void ensureSession(RuntimePersistencePorts ports) {
         ports.unitOfWork().execute(() -> {
             if (ports.sessions().find(SESSION).isEmpty()) {
-                ports.sessions().insert(AgentSession.open(
-                        SESSION, TENANT, PRINCIPAL, null, SessionScope.USER, NOW, Map.of()));
+                ports.sessions()
+                        .insert(AgentSession.open(SESSION, TENANT, PRINCIPAL, null, SessionScope.USER, NOW, Map.of()));
             }
             return null;
         });
@@ -413,8 +544,7 @@ class ProjectExecutionRecoveryIT {
     }
 
     private static AesGcmModelContinuationProtector protector() {
-        return new AesGcmModelContinuationProtector(
-                new SecretKeySpec(PROTECTOR_KEY, "AES"), new SecureRandom());
+        return new AesGcmModelContinuationProtector(new SecretKeySpec(PROTECTOR_KEY, "AES"), new SecureRandom());
     }
 
     private static ProjectPersistenceAssembly persistence(Path database) {

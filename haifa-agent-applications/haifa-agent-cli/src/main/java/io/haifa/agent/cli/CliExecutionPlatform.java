@@ -3,6 +3,7 @@ package io.haifa.agent.cli;
 import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
+import io.haifa.agent.application.project.tool.ProjectExecutionRecoveryAuthorization;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
@@ -26,6 +27,7 @@ import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisionin
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxException;
@@ -94,13 +96,17 @@ final class CliExecutionPlatform implements AutoCloseable {
             AuthorizedWorkspaceProvisioning provisioning,
             WorkspaceAccessStore workspaceAccess,
             TenantRef tenant,
-            PrincipalRef principal) {
+            PrincipalRef principal,
+            RuntimeToolExecutionVerifier runtimeExecutionVerifier,
+            ProjectExecutionRecoveryAuthorization recoveryAuthorization) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
         Objects.requireNonNull(provisioning, "provisioning must not be null");
         Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
+        Objects.requireNonNull(runtimeExecutionVerifier, "runtimeExecutionVerifier must not be null");
+        Objects.requireNonNull(recoveryAuthorization, "recoveryAuthorization must not be null");
         HostShell shell = shell(configuration);
         LocalNativeSandboxConfiguration localConfiguration = localConfiguration(configuration, shell);
         var host = new HostGuardedSandboxProvider(
@@ -169,7 +175,22 @@ final class CliExecutionPlatform implements AutoCloseable {
                 requestedEnvironment -> requestedEnvironment.equals(permissionEnvironmentRef)
                         ? io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(permissionEnvironment)
                         : io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
-                new CodingAgentExecutionPolicy(),
+                new CodingAgentExecutionPolicy(
+                        runtimeExecutionVerifier,
+                        recoveryAuthorization,
+                        workspaceAccess,
+                        provisioning,
+                        tenant,
+                        principal,
+                        environmentRef,
+                        permissionEnvironmentRef,
+                        profile.ref(),
+                        permissionProfile.ref(),
+                        CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                        configuration.defaultTimeout(),
+                        configuration.maximumTimeout(),
+                        configuration.maxOutputBytes(),
+                        configuration.maxProcesses()),
                 profileRegistry,
                 providerRegistry,
                 workspaces,

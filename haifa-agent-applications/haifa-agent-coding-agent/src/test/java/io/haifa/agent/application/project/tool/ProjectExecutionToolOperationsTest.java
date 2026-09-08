@@ -45,7 +45,6 @@ import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
@@ -55,6 +54,7 @@ import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys;
+import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
@@ -68,7 +68,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1300,18 +1299,18 @@ class ProjectExecutionToolOperationsTest {
         };
         ProjectExecutionToolOperations operations = operations(broker, 1024, 2000);
 
-        assertThatThrownBy(() -> operations.execute(
-                        invocation(Map.of("command", "git fetch origin"), () -> false), access()))
+        assertThatThrownBy(() ->
+                        operations.execute(invocation(Map.of("command", "git fetch origin"), () -> false), access()))
                 .isInstanceOf(io.haifa.agent.tool.api.ToolInvocationException.class)
-                .satisfies(failure -> assertThat(
-                                ((io.haifa.agent.tool.api.ToolInvocationException) failure).failureCode())
-                        .isEqualTo("GIT_AUTHENTICATION_UNAVAILABLE"));
-        assertThatThrownBy(() -> operations.execute(
-                        invocation(Map.of("command", "gh repo view"), () -> false), access()))
+                .satisfies(
+                        failure -> assertThat(((io.haifa.agent.tool.api.ToolInvocationException) failure).failureCode())
+                                .isEqualTo("GIT_AUTHENTICATION_UNAVAILABLE"));
+        assertThatThrownBy(
+                        () -> operations.execute(invocation(Map.of("command", "gh repo view"), () -> false), access()))
                 .isInstanceOf(io.haifa.agent.tool.api.ToolInvocationException.class)
-                .satisfies(failure -> assertThat(
-                                ((io.haifa.agent.tool.api.ToolInvocationException) failure).failureCode())
-                        .isEqualTo("GH_AUTHENTICATION_UNAVAILABLE"));
+                .satisfies(
+                        failure -> assertThat(((io.haifa.agent.tool.api.ToolInvocationException) failure).failureCode())
+                                .isEqualTo("GH_AUTHENTICATION_UNAVAILABLE"));
     }
 
     @Test
@@ -1355,7 +1354,11 @@ class ProjectExecutionToolOperationsTest {
         ProjectExecutionToolOperations normal = operations(new StubBroker() {}, 1024, 100);
         ProjectExecutionToolOperations recovery = operations(new StubBroker() {}, 2048, 200);
         var selector = new ProjectExecutionRecoverySelector(
-                state, interactions, normal, recovery, deniedExecutionProfile(), executionProfile());
+                new ProjectExecutionRecoveryAuthorization(state, interactions),
+                normal,
+                recovery,
+                deniedExecutionProfile(),
+                executionProfile());
         ToolInvocationRequest originalInvocation =
                 invocation(Map.of("command", "git ls-remote origin", "timeoutMillis", 30_000L), () -> false);
         ToolCall source = failedRecoverySource(originalInvocation, "NETWORK_PERMISSION_REQUIRED");
@@ -1363,7 +1366,8 @@ class ProjectExecutionToolOperationsTest {
         ToolApprovalTarget target = recoveryTarget(source);
         applyRecoveryInteraction(interactions, source, target);
         var keys = ExecutionRecoveryKeys.successor(source.runId(), source.id(), target.argumentsDigest());
-        ToolInvocationRequest successor = invocationWithIdentity(originalInvocation, keys, originalInvocation.arguments());
+        ToolInvocationRequest successor =
+                invocationWithIdentity(originalInvocation, keys, originalInvocation.arguments());
 
         assertThat(selector.select(successor)).isSameAs(recovery);
         assertThat(selector.select(originalInvocation)).isSameAs(normal);
@@ -1383,7 +1387,11 @@ class ProjectExecutionToolOperationsTest {
         ProjectExecutionToolOperations normal = operations(new StubBroker() {}, 1024, 100);
         ProjectExecutionToolOperations recovery = operations(new StubBroker() {}, 2048, 200);
         var selector = new ProjectExecutionRecoverySelector(
-                state, interactions, normal, recovery, deniedExecutionProfile(), executionProfile());
+                new ProjectExecutionRecoveryAuthorization(state, interactions),
+                normal,
+                recovery,
+                deniedExecutionProfile(),
+                executionProfile());
         ToolInvocationRequest base = invocation(Map.of("command", "git clean -fd"), () -> false);
         ToolCall source = failedRecoverySource(base, "NETWORK_PERMISSION_REQUIRED");
         state.appendToolCall(source);
@@ -1405,7 +1413,11 @@ class ProjectExecutionToolOperationsTest {
         InMemoryRuntimeStore genericState = new InMemoryRuntimeStore();
         InMemoryInteractionPort genericInteractions = new InMemoryInteractionPort();
         var genericSelector = new ProjectExecutionRecoverySelector(
-                genericState, genericInteractions, normal, recovery, deniedExecutionProfile(), executionProfile());
+                new ProjectExecutionRecoveryAuthorization(genericState, genericInteractions),
+                normal,
+                recovery,
+                deniedExecutionProfile(),
+                executionProfile());
         ToolCall genericHostFailure = failedRecoverySource(base, "HOST_AUTHENTICATION_UNAVAILABLE");
         genericState.appendToolCall(genericHostFailure);
         ToolApprovalTarget genericTarget = recoveryTarget(genericHostFailure);
@@ -1555,9 +1567,7 @@ class ProjectExecutionToolOperationsTest {
         call.fail(
                 new ToolExecutionError(new AgentError(
                         AgentErrorCode.TOOL_INVOCATION_FAILED,
-                        Map.of(
-                                "failureCode", failureCode,
-                                "dispatchState", "NOT_DISPATCHED"),
+                        Map.of("failureCode", failureCode, "dispatchState", "NOT_DISPATCHED"),
                         "recovery-source-error",
                         NOW)),
                 NOW);
