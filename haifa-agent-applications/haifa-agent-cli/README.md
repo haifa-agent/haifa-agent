@@ -168,8 +168,9 @@ haifa-coding resume --last "继续前面的工作"
 入口未收到 `--workspace` 时默认使用进程当前目录，所以从哪个项目目录发起，该目录就是 Workspace。
 发行配置只使用 `model-auth://deepseek/default` 引用，不包含密钥；首次启动通过掩码输入保存 API Key，默认保持
 `approval=ask`、`host-guarded + network allow + shell auto`，并启用
-`SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Policy 证据等恢复状态
-的唯一事实源；本地默认 payload 在磁盘上可读，不提供保密性，但仍执行格式、binding 和 digest 校验。
+`SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Interaction、Workspace
+Registry/Access 等恢复状态的唯一事实源；Policy RuleSet 由产品配置提供，Decision 只瞬态求值，不作为
+SQLite 恢复事实。本地默认 payload 在磁盘上可读，不提供保密性，但仍执行格式、binding 和 digest 校验。
 JSONL 只用于审计投影，不参与恢复。启动器按自身目录设置绝对数据路径，因此发行目录整体移动后仍可
 使用；重新打包以原子替换部署经关键类检查的 shaded JAR，只覆盖 JAR、配置和启动器，不删除既有
 `data/` 或 `logs/`。启动时只要配置目录中任一模型已有可用凭据，就不会重复打开首次连接引导。可通过

@@ -410,7 +410,7 @@ Release 验证必须通过 `-pl` 指定受影响模块；完整分层矩阵见
 - 分布式 Store/Lease、生产 KMS/Vault、对象存储和跨机器恢复；
 - Knowledge/RAG、Graph/Workflow 与多 Agent 调度；
 - Skill Hub、Skill 创作/安装/企业管理面和动态插件平台；
-- 完整的 Project Trust/Approval 产品体验与企业审批流程；
+- 完整的企业级 Approval 产品体验、审批路由与工作流；
 - Windows Local Native Adapter、容器、gVisor、microVM 或 Kubernetes Sandbox；
 - Coding Session Tree/Fork/Clone、PTY、交互式子进程和后台 Job；
 - MCP Server Hosting，以及 MCP Resources、Prompts、Sampling、Elicitation、OAuth 等后续协议能力。
