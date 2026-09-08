@@ -135,6 +135,11 @@ class RuntimeToolExecutionVerifierTest {
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("lacks a current exact approval");
 
+        approve(fixture, "wrong-type", "execution-recovery");
+        assertThatThrownBy(() -> verify(fixture))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("lacks a current exact approval");
+
         approve(fixture, "approval-1");
         assertThatCode(() -> verify(fixture)).doesNotThrowAnyException();
 
@@ -155,7 +160,11 @@ class RuntimeToolExecutionVerifierTest {
     }
 
     private static void approve(Fixture fixture, String id) {
-        InteractionRequest approval = approvalRequest(fixture, id);
+        approve(fixture, id, "tool-approval");
+    }
+
+    private static void approve(Fixture fixture, String id, String type) {
+        InteractionRequest approval = approvalRequest(fixture, id, type);
         fixture.interactions().create(approval);
         fixture.interactions()
                 .respond(
@@ -174,6 +183,10 @@ class RuntimeToolExecutionVerifierTest {
     }
 
     private static InteractionRequest approvalRequest(Fixture fixture, String id) {
+        return approvalRequest(fixture, id, "tool-approval");
+    }
+
+    private static InteractionRequest approvalRequest(Fixture fixture, String id, String type) {
         PolicyDecision decision = fixture.decision();
         var request = new io.haifa.agent.runtime.core.decision.ToolRequest(
                 fixture.call().id(),
@@ -187,7 +200,7 @@ class RuntimeToolExecutionVerifierTest {
                 fixture.run().id(),
                 TENANT,
                 PRINCIPAL,
-                "tool-approval",
+                type,
                 "Safe approval",
                 true,
                 ToolApprovalTargets.ordinary(fixture.run(), fixture.call().id(), fixture.binding(), request, decision),

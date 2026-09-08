@@ -6,6 +6,7 @@ import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
+import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionState;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
@@ -90,6 +91,9 @@ public final class ProjectExecutionRecoveryAuthorization {
         if (record == null
                 || record.state() != InteractionState.APPLIED
                 || !RECOVERY_TYPE.equals(record.request().type())
+                || !record.request().runId().equals(runId)
+                || !record.request().approval()
+                || record.action().filter(InteractionAction.APPROVE::equals).isEmpty()
                 || !(record.request().target() instanceof ToolApprovalTarget target)
                 || !target.toolCallId().equals(source.id())) {
             return false;
@@ -99,6 +103,21 @@ public final class ProjectExecutionRecoveryAuthorization {
                 || !successor.idempotencyKey().value().equals(successorIdempotencyKey)) {
             return false;
         }
+        List<ToolCall> persistedSuccessors = state.toolCalls(runId).stream()
+                .filter(candidate -> candidate.id().equals(successor.toolCallId()))
+                .filter(candidate -> candidate.stepId().equals(successor.stepId()))
+                .filter(candidate -> candidate.idempotencyKey().equals(successor.idempotencyKey()))
+                .filter(candidate -> candidate.toolName().equals(source.toolName()))
+                .filter(candidate -> candidate.toolVersion().equals(source.toolVersion()))
+                .filter(candidate -> candidate.arguments().equals(source.arguments()))
+                .toList();
+        if (persistedSuccessors.size() != 1) return false;
+        long successorSteps = state.steps(runId).stream()
+                .filter(step -> step.id().equals(successor.stepId()))
+                .filter(step ->
+                        step.parentStepId().filter(source.stepId()::equals).isPresent())
+                .count();
+        if (successorSteps != 1) return false;
         Object command = source.arguments().values().get("command");
         if (!(command instanceof String text) || text.isBlank()) return false;
         var classification = SystemGitCliCommandClassifier.classify(text);

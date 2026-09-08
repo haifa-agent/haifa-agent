@@ -18,7 +18,9 @@ import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.step.AgentStepId;
+import io.haifa.agent.core.step.AgentStepType;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
@@ -1369,6 +1371,8 @@ class ProjectExecutionToolOperationsTest {
         ToolInvocationRequest successor =
                 invocationWithIdentity(originalInvocation, keys, originalInvocation.arguments());
 
+        assertThatThrownBy(() -> selector.select(successor)).isInstanceOf(SecurityException.class);
+        persistRecoverySuccessor(state, source, keys);
         assertThat(selector.select(successor)).isSameAs(recovery);
         assertThat(selector.select(originalInvocation)).isSameAs(normal);
 
@@ -1426,6 +1430,25 @@ class ProjectExecutionToolOperationsTest {
                 genericHostFailure.runId(), genericHostFailure.id(), genericTarget.argumentsDigest());
         assertThatThrownBy(() -> genericSelector.select(invocationWithIdentity(base, genericKeys, base.arguments())))
                 .isInstanceOf(SecurityException.class);
+    }
+
+    @Test
+    void rejectedRecoveryInteractionNeverAuthorizesAPersistedSuccessor() {
+        InMemoryRuntimeStore state = new InMemoryRuntimeStore();
+        InMemoryInteractionPort interactions = new InMemoryInteractionPort();
+        var authorization = new ProjectExecutionRecoveryAuthorization(state, interactions);
+        ToolInvocationRequest base =
+                invocation(Map.of("command", "git ls-remote origin", "timeoutMillis", 30_000L), () -> false);
+        ToolCall source = failedRecoverySource(base, "NETWORK_PERMISSION_REQUIRED");
+        state.appendToolCall(source);
+        ToolApprovalTarget target = recoveryTarget(source);
+        applyRecoveryInteraction(interactions, source, target, InteractionResponseType.REJECT);
+        var keys = ExecutionRecoveryKeys.successor(source.runId(), source.id(), target.argumentsDigest());
+        persistRecoverySuccessor(state, source, keys);
+
+        assertThat(authorization.isVerifiedSuccessor(
+                        source.runId(), keys.toolCallId(), keys.idempotencyKey().value(), source.arguments()))
+                .isFalse();
     }
 
     @Test
@@ -1586,6 +1609,14 @@ class ProjectExecutionToolOperationsTest {
 
     private static void applyRecoveryInteraction(
             InMemoryInteractionPort interactions, ToolCall source, ToolApprovalTarget target) {
+        applyRecoveryInteraction(interactions, source, target, InteractionResponseType.APPROVE);
+    }
+
+    private static void applyRecoveryInteraction(
+            InMemoryInteractionPort interactions,
+            ToolCall source,
+            ToolApprovalTarget target,
+            InteractionResponseType responseType) {
         InteractionRequestId requestId = ExecutionRecoveryKeys.requestId(source.runId(), source.id());
         interactions.create(new InteractionRequest(
                 requestId,
@@ -1603,13 +1634,29 @@ class ProjectExecutionToolOperationsTest {
                         new InteractionResponseId("response-1"),
                         requestId,
                         source.runId(),
-                        InteractionResponseType.APPROVE,
+                        responseType,
                         List.of(),
                         "response-key",
                         NOW),
                 new RuntimeCallerContext(new TenantRef("tenant-1"), new PrincipalRef("operator", "user")),
                 NOW);
         interactions.markResolutionApplied(requestId);
+    }
+
+    private static void persistRecoverySuccessor(
+            InMemoryRuntimeStore state, ToolCall source, ExecutionRecoveryKeys.Successor keys) {
+        state.appendStep(new AgentStep(
+                keys.stepId(), source.runId(), source.stepId(), null, AgentStepType.TOOL_EXECUTION, 1, NOW));
+        state.appendToolCall(new ToolCall(
+                keys.toolCallId(),
+                source.runId(),
+                keys.stepId(),
+                keys.providerCorrelationId(),
+                keys.idempotencyKey(),
+                source.toolName(),
+                source.toolVersion(),
+                source.arguments(),
+                NOW));
     }
 
     private static ToolInvocationRequest invocationWithIdentity(

@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceAssembly;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
-import io.haifa.agent.application.project.policy.CodingExecutionRecoveryPolicy;
 import io.haifa.agent.application.project.workspace.WorkspaceAccess;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.common.id.IdentifierGenerator;
@@ -183,7 +182,8 @@ class ProjectExecutionRecoveryIT {
             instance.runtime().recover(runId);
             instance.scheduler().runAll();
 
-            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(instance.runtime().find(runId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
             assertThat(instance.ports().state().toolCalls(runId)).hasSize(2);
             assertThat(instance.ports()
                             .interactions()
@@ -192,6 +192,24 @@ class ProjectExecutionRecoveryIT {
                             .state()
                             .name())
                     .isEqualTo("APPLIED");
+            var ordinaryApproval =
+                    instance.ports().interactions().pending(runId).orElseThrow();
+            assertThat(ordinaryApproval.type()).isEqualTo("tool-approval");
+            assertThat(modelCalls).hasValue(1);
+            assertThat(brokerCalls).hasValue(1);
+
+            instance.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId("ordinary-execution-approval-response"),
+                            ordinaryApproval.id(),
+                            runId,
+                            InteractionResponseType.APPROVE,
+                            List.of(),
+                            "ordinary-execution-approval-key",
+                            NOW));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(modelCalls).hasValue(2);
             assertThat(brokerCalls).hasValue(2);
             assertThat(observedProfiles)
@@ -259,22 +277,18 @@ class ProjectExecutionRecoveryIT {
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
         InteractionPort interactions = ports.interactions();
         var recoveryAuthorization = new ProjectExecutionRecoveryAuthorization(ports.state(), interactions);
-        PublicToolPolicy publicPolicy = new CodingExecutionRecoveryPolicy(
-                (run, binding, request) -> {
-                    persistence.workspaceAccess().require(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP);
-                    boolean successor = request.toolCallId().value().startsWith("execution-recovery-tool:v1:");
-                    return new PolicyDecision(
-                            successor ? PolicyEffect.ASK : PolicyEffect.ALLOW,
-                            successor
-                                    ? Optional.of(io.haifa.agent.policy.api.PolicyChallenge.APPROVAL)
-                                    : Optional.empty(),
-                            successor ? "M6_RECOVERY_TEST_ASK" : "M4_TEST_ALLOW",
-                            successor
-                                    ? "M6 recovery integration requires its existing approval"
-                                    : "M4 integration policy allowed the tool",
-                            "sha256:m4-integration-allow");
-                },
-                recoveryAuthorization);
+        PublicToolPolicy publicPolicy = (run, binding, request) -> {
+            persistence.workspaceAccess().require(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP);
+            boolean successor = request.toolCallId().value().startsWith("execution-recovery-tool:v1:");
+            return new PolicyDecision(
+                    successor ? PolicyEffect.ASK : PolicyEffect.ALLOW,
+                    successor ? Optional.of(io.haifa.agent.policy.api.PolicyChallenge.APPROVAL) : Optional.empty(),
+                    successor ? "M6_RECOVERY_TEST_ASK" : "M4_TEST_ALLOW",
+                    successor
+                            ? "M6 recovery integration requires ordinary approval"
+                            : "M4 integration policy allowed the tool",
+                    "sha256:m4-integration-allow");
+        };
         var canonicalizer = new CodingExecutionToolRequestCanonicalizer();
         var runtimeVerifier = new RuntimeToolExecutionVerifier(
                 ports.runs(), ports.state(), interactions, canonicalizer, publicPolicy);

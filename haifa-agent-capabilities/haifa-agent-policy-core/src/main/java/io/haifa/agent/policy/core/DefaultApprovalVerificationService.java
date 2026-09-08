@@ -21,8 +21,7 @@ public final class DefaultApprovalVerificationService implements ApprovalVerific
     private final Map<String, ApprovalTargetValidator> targetValidators;
 
     public DefaultApprovalVerificationService(
-            ApprovalAuthorityVerifier localVerifier,
-            Map<String, ApprovalTargetValidator> targetValidators) {
+            ApprovalAuthorityVerifier localVerifier, Map<String, ApprovalTargetValidator> targetValidators) {
         this.localVerifier = Objects.requireNonNull(localVerifier, "localVerifier must not be null");
         this.targetValidators =
                 Map.copyOf(Objects.requireNonNull(targetValidators, "targetValidators must not be null"));
@@ -52,5 +51,4 @@ public final class DefaultApprovalVerificationService implements ApprovalVerific
                 : new ApprovalVerification(
                         false, authority == null ? "AUTHORITY_VERIFIER_RETURNED_NULL" : authority.reasonCode());
     }
-
 }
