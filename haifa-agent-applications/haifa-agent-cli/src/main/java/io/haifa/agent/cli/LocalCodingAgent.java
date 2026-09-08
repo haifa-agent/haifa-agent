@@ -546,19 +546,15 @@ final class LocalCodingAgent implements AutoCloseable {
             var recoveryAuthorization =
                     new io.haifa.agent.application.project.tool.ProjectExecutionRecoveryAuthorization(
                             persistence.ports().state(), persistence.ports().interactions());
-            PublicToolPolicy publicToolPolicy =
-                    new io.haifa.agent.application.project.policy.CodingExecutionRecoveryPolicy(
-                            workspaceAccessPolicy(
-                                    new DefaultPublicToolPolicy(
-                                            new io.haifa.agent.application.project.policy
-                                                    .CodingExecutionPolicyRequestAdapter(
-                                                    policyMode(configuration.approval())),
-                                            policy.evaluator(),
-                                            policy.rules()),
-                                    persistence.workspaceAccess(),
-                                    tenant,
-                                    principal),
-                            recoveryAuthorization);
+            PublicToolPolicy publicToolPolicy = workspaceAccessPolicy(
+                    new DefaultPublicToolPolicy(
+                            new io.haifa.agent.application.project.policy.CodingExecutionPolicyRequestAdapter(
+                                    policyMode(configuration.approval())),
+                            policy.evaluator(),
+                            policy.rules()),
+                    persistence.workspaceAccess(),
+                    tenant,
+                    principal);
             var runtimeExecutionVerifier = new io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier(
                     persistence.ports().runs(),
                     persistence.ports().state(),

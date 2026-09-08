@@ -16,6 +16,7 @@ class PolicyStoreAndGrantTest {
     private static final Instant NOW = Instant.parse("2026-07-26T00:00:00Z");
     private static final TenantRef TENANT = new TenantRef("tenant");
     private static final PrincipalRef PRINCIPAL = new PrincipalRef("user", "local");
+
     @Test
     void projectTrustRevocationUsesVersionAndStopsMatching() {
         InMemoryPolicyStore store = new InMemoryPolicyStore();
@@ -68,5 +69,4 @@ class PolicyStoreAndGrantTest {
                 Optional.empty(),
                 0);
     }
-
 }

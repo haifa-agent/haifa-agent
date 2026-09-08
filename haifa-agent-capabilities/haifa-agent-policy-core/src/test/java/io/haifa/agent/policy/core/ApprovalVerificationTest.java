@@ -32,10 +32,7 @@ class ApprovalVerificationTest {
                                 new ApprovalResponder(TENANT, new PrincipalRef("other", "user")))
                         .accepted())
                 .isFalse();
-        assertThat(service.verify(
-                                APPROVAL_REQUESTER,
-                                TARGET,
-                                new ApprovalResponder(new TenantRef("other"), REQUESTER))
+        assertThat(service.verify(APPROVAL_REQUESTER, TARGET, new ApprovalResponder(new TenantRef("other"), REQUESTER))
                         .accepted())
                 .isFalse();
     }

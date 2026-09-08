@@ -102,6 +102,7 @@ public final class RuntimeToolExecutionVerifier {
         var expected = ToolApprovalTargets.ordinary(run, source.id(), binding, canonical, decision);
         long candidates = interactions.toolApprovalRecords(runId, source.id()).stream()
                 .filter(record -> record.state() == InteractionState.APPLIED)
+                .filter(record -> isOrdinaryApprovalType(record.request().type()))
                 .filter(record -> record.action()
                         .filter(InteractionAction.APPROVE::equals)
                         .isPresent())
@@ -116,6 +117,10 @@ public final class RuntimeToolExecutionVerifier {
                             ? "runtime execution lacks a current exact approval"
                             : "runtime execution approval state is ambiguous");
         }
+    }
+
+    private static boolean isOrdinaryApprovalType(String type) {
+        return "tool-approval".equals(type) || "tool-reauthentication".equals(type);
     }
 
     @FunctionalInterface

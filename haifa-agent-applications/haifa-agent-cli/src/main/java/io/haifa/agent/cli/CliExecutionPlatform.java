@@ -397,13 +397,13 @@ final class CliExecutionPlatform implements AutoCloseable {
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         if (provider.providerId().equals(HostGuardedSandboxProvider.PROVIDER_ID)) {
             return SandboxProfile.hostGuarded(
-                    reference, provider.configurationDigest(), Set.of(), allowedEnvironment, true);
+                    reference, provider.configurationDigest(), Set.of("git"), allowedEnvironment, true);
         }
         return new SandboxProfile(
                 reference,
                 provider.providerId(),
                 provider.configurationDigest(),
-                Set.of(),
+                Set.of("git"),
                 allowedEnvironment,
                 true,
                 network,

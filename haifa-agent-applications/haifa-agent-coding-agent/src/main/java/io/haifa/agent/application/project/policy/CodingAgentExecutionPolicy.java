@@ -139,6 +139,11 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
         }
         requireWorkspace(request, WorkspaceAccessMode.DEVELOP);
         requireFixedCommon(request, normalEnvironment, normalProfile, scratchSpace);
+        if (SystemGitCliCommandClassifier.classify(request.command().shellCommand())
+                        .risk()
+                == SystemGitCliCommandClassifier.Risk.DENIED) {
+            throw denied("CODING_USER_EXECUTION_DENIED", "CLI user execution was denied by the system Git classifier");
+        }
         if (request.limits().maxStdoutBytes() != FULL_OUTPUT_BYTES_PER_CHANNEL
                 || request.limits().maxStderrBytes() != FULL_OUTPUT_BYTES_PER_CHANNEL
                 || request.limits().maxProcesses() != maximumProcesses
