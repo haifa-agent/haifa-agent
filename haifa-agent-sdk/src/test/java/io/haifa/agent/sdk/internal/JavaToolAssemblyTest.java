@@ -88,7 +88,6 @@ public class JavaToolAssemblyTest {
                                 Map.of("city", "Shanghai")),
                         Instant.parse("2026-08-05T01:02:03Z"),
                         java.util.Optional.empty(),
-                        java.util.Optional.empty(),
                         () -> false,
                         List.of(),
                         new ToolInvocationObserver() {

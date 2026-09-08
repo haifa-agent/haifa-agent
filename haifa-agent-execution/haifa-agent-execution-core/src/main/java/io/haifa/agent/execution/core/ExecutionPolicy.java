@@ -4,5 +4,5 @@ import io.haifa.agent.execution.api.ExecutionRequest;
 
 @FunctionalInterface
 public interface ExecutionPolicy {
-    void authorize(ExecutionRequest request);
+    void authorize(ExecutionRequest request, ExecutionPolicyEntryPoint entryPoint);
 }

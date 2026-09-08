@@ -17,9 +17,6 @@ import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.credential.api.CredentialRequest;
 import io.haifa.agent.credential.api.CredentialScopeKind;
 import io.haifa.agent.policy.api.ApprovalTargetRef;
-import io.haifa.agent.policy.api.AuthorizationClassification;
-import io.haifa.agent.policy.api.AuthorizationResult;
-import io.haifa.agent.policy.api.PolicyAuthorizationService;
 import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
@@ -31,6 +28,7 @@ import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
+import io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.retry.ToolRetryPolicy;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -85,10 +83,7 @@ public final class ToolPipeline {
     private final ToolResultAssetStore resultAssets;
     private final LargeToolResultPolicy largeResultPolicy;
     private final ToolRequestCanonicalizer requestCanonicalizer;
-    private final PolicyAuthorizationService authorization;
     private final FrozenToolBindingResolver bindings = new FrozenToolBindingResolver();
-    private final java.util.concurrent.ConcurrentHashMap<io.haifa.agent.core.tool.ToolCallId, PolicyDecision>
-            approvedDecisions = new java.util.concurrent.ConcurrentHashMap<>();
 
     public ToolPipeline(
             ToolInvoker invoker,
@@ -111,8 +106,7 @@ public final class ToolPipeline {
             RunTransitionCoordinator transitions,
             ToolResultAssetStore resultAssets,
             LargeToolResultPolicy largeResultPolicy,
-            ToolRequestCanonicalizer requestCanonicalizer,
-            PolicyAuthorizationService authorization) {
+            ToolRequestCanonicalizer requestCanonicalizer) {
         this.invoker = Objects.requireNonNull(invoker);
         this.schemaValidator = Objects.requireNonNull(schemaValidator);
         this.capabilityAuthorizer = Objects.requireNonNull(capabilityAuthorizer);
@@ -134,7 +128,6 @@ public final class ToolPipeline {
         this.resultAssets = Objects.requireNonNull(resultAssets);
         this.largeResultPolicy = Objects.requireNonNull(largeResultPolicy);
         this.requestCanonicalizer = Objects.requireNonNull(requestCanonicalizer);
-        this.authorization = Objects.requireNonNull(authorization);
     }
 
     public ToolPipelineOutcome execute(AgentRun run, AgentStepId stepId, ToolRequest request, int iteration) {
@@ -386,31 +379,15 @@ public final class ToolPipeline {
             call.beginPolicyCheck();
         }
         PolicyDecision currentDecision = policy.evaluate(run, binding, request);
-        ApprovalTargetRef approvalTarget = approvalTarget(binding, call, request);
-        AuthorizationResult authorizationResult =
-                authorization.authorize(currentDecision, approvalTarget, java.util.Optional.empty());
-        if (currentDecision.effect() == PolicyEffect.DENY
-                || authorizationResult.classification() == AuthorizationClassification.HARD_DENY) {
+        if (currentDecision.effect() == PolicyEffect.DENY) {
             if (approved) call.cancel(time.now());
             else call.deny(time.now());
             state.appendToolCall(call);
-            appendToolEvent(run, call, "tool.cancelled", "CANCELLED", authorizationResult.reasonCode(), "");
-            throw new ToolPolicyDeniedException(authorizationResult.reasonCode());
-        }
-        PolicyDecision effectiveDecision = currentDecision;
-        PolicyDecision approvedDecision = approved ? approvedDecisions.remove(call.id()) : null;
-        if (authorizationResult.classification() == AuthorizationClassification.PROTOCOL_ERROR) {
-            call.cancel(time.now());
-            state.appendToolCall(call);
-            appendToolEvent(run, call, "tool.cancelled", "CANCELLED", authorizationResult.reasonCode(), "");
-            throw new ToolAuthorizationProtocolException(
-                    authorizationResult.reasonCode(), authorizationResult.safeExplanation());
-        }
-        if (authorizationResult.classification() == AuthorizationClassification.EXECUTION_OUTCOME) {
-            throw new IllegalStateException("execution outcome cannot authorize a tool request");
+            appendToolEvent(run, call, "tool.cancelled", "CANCELLED", currentDecision.reasonCode(), "");
+            throw new ToolPolicyDeniedException(currentDecision.reasonCode());
         }
         if (currentDecision.effect() == PolicyEffect.ASK) {
-            if (!approved && !authorizationResult.authorized()) {
+            if (!approved) {
                 call.waitForApproval();
                 state.appendToolCall(call);
                 return new ToolPipelineOutcome.ApprovalRequired(
@@ -418,26 +395,13 @@ public final class ToolPipeline {
                         argumentsDigest(request),
                         currentDecision.challenge().orElseThrow()
                                 == io.haifa.agent.policy.api.PolicyChallenge.REAUTHENTICATE,
-                        currentDecision,
-                        authorizationResult);
-            }
-            if (approved) {
-                if (approvedDecision == null
-                        || approvedDecision.effect() != PolicyEffect.ASK
-                        || !approvedDecision.requestDigest().equals(currentDecision.requestDigest())
-                        || !approvedDecision.challenge().equals(currentDecision.challenge())) {
-                    call.cancel(time.now());
-                    state.appendToolCall(call);
-                    throw new SecurityException("approved tool policy decision is missing or has drifted");
-                }
-                effectiveDecision = approvedDecision;
+                        currentDecision);
             }
         }
         journal.recordIntent(run.id(), request.idempotencyKey(), definition.idempotency());
         call.start(time.now());
         state.appendToolCall(call);
         appendToolEvent(run, call, "tool.started", "STARTED", "NONE", "");
-        PolicyDecision dispatchDecision = effectiveDecision;
         recordTrace(new RuntimeTraceEvent(
                 traceContext.traceId(),
                 run.id(),
@@ -467,7 +431,7 @@ public final class ToolPipeline {
                                     run.usage().toolCalls());
                         }
                         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 1, 0, 0, 0));
-                        return invokeProvider(run, call, request, binding, dispatchDecision);
+                        return invokeProvider(run, call, request, binding);
                     },
                     retryPolicy.forTool(binding));
             if (rawResult.successful()) {
@@ -621,12 +585,7 @@ public final class ToolPipeline {
                 binding.definition().title());
     }
 
-    private ToolResult invokeProvider(
-            AgentRun run,
-            ToolCall call,
-            ToolRequest request,
-            FrozenToolBinding binding,
-            PolicyDecision effectiveDecision) {
+    private ToolResult invokeProvider(AgentRun run, ToolCall call, ToolRequest request, FrozenToolBinding binding) {
         var definition = binding.definition();
         var now = time.now();
         var deadline = now.plus(definition.timeout());
@@ -666,7 +625,6 @@ public final class ToolPipeline {
                         request.arguments(),
                         deadline,
                         java.util.Optional.of(request.idempotencyKey().value()),
-                        java.util.Optional.of(effectiveDecision.id().value()),
                         (ToolCancellation) () -> controls.signal(run.id()) == RunControlSignal.CANCEL,
                         leases,
                         new io.haifa.agent.tool.api.ToolInvocationObserver() {
@@ -794,15 +752,73 @@ public final class ToolPipeline {
         if (!principalScope.equals(target.principalScope())) {
             throw new SecurityException("tool approval principal scope changed");
         }
+        PolicyDecision current = policy.evaluate(run, binding, request);
+        if (current.effect() != PolicyEffect.ASK || !current.requirementDigest().equals(target.requirementDigest())) {
+            throw new SecurityException("tool approval requirement changed");
+        }
     }
 
-    public void recordApprovedDecision(ToolCall call, PolicyDecision decision) {
+    public boolean isExecutionRecoverySource(AgentRun run, ToolCall call) {
+        Objects.requireNonNull(run, "run must not be null");
         Objects.requireNonNull(call, "call must not be null");
-        Objects.requireNonNull(decision, "decision must not be null");
-        if (call.status() != ToolCallStatus.WAITING_APPROVAL) {
-            throw new IllegalStateException("tool call is not waiting for approval");
+        if (call.status() != ToolCallStatus.FAILED) return false;
+        ToolRequest request = canonicalize(run, request(call));
+        FrozenToolBinding binding = binding(run, request);
+        return "execution.run".equals(binding.definition().name().value())
+                && journal.state(run.id(), call.idempotencyKey())
+                        .filter(value -> value == ToolJournalState.FAILED)
+                        .isPresent();
+    }
+
+    public ToolApprovalTarget executionRecoveryTarget(AgentRun run, ToolCall call, String failureCode) {
+        ToolRequest request = canonicalize(run, request(call));
+        FrozenToolBinding binding = binding(run, request);
+        String argumentsDigest = argumentsDigest(request);
+        String principalScope = principalScope(run);
+        return new ToolApprovalTarget(
+                call.id(),
+                binding.coordinate().externalForm(),
+                binding.coordinate().definitionHash().value(),
+                argumentsDigest,
+                principalScope,
+                ExecutionRecoveryKeys.requirementDigest(
+                        run.id(),
+                        call.id(),
+                        binding.coordinate().externalForm(),
+                        binding.coordinate().definitionHash().value(),
+                        argumentsDigest,
+                        run.configurationSnapshot().contentHash(),
+                        failureCode,
+                        principalScope));
+    }
+
+    public void validateExecutionRecoveryTarget(
+            AgentRun run, ToolCall call, String failureCode, ToolApprovalTarget target) {
+        if (!isExecutionRecoverySource(run, call)) {
+            throw new SecurityException("execution recovery source is no longer eligible");
         }
-        approvedDecisions.put(call.id(), decision);
+        ToolApprovalTarget current = executionRecoveryTarget(run, call, failureCode);
+        if (!current.equals(target)) {
+            throw new SecurityException("execution recovery target drifted from the frozen invocation");
+        }
+        ToolRequest request = canonicalize(run, request(call));
+        FrozenToolBinding binding = binding(run, request);
+        if (!capabilityAuthorizer.isAllowed(run, binding)) {
+            throw new SecurityException("execution recovery capability is no longer allowed");
+        }
+        ToolSchemaValidationResult inputValidation = schemaValidator.validate(
+                binding.definition().inputSchema(), request.arguments().values());
+        if (!inputValidation.valid()) {
+            throw new SecurityException("execution recovery input no longer matches the frozen schema");
+        }
+        if (policy.evaluate(run, binding, request).effect() == PolicyEffect.DENY) {
+            throw new SecurityException("execution recovery is denied by current policy");
+        }
+    }
+
+    private static String principalScope(AgentRun run) {
+        return run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
+                + run.principal().principalId();
     }
 
     private ToolResult persistResult(

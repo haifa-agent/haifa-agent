@@ -33,12 +33,8 @@ import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.ApprovalVerification;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
-import io.haifa.agent.policy.api.PolicyAuthorizationEvidenceStore;
-import io.haifa.agent.policy.api.PolicyAuthorizationService;
-import io.haifa.agent.policy.api.PolicyDecisionStore;
-import io.haifa.agent.policy.api.PolicySnapshot;
-import io.haifa.agent.policy.api.PolicySnapshotRef;
-import io.haifa.agent.policy.api.PolicySnapshotStore;
+import io.haifa.agent.policy.api.PolicyDecisionService;
+import io.haifa.agent.policy.api.PolicyRuleSet;
 import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointParticipant;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
 import io.haifa.agent.runtime.core.bootstrap.ConfigurationSnapshotFactory;
@@ -113,8 +109,6 @@ import io.haifa.agent.runtime.core.model.ModelAdapterKey;
 import io.haifa.agent.runtime.core.model.ModelAudioResolver;
 import io.haifa.agent.runtime.core.model.ModelImageResolver;
 import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
-import io.haifa.agent.runtime.core.policy.RuntimePolicyAuthorizationEvidenceStore;
-import io.haifa.agent.runtime.core.policy.RuntimePolicyDecisionStore;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
@@ -125,14 +119,12 @@ import io.haifa.agent.runtime.core.retry.ToolRetryPolicy;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.BoundedToolResultNormalizer;
 import io.haifa.agent.runtime.core.tool.CapabilityAuthorizer;
-import io.haifa.agent.runtime.core.tool.DefaultToolPolicy;
+import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
 import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.LargeToolResultPolicy;
-import io.haifa.agent.runtime.core.tool.LegacyToolPolicyAdapter;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.runtime.core.tool.ToolExecutionEnvironment;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
-import io.haifa.agent.runtime.core.tool.ToolPolicy;
 import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.ToolRequestCanonicalizer;
 import io.haifa.agent.runtime.core.tool.ToolResultNormalizer;
@@ -191,18 +183,14 @@ public final class RuntimeCoreBuilder {
             new ToolSchemaValidationResult(List.of(new io.haifa.agent.tool.api.ToolSchemaValidationError(
                     "$", "validator", "structured output schema validator is unavailable")));
     private boolean toolPlatformConfigured;
-    private ToolPolicy toolPolicy = new DefaultToolPolicy();
     private PublicToolPolicy publicToolPolicy;
     private java.util.function.UnaryOperator<PublicToolPolicy> publicToolPolicyDecorator =
             java.util.function.UnaryOperator.identity();
-    private PolicyDecisionStore policyDecisions = new RuntimePolicyDecisionStore();
-    private PolicySnapshotStore policySnapshots;
-    private PolicyAuthorizationEvidenceStore policyAuthorizationEvidence =
-            new RuntimePolicyAuthorizationEvidenceStore();
-    private PolicyAuthorizationService policyAuthorization = PolicyAuthorizationService.decisionOnly();
-    private ApprovalVerificationService approvalVerification = (request, responder) -> {
-        boolean samePrincipal = request.requester().tenant().equals(responder.tenant())
-                && request.requester().principal().equals(responder.principal());
+    private PolicyDecisionService policyEvaluator;
+    private PolicyRuleSet policyRules;
+    private ApprovalVerificationService approvalVerification = (requester, target, responder) -> {
+        boolean samePrincipal = requester.tenant().equals(responder.tenant())
+                && requester.principal().equals(responder.principal());
         return new ApprovalVerification(
                 samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
     };
@@ -380,12 +368,6 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder toolPolicy(ToolPolicy value) {
-        toolPolicy = Objects.requireNonNull(value, "value");
-        publicToolPolicy = null;
-        return this;
-    }
-
     public RuntimeCoreBuilder publicToolPolicy(PublicToolPolicy value) {
         publicToolPolicy = Objects.requireNonNull(value, "value");
         return this;
@@ -396,28 +378,14 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder policyStores(
-            PolicyDecisionStore decisions, PolicyAuthorizationEvidenceStore authorizationEvidence) {
-        policyDecisions = Objects.requireNonNull(decisions, "decisions");
-        policyAuthorizationEvidence = Objects.requireNonNull(authorizationEvidence, "authorizationEvidence");
+    public RuntimeCoreBuilder policy(PolicyRuleSet rules, PolicyDecisionService evaluator) {
+        policyRules = Objects.requireNonNull(rules, "rules");
+        policyEvaluator = Objects.requireNonNull(evaluator, "evaluator");
         return this;
-    }
-
-    public RuntimeCoreBuilder policyStores(
-            PolicySnapshotStore snapshots,
-            PolicyDecisionStore decisions,
-            PolicyAuthorizationEvidenceStore authorizationEvidence) {
-        policySnapshots = Objects.requireNonNull(snapshots, "snapshots");
-        return policyStores(decisions, authorizationEvidence);
     }
 
     public RuntimeCoreBuilder approvalVerification(ApprovalVerificationService value) {
         approvalVerification = Objects.requireNonNull(value, "value");
-        return this;
-    }
-
-    public RuntimeCoreBuilder policyAuthorization(PolicyAuthorizationService value) {
-        policyAuthorization = Objects.requireNonNull(value, "value");
         return this;
     }
 
@@ -602,31 +570,18 @@ public final class RuntimeCoreBuilder {
                 new DefaultToolPolicyRequestAdapter(policyProductId, ApprovalMode.ASK);
         if (publicToolPolicy != null) {
             configuredToolPolicy = publicToolPolicy;
-        } else if (policySnapshots == null) {
-            configuredToolPolicy = new LegacyToolPolicyAdapter(toolPolicy, policyRequests, ids, time, policyDecisions);
+        } else if (policyEvaluator != null && policyRules != null) {
+            configuredToolPolicy = new DefaultPublicToolPolicy(policyRequests, policyEvaluator, policyRules);
+        } else if (toolNames.isEmpty()) {
+            configuredToolPolicy = (run, binding, request) -> {
+                throw new IllegalStateException("tool policy is unavailable");
+            };
         } else {
-            PolicySnapshotRef legacySnapshotRef = new PolicySnapshotRef("legacy-tool-policy-v1");
-            PolicySnapshot newLegacySnapshot = new PolicySnapshot(
-                    legacySnapshotRef,
-                    List.of(),
-                    java.util.Optional.empty(),
-                    ApprovalMode.ASK,
-                    "runtime-compatibility",
-                    java.util.Optional.empty(),
-                    "legacy-tool-policy-v1",
-                    java.time.Instant.ofEpochMilli(time.now().toEpochMilli()));
-            PolicySnapshot legacySnapshot = policySnapshots
-                    .find(legacySnapshotRef)
-                    .orElseGet(() -> {
-                        policySnapshots.save(newLegacySnapshot);
-                        return newLegacySnapshot;
-                    });
-            configuredToolPolicy = new LegacyToolPolicyAdapter(
-                    toolPolicy, policyRequests, ids, time, policyDecisions, legacySnapshot.ref());
+            throw new IllegalStateException("non-empty tool catalog requires an explicit product policy");
         }
         if (!skillTrust.scriptExecutionGrants().isEmpty()) {
-            configuredToolPolicy = new TrustedSkillScriptPublicToolPolicy(
-                    configuredToolPolicy, state, policyRequests, ids, time, policyDecisions);
+            configuredToolPolicy =
+                    new TrustedSkillScriptPublicToolPolicy(configuredToolPolicy, state, policyRequests, time);
         }
         configuredToolPolicy = Objects.requireNonNull(
                 publicToolPolicyDecorator.apply(configuredToolPolicy), "public tool policy decorator returned null");
@@ -651,8 +606,7 @@ public final class RuntimeCoreBuilder {
                 transitions,
                 toolResultAssets,
                 LargeToolResultPolicy.defaults(),
-                toolRequestCanonicalizer,
-                policyAuthorization);
+                toolRequestCanonicalizer);
         List<AgentRuntimeMiddleware> configuredMiddleware = new ArrayList<>(List.of(
                 new RunMetadataMiddleware(),
                 new SafetyInstructionMiddleware(),
@@ -705,7 +659,6 @@ public final class RuntimeCoreBuilder {
                 controls,
                 repairRetry,
                 toolApprovalPrompts,
-                policyDecisions,
                 unitOfWork,
                 events,
                 outbox);
@@ -815,9 +768,6 @@ public final class RuntimeCoreBuilder {
                 new RetryExecutor(Sleeper.threadSleep()),
                 persistenceRetry,
                 approvalVerification,
-                policyAuthorizationEvidence,
-                policyAuthorization,
-                policyDecisions,
                 configuredRunInputs,
                 eventFeed,
                 eventSubscriptions);

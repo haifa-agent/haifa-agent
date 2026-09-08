@@ -158,7 +158,6 @@ public final class JavaToolAssembly {
                             request.principal(),
                             request.deadline(),
                             request.idempotencyKey(),
-                            request.policyDecisionRef(),
                             request.cancellation(),
                             request.credentialLeases());
                     request.observer().dispatched();
@@ -373,7 +372,6 @@ public final class JavaToolAssembly {
                     request.arguments(),
                     request.deadline(),
                     request.idempotencyKey(),
-                    request.policyDecisionRef(),
                     request.cancellation(),
                     request.credentialLeases(),
                     request.observer());

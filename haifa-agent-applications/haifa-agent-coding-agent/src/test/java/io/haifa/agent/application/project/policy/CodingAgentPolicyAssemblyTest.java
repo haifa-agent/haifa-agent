@@ -15,25 +15,22 @@ import io.haifa.agent.policy.api.PolicyRisk;
 import io.haifa.agent.policy.api.PolicyRiskLevel;
 import io.haifa.agent.policy.api.PolicySideEffect;
 import io.haifa.agent.policy.api.PolicySubject;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class CodingAgentPolicyAssemblyTest {
-    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-26T00:00:00Z"), ZoneOffset.UTC);
-
     @Test
-    void exposesTheSharedPersistentAuthorizationService() {
-        AtomicInteger sequence = new AtomicInteger();
-        var assembly =
-                CodingAgentPolicyAssembly.create(ApprovalMode.ASK, CLOCK, () -> "policy-" + sequence.incrementAndGet());
+    void exposesStorelessProductRulesAndSharedEvaluator() {
+        var assembly = CodingAgentPolicyAssembly.create(ApprovalMode.ASK, CodingApprovalThreshold.LOW);
 
-        assertThat(assembly.authorization().persistentGrantsEnabled()).isTrue();
+        assertThat(assembly.rules().approvalMode()).isEqualTo(ApprovalMode.ASK);
+        assertThat(assembly.rules().contentDigest()).startsWith("sha256:");
+        assertThat(assembly.evaluator()).isNotNull();
+        assertThat(List.of(assembly.getClass().getMethods()))
+                .extracting(method -> method.getName())
+                .doesNotContain("snapshot", "authorization", "persistence");
     }
 
     @Test
@@ -246,10 +243,8 @@ class CodingAgentPolicyAssemblyTest {
             String resourceType,
             Set<PolicySideEffect> sideEffects,
             boolean credentialUse) {
-        AtomicInteger sequence = new AtomicInteger();
-        var assembly = CodingAgentPolicyAssembly.create(
-                mode, threshold, CLOCK, () -> "decision-" + sequence.incrementAndGet());
-        return assembly.decisions()
+        var assembly = CodingAgentPolicyAssembly.create(mode, threshold);
+        return assembly.evaluator()
                 .evaluate(
                         new PolicyRequest(
                                 new PolicySubject(
@@ -260,6 +255,6 @@ class CodingAgentPolicyAssemblyTest {
                                 new PolicyAction(capability, operation),
                                 new PolicyResource(resourceType, "test.tool", Optional.of("0".repeat(64)), "Test tool"),
                                 new PolicyRisk(riskLevel, sideEffects, credentialUse, Optional.empty())),
-                        assembly.snapshot());
+                        assembly.rules());
     }
 }

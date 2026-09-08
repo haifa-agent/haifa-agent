@@ -7,6 +7,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionFailure;
 import io.haifa.agent.execution.api.ExecutionId;
+import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutput;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
@@ -18,7 +19,6 @@ import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.hostworkspace.HostGitInspectionStatus;
 import io.haifa.agent.project.hostworkspace.HostRepositoryLocator;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.WorkspaceId;
@@ -51,8 +51,7 @@ class GitTopologyIntegrationTest {
                 .requireSuccess();
         linked = linked.toRealPath();
         WorkspaceId workspaceId = new WorkspaceId("workspace-linked");
-        AuthorizedHostDirectory boundary =
-                AuthorizedHostDirectory.of(workspaceId, linked, HostDirectoryPermission.READ_WRITE);
+        AuthorizedHostDirectory boundary = AuthorizedHostDirectory.of(workspaceId, linked);
         ExecutionBroker broker = realGitBroker(Map.of(workspaceId, linked));
         AtomicInteger ids = new AtomicInteger();
         IdentifierGenerator identifiers = () -> "linked-git-" + ids.incrementAndGet();
@@ -90,8 +89,7 @@ class GitTopologyIntegrationTest {
         Path submodule = parent.resolve("vendor/lib-x").toRealPath();
         configure(submodule);
         WorkspaceId workspaceId = new WorkspaceId("workspace-submodule");
-        AuthorizedHostDirectory boundary =
-                AuthorizedHostDirectory.of(workspaceId, parent.toRealPath(), HostDirectoryPermission.READ_WRITE);
+        AuthorizedHostDirectory boundary = AuthorizedHostDirectory.of(workspaceId, parent.toRealPath());
         HostWorkspaceScope scope = HostWorkspaceScope.initial(boundary);
         ExecutionBroker broker = realGitBroker(Map.of(workspaceId, parent.toRealPath()));
         AtomicInteger ids = new AtomicInteger();
@@ -200,7 +198,12 @@ class GitTopologyIntegrationTest {
 
     private static TrustedExecutionContext trusted(String runRef) {
         return new TrustedExecutionContext(
-                runRef, new PrincipalRef("actor", "user"), Set.of("execution.run", "git.read"), "allow");
+                new io.haifa.agent.core.reference.TenantRef("tenant"),
+                runRef,
+                new PrincipalRef("actor", "user"),
+                Set.of("execution.run", "git.read"),
+                ExecutionOrigin.PRODUCT_INTERNAL,
+                Optional.empty());
     }
 
     private static String digest(byte[] value) {

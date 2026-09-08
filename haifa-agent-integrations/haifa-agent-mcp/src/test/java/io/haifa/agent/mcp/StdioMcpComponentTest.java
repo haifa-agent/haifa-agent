@@ -14,6 +14,7 @@ import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
@@ -221,7 +222,13 @@ class StdioMcpComponentTest {
         return new ManagedProcessRequest(new ExecutionRequest(
                 new ExecutionId("mcp-stdio-test"),
                 "mcp-stdio-test",
-                new TrustedExecutionContext("mcp-control", McpTestFixtures.PRINCIPAL, Set.of("execution.run"), "allow"),
+                new TrustedExecutionContext(
+                        new io.haifa.agent.core.reference.TenantRef("tenant"),
+                        "mcp-control",
+                        McpTestFixtures.PRINCIPAL,
+                        Set.of("execution.run"),
+                        ExecutionOrigin.PRODUCT_INTERNAL,
+                        Optional.empty()),
                 workspace,
                 WorkspacePath.root(workspace),
                 new ExecutionCommand(ExecutionCommandMode.DIRECT, List.of("stub-mcp", "--stdio")),

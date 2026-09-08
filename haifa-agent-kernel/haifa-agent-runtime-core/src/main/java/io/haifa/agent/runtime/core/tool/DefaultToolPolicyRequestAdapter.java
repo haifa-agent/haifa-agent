@@ -35,8 +35,7 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
         var definition = binding.definition();
         String invocationDigest = resourceDigest(definition.name().value(), request);
         String resourceDigest;
-        boolean execution = definition.name().value().equals("execution.run")
-                || definition.name().value().equals("execution.request_permissions");
+        boolean execution = definition.name().value().equals("execution.run");
         if (execution) {
             String scratchSpecDigest =
                     executionScratchSpecDigest(definition.inputSchema().document());
@@ -58,7 +57,6 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
                         Optional.of(run.id().value()),
                         Optional.empty(),
                         approvalMode,
-                        Optional.empty(),
                         Optional.empty()),
                 new PolicyAction(execution ? "execution.run" : definition.name().value(), "invoke"),
                 new PolicyResource(
@@ -93,47 +91,6 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
                         commandText,
                         workdirText,
                         canonicalExpectedExitCodes(request.arguments().values())));
-            }
-        }
-        if ("execution.request_permissions".equals(capability)) {
-            Map<String, Object> values = request.arguments().values();
-            Object command = values.get("command");
-            Object workspaceRef = values.get("workspaceRef");
-            Object relativeWorkdir = values.get("relativeWorkdir");
-            Object workdir = values.getOrDefault("workdir", ".");
-            Object prior = values.get("priorToolCallId");
-            Object permission = values.get("requestedPermission");
-            Object justification = values.get("justification");
-            Object timeout = values.getOrDefault("timeoutMillis", "DEFAULT");
-            if (command instanceof String commandText
-                    && workspaceRef instanceof String workspaceRefText
-                    && relativeWorkdir instanceof String relativeWorkdirText
-                    && prior instanceof String priorText
-                    && permission instanceof String permissionText
-                    && justification instanceof String justificationText) {
-                return PolicyDigest.sha256Fields(List.of(
-                        commandText,
-                        workspaceRefText,
-                        relativeWorkdirText,
-                        priorText,
-                        permissionText,
-                        justificationText,
-                        String.valueOf(timeout),
-                        canonicalExpectedExitCodes(values)));
-            }
-            if (command instanceof String commandText
-                    && workdir instanceof String workdirText
-                    && prior instanceof String priorText
-                    && permission instanceof String permissionText
-                    && justification instanceof String justificationText) {
-                return PolicyDigest.sha256Fields(List.of(
-                        commandText,
-                        workdirText,
-                        priorText,
-                        permissionText,
-                        justificationText,
-                        String.valueOf(timeout),
-                        canonicalExpectedExitCodes(values)));
             }
         }
         return ToolPipeline.argumentsDigest(request);

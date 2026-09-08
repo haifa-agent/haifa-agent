@@ -15,6 +15,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,15 @@ class HostWorkspaceScopeTest {
     private Path outside;
     private HostWorkspaceScope scope;
 
+    @Test
+    void mountScopeCarriesIdentityAndPathFactsButNoUserPermission() {
+        assertThat(Stream.of(AuthorizedHostDirectory.class.getRecordComponents())
+                        .map(component -> component.getName()))
+                .containsExactly("workspaceId", "realPath");
+        assertThat(Stream.of(HostWorkspaceScope.class.getDeclaredMethods()).map(method -> method.getName()))
+                .doesNotContain("requireWritable");
+    }
+
     @BeforeEach
     void setUp() throws IOException {
         // @TempDir may use an OS alias (/var vs /private/var or a Windows short path).
@@ -39,10 +49,8 @@ class HostWorkspaceScopeTest {
         rootA = Files.createDirectories(tempDir.resolve("project-a"));
         rootB = Files.createDirectories(tempDir.resolve("project-b"));
         outside = Files.createDirectories(tempDir.resolve("outside"));
-        scope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(
-                new WorkspaceId("ws-a"), rootA.toRealPath(), HostDirectoryPermission.READ_WRITE));
-        scope = scope.withDirectory(AuthorizedHostDirectory.of(
-                new WorkspaceId("ws-b"), rootB.toRealPath(), HostDirectoryPermission.READ_ONLY));
+        scope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(new WorkspaceId("ws-a"), rootA.toRealPath()));
+        scope = scope.withDirectory(AuthorizedHostDirectory.of(new WorkspaceId("ws-b"), rootB.toRealPath()));
     }
 
     @AfterEach
@@ -70,6 +78,20 @@ class HostWorkspaceScopeTest {
 
         assertThat(resolved.workspacePath().projectPath()).isEqualTo(ProjectPath.root());
         assertThat(resolved.hostPath()).isEqualTo(rootA.toRealPath());
+    }
+
+    @Test
+    void keepsTheWorkspaceIdentityWhenASafeDirectoryIsRecreatedAtTheSameCanonicalPath() throws IOException {
+        Path approvedPath = rootA;
+        deleteRecursively(rootA);
+        Files.createDirectories(approvedPath);
+        Path replacement = Files.writeString(approvedPath.resolve("replacement.txt"), "new contents");
+
+        ResolvedAuthorizedPath resolved = scope.resolve(replacement.toString());
+
+        assertThat(resolved.directory().workspaceId()).isEqualTo(new WorkspaceId("ws-a"));
+        assertThat(resolved.workspacePath().workspaceId()).isEqualTo(new WorkspaceId("ws-a"));
+        assertThat(resolved.workspacePath().projectPath()).isEqualTo(ProjectPath.of("replacement.txt"));
     }
 
     @Test
@@ -189,16 +211,6 @@ class HostWorkspaceScopeTest {
     }
 
     @Test
-    void requiresWritePermissionForReadOnlyDirectories() {
-        assertThatThrownBy(
-                        () -> scope.requireWritable(scope.allowedDirectories().get(1)))
-                .isInstanceOfSatisfying(HostWorkspaceScopeException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(HostWorkspaceScopeErrorCode.PERMISSION_DENIED));
-        assertThatCode(() -> scope.requireWritable(scope.allowedDirectories().get(0)))
-                .doesNotThrowAnyException();
-    }
-
-    @Test
     void rejectsExistingSymlinkTargetEscapingTheAuthorizedDirectory() throws IOException {
         Path secret = Files.writeString(outside.resolve("secret.txt"), "secret", StandardCharsets.UTF_8);
         Path link = createSymbolicLinkOrSkip(rootA.resolve("link.txt"), secret);
@@ -274,10 +286,9 @@ class HostWorkspaceScopeTest {
     @Test
     void rejectsOverlappingAuthorizedDirectoriesAtConstruction() throws IOException {
         Files.createDirectories(rootA.resolve("child"));
-        AuthorizedHostDirectory parent = AuthorizedHostDirectory.of(
-                new WorkspaceId("ws-parent"), rootA.toRealPath(), HostDirectoryPermission.READ_WRITE);
+        AuthorizedHostDirectory parent = AuthorizedHostDirectory.of(new WorkspaceId("ws-parent"), rootA.toRealPath());
         AuthorizedHostDirectory child = AuthorizedHostDirectory.of(
-                new WorkspaceId("ws-child"), rootA.resolve("child").toRealPath(), HostDirectoryPermission.READ_ONLY);
+                new WorkspaceId("ws-child"), rootA.resolve("child").toRealPath());
 
         assertThatThrownBy(() -> HostWorkspaceScope.initial(child).withDirectory(parent))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -285,15 +296,14 @@ class HostWorkspaceScopeTest {
         assertThatThrownBy(() -> HostWorkspaceScope.initial(parent).withDirectory(child))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> HostWorkspaceScope.initial(parent)
-                        .withDirectory(AuthorizedHostDirectory.of(
-                                new WorkspaceId("ws-copy"), parent.realPath(), HostDirectoryPermission.READ_ONLY)))
+                        .withDirectory(AuthorizedHostDirectory.of(new WorkspaceId("ws-copy"), parent.realPath())))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void acceptsDisjointSiblingDirectoriesIncludingAcrossDifferentParents() throws IOException {
-        AuthorizedHostDirectory sibling = AuthorizedHostDirectory.of(
-                new WorkspaceId("ws-outside"), outside.toRealPath(), HostDirectoryPermission.READ_WRITE);
+        AuthorizedHostDirectory sibling =
+                AuthorizedHostDirectory.of(new WorkspaceId("ws-outside"), outside.toRealPath());
 
         assertThatCode(() -> HostWorkspaceScope.initial(
                                 scope.allowedDirectories().get(0))
@@ -333,14 +343,8 @@ class HostWorkspaceScopeTest {
             Path secondFile = Files.writeString(second.resolve("same.txt"), "b", StandardCharsets.UTF_8);
             HostWorkspaceScope crossVolumeScope = new HostWorkspaceScope(
                     List.of(
-                            AuthorizedHostDirectory.of(
-                                    new WorkspaceId("ws-volume-a"),
-                                    first.toRealPath(),
-                                    HostDirectoryPermission.READ_WRITE),
-                            AuthorizedHostDirectory.of(
-                                    new WorkspaceId("ws-volume-b"),
-                                    second.toRealPath(),
-                                    HostDirectoryPermission.READ_WRITE)),
+                            AuthorizedHostDirectory.of(new WorkspaceId("ws-volume-a"), first.toRealPath()),
+                            AuthorizedHostDirectory.of(new WorkspaceId("ws-volume-b"), second.toRealPath())),
                     1L);
 
             assertThat(crossVolumeScope
@@ -361,8 +365,7 @@ class HostWorkspaceScopeTest {
 
     @Test
     void versionAdvancesWhenTheDirectorySetChanges() throws IOException {
-        AuthorizedHostDirectory third = AuthorizedHostDirectory.of(
-                new WorkspaceId("ws-c"), outside.toRealPath(), HostDirectoryPermission.READ_WRITE);
+        AuthorizedHostDirectory third = AuthorizedHostDirectory.of(new WorkspaceId("ws-c"), outside.toRealPath());
 
         HostWorkspaceScope expanded = scope.withDirectory(third);
         HostWorkspaceScope reverted = expanded.withoutDirectory(new WorkspaceId("ws-c"));

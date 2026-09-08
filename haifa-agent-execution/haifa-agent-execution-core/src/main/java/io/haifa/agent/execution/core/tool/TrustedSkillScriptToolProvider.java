@@ -58,9 +58,6 @@ public final class TrustedSkillScriptToolProvider implements ToolProvider {
                         .equals(spec.definition().name())) {
             throw new SecurityException("trusted script Tool binding is unavailable or drifted");
         }
-        if (invocation.policyDecisionRef().isEmpty()) {
-            throw new SecurityException("trusted script Tool requires a public policy decision");
-        }
         if (!execution.configurationIdentity().equals(spec.executionConfigurationDigest())) {
             throw new SecurityException("trusted script execution configuration has drifted");
         }

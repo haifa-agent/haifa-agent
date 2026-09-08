@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.interaction;
 
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
@@ -74,6 +75,16 @@ public final class InMemoryInteractionPort implements InteractionPort {
                 .map(record -> new ResolvedInteraction(
                         record.request(), resolved.get(record.request().id())))
                 .findFirst();
+    }
+
+    @Override
+    public synchronized List<InteractionRecord> toolApprovalRecords(AgentRunId runId, ToolCallId toolCallId) {
+        return records.values().stream()
+                .filter(record -> record.request().runId().equals(runId))
+                .filter(record -> record.request().target() instanceof ToolApprovalTarget target
+                        && target.toolCallId().equals(toolCallId))
+                .sorted(Comparator.comparing(record -> record.request().createdAt()))
+                .toList();
     }
 
     @Override
@@ -314,8 +325,7 @@ public final class InMemoryInteractionPort implements InteractionPort {
             throw new RuntimeContractException(
                     RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
-        if (!request.tenant().equals(caller.tenant())
-                || (request.approvalContext().isEmpty() && !request.requester().equals(caller.principal()))) {
+        if (!request.tenant().equals(caller.tenant()) || !request.requester().equals(caller.principal())) {
             throw new RuntimeContractException(
                     RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
@@ -331,8 +341,7 @@ public final class InMemoryInteractionPort implements InteractionPort {
         if (!request.runId().equals(responseRunId)) {
             throw new IllegalArgumentException("response run does not match interaction");
         }
-        if (!request.tenant().equals(caller.tenant())
-                || (request.approvalContext().isEmpty() && !request.requester().equals(caller.principal()))) {
+        if (!request.tenant().equals(caller.tenant()) || !request.requester().equals(caller.principal())) {
             throw new SecurityException("caller is not allowed to respond to interaction");
         }
         if (request.expiresAt()

@@ -17,7 +17,6 @@ public record JavaToolContext(
         PrincipalRef principal,
         Instant deadline,
         Optional<String> idempotencyKey,
-        Optional<String> policyDecisionRef,
         ToolCancellation cancellation,
         List<CredentialLease> credentialLeases) {
     public JavaToolContext {
@@ -26,7 +25,6 @@ public record JavaToolContext(
         principal = Objects.requireNonNull(principal, "principal must not be null");
         deadline = Objects.requireNonNull(deadline, "deadline must not be null");
         idempotencyKey = Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
-        policyDecisionRef = Objects.requireNonNull(policyDecisionRef, "policyDecisionRef must not be null");
         cancellation = Objects.requireNonNull(cancellation, "cancellation must not be null");
         credentialLeases = List.copyOf(Objects.requireNonNull(credentialLeases, "credentialLeases must not be null"));
     }

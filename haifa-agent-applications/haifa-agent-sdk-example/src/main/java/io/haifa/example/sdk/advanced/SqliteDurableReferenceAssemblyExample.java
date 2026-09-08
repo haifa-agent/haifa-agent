@@ -7,12 +7,21 @@ import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.ModelAdapterCoordinate;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.policy.api.ApprovalMode;
+import io.haifa.agent.policy.api.PolicyEffect;
+import io.haifa.agent.policy.api.PolicyRule;
+import io.haifa.agent.policy.api.PolicyRuleMatcher;
+import io.haifa.agent.policy.api.PolicyRuleRef;
+import io.haifa.agent.policy.api.PolicyRuleSet;
+import io.haifa.agent.policy.api.PolicyRuleSource;
+import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.ModelContribution;
+import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.product.ProductArtifactPolicy;
 import io.haifa.agent.sdk.product.ProductCapabilities;
@@ -35,7 +44,9 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
@@ -73,8 +84,8 @@ public final class SqliteDurableReferenceAssemblyExample {
                 new AesGcmModelContinuationProtector(continuationKey, new SecureRandom()),
                 metadata(PERSISTENCE, ProductCapabilities.PERSISTENCE, "sqlite-runtime-v7"),
                 metadata(CONVERSATION, ProductCapabilities.CONVERSATION, "sqlite-conversation-v1"),
-                metadata(MEMORY, ProductCapabilities.MEMORY, "sqlite-memory-v1"),
-                metadata(POLICY, ProductCapabilities.POLICY, "sqlite-policy-v1"));
+                metadata(MEMORY, ProductCapabilities.MEMORY, "sqlite-memory-v1"));
+        PolicyPlatformContribution policy = policyContribution();
         ModelContribution models = new ModelContribution(
                 new SdkContributionMetadata(
                         MODEL,
@@ -92,7 +103,7 @@ public final class SqliteDurableReferenceAssemblyExample {
                     .contribute(sqlite.persistence())
                     .contribute(sqlite.conversation())
                     .contribute(sqlite.memory())
-                    .contribute(sqlite.policy())
+                    .contribute(policy)
                     .contribute(sqlite.artifact())
                     .build();
         } catch (RuntimeException | Error exception) {
@@ -171,6 +182,22 @@ public final class SqliteDurableReferenceAssemblyExample {
                 SdkConfigurationDigest.sha256(digestSeed),
                 ProductProviderSuitability.PRODUCTION,
                 "SQLite " + capability.value());
+    }
+
+    private static PolicyPlatformContribution policyContribution() {
+        PolicyRule defaultRule = new PolicyRule(
+                new PolicyRuleRef("sdk-example-default-deny", "1"),
+                PolicyRuleSource.MANAGED,
+                0,
+                PolicyRuleMatcher.any(),
+                PolicyEffect.DENY,
+                Optional.empty(),
+                "SDK_EXAMPLE_TOOL_DENIED",
+                "The durable SDK example does not enable public tools");
+        return new PolicyPlatformContribution(
+                metadata(POLICY, ProductCapabilities.POLICY, "application-policy-v1"),
+                PolicyRuleSet.of(List.of(), Optional.of(defaultRule), ApprovalMode.DENY),
+                new DefaultPolicyDecisionService());
     }
 
     private static ProductContributionCoordinate coordinate(String providerId) {

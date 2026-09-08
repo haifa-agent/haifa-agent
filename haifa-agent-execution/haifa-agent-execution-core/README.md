@@ -2,11 +2,16 @@
 
 ## Public Policy integration
 
-`PolicyDecisionExecutionPolicy` 要求 `TrustedExecutionContext.policyDecisionRef` 真实可查，并复核
-Tenant、Principal、Run、Action、Execution 请求摘要、Snapshot，以及 `ASK` 的有效满足证据。
-它不会创建 Interaction，因此 `execution.run` 的用户可见审批只发生在 Tool/Runtime 层。公共
-Decision 不能覆盖 Broker 既有的 Frozen Capability、Workspace、Profile、Provider、Sandbox、
-deadline、输出和审计硬边界。
+`TrustedExecutionContext` 使用类型化 `ExecutionOrigin` 和可选 `sourceToolCallId` 描述可信入口。
+`sourceToolCallId` 只用于关联 Runtime 已冻结的 Tool Call 事实，不是 bearer，也不能单独授权执行。
+CA 与 PA 在产品装配层提供各自的 `ExecutionPolicy`；未知入口、来源与 Tool Call 形状不一致、缺少冻结
+capability 时均 fail closed。Store-based `PolicyDecisionExecutionPolicy` 已退出生产装配。
+Broker 自己把 `FIRST_EXECUTION`、`IDEMPOTENT_REPLAY` 或 `MANAGED_SESSION` 传给该策略；入口类型不进入
+caller 可构造的 request/context。首次执行、缓存结果返回和 managed process open 之前都重新授权，
+产品撤权后不会因为已有幂等结果而绕过当前策略。
+
+`execution.run` 的用户可见审批仍发生在 Tool/Runtime 的 Interaction 层。产品 Policy 不能覆盖 Broker
+既有的 Frozen Capability、Workspace、Profile、Provider、Sandbox、deadline、输出和审计硬边界。
 
 实现 `ExecutionBroker`、内存 Journal/输出存储、可替换的 `WorkspaceChangeObserver` 端口及 `FileChangeSet`
 对账。`LocalIncrementalWorkspaceChangeObserver` 的 NIO 实现位于 `haifa-agent-execution-host`，显式绑定一个

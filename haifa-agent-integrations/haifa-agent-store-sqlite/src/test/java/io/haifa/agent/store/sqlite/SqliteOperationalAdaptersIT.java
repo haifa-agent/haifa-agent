@@ -236,7 +236,8 @@ class SqliteOperationalAdaptersIT {
                         "builtin/file.write@1",
                         "sha256:definition",
                         "sha256:arguments",
-                        "tenant:principal"),
+                        "tenant:principal",
+                        "sha256:requirement"),
                 NOW,
                 NOW.plusSeconds(60));
         foundation.interactions().create(request);

@@ -107,7 +107,7 @@ public final class PersonalAssistantAssembler {
                     .timeProvider(dependencies.clock()::instant)
                     .toolApprovalPrompts(dependencies.execution()::approvalPrompt)
                     .publicToolPolicyDecorator(PersonalWebAllowPolicy.decorator(
-                            tools.tool().catalog(), dependencies.web(), dependencies.policy(), dependencies.clock()))
+                            tools.tool().catalog(), dependencies.web(), dependencies.policy()))
                     .modelImageResolver(dependencies.imageResolver())
                     .modelAudioResolver(dependencies.audioResolver())
                     .toolRetry(

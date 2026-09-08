@@ -9,6 +9,7 @@ import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionPreflightException;
@@ -84,6 +85,7 @@ class ExecutionCoreTest {
         Files.writeString(root.resolve("before.txt"), "before\n");
         Fixture fixture = fixture();
         AtomicInteger policyCalls = new AtomicInteger();
+        List<ExecutionPolicyEntryPoint> policyEntryPoints = new java.util.ArrayList<>();
         SandboxProvider provider = fakeProvider(
                 () -> {
                     try {
@@ -94,7 +96,10 @@ class ExecutionCoreTest {
                 },
                 ("secret-token\nhttps://user:remote-secret@github.example/repo.git\n" + "x".repeat(5000))
                         .getBytes(StandardCharsets.UTF_8));
-        DefaultExecutionBroker broker = fixture.broker(provider, request -> policyCalls.incrementAndGet());
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {
+            policyCalls.incrementAndGet();
+            policyEntryPoints.add(entryPoint);
+        });
         ExecutionRequest request = fixture.request("execution-1", "key-1", Set.of("execution.run"), List.of("fake"));
 
         var result = broker.execute(request);
@@ -108,6 +113,9 @@ class ExecutionCoreTest {
                 .contains("***", "https://***@github.example/repo.git");
         assertThat(broker.execute(request).replayed()).isTrue();
         assertThat(policyCalls).hasValue(2);
+        assertThat(policyEntryPoints)
+                .containsExactly(
+                        ExecutionPolicyEntryPoint.FIRST_EXECUTION, ExecutionPolicyEntryPoint.IDEMPOTENT_REPLAY);
 
         assertThatThrownBy(() -> broker.execute(
                         fixture.request("execution-2", "key-1", Set.of("execution.run"), List.of("different"))))
@@ -118,10 +126,49 @@ class ExecutionCoreTest {
     }
 
     @Test
+    void currentPolicyCanRevokeAnIdempotentReplayBeforeTheCachedResultReturns() {
+        Fixture fixture = fixture();
+        AtomicInteger providerCalls = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean revoked = new java.util.concurrent.atomic.AtomicBoolean();
+        DefaultExecutionBroker broker =
+                fixture.broker(fakeProvider(providerCalls::incrementAndGet, new byte[0]), (request, entryPoint) -> {
+                    if (revoked.get()) {
+                        throw new ExecutionRejectedException("LIVE_AUTHORITY_REVOKED", "live authority was revoked");
+                    }
+                });
+        ExecutionRequest request =
+                fixture.request("replay-revoke", "replay-revoke-key", Set.of("execution.run"), List.of("fake"));
+
+        assertThat(broker.execute(request).replayed()).isFalse();
+        revoked.set(true);
+
+        assertThatThrownBy(() -> broker.execute(request))
+                .isInstanceOfSatisfying(ExecutionRejectedException.class, exception -> assertThat(exception.code())
+                        .isEqualTo("LIVE_AUTHORITY_REVOKED"));
+        assertThat(providerCalls).hasValue(1);
+    }
+
+    @Test
+    void policyDenialHappensBeforeExecutionStateOrProviderOpen() {
+        Fixture fixture = fixture();
+        AtomicInteger providerCalls = new AtomicInteger();
+        DefaultExecutionBroker broker =
+                fixture.broker(fakeProvider(providerCalls::incrementAndGet, new byte[0]), (request, entryPoint) -> {
+                    throw new ExecutionRejectedException("PRODUCT_DENIED", "product denied execution");
+                });
+        ExecutionRequest request =
+                fixture.request("policy-denied", "policy-denied-key", Set.of("execution.run"), List.of("fake"));
+
+        assertThatThrownBy(() -> broker.execute(request)).isInstanceOf(ExecutionRejectedException.class);
+        assertThat(broker.find(request.id())).isEmpty();
+        assertThat(providerCalls).hasValue(0);
+    }
+
+    @Test
     void brokerPreservesConfirmedProcessLimitAsATerminalResourceFailure() {
         Fixture fixture = fixture();
         SandboxProvider provider = fakeProvider(() -> {}, new byte[0], SandboxProcessStatus.PROCESS_LIMIT_EXCEEDED);
-        DefaultExecutionBroker broker = fixture.broker(provider, request -> {});
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
 
         var result = broker.execute(
                 fixture.request("process-limit", "process-limit-key", Set.of("execution.run"), List.of("fake")));
@@ -197,7 +244,7 @@ class ExecutionCoreTest {
         };
         ResolvedExecutionEnvironment resolvedEnv =
                 ResolvedExecutionEnvironment.of(Map.of("SECRET", "secret-token"), Set.of("SECRET"));
-        DefaultExecutionBroker broker = fixture.broker(provider, request -> {}, resolvedEnv);
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {}, resolvedEnv);
         var streamed = new java.io.ByteArrayOutputStream();
         AtomicInteger starts = new AtomicInteger();
 
@@ -246,7 +293,8 @@ class ExecutionCoreTest {
                 ("port 8080 build 1234 color truecolor; cat in C:\\Users\\dev and C:\\Windows\\System32; key: k9x; token: supersecret1\n"
                                 + "clone url: https://user:secret-pass@github.example/repo.git\n")
                         .getBytes(StandardCharsets.UTF_8);
-        DefaultExecutionBroker broker = fixture.broker(fakeProvider(() -> {}, stdout), request -> {}, resolvedEnv);
+        DefaultExecutionBroker broker =
+                fixture.broker(fakeProvider(() -> {}, stdout), (request, entryPoint) -> {}, resolvedEnv);
 
         var result = broker.execute(
                 fixture.request("redaction-policy", "redaction-policy-key", Set.of("execution.run"), List.of("fake")));
@@ -279,7 +327,8 @@ class ExecutionCoreTest {
         WorkspaceChangeObserver unavailable = ignored -> {
             throw WorkspaceChangeObserverException.resyncFailed(new IllegalStateException("observer unavailable"));
         };
-        DefaultExecutionBroker broker = fixture.broker(provider, ignored -> {}, fixture.profile(provider), unavailable);
+        DefaultExecutionBroker broker =
+                fixture.broker(provider, (request, entryPoint) -> {}, fixture.profile(provider), unavailable);
 
         assertThatThrownBy(() -> broker.execute(fixture.request(
                         "observer-failure", "observer-failure-key", Set.of("execution.run"), List.of("fake"))))
@@ -299,7 +348,7 @@ class ExecutionCoreTest {
             }
         };
         DefaultExecutionBroker broker =
-                fixture.broker(provider, ignored -> {}, fixture.profile(provider), failingCompletion);
+                fixture.broker(provider, (request, entryPoint) -> {}, fixture.profile(provider), failingCompletion);
 
         var result = broker.execute(
                 fixture.request("observer-resync", "observer-resync-key", Set.of("execution.run"), List.of("fake")));
@@ -327,7 +376,12 @@ class ExecutionCoreTest {
     void managedSessionUsesTheSameAuthorizationRedactionAuditAndCompletionPath() throws Exception {
         Fixture fixture = fixture();
         var provider = managedProvider();
-        DefaultExecutionBroker broker = fixture.broker(provider, request -> {});
+        AtomicInteger policyCalls = new AtomicInteger();
+        List<ExecutionPolicyEntryPoint> policyEntryPoints = new java.util.ArrayList<>();
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {
+            policyCalls.incrementAndGet();
+            policyEntryPoints.add(entryPoint);
+        });
         ExecutionRequest request =
                 fixture.request("managed-execution", "managed-key", Set.of("execution.run"), List.of("fake"));
 
@@ -349,6 +403,10 @@ class ExecutionCoreTest {
         var result = broker.find(request.id()).orElseThrow();
         assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
         assertThat(result.stdout().summary()).doesNotContain("remote-secret");
+        assertThat(policyCalls)
+                .as("managed execution must pass the same final ExecutionPolicy choke point")
+                .hasValue(1);
+        assertThat(policyEntryPoints).containsExactly(ExecutionPolicyEntryPoint.MANAGED_SESSION);
     }
 
     @Test
@@ -403,7 +461,7 @@ class ExecutionCoreTest {
 
         ResolvedExecutionEnvironment env =
                 ResolvedExecutionEnvironment.of(Map.of("LEAS_KEY", "secret-token"), Set.of("LEAS_KEY"));
-        DefaultExecutionBroker broker = fixture.broker(provider, request -> {}, env);
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {}, env);
         ExecutionRequest request =
                 fixture.request("flush-exit", "flush-exit-key", Set.of("execution.run"), List.of("fake"));
 
@@ -460,7 +518,7 @@ class ExecutionCoreTest {
                 NetworkPolicy.ALLOW,
                 new SandboxFilesystemPolicy(SandboxWorkspaceAccess.READ_WRITE, true, Set.of()),
                 new SandboxCapabilities(true, true, false, false, false));
-        DefaultExecutionBroker broker = fixture.broker(provider, request -> {}, profile);
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {}, profile);
 
         assertThatThrownBy(() -> broker.execute(fixture.request(
                         "capability-missing", "capability-key", Set.of("execution.run"), List.of("fake"))))
@@ -750,7 +808,13 @@ class ExecutionCoreTest {
             return new ExecutionRequest(
                     new ExecutionId(id),
                     key,
-                    new TrustedExecutionContext("run-1", new PrincipalRef("actor", "user"), capabilities, "allow-1"),
+                    new TrustedExecutionContext(
+                            new io.haifa.agent.core.reference.TenantRef("tenant"),
+                            "run-1",
+                            new PrincipalRef("actor", "user"),
+                            capabilities,
+                            ExecutionOrigin.PRODUCT_USER_COMMAND,
+                            Optional.empty()),
                     workspaceId,
                     WorkspacePath.root(workspaceId),
                     new ExecutionCommand(ExecutionCommandMode.DIRECT, argv),

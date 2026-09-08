@@ -4,13 +4,13 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
-import io.haifa.agent.execution.core.PolicyDecisionExecutionPolicy;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.execution.core.tool.ExecutionInvocationScopeResolver.ExecutionInvocationScope;
@@ -19,8 +19,10 @@ import io.haifa.agent.execution.core.tool.ExecutionToolProvider;
 import io.haifa.agent.execution.core.tool.ScriptRuntimeResolver;
 import io.haifa.agent.execution.host.change.LocalIncrementalWorkspaceChangeObserver;
 import io.haifa.agent.execution.host.tool.HostScriptRuntimeResolver;
+import io.haifa.agent.personalassistant.application.execution.PersonalAssistantExecutionPolicy;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.ApprovalVerification;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
@@ -40,13 +42,17 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
+import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
+import io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier;
+import io.haifa.agent.runtime.core.tool.ToolRequestCanonicalizer;
 import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.host.HostExecutionEnvironmentResolver;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.sandbox.host.HostShell;
 import io.haifa.agent.sandbox.host.ResolvedHostEnvironment;
-import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -62,10 +68,12 @@ public final class PersonalExecutionRuntime {
 
     public static PersonalExecutionPlatform create(
             Path dataDirectory,
+            TenantRef tenant,
             PrincipalRef principal,
             PersonalAssistantProperties.Execution properties,
-            PolicyPlatformContribution policy,
-            Clock clock) {
+            Clock clock,
+            RuntimePersistencePorts persistence,
+            io.haifa.agent.sdk.contribution.PolicyPlatformContribution policy) {
         Path workspaceRoot = prepare(dataDirectory.resolve("execution-workspace"));
         Path scratchRoot = Path.of(System.getProperty("java.io.tmpdir"), "haifa-agent-host-scratch")
                 .toAbsolutePath()
@@ -126,20 +134,6 @@ public final class PersonalExecutionRuntime {
                 environmentNames,
                 true);
         host.preflight(profile);
-        var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(
-                workspaceId, workspaceRoot, new PersonalWorkspaceChangeIgnorePolicy());
-        var broker = new DefaultExecutionBroker(
-                new InMemoryExecutionStore(),
-                new InMemoryExecutionOutputStore(),
-                ignored -> io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
-                new PolicyDecisionExecutionPolicy(
-                        policy.decisions(), policy.snapshots(), policy.authorizationEvidence(), clock),
-                new ImmutableSandboxProfileRegistry(List.of(profile)),
-                new ImmutableSandboxProviderRegistry(List.of(host)),
-                workspaces,
-                bindings,
-                workspaceChanges);
         var configuration = new ExecutionToolConfiguration(
                 new ExecutionEnvironmentRef(
                         List.of("personal-execution-" + profile.contentDigest().value())),
@@ -153,6 +147,29 @@ public final class PersonalExecutionRuntime {
                 runtimes,
                 ExecutionOutputObserver.noop(),
                 java.util.function.UnaryOperator.identity());
+        var publicToolPolicy = new DefaultPublicToolPolicy(
+                new DefaultToolPolicyRequestAdapter("haifa-personal-assistant", ApprovalMode.ASK),
+                policy.evaluator(),
+                policy.rules());
+        var runtimeVerifier = new RuntimeToolExecutionVerifier(
+                persistence.runs(),
+                persistence.state(),
+                persistence.interactions(),
+                ToolRequestCanonicalizer.identity(),
+                publicToolPolicy);
+        var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(
+                workspaceId, workspaceRoot, new PersonalWorkspaceChangeIgnorePolicy());
+        var broker = new DefaultExecutionBroker(
+                new InMemoryExecutionStore(),
+                new InMemoryExecutionOutputStore(),
+                ignored -> io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
+                new PersonalAssistantExecutionPolicy(runtimeVerifier, configuration, tenant, principal, workspaceId),
+                new ImmutableSandboxProfileRegistry(List.of(profile)),
+                new ImmutableSandboxProviderRegistry(List.of(host)),
+                workspaces,
+                bindings,
+                workspaceChanges);
         var provider = new ExecutionToolProvider(
                 broker,
                 identifiers,
@@ -166,9 +183,9 @@ public final class PersonalExecutionRuntime {
                     provider,
                     profile,
                     runtimes,
-                    (request, responder) -> {
-                        boolean samePrincipal = request.requester().tenant().equals(responder.tenant())
-                                && request.requester().principal().equals(responder.principal());
+                    (requester, target, responder) -> {
+                        boolean samePrincipal = requester.tenant().equals(responder.tenant())
+                                && requester.principal().equals(responder.principal());
                         return new ApprovalVerification(
                                 samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
                     },

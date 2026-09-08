@@ -12,12 +12,13 @@ export LESS=-FRX
 readonly SCRIPT_PATH="${0:A}"
 readonly SCRIPT_DIR="${SCRIPT_PATH:h}"
 readonly REPO_DIR="${HAIFA_AGENT_REPO_DIR:-${SCRIPT_DIR:h:h}}"
+readonly SECRETS_DIR="${REPO_DIR:h}/secrets"
 readonly JAR_FILE="${REPO_DIR}/haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0-SNAPSHOT.jar"
 readonly FIXTURE_DIR="${REPO_DIR}/haifa-agent-testing/haifa-agent-e2e-tests/src/test/resources/coding-e2e/fixtures/single-file-bugfix"
 readonly VERIFIER_FILE="${REPO_DIR}/haifa-agent-testing/haifa-agent-e2e-tests/src/test/resources/coding-e2e/support/verify_java.py"
-readonly DEEPSEEK_KEY_FILE="${HAIFA_DEEPSEEK_KEY_FILE:-${REPO_DIR:h}/ss共享密钥.txt}"
-readonly ALIYUN_IQS_KEY_FILE="${HAIFA_ALIYUN_IQS_KEY_FILE:-${REPO_DIR:h}/ss-aliyun-iqs.txt}"
-readonly CONTINUATION_KEY_FILE="${HAIFA_CONTINUATION_KEY_FILE:-${REPO_DIR:h}/haifa-continuation-key.txt}"
+readonly DEEPSEEK_KEY_FILE="${HAIFA_DEEPSEEK_KEY_FILE:-${SECRETS_DIR}/ss-deepseek.env}"
+readonly ALIYUN_IQS_KEY_FILE="${HAIFA_ALIYUN_IQS_KEY_FILE:-${SECRETS_DIR}/ss-aliyun-iqs.env}"
+readonly CONTINUATION_KEY_FILE="${HAIFA_CONTINUATION_KEY_FILE:-${SECRETS_DIR}/ss-haifa-personal-continuation.env}"
 readonly TEST_RUNS_ROOT="${HAIFA_TEST_RUNS_ROOT:-${HOME}/haifa-agent-test-runs}"
 readonly UTILITY_MCP_ENDPOINT="${HAIFA_UTILITY_MCP_URL:-http://127.0.0.1:8091/mcp}"
 readonly UTILITY_MCP_HEALTH_URL="${HAIFA_UTILITY_MCP_HEALTH_URL:-http://127.0.0.1:8091/actuator/health}"
@@ -49,6 +50,21 @@ fail() {
 
 require_file() {
   [[ -f "$1" ]] || fail "缺少文件: $1"
+}
+
+read_env_secret() {
+  local file="$1"
+  local name="$2"
+  local count
+  local unexpected
+  local value
+  count="$(grep -Ec "^${name}=" "$file" || true)"
+  [[ "$count" == "1" ]] || fail "密钥文件必须且只能定义一次 ${name}: $file"
+  unexpected="$(grep -Evc "^${name}=|^[[:space:]]*(#.*)?$" "$file" || true)"
+  [[ "$unexpected" == "0" ]] || fail "密钥文件包含 ${name} 之外的内容: $file"
+  value="$(sed -n "s/^${name}=//p" "$file")"
+  [[ -n "$value" ]] || fail "密钥文件中的 ${name} 不能为空: $file"
+  print -r -- "$value"
 }
 
 cleanup_secrets() {
@@ -122,23 +138,22 @@ fi
 require_file "$JAR_FILE"
 
 if [[ -z "${DEEPSEEK_API_KEY:-}" ]]; then
-  DEEPSEEK_API_KEY=""
-  IFS= read -r DEEPSEEK_API_KEY < "$DEEPSEEK_KEY_FILE" || [[ -n "$DEEPSEEK_API_KEY" ]]
+  DEEPSEEK_API_KEY="$(read_env_secret "$DEEPSEEK_KEY_FILE" "DEEPSEEK_API_KEY")"
 fi
 [[ -n "$DEEPSEEK_API_KEY" ]] || fail "DeepSeek Key 不可用"
 export DEEPSEEK_API_KEY
 
 if [[ -z "${HAIFA_CONTINUATION_KEY:-}" ]]; then
-  HAIFA_CONTINUATION_KEY=""
-  IFS= read -r HAIFA_CONTINUATION_KEY < "$CONTINUATION_KEY_FILE" || [[ -n "$HAIFA_CONTINUATION_KEY" ]]
+  HAIFA_CONTINUATION_KEY="$(
+    read_env_secret "$CONTINUATION_KEY_FILE" "HAIFA_PERSONAL_CONTINUATION_KEY"
+  )"
 fi
 [[ -n "$HAIFA_CONTINUATION_KEY" ]] || fail "Continuation Key 不可用"
 export HAIFA_CONTINUATION_KEY
 
 web_enabled=false
 if [[ -z "${ALIYUN_IQS_API_KEY:-}" ]] && [[ -f "$ALIYUN_IQS_KEY_FILE" ]]; then
-  ALIYUN_IQS_API_KEY=""
-  IFS= read -r ALIYUN_IQS_API_KEY < "$ALIYUN_IQS_KEY_FILE" || [[ -n "$ALIYUN_IQS_API_KEY" ]]
+  ALIYUN_IQS_API_KEY="$(read_env_secret "$ALIYUN_IQS_KEY_FILE" "ALIYUN_IQS_API_KEY")"
 fi
 if [[ -n "${ALIYUN_IQS_API_KEY:-}" ]]; then
   export ALIYUN_IQS_API_KEY

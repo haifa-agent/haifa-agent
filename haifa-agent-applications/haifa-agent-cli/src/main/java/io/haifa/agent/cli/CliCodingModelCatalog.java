@@ -27,7 +27,9 @@ import io.haifa.agent.model.core.ImmutableModelCatalog;
 import io.haifa.agent.model.core.InMemoryProviderHealthRegistry;
 import io.haifa.agent.model.core.ModelAccessPolicy;
 import io.haifa.agent.model.core.ModelAvailabilityRequest;
+import io.haifa.agent.model.core.ModelCatalogManifest;
 import io.haifa.agent.model.core.ModelSelectionRequest;
+import io.haifa.agent.model.core.PackagedModelCatalog;
 import io.haifa.agent.model.core.StaticModelPlatform;
 import io.haifa.agent.model.gemini.GeminiModelProfileFactory;
 import io.haifa.agent.model.openai.OpenAiCompatibleModelProfileFactory;
@@ -47,6 +49,8 @@ import java.util.stream.Collectors;
 final class CliCodingModelCatalog implements CodingModelCatalog {
     private static final Set<ModelCapability> REQUIRED =
             EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING);
+    private static final ModelCatalogManifest PACKAGED_CATALOG =
+            PackagedModelCatalog.load(CliCodingModelCatalog.class.getClassLoader());
 
     private final String defaultModelId;
     private final Map<String, CliConfiguration.Model> models;
@@ -75,6 +79,8 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
         profiles = configuration.availableModels().stream()
                 .collect(java.util.stream.Collectors.toUnmodifiableMap(CliConfiguration.Model::id, model -> {
                     var snapshot = LocalCodingAgent.modelSnapshot(model);
+                    var catalogProfile = PACKAGED_CATALOG.profileFor(snapshot);
+                    if (catalogProfile.isPresent()) return catalogProfile.get();
                     if (ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(snapshot.apiStyle())) {
                         return GeminiModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 24));
                     } else if (ModelApiStyles.ANTHROPIC_MESSAGES.equals(snapshot.apiStyle())) {

@@ -12,8 +12,7 @@ public record ProjectToolCallContext(
         PrincipalRef actor,
         String runRef,
         String toolCallRef,
-        String idempotencyKey,
-        String policyDecisionRef) {
+        String idempotencyKey) {
     public ProjectToolCallContext {
         tenant = Objects.requireNonNull(tenant, "tenant must not be null");
         workspaceId = Objects.requireNonNull(workspaceId, "workspaceId must not be null");
@@ -21,7 +20,6 @@ public record ProjectToolCallContext(
         runRef = required(runRef, "runRef");
         toolCallRef = required(toolCallRef, "toolCallRef");
         idempotencyKey = required(idempotencyKey, "idempotencyKey");
-        policyDecisionRef = required(policyDecisionRef, "policyDecisionRef");
     }
 
     private static String required(String value, String field) {

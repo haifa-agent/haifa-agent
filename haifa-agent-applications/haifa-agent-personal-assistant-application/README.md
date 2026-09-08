@@ -199,6 +199,11 @@ Personal Profile 通过 SDK 的 `ShellPlatformContribution` 接入共享 `execut
 `execution_run`。`PersonalExecutionPlatform` 负责产品级 alias、Skill 和审批文案，不复制
 Execution Broker、Sandbox 或 Policy。
 
+PA 的 Broker policy 只接受来自当前持久化 Run 中 `execution.run` frozen ToolCall 的 Runtime 请求，
+并按 server-owned `ExecutionToolConfiguration` 重构命令、输入、cwd、environment、profile、scratch、
+limits 与 digest。它拒绝 direct user/internal/managed 入口，也不创建、读取或依赖 Coding Agent 的
+WorkspaceAccess。
+
 每次执行都创建 exact approval。审批内容显示 mode、language、purpose、args、timeout、完整正文、
 调用摘要、Workspace 边界和 Host 风险；拒绝不会进入 STARTED。内置
 `local-script-execution` Skill 只能调用 `execution_run`，不会绕过审批、自动重试副作用执行，或

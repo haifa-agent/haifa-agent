@@ -10,6 +10,8 @@ import io.haifa.agent.application.project.product.coding.CodingSessionCompactor;
 import io.haifa.agent.application.project.product.coding.CodingSessionLifecycle;
 import io.haifa.agent.application.project.product.coding.CodingSessionStore;
 import io.haifa.agent.application.project.product.coding.InMemoryCodingSessionStore;
+import io.haifa.agent.application.project.workspace.InMemoryWorkspaceAccessStore;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.compression.CompressionPolicy;
@@ -21,9 +23,6 @@ import io.haifa.agent.core.session.AgentSession;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.core.session.SessionScope;
-import io.haifa.agent.policy.api.PolicyPersistencePorts;
-import io.haifa.agent.policy.core.InMemoryPolicyAuthorizationEvidenceStore;
-import io.haifa.agent.policy.core.InMemoryPolicyStore;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStore;
 import io.haifa.agent.project.hostworkspace.registry.InMemoryHostWorkspaceRegistryStore;
 import io.haifa.agent.runtime.api.AgentRuntime;
@@ -63,8 +62,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
     private final String workerId;
     private final SqliteStoreFoundation sqlite;
     private final JsonlTranscriptProjector projector;
-    private final PolicyPersistencePorts policy;
     private final HostWorkspaceRegistryStore workspaceRegistry;
+    private final WorkspaceAccessStore workspaceAccess;
     private final AtomicBoolean closing = new AtomicBoolean();
 
     private ProjectPersistenceAssembly(
@@ -75,8 +74,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
             String workerId,
             SqliteStoreFoundation sqlite,
             JsonlTranscriptProjector projector,
-            PolicyPersistencePorts policy,
-            HostWorkspaceRegistryStore workspaceRegistry) {
+            HostWorkspaceRegistryStore workspaceRegistry,
+            WorkspaceAccessStore workspaceAccess) {
         this.mode = mode;
         this.ports = ports;
         this.productSessions = productSessions;
@@ -84,8 +83,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         this.workerId = workerId;
         this.sqlite = sqlite;
         this.projector = projector;
-        this.policy = Objects.requireNonNull(policy, "policy must not be null");
         this.workspaceRegistry = Objects.requireNonNull(workspaceRegistry, "workspaceRegistry must not be null");
+        this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
     }
 
     public static ProjectPersistenceAssembly open(
@@ -101,7 +100,6 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
             InMemoryRuntimeStore store = new InMemoryRuntimeStore();
             RuntimePersistencePorts ports = RuntimePersistencePorts.inMemory(
                     store, new InMemoryToolExecutionJournal(), new InMemoryInteractionPort());
-            var policyStore = new InMemoryPolicyStore();
             return new ProjectPersistenceAssembly(
                     configuration.mode(),
                     ports,
@@ -110,13 +108,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                     workerId,
                     null,
                     null,
-                    new PolicyPersistencePorts(
-                            policyStore,
-                            policyStore,
-                            new InMemoryPolicyAuthorizationEvidenceStore(),
-                            policyStore,
-                            policyStore),
-                    new InMemoryHostWorkspaceRegistryStore());
+                    new InMemoryHostWorkspaceRegistryStore(),
+                    new InMemoryWorkspaceAccessStore());
         }
         ModelContinuationProtector effectiveProtector = protector;
         if (configuration.protection() == ProjectPersistenceProtection.NONE && effectiveProtector == null) {
@@ -134,8 +127,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                 database, configuration.busyTimeoutMillis(), configuration.maximumPayloadBytes());
         SqliteStoreFoundation foundation = null;
         try {
-            foundation = SqliteStoreFoundation.initialize(
-                    sqliteConfiguration, clock, ProjectApplicationMigrations.all(), ProjectApplicationMappers.all());
+            foundation = SqliteStoreFoundation.initializeWithAdditionalMappers(
+                    sqliteConfiguration, clock, ProjectApplicationMappers.all());
             RuntimePersistencePorts ports = foundation.persistencePorts(effectiveProtector);
             ProjectProductSessionStore productSessions =
                     new SqliteProjectProductSessionStore(foundation.unitOfWork(), ports.sessions());
@@ -159,13 +152,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                     workerId,
                     foundation,
                     projector,
-                    new PolicyPersistencePorts(
-                            foundation.policySnapshots(),
-                            foundation.policyDecisions(),
-                            foundation.policyAuthorizationEvidence(),
-                            foundation.approvalGrants(),
-                            foundation.projectTrusts()),
-                    new SqliteHostWorkspaceRegistryStore(foundation.unitOfWork(), effectiveProtector, clock));
+                    new SqliteHostWorkspaceRegistryStore(foundation.unitOfWork(), effectiveProtector, clock),
+                    new SqliteWorkspaceAccessStore(foundation.unitOfWork()));
         } catch (RuntimeException | Error exception) {
             if (foundation != null) {
                 try {
@@ -238,12 +226,12 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         return workerId;
     }
 
-    public PolicyPersistencePorts policy() {
-        return policy;
-    }
-
     public HostWorkspaceRegistryStore workspaceRegistry() {
         return workspaceRegistry;
+    }
+
+    public WorkspaceAccessStore workspaceAccess() {
+        return workspaceAccess;
     }
 
     public RuntimeCoreBuilder configure(RuntimeCoreBuilder builder) {

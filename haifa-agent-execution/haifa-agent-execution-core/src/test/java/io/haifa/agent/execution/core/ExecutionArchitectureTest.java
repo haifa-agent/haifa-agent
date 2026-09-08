@@ -59,6 +59,7 @@ class ExecutionArchitectureTest {
                         "io.haifa.agent.policy.core..",
                         "io.haifa.agent.runtime.core..",
                         "io.haifa.agent.tool.core..",
+                        "io.haifa.agent.application..",
                         "io.haifa.agent.personalassistant..")
                 .check(classes);
         noClasses()
@@ -95,6 +96,18 @@ class ExecutionArchitectureTest {
                 }
             }
         }
+    }
+
+    @Test
+    void trustedExecutionContextUsesToolCallCorrelationInsteadOfADecisionBearer() {
+        var componentNames = java.util.Arrays.stream(
+                        io.haifa.agent.execution.api.TrustedExecutionContext.class.getRecordComponents())
+                .map(java.lang.reflect.RecordComponent::getName)
+                .toList();
+
+        org.assertj.core.api.Assertions.assertThat(componentNames)
+                .contains("sourceToolCallId")
+                .doesNotContain("policyDecisionRef");
     }
 
     private static Path repositoryRoot() {

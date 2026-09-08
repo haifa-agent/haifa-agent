@@ -1,12 +1,14 @@
 package io.haifa.agent.application.project.tool;
 
+import io.haifa.agent.application.project.workspace.WorkspaceAccess;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.project.workspace.WorkspacePermissionSet;
@@ -25,14 +27,17 @@ public final class ProjectWorktreeToolOperations {
     private final GitWorktreeIsolationProvider provider;
     private final AuthorizedWorkspaceProvisioning provisioning;
     private final IdentifierGenerator identifiers;
+    private final WorkspaceAccessStore workspaceAccess;
 
     public ProjectWorktreeToolOperations(
             GitWorktreeIsolationProvider provider,
             AuthorizedWorkspaceProvisioning provisioning,
-            IdentifierGenerator identifiers) {
+            IdentifierGenerator identifiers,
+            WorkspaceAccessStore workspaceAccess) {
         this.provider = Objects.requireNonNull(provider, "provider must not be null");
         this.provisioning = Objects.requireNonNull(provisioning, "provisioning must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
+        this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -43,11 +48,8 @@ public final class ProjectWorktreeToolOperations {
         String baseCommit = text(values, "baseCommit");
         String branchName = text(values, "branchName");
         String targetName = safeTargetName(text(values, "targetName"));
-        String permission = text(values, "permission");
         String deliveryIntent = deliveryIntent(text(values, "deliveryIntent"));
-        if (!permission.equals("read-write")) {
-            throw new IllegalArgumentException("workspace worktrees currently require read-write permission");
-        }
+        workspaceAccess.require(invocation.tenant(), invocation.principal(), parent, WorkspaceAccessMode.DEVELOP);
         provisioning.scope().resolveExecutionDirectory(parent, ".");
         String identity = PolicyDigest.sha256Fields(List.of(
                 "coding-worktree-v1",
@@ -73,17 +75,17 @@ public final class ProjectWorktreeToolOperations {
                     branchName,
                     WorkspaceCapabilitySet.executionFiles(),
                     WorkspacePermissionSet.readWriteExecute()));
-            String authorizationRef = invocation
-                    .policyDecisionRef()
-                    .orElseThrow(() -> new SecurityException("worktree creation requires a policy decision"));
             var registered = provisioning.authorizeApprovedWorktree(
                     isolated.parentWorkspaceId(),
                     isolated.childWorkspaceId(),
                     isolated.bindingId(),
                     isolated.locationRef(),
-                    HostDirectoryPermission.READ_WRITE,
-                    targetName,
-                    authorizationRef);
+                    targetName);
+            workspaceAccess.replace(new WorkspaceAccess(
+                    invocation.tenant(),
+                    invocation.principal(),
+                    registered.directory().workspaceId(),
+                    WorkspaceAccessMode.DEVELOP));
             invocation.observer().acknowledged();
             var view = registered.registryView();
             return new ToolResult(
@@ -95,7 +97,7 @@ public final class ProjectWorktreeToolOperations {
                             "sourceWorkspaceRef", parent.value(),
                             "baseCommit", baseCommit,
                             "branchName", branchName,
-                            "permission", permission,
+                            "mode", WorkspaceAccessMode.DEVELOP.name(),
                             "deliveryIntent", deliveryIntent,
                             "source", view.source().name(),
                             "status", view.status().name()),
@@ -104,6 +106,16 @@ public final class ProjectWorktreeToolOperations {
                     false);
         } catch (RuntimeException failure) {
             if (isolated != null) {
+                try {
+                    workspaceAccess.delete(invocation.tenant(), invocation.principal(), isolated.childWorkspaceId());
+                } catch (RuntimeException cleanupFailure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
+                try {
+                    provisioning.revoke(isolated.childWorkspaceId(), "WORKTREE_CREATE_COMPENSATED");
+                } catch (RuntimeException cleanupFailure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
                 try {
                     provider.releaseWorktree(isolated.childWorkspaceId(), true);
                 } catch (RuntimeException cleanupFailure) {

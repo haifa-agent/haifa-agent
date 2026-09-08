@@ -78,12 +78,12 @@ class LocalCodingProductAssemblyTest {
     void rendersExactWorkspaceAttachmentDetailsForApproval() {
         String prompt = LocalCodingAgent.workspaceAttachmentApprovalPrompt(Map.of(
                 "path", "D:\\workspace\\haifa-agent-docs",
-                "permission", "read-write"));
+                "mode", "develop"));
 
         assertThat(prompt)
                 .contains("Attach additional workspace directory")
                 .contains("Path: D:\\workspace\\haifa-agent-docs")
-                .contains("Permission: read-write")
+                .contains("Mode: develop")
                 .contains("persisted locally and remains revocable");
     }
 
@@ -404,7 +404,7 @@ class LocalCodingProductAssemblyTest {
                 agent.shell(),
                 agent.exporter(),
                 agent.outcomes(),
-                agent::workspaceGrants,
+                agent::workspaceViews,
                 agent::revokeWorkspace);
     }
 

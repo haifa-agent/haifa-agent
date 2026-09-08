@@ -1,18 +1,22 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
+import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
+import io.haifa.agent.application.project.tool.ProjectExecutionRecoveryAuthorization;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
-import io.haifa.agent.execution.core.PolicyDecisionExecutionPolicy;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.execution.host.change.LocalIncrementalWorkspaceChangeObserver;
@@ -23,6 +27,7 @@ import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisionin
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxException;
@@ -40,7 +45,6 @@ import io.haifa.agent.sandbox.localnative.LocalNativeSandboxProvider;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -84,109 +88,25 @@ final class CliExecutionPlatform implements AutoCloseable {
             HostWorkspaceFileService files,
             IdentifierGenerator identifiers,
             TimeProvider time,
-            Clock clock,
-            CodingAgentPolicyAssembly policy,
-            WorkspaceId workspaceId,
-            Path workspaceRoot,
-            PrintStream output) {
-        return create(
-                configuration,
-                workspaces,
-                bindings,
-                locations,
-                files,
-                identifiers,
-                time,
-                clock,
-                policy,
-                workspaceId,
-                workspaceRoot,
-                output,
-                System.getenv());
-    }
-
-    static CliExecutionPlatform create(
-            CliConfiguration.Execution configuration,
-            WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
-            HostWorkspaceLocationStore locations,
-            HostWorkspaceFileService files,
-            IdentifierGenerator identifiers,
-            TimeProvider time,
-            Clock clock,
-            CodingAgentPolicyAssembly policy,
-            WorkspaceId workspaceId,
-            Path workspaceRoot,
-            PrintStream output,
-            Map<String, String> hostEnvironment) {
-        return create(
-                configuration,
-                workspaces,
-                bindings,
-                locations,
-                files,
-                identifiers,
-                time,
-                clock,
-                policy,
-                workspaceId,
-                workspaceRoot,
-                output,
-                hostEnvironment,
-                CodingVerificationProfileProvider.empty());
-    }
-
-    static CliExecutionPlatform create(
-            CliConfiguration.Execution configuration,
-            WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
-            HostWorkspaceLocationStore locations,
-            HostWorkspaceFileService files,
-            IdentifierGenerator identifiers,
-            TimeProvider time,
-            Clock clock,
-            CodingAgentPolicyAssembly policy,
-            WorkspaceId workspaceId,
-            Path workspaceRoot,
-            PrintStream output,
-            Map<String, String> hostEnvironment,
-            CodingVerificationProfileProvider verificationProfiles) {
-        return create(
-                configuration,
-                workspaces,
-                bindings,
-                locations,
-                files,
-                identifiers,
-                time,
-                clock,
-                policy,
-                workspaceId,
-                workspaceRoot,
-                output,
-                hostEnvironment,
-                verificationProfiles,
-                null);
-    }
-
-    static CliExecutionPlatform create(
-            CliConfiguration.Execution configuration,
-            WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
-            HostWorkspaceLocationStore locations,
-            HostWorkspaceFileService files,
-            IdentifierGenerator identifiers,
-            TimeProvider time,
-            Clock clock,
-            CodingAgentPolicyAssembly policy,
             WorkspaceId workspaceId,
             Path workspaceRoot,
             PrintStream output,
             Map<String, String> hostEnvironment,
             CodingVerificationProfileProvider verificationProfiles,
-            AuthorizedWorkspaceProvisioning provisioning) {
+            AuthorizedWorkspaceProvisioning provisioning,
+            WorkspaceAccessStore workspaceAccess,
+            TenantRef tenant,
+            PrincipalRef principal,
+            RuntimeToolExecutionVerifier runtimeExecutionVerifier,
+            ProjectExecutionRecoveryAuthorization recoveryAuthorization) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
+        Objects.requireNonNull(provisioning, "provisioning must not be null");
+        Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
+        Objects.requireNonNull(tenant, "tenant must not be null");
+        Objects.requireNonNull(principal, "principal must not be null");
+        Objects.requireNonNull(runtimeExecutionVerifier, "runtimeExecutionVerifier must not be null");
+        Objects.requireNonNull(recoveryAuthorization, "recoveryAuthorization must not be null");
         HostShell shell = shell(configuration);
         LocalNativeSandboxConfiguration localConfiguration = localConfiguration(configuration, shell);
         var host = new HostGuardedSandboxProvider(
@@ -255,16 +175,29 @@ final class CliExecutionPlatform implements AutoCloseable {
                 requestedEnvironment -> requestedEnvironment.equals(permissionEnvironmentRef)
                         ? io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(permissionEnvironment)
                         : io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
-                new PolicyDecisionExecutionPolicy(
-                        policy.decisionsStore(), policy.snapshots(), policy.evidence(), clock),
+                new CodingAgentExecutionPolicy(
+                        runtimeExecutionVerifier,
+                        recoveryAuthorization,
+                        workspaceAccess,
+                        provisioning,
+                        tenant,
+                        principal,
+                        environmentRef,
+                        permissionEnvironmentRef,
+                        profile.ref(),
+                        permissionProfile.ref(),
+                        CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                        configuration.defaultTimeout(),
+                        configuration.maximumTimeout(),
+                        configuration.maxOutputBytes(),
+                        configuration.maxProcesses()),
                 profileRegistry,
                 providerRegistry,
                 workspaces,
                 bindings,
                 workspaceChanges);
-        CliRepositoryBaselineSupport repositoryBaselines = provisioning == null
-                ? null
-                : CliRepositoryBaselineSupport.create(broker, identifiers, profile.ref(), policy, provisioning);
+        CliRepositoryBaselineSupport repositoryBaselines =
+                CliRepositoryBaselineSupport.create(broker, identifiers, profile.ref(), provisioning);
         ExecutionOutputObserver observer = new CliOutputObserver(output);
         var operations = new ProjectExecutionToolOperations(
                 broker,
@@ -280,11 +213,9 @@ final class CliExecutionPlatform implements AutoCloseable {
                 observer,
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                workspaceTargetResolver(provisioning),
+                workspaceTargetResolver(provisioning, workspaceAccess, tenant, principal),
                 verificationProfiles,
-                repositoryBaselines == null
-                        ? io.haifa.agent.application.project.tool.ExecutionRepositoryBaselineObserver.noop()
-                        : repositoryBaselines.observer());
+                repositoryBaselines.observer());
         var permissionOperations = new ProjectExecutionToolOperations(
                 broker,
                 identifiers,
@@ -299,11 +230,9 @@ final class CliExecutionPlatform implements AutoCloseable {
                 observer,
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                workspaceTargetResolver(provisioning),
+                workspaceTargetResolver(provisioning, workspaceAccess, tenant, principal),
                 verificationProfiles,
-                repositoryBaselines == null
-                        ? io.haifa.agent.application.project.tool.ExecutionRepositoryBaselineObserver.noop()
-                        : repositoryBaselines.observer());
+                repositoryBaselines.observer());
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(
@@ -326,14 +255,19 @@ final class CliExecutionPlatform implements AutoCloseable {
     }
 
     static io.haifa.agent.application.project.tool.ExecutionWorkspaceTargetResolver workspaceTargetResolver(
-            AuthorizedWorkspaceProvisioning provisioning) {
-        if (provisioning == null) {
-            return io.haifa.agent.application.project.tool.ExecutionWorkspaceTargetResolver.currentWorkspaceOnly();
-        }
-        return (access, workspaceRef, relativeWorkdir) -> provisioning
-                .scope()
-                .resolveExecutionDirectory(
-                        new io.haifa.agent.project.workspace.WorkspaceId(workspaceRef), relativeWorkdir);
+            AuthorizedWorkspaceProvisioning provisioning,
+            WorkspaceAccessStore workspaceAccess,
+            TenantRef tenant,
+            PrincipalRef principal) {
+        Objects.requireNonNull(provisioning, "provisioning must not be null");
+        Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
+        Objects.requireNonNull(tenant, "tenant must not be null");
+        Objects.requireNonNull(principal, "principal must not be null");
+        return (access, workspaceRef, relativeWorkdir) -> {
+            WorkspaceId target = new WorkspaceId(workspaceRef);
+            workspaceAccess.require(tenant, principal, target, WorkspaceAccessMode.DEVELOP);
+            return provisioning.scope().resolveExecutionDirectory(target, relativeWorkdir);
+        };
     }
 
     ProjectExecutionToolOperations permissionOperations() {
@@ -463,13 +397,13 @@ final class CliExecutionPlatform implements AutoCloseable {
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         if (provider.providerId().equals(HostGuardedSandboxProvider.PROVIDER_ID)) {
             return SandboxProfile.hostGuarded(
-                    reference, provider.configurationDigest(), Set.of(), allowedEnvironment, true);
+                    reference, provider.configurationDigest(), Set.of("git"), allowedEnvironment, true);
         }
         return new SandboxProfile(
                 reference,
                 provider.providerId(),
                 provider.configurationDigest(),
-                Set.of(),
+                Set.of("git"),
                 allowedEnvironment,
                 true,
                 network,

@@ -97,6 +97,49 @@ class CodingDeliveryControlTest {
     }
 
     @Test
+    void trustedStructuredValidationEvidenceDoesNotDependOnTheOptionalOperationFamilyHint() {
+        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
+        changeTool(fixture, "file.write", "change-1");
+        CodingValidationAttemptEvidence evidence = new CodingValidationAttemptEvidence(
+                CodingValidationAttemptEvidence.SCHEMA_VERSION,
+                CodingValidationStatus.PASSED,
+                null,
+                null,
+                null,
+                CodingValidationScope.FULL,
+                "COUNTS_UNAVAILABLE",
+                "BUILD_CONFIGURATION",
+                "TRUSTED_FULL_SCOPE",
+                "d".repeat(64),
+                "e".repeat(64));
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of(
+                        "declaredOperationFamily",
+                        "UNKNOWN",
+                        "status",
+                        "SUCCEEDED",
+                        "validationEvidence",
+                        evidence.toStructuredData()));
+
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
+                        .allowed())
+                .isTrue();
+
+        Fixture arbitrary = fixture("fix the implementation", trusted("CHANGE"));
+        changeTool(arbitrary, "file.write", "change-1");
+        tool(arbitrary, "execution.run", Map.of(), Map.of("declaredOperationFamily", "UNKNOWN", "status", "SUCCEEDED"));
+        assertThat(policy(arbitrary.store())
+                        .evaluate(arbitrary.run(), finalDecision())
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .contains("VALIDATION_ATTEMPT_MISSING");
+    }
+
+    @Test
     void trustedDiffClassificationRemainsDiagnosticWithoutCompletingChangeReview() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));

@@ -29,15 +29,12 @@ import io.haifa.agent.policy.api.PolicyAction;
 import io.haifa.agent.policy.api.PolicyChallenge;
 import io.haifa.agent.policy.api.PolicyContext;
 import io.haifa.agent.policy.api.PolicyDecision;
-import io.haifa.agent.policy.api.PolicyDecisionId;
-import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.policy.api.PolicyRequest;
 import io.haifa.agent.policy.api.PolicyResource;
 import io.haifa.agent.policy.api.PolicyRisk;
 import io.haifa.agent.policy.api.PolicyRiskLevel;
 import io.haifa.agent.policy.api.PolicySideEffect;
-import io.haifa.agent.policy.api.PolicySnapshotRef;
 import io.haifa.agent.policy.api.PolicySubject;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
@@ -79,7 +76,6 @@ import io.haifa.agent.tool.api.ToolSideEffect;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -99,7 +95,7 @@ class TrustedSkillScriptPublicToolPolicyTest {
     private static final String EXECUTION_DIGEST = "e".repeat(64);
 
     @Test
-    void exactFrozenEvidenceProducesAuditedAllowWithoutDelegating() {
+    void exactFrozenEvidenceProducesAuditedAllowWithTheSharedRequirementDigest() {
         Fixture fixture = fixture(SANDBOX_DIGEST, "trusted.transform");
 
         PolicyDecision decision =
@@ -108,12 +104,8 @@ class TrustedSkillScriptPublicToolPolicyTest {
         assertThat(decision.effect()).isEqualTo(PolicyEffect.ALLOW);
         assertThat(decision.reasonCode()).isEqualTo(TrustedSkillScriptPublicToolPolicy.REASON_CODE);
         assertThat(decision.challenge()).isEmpty();
-        assertThat(decision.matchedRule()).hasValueSatisfying(rule -> {
-            assertThat(rule.ruleId()).isEqualTo("script-grant");
-            assertThat(rule.version()).isEqualTo("package-grant");
-        });
-        assertThat(fixture.delegateCalls()).hasValue(0);
-        assertThat(fixture.decisions().find(decision.id())).contains(decision);
+        assertThat(decision.requirementDigest()).isEqualTo("sha256:ordinary-requirement");
+        assertThat(fixture.delegateCalls()).hasValue(1);
     }
 
     @Test
@@ -253,18 +245,14 @@ class TrustedSkillScriptPublicToolPolicyTest {
                         reference),
                 NOW);
         AtomicInteger delegateCalls = new AtomicInteger();
-        MemoryDecisionStore decisions = new MemoryDecisionStore();
         PublicToolPolicy delegate = (ignoredRun, ignoredTool, ignoredRequest) -> {
             delegateCalls.incrementAndGet();
             return new PolicyDecision(
-                    new PolicyDecisionId("ordinary-decision"),
                     PolicyEffect.ASK,
                     Optional.of(PolicyChallenge.APPROVAL),
                     "ORDINARY_APPROVAL",
                     "Ordinary approval remains required",
-                    new PolicySnapshotRef("ordinary"),
-                    Optional.empty(),
-                    NOW);
+                    "sha256:ordinary-requirement");
         };
         ToolPolicyRequestAdapter adapter = (ignoredRun, binding, ignoredRequest) -> new PolicyRequest(
                 new PolicySubject(TENANT, PRINCIPAL, PRODUCT),
@@ -277,9 +265,8 @@ class TrustedSkillScriptPublicToolPolicyTest {
                         "Fixed test tool"),
                 new PolicyRisk(
                         PolicyRiskLevel.HIGH, Set.of(PolicySideEffect.PROCESS_EXECUTION), false, Optional.empty()));
-        var policy = new TrustedSkillScriptPublicToolPolicy(
-                delegate, state, adapter, () -> "trusted-decision", () -> NOW, decisions);
-        return new Fixture(policy, run, tool, delegateCalls, decisions);
+        var policy = new TrustedSkillScriptPublicToolPolicy(delegate, state, adapter, () -> NOW);
+        return new Fixture(policy, run, tool, delegateCalls);
     }
 
     private static FrozenSkillBinding skill() {
@@ -414,20 +401,5 @@ class TrustedSkillScriptPublicToolPolicyTest {
             TrustedSkillScriptPublicToolPolicy policy,
             AgentRun run,
             FrozenToolBinding tool,
-            AtomicInteger delegateCalls,
-            MemoryDecisionStore decisions) {}
-
-    private static final class MemoryDecisionStore implements PolicyDecisionStore {
-        private final Map<PolicyDecisionId, PolicyDecision> values = new HashMap<>();
-
-        @Override
-        public void save(PolicyDecision decision) {
-            values.put(decision.id(), decision);
-        }
-
-        @Override
-        public Optional<PolicyDecision> find(PolicyDecisionId id) {
-            return Optional.ofNullable(values.get(id));
-        }
-    }
+            AtomicInteger delegateCalls) {}
 }

@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Shared Tool provider that is the only command/script adapter above ExecutionBroker. */
@@ -108,7 +109,7 @@ public final class ExecutionToolProvider implements ToolProvider {
         if (!scope.capabilities().contains("execution.run")) {
             throw new SecurityException("execution.run is not authorized by the invocation scope");
         }
-        ParsedInvocation parsed = parse(invocation.arguments().values());
+        ParsedInvocation parsed = parse(configuration, invocation.arguments().values());
         return invokeParsed(invocation, scope, parsed);
     }
 
@@ -218,10 +219,8 @@ public final class ExecutionToolProvider implements ToolProvider {
                         invocation.runId().value(),
                         invocation.principal(),
                         scope.capabilities(),
-                        invocation
-                                .policyDecisionRef()
-                                .orElseThrow(() ->
-                                        new SecurityException("execution tool requires a public policy decision"))),
+                        io.haifa.agent.execution.api.ExecutionOrigin.RUNTIME_TOOL,
+                        Optional.of(invocation.toolCallId())),
                 scope.workspaceId(),
                 workingDirectory,
                 parsed.command,
@@ -242,7 +241,37 @@ public final class ExecutionToolProvider implements ToolProvider {
         return result;
     }
 
-    private ParsedInvocation parse(Map<String, Object> values) {
+    /** Reconstructs this provider's frozen execution intent without dispatching or persisting anything. */
+    public static void validateFrozenInvocation(
+            ExecutionToolConfiguration configuration,
+            io.haifa.agent.core.tool.ToolArguments arguments,
+            ExecutionRequest request) {
+        Objects.requireNonNull(configuration, "configuration must not be null");
+        Objects.requireNonNull(arguments, "arguments must not be null");
+        Objects.requireNonNull(request, "request must not be null");
+        ParsedInvocation parsed = parse(configuration, arguments.values());
+        String workdir = parsed.workdir.equals(".") ? "." : parsed.workdir;
+        String expectedDigest = ExecutionRequest.digestWithScratch(
+                io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(arguments), configuration.scratchSpace());
+        if (!request.command().equals(parsed.command)
+                || !request.input().equals(parsed.input)
+                || !request.workingDirectory().projectPath().toString().equals(workdir)
+                || !request.environmentRef().equals(configuration.environmentRef())
+                || !request.sandboxProfileRef().equals(configuration.sandboxProfileRef())
+                || !request.scratchSpace().equals(configuration.scratchSpace())
+                || !request.invocationDigest().equals(expectedDigest)
+                || request.limits().timeout().compareTo(parsed.timeout) > 0
+                || request.limits().timeout().compareTo(configuration.maximumTimeout()) > 0
+                || request.limits().maxStdoutBytes() != BROKER_OUTPUT_BYTES_PER_CHANNEL
+                || request.limits().maxStderrBytes() != BROKER_OUTPUT_BYTES_PER_CHANNEL
+                || request.limits().maxProcesses() != configuration.maximumProcesses()
+                || request.limits().outputOverflowPolicy()
+                        != io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.RETAIN_HEAD_TAIL) {
+            throw new SecurityException("execution request drifted from the frozen Tool invocation");
+        }
+    }
+
+    private static ParsedInvocation parse(ExecutionToolConfiguration configuration, Map<String, Object> values) {
         String mode = text(values, "mode", 16).toUpperCase(Locale.ROOT);
         String content = text(values, "content", 16_384);
         String purpose = text(values, "purpose", 256);

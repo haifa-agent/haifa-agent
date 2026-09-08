@@ -71,6 +71,32 @@ class CodingValidationEvidenceTest {
     }
 
     @Test
+    void exactFrozenCandidateDoesNotDependOnTheOptionalOperationFamilyHint() {
+        CodingVerificationCandidate candidate = new CodingVerificationCandidate(
+                "powershell -NoProfile -File verify.ps1",
+                CodingVerificationCost.HIGH,
+                Duration.ofMinutes(10),
+                CodingVerificationTrigger.FINAL_GATE,
+                CodingVerificationSource.BUILD_CONFIGURATION,
+                "verify.ps1",
+                CodingValidationScope.FULL);
+        CodingSessionVerificationConfiguration configuration = CodingSessionVerificationConfiguration.freeze(
+                new CodingVerificationProfile(List.of(candidate), List.of()));
+
+        assertThat(CodingValidationAttemptFactory.create("UNKNOWN", candidate.command(), true, configuration))
+                .get()
+                .satisfies(evidence -> {
+                    assertThat(evidence.status()).isEqualTo(CodingValidationStatus.PASSED);
+                    assertThat(evidence.scope()).isEqualTo(CodingValidationScope.FULL);
+                    assertThat(evidence.claimCode()).isEqualTo("TRUSTED_FULL_SCOPE");
+                });
+        assertThat(CodingValidationAttemptFactory.create("INSPECT", candidate.command(), true, configuration))
+                .isEmpty();
+        assertThat(CodingValidationAttemptFactory.create("UNKNOWN", "arbitrary-command", true, configuration))
+                .isEmpty();
+    }
+
+    @Test
     void normalizesLegacyRunnerCountsToUntrustedUnknownEvidence() {
         Map<String, Object> legacy = Map.ofEntries(
                 Map.entry("schemaVersion", "coding-validation-evidence/1"),

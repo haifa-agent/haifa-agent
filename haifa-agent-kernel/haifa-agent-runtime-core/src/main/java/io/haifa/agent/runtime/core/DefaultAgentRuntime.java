@@ -12,14 +12,10 @@ import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.RunTerminationReason;
-import io.haifa.agent.policy.api.ApprovalGrantCreationRequest;
+import io.haifa.agent.policy.api.ApprovalRequester;
 import io.haifa.agent.policy.api.ApprovalResponder;
-import io.haifa.agent.policy.api.ApprovalReuseScope;
+import io.haifa.agent.policy.api.ApprovalTargetRef;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
-import io.haifa.agent.policy.api.PolicyAuthorizationEvidence;
-import io.haifa.agent.policy.api.PolicyAuthorizationEvidenceStore;
-import io.haifa.agent.policy.api.PolicyAuthorizationService;
-import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunHandle;
 import io.haifa.agent.runtime.api.AgentRunListener;
@@ -95,7 +91,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Snapshot-first, asynchronous pure-Java Runtime implementation. */
 public final class DefaultAgentRuntime implements AgentRuntime {
-    private static final Duration APPROVAL_EVIDENCE_TTL = Duration.ofMinutes(5);
     private final CallerContextProvider callers;
     private final RunBootstrapper bootstrapper;
     private final RunStateRepository runs;
@@ -120,9 +115,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final RetryExecutor persistenceRetries;
     private final PersistenceRetryPolicy persistenceRetry;
     private final ApprovalVerificationService approvalVerification;
-    private final PolicyAuthorizationEvidenceStore policyAuthorizationEvidence;
-    private final PolicyAuthorizationService policyAuthorization;
-    private final PolicyDecisionStore policyDecisions;
     private final RunInputPort runInputs;
     private final RuntimeEventFeed eventFeed;
     private final RuntimeEventSubscriptions eventSubscriptions;
@@ -153,9 +145,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             RetryExecutor persistenceRetries,
             PersistenceRetryPolicy persistenceRetry,
             ApprovalVerificationService approvalVerification,
-            PolicyAuthorizationEvidenceStore policyAuthorizationEvidence,
-            PolicyAuthorizationService policyAuthorization,
-            PolicyDecisionStore policyDecisions,
             RunInputPort runInputs,
             RuntimeEventFeed eventFeed,
             RuntimeEventSubscriptions eventSubscriptions) {
@@ -183,9 +172,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         this.persistenceRetries = Objects.requireNonNull(persistenceRetries);
         this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
         this.approvalVerification = Objects.requireNonNull(approvalVerification);
-        this.policyAuthorizationEvidence = Objects.requireNonNull(policyAuthorizationEvidence);
-        this.policyAuthorization = Objects.requireNonNull(policyAuthorization);
-        this.policyDecisions = Objects.requireNonNull(policyDecisions);
         this.runInputs = Objects.requireNonNull(runInputs);
         this.eventFeed = Objects.requireNonNull(eventFeed);
         this.eventSubscriptions = Objects.requireNonNull(eventSubscriptions);
@@ -444,9 +430,16 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             io.haifa.agent.runtime.core.interaction.InteractionRequest request,
             io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext caller) {
         if (!request.approval()) return null;
-        if (request.approvalContext().isPresent()) {
+        if (request.target() instanceof io.haifa.agent.runtime.core.interaction.ToolApprovalTarget target) {
             var verification = approvalVerification.verify(
-                    request.approvalContext().orElseThrow(),
+                    new ApprovalRequester(request.tenant(), request.requester()),
+                    new ApprovalTargetRef(
+                            "tool",
+                            target.toolCallId().value(),
+                            target.definitionHash(),
+                            "invoke",
+                            target.argumentsDigest(),
+                            "Tool approval"),
                     new ApprovalResponder(caller.tenant(), caller.principal()));
             if (!verification.accepted()) {
                 throw new SecurityException("approval verification failed: " + verification.reasonCode());
@@ -484,7 +477,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             boolean toolApproval) {
         if (!newlyRecorded) return;
         if (approvalResult != null) {
-            interactions.recordApprovalVerification(response.responseId(), approvalResult);
             var securityAt = time.now();
             appendSecurityEvent(
                     run,
@@ -512,36 +504,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                             "reasonCode",
                             approvalResult.reasonCode()),
                     securityAt);
-        }
-        if (approvalResult != null && response.type() == InteractionResponseType.APPROVE) {
-            var context = request.approvalContext().orElseThrow();
-            var decision = policyDecisions
-                    .find(context.decisionId())
-                    .orElseThrow(() -> new SecurityException("policy decision is unavailable"));
-            var approvedAt = time.now();
-            policyAuthorizationEvidence.save(new PolicyAuthorizationEvidence(
-                    context.decisionId(),
-                    decision.requestDigest(),
-                    context.requester(),
-                    new ApprovalResponder(caller.tenant(), caller.principal()),
-                    approvedAt,
-                    approvedAt.plus(APPROVAL_EVIDENCE_TTL)));
-            if (policyAuthorization.persistentGrantsEnabled()) {
-                java.time.Instant grantExpiry = approvedAt.plus(APPROVAL_EVIDENCE_TTL);
-                if (context.expiresAt().isPresent()
-                        && context.expiresAt().orElseThrow().isBefore(grantExpiry)) {
-                    grantExpiry = context.expiresAt().orElseThrow();
-                }
-                policyAuthorization.createGrant(new ApprovalGrantCreationRequest(
-                        decision,
-                        context,
-                        approvalResult,
-                        request.id().value(),
-                        response.responseId().value(),
-                        new ApprovalResponder(caller.tenant(), caller.principal()),
-                        ApprovalReuseScope.ONCE,
-                        grantExpiry));
-            }
         }
         appendInteractionResponseMessage(
                 run, response, toolApproval ? MessageVisibility.INTERNAL : MessageVisibility.AGENT_VISIBLE);

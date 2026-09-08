@@ -183,6 +183,7 @@ class PersonalModelFactoryTest {
                 .hasToString("https://default-workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
         assertThat(providers.get(2).bindingIds()).contains("qwen3-vl-plus");
         assertThat(providers.get(3).bindingIds()).contains("siliconflow-glm-5-2");
+        assertThat(providers.get(5).bindingIds()).contains("glm-5.3", "glm-5.3-flash");
         assertThat(providers.get(6).bindingIds()).contains("tokenrhythm-deepseek-v4-flash-0731");
         assertThat(providers.get(1).bindingIds()).contains("gpt-5.3-codex-spark");
         assertThat(providers.get(7).bindingIds())
@@ -193,7 +194,7 @@ class PersonalModelFactoryTest {
                         "antigravity-gemini-3-1-pro-preview");
 
         var platform = PersonalModelFactory.createPlatform(
-                List.of(providers.getFirst(), providers.get(2), providers.get(6), providers.get(7)),
+                List.of(providers.getFirst(), providers.get(2), providers.get(5), providers.get(6), providers.get(7)),
                 "deepseek-chat-flash",
                 false,
                 new ObjectMapper(),
@@ -202,6 +203,8 @@ class PersonalModelFactoryTest {
                 .extracting(io.haifa.agent.personalassistant.application.PersonalModelOption::id)
                 .contains(
                         "qwen3-vl-plus",
+                        "glm-5.3",
+                        "glm-5.3-flash",
                         "tokenrhythm-deepseek-v4-flash-0731",
                         "antigravity-gemini",
                         "antigravity-gemini-3-8-flash",

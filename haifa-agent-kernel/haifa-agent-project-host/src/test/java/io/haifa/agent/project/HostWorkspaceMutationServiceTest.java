@@ -464,7 +464,7 @@ class HostWorkspaceMutationServiceTest {
     }
 
     private static MutationContext context(String operationId) {
-        return new MutationContext(operationId, "run-1", "tool-1", new PrincipalRef("actor", "user"), "allow-1");
+        return new MutationContext(operationId, "run-1", "tool-1", new PrincipalRef("actor", "user"));
     }
 
     private static byte[] bytes(String value) {

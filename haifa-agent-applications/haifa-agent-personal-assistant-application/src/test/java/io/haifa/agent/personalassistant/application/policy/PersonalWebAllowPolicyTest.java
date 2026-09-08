@@ -22,16 +22,10 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.personalassistant.application.tool.PersonalChecklistTool;
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
-import io.haifa.agent.policy.api.PolicyAuthorizationEvidence;
-import io.haifa.agent.policy.api.PolicyAuthorizationEvidenceStore;
 import io.haifa.agent.policy.api.PolicyChallenge;
 import io.haifa.agent.policy.api.PolicyDecision;
-import io.haifa.agent.policy.api.PolicyDecisionId;
-import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.policy.api.PolicyEffect;
-import io.haifa.agent.policy.api.PolicySnapshot;
-import io.haifa.agent.policy.api.PolicySnapshotRef;
-import io.haifa.agent.policy.api.PolicySnapshotStore;
+import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
@@ -47,9 +41,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -60,14 +54,13 @@ class PersonalWebAllowPolicyTest {
     private static final PrincipalRef PRINCIPAL = new PrincipalRef("personal-user", "user");
 
     @Test
-    void directlyAllowsExactFrozenSearchAndFetchAndPersistsBoundDecisions() {
+    void directlyAllowsExactFrozenSearchAndFetchWithoutPersistence() {
         Fixture fixture = fixture();
         AtomicInteger delegateCalls = new AtomicInteger();
-        PublicToolPolicy policy = PersonalWebAllowPolicy.decorator(
-                        fixture.catalog(), fixture.web(), fixture.persistence(), CLOCK)
+        PublicToolPolicy policy = PersonalWebAllowPolicy.decorator(fixture.catalog(), fixture.web(), fixture.policy())
                 .apply((run, binding, request) -> {
                     delegateCalls.incrementAndGet();
-                    return askDecision("delegate");
+                    return askDecision();
                 });
 
         for (String alias : fixture.web().aliases()) {
@@ -79,13 +72,12 @@ class PersonalWebAllowPolicyTest {
             assertThat(decision.effect()).isEqualTo(PolicyEffect.ALLOW);
             assertThat(decision.challenge()).isEmpty();
             assertThat(decision.reasonCode()).isEqualTo("PERSONAL_WEB_READ_ALLOWED");
-            assertThat(decision.bound()).isTrue();
-            assertThat(decision.request().orElseThrow().subject().productId()).isEqualTo("haifa-personal-assistant");
-            assertThat(decision.request().orElseThrow().action().capability())
-                    .isEqualTo(binding.definition().name().value());
-            assertThat(fixture.store().find(decision.id())).contains(decision);
+            assertThat(decision.requirementDigest()).startsWith("sha256:");
         }
         assertThat(delegateCalls).hasValue(0);
+        assertThat(List.of(fixture.policy().getClass().getMethods()))
+                .extracting(method -> method.getName())
+                .doesNotContain("snapshots", "decisions", "authorizationEvidence", "approvalGrants", "projectTrusts");
     }
 
     @Test
@@ -94,9 +86,8 @@ class PersonalWebAllowPolicyTest {
         FrozenToolBinding checklist =
                 fixture.catalog().findByAlias(PersonalChecklistTool.ALIAS).orElseThrow();
         AtomicInteger delegateCalls = new AtomicInteger();
-        PolicyDecision delegated = askDecision("checklist-decision");
-        PublicToolPolicy policy = PersonalWebAllowPolicy.decorator(
-                        fixture.catalog(), fixture.web(), fixture.persistence(), CLOCK)
+        PolicyDecision delegated = askDecision();
+        PublicToolPolicy policy = PersonalWebAllowPolicy.decorator(fixture.catalog(), fixture.web(), fixture.policy())
                 .apply((run, binding, request) -> {
                     delegateCalls.incrementAndGet();
                     return delegated;
@@ -136,23 +127,15 @@ class PersonalWebAllowPolicyTest {
                 .forEach(item -> builder.register(
                         item.alias(), item.definition(), item.providerBindingReference(), item.provider()));
         var catalog = builder.freeze();
-        var store = new TestPolicyStore();
         var metadata = new SdkContributionMetadata(
                 new ProductContributionCoordinate("personal-policy-test", "1.0.0"),
                 ProductCapabilities.POLICY,
                 SdkConfigurationDigest.sha256("personal-policy-test"),
                 ProductProviderSuitability.TEST_ONLY,
-                "Personal policy test persistence");
-        PolicyAuthorizationEvidenceStore evidence = new PolicyAuthorizationEvidenceStore() {
-            @Override
-            public void save(PolicyAuthorizationEvidence value) {}
-
-            @Override
-            public Optional<PolicyAuthorizationEvidence> find(PolicyDecisionId decisionId) {
-                return Optional.empty();
-            }
-        };
-        return new Fixture(web, catalog, store, new PolicyPlatformContribution(metadata, store, store, evidence));
+                "Personal policy test");
+        var policy = new PolicyPlatformContribution(
+                metadata, PersonalAssistantPolicyRules.conservative(), new DefaultPolicyDecisionService());
+        return new Fixture(web, catalog, policy);
     }
 
     private static AgentRun run() {
@@ -188,46 +171,15 @@ class PersonalWebAllowPolicyTest {
                         Map.of()));
     }
 
-    private static PolicyDecision askDecision(String id) {
+    private static PolicyDecision askDecision() {
         return new PolicyDecision(
-                new PolicyDecisionId(id),
                 PolicyEffect.ASK,
                 Optional.of(PolicyChallenge.APPROVAL),
                 "DELEGATED_APPROVAL",
                 "Delegate decision",
-                new PolicySnapshotRef("delegate"),
-                Optional.empty(),
-                NOW);
+                "sha256:delegated-requirement");
     }
 
     private record Fixture(
-            PersonalWebPlatform web,
-            io.haifa.agent.tool.api.ToolCatalog catalog,
-            TestPolicyStore store,
-            PolicyPlatformContribution persistence) {}
-
-    private static final class TestPolicyStore implements PolicySnapshotStore, PolicyDecisionStore {
-        private final Map<PolicySnapshotRef, PolicySnapshot> snapshots = new ConcurrentHashMap<>();
-        private final Map<PolicyDecisionId, PolicyDecision> decisions = new ConcurrentHashMap<>();
-
-        @Override
-        public void save(PolicySnapshot snapshot) {
-            snapshots.put(snapshot.ref(), snapshot);
-        }
-
-        @Override
-        public Optional<PolicySnapshot> find(PolicySnapshotRef ref) {
-            return Optional.ofNullable(snapshots.get(ref));
-        }
-
-        @Override
-        public void save(PolicyDecision decision) {
-            decisions.put(decision.id(), decision);
-        }
-
-        @Override
-        public Optional<PolicyDecision> find(PolicyDecisionId id) {
-            return Optional.ofNullable(decisions.get(id));
-        }
-    }
+            PersonalWebPlatform web, io.haifa.agent.tool.api.ToolCatalog catalog, PolicyPlatformContribution policy) {}
 }

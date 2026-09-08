@@ -6,6 +6,9 @@ import io.haifa.agent.application.project.product.coding.delivery.AttributionSta
 import io.haifa.agent.application.project.product.coding.delivery.RepositoryBaseline;
 import io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry;
 import io.haifa.agent.application.project.tool.ProjectToolCallContext;
+import io.haifa.agent.application.project.workspace.InMemoryWorkspaceAccessStore;
+import io.haifa.agent.application.project.workspace.WorkspaceAccess;
+import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
@@ -31,7 +34,6 @@ import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
 import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
 import io.haifa.agent.project.path.ProjectPath;
@@ -74,7 +76,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", hostPath, "maxBytes", 8, "maxLines", 1)));
         String cursor = (String) first.structuredData().get("nextCursor");
         var second = fixture.operations.execute(
@@ -82,7 +83,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", hostPath, "cursor", cursor, "maxBytes", 8, "maxLines", 1)));
 
         assertThat(first.successful()).isTrue();
@@ -99,7 +99,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", hostPath, "cursor", cursor)));
         assertThat(stale.successful()).isFalse();
         assertThat(stale.structuredData())
@@ -118,7 +117,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("recursive", true)));
 
         assertThat(result.successful()).isFalse();
@@ -142,7 +140,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of(
                         "patch",
                         """
@@ -174,7 +171,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", hostPath, "content", "replacement")));
 
         assertThat(result.successful()).isFalse();
@@ -198,14 +194,12 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", missingPath, "content", "new")));
         var sensitiveRead = fixture.operations.execute(
                 "file.read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", sensitivePath)));
 
         assertThat(missingWrite.successful()).isTrue();
@@ -236,7 +230,6 @@ class LocalFileToolOperationsTest {
                 "run-reconcile",
                 "tool-call-reconcile",
                 "idempotency-reconcile",
-                "policy-reconcile",
                 arguments);
 
         assertThat(result.successful()).isTrue();
@@ -298,8 +291,7 @@ class LocalFileToolOperationsTest {
                         now)
                 .activate(now));
         var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        HostWorkspaceScope scope = HostWorkspaceScope.initial(
-                AuthorizedHostDirectory.of(workspaceId, realRoot, HostDirectoryPermission.READ_WRITE));
+        HostWorkspaceScope scope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(workspaceId, realRoot));
         var sequence = new AtomicInteger();
         var identifiers =
                 (io.haifa.agent.common.id.IdentifierGenerator) () -> "file-tool-test-" + sequence.incrementAndGet();
@@ -326,6 +318,9 @@ class LocalFileToolOperationsTest {
                 new InMemoryWorkspaceWriteLeaseManager(),
                 identifiers,
                 () -> now);
+        TenantRef tenant = new TenantRef("local");
+        var workspaceAccess = new InMemoryWorkspaceAccessStore();
+        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, workspaceId, WorkspaceAccessMode.DEVELOP));
         var operations = new LocalFileToolOperations(
                 workspaces,
                 files,
@@ -335,7 +330,10 @@ class LocalFileToolOperationsTest {
                 provisioning,
                 ledger,
                 repositoryBaselines,
-                workspaceAttachmentDisclosed);
+                workspaceAttachmentDisclosed,
+                workspaceAccess,
+                tenant,
+                owner);
         return new Fixture(workspaceId, operations);
     }
 
@@ -418,8 +416,7 @@ class LocalFileToolOperationsTest {
                 new PrincipalRef("operator", "user"),
                 runRef,
                 "tool-call",
-                "idempotency",
-                "policy");
+                "idempotency");
     }
 
     private static RepositoryBaseline cleanBaseline(GitRepositoryRef repository) {
@@ -438,7 +435,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", "unknown:file.txt")));
 
         assertThat(resultAlias.successful()).isFalse();
@@ -452,7 +448,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", "file.txt")));
 
         assertThat(resultRelative.successful()).isFalse();
@@ -471,7 +466,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", outside.toString())));
 
         assertThat(result.successful()).isFalse();
@@ -490,7 +484,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", outside.toString())));
 
         assertThat(result.successful()).isFalse();
@@ -511,7 +504,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", testdir.toAbsolutePath().normalize().toString())));
 
         assertThat(result.successful()).isTrue();
@@ -530,7 +522,6 @@ class LocalFileToolOperationsTest {
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", hostPath)));
 
         assertThat(result.successful()).isTrue();
@@ -551,7 +542,6 @@ class LocalFileToolOperationsTest {
                 f.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                "policy-1",
                 arguments(Map.of("path", hostPath, "content", "hello world")));
 
         assertThat(createRes.successful()).isTrue();

@@ -1,19 +1,18 @@
 package io.haifa.agent.policy.core;
 
 import io.haifa.agent.policy.api.PolicyDecision;
-import io.haifa.agent.policy.api.PolicyDecisionIdGenerator;
 import io.haifa.agent.policy.api.PolicyDecisionService;
 import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.policy.api.PolicyRequest;
-import io.haifa.agent.policy.api.PolicyRequestDigest;
+import io.haifa.agent.policy.api.PolicyRequirementDigest;
 import io.haifa.agent.policy.api.PolicyRule;
 import io.haifa.agent.policy.api.PolicyRuleMatcher;
-import io.haifa.agent.policy.api.PolicySnapshot;
-import java.time.Clock;
+import io.haifa.agent.policy.api.PolicyRuleSet;
 import java.util.Comparator;
 import java.util.Objects;
 import java.util.Optional;
 
+/** Pure deterministic policy evaluator shared by products. */
 public final class DefaultPolicyDecisionService implements PolicyDecisionService {
     private static final Comparator<PolicyRule> DECISION_ORDER = Comparator.comparingInt(
                     (PolicyRule rule) -> effectRank(rule.effect()))
@@ -22,56 +21,30 @@ public final class DefaultPolicyDecisionService implements PolicyDecisionService
             .thenComparing(rule -> rule.ref().ruleId())
             .thenComparing(rule -> rule.ref().version());
 
-    private final Clock clock;
-    private final PolicyDecisionIdGenerator ids;
-
-    public DefaultPolicyDecisionService(Clock clock, PolicyDecisionIdGenerator ids) {
-        this.clock = Objects.requireNonNull(clock, "clock must not be null");
-        this.ids = Objects.requireNonNull(ids, "ids must not be null");
-    }
-
     @Override
-    public PolicyDecision evaluate(PolicyRequest request, PolicySnapshot snapshot) {
+    public PolicyDecision evaluate(PolicyRequest request, PolicyRuleSet rules) {
         Objects.requireNonNull(request, "request must not be null");
-        Objects.requireNonNull(snapshot, "snapshot must not be null");
-        PolicyRule selected = snapshot.rules().stream()
+        Objects.requireNonNull(rules, "rules must not be null");
+        String digest = PolicyRequirementDigest.compute(request, rules);
+        PolicyRule selected = rules.rules().stream()
                 .filter(rule -> matches(rule, request))
                 .min(DECISION_ORDER)
-                .or(() -> snapshot.defaultRule().filter(rule -> matches(rule, request)))
+                .or(() -> rules.defaultRule().filter(rule -> matches(rule, request)))
                 .orElse(null);
         if (selected == null) {
             return new PolicyDecision(
-                    ids.nextId(),
-                    Optional.of(request),
-                    PolicyRequestDigest.compute(request),
                     PolicyEffect.DENY,
                     Optional.empty(),
                     "POLICY_NO_MATCH",
                     "No explicit policy rule allows this action",
-                    snapshot.ref(),
-                    Optional.empty(),
-                    java.time.Instant.ofEpochMilli(clock.millis()));
+                    digest);
         }
         return new PolicyDecision(
-                ids.nextId(),
-                Optional.of(request),
-                PolicyRequestDigest.compute(request),
-                selected.effect(),
-                selected.challenge(),
-                selected.reasonCode(),
-                selected.safeExplanation(),
-                snapshot.ref(),
-                Optional.of(selected.ref()),
-                java.time.Instant.ofEpochMilli(clock.millis()));
+                selected.effect(), selected.challenge(), selected.reasonCode(), selected.safeExplanation(), digest);
     }
 
     private static boolean matches(PolicyRule rule, PolicyRequest request) {
         PolicyRuleMatcher matcher = rule.matcher();
-        if (rule.source() == io.haifa.agent.policy.api.PolicyRuleSource.PROJECT
-                && rule.effect() == PolicyEffect.ALLOW
-                && request.context().projectTrustRef().isEmpty()) {
-            return false;
-        }
         return matches(matcher.tenantId(), request.subject().tenant().tenantId())
                 && matches(matcher.productId(), request.subject().productId())
                 && matches(matcher.projectRef(), request.context().projectRef())
