@@ -733,8 +733,14 @@ async function sendAndWaitForTraceStop(text, label, timeoutMillis) {
 const observations = {};
 try {
   await waitFor(() => hasTerminalText("Haifa Coding Agent"), 20_000, "Terminal UI startup");
+  await waitFor(
+    () => screen.text().includes("IDLE") && !screen.text().includes("Loading most recent session"),
+    20_000,
+    "initial session lookup",
+  );
   captureScreen("startup");
 
+  if (mode !== "streaming") {
   let start = terminalOutput.length;
   await send("/help\r", "help");
   observations.helpOpened = terminalOutput.slice(start).includes("Commands");
@@ -779,6 +785,7 @@ try {
     120_000,
   );
   observations.seedRunCompleted = true;
+  }
 
   if (mode === "viewport") {
     for (let index = 1; index <= 12; index += 1) {
@@ -1062,6 +1069,17 @@ const commonAssertions = {
     ? { streamingAvoidedFullScreenClear: observations.streamingAvoidedFullScreenClear === true }
     : {}),
 };
+const streamingAssertions = {
+  started: hasTerminalText("Haifa Coding Agent"),
+  alternateScreenEntered: terminalOutput.includes("\u001b[?1049h"),
+  alternateScreenExited: terminalOutput.includes("\u001b[?1049l"),
+  mouseAnyMotionDisabled: !terminalOutput.includes("\u001b[?1003h"),
+  noKeyLeak: keyLeakFiles.length === 0,
+  exitedSuccessfully: exited?.exitCode === 0,
+  streamingAvoidedFullScreenClear: observations.streamingAvoidedFullScreenClear === true,
+  longModelOutputCompleted: observations.longModelOutputCompleted === true,
+  longModelOutputVisible: terminalOutput.includes("STUB-LONG-LINE-40"),
+};
 const assertions = mode === "mouse" ? {
   ...commonAssertions,
   mouseCellMotionEnabled:
@@ -1073,12 +1091,7 @@ const assertions = mode === "mouse" ? {
   mouseWheelScrolledTranscript: observations.mouseWheelScrolledTranscript === true,
   mouseSelectionHighlighted: observations.mouseSelectionHighlighted === true,
   sqliteCreated: fs.existsSync(database) && fs.statSync(database).size > 0,
-} : mode === "streaming" ? {
-  ...commonAssertions,
-  longModelOutputCompleted: observations.longModelOutputCompleted === true,
-  longModelOutputVisible: terminalOutput.includes("STUB-LONG-LINE-40"),
-  sqliteCreated: fs.existsSync(database) && fs.statSync(database).size > 0,
-} : mode === "viewport" ? {
+} : mode === "streaming" ? streamingAssertions : mode === "viewport" ? {
   ...commonAssertions,
   viewportBounded: observations.viewportBounded === true,
   latestViewportLineVisible: terminalOutput.includes("VIEWPORT-LINE-12"),
