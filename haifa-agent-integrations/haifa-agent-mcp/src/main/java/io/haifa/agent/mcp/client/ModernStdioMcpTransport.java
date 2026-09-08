@@ -141,6 +141,13 @@ final class ModernStdioMcpTransport implements ModernMcpTransport {
     private Map<String, Object> result(Map<String, Object> message) {
         if (message.containsKey("error")) {
             Map<String, Object> error = objectMap(message.get("error"));
+            var future = McpProtocolProfile.findFutureProtocolVersion(error.toString());
+            if (future.isPresent()) {
+                throw new ToolInvocationException(
+                        "MCP_PROTOCOL_VERSION_PENDING_ADAPTATION",
+                        ToolDispatchState.ACKNOWLEDGED,
+                        McpProtocolProfile.adaptationNotice(future.orElseThrow()));
+            }
             String description = String.valueOf(error.getOrDefault("message", "MCP protocol error"));
             String code = description.toLowerCase(Locale.ROOT).contains("protocol")
                     ? "MCP_PROTOCOL_VERSION_MISMATCH"

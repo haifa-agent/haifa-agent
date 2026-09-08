@@ -124,6 +124,57 @@ class ModernHttpMcpComponentTest {
         }
     }
 
+    @Test
+    void reportsFutureServerVersionAsPendingAdaptation() throws Exception {
+        try (ModernStubServer stub = new ModernStubServer(false, false, "2026-08-01")) {
+            var client = new SdkMcpClientFactory()
+                    .create(
+                            McpTestFixtures.httpServer(
+                                    stub.endpoint(), Set.of("echo"), McpProtocolProfile.FIXED_2026_07_28),
+                            McpTestFixtures.IDENTITY);
+
+            assertThatThrownBy(() -> client.initialize(List.of()))
+                    .isInstanceOf(ToolInvocationException.class)
+                    .hasMessage("MCP 协议版本2026-08-01未适配，即将适配")
+                    .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
+                            .isEqualTo("MCP_PROTOCOL_VERSION_PENDING_ADAPTATION"));
+        }
+    }
+
+    @Test
+    void reportsFutureVersionFromUnsupportedProtocolHttpResponse() throws Exception {
+        try (ModernStubServer stub = new ModernStubServer(false, false, "2026-09-10", true)) {
+            var client = new SdkMcpClientFactory()
+                    .create(
+                            McpTestFixtures.httpServer(
+                                    stub.endpoint(), Set.of("echo"), McpProtocolProfile.FIXED_2026_07_28),
+                            McpTestFixtures.IDENTITY);
+
+            assertThatThrownBy(() -> client.initialize(List.of()))
+                    .isInstanceOf(ToolInvocationException.class)
+                    .hasMessage("MCP 协议版本2026-09-10未适配，即将适配")
+                    .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
+                            .isEqualTo("MCP_PROTOCOL_VERSION_PENDING_ADAPTATION"));
+        }
+    }
+
+    @Test
+    void blocksConfiguredFutureVersionBeforeNetworkDispatchWithAdaptationNotice() {
+        var definition = McpTestFixtures.httpServer(
+                java.net.URI.create("http://127.0.0.1:1/mcp"), Set.of("echo"), new McpProtocolProfile("2027-01-15"));
+        var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
+
+        assertThatThrownBy(() -> client.initialize(List.of()))
+                .isInstanceOf(ToolInvocationException.class)
+                .hasMessage("MCP 协议版本2027-01-15未适配，即将适配")
+                .satisfies(error -> {
+                    var invocation = (ToolInvocationException) error;
+                    assertThat(invocation.failureCode()).isEqualTo("MCP_PROTOCOL_VERSION_PENDING_ADAPTATION");
+                    assertThat(invocation.dispatchState())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
+                });
+    }
+
     private static io.haifa.agent.tool.api.ToolInvocationObserver observer(AtomicInteger dispatched) {
         return new io.haifa.agent.tool.api.ToolInvocationObserver() {
             @Override
@@ -143,24 +194,32 @@ class ModernHttpMcpComponentTest {
         private final boolean eventStream;
         private final boolean invalidHeader;
         private final String supportedVersion;
+        private final boolean rejectDiscovery;
 
         private ModernStubServer() throws IOException {
-            this(false, false, "2026-07-28");
+            this(false, false, "2026-07-28", false);
         }
 
         private ModernStubServer(boolean eventStream) throws IOException {
-            this(eventStream, false, "2026-07-28");
+            this(eventStream, false, "2026-07-28", false);
         }
 
         private ModernStubServer(boolean eventStream, boolean invalidHeader) throws IOException {
-            this(eventStream, invalidHeader, "2026-07-28");
+            this(eventStream, invalidHeader, "2026-07-28", false);
         }
 
         private ModernStubServer(boolean eventStream, boolean invalidHeader, String supportedVersion)
                 throws IOException {
+            this(eventStream, invalidHeader, supportedVersion, false);
+        }
+
+        private ModernStubServer(
+                boolean eventStream, boolean invalidHeader, String supportedVersion, boolean rejectDiscovery)
+                throws IOException {
             this.eventStream = eventStream;
             this.invalidHeader = invalidHeader;
             this.supportedVersion = supportedVersion;
+            this.rejectDiscovery = rejectDiscovery;
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.createContext("/mcp", this::handle);
             server.start();
@@ -191,6 +250,26 @@ class ModernHttpMcpComponentTest {
                     exchange.getRequestHeaders().getFirst("Mcp-Name"),
                     exchange.getRequestHeaders().getFirst("Mcp-Param-Region"),
                     objectMap(params.get("_meta"))));
+            if (rejectDiscovery && method.equals("server/discover")) {
+                byte[] body = mapper.writeValueAsBytes(Map.of(
+                        "jsonrpc",
+                        "2.0",
+                        "id",
+                        request.get("id"),
+                        "error",
+                        Map.of(
+                                "code",
+                                -32600,
+                                "message",
+                                "Unsupported protocol version",
+                                "data",
+                                Map.of("supportedVersions", List.of(supportedVersion)))));
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(400, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+                return;
+            }
             Object result =
                     switch (method) {
                         case "server/discover" ->

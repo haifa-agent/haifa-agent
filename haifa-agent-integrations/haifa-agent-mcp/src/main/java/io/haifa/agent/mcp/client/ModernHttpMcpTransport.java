@@ -114,6 +114,13 @@ final class ModernHttpMcpTransport implements ModernMcpTransport {
                             : "MCP server rejected the configured credential");
         }
         if (status < 200 || status >= 300) {
+            var future = McpProtocolProfile.findFutureProtocolVersion(response.body());
+            if (future.isPresent()) {
+                throw new ToolInvocationException(
+                        "MCP_PROTOCOL_VERSION_PENDING_ADAPTATION",
+                        ToolDispatchState.ACKNOWLEDGED,
+                        McpProtocolProfile.adaptationNotice(future.orElseThrow()));
+            }
             String description = response.body().toLowerCase(Locale.ROOT);
             String code = status == 400 && description.contains("protocol")
                     ? "MCP_PROTOCOL_VERSION_MISMATCH"

@@ -3,6 +3,7 @@ package io.haifa.agent.mcp.client;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.credential.api.CredentialLease;
+import io.haifa.agent.mcp.config.McpProtocolProfile;
 import io.haifa.agent.mcp.config.McpServerDefinition;
 import io.haifa.agent.mcp.protocol.McpListToolsPage;
 import io.haifa.agent.mcp.protocol.McpRemoteContent;
@@ -66,6 +67,12 @@ final class ModernMcpClientFacade implements McpClientFacade {
             List<String> supported =
                     mapper.convertValue(result.getOrDefault("supportedVersions", List.of()), new TypeReference<>() {});
             if (!supported.contains(server.protocol().targetVersion())) {
+                Optional<String> future = supported.stream()
+                        .filter(McpProtocolProfile::isFutureVersion)
+                        .min(String::compareTo);
+                if (future.isPresent()) {
+                    throw pendingAdaptation(future.orElseThrow(), ToolDispatchState.ACKNOWLEDGED);
+                }
                 throw new ToolInvocationException(
                         "MCP_PROTOCOL_VERSION_MISMATCH",
                         ToolDispatchState.ACKNOWLEDGED,
@@ -289,6 +296,11 @@ final class ModernMcpClientFacade implements McpClientFacade {
         telemetry.operationFailed(server.serverId(), defaultCode);
         return new ToolInvocationException(
                 defaultCode, ToolDispatchState.OUTCOME_UNKNOWN, "MCP operation failed", exception);
+    }
+
+    private static ToolInvocationException pendingAdaptation(String version, ToolDispatchState dispatchState) {
+        return new ToolInvocationException(
+                "MCP_PROTOCOL_VERSION_PENDING_ADAPTATION", dispatchState, McpProtocolProfile.adaptationNotice(version));
     }
 
     private void transition(McpConnectionState target) {

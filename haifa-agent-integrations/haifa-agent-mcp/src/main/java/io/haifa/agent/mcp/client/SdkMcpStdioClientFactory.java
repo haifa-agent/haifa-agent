@@ -31,6 +31,9 @@ public final class SdkMcpStdioClientFactory implements McpClientFactory {
         if (!(server.transport() instanceof StdioDefinition stdio)) {
             throw new IllegalArgumentException("SDK stdio factory only accepts stdio definitions");
         }
+        if (server.protocol().requiresAdaptation()) {
+            return new PendingAdaptationMcpClientFacade(server, telemetry);
+        }
         var objectMapper = new ObjectMapper();
         if (server.protocol().isModern()) {
             var transport =

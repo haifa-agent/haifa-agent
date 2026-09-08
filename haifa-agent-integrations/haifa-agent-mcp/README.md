@@ -1,6 +1,6 @@
 # Haifa Agent MCP Client Integration
 
-本模块将显式固定到 `2025-03-26`、`2025-06-18`、`2025-11-25` 或 `2026-07-28` 的 MCP Tool 映射为普通 `ToolProvider`；`2024-11-05` 和未知版本 fail closed。2025 系列封装官方 MCP Java SDK 2.0.0 的 `mcp-core` 与 `mcp-json-jackson2`，2026 协议在同一 Integration 边界内使用独立的无会话 JSON-RPC 实现；SDK、Jackson 和 Reactor 类型不能进入 Tool、Runtime、Credential 或 Execution 公共契约。
+本模块将显式固定到 `2025-03-26`、`2025-06-18`、`2025-11-25` 或 `2026-07-28` 的 MCP Tool 映射为普通 `ToolProvider`；`2024-11-05` 和其它已知日期范围内的未知版本 fail closed。严格符合 `yyyy-MM-dd`、日期有效且晚于 `2026-07-28` 的版本会被识别为待适配版本，连接时以 `MCP_PROTOCOL_VERSION_PENDING_ADAPTATION` 和“版本XXX未适配，即将适配”提示终止，不发起猜测性协议交互。2025 系列封装官方 MCP Java SDK 2.0.0 的 `mcp-core` 与 `mcp-json-jackson2`，2026 协议在同一 Integration 边界内使用独立的无会话 JSON-RPC 实现；SDK、Jackson 和 Reactor 类型不能进入 Tool、Runtime、Credential 或 Execution 公共契约。
 
 ## 支持范围
 
@@ -39,6 +39,24 @@ HTTP 401/403 不会把 SDK request snapshot 或凭据带入对外异常：未配
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-mcp -am test
 ```
+
+官方 TypeScript SDK 的 `examples/dual-era` 是可重复使用的 HelloWorld 兼容目标。构建依赖后启动 HTTP server，并把仓库路径与 endpoint 传给 opt-in Live IT；该测试会分别通过 HTTP 和 ExecutionBroker-backed stdio 对四个已适配版本执行 initialize/discover、`tools/list` 和 `greet`：
+
+```powershell
+git clone https://github.com/modelcontextprotocol/typescript-sdk.git D:\dev\software\modelcontextprotocol-typescript-sdk
+Set-Location D:\dev\software\modelcontextprotocol-typescript-sdk
+corepack prepare pnpm@10.26.1 --activate
+pnpm install --frozen-lockfile
+pnpm --filter @mcp-examples/dual-era... build
+pnpm tsx examples/dual-era/server.ts --http --port 32128
+
+Set-Location D:\workspace\haifa-agent
+$env:HAIFA_OFFICIAL_MCP_HTTP_URL='http://127.0.0.1:32128/mcp'
+$env:HAIFA_OFFICIAL_MCP_REPO='D:\dev\software\modelcontextprotocol-typescript-sdk'
+.\mvnw.cmd -pl :haifa-agent-mcp -am -Dtest=OfficialDualEraMcpCompatibilityLiveIT -Dsurefire.failIfNoSpecifiedTests=false test
+```
+
+Live IT 只在相应环境变量存在时运行；默认 `ci-fast` 不启动外部进程或访问该 endpoint。
 
 真实 utility server 兼容测试只在 server 已由用户显式启动时运行。它校验 SDK 2.0 Client 对 SDK 0.18.3 Server 的 19 Tool 合同、`time_now`、`calculate` 和错误结果；Token 不得写入命令或日志：
 
