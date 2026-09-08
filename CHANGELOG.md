@@ -1,5 +1,8 @@
 # Changelog
 
+- MCP Client 对 Streamable HTTP 与 ExecutionBroker-backed stdio 增加 `2025-03-26`、`2025-06-18`
+  和 `2026-07-28` 精确协议配置；2026 使用无会话 `server/discover`、per-request metadata 和标准 HTTP
+  routing/parameter headers，`2024-11-05` 与未知版本继续 fail closed。
 - `file.write` 在读写授权的 Workspace 根中遇到不存在的目标时改为原子创建并记录 Create；已有目标仍以
   revision/content-hash 保护整体替换，目录、敏感路径、只读根和并发冲突继续 fail closed。
 - 新增原生 Google Gemini `generateContent` Integration，并严格区分官方 Standard 与个人本机

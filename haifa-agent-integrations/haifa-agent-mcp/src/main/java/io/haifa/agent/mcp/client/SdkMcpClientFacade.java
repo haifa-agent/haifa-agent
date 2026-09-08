@@ -3,7 +3,6 @@ package io.haifa.agent.mcp.client;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.credential.api.CredentialLease;
-import io.haifa.agent.mcp.config.McpProtocolProfile;
 import io.haifa.agent.mcp.config.McpServerDefinition;
 import io.haifa.agent.mcp.internal.McpRequestContext;
 import io.haifa.agent.mcp.protocol.McpListToolsPage;
@@ -58,7 +57,7 @@ final class SdkMcpClientFacade implements McpClientFacade {
         try {
             transportFailures.clearFailure();
             McpSchema.InitializeResult result = credentials.withCredentials(leases, client::initialize);
-            if (!McpProtocolProfile.VERSION_2025_11_25.equals(result.protocolVersion())) {
+            if (!server.protocol().targetVersion().equals(result.protocolVersion())) {
                 throw new ToolInvocationException(
                         "MCP_PROTOCOL_VERSION_MISMATCH",
                         ToolDispatchState.ACKNOWLEDGED,

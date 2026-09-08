@@ -24,8 +24,17 @@ import org.junit.jupiter.api.Test;
 
 class McpConfigurationAndMappingTest {
     @Test
-    void fixesProtocolAndRejectsUnsafeHttpAndHostPaths() {
+    void supportsEveryPost2024ProtocolRevisionAndRejectsExcludedOrUnknownVersions() {
+        assertThat(new McpProtocolProfile("2025-03-26").targetVersion()).isEqualTo("2025-03-26");
+        assertThat(new McpProtocolProfile("2025-06-18").targetVersion()).isEqualTo("2025-06-18");
+        assertThat(new McpProtocolProfile("2025-11-25").targetVersion()).isEqualTo("2025-11-25");
+        assertThat(new McpProtocolProfile("2026-07-28").targetVersion()).isEqualTo("2026-07-28");
         assertThatThrownBy(() -> new McpProtocolProfile("2024-11-05")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new McpProtocolProfile("2099-01-01")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectsUnsafeHttpAndHostPaths() {
         assertThatThrownBy(() -> new StreamableHttpDefinition(
                         URI.create("http://example.com/mcp"),
                         true,

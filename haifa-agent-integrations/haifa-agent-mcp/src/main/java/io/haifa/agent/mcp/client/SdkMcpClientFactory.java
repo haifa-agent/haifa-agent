@@ -1,7 +1,6 @@
 package io.haifa.agent.mcp.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.haifa.agent.mcp.config.McpProtocolProfile;
 import io.haifa.agent.mcp.config.McpServerDefinition;
 import io.haifa.agent.mcp.config.StreamableHttpDefinition;
 import io.haifa.agent.mcp.transport.http.BoundedHttpClientBuilder;
@@ -38,6 +37,11 @@ public final class SdkMcpClientFactory implements McpClientFactory {
         if (!(server.transport() instanceof StreamableHttpDefinition http)) {
             throw new IllegalArgumentException("SDK HTTP factory only accepts Streamable HTTP definitions");
         }
+        if (server.protocol().isModern()) {
+            var objectMapper = new ObjectMapper();
+            var transport = new ModernHttpMcpTransport(server, http, objectMapper);
+            return new ModernMcpClientFacade(server, transport, objectMapper, telemetry);
+        }
         var mapper = new JacksonMcpJsonMapper(new ObjectMapper());
         String origin = StreamableHttpDefinition.origin(http.endpoint());
         var credentials = new McpHttpCredentialContext(server.discoveryCredentials(), origin);
@@ -60,7 +64,7 @@ public final class SdkMcpClientFactory implements McpClientFactory {
                 .requestBuilder(HttpRequest.newBuilder().timeout(http.requestTimeout()))
                 .resumableStreams(true)
                 .openConnectionOnStartup(false)
-                .supportedProtocolVersions(List.of(McpProtocolProfile.VERSION_2025_11_25))
+                .supportedProtocolVersions(List.of(server.protocol().targetVersion()))
                 .httpRequestCustomizer(credentials::customize)
                 .build();
         var trackedTransport = new TrackingMcpClientTransport(transport);

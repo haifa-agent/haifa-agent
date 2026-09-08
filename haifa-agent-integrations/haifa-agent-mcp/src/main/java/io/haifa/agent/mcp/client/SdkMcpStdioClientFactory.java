@@ -28,10 +28,15 @@ public final class SdkMcpStdioClientFactory implements McpClientFactory {
 
     @Override
     public McpClientFacade create(McpServerDefinition server, McpConnectionIdentity identity) {
-        if (!(server.transport() instanceof StdioDefinition)) {
+        if (!(server.transport() instanceof StdioDefinition stdio)) {
             throw new IllegalArgumentException("SDK stdio factory only accepts stdio definitions");
         }
         var objectMapper = new ObjectMapper();
+        if (server.protocol().isModern()) {
+            var transport =
+                    new ModernStdioMcpTransport(server, identity, executionBroker, launches, stdio, objectMapper);
+            return new ModernMcpClientFacade(server, transport, objectMapper, telemetry);
+        }
         var mapper = new JacksonMcpJsonMapper(objectMapper);
         var credentials = new io.haifa.agent.mcp.transport.stdio.McpStdioCredentialContext();
         var transport = new io.haifa.agent.mcp.transport.stdio.ExecutionBrokerMcpTransport(
