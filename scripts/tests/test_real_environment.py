@@ -90,10 +90,106 @@ class RealEnvironmentTest(unittest.TestCase):
         )
         self.assertEqual(repository / "haifa-agent-applications/haifa-agent-personal-assistant-web", paths.web)
 
-    def test_bailian_configuration_reads_key_value_file_and_defaults_region(self) -> None:
+    def test_default_key_files_use_workspace_secrets_env_files(self) -> None:
+        environment_names = (
+            "HAIFA_DEEPSEEK_KEY_FILE",
+            "HAIFA_BAILIAN_KEY_FILE",
+            "HAIFA_KIMI_KEY_FILE",
+            "HAIFA_BIGMODEL_KEY_FILE",
+            "HAIFA_SILICONFLOW_KEY_FILE",
+            "HAIFA_ALIYUN_IQS_KEY_FILE",
+            "HAIFA_BROWSERLESS_KEY_FILE",
+            "HAIFA_TAVILY_KEY_FILE",
+            "HAIFA_PERSONAL_CONTINUATION_KEY_FILE",
+        )
+        with mock.patch.dict(real_environment.os.environ):
+            for name in environment_names:
+                real_environment.os.environ.pop(name, None)
+
+            arguments = real_environment.parser().parse_args([])
+
+        workspace = (
+            Path("D:/workspace")
+            if real_environment.os.name == "nt"
+            else Path.home() / "workspace"
+        )
+        expected = workspace / "secrets"
+        self.assertEqual(expected / "ss-deepseek.env", Path(arguments.deepseek_key_file))
+        self.assertEqual(expected / "ss-bailian.env", Path(arguments.bailian_key_file))
+        self.assertEqual(expected / "ss-kimi.env", Path(arguments.kimi_key_file))
+        self.assertEqual(expected / "ss-bigmodel.env", Path(arguments.bigmodel_key_file))
+        self.assertEqual(expected / "ss-siliconflow.env", Path(arguments.siliconflow_key_file))
+        self.assertEqual(expected / "ss-aliyun-iqs.env", Path(arguments.aliyun_iqs_key_file))
+        self.assertEqual(expected / "ss-browserless.env", Path(arguments.browserless_key_file))
+        self.assertEqual(expected / "ss-tavily.env", Path(arguments.tavily_key_file))
+        self.assertEqual(
+            expected / "ss-haifa-personal-continuation.env",
+            Path(arguments.continuation_key_file),
+        )
+
+    def test_secret_file_reads_only_the_expected_env_variable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            key_file = Path(directory) / "ss-bailian.txt"
-            key_file.write_text("API_KEY:test-secret\nWORKSPACE_ID:Workspace-123\n", encoding="utf-8")
+            key_file = Path(directory) / "ss-deepseek.env"
+            key_file.write_text("DEEPSEEK_API_KEY=test-secret\n", encoding="utf-8")
+
+            secret = real_environment.read_secret_file(
+                str(key_file), "DeepSeek", "DEEPSEEK_API_KEY"
+            )
+
+        self.assertEqual("test-secret", secret)
+
+    def test_secret_file_rejects_legacy_raw_secret_format(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            key_file = Path(directory) / "ss-deepseek.env"
+            key_file.write_text("test-secret\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "KEY=VALUE"):
+                real_environment.read_secret_file(
+                    str(key_file), "DeepSeek", "DEEPSEEK_API_KEY"
+                )
+
+    def test_secret_file_rejects_unknown_duplicate_and_empty_variables(self) -> None:
+        cases = (
+            ("OTHER_API_KEY=test-secret\n", "unexpected variable"),
+            (
+                "DEEPSEEK_API_KEY=first\nDEEPSEEK_API_KEY=second\n",
+                "duplicate DEEPSEEK_API_KEY",
+            ),
+            ("DEEPSEEK_API_KEY=\n", "DEEPSEEK_API_KEY is empty"),
+        )
+        for content, expected_message in cases:
+            with self.subTest(
+                expected_message=expected_message
+            ), tempfile.TemporaryDirectory() as directory:
+                key_file = Path(directory) / "ss-deepseek.env"
+                key_file.write_text(content, encoding="utf-8")
+
+                with self.assertRaisesRegex(RuntimeError, expected_message):
+                    real_environment.read_secret_file(
+                        str(key_file), "DeepSeek", "DEEPSEEK_API_KEY"
+                    )
+
+    def test_continuation_key_is_created_as_an_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            key_file = Path(directory) / "ss-haifa-personal-continuation.env"
+            with mock.patch.object(real_environment, "restrict_secret_file"), mock.patch.object(
+                real_environment.secrets, "token_bytes", return_value=b"a" * 32
+            ):
+                configured = real_environment.continuation_key(str(key_file))
+
+            lines = key_file.read_text(encoding="ascii").splitlines()
+
+        self.assertEqual("YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=", configured)
+        self.assertEqual([f"HAIFA_PERSONAL_CONTINUATION_KEY={configured}"], lines)
+
+    def test_bailian_configuration_reads_env_file_and_defaults_region(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            key_file = Path(directory) / "ss-bailian.env"
+            key_file.write_text(
+                "DASHSCOPE_API_KEY=test-secret\n"
+                "ALIYUN_BAILIAN_WORKSPACE_ID=Workspace-123\n",
+                encoding="utf-8",
+            )
 
             configured = real_environment.optional_bailian_configuration(
                 str(key_file), environment={}
