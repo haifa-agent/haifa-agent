@@ -6,9 +6,13 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelAuthenticationMethod;
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProfileStatus;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.io.ByteArrayInputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -16,6 +20,52 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ModelCatalogYamlLoaderTest {
+    @Test
+    void suppliesTheCatalogProfileForAnExactFrozenBindingAndRejectsFactDrift() {
+        ModelCatalogManifest catalog = loader(resources()).load();
+        ResolvedModelSnapshot matching = ResolvedModelSnapshot.create(
+                new ModelProviderId("openai"),
+                "deployment",
+                new ModelDefinitionId("openai-chat"),
+                "deployment",
+                "openai-chat-model",
+                ModelApiStyles.OPENAI_CHAT_ADAPTER,
+                "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "standard",
+                URI.create("https://api.example.test/v1"),
+                new CredentialRef("env://OPENAI_API_KEY"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                8192,
+                4096,
+                Map.of(),
+                Map.of());
+
+        assertThat(catalog.profileFor(matching))
+                .hasValueSatisfying(profile -> assertThat(profile.status()).isEqualTo(ModelProfileStatus.VERIFIED));
+        ResolvedModelSnapshot drifted = ResolvedModelSnapshot.create(
+                new ModelProviderId("openai"),
+                "deployment",
+                new ModelDefinitionId("openai-chat"),
+                "deployment",
+                "different-provider-model",
+                ModelApiStyles.OPENAI_CHAT_ADAPTER,
+                "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "standard",
+                URI.create("https://api.example.test/v1"),
+                new CredentialRef("env://OPENAI_API_KEY"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                8192,
+                4096,
+                Map.of(),
+                Map.of());
+
+        assertThat(catalog.profileFor(drifted)).isEmpty();
+    }
+
     @Test
     void loadsVerifiedBindingsForOpenAiAnthropicAndGeminiStyles() {
         ModelCatalogManifest catalog = loader(resources()).load();
@@ -100,6 +150,21 @@ class ModelCatalogYamlLoaderTest {
                         .profile()
                         .contextWindowTokens())
                 .isEqualTo(1_048_576);
+        assertThat(catalog.binding("glm-5.3").orElseThrow().profile().allowedReasoningEfforts())
+                .containsExactlyInAnyOrder(
+                        io.haifa.agent.model.api.ModelReasoningEffort.LOW,
+                        io.haifa.agent.model.api.ModelReasoningEffort.HIGH,
+                        io.haifa.agent.model.api.ModelReasoningEffort.MAX);
+        assertThat(catalog.binding("glm-5.3-flash").orElseThrow().definition().capabilities())
+                .containsExactlyInAnyOrder(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.IMAGE_UPLOAD_INPUT,
+                        ModelCapability.IMAGE_URL_INPUT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.REASONING);
+        assertThat(catalog.binding("glm-5.3-flash").orElseThrow().profile().imageInput())
+                .isPresent();
         assertThat(catalog.binding("gpt-5.6-sol").orElseThrow().definition().style())
                 .isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
         assertThat(catalog.binding("tokenrhythm-deepseek-v4-flash-0731")

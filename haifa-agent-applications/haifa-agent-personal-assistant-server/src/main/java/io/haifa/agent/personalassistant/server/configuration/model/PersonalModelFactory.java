@@ -34,6 +34,7 @@ import io.haifa.agent.model.core.InMemoryProviderHealthRegistry;
 import io.haifa.agent.model.core.ModelAccessPolicy;
 import io.haifa.agent.model.core.ModelAvailabilityRequest;
 import io.haifa.agent.model.core.ModelCatalogDeployment;
+import io.haifa.agent.model.core.ModelCatalogManifest;
 import io.haifa.agent.model.core.ModelSelectionRequest;
 import io.haifa.agent.model.core.PackagedModelCatalog;
 import io.haifa.agent.model.core.StaticModelPlatform;
@@ -76,6 +77,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /** Creates either the production remote adapter or an explicitly enabled deterministic acceptance model. */
 public final class PersonalModelFactory {
+    private static final ModelCatalogManifest PACKAGED_CATALOG =
+            PackagedModelCatalog.load(PersonalModelFactory.class.getClassLoader());
     private PersonalModelFactory() {}
 
     public static Platform createPlatform(
@@ -168,7 +171,9 @@ public final class PersonalModelFactory {
             AntigravityCloudCodeProjectResolver trustedProjectResolver,
             CodexAccountIdentityResolver codexAccountResolver,
             ProxySelector proxySelector) {
-        List<PersonalAssistantProperties.ModelProvider> providers = catalogized(List.copyOf(configured));
+        List<PersonalAssistantProperties.ModelProvider> configuredProviders = List.copyOf(configured);
+        boolean catalogDeployment = isCatalogDeployment(configuredProviders);
+        List<PersonalAssistantProperties.ModelProvider> providers = catalogized(configuredProviders);
         java.util.Objects.requireNonNull(credentials, "credentials must not be null");
         java.util.Objects.requireNonNull(proxySelector, "proxySelector must not be null");
         if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
@@ -224,12 +229,7 @@ public final class PersonalModelFactory {
         Map<String, ModelBindingProfile> profiles = snapshots.values().stream()
                 .collect(java.util.stream.Collectors.toUnmodifiableMap(
                         value -> value.modelId().value(),
-                        value -> ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(value.apiStyle())
-                                ? GeminiModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 24))
-                                : ModelApiStyles.ANTHROPIC_MESSAGES.equals(value.apiStyle())
-                                        ? AnthropicModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 30))
-                                        : OpenAiCompatibleModelProfileFactory.fromSnapshot(
-                                                value, LocalDate.of(2026, 8, 13))));
+                        value -> profile(value, catalogDeployment)));
         StaticModelPlatform modelPlatform = modelPlatform(providers, adapters, profiles);
         if (!profiles.get(selected.model().id()).selectable()) {
             throw new IllegalArgumentException("default Personal model profile is not verified");
@@ -435,8 +435,7 @@ public final class PersonalModelFactory {
     /** Replaces YAML model facts with the packaged Catalog while retaining product-owned connection settings. */
     private static List<PersonalAssistantProperties.ModelProvider> catalogized(
             List<PersonalAssistantProperties.ModelProvider> configured) {
-        if (configured.stream().anyMatch(provider -> "deterministic".equals(provider.mode()))
-                || configured.stream().allMatch(provider -> !provider.models().isEmpty())) {
+        if (!isCatalogDeployment(configured)) {
             return configured;
         }
         var deployment = new ModelCatalogDeployment(configured.stream()
@@ -525,6 +524,11 @@ public final class PersonalModelFactory {
                 .toList();
     }
 
+    private static boolean isCatalogDeployment(List<PersonalAssistantProperties.ModelProvider> configured) {
+        return configured.stream().noneMatch(provider -> "deterministic".equals(provider.mode()))
+                && configured.stream().anyMatch(provider -> provider.models().isEmpty());
+    }
+
     private static String apiStyleDisplayName(ApiStyleId style) {
         if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(style)) return "Chat Completions";
         if (ModelApiStyles.OPENAI_RESPONSES.equals(style)) return "Responses";
@@ -575,6 +579,17 @@ public final class PersonalModelFactory {
                 model.maxOutputTokens(),
                 providerOptions,
                 invocationOptions);
+    }
+
+    private static ModelBindingProfile profile(ResolvedModelSnapshot snapshot, boolean catalogDeployment) {
+        if (catalogDeployment) return PACKAGED_CATALOG.profileFor(snapshot).orElseThrow();
+        return
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(snapshot.apiStyle())
+                        ? GeminiModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 24))
+                        : ModelApiStyles.ANTHROPIC_MESSAGES.equals(snapshot.apiStyle())
+                                ? AnthropicModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 30))
+                                : OpenAiCompatibleModelProfileFactory.fromSnapshot(
+                                        snapshot, LocalDate.of(2026, 8, 13));
     }
 
     private static StaticModelPlatform modelPlatform(

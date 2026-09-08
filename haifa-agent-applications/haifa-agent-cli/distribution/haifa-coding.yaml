@@ -43,7 +43,7 @@ models:
       endpoint: https://open.bigmodel.cn/api/paas/v4
       credentialRef: env://BIGMODEL_API_KEY
       nativeStreaming: true
-      allowedBindings: [glm-5.2, glm-5.1, glm-5, glm-5-turbo]
+      allowedBindings: [glm-5.3, glm-5.3-flash, glm-5.2, glm-5.1, glm-5, glm-5-turbo]
       reasoningMode: ENABLED
     - id: tokenrhythm
       endpoint: https://tokenrhythm.studio/v1
