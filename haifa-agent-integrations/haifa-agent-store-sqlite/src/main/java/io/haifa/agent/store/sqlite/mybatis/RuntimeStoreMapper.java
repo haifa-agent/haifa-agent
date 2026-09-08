@@ -164,6 +164,8 @@ public interface RuntimeStoreMapper {
 
     InteractionRequestRow pendingInteraction(@Param("runId") String runId);
 
+    List<InteractionRequestRow> toolApprovalInteractions(@Param("runId") String runId);
+
     List<InteractionRequestRow> dueInteractions(
             @Param("runId") String runId, @Param("at") java.time.Instant at, @Param("limit") int limit);
 

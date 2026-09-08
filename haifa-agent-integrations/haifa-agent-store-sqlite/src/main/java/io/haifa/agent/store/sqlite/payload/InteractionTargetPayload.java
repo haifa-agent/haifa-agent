@@ -12,11 +12,12 @@ public record InteractionTargetPayload(
         String coordinate,
         String definitionHash,
         String argumentsDigest,
-        String principalScope) {
+        String principalScope,
+        String requirementDigest) {
 
     public static InteractionTargetPayload from(InteractionTarget target) {
         if (target instanceof GenericInteractionTarget generic) {
-            return new InteractionTargetPayload("generic", generic.type(), null, null, null, null, null);
+            return new InteractionTargetPayload("generic", generic.type(), null, null, null, null, null, null);
         }
         if (target instanceof ToolApprovalTarget tool) {
             return new InteractionTargetPayload(
@@ -26,7 +27,8 @@ public record InteractionTargetPayload(
                     tool.coordinate(),
                     tool.definitionHash(),
                     tool.argumentsDigest(),
-                    tool.principalScope());
+                    tool.principalScope(),
+                    tool.requirementDigest());
         }
         throw new IllegalArgumentException("unsupported interaction target");
     }
@@ -36,7 +38,12 @@ public record InteractionTargetPayload(
             case "generic" -> new GenericInteractionTarget(type);
             case "tool-approval" ->
                 new ToolApprovalTarget(
-                        new ToolCallId(toolCallId), coordinate, definitionHash, argumentsDigest, principalScope);
+                        new ToolCallId(toolCallId),
+                        coordinate,
+                        definitionHash,
+                        argumentsDigest,
+                        principalScope,
+                        requirementDigest);
             default -> throw new IllegalStateException("unknown interaction target kind");
         };
     }

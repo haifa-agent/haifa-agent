@@ -1,5 +1,5 @@
 package io.haifa.agent.policy.api;
 
 public interface ApprovalVerificationService {
-    ApprovalVerification verify(ApprovalRequestContext request, ApprovalResponder responder);
+    ApprovalVerification verify(ApprovalRequester requester, ApprovalTargetRef target, ApprovalResponder responder);
 }

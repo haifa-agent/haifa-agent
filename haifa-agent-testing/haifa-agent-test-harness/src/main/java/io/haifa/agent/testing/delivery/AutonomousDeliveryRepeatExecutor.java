@@ -173,7 +173,7 @@ final class AutonomousDeliveryRepeatExecutor {
                                 phaseThree.passed(),
                                 phaseThree.atomicity()),
                         selectedSecrets);
-        progress.caseCompleted(testCase.caseId(), repetition, grade.passed(), preliminaryGatePassed, wallTimeMillis);
+        progress.caseCompleted(testCase.caseId(), repetition, grade.passed(), collected.gatePassed(), wallTimeMillis);
         return collected.summary();
     }
 

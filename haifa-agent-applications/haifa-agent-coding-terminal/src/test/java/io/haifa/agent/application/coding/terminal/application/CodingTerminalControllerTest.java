@@ -22,7 +22,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
-import io.haifa.agent.application.project.product.coding.CodingWorkspaceGrant;
+import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
@@ -746,12 +746,12 @@ class CodingTerminalControllerTest {
     }
 
     @Test
-    void settingsStaysUnavailableWhileTrustListsAndRevokesDurableWorkspaceGrants() {
+    void settingsStaysUnavailableWhileTrustListsAndRevokesCurrentWorkspaceAccess() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         client.workspaces = List.of(
-                new CodingWorkspaceGrant("workspace-initial", "haifa-agent", "read-write", "initial", "active", false),
-                new CodingWorkspaceGrant(
-                        "workspace-docs", "haifa-agent-docs", "read-only", "approved-attach", "active", true));
+                new CodingWorkspaceView("workspace-initial", "haifa-agent", "DEVELOP", "initial", "active", false),
+                new CodingWorkspaceView(
+                        "workspace-docs", "haifa-agent-docs", "READ", "approved-attach", "active", true));
         var controller = controller(client);
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, "/settings"));
@@ -764,8 +764,8 @@ class CodingTerminalControllerTest {
             assertThat(selector.title()).isEqualTo("Workspace trust");
             assertThat(selector.options())
                     .containsExactly(
-                            "haifa-agent · read-write · active · initial · workspace-initial",
-                            "haifa-agent-docs · read-only · active · approved-attach · workspace-docs · revocable");
+                            "haifa-agent · DEVELOP · active · initial · workspace-initial",
+                            "haifa-agent-docs · READ · active · approved-attach · workspace-docs · revocable");
         });
 
         controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
@@ -1305,7 +1305,7 @@ class CodingTerminalControllerTest {
         private List<CodingQueuedMessage> restorable = List.of();
         private List<String> logicalPaths = List.of();
         private List<CodingModelOption> models = List.of();
-        private List<CodingWorkspaceGrant> workspaces = List.of();
+        private List<CodingWorkspaceView> workspaces = List.of();
         private CodingSessionCreateOptions createOptions = CodingSessionCreateOptions.defaults();
         private ProjectProductException submitFailure;
         private ProjectProductException responseFailure;
@@ -1357,7 +1357,7 @@ class CodingTerminalControllerTest {
         }
 
         @Override
-        public List<CodingWorkspaceGrant> workspaces() {
+        public List<CodingWorkspaceView> workspaces() {
             return workspaces;
         }
 

@@ -25,6 +25,7 @@ import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
@@ -36,13 +37,6 @@ import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
-import io.haifa.agent.policy.api.ApprovalGrantId;
-import io.haifa.agent.policy.api.ApprovalGrantState;
-import io.haifa.agent.policy.api.AuthorizationResult;
-import io.haifa.agent.policy.api.PolicyAuthorizationService;
-import io.haifa.agent.policy.core.ApprovalGrantMatcher;
-import io.haifa.agent.policy.core.DefaultApprovalGrantService;
-import io.haifa.agent.policy.core.InMemoryPolicyStore;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
@@ -85,10 +79,8 @@ import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolReconciliation;
 import io.haifa.agent.tool.api.ToolSchema;
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
@@ -1087,29 +1079,230 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void preservesKnownNotDispatchedToolFailureThroughTheAttemptBoundary() {
+    void eligibleKnownNotDispatchedFailureCreatesOneDeterministicSuccessorWithoutModelReplay() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
         ToolRequest request = toolRequest(
-                "observer-unavailable", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+                "network-permission",
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.run.input", "1.0", Map.of()));
         Fixture fixture = fixture(
-                model(new ToolCallDecision(List.of(request))),
-                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
-                    throw new io.haifa.agent.tool.api.ToolInvocationException(
-                            "WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE",
-                            io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
-                            "workspace change observation could not be established before execution");
-                }));
+                ignored -> response(
+                        modelCalls.incrementAndGet() == 1
+                                ? new ToolCallDecision(List.of(request))
+                                : finalDecision("recovered")),
+                builder -> TestToolPlatform.install(
+                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
+                            if (toolCalls.incrementAndGet() == 1) {
+                                throw new io.haifa.agent.tool.api.ToolInvocationException(
+                                        "NETWORK_PERMISSION_REQUIRED",
+                                        io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
+                                        "host network access requires operator approval before execution");
+                            }
+                            return new ToolResult(
+                                    true, "written after recovery", Map.of(), List.of(), List.of(), false);
+                        }));
 
-        var failed = fixture.runtime.start(request("observer-unavailable"));
+        var accepted = fixture.runtime.start(request("network-permission"));
         fixture.scheduler.runAll();
 
-        assertThat(fixture.runtime.find(failed.runId()).orElseThrow()).satisfies(run -> {
-            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(run.error().orElseThrow().code())
-                    .isEqualTo(AgentErrorCode.WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE);
-        });
-        assertThat(fixture.store.toolCalls(failed.runId())).singleElement().satisfies(call -> assertThat(
-                        call.error().orElseThrow().error().code())
-                .isEqualTo(AgentErrorCode.WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE));
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.WAITING_INTERACTION);
+        assertThat(modelCalls).hasValue(1);
+        assertThat(toolCalls).hasValue(1);
+        var original = fixture.store.toolCalls(accepted.runId()).getFirst();
+        assertThat(original.status().name()).isEqualTo("FAILED");
+        assertThat(original.error().orElseThrow().error().code()).isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
+        assertThat(original.error().orElseThrow().error().details())
+                .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
+                .containsEntry("dispatchState", "NOT_DISPATCHED");
+        assertThat(fixture.journal.state(accepted.runId(), original.idempotencyKey()))
+                .contains(ToolJournalState.FAILED);
+        var recovery = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        assertThat(recovery.id().value()).startsWith("execution-recovery:v1:");
+        assertThat(recovery.type()).isEqualTo("execution-recovery");
+        assertThat(recovery.target()).isInstanceOf(ToolApprovalTarget.class);
+        assertThat(((ToolApprovalTarget) recovery.target()).toolCallId()).isEqualTo(original.id());
+
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("recovery-response"),
+                recovery.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "recovery-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(modelCalls).hasValue(2);
+        assertThat(toolCalls).hasValue(2);
+        assertThat(fixture.store.toolCalls(accepted.runId()))
+                .hasSize(2)
+                .satisfiesExactly(
+                        first -> {
+                            assertThat(first.id()).isEqualTo(original.id());
+                            assertThat(first.status().name()).isEqualTo("FAILED");
+                        },
+                        successor -> {
+                            assertThat(successor.id()).isNotEqualTo(original.id());
+                            assertThat(successor.status().name()).isEqualTo("COMPLETED");
+                            assertThat(successor.arguments()).isEqualTo(original.arguments());
+                        });
+    }
+
+    @Test
+    void workspaceObserverFailureRemainsIneligibleForExecutionRecovery() {
+        AtomicInteger toolCalls = new AtomicInteger();
+        ToolRequest request = toolRequest(
+                "observer-unavailable",
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.run.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request))),
+                builder -> TestToolPlatform.install(
+                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
+                            toolCalls.incrementAndGet();
+                            throw new io.haifa.agent.tool.api.ToolInvocationException(
+                                    "WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE",
+                                    io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
+                                    "workspace change observation could not be established before execution");
+                        }));
+
+        var accepted = fixture.runtime.start(request("observer-unavailable"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.FAILED);
+        assertThat(fixture.interactions.pending(accepted.runId())).isEmpty();
+        assertThat(fixture.store.toolCalls(accepted.runId())).hasSize(1);
+        assertThat(toolCalls).hasValue(1);
+    }
+
+    @Test
+    void rejectingExecutionRecoveryCreatesNoSuccessor() {
+        AtomicInteger toolCalls = new AtomicInteger();
+        ToolRequest request = toolRequest(
+                "recovery-rejected",
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.run.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request))),
+                builder -> TestToolPlatform.install(
+                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
+                            toolCalls.incrementAndGet();
+                            throw new io.haifa.agent.tool.api.ToolInvocationException(
+                                    "NETWORK_PERMISSION_REQUIRED",
+                                    io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
+                                    "host network access requires operator approval before execution");
+                        }));
+
+        var accepted = fixture.runtime.start(request("recovery-rejected"));
+        fixture.scheduler.runAll();
+        var recovery = fixture.interactions.pending(accepted.runId()).orElseThrow();
+
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("recovery-rejected-response"),
+                recovery.id(),
+                accepted.runId(),
+                InteractionResponseType.REJECT,
+                List.of(),
+                "recovery-rejected-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.CANCELLED);
+        assertThat(fixture.store.toolCalls(accepted.runId())).hasSize(1);
+        assertThat(toolCalls).hasValue(1);
+    }
+
+    @Test
+    void failedRecoverySuccessorCannotCreateASecondRecoveryInteraction() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        ToolRequest request = toolRequest(
+                "one-hop-recovery",
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.run.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                ignored -> response(
+                        modelCalls.incrementAndGet() == 1
+                                ? new ToolCallDecision(List.of(request))
+                                : finalDecision("must-not-be-reached")),
+                builder -> TestToolPlatform.install(
+                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
+                            toolCalls.incrementAndGet();
+                            throw new io.haifa.agent.tool.api.ToolInvocationException(
+                                    "NETWORK_PERMISSION_REQUIRED",
+                                    io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
+                                    "host network access requires operator approval before execution");
+                        }));
+
+        var accepted = fixture.runtime.start(request("one-hop-recovery"));
+        fixture.scheduler.runAll();
+        var recovery = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("one-hop-recovery-response"),
+                recovery.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "one-hop-recovery-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.FAILED);
+        assertThat(fixture.interactions.pending(accepted.runId())).isEmpty();
+        assertThat(fixture.store.toolCalls(accepted.runId())).hasSize(2).allSatisfy(call -> assertThat(call.status())
+                .isEqualTo(ToolCallStatus.FAILED));
+        assertThat(modelCalls).hasValue(1);
+        assertThat(toolCalls).hasValue(2);
+    }
+
+    @Test
+    void ordinaryUnsuccessfulExecutionResultDoesNotCreateRecovery() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        ToolRequest request = toolRequest(
+                "ordinary-unsuccessful",
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.run.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                ignored -> response(
+                        modelCalls.incrementAndGet() == 1
+                                ? new ToolCallDecision(List.of(request))
+                                : finalDecision("handled failure")),
+                builder -> TestToolPlatform.install(
+                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
+                            toolCalls.incrementAndGet();
+                            return new ToolResult(
+                                    false,
+                                    "network unavailable",
+                                    Map.of("stableFailureCode", "NETWORK_PERMISSION_REQUIRED"),
+                                    List.of(),
+                                    List.of(),
+                                    false);
+                        }));
+
+        var accepted = fixture.runtime.start(request("ordinary-unsuccessful"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.interactions.pending(accepted.runId())).isEmpty();
+        assertThat(fixture.store.toolCalls(accepted.runId()))
+                .singleElement()
+                .satisfies(call -> assertThat(call.status()).isEqualTo(ToolCallStatus.FAILED));
+        assertThat(modelCalls).hasValue(2);
+        assertThat(toolCalls).hasValue(1);
     }
 
     @Test
@@ -1271,14 +1464,7 @@ class RuntimeCoreTest {
     void asynchronousToolApprovalPausesWorkerAndResumesSameCallInANewAttempt() {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger toolCalls = new AtomicInteger();
-        AtomicReference<String> dispatchedDecisionRef = new AtomicReference<>();
-        InMemoryPolicyStore grants = new InMemoryPolicyStore();
-        var authorization = new DefaultApprovalGrantService(
-                grants,
-                grants,
-                new ApprovalGrantMatcher(),
-                Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC),
-                () -> new ApprovalGrantId("runtime-grant"));
+        AtomicReference<ToolCallId> dispatchedToolCallId = new AtomicReference<>();
         AgentChatModel model = ignored -> response(
                 modelCalls.incrementAndGet() == 1
                         ? new ToolCallDecision(List.of(toolRequest(
@@ -1290,7 +1476,7 @@ class RuntimeCoreTest {
         Fixture fixture = fixture(
                 model,
                 builder -> TestToolPlatform.install(
-                        builder.policyAuthorization(authorization),
+                        builder,
                         "write",
                         "1.0.0",
                         "write.input",
@@ -1298,8 +1484,7 @@ class RuntimeCoreTest {
                         ToolPolicyDecision.REQUIRE_APPROVAL,
                         request -> {
                             toolCalls.incrementAndGet();
-                            dispatchedDecisionRef.set(
-                                    request.policyDecisionRef().orElseThrow());
+                            dispatchedToolCallId.set(request.toolCallId());
                             return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
                         }));
 
@@ -1347,16 +1532,7 @@ class RuntimeCoreTest {
                 .isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(toolCalls).hasValue(1);
         assertThat(modelCalls).hasValue(2);
-        assertThat(dispatchedDecisionRef)
-                .hasValue(
-                        interaction.approvalContext().orElseThrow().decisionId().value());
-        assertThat(grants.find(new ApprovalGrantId("runtime-grant"))).get().satisfies(grant -> {
-            assertThat(grant.state()).isEqualTo(ApprovalGrantState.CONSUMED);
-            assertThat(grant.sourceApprovalRequestRef())
-                    .isEqualTo(interaction.id().value());
-            assertThat(grant.sourceApprovalResponseRef())
-                    .isEqualTo(response.responseId().value());
-        });
+        assertThat(dispatchedToolCallId).hasValue(originalToolCallId);
         assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> assertThat(call.id())
                 .isEqualTo(originalToolCallId));
         assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
@@ -1373,43 +1549,23 @@ class RuntimeCoreTest {
     @Test
     void authorizationProtocolErrorReturnsSafeRepairFeedbackWithoutCreatingApproval() {
         AtomicInteger modelCalls = new AtomicInteger();
-        PolicyAuthorizationService protocol = new PolicyAuthorizationService() {
-            @Override
-            public AuthorizationResult authorize(
-                    io.haifa.agent.policy.api.PolicyDecision decision,
-                    io.haifa.agent.policy.api.ApprovalTargetRef target,
-                    Optional<io.haifa.agent.policy.api.ProjectTrustExpectation> projectExpectation) {
-                return AuthorizationResult.protocolError(
-                        "WORKSPACE_PROTOCOL_REQUIRED", "Use the structured workspace fields");
-            }
-
-            @Override
-            public io.haifa.agent.policy.api.ApprovalGrant createGrant(
-                    io.haifa.agent.policy.api.ApprovalGrantCreationRequest request) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public io.haifa.agent.policy.api.ApprovalGrantRevocation revoke(
-                    ApprovalGrantId id, long expectedVersion, String reasonCode) {
-                throw new UnsupportedOperationException();
-            }
-        };
         AgentChatModel model = ignored -> response(
                 modelCalls.incrementAndGet() == 1
                         ? new ToolCallDecision(List.of(toolRequest(
                                 "protocol", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of("v", 1)))))
                         : finalDecision("repaired"));
-        Fixture fixture = fixture(
-                model,
-                builder -> TestToolPlatform.install(
-                        builder.policyAuthorization(protocol),
+        Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
+                        builder,
                         "write",
                         "1.0.0",
                         "write.input",
                         true,
                         ToolPolicyDecision.REQUIRE_APPROVAL,
-                        request -> new ToolResult(true, "not called", Map.of(), List.of(), List.of(), false)));
+                        request -> new ToolResult(true, "not called", Map.of(), List.of(), List.of(), false))
+                .publicToolPolicy((run, binding, request) -> {
+                    throw new io.haifa.agent.runtime.core.tool.ToolAuthorizationProtocolException(
+                            "WORKSPACE_PROTOCOL_REQUIRED", "Use the structured workspace fields");
+                }));
 
         var accepted = fixture.runtime.start(request("protocol-error"));
         fixture.scheduler.runAll();
@@ -1734,8 +1890,8 @@ class RuntimeCoreTest {
         assertThat(fixture.store.steps(accepted.runId()))
                 .filteredOn(step -> step.type() == AgentStepType.TOOL_EXECUTION)
                 .singleElement()
-                .satisfies(step -> assertThat(step.error().orElseThrow().error().details())
-                        .containsEntry("reason", "LEGACY_TOOL_POLICY_DENY"));
+                .satisfies(step ->
+                        assertThat(step.error().orElseThrow().error().details()).containsEntry("reason", "TEST_DENY"));
     }
 
     @Test
@@ -1805,13 +1961,17 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void oversizedLegacyApprovalPromptStillProjectsAsABoundedPublicInteraction() {
+    void oversizedApprovalPromptProjectsAsBoundedAndCanBeApproved() {
         String oversizedPrompt = "Approve execution\nFull content:\n" + "Write-Output 'test'\n".repeat(300);
-        AgentChatModel model = model(new ToolCallDecision(List.of(toolRequest(
-                "legacy-approval",
-                "write",
-                "1.0.0",
-                new ToolArguments("write.input", "1.0", Map.of("value", "test"))))));
+        AtomicInteger modelCalls = new AtomicInteger();
+        AgentChatModel model = ignored -> response(
+                modelCalls.incrementAndGet() == 1
+                        ? new ToolCallDecision(List.of(toolRequest(
+                                "oversized-approval",
+                                "write",
+                                "1.0.0",
+                                new ToolArguments("write.input", "1.0", Map.of("value", "test")))))
+                        : finalDecision("completed after approval"));
         Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
                         builder,
                         "write",
@@ -1833,6 +1993,21 @@ class RuntimeCoreTest {
                         .safePrompt())
                 .hasSizeLessThanOrEqualTo(2_048)
                 .contains("Approve execution", "Prompt truncated for safe display", "original length=");
+        var interaction = fixture.interactions.pending(accepted.runId()).orElseThrow();
+
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("oversized-approval-response"),
+                interaction.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "oversized-approval-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(modelCalls).hasValue(2);
     }
 
     private static Fixture fixture(AgentChatModel model) {

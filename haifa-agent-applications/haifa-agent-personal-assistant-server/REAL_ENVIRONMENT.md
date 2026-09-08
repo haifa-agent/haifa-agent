@@ -20,19 +20,25 @@ loopback `20000` 的 Origin，方案中没有反向代理。
 - 主仓：`D:\workspace\haifa-agent`；
 - Utility MCP 仓库：
   `D:\workspace\haifa\haifa-ai\haifa-ai-utility-mcp-server`；
-- DeepSeek Key 文件：`D:\workspace\ss-deepseek.txt`，文件中只放 Key 本身。
-- 可选百炼 Key 文件：`D:\workspace\ss-bailian.txt`，每行使用 `KEY:VALUE`，支持
-  `API_KEY`、`WORKSPACE_ID` 和可选 `REGION`；region 缺省为 `cn-beijing`；
-- 可选 Kimi Key 文件：`D:\workspace\ss-kimi.txt`，文件中只放 Key 本身；
-- 可选智谱 Key 文件：`D:\workspace\ss-bigmodel.txt`，文件中只放 Key 本身；
-- 可选硅基流动 Key 文件：`D:\workspace\ss-siliconflow.txt`，文件中只放 Key 本身；
-- Tavily Key 文件：`D:\workspace\ss-tavily.txt`，文件中只放 Key 本身；默认 Search 与 Fetch 均读取此文件；
-- 可选 Aliyun IQS Key 文件：`D:\workspace\ss-aliyun-iqs.txt`，仅在 Search 或 Fetch 选择 Aliyun 时读取；
-- 可选 Browserless Token 文件：`D:\workspace\ss-browserless.txt`，仅在 Fetch 选择 Browserless 时读取；
+- DeepSeek Key 文件：`D:\workspace\secrets\ss-deepseek.env`，内容为 `DEEPSEEK_API_KEY=...`；
+- 可选百炼 Key 文件：`D:\workspace\secrets\ss-bailian.env`，使用 env 格式，支持
+  `DASHSCOPE_API_KEY`、`ALIYUN_BAILIAN_WORKSPACE_ID` 和可选 `ALIYUN_BAILIAN_REGION`；region 缺省为
+  `cn-beijing`；
+- 可选 Kimi Key 文件：`D:\workspace\secrets\ss-kimi.env`，内容为 `KIMI_API_KEY=...`；
+- 可选智谱 Key 文件：`D:\workspace\secrets\ss-bigmodel.env`，内容为 `BIGMODEL_API_KEY=...`；
+- 可选硅基流动 Key 文件：`D:\workspace\secrets\ss-siliconflow.env`，内容为
+  `SILICONFLOW_API_KEY=...`；
+- Tavily Key 文件：`D:\workspace\secrets\ss-tavily.env`，内容为 `TAVILY_API_KEY=...`；默认 Search 与
+  Fetch 均读取此文件；
+- 可选 Aliyun IQS Key 文件：`D:\workspace\secrets\ss-aliyun-iqs.env`，内容为
+  `ALIYUN_IQS_API_KEY=...`，仅在 Search 或 Fetch 选择 Aliyun 时读取；
+- 可选 Browserless Token 文件：`D:\workspace\secrets\ss-browserless.env`，内容为
+  `BROWSERLESS_TOKEN=...`，仅在 Fetch 选择 Browserless 时读取；
 - Personal Skill 根目录：`D:\agents\hermes-agent\optional-skills\finance`，其直接子目录分别包含
   `SKILL.md`。
 
-Key 文件不能提交到 Git，也不要把内容复制到命令历史、日志或文档。
+这些 env 文件不能提交到 Git，也不要把内容复制到命令历史、日志或文档。文件仅允许包含对应 Provider
+明确列出的变量；启动脚本遇到未知变量、重复变量、空值或旧的裸 Key 格式时会拒绝启动。
 
 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID` 仅用于可选的本机 OpenAI Responses
 Provider。三项都配置时启用该 Provider；全部缺失或仅配置一部分时继续使用 DeepSeek-only 环境，
@@ -100,7 +106,8 @@ Main 参数会原样传给 Python，例如在 IDE Program arguments 中填写：
 
 1. 校验本机工具、DeepSeek、所选 Web Provider Key、finance Skill 根目录和 Utility MCP 目录；
 2. 首次运行时生成随机 32 字节 Continuation Key，并持久化到
-   `D:\workspace\ss-haifa-personal-continuation.txt`；
+   `D:\workspace\secrets\ss-haifa-personal-continuation.env`，变量名为
+   `HAIFA_PERSONAL_CONTINUATION_KEY`；
 3. JAR 模式只在后端 JAR 不存在时构建后端；IDE classpath 模式直接使用当前编译结果；
 4. 按内容摘要把后端 JAR 复制到 `local-tmp/personal-assistant-real/backend/`，从运行副本启动，避免
    Java 进程锁定 Maven `target/` 下的构建产物；复制前校验 Spring Boot Manifest 和 `BOOT-INF`，
@@ -266,7 +273,7 @@ Get-NetTCPConnection -State Listen |
 
 ## 6. Web Tool 与 finance Skills
 
-脚本默认只读取 `D:\workspace\ss-tavily.txt`，向后端子进程注入 `TAVILY_API_KEY`，默认组合为
+脚本默认只读取 `D:\workspace\secrets\ss-tavily.env`，向后端子进程注入 `TAVILY_API_KEY`，默认组合为
 `web.search=tavily`、`web.fetch=tavily`。可通过 `--web-search-provider aliyun`，或通过
 `--web-fetch-provider aliyun|browserless` 单独覆盖；脚本只读取所选 Provider 的 Key 文件，选择
 Aliyun Fetch 时继续复用 IQS Key。
@@ -295,18 +302,18 @@ macOS 使用同目录的 `start-real-environment.sh`，功能与 PowerShell 脚�
 `curl`、`lsof`、`openssl`。脚本按已选择的 Provider 从以下默认路径读取所需文件：
 
 ```text
-~/workspace/ss-deepseek.txt
-~/workspace/ss-aliyun-iqs.txt
-~/workspace/ss-browserless.txt
-~/workspace/ss-tavily.txt
-~/workspace/ss-haifa-personal-continuation.txt
+~/workspace/secrets/ss-deepseek.env
+~/workspace/secrets/ss-aliyun-iqs.env
+~/workspace/secrets/ss-browserless.env
+~/workspace/secrets/ss-tavily.env
+~/workspace/secrets/ss-haifa-personal-continuation.env
 ~/workspace/haifa/haifa-ai/haifa-ai-utility-mcp-server
 ~/agents/hermes-agent/optional-skills/finance
 ```
 
 前四个分别是 DeepSeek Key、可选 Aliyun IQS Key、可选 Browserless Token 和默认 Tavily Key；随后是持久
-Continuation Key。Continuation Key 不存在时，
-脚本会生成随机 32 字节 Key，并把文件权限设为 `0600`。
+Continuation Key。所有文件均使用 `KEY=VALUE` env 格式。Continuation Key 不存在时，脚本会生成随机
+32 字节 Key，以 `HAIFA_PERSONAL_CONTINUATION_KEY=...` 写入，并把文件权限设为 `0600`。
 
 从主仓根目录启动：
 
@@ -338,8 +345,13 @@ Continuation Key。Continuation Key 不存在时，
 ```text
 HAIFA_DEEPSEEK_KEY_FILE
 HAIFA_BAILIAN_KEY_FILE
+HAIFA_KIMI_KEY_FILE
+HAIFA_BIGMODEL_KEY_FILE
+HAIFA_SILICONFLOW_KEY_FILE
 ALIYUN_BAILIAN_REGION
 HAIFA_ALIYUN_IQS_KEY_FILE
+HAIFA_BROWSERLESS_KEY_FILE
+HAIFA_TAVILY_KEY_FILE
 HAIFA_PERSONAL_CONTINUATION_KEY_FILE
 HAIFA_UTILITY_MCP_DIRECTORY
 HAIFA_PERSONAL_SKILL_ROOT

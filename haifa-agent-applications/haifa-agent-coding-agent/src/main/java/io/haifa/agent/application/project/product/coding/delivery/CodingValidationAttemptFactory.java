@@ -14,10 +14,13 @@ public final class CodingValidationAttemptFactory {
             String command,
             boolean successful,
             CodingSessionVerificationConfiguration configuration) {
-        if (!"TEST".equals(operationFamily) && !"BUILD".equals(operationFamily)) return Optional.empty();
         CodingSessionVerificationConfiguration frozen =
                 Objects.requireNonNull(configuration, "configuration must not be null");
         Optional<CodingVerificationCandidate> matched = frozen.profile().exactCandidate(command);
+        boolean declaredValidation = "TEST".equals(operationFamily) || "BUILD".equals(operationFamily);
+        if (!declaredValidation && !("UNKNOWN".equals(operationFamily) && matched.isPresent())) {
+            return Optional.empty();
+        }
         CodingValidationScope scope =
                 matched.map(CodingVerificationCandidate::claimedScope).orElse(CodingValidationScope.UNKNOWN);
         String claimCode =

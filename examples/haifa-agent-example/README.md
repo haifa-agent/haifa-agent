@@ -69,14 +69,18 @@ Never place API keys directly in source code, POM files, configuration propertie
   ```
 
 #### Option B: Load from a Local Secret File (Recommended to prevent shell history leaks)
-If your key is stored in a private text file (e.g. `D:\workspace\ss-deepseek.txt` or `~/.deepseek_key`):
+If your key is stored in a private env file (for example
+`D:\workspace\secrets\ss-deepseek.env` or `~/workspace/secrets/ss-deepseek.env`):
 * **Linux / macOS (Bash / Zsh)**:
   ```bash
-  export DEEPSEEK_API_KEY=$(cat ~/.deepseek_key | tr -d '\r\n')
+  export DEEPSEEK_API_KEY="$(sed -n 's/^DEEPSEEK_API_KEY=//p' ~/workspace/secrets/ss-deepseek.env)"
   ```
 * **Windows (PowerShell)**:
   ```powershell
-  $env:DEEPSEEK_API_KEY = (Get-Content -Path 'D:\workspace\ss-deepseek.txt' -Raw).Trim()
+  $line = Get-Content -Path 'D:\workspace\secrets\ss-deepseek.env' |
+    Where-Object { $_ -match '^\s*DEEPSEEK_API_KEY=' } |
+    Select-Object -First 1
+  $env:DEEPSEEK_API_KEY = $line.Substring($line.IndexOf('=') + 1).Trim()
   ```
 
 #### Option C: Custom Credential Variable Name

@@ -18,6 +18,7 @@ import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
+import io.haifa.agent.core.run.RunTerminationReason;
 import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.step.AgentStepError;
 import io.haifa.agent.core.step.AgentStepId;
@@ -26,14 +27,9 @@ import io.haifa.agent.core.step.AgentStepStatus;
 import io.haifa.agent.core.step.AgentStepType;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallStatus;
-import io.haifa.agent.policy.api.ApprovalRequestContext;
-import io.haifa.agent.policy.api.ApprovalRequester;
-import io.haifa.agent.policy.api.ApprovalReuseScope;
-import io.haifa.agent.policy.api.ApprovalSemantics;
-import io.haifa.agent.policy.api.ApprovalTargetRef;
-import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
+import io.haifa.agent.runtime.api.InteractionState;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.completion.CompletionGuard;
@@ -54,6 +50,7 @@ import io.haifa.agent.runtime.core.model.ModelInvocationResult;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
 import io.haifa.agent.runtime.core.recovery.BudgetLimitedSummary;
+import io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -72,9 +69,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /** Executes validated decisions without deciding Core lifecycle legality. */
 public final class DecisionExecutor {
+    private static final String EXECUTION_RECOVERY_TYPE = "execution-recovery";
+    private static final Set<String> EXECUTION_RECOVERY_FAILURE_CODES = Set.of(
+            "NETWORK_UNAVAILABLE",
+            "NETWORK_PERMISSION_REQUIRED",
+            "HOST_AUTHENTICATION_UNAVAILABLE",
+            "GIT_AUTHENTICATION_UNAVAILABLE",
+            "GH_AUTHENTICATION_UNAVAILABLE");
     private final ToolPipeline tools;
     private final CompletionGuard completionGuard;
     private final RunFinalizer finalizer;
@@ -88,7 +93,6 @@ public final class DecisionExecutor {
     private final RunControlRegistry controls;
     private final RepairRetryPolicy repairRetry;
     private final ToolApprovalPromptFormatter approvalPrompts;
-    private final PolicyDecisionStore policyDecisions;
     private final RuntimeUnitOfWork unitOfWork;
     private final RuntimeEventAppender events;
     private final RuntimeOutboxPublisher outbox;
@@ -107,7 +111,6 @@ public final class DecisionExecutor {
             RunControlRegistry controls,
             RepairRetryPolicy repairRetry,
             ToolApprovalPromptFormatter approvalPrompts,
-            PolicyDecisionStore policyDecisions,
             RuntimeUnitOfWork unitOfWork,
             RuntimeEventAppender events,
             RuntimeOutboxPublisher outbox) {
@@ -124,7 +127,6 @@ public final class DecisionExecutor {
         this.controls = Objects.requireNonNull(controls);
         this.repairRetry = Objects.requireNonNull(repairRetry);
         this.approvalPrompts = Objects.requireNonNull(approvalPrompts);
-        this.policyDecisions = Objects.requireNonNull(policyDecisions);
         this.unitOfWork = Objects.requireNonNull(unitOfWork);
         this.events = Objects.requireNonNull(events);
         this.outbox = Objects.requireNonNull(outbox);
@@ -443,7 +445,11 @@ public final class DecisionExecutor {
                         "Tool request rejected; repair the arguments or choose another capability.");
                 continue;
             } catch (RuntimeException failure) {
-                throw failToolAndCancelPendingSiblings(run, call, step, failure);
+                AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
+                if (createExecutionRecovery(run, call, classified, loopContext)) {
+                    return AgentLoopDirective.WAIT;
+                }
+                throw classified;
             }
             if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
                 step.waitForExternalInput();
@@ -541,22 +547,6 @@ public final class DecisionExecutor {
         var binding = approval.binding();
         String interactionType = approval.reauthentication() ? "tool-reauthentication" : "tool-approval";
         var createdAt = time.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
-        var approvalContext = new ApprovalRequestContext(
-                approval.decision().id(),
-                ApprovalSemantics.CAPABILITY_CONFIRMATION,
-                java.util.Set.of(ApprovalReuseScope.ONCE),
-                new ApprovalRequester(run.tenant(), run.principal()),
-                new ApprovalTargetRef(
-                        "tool",
-                        call.id().value(),
-                        binding.coordinate().definitionHash().value(),
-                        "invoke",
-                        approval.argumentsDigest(),
-                        binding.definition().title()),
-                Optional.empty(),
-                createdAt,
-                Optional.empty(),
-                Optional.empty());
         unitOfWork.execute(() -> {
             interactions.create(new InteractionRequest(
                     new InteractionRequestId(requestId),
@@ -566,16 +556,10 @@ public final class DecisionExecutor {
                     interactionType,
                     approvalPrompts.format(binding, call, approval.reauthentication()),
                     true,
-                    new ToolApprovalTarget(
-                            call.id(),
-                            binding.coordinate().externalForm(),
-                            binding.coordinate().definitionHash().value(),
-                            approval.argumentsDigest(),
-                            run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
-                                    + run.principal().principalId()),
+                    io.haifa.agent.runtime.core.interaction.ToolApprovalTargets.ordinary(
+                            run, call.id(), binding, requestFrom(call), approval.decision()),
                     createdAt,
-                    Optional.empty(),
-                    Optional.of(approvalContext)));
+                    Optional.empty()));
             checkpoints.capture(
                     run,
                     loopContext.iteration(),
@@ -587,10 +571,6 @@ public final class DecisionExecutor {
                     run,
                     "policy.decision.made",
                     Map.of(
-                            "decisionId",
-                            approval.decision().id().value(),
-                            "snapshotId",
-                            approval.decision().snapshot().value(),
                             "effect",
                             approval.decision().effect().name(),
                             "challenge",
@@ -604,12 +584,10 @@ public final class DecisionExecutor {
                     Map.of(
                             "requestId",
                             requestId,
-                            "decisionId",
-                            approval.decision().id().value(),
                             "challenge",
                             approval.reauthentication() ? "REAUTHENTICATE" : "APPROVAL",
                             "semantics",
-                            ApprovalSemantics.CAPABILITY_CONFIRMATION.name()),
+                            "CAPABILITY_CONFIRMATION"),
                     createdAt);
             return null;
         });
@@ -650,7 +628,11 @@ public final class DecisionExecutor {
             try {
                 outcome = tools.execute(run, call, request, loopContext.iteration(), loopContext.traceContext());
             } catch (RuntimeException failure) {
-                throw failToolAndCancelPendingSiblings(run, call, step, failure);
+                AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
+                if (createExecutionRecovery(run, call, classified, loopContext)) {
+                    return Optional.of(AgentLoopDirective.WAIT);
+                }
+                throw classified;
             }
             if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
                 step.waitForExternalInput();
@@ -743,23 +725,120 @@ public final class DecisionExecutor {
         };
     }
 
-    public void resolveToolApproval(
-            AgentRun run,
-            ToolApprovalTarget target,
-            Optional<ApprovalRequestContext> approvalContext,
-            InteractionResponseType responseType) {
+    private boolean createExecutionRecovery(
+            AgentRun run, ToolCall source, AgentExecutionFailureException failure, AgentLoopContext loopContext) {
+        String failureCode = recoveryFailureCode(source, failure);
+        if (failureCode == null || !tools.isExecutionRecoverySource(run, source) || isRecoverySuccessor(run, source)) {
+            return false;
+        }
+        ToolApprovalTarget target = tools.executionRecoveryTarget(run, source, failureCode);
+        InteractionRequestId requestId = ExecutionRecoveryKeys.requestId(run.id(), source.id());
+        var successor = ExecutionRecoveryKeys.successor(run.id(), source.id(), target.argumentsDigest());
+        if (state.toolCalls(run.id()).stream().anyMatch(call -> call.id().equals(successor.toolCallId()))) {
+            return false;
+        }
+        var createdAt = time.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        InteractionRequest request = new InteractionRequest(
+                requestId,
+                run.id(),
+                run.tenant(),
+                run.principal(),
+                EXECUTION_RECOVERY_TYPE,
+                "Execution was not dispatched. Approve one exact retry after restoring the required host access.",
+                true,
+                target,
+                createdAt,
+                Optional.empty());
+        return unitOfWork.execute(() -> {
+            var existing = interactions.record(requestId);
+            if (existing.isPresent()) {
+                var record = existing.orElseThrow();
+                if (!sameRecoveryRequest(record.request(), request)) {
+                    if (record.state() == InteractionState.PENDING || record.state() == InteractionState.RESPONDED) {
+                        interactions.invalidate(requestId, record.revision(), "RECOVERY_REQUIREMENT_DRIFT", time.now());
+                    }
+                    return false;
+                }
+                if (record.state() != InteractionState.PENDING) return false;
+            } else {
+                interactions.create(request);
+            }
+            checkpoints.capture(
+                    run,
+                    loopContext.iteration(),
+                    loopContext.fingerprints(),
+                    loopContext.forcedContextRebuildAttempts(),
+                    CheckpointType.INTERACTION);
+            transitions.waiting(run, new InteractionRequestRef(requestId.value(), EXECUTION_RECOVERY_TYPE), false);
+            appendSecurityEvent(
+                    run,
+                    "execution.recovery.requested",
+                    Map.of(
+                            "requestId",
+                            requestId.value(),
+                            "sourceToolCallId",
+                            source.id().value(),
+                            "failureCode",
+                            failureCode,
+                            "dispatchState",
+                            "NOT_DISPATCHED"),
+                    createdAt);
+            return true;
+        });
+    }
+
+    private static boolean sameRecoveryRequest(InteractionRequest left, InteractionRequest right) {
+        return left.id().equals(right.id())
+                && left.runId().equals(right.runId())
+                && left.tenant().equals(right.tenant())
+                && left.requester().equals(right.requester())
+                && left.type().equals(right.type())
+                && left.prompt().equals(right.prompt())
+                && left.approval() == right.approval()
+                && left.target().equals(right.target())
+                && left.expiresAt().equals(right.expiresAt())
+                && left.expirationOutcome() == right.expirationOutcome();
+    }
+
+    private String recoveryFailureCode(ToolCall source, AgentExecutionFailureException failure) {
+        Map<String, Object> details =
+                source.error().map(value -> value.error().details()).orElse(Map.of());
+        Object codeValue = details.get("failureCode");
+        if (!(codeValue instanceof String code)
+                || !EXECUTION_RECOVERY_FAILURE_CODES.contains(code)
+                || !"NOT_DISPATCHED".equals(details.get("dispatchState"))) {
+            return null;
+        }
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof io.haifa.agent.tool.api.ToolInvocationException invocation) {
+                return invocation.dispatchState() == io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED
+                                && code.equals(invocation.failureCode())
+                        ? code
+                        : null;
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    private boolean isRecoverySuccessor(AgentRun run, ToolCall call) {
+        AgentStep step = state.steps(run.id()).stream()
+                .filter(candidate -> candidate.id().equals(call.stepId()))
+                .findFirst()
+                .orElse(null);
+        return step != null
+                && step.parentStepId().isPresent()
+                && call.id().value().startsWith("execution-recovery-tool:v1:");
+    }
+
+    public void resolveToolApproval(AgentRun run, ToolApprovalTarget target, InteractionResponseType responseType) {
         ToolCall call = state.toolCalls(run.id()).stream()
                 .filter(candidate -> candidate.id().equals(target.toolCallId()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("tool approval target is unavailable"));
         tools.validateApprovalTarget(run, call, requestFrom(call), target);
         if (responseType == InteractionResponseType.APPROVE) {
-            ApprovalRequestContext context =
-                    approvalContext.orElseThrow(() -> new SecurityException("approval context is unavailable"));
-            var decision = policyDecisions
-                    .find(context.decisionId())
-                    .orElseThrow(() -> new SecurityException("policy decision is unavailable"));
-            tools.recordApprovedDecision(call, decision);
             call.approve();
             state.appendToolCall(call);
             return;
@@ -790,15 +869,99 @@ public final class DecisionExecutor {
             interactions.unappliedToolResolution(run.id()).ifPresent(resolution -> {
                 ToolApprovalTarget target =
                         (ToolApprovalTarget) resolution.request().target();
-                resolveToolApproval(
-                        run,
-                        target,
-                        resolution.request().approvalContext(),
-                        resolution.response().type());
+                if (EXECUTION_RECOVERY_TYPE.equals(resolution.request().type())) {
+                    applyExecutionRecovery(
+                            run,
+                            resolution.request(),
+                            target,
+                            resolution.response().type());
+                    return;
+                }
+                resolveToolApproval(run, target, resolution.response().type());
                 interactions.markResolutionApplied(resolution.request().id());
             });
             return null;
         });
+    }
+
+    private void applyExecutionRecovery(
+            AgentRun run, InteractionRequest request, ToolApprovalTarget target, InteractionResponseType responseType) {
+        if (responseType != InteractionResponseType.APPROVE) {
+            interactions.markResolutionApplied(request.id());
+            if (!run.status().isTerminal()) {
+                transitions.cancelled(
+                        run,
+                        new RunTerminationReason(
+                                "EXECUTION_RECOVERY_REJECTED", "Execution recovery was rejected by the operator"));
+            }
+            return;
+        }
+        ToolCall source = state.toolCalls(run.id()).stream()
+                .filter(candidate -> candidate.id().equals(target.toolCallId()))
+                .findFirst()
+                .orElse(null);
+        String failureCode = source == null ? null : persistedRecoveryFailureCode(source);
+        try {
+            if (source == null || failureCode == null || isRecoverySuccessor(run, source)) {
+                throw new SecurityException("execution recovery source is unavailable or ineligible");
+            }
+            tools.validateExecutionRecoveryTarget(run, source, failureCode, target);
+            var keys = ExecutionRecoveryKeys.successor(run.id(), source.id(), target.argumentsDigest());
+            ToolCall existing = state.toolCalls(run.id()).stream()
+                    .filter(candidate -> candidate.id().equals(keys.toolCallId()))
+                    .findFirst()
+                    .orElse(null);
+            if (existing == null) {
+                AgentStep step = new AgentStep(
+                        keys.stepId(),
+                        run.id(),
+                        source.stepId(),
+                        null,
+                        AgentStepType.TOOL_EXECUTION,
+                        state.steps(run.id()).size() + 1,
+                        time.now());
+                state.appendStep(step);
+                ToolRequest successorRequest = new ToolRequest(
+                        keys.toolCallId(),
+                        keys.providerCorrelationId(),
+                        keys.idempotencyKey(),
+                        source.toolName(),
+                        source.toolVersion(),
+                        source.arguments());
+                ToolCall successor = tools.prepare(run, step.id(), successorRequest);
+                appendToolCalls(run, List.of(successor), Optional.empty());
+            } else if (!existing.arguments().equals(source.arguments())
+                    || !existing.toolName().equals(source.toolName())
+                    || !existing.toolVersion().equals(source.toolVersion())) {
+                throw new SecurityException("execution recovery successor conflicts with the frozen source");
+            }
+            interactions.markResolutionApplied(request.id());
+        } catch (SecurityException | IllegalArgumentException invariant) {
+            var record = interactions.record(request.id()).orElseThrow();
+            if (record.state() == InteractionState.PENDING || record.state() == InteractionState.RESPONDED) {
+                interactions.invalidate(request.id(), record.revision(), "RECOVERY_REVALIDATION_FAILED", time.now());
+            }
+            if (!run.status().isTerminal()) {
+                transitions.failed(
+                        run,
+                        new AgentError(
+                                AgentErrorCode.TOOL_INVOCATION_FAILED,
+                                Map.of("reason", "RECOVERY_REVALIDATION_FAILED"),
+                                ids.nextValue(),
+                                time.now()));
+            }
+        }
+    }
+
+    private static String persistedRecoveryFailureCode(ToolCall source) {
+        Map<String, Object> details =
+                source.error().map(value -> value.error().details()).orElse(Map.of());
+        Object code = details.get("failureCode");
+        return code instanceof String value
+                        && EXECUTION_RECOVERY_FAILURE_CODES.contains(value)
+                        && "NOT_DISPATCHED".equals(details.get("dispatchState"))
+                ? value
+                : null;
     }
 
     private static ToolRequest requestFrom(ToolCall call) {

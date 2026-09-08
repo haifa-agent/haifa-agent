@@ -11,7 +11,6 @@ public record PolicyContext(
         Optional<String> runRef,
         Optional<String> attemptRef,
         ApprovalMode approvalMode,
-        Optional<ProjectTrustRef> projectTrustRef,
         Optional<String> securityConfigurationDigest) {
     public PolicyContext {
         projectRef = optionalIdentifier(projectRef, "projectRef");
@@ -19,7 +18,6 @@ public record PolicyContext(
         runRef = optionalIdentifier(runRef, "runRef");
         attemptRef = optionalIdentifier(attemptRef, "attemptRef");
         approvalMode = Objects.requireNonNull(approvalMode, "approvalMode must not be null");
-        projectTrustRef = Objects.requireNonNull(projectTrustRef, "projectTrustRef must not be null");
         securityConfigurationDigest = optionalIdentifier(securityConfigurationDigest, "securityConfigurationDigest");
     }
 
@@ -30,7 +28,6 @@ public record PolicyContext(
                 Optional.of(runRef),
                 Optional.empty(),
                 approvalMode,
-                Optional.empty(),
                 Optional.empty());
     }
 }

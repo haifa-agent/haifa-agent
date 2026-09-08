@@ -17,7 +17,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
-import io.haifa.agent.application.project.product.coding.CodingWorkspaceGrant;
+import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
@@ -1037,7 +1037,7 @@ public final class CodingTerminalController implements AutoCloseable {
             submitEffect(
                     () -> {
                         List<String> options = client.workspaces().stream()
-                                .map(CodingTerminalController::workspaceGrantOption)
+                                .map(CodingTerminalController::workspaceOption)
                                 .toList();
                         return () -> {
                             apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
@@ -1069,15 +1069,15 @@ public final class CodingTerminalController implements AutoCloseable {
                 code -> apply(new TerminalUiAction.RecoverableFailure(code)));
     }
 
-    private static String workspaceGrantOption(CodingWorkspaceGrant grant) {
+    private static String workspaceOption(CodingWorkspaceView workspace) {
         return String.join(
                         " · ",
-                        grant.safeDisplayName(),
-                        grant.permission(),
-                        grant.status(),
-                        grant.source(),
-                        grant.workspaceRef())
-                + (grant.revocable() ? " · revocable" : "");
+                        workspace.safeDisplayName(),
+                        workspace.mode(),
+                        workspace.status(),
+                        workspace.source(),
+                        workspace.workspaceRef())
+                + (workspace.revocable() ? " · revocable" : "");
     }
 
     private LoadedSession readSession(

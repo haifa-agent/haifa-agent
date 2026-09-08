@@ -4,11 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryEntry;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistrySource;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStatus;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
+import io.haifa.agent.project.hostworkspace.scope.HostDirectoryIdentity;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import java.nio.charset.StandardCharsets;
@@ -41,11 +40,9 @@ class SqliteHostWorkspaceRegistryStoreTest {
                 workspaceRef,
                 new WorkspaceLocationRef("location-registry-entry"),
                 "attached-root",
-                HostDirectoryPermission.READ_ONLY,
                 HostWorkspaceRegistrySource.APPROVED_ATTACH,
                 root,
-                HostWorkspaceLocationStore.fingerprintFor(root),
-                "policy-decision-registry",
+                HostDirectoryIdentity.resolve(root).physicalFingerprint(),
                 NOW);
 
         try (ProjectPersistenceAssembly first = ProjectPersistenceAssembly.open(
@@ -79,11 +76,9 @@ class SqliteHostWorkspaceRegistryStoreTest {
                 workspaceRef,
                 new WorkspaceLocationRef("location-corrupt"),
                 "corrupt-root",
-                HostDirectoryPermission.READ_WRITE,
                 HostWorkspaceRegistrySource.APPROVED_ATTACH,
                 root,
-                HostWorkspaceLocationStore.fingerprintFor(root),
-                "policy-decision-corrupt",
+                HostDirectoryIdentity.resolve(root).physicalFingerprint(),
                 NOW);
         try (ProjectPersistenceAssembly first = ProjectPersistenceAssembly.open(
                 ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"),
@@ -116,6 +111,28 @@ class SqliteHostWorkspaceRegistryStoreTest {
             assertThat(result.next()).isTrue();
             assertThat(result.getString("status")).isEqualTo(HostWorkspaceRegistryStatus.DISABLED.name());
             assertThat(result.getString("revocation_reason_code")).isEqualTo("LOCATION_DECRYPTION_FAILED");
+        }
+    }
+
+    @Test
+    void freshRegistrySchemaKeepsPhysicalFingerprintAndHasNoPermissionColumn() throws Exception {
+        Path database = directory.resolve("workspace-registry-schema.db");
+        try (ProjectPersistenceAssembly ignored = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"),
+                CLOCK,
+                () -> "registry-schema",
+                protector())) {
+            // Opening a fresh store applies the clean development baseline.
+        }
+
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                var columns =
+                        connection.createStatement().executeQuery("PRAGMA table_info(coding_workspace_registry)")) {
+            var names = new java.util.ArrayList<String>();
+            while (columns.next()) {
+                names.add(columns.getString("name"));
+            }
+            assertThat(names).contains("physical_fingerprint").doesNotContain("permission", "fingerprint");
         }
     }
 

@@ -82,7 +82,9 @@ Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/R
 Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影响模块和最终门禁。TEST/BUILD Tool Result
 保留每次结构化 Validation Attempt；候选在 Coding Session 创建时由可信 Host 冻结到 Session metadata，
 重启后按摘要与精确命令匹配恢复来源和 scope。runner stdout/stderr 不作为数量或 scope 的可信来源，当前
-统一报告 `COUNTS_UNAVAILABLE`，也不会扩展 runner 专用解析器来制造虚假的完整覆盖。
+统一报告 `COUNTS_UNAVAILABLE`，也不会扩展 runner 专用解析器来制造虚假的完整覆盖。CLI Host 会把根目录
+现存且非符号链接的 `verify.ps1` 或 `verify.sh` 作为当前 OS 的平台验证候选冻结；精确命中该候选的执行即使
+没有模型提供的可选 operation-family hint，也可产生验证证据，其他未知命令不能据此冒充验证。
 
 可信本机产品宿主可以在 Definition instructions 中冻结一个产品私有、Agent-visible 的 L0-L2 Workspace
 环境块，用于表达已经由宿主掌握的安全边界、根仓库/instructions 状态、根静态项目标记和 frozen validation
@@ -111,16 +113,19 @@ Broker 前置交付门禁。系统仍从 Tool 结果投影有界交付证据；�
 Evaluation/Trace Replay 继续独立使用隐藏验收、Workspace 快照与 Scratch 清理事实，不与生产完成门禁
 共享模型声明。
 
-## Policy 持久化装配
-
-`ProjectPersistenceAssembly.policy()` 是应用级 Policy 权威 Store 组合：内存模式共享同一 `InMemoryPolicyStore`，SQLite 模式复用 `SqliteStoreFoundation` 的 Snapshot、Decision、Evidence、Grant 与 Trust Store。Coding Agent 重启时复用内容一致的固定 Policy Snapshot；不在应用层实现企业组织或审批工作流。
-
 ## Policy assembly
 
-`CodingAgentPolicyAssembly` 是产品装配边界：创建 Coding Agent 默认规则 Snapshot、内存
-Decision/Approval evidence Store 和本地同主体 Verifier。它不包含组织、审批路由、待办或业务
-状态机。`ProjectExecutionToolOperations` 只接受上游 Tool Pipeline 传入的真实
-`policyDecisionRef`；缺少引用时 fail closed，Broker 复核同一 Decision 而不再次询问用户。
+`CodingAgentPolicyAssembly` 是产品装配边界：创建 Coding Agent 自有的 immutable
+`PolicyRuleSet`、共享的纯 evaluator 和独立 Approval verifier。它不创建 Snapshot/Decision/Evidence/
+Grant/Trust Store，也不包含组织、审批路由、待办或业务状态机。
+
+`CodingAgentExecutionPolicy` 在 Broker 最终门按可信 `ExecutionOrigin` 分类当前已支持入口：
+Runtime Tool 必须关联 `sourceToolCallId`，用户终端命令不能携带 Tool Call，内部只读 Git 必须是
+`PRODUCT_INTERNAL + git.read`。相关键不是授权凭据；WorkspaceAccess、path、Sandbox、Credential 与
+Broker enforcement 仍实时执行，未知入口 fail closed。Runtime 来源会重新读取 Run、运行中的 frozen
+ToolCall、configuration、当前 Policy 与唯一有效的 exact Interaction；CLI 用户命令和模型触发执行要求
+DEVELOP。只有产品内部固定的 8 条只读 Git probe 可在 READ 下执行，任何 argv、profile、environment、
+scratch、timeout、output family 或 working-directory 扩张均拒绝。CA/PA 当前均拒绝 managed session。
 
 组合 Project Index、Context Source、既有 Runtime Tool Pipeline 与 Project-only 产品外观。普通产品请求只携带 ProjectId 和消息；默认 Workspace、Profile、Context Source 与 Tool disclosure 从可信版本化配置解析。
 
@@ -140,9 +145,9 @@ Search/Fetch Tool。Web 的 Provider-neutral Java 接口、Tool adapter、URL Po
 
 SQLite 模式要求数据库文件绝对路径，并显式选择 `NONE` 或 `AES_GCM` payload protection；后者还要求
 `env://` 形式的稳定 continuation protector 引用。JSONL 模式还要求已存在、可写、非符号链接的受控
-绝对目录。Application 在一次 checksum 校验中组合 Runtime Migration 与自己
-拥有的 `V1000 project_product_session` 至 `V1007 coding_workspace_registry` Migration，不修改
-Runtime Schema。每次进程启动生成新的 worker ID，
+绝对目录。Application 使用共享 SQLite 边界唯一的 `HaifaAgentStoreMigrations`；V1000～V1007 已由该
+统一 registry 拥有，WorkspaceAccess 建表已折入 V1007，CA 不再维护产品侧 migration 追加链。
+每次进程启动生成新的 worker ID，
 并把完整 `RuntimePersistencePorts`、worker ID 和仅针对安全 `SQLITE_BUSY/LOCKED` 获取失败的有界重试策略
 注入 `RuntimeCoreBuilder`。
 
@@ -152,14 +157,26 @@ Session 重新核对，漂移时 fail closed。JSONL projector 只在 Runtime �
 再冲刷投影，最后关闭 SQLite 连接。
 
 Application 自有的 Product/Coding 表通过 MyBatis Mapper XML 接入
-`SqliteRuntimeUnitOfWork`，与 Runtime/Policy 共用同一个 `BEGIN IMMEDIATE` 事务边界；应用层 Store
+`SqliteRuntimeUnitOfWork`，与 Runtime 共用同一个 `BEGIN IMMEDIATE` 事务边界；应用层 Store
 不直接使用 JDBC。Mapper 仍经过 SQLite Foundation 的静态 XML 校验，禁止 `${...}` 动态 SQL。
 
 `coding_workspace_registry` 是 CA 自有 Host/Application 持久事实，不进入公共 Runtime/Core。SQLite Adapter
-通过当前持久保护器保存本机根位置，并绑定 project、workspace、location 与物理目录身份 fingerprint；解密失败、目录缺失、
-身份漂移、link/reparse point 或根重叠都会禁用记录而不恢复权限。模型只能看到脱敏 Registry 投影；本地
+通过当前持久保护器保存本机根位置，并绑定 project、workspace、location 与物理目录身份 physical fingerprint；解密失败、目录缺失、
+canonical 身份漂移、link/reparse point 或根重叠都会禁用记录而不恢复挂载。同一安全 canonical path 删除后重建时，
+ACTIVE 条目保留 workspace identity 并刷新 physical fingerprint；REVOKED、DISABLED、不同 canonical path 或不可验证路径
+都不会自动恢复。模型只能看到脱敏 Registry 与当前 Access 的交集投影；本地
 `file.*` 继续接收宿主绝对路径并在当前活动 Registry/Scope 中重新解析。标准 `CodingSessionClient` 还提供
-脱敏授权清单与撤销入口，供受信产品界面移除非初始根的持久授权。
+脱敏 workspace 清单与撤销入口，供受信产品界面移除非初始根的持久 Access 和挂载。
+
+`coding_workspace_access` 是 CA 唯一持续用户授权关系。领域对象只由现有 `TenantRef + PrincipalRef` 组成的
+owner、`WorkspaceId` 与 `READ / DEVELOP` mode 构成；SQLite 表也严格只有对应五列。`READ` 只允许文件读取，
+`DEVELOP` 才允许文件 mutation 与 execution 进入后续 Policy/Sandbox/Credential 门。启动时只在初始 Access
+缺失时创建 `DEVELOP`，不得覆盖已降级值；attach/worktree 由受信控制面替换 mode，撤销先删除 Access。
+每次文件操作和 execution workspace 解析都会读取当前 Access，即使旧 Scope 或 Registry 仍有活动 mount，
+缺失/降级也会 fail closed。Registry、Host Scope 和技术 Binding 均不携带或推导用户权限；CA mount 的
+Binding 固定提供技术读写上限，只能进一步拒绝，不能在 Access 缺失时放行。Registry 终态字段为
+`physicalFingerprint` / `physical_fingerprint`，且不新增第二个 fingerprint。该 Store 不进入公共
+Runtime/SDK/Execution 或 Personal Assistant。
 
 ## Coding Session 产品闭环
 
@@ -190,7 +207,7 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 冻结对应快照；配置中已删除的模型要求重选，不静默回退。
 
 `ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`workspace.attach`、
-`workspace.worktree.create`、`execution.run` 与 `execution.request_permissions` 共 14 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
+`workspace.worktree.create` 与 `execution.run` 共 13 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
 `github.*` Tool；Git/GitHub 操作由
 `execution.run` 直接调用系统 `git` / `gh`。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、
 幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
@@ -224,16 +241,7 @@ Git/GH 只保留基础分级：`status/diff/log/show/grep/ls-files/rev-parse` �
 `fetch/pull`、GH 远端读取为 MEDIUM；Push、远端写入、破坏性操作、`gh api`、未知子命令和任意复合/
 Wrapper 形式为 HIGH。HIGH 继续进入用户阈值，不是分类失败；产品不维护完整 Git/GH 参数 DSL。
 
-`execution.request_permissions -> request_permissions` 不是通用 Sandbox 绕过入口，也不授予可复用权限。
-它只允许引用同一 Run 中一次以 `NETWORK_PERMISSION_REQUIRED`（兼容读取旧
-`NETWORK_UNAVAILABLE`）、`HOST_AUTHENTICATION_UNAVAILABLE`、
-`GIT_AUTHENTICATION_UNAVAILABLE` 或 `GH_AUTHENTICATION_UNAVAILABLE` 失败的 `execution.run`，并要求逐字段复用该结果
-返回的 `toolCallId`、完整 command、`workspaceRef`、`relativeWorkdir` 和 timeout；operationFamily 仅是可选诊断 Hint，不参与
-精确授权绑定。Runtime 为该托管权限升级创建独立 Policy Decision 与审批 Checkpoint；批准后只用受信 Host 配置及其系统
-`git` / `gh` 登录环境的
-`host-guarded + network allow` Profile 执行这一次调用。只有直接、非破坏性的系统 `git` / `gh` 命令
-可申请；未知、复合、包装、凭据覆盖、路径逃逸、破坏性或结果未知的命令不可升级；Agent 不能创建
-Profile、改变 Policy Decision 或批准自己的申请。
+模型目录不包含权限申请 Tool。只有 CA 受信 preflight 对一条直接 Git/GH 调用产生候选网络/认证错误码，且 Tool exception 与 Journal 同时证明 `NOT_DISPATCHED`，Runtime 才创建确定性的 `execution-recovery` Interaction。原 ToolCall/Step/错误保持 FAILED；批准后从原 canonical arguments 与 frozen binding 创建至多一个 successor，不从模型或 Interaction 接受参数副本。CA 仅在 successor ID、同 owner 原调用、已 APPLIED 的 exact target、direct Git/GH 分类和 frozen profile pair 全部重验通过时选择 `host-guarded + network allow` recovery profile；当前 WorkspaceAccess、路径、Policy、Broker、Sandbox 和 Credential 仍实时检查。普通失败结果、已 dispatch/未知结果、复合或伪造 correlation 都 fail closed，successor 不能再次进入 recovery。
 
 `ProjectSkillPlatform` 从受信 Discovery/Visibility Context 组装 Skill Catalog 与精确内容 Loader。它提供
 `task-planning`、`result-verification`、共享 `git`/`github` 与 Coding `git-delivery` Classpath Skill，
@@ -248,8 +256,7 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 进入冻结 binding；Provider 不读取环境变量、不保存 Credential、不执行 fallback。
 
 配置、权限和精确 Tool 身份继续使用点号命名；模型披露使用 Provider-safe Alias，例如
-`file.read -> file_read`、`execution.run -> execution_run` 和
-`execution.request_permissions -> request_permissions`。Alias 只影响模型协议，不改变 Provider
+`file.read -> file_read` 和 `execution.run -> execution_run`。Alias 只影响模型协议，不改变 Provider
 执行时收到的精确 Tool 名称。历史 frozen Run 中旧 `git.*` identity 仅用于读取持久化交付证据，不能进入
 新 Run 的 Tool Catalog。
 
@@ -283,8 +290,9 @@ Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版�
 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
 
 `workspace.worktree.create` 是 CA 独有的始终审批能力：精确目标同时绑定 source `workspaceRef`、不可变 base
-commit、新分支、受控 target name、`read-write` 权限和交付意图，不接受模型指定的主机目标路径。受信 Git
-Provider 创建并校验 worktree 后，CA 才把新 root 以 `APPROVED_WORKTREE_CREATE` 登记并返回脱敏
+commit、新分支、受控 target name 和交付意图，不接受模型指定的主机目标路径或权限；source 必须具有当前
+`DEVELOP` Access。受信 Git Provider 创建并校验 worktree 后，CA 才把新 root 以
+`APPROVED_WORKTREE_CREATE` 登记、写入新 workspace 的 `DEVELOP` Access 并返回脱敏
 `workspaceRef`；失败时清理且不激活 root。当前重启恢复无法建立受信 Git reconciliation，因此会 fail closed
 禁用对应 root，不能把普通 Registry 测试描述成进程级强隔离证明。`file.*` 仍要求模型传宿主绝对路径并由
 Registry/Scope 映射，未改成相对路径或 root alias。

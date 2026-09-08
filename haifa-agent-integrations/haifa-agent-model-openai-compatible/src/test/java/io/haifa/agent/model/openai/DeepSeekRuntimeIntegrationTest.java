@@ -19,6 +19,15 @@ import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.policy.api.ApprovalMode;
+import io.haifa.agent.policy.api.PolicyDecision;
+import io.haifa.agent.policy.api.PolicyEffect;
+import io.haifa.agent.policy.api.PolicyRequirementDigest;
+import io.haifa.agent.policy.api.PolicyRule;
+import io.haifa.agent.policy.api.PolicyRuleMatcher;
+import io.haifa.agent.policy.api.PolicyRuleRef;
+import io.haifa.agent.policy.api.PolicyRuleSet;
+import io.haifa.agent.policy.api.PolicyRuleSource;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
@@ -177,6 +186,14 @@ class DeepSeekRuntimeIntegrationTest {
                             new AgentRunLimits(50, 4, 1, 300_000, 60_000),
                             frozenModel))
                     .toolPlatform(toolCatalog, new DefaultToolInvoker(toolCatalog), new JsonSchema202012Validator())
+                    .policy(
+                            testPolicy(),
+                            (policyRequest, rules) -> new PolicyDecision(
+                                    PolicyEffect.ALLOW,
+                                    Optional.empty(),
+                                    "LOCAL_STUB_TOOL_ALLOWED",
+                                    "The local integration-test tool is allowed",
+                                    PolicyRequirementDigest.compute(policyRequest, rules)))
                     .scheduler(scheduler)
                     .persistence(RuntimePersistencePorts.inMemory(store))
                     .identifierGenerator(ids)
@@ -223,6 +240,19 @@ class DeepSeekRuntimeIntegrationTest {
                 "Call echo and then finish.",
                 List.of(),
                 RuntimeOverrides.NONE);
+    }
+
+    private static PolicyRuleSet testPolicy() {
+        PolicyRule allowLocalEcho = new PolicyRule(
+                new PolicyRuleRef("deepseek-local-echo", "1"),
+                PolicyRuleSource.SYSTEM,
+                100,
+                PolicyRuleMatcher.any(),
+                PolicyEffect.ALLOW,
+                Optional.empty(),
+                "LOCAL_STUB_TOOL_ALLOWED",
+                "The local integration-test tool is allowed");
+        return PolicyRuleSet.of(List.of(allowLocalEcho), Optional.empty(), ApprovalMode.DENY);
     }
 
     private static void handle(HttpExchange exchange, ObjectMapper json, AtomicInteger calls, List<JsonNode> requests)

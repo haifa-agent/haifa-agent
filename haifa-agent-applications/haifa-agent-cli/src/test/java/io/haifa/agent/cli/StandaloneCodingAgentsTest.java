@@ -22,16 +22,17 @@ class StandaloneCodingAgentsTest {
         try (StandaloneCodingAgent first = StandaloneCodingAgents.open(firstWorkspace)) {
             firstMetadata = first.metadata();
             assertThat(first.client()).isNotNull();
-            assertThat(first.client().workspaces()).singleElement().satisfies(grant -> {
-                assertThat(grant.safeDisplayName()).isNotBlank();
-                assertThat(grant.source()).isEqualTo("initial");
-                assertThat(grant.status()).isEqualTo("active");
-                assertThat(grant.revocable()).isFalse();
-                assertThat(grant.toString()).doesNotContain(firstWorkspace.toString());
+            assertThat(first.client().workspaces()).singleElement().satisfies(workspace -> {
+                assertThat(workspace.safeDisplayName()).isNotBlank();
+                assertThat(workspace.mode()).isEqualTo("DEVELOP");
+                assertThat(workspace.source()).isEqualTo("initial");
+                assertThat(workspace.status()).isEqualTo("active");
+                assertThat(workspace.revocable()).isFalse();
+                assertThat(workspace.toString()).doesNotContain(firstWorkspace.toString());
             });
             String initialWorkspaceRef = first.client().workspaces().getFirst().workspaceRef();
             assertThatThrownBy(() -> first.client().revokeWorkspace(initialWorkspaceRef))
-                    .hasMessage("WORKSPACE_GRANT_NOT_REVOCABLE");
+                    .hasMessage("WORKSPACE_NOT_REVOCABLE");
             assertThat(first.projectId()).isNotNull();
             assertThat(firstMetadata.providerId()).isEqualTo("deepseek");
             assertThat(firstMetadata.assemblyDigest()).matches("[0-9a-f]{64}");

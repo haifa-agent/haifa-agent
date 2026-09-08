@@ -12,7 +12,6 @@ import java.util.Set;
 /** Reviewed Zhipu general OpenAI Chat contract. */
 final class ZhipuOpenAiChatDialect implements OpenAiCompatibleDialect {
     static final ZhipuOpenAiChatDialect INSTANCE = new ZhipuOpenAiChatDialect();
-    private static final Set<String> MODELS = Set.of("glm-5.2", "glm-5.1", "glm-5", "glm-4.7");
 
     private ZhipuOpenAiChatDialect() {}
 
@@ -30,28 +29,25 @@ final class ZhipuOpenAiChatDialect implements OpenAiCompatibleDialect {
     public void validateProvider(ModelProviderDefinition provider, boolean allowInsecureHttp) {
         validateEndpoint(provider.endpoint(), allowInsecureHttp);
         provider.models()
-                .forEach(model -> validateProfile(
-                        model.providerModelId(),
-                        model.options(),
-                        model.capabilities().contains(ModelCapability.REASONING)));
+                .forEach(model ->
+                        validateProfile(model.options(), model.capabilities().contains(ModelCapability.REASONING)));
     }
 
     @Override
     public void validateSnapshot(ResolvedModelSnapshot snapshot, boolean allowInsecureHttp) {
         validateEndpoint(snapshot.endpoint(), allowInsecureHttp);
-        validateProfile(
-                snapshot.providerModelId(),
-                snapshot.invocationOptions(),
-                snapshot.capabilities().contains(ModelCapability.REASONING));
+        validateProfile(snapshot.invocationOptions(), snapshot.capabilities().contains(ModelCapability.REASONING));
     }
 
     @Override
     public void applyRequest(AgentChatRequest request, Map<String, Object> body) {
         Map<String, Object> options = request.model().invocationOptions();
-        ModelReasoningMode mode = reasoningMode(options);
-        body.put("thinking", Map.of("type", mode == ModelReasoningMode.DISABLED ? "disabled" : "enabled"));
-        if ("glm-5.2".equals(request.model().providerModelId()) && mode != ModelReasoningMode.DISABLED) {
-            body.put("reasoning_effort", effectiveEffort(options.getOrDefault("reasoning_effort", "high")));
+        if (request.model().capabilities().contains(ModelCapability.REASONING)) {
+            ModelReasoningMode mode = reasoningMode(options);
+            body.put("thinking", Map.of("type", mode == ModelReasoningMode.DISABLED ? "disabled" : "enabled"));
+            if (mode != ModelReasoningMode.DISABLED && options.containsKey("reasoning_effort")) {
+                body.put("reasoning_effort", effectiveEffort(options.get("reasoning_effort")));
+            }
         }
         boolean sample = booleanOption(options, "do_sample", false);
         body.put("do_sample", sample);
@@ -75,16 +71,16 @@ final class ZhipuOpenAiChatDialect implements OpenAiCompatibleDialect {
         }
     }
 
-    private static void validateProfile(String model, Map<String, Object> options, boolean reasoning) {
-        if (!MODELS.contains(model) || !reasoning) {
-            throw new IllegalArgumentException("Zhipu model profile is not verified");
-        }
-        reasoningMode(options);
+    private static void validateProfile(Map<String, Object> options, boolean reasoning) {
+        if (reasoning) reasoningMode(options);
         boolean sample = booleanOption(options, "do_sample", false);
         if (!sample && options.containsKey("temperature")) {
             throw new IllegalArgumentException("Zhipu deterministic profile cannot configure temperature");
         }
-        if ("glm-5.2".equals(model) && options.containsKey("reasoning_effort")) {
+        if (options.containsKey("reasoning_effort")) {
+            if (!reasoning) {
+                throw new IllegalArgumentException("Zhipu reasoning effort requires reasoning capability");
+            }
             effectiveEffort(options.get("reasoning_effort"));
         }
     }
@@ -100,7 +96,8 @@ final class ZhipuOpenAiChatDialect implements OpenAiCompatibleDialect {
 
     private static String effectiveEffort(Object configured) {
         return switch (String.valueOf(configured)) {
-            case "low", "medium", "high" -> "high";
+            case "low" -> "low";
+            case "medium", "high" -> "high";
             case "max" -> "max";
             default -> throw new IllegalArgumentException("unsupported Zhipu effective reasoning effort");
         };

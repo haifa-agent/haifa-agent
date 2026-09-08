@@ -37,6 +37,7 @@ class CliExecutionPlatformTest {
         assertThat(profile.networkPolicy()).isEqualTo(NetworkPolicy.ALLOW);
         assertThat(profile.requiredCapabilities().networkIsolation()).isFalse();
         assertThat(preflight.managedProcessSupported()).isTrue();
+        assertThat(profile.allowedExecutables()).containsExactly("git");
         assertThat(configuration.inheritEnvironment()).containsExactly("*");
         assertThat(profile.allowedEnvironmentNames()).anyMatch(name -> name.equalsIgnoreCase("PATH"));
         assertThat(CliExecutionPlatform.securitySummary(profile, preflight))
@@ -87,6 +88,7 @@ class CliExecutionPlatformTest {
         assertThat(localProfile.providerId()).isEqualTo("local-native");
         assertThat(localProfile.networkPolicy()).isEqualTo(NetworkPolicy.DENY);
         assertThat(localProfile.requiredCapabilities().networkIsolation()).isTrue();
+        assertThat(localProfile.allowedExecutables()).containsExactly("git");
         assertThat(hostProfile.contentDigest()).isNotEqualTo(localProfile.contentDigest());
     }
 

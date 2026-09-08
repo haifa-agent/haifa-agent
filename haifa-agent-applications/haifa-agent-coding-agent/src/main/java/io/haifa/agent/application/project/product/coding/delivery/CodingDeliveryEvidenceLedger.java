@@ -139,10 +139,10 @@ public final class CodingDeliveryEvidenceLedger {
                 && trustedOperationFamily(data, evidenceFamily)) {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
         }
-        if ("BUILD".equals(declaredFamily) || "TEST".equals(declaredFamily)) {
-            CodingValidationAttemptEvidence validation = CodingValidationAttemptEvidence.fromStructuredData(
-                            data.get("validationEvidence"))
-                    .orElseGet(() -> legacyValidation(status));
+        java.util.Optional<CodingValidationAttemptEvidence> structuredValidation =
+                CodingValidationAttemptEvidence.fromStructuredData(data.get("validationEvidence"));
+        if (structuredValidation.isPresent() || "BUILD".equals(declaredFamily) || "TEST".equals(declaredFamily)) {
+            CodingValidationAttemptEvidence validation = structuredValidation.orElseGet(() -> legacyValidation(status));
             validationAttempts.add(validation);
             facts.add(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT);
             facts.add(

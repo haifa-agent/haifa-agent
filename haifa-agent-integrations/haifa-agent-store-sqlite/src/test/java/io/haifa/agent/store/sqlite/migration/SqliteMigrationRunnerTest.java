@@ -20,72 +20,56 @@ class SqliteMigrationRunnerTest {
     Path directory;
 
     @Test
-    void createsAllRuntimeMigrationsOnceAndAllowsRepeatedStartup() throws Exception {
+    void createsAllSharedMigrationsOnceAndAllowsRepeatedStartup() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
 
-        runner.migrate(RuntimeStoreMigrations.all());
-        runner.migrate(RuntimeStoreMigrations.all());
+        runner.migrate(HaifaAgentStoreMigrations.all());
+        runner.migrate(HaifaAgentStoreMigrations.all());
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(RuntimeStoreMigrations.CURRENT_SCHEMA_VERSION);
+                    .isEqualTo(HaifaAgentStoreMigrations.all().size());
             assertThat(queryLong(connection, "SELECT applied_at FROM schema_migration WHERE version = 1"))
                     .isEqualTo(SqliteTestSupport.NOW.toEpochMilli());
         }
     }
 
     @Test
-    void upgradesAnExistingV3DatabaseToCurrentSchemaWithoutReapplyingHistory() throws Exception {
+    void cleanBaselineOmitsLegacyDecisionEvidenceGrantAndTrustTables() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
-        SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
-
-        runner.migrate(RuntimeStoreMigrations.all().subList(0, 3));
-        runner.migrate(RuntimeStoreMigrations.all());
-        runner.migrate(RuntimeStoreMigrations.all());
+        new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK).migrate(HaifaAgentStoreMigrations.all());
 
         try (Connection connection = connections.openConnection()) {
-            assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(RuntimeStoreMigrations.CURRENT_SCHEMA_VERSION);
             assertThat(queryLong(
                             connection,
-                            "SELECT COUNT(*) FROM sqlite_master "
-                                    + "WHERE type='table' AND name IN ('runtime_event_stream', 'run_input')"))
-                    .isEqualTo(2);
-            assertThat(queryLong(
-                            connection,
-                            "SELECT COUNT(*) FROM pragma_table_info('runtime_event') "
-                                    + "WHERE name IN ('event_schema_version', 'correlation_id', 'causation_id')"))
-                    .isEqualTo(3);
-            assertThat(queryLong(
-                            connection,
-                            "SELECT COUNT(*) FROM sqlite_master "
-                                    + "WHERE type='table' AND name IN "
-                                    + "('sdk_conversation', 'sdk_conversation_command')"))
-                    .isEqualTo(2);
-            assertThat(queryLong(
-                            connection,
-                            "SELECT COUNT(*) FROM sqlite_master "
-                                    + "WHERE type='table' AND name IN "
-                                    + "('memory_candidate', 'memory_record', 'memory_audit_event')"))
-                    .isEqualTo(3);
-            assertThat(queryLong(
-                            connection,
-                            "SELECT COUNT(*) FROM pragma_table_info('tool_journal') "
-                                    + "WHERE name IN ('dispatch_execution_id', 'dispatch_process_id', "
-                                    + "'dispatch_workdir_digest', 'reconcile_status', 'reconcile_reason')"))
-                    .isEqualTo(5);
-            assertThat(queryLong(
-                            connection,
-                            "SELECT \"notnull\" FROM pragma_table_info('interaction_request') "
-                                    + "WHERE name = 'expires_at'"))
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN "
+                                    + "('policy_snapshot', 'policy_decision', 'policy_authorization_evidence', "
+                                    + "'approval_grant', 'project_trust', 'approval_request_metadata', "
+                                    + "'approval_response_metadata')"))
                     .isZero();
-            assertThat(queryLong(
-                            connection,
-                            "SELECT COUNT(*) FROM pragma_table_info('run') WHERE name IN "
-                                    + "('accumulated_human_wait_millis', 'human_wait_started_at', "
-                                    + "'limit_max_tool_calls', 'limit_max_model_calls', 'limit_max_child_runs')"))
-                    .isEqualTo(5);
+        }
+    }
+
+    @Test
+    void rejectsPreM7DatabaseWithoutChangingItsSentinelData() throws Exception {
+        SqliteConnectionFactory connections = initializedConnections();
+        SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
+        runner.migrate(List.of(SqliteMigration.fromScript(
+                3,
+                "policy_approval_security",
+                "CREATE TABLE pre_m7_sentinel(value TEXT NOT NULL);"
+                        + " INSERT INTO pre_m7_sentinel(value) VALUES ('preserve-me');")));
+
+        assertThatThrownBy(() -> runner.migrate(HaifaAgentStoreMigrations.all()))
+                .isInstanceOf(SqliteStoreException.class)
+                .extracting(exception -> ((SqliteStoreException) exception).failure())
+                .isEqualTo(SqliteStoreFailure.MIGRATION_CHECKSUM_MISMATCH);
+        try (Connection connection = connections.openConnection()) {
+            assertThat(queryString(connection, "SELECT value FROM pre_m7_sentinel"))
+                    .isEqualTo("preserve-me");
+            assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
+                    .isEqualTo(1);
         }
     }
 
@@ -106,7 +90,7 @@ class SqliteMigrationRunnerTest {
     void preservesExistingInteractionDeadlineWhileMakingTheColumnNullable() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
-        runner.migrate(RuntimeStoreMigrations.all().subList(0, 8));
+        runner.migrate(throughVersion(8));
         long createdAt = SqliteTestSupport.NOW.toEpochMilli();
         long expiresAt = createdAt + 60_000;
         try (Connection connection = connections.openConnection();
@@ -121,7 +105,7 @@ class SqliteMigrationRunnerTest {
                     + ", 0, 'clarification', 'PENDING', 'FAIL_RUN')");
         }
 
-        runner.migrate(RuntimeStoreMigrations.all());
+        runner.migrate(HaifaAgentStoreMigrations.all());
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(
@@ -139,7 +123,7 @@ class SqliteMigrationRunnerTest {
     void startsHumanWaitAccountingAtMigrationForAnExistingWaitingRun() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
-        runner.migrate(RuntimeStoreMigrations.all().subList(0, 9));
+        runner.migrate(throughVersion(9));
         try (Connection connection = connections.openConnection();
                 Statement statement = connection.createStatement()) {
             statement.execute("PRAGMA foreign_keys = OFF");
@@ -168,7 +152,7 @@ class SqliteMigrationRunnerTest {
                     """);
         }
 
-        runner.migrate(RuntimeStoreMigrations.all());
+        runner.migrate(HaifaAgentStoreMigrations.all());
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT human_wait_started_at FROM run WHERE run_id = 'run-1'"))
@@ -182,7 +166,7 @@ class SqliteMigrationRunnerTest {
     void separatesRunLimitsAndRestoresFrozenBudgetFromConfigurationSnapshot() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
-        runner.migrate(RuntimeStoreMigrations.all().subList(0, 10));
+        runner.migrate(throughVersion(10));
         try (Connection connection = connections.openConnection();
                 Statement statement = connection.createStatement()) {
             statement.execute("PRAGMA foreign_keys = OFF");
@@ -220,7 +204,7 @@ class SqliteMigrationRunnerTest {
                     """);
         }
 
-        runner.migrate(RuntimeStoreMigrations.all());
+        runner.migrate(HaifaAgentStoreMigrations.all());
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT budget_max_tool_calls FROM run WHERE run_id = 'run-1'"))
@@ -277,5 +261,19 @@ class SqliteMigrationRunnerTest {
             assertThat(result.next()).isTrue();
             return result.getLong(1);
         }
+    }
+
+    private static String queryString(Connection connection, String sql) throws Exception {
+        try (Statement statement = connection.createStatement();
+                ResultSet result = statement.executeQuery(sql)) {
+            assertThat(result.next()).isTrue();
+            return result.getString(1);
+        }
+    }
+
+    private static List<SqliteMigration> throughVersion(long version) {
+        return HaifaAgentStoreMigrations.all().stream()
+                .filter(migration -> migration.version() <= version)
+                .toList();
     }
 }

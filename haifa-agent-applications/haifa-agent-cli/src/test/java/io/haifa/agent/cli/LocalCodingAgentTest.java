@@ -129,7 +129,8 @@ class LocalCodingAgentTest {
                 .contains("execution.run")
                 .doesNotContain("execution.request_permissions");
         assertThat(LocalCodingAgent.effectiveBuiltInTools(isolated))
-                .contains("execution.run", "execution.request_permissions");
+                .contains("execution.run")
+                .doesNotContain("execution.request_permissions");
     }
 
     @Test
@@ -146,8 +147,8 @@ class LocalCodingAgentTest {
                         "rg exit 1 means no matches",
                         "git diff --no-index exit 1 means differences",
                         "rg -F -- <text>",
-                        "request_permissions is not a general sandbox bypass",
-                        "workspaceRef, relativeWorkdir, timeout, expectedExitCodes",
+                        "Runtime-owned recovery interaction",
+                        "Do not copy or resubmit the command",
                         "Keep command output bounded")
                 .doesNotContain("Host OS:", "repeat the exact command, workdir");
         assertThat(LocalCodingAgent.executionEnvironmentPrompt(" ")).isEmpty();
@@ -413,7 +414,7 @@ class LocalCodingAgentTest {
                         List.of(new ModelToolCall(
                                 new ProviderToolCallCorrelationId("approval-tool-call-1"),
                                 "workspace_attach",
-                                Map.of("path", attachedDirectory.toString(), "permission", "read-only"))),
+                                Map.of("path", attachedDirectory.toString(), "mode", "read"))),
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unpriced(5, 2),
                         "stub",
@@ -453,7 +454,7 @@ class LocalCodingAgentTest {
             assertThat(request.prompt())
                     .contains("Attach additional workspace directory")
                     .contains("Path: " + attachedDirectory)
-                    .contains("Permission: read-only")
+                    .contains("Mode: read")
                     .contains("this local Coding Agent registry")
                     .contains("persisted locally and remains revocable");
             awaitCondition(
@@ -517,14 +518,14 @@ class LocalCodingAgentTest {
                 return toolResponse(
                         "persistent-attach",
                         "workspace_attach",
-                        Map.of("path", attachedDirectory.toString(), "permission", "read-only"));
+                        Map.of("path", attachedDirectory.toString(), "mode", "read"));
             }
             var result = request.messages().stream()
                     .filter(message -> message.role() == ModelMessageRole.TOOL)
                     .findFirst()
                     .orElseThrow();
             assertThat(result.toolResultData())
-                    .containsKeys("workspaceRef", "safeDisplayName", "permission", "source", "status")
+                    .containsKeys("workspaceRef", "safeDisplayName", "mode", "source", "status")
                     .doesNotContainKeys("path", "realPath", "locationRef", "workspaceId");
             workspaceRef.set(String.valueOf(result.toolResultData().get("workspaceRef")));
             assertThat(result.content()).doesNotContain(attachedDirectory.toString());
@@ -555,6 +556,13 @@ class LocalCodingAgentTest {
             assertThat(awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(60))
                             .status())
                     .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(agent.workspaceViews())
+                    .filteredOn(view -> view.workspaceRef().equals(workspaceRef.get()))
+                    .singleElement()
+                    .satisfies(view -> {
+                        assertThat(view.mode()).isEqualTo("READ");
+                        assertThat(view.status()).isEqualTo("active");
+                    });
         }
 
         AtomicInteger readCalls = new AtomicInteger();
@@ -565,7 +573,7 @@ class LocalCodingAgentTest {
                         .map(message -> message.content())
                         .collect(java.util.stream.Collectors.joining("\n"));
                 assertThat(system)
-                        .contains("<workspace_registry", workspaceRef.get(), "persistent-attached", "READ_ONLY")
+                        .contains("<workspace_registry", workspaceRef.get(), "persistent-attached", "READ")
                         .doesNotContain(attachedDirectory.toString());
                 return toolResponse(
                         "persistent-read",
@@ -586,6 +594,11 @@ class LocalCodingAgentTest {
                 ignored -> {},
                 new AesGcmModelContinuationProtector(
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
+            assertThat(reopened.workspaceViews())
+                    .filteredOn(view -> view.workspaceRef().equals(workspaceRef.get()))
+                    .singleElement()
+                    .extracting(view -> view.mode())
+                    .isEqualTo("READ");
             var accepted = reopened.start("Read the restored attached file by absolute path.");
             assertThat(awaitTerminal(reopened, accepted.runId(), Duration.ofSeconds(60))
                             .status())
@@ -1394,7 +1407,7 @@ class LocalCodingAgentTest {
     }
 
     private AgentChatResponse toolResponse(String id, String tool, Map<String, Object> arguments) {
-        if (tool.equals("execution_run") || tool.equals("request_permissions")) {
+        if (tool.equals("execution_run")) {
             var structured = new java.util.LinkedHashMap<String, Object>(arguments);
             structured.putIfAbsent(
                     "workspaceRef",

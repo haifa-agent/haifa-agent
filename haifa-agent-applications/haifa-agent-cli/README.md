@@ -2,18 +2,16 @@
 
 ## Policy / Approval
 
-CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVER` 风险阈值表达实际审批策略；SQLite 模式下 Policy Snapshot、Decision 和审批证据与 Runtime 使用同一权威数据库。CLI 不提供企业审批路由、待办或业务单据提交能力。
+CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVER` 风险阈值表达实际审批策略。产品提供 immutable `PolicyRuleSet`，Decision 是瞬时结果；需要等待的审批只由 Runtime Interaction 持久化和恢复，不创建 Policy Snapshot、Decision、Evidence 或 Grant。CLI 不提供企业审批路由、待办或业务单据提交能力。
 
 ## Unified approval policy
 
-`ask/auto/deny` 由产品 Policy Snapshot 表达，默认 `ask` 映射为 `LOW`，`auto` 映射为 `NEVER`，
-`deny` 在 Catalog freeze 前移除 `execution.run` 及其 `execution.request_permissions` 配套入口。也可只配置
+`ask/auto/deny` 由产品 immutable `PolicyRuleSet` 表达，默认 `ask` 映射为 `LOW`，`auto` 映射为 `NEVER`，
+`deny` 在 Catalog freeze 前移除 `execution.run` 与受控 worktree 入口。也可只配置
 `approval.threshold` 为 `low`、`medium`、`high` 或 `never`；同时配置 mode 和 threshold 时必须使用兼容组合。
-达到阈值的普通执行风险创建一次 Policy 审批，Tool Decision 沿调用链传给 Broker 复核，不产生第二个
+达到阈值的普通执行风险创建一次 Interaction 审批，批准后 Runtime 重验并继续同一 ToolCall，不产生第二个
 控制台审批。`NEVER` 会自动执行包括 HIGH 在内的普通命令，但不覆盖可信分类器的硬拒绝、
-Broker/Workspace/Sandbox 边界、Credential 重认证或一次性 Host 权限升级；后两者仍要求操作者交互。
-权限申请只在普通执行使用与 Host 不同的隔离 Provider 时披露；默认 `host-guarded` 已经是受信 Host 路径，
-不重复披露。
+Broker/Workspace/Sandbox 边界或 Credential 重认证。只有可信 CA preflight 明确证明直接 Git/GH 调用尚未 dispatch 时，Runtime 才可创建一次 `execution-recovery` Interaction；模型没有权限申请 Tool，也不能改变或批准恢复请求。
 
 `haifa-agent-cli` 是 Coding Agent 的最高层生产装配与唯一可执行发行入口。它把同一个 Runtime、
 Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSessionService` 交给 tui4j
@@ -170,8 +168,9 @@ haifa-coding resume --last "继续前面的工作"
 入口未收到 `--workspace` 时默认使用进程当前目录，所以从哪个项目目录发起，该目录就是 Workspace。
 发行配置只使用 `model-auth://deepseek/default` 引用，不包含密钥；首次启动通过掩码输入保存 API Key，默认保持
 `approval=ask`、`host-guarded + network allow + shell auto`，并启用
-`SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Policy 证据等恢复状态
-的唯一事实源；本地默认 payload 在磁盘上可读，不提供保密性，但仍执行格式、binding 和 digest 校验。
+`SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Interaction、Workspace
+Registry/Access 等恢复状态的唯一事实源；Policy RuleSet 由产品配置提供，Decision 只瞬态求值，不作为
+SQLite 恢复事实。本地默认 payload 在磁盘上可读，不提供保密性，但仍执行格式、binding 和 digest 校验。
 JSONL 只用于审计投影，不参与恢复。启动器按自身目录设置绝对数据路径，因此发行目录整体移动后仍可
 使用；重新打包以原子替换部署经关键类检查的 shaded JAR，只覆盖 JAR、配置和启动器，不删除既有
 `data/` 或 `logs/`。启动时只要配置目录中任一模型已有可用凭据，就不会重复打开首次连接引导。可通过
@@ -565,7 +564,7 @@ binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可�
 `HAIFA_CONTINUATION_PROTECTOR_REF`。
 
 `tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_patch`、
-`workspace_attach`、`workspace_worktree_create`、`execution_run`、`request_permissions` 等 Provider-safe function name。`execution.run` 接收完整命令文本、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
+`workspace_attach`、`workspace_worktree_create`、`execution_run` 等 Provider-safe function name。`execution.run` 接收完整命令文本、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
 命令仅是非穷举示例。Coding Agent 默认使用该通用 OS CLI 路径完成仓库级文件发现、内容搜索、源码
 检查、构建和测试：文件发现优先 `rg --files`，内容搜索优先 `rg`，命令不存在时由模型按当前 Shell
 选择替代方案。产品代码不识别搜索意图，也不拼接 `rg`、`grep` 或其他命令的具体选项。
@@ -584,11 +583,13 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 `USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。
 
 只有当 `tools.enabled` 显式包含 `workspace.attach` 时，用户要求读取或修改当前 Workspace 外的目录，模型才可
-请求 `workspace_attach`：必须给出主机绝对路径和最小权限（`read-only` 或 `read-write`）。默认 `ask` 模式会向
-用户展示这两项并等待明确批准；批准后目录登记到 CA 自有 Workspace Registry。SQLite 模式会保护物理路径并在
-进程重启时重新验证，只有仍满足存在性、物理目录身份 fingerprint、link/reparse point 与互斥根规则的 ACTIVE 记录才恢复；
-MEMORY 模式仍只在当前进程有效。Tool 成功结果和新 Run 的模型投影只包含 `workspaceRef`、安全显示名、权限、来源和
-状态，不回显真实路径。未启用该工具的 Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准
+请求 `workspace_attach`：必须给出主机绝对路径和最小 Access mode（`read` 或 `develop`）。默认 `ask` 模式会向
+用户展示这两项并等待明确批准；批准后目录挂载到 CA 自有 Workspace Registry，并由 CA 控制面写入当前用户的
+`WorkspaceAccess`。SQLite 模式会保护物理路径并在进程重启时重新验证；只有状态仍为 ACTIVE、workspace/location
+身份精确匹配、canonical path 未改变且通过 link/reparse point 与互斥根规则的记录才恢复。同一安全 canonical path
+删除后重建可保留 workspace identity 与既有 Access，并只刷新 physical fingerprint；换路径或不可验证时 fail closed。
+MEMORY 模式仍只在当前进程有效。Tool 成功结果和新 Run 的模型投影只包含 `workspaceRef`、安全显示名、当前
+`READ / DEVELOP` mode、来源和状态，不回显真实路径或 fingerprint。未启用该工具的 Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准
 一个不可调用的工具。Terminal 的 `/trust` 展示同一份脱敏授权清单，`/trust revoke <workspaceRef>` 可立即撤销
 非初始根；撤销不会删除用户文件或历史逻辑事实。主目录
 与附加目录的后续文件操作都直接使用主机绝对路径，并统一映射到各自的 `WorkspaceId + WorkspacePath` 后进入同一
@@ -683,9 +684,9 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
 
-风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。网络或系统 `git` / `gh` 登录环境被 Sandbox 隔离时，模型只能用失败结果中的 `toolCallId` 请求对同一条直接、非破坏性的系统 `git` / `gh` 命令做一次 `HOST_NETWORK_ACCESS` 重试；不能修改命令意图、生成权限或批准自己的请求。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、一次性 Host 权限升级、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution.run`、`execution.request_permissions` 与 `workspace.worktree.create`，模型不可见，底层授权仍 fail closed。
+风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以允许的网络/认证错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会创建确定性的 `execution-recovery` Interaction；批准后从原 FAILED ToolCall 创建至多一个同参数 successor，重新检查当前 DEVELOP WorkspaceAccess、Policy、路径、Sandbox 与 Credential，再由内部 correlation 选择冻结的 recovery profile。模型不接收恢复 Tool，successor 也不能再次触发恢复。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution.run` 与 `workspace.worktree.create`，模型不可见，底层授权仍 fail closed。
 
-`workspace.worktree.create` 只接受活动可执行 source `workspaceRef`、不可变 base commit、新分支名、受控 target name、固定 `read-write` 权限和交付意图；模型不能传入目标主机路径。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验和 Registry 登记全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
+`workspace.worktree.create` 只接受具有当前 `DEVELOP` Access 的 source `workspaceRef`、不可变 base commit、新分支名、受控 target name 和交付意图；模型不能传入目标主机路径或权限。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验、Registry 登记和新 workspace 的 `DEVELOP` Access 写入全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
 
 系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。Tool Result 保留原始退出码，并单独投影命令语义：
 当前本地 Terminal 的 Coding Session 仍默认冻结 `WORKTREE_ONLY`，但该值只作为完成目标和投影元数据，

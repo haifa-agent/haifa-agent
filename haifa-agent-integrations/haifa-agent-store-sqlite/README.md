@@ -1,9 +1,14 @@
 # Haifa Agent SQLite Runtime Store
 
 `SqliteSdkProductContributions` 打开一个 SQLite Foundation，并共同提供 Persistence、Conversation、
-Memory、Policy 与 Artifact。应用应在自己的装配层选择这些 Contribution；仓库不会为某个 Store 发布
+Memory 与 Artifact。Action Policy rules 及 evaluator contribution 由产品装配层提供；仓库不会为某个 Store 发布
 独立生产 Starter。单机持久化参考代码见 `haifa-agent-sdk-example` 的
 `SqliteDurableReferenceAssemblyExample`；示例模块不是发布制品或 Stable API。
+
+`HaifaAgentStoreMigrations` 是 CA、PA 与显式 SQLite SDK 唯一的物理 Schema registry。它统一注册
+V1、V2、V4～V11 与 V1000～V1007；V3 legacy Policy family 和独立 V1008 已从 clean baseline 删除。
+同目录下唯一 `haifa-agent-v1.0-init.sql` 由 `build-support/scripts/generate_haifa_agent_v1_schema.py`
+从该 registry 实际注册资源生成，`--check` 用于 byte-for-byte 门禁。
 
 ## V5 SDK Conversation
 
@@ -44,7 +49,7 @@ not retain a trustworthy wait start timestamp.
 
 ## V4 Interaction / Run Input / Runtime Journal
 
-Runtime Migration V4 在不修改 V1～V3 的前提下完成 11 号能力 Task 02：
+Migration V4 在 V1～V2 clean baseline 之上完成 11 号能力 Task 02：
 
 - `runtime_event` 增加 event schema、correlation/causation；`runtime_event_stream` 保存每个 Run 的
   head/earliest，并在 `BEGIN IMMEDIATE` 事务内分配单调 sequence；
@@ -67,13 +72,14 @@ SQLite 仍是 Client Event Page、Interaction、Run Input、Checkpoint 和 Runti
 `technicalDetailRef` 迁移为 `diagnosticId`。本次不修改既有 Migration。
 进程内 Subscription 只接收提交后唤醒，并始终返回 SQLite 范围读取。
 
-## V3 Policy / Approval / Security
+## Clean Policy / Approval boundary
 
-Runtime Migration V3 追加 `policy_snapshot`、`policy_decision`、`approval_request_metadata`、`approval_response_metadata`、`policy_authorization_evidence`、`approval_grant` 与 `project_trust`。固定查询列、外键、状态 CHECK、版本/hash 交叉校验和条件更新共同构成权威恢复边界；JSONL/Event 仍只是提交后的安全投影，不参与恢复。
+V3 及其 Snapshot、Decision、Evidence、Grant、Project Trust 和 approval metadata 表已从 clean baseline
+物理删除。普通 Tool ASK 的唯一持久恢复事实位于 Interaction target/response；SQLite Foundation 不注册
+旧 Policy Mapper 或 payload codec。pre-M7 数据库因 migration metadata 不再匹配而 fail closed，产品不会
+自动修改、删除或兼容读取旧文件。
 
-`SqliteStoreFoundation` 暴露与 Policy API 对齐的 Store。Project Application 和 CLI 在 SQLite 模式下把同一组实例同时注入 Policy、Runtime Tool 与 Execution，避免进程内 Store 和 SQLite 各持一份授权事实。
-
-本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V6 Migration、
+本模块提供纯 Java 的 SQLite/MyBatis Store。当前已完成受控数据库配置、统一 Migration、
 版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
 
 V6 只新增 `memory_candidate`、`memory_record` 和 `memory_audit_event`。Candidate/Memory 正文以
@@ -105,9 +111,9 @@ worker ID 驱动。
 
 ## 初始化与所有权
 
-调用方通过 `SqliteStoreFoundation.initialize(configuration, clock)` 完成纯 Runtime 初始化；拥有额外
-Schema 的 Application 使用扩展重载，在一次校验中传入包含 Runtime V1～V5 原文的完整 Migration 集合，
-并可传入由 Application 自己拥有的静态 `MapperXml`。附加 Mapper 与内建 Mapper 使用相同的
+调用方通过 `SqliteStoreFoundation.initialize(configuration, clock)` 使用唯一完整 Schema 初始化；产品不能
+传入、追加或替换 Migration 集合。需要产品 Store 的 Application 只能通过
+`initializeWithAdditionalMappers` 传入自己拥有的静态 `MapperXml`。附加 Mapper 与内建 Mapper 使用相同的
 namespace/statement 唯一性、`${}` 禁止和启动期解析校验：
 
 1. 打开受控 JDBC Connection，设置并验证 WAL；
@@ -153,8 +159,9 @@ Conversation Summary 的有效快照读取，以及来源消息校验加版本 C
 V2 只补充无损恢复所需字段：Run 的 waiting request/termination description，以及 Configuration 与
 Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校验并在 `BEGIN IMMEDIATE` 中执行。
 
-V3 提供 Policy/Approval/Trust 权威表。V4 提供稳定 Event Journal range/head/earliest、Interaction
-revision/state 和 durable Run Input；旧库通过连续 Migration 升级，重复启动只校验 name/checksum。
+V3 已从 clean baseline 删除并保留版本空洞。V4 提供稳定 Event Journal range/head/earliest、Interaction
+revision/state 和 durable Run Input；pre-M7 旧库因 checksum/history 不一致而拒绝，重复启动只校验当前
+统一 registry 的 name/checksum。
 V9 将 `interaction_request.expires_at` 迁移为可空列；既有请求保留原截止时间，新建无截止时间的请求
 不会进入 due/expire 查询，响应、取消、revision 与恢复语义保持不变。
 

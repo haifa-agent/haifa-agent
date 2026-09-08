@@ -88,6 +88,43 @@ class KimiZhipuOpenAiChatDialectTest {
     }
 
     @Test
+    void mapsZhipuGlm53EffortWithoutDowngradingLowReasoning() {
+        var snapshot = snapshot(
+                "zhipu",
+                "glm-5.3",
+                OpenAiCompatibleDialects.ZHIPU,
+                "https://open.bigmodel.cn/api/paas/v4",
+                Map.of("thinking", "enabled", "reasoning_effort", "low", "do_sample", false));
+        Map<String, Object> body = new LinkedHashMap<>();
+
+        ZhipuOpenAiChatDialect.INSTANCE.applyRequest(request(snapshot, List.of(user()), Map.of()), body);
+
+        assertThat(body)
+                .containsEntry("thinking", Map.of("type", "enabled"))
+                .containsEntry("reasoning_effort", "low")
+                .containsEntry("do_sample", false);
+    }
+
+    @Test
+    void appliesTheZhipuProtocolWithoutAJavaModelWhitelist() {
+        var snapshot = snapshot(
+                "zhipu",
+                "catalog-defined-future-model",
+                OpenAiCompatibleDialects.ZHIPU,
+                "https://open.bigmodel.cn/api/paas/v4",
+                Map.of("thinking", "enabled", "reasoning_effort", "max", "do_sample", false));
+        Map<String, Object> body = new LinkedHashMap<>();
+
+        ZhipuOpenAiChatDialect.INSTANCE.validateSnapshot(snapshot, false);
+        ZhipuOpenAiChatDialect.INSTANCE.applyRequest(request(snapshot, List.of(user()), Map.of()), body);
+
+        assertThat(body)
+                .containsEntry("thinking", Map.of("type", "enabled"))
+                .containsEntry("reasoning_effort", "max")
+                .containsEntry("do_sample", false);
+    }
+
+    @Test
     void rejectsProviderEndpointsAndModelsOutsideTheReviewedContracts() {
         var unknownKimi = snapshot(
                 "kimi",

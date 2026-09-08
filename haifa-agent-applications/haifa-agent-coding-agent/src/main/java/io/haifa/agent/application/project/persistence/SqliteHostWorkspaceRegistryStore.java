@@ -6,7 +6,6 @@ import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryEntry;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistrySource;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStatus;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStore;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.store.sqlite.SqliteRuntimeUnitOfWork;
@@ -91,12 +90,10 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
                     new WorkspaceId(row.workspaceRef()),
                     new WorkspaceLocationRef(row.locationRef()),
                     row.safeDisplayName(),
-                    HostDirectoryPermission.valueOf(row.permission()),
                     HostWorkspaceRegistrySource.valueOf(row.source()),
                     HostWorkspaceRegistryStatus.valueOf(row.status()),
                     locations.decode(row.locationNonce(), row.locationCiphertext(), row.locationDigest(), binding),
-                    row.fingerprint(),
-                    row.authorizationRef(),
+                    row.physicalFingerprint(),
                     row.createdAt(),
                     row.validatedAt(),
                     Optional.ofNullable(row.revokedAt()),
@@ -122,21 +119,19 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
                 entry.projectId().value(),
                 entry.workspaceRef().value(),
                 entry.locationRef().value(),
-                entry.fingerprint());
+                entry.physicalFingerprint());
         CodingWorkspaceLocationCodec.ProtectedLocation protectedLocation = locations.encode(entry.realPath(), binding);
         return new CodingWorkspaceRegistryRow(
                 entry.projectId().value(),
                 entry.workspaceRef().value(),
                 entry.locationRef().value(),
                 entry.safeDisplayName(),
-                entry.permission().name(),
                 entry.source().name(),
                 entry.status().name(),
                 protectedLocation.nonce(),
                 protectedLocation.ciphertext(),
                 protectedLocation.digest(),
-                entry.fingerprint(),
-                entry.authorizationRef(),
+                entry.physicalFingerprint(),
                 entry.createdAt(),
                 entry.validatedAt(),
                 entry.revokedAt().orElse(null),
@@ -146,7 +141,7 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
 
     private static String binding(CodingWorkspaceRegistryRow row) {
         return CodingWorkspaceLocationCodec.binding(
-                row.projectId(), row.workspaceRef(), row.locationRef(), row.fingerprint());
+                row.projectId(), row.workspaceRef(), row.locationRef(), row.physicalFingerprint());
     }
 
     private CodingWorkspaceRegistryMapper mapper() {

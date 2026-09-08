@@ -3,7 +3,6 @@ package io.haifa.agent.application.project.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
 import io.haifa.agent.application.project.product.ProjectProductService;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.product.coding.CodingFollowUp;
@@ -31,7 +30,6 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelUsage;
-import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.configuration.ProjectConfiguration;
 import io.haifa.agent.project.configuration.ProjectConfigurationId;
@@ -529,15 +527,16 @@ class ProjectPersistenceAssemblyTest {
     }
 
     @Test
-    void codingPolicyUsesTheSameAuthoritativeSqliteStoreAfterApplicationRebuild() {
+    void applicationPersistenceDoesNotExposePolicyStoresAfterRebuild() {
         Path database = directory.resolve("policy-recovery.db");
-        var firstIds = new TestIds("policy-first");
-        String snapshotRef;
         try (ProjectPersistenceAssembly first = ProjectPersistenceAssembly.open(
-                ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"), CLOCK, firstIds, protector())) {
-            var policy = CodingAgentPolicyAssembly.create(ApprovalMode.ASK, CLOCK, firstIds::nextValue, first.policy());
-            snapshotRef = policy.snapshot().ref().value();
-            assertThat(first.policy().snapshots().find(policy.snapshot().ref())).contains(policy.snapshot());
+                ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"),
+                CLOCK,
+                new TestIds("policy-first"),
+                protector())) {
+            assertThat(List.of(first.getClass().getMethods()))
+                    .extracting(method -> method.getName())
+                    .doesNotContain("policy");
         }
 
         try (ProjectPersistenceAssembly reopened = ProjectPersistenceAssembly.open(
@@ -545,11 +544,9 @@ class ProjectPersistenceAssemblyTest {
                 CLOCK,
                 new TestIds("policy-second"),
                 protector())) {
-            var policy = CodingAgentPolicyAssembly.create(
-                    ApprovalMode.ASK, CLOCK, new TestIds("decision")::nextValue, reopened.policy());
-            assertThat(policy.snapshot().ref().value()).isEqualTo(snapshotRef);
-            assertThat(reopened.policy().snapshots().find(policy.snapshot().ref()))
-                    .contains(policy.snapshot());
+            assertThat(List.of(reopened.getClass().getMethods()))
+                    .extracting(method -> method.getName())
+                    .doesNotContain("policy");
         }
     }
 

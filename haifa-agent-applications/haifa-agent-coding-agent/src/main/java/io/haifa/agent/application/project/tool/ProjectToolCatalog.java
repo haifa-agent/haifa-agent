@@ -42,8 +42,7 @@ public final class ProjectToolCatalog {
             Map.entry("file.patch", "file.write"),
             Map.entry("workspace.attach", "file.read"),
             Map.entry(ProjectWorktreeToolOperations.TOOL_NAME, "execution.run"),
-            Map.entry("execution.run", "execution.run"),
-            Map.entry(ProjectPermissionRequestOperations.TOOL_NAME, "execution.run"));
+            Map.entry("execution.run", "execution.run"));
     private static final Set<String> WRITES =
             Set.of("file.create", "file.write", "file.delete", "file.move", "file.patch");
 
@@ -52,7 +51,7 @@ public final class ProjectToolCatalog {
             Set<String> effectiveCapabilities,
             boolean modelSupportsTools,
             ToolProvider provider) {
-        return freeze(
+        return freezeInternal(
                 configuredTools,
                 effectiveCapabilities,
                 modelSupportsTools,
@@ -60,7 +59,8 @@ public final class ProjectToolCatalog {
                 List.of(),
                 List.of(),
                 List.of(),
-                null);
+                null,
+                ExecutionScratchSpaceSpec.genericRequired());
     }
 
     public DefaultToolCatalog freeze(
@@ -69,7 +69,7 @@ public final class ProjectToolCatalog {
             boolean modelSupportsTools,
             ToolProvider provider,
             SandboxProfile executionProfile) {
-        return freeze(
+        return freezeInternal(
                 configuredTools,
                 effectiveCapabilities,
                 modelSupportsTools,
@@ -169,7 +169,7 @@ public final class ProjectToolCatalog {
             List<SkillToolCatalogContribution> skillTools,
             SandboxProfile executionProfile,
             ExecutionScratchSpaceSpec scratchSpace) {
-        return freeze(
+        return freezeInternal(
                 configuredTools,
                 effectiveCapabilities,
                 modelSupportsTools,
@@ -178,11 +178,10 @@ public final class ProjectToolCatalog {
                 webTools,
                 skillTools,
                 executionProfile,
-                executionProfile,
                 scratchSpace);
     }
 
-    public DefaultToolCatalog freeze(
+    private DefaultToolCatalog freezeInternal(
             Set<String> configuredTools,
             Set<String> effectiveCapabilities,
             boolean modelSupportsTools,
@@ -191,7 +190,6 @@ public final class ProjectToolCatalog {
             List<WebToolCatalogContribution> webTools,
             List<SkillToolCatalogContribution> skillTools,
             SandboxProfile executionProfile,
-            SandboxProfile permissionProfile,
             ExecutionScratchSpaceSpec scratchSpace) {
         Objects.requireNonNull(mcpTools, "mcpTools");
         Objects.requireNonNull(webTools, "webTools");
@@ -208,12 +206,7 @@ public final class ProjectToolCatalog {
                 .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
                 .forEach(name -> builder.register(
                         modelAlias(name),
-                        definition(
-                                name,
-                                name.equals(ProjectPermissionRequestOperations.TOOL_NAME)
-                                        ? permissionProfile
-                                        : executionProfile,
-                                scratchSpace),
+                        definition(name, executionProfile, scratchSpace),
                         "project-workspace",
                         provider));
         mcpTools.stream()
@@ -245,16 +238,12 @@ public final class ProjectToolCatalog {
     }
 
     private static ToolAlias modelAlias(String name) {
-        if (name.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
-            return new ToolAlias(ProjectPermissionRequestOperations.MODEL_ALIAS);
-        }
         return new ToolAlias(name.replace('.', '_'));
     }
 
     private static ToolDefinition definition(
             String name, SandboxProfile executionProfile, ExecutionScratchSpaceSpec scratchSpace) {
-        boolean permissionRequest = name.equals(ProjectPermissionRequestOperations.TOOL_NAME);
-        boolean execution = name.equals("execution.run") || permissionRequest;
+        boolean execution = name.equals("execution.run");
         if (execution && executionProfile == null) {
             throw new IllegalArgumentException(name + " requires a frozen sandbox profile");
         }
@@ -271,7 +260,7 @@ public final class ProjectToolCatalog {
                                 ToolSideEffect.FILE_WRITE,
                                 ToolSideEffect.PROCESS_EXECUTION,
                                 ToolSideEffect.PERMISSION_ELEVATION)
-                        : executionEffects(executionProfile, permissionRequest, execution, write);
+                        : executionEffects(executionProfile, execution, write);
         ToolApprovalRequirement approval = attach || worktree
                 ? ToolApprovalRequirement.ALWAYS
                 : execution || write ? ToolApprovalRequirement.POLICY : ToolApprovalRequirement.NEVER;
@@ -284,7 +273,6 @@ public final class ProjectToolCatalog {
         String version =
                 switch (name) {
                     case "execution.run" -> "2.0.0";
-                    case ProjectPermissionRequestOperations.TOOL_NAME -> "2.0.0";
                     case "file.list",
                             "file.read",
                             "file.search",
@@ -295,8 +283,8 @@ public final class ProjectToolCatalog {
                             "file.diff",
                             "file.patch",
                             "file.stat" -> "2.0.0";
-                    case "workspace.attach" -> "2.1.0";
-                    case ProjectWorktreeToolOperations.TOOL_NAME -> "1.0.0";
+                    case "workspace.attach" -> "3.0.0";
+                    case ProjectWorktreeToolOperations.TOOL_NAME -> "2.0.0";
                     default -> "1.0.0";
                 };
         return new ToolDefinition(
@@ -326,13 +314,12 @@ public final class ProjectToolCatalog {
     }
 
     private static Set<ToolSideEffect> executionEffects(
-            SandboxProfile executionProfile, boolean permissionRequest, boolean execution, boolean write) {
+            SandboxProfile executionProfile, boolean execution, boolean write) {
         if (!execution) return write ? Set.of(ToolSideEffect.FILE_WRITE) : Set.of(ToolSideEffect.FILE_READ);
         var effects = java.util.EnumSet.of(ToolSideEffect.PROCESS_EXECUTION);
         if (executionProfile.networkPolicy() == NetworkPolicy.ALLOW) {
             effects.add(ToolSideEffect.NETWORK_ACCESS);
         }
-        if (permissionRequest) effects.add(ToolSideEffect.PERMISSION_ELEVATION);
         return Set.copyOf(effects);
     }
 
@@ -351,7 +338,6 @@ public final class ProjectToolCatalog {
             case "workspace.attach" -> "Attach a user-approved directory";
             case ProjectWorktreeToolOperations.TOOL_NAME -> "Create a controlled Git worktree";
             case "execution.run" -> "Run a local shell command";
-            case ProjectPermissionRequestOperations.TOOL_NAME -> "Request permission for one failed command";
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         };
     }
@@ -371,15 +357,6 @@ public final class ProjectToolCatalog {
                     + "and gh commands use the same risk classification, approval, workspace, sandbox, network, and "
                     + "audit controls as other execution commands; delivery intent is completion metadata, not "
                     + "command authorization.";
-        }
-        if (name.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
-            return "Request user approval to rerun one exact execution.run command that failed in this Run because "
-                    + "the isolated profile could not use remote network or host authentication. Only direct, "
-                    + "non-destructive system git or gh commands are eligible. The prior Tool Call, command, workspaceRef, relativeWorkdir, "
-                    + "timeout, and expected exit codes must match; the optional operation family remains a diagnostic hint. "
-                    + "compound, wrapped, path-escaping, credential-overriding, destructive, or outcome-unknown "
-                    + "requests remain denied. Approval applies once to this Tool Call and does not create a reusable "
-                    + "grant.";
         }
         if (name.equals("file.read")) {
             return "Read one bounded text window from a workspace file. Continue with nextCursor only when hasMore "
@@ -404,13 +381,13 @@ public final class ProjectToolCatalog {
         }
         if (name.equals("workspace.attach")) {
             return "Request one additional existing local directory for this Coding Agent registry. Supply an "
-                    + "absolute host path and explicit read-only or read-write permission. The user "
-                    + "must approve the exact directory and permission before it becomes available in the scope; "
+                    + "absolute host path and explicit read or develop mode. The user "
+                    + "must approve the exact directory and mode before it becomes available in the scope; "
                     + "successful attachments are revalidated before restoration and returned as a path-redacted workspaceRef.";
         }
         if (name.equals(ProjectWorktreeToolOperations.TOOL_NAME)) {
             return "Create one managed Git worktree from an active executable workspace after exact user approval. "
-                    + "The immutable base commit, new branch, managed target name, read-write permission, and delivery intent "
+                    + "The immutable base commit, new branch, managed target name, and delivery intent "
                     + "are approved together; no arbitrary host target path is accepted.";
         }
         if (WRITES.contains(name)) {
@@ -491,27 +468,21 @@ public final class ProjectToolCatalog {
                                 4096,
                                 "description",
                                 "Absolute path of the user-requested existing local directory."));
-                properties.put("permission", Map.of("type", "string", "enum", List.of("read-only", "read-write")));
+                properties.put("mode", Map.of("type", "string", "enum", List.of("read", "develop")));
                 required.add("path");
-                required.add("permission");
+                required.add("mode");
             }
             case ProjectWorktreeToolOperations.TOOL_NAME -> {
                 properties.put("sourceWorkspaceRef", Map.of("type", "string", "minLength", 1, "maxLength", 256));
                 properties.put("baseCommit", Map.of("type", "string", "minLength", 7, "maxLength", 64));
                 properties.put("branchName", Map.of("type", "string", "minLength", 1, "maxLength", 240));
                 properties.put("targetName", Map.of("type", "string", "minLength", 1, "maxLength", 80));
-                properties.put("permission", Map.of("type", "string", "enum", List.of("read-write")));
                 properties.put(
                         "deliveryIntent", Map.of("type", "string", "enum", List.of("local-change", "pull-request")));
-                required.addAll(List.of(
-                        "sourceWorkspaceRef",
-                        "baseCommit",
-                        "branchName",
-                        "targetName",
-                        "permission",
-                        "deliveryIntent"));
+                required.addAll(
+                        List.of("sourceWorkspaceRef", "baseCommit", "branchName", "targetName", "deliveryIntent"));
             }
-            case "execution.run", ProjectPermissionRequestOperations.TOOL_NAME -> {
+            case "execution.run" -> {
                 properties.put(
                         "command",
                         Map.of(
@@ -578,20 +549,6 @@ public final class ProjectToolCatalog {
                                 "Stable operation family for delivery and recovery control. Use DIFF only for "
                                         + "read-only diff inspection and UNKNOWN when the command cannot "
                                         + "be reliably classified; do not infer it from arbitrary shell syntax."));
-                if (name.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
-                    properties.put("priorToolCallId", Map.of("type", "string", "minLength", 1, "maxLength", 256));
-                    properties.put(
-                            "requestedPermission",
-                            Map.of(
-                                    "type",
-                                    "string",
-                                    "enum",
-                                    List.of(ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS)));
-                    properties.put("justification", Map.of("type", "string", "minLength", 1, "maxLength", 512));
-                    required.add("priorToolCallId");
-                    required.add("requestedPermission");
-                    required.add("justification");
-                }
             }
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         }
@@ -640,7 +597,7 @@ public final class ProjectToolCatalog {
                     "additionalProperties",
                     false);
         }
-        if (name.equals("execution.run") || name.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
+        if (name.equals("execution.run")) {
             var properties = new LinkedHashMap<String, Object>();
             properties.put("toolCallId", Map.of("type", "string"));
             properties.put("executionId", Map.of("type", "string"));
@@ -651,12 +608,10 @@ public final class ProjectToolCatalog {
             properties.put("semanticReasonCode", Map.of("type", "string"));
             properties.put("semanticInterpreterVersion", Map.of("type", "string"));
             properties.put("commandOutcomeCode", Map.of("type", "string"));
-            if (name.equals("execution.run")) {
-                properties.put("runtimeOutcome", Map.of("type", "string", "enum", List.of("OUTCOME_UNKNOWN")));
-                properties.put("reconcileStatus", Map.of("type", "string"));
-                properties.put("reconcileReason", Map.of("type", "string"));
-                properties.put("replayAllowed", Map.of("type", "boolean"));
-            }
+            properties.put("runtimeOutcome", Map.of("type", "string", "enum", List.of("OUTCOME_UNKNOWN")));
+            properties.put("reconcileStatus", Map.of("type", "string"));
+            properties.put("reconcileReason", Map.of("type", "string"));
+            properties.put("replayAllowed", Map.of("type", "boolean"));
             properties.put("output", Map.of("type", "string"));
             properties.put("truncated", Map.of("type", "boolean"));
             properties.put("outputRef", Map.of("type", "string"));
@@ -707,11 +662,6 @@ public final class ProjectToolCatalog {
             properties.put("scratchSpecDigest", Map.of("type", "string"));
             properties.put("scratchProvisioned", Map.of("type", "boolean"));
             properties.put("scratchCleanupFailed", Map.of("type", "boolean"));
-            if (name.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
-                properties.put("permissionEscalated", Map.of("type", "boolean"));
-                properties.put("requestedPermission", Map.of("type", "string"));
-                properties.put("priorToolCallId", Map.of("type", "string"));
-            }
             return Map.of(
                     "$schema",
                     ToolSchema.DRAFT_2020_12,

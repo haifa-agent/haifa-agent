@@ -1021,6 +1021,13 @@
         ORDER BY created_at ASC, request_id ASC LIMIT 1
     </select>
 
+    <select id="toolApprovalInteractions" resultMap="interactionRequestRow">
+        SELECT <include refid="interactionRequestColumns"/>
+        FROM interaction_request
+        WHERE run_id = #{runId} AND target_type = 'tool-approval'
+        ORDER BY created_at ASC, request_id ASC
+    </select>
+
     <select id="dueInteractions" resultMap="interactionRequestRow">
         SELECT <include refid="interactionRequestColumns"/>
         FROM interaction_request

@@ -237,7 +237,7 @@ class ProjectApplicationTest {
     }
 
     @Test
-    void publishesProjectToolsIncludingControlledPermissionRequests() {
+    void keepsExecutionRecoveryInsideRuntimeInsteadOfPublishingAPermissionRequestTool() {
         var catalog = new ProjectToolCatalog();
         var frozen = catalog.freeze(
                 catalog.names(),
@@ -247,7 +247,7 @@ class ProjectApplicationTest {
                 executionProfile("host-guarded", NetworkPolicy.ALLOW, "two"));
 
         assertThat(frozen.snapshot().bindings())
-                .hasSize(14)
+                .hasSize(13)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
                         "execution_run",
@@ -261,7 +261,6 @@ class ProjectApplicationTest {
                         "file_search",
                         "file_stat",
                         "file_write",
-                        "request_permissions",
                         "workspace_attach",
                         "workspace_worktree_create");
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
@@ -273,21 +272,8 @@ class ProjectApplicationTest {
             assertThat(binding.coordinate().definitionHash().value()).matches("[0-9a-f]{64}");
         });
         assertThat(frozen.snapshot().bindings())
-                .filteredOn(binding -> binding.alias().value().equals("request_permissions"))
-                .singleElement()
-                .satisfies(binding -> {
-                    assertThat(binding.definition().approvalRequirement())
-                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.POLICY);
-                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
-                    assertThat(binding.definition().sideEffects())
-                            .contains(io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
-                    assertThat(binding.definition()
-                                    .inputSchema()
-                                    .document()
-                                    .get("required")
-                                    .toString())
-                            .contains("priorToolCallId", "requestedPermission", "justification");
-                });
+                .extracting(binding -> binding.alias().value())
+                .doesNotContain("request_permissions");
         assertThat(frozen.snapshot().bindings())
                 .filteredOn(binding -> binding.alias().value().equals("workspace_attach"))
                 .singleElement()
@@ -297,6 +283,9 @@ class ProjectApplicationTest {
                     assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
                     assertThat(binding.definition().sideEffects())
                             .contains(io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
+                    assertThat(binding.definition().inputSchema().document().toString())
+                            .contains("path", "mode", "read", "develop")
+                            .doesNotContain("permission", "read-only", "read-write");
                 });
         assertThat(frozen.snapshot().bindings())
                 .filteredOn(binding -> binding.alias().value().equals("workspace_worktree_create"))
@@ -315,13 +304,10 @@ class ProjectApplicationTest {
                                     .document()
                                     .get("required")
                                     .toString())
-                            .contains(
-                                    "sourceWorkspaceRef",
-                                    "baseCommit",
-                                    "branchName",
-                                    "targetName",
-                                    "permission",
-                                    "deliveryIntent");
+                            .contains("sourceWorkspaceRef", "baseCommit", "branchName", "targetName", "deliveryIntent")
+                            .doesNotContain("permission");
+                    assertThat(binding.definition().inputSchema().document().toString())
+                            .doesNotContain("permission", "read-write");
                 });
         assertThat(frozen.snapshot().bindings())
                 .filteredOn(binding -> binding.alias().value().equals("file_write"))
@@ -377,9 +363,8 @@ class ProjectApplicationTest {
         ProjectToolExecutor executor = new ProjectToolExecutor(
                 (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
                         workspaceId, Set.of("file.read")),
-                (toolName, workspace, actor, runRef, policy, arguments) -> {
-                    observed.set(toolName + "|" + workspace.value() + "|" + actor.principalId() + "|" + runRef + "|"
-                            + policy);
+                (toolName, workspace, actor, runRef, arguments) -> {
+                    observed.set(toolName + "|" + workspace.value() + "|" + actor.principalId() + "|" + runRef);
                     return new ToolResult(true, "read", java.util.Map.of(), List.of(), List.of(), false);
                 });
         var request = new ToolInvocationRequest(
@@ -391,17 +376,16 @@ class ProjectApplicationTest {
                 new ToolArguments("haifa.file.read.input", "1.1.0", java.util.Map.of("path", "README.md")),
                 NOW.plusSeconds(30),
                 Optional.of("key"),
-                Optional.of("policy-1"),
                 () -> false,
                 List.of(),
                 io.haifa.agent.tool.api.ToolInvocationObserver.noop());
 
         assertThat(executor.invoke(request).successful()).isTrue();
-        assertThat(observed).hasValue("file.read|workspace-tool|operator|run-tool|policy-1");
+        assertThat(observed).hasValue("file.read|workspace-tool|operator|run-tool");
 
         ProjectToolExecutor denied = new ProjectToolExecutor(
                 (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(workspaceId, Set.of()),
-                (toolName, workspace, actor, runRef, policy, arguments) -> {
+                (toolName, workspace, actor, runRef, arguments) -> {
                     throw new AssertionError("unauthorized operation must not execute");
                 });
         assertThatThrownBy(() -> denied.invoke(request)).isInstanceOf(SecurityException.class);

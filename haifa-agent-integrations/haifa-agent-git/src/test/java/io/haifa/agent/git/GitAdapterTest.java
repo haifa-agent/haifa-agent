@@ -6,6 +6,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionFailure;
 import io.haifa.agent.execution.api.ExecutionId;
+import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutput;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
@@ -15,7 +16,6 @@ import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.project.hostworkspace.HostGitInspectionStatus;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
-import io.haifa.agent.project.hostworkspace.scope.HostDirectoryPermission;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.nio.file.Path;
@@ -70,8 +70,7 @@ class GitAdapterTest {
                 new ExecutionBrokerGitRevisionProbe(broker, generator, new SandboxProfileRef("git-read", "1"), "git");
         WorkspaceId workspaceId = new WorkspaceId("workspace-1");
         var repository = new GitRepositoryRef(WorkspacePath.root(workspaceId));
-        var context = new GitCommandContext(new TrustedExecutionContext(
-                "run-1", new PrincipalRef("actor", "user"), Set.of("execution.run", "git.read"), "allow-1"));
+        var context = new GitCommandContext(trusted("run-1"));
 
         assertThat(adapter.inspectHead(context, repository).branch()).isEqualTo("main");
         assertThat(commands).hasSize(4);
@@ -86,20 +85,18 @@ class GitAdapterTest {
     void bindsHostInspectionToAnExactlyAuthorizedBrokerRequest() throws Exception {
         Path root = tempDir.toRealPath();
         WorkspaceId workspaceId = new WorkspaceId("workspace-host");
-        var boundary = AuthorizedHostDirectory.of(workspaceId, root, HostDirectoryPermission.READ_WRITE);
+        var boundary = AuthorizedHostDirectory.of(workspaceId, root);
         List<ExecutionRequest> requests = new ArrayList<>();
         ExecutionBroker broker = broker(requests, request -> result(request.id(), root + System.lineSeparator(), 0));
         AtomicInteger ids = new AtomicInteger();
-        var context = new GitCommandContext(trusted("run-host", "pending"), request -> {
-            assertThat(request.context().runRef()).isEqualTo("run-host");
-            return "generated-policy";
-        });
+        var context = new GitCommandContext(trusted("run-host"));
         var adapter = new ExecutionBrokerHostGitInspectionPort(
                 broker, () -> "host-" + ids.incrementAndGet(), new SandboxProfileRef("git-read", "1"), "git", context);
 
         assertThat(adapter.inspect(boundary, root)).isEqualTo(HostGitInspectionStatus.WORKTREE_ROOT);
         assertThat(requests).singleElement().satisfies(request -> {
-            assertThat(request.context().policyDecisionRef()).isEqualTo("generated-policy");
+            assertThat(request.context().origin()).isEqualTo(ExecutionOrigin.PRODUCT_INTERNAL);
+            assertThat(request.context().sourceToolCallId()).isEmpty();
             assertThat(request.workingDirectory()).isEqualTo(WorkspacePath.root(workspaceId));
             assertThat(request.command().argv()).contains("rev-parse", "--show-toplevel");
         });
@@ -109,7 +106,7 @@ class GitAdapterTest {
     void distinguishesPlainDirectoryFromUnavailableGitExecution() throws Exception {
         Path root = tempDir.toRealPath();
         WorkspaceId workspaceId = new WorkspaceId("workspace-inspection-failure");
-        var boundary = AuthorizedHostDirectory.of(workspaceId, root, HostDirectoryPermission.READ_WRITE);
+        var boundary = AuthorizedHostDirectory.of(workspaceId, root);
         AtomicInteger calls = new AtomicInteger();
         ExecutionBroker broker =
                 broker(new ArrayList<>(), request -> result(request.id(), "", calls.incrementAndGet() == 1 ? 128 : 1));
@@ -119,7 +116,7 @@ class GitAdapterTest {
                 () -> "failure-" + ids.incrementAndGet(),
                 new SandboxProfileRef("git-read", "1"),
                 "git",
-                new GitCommandContext(trusted("run-failure", "allow")));
+                new GitCommandContext(trusted("run-failure")));
 
         assertThat(adapter.inspect(boundary, root)).isEqualTo(HostGitInspectionStatus.NOT_WORKTREE_ROOT);
         assertThat(adapter.inspect(boundary, root)).isEqualTo(HostGitInspectionStatus.UNAVAILABLE);
@@ -140,8 +137,7 @@ class GitAdapterTest {
         var probe = new ExecutionBrokerGitReviewProbe(
                 broker, () -> "review-" + ids.incrementAndGet(), new SandboxProfileRef("git-read", "1"), "git");
 
-        GitReviewSnapshot snapshot =
-                probe.captureBaseline(new GitCommandContext(trusted("run-review", "allow")), repository);
+        GitReviewSnapshot snapshot = probe.captureBaseline(new GitCommandContext(trusted("run-review")), repository);
 
         assertThat(snapshot.headRevision()).isEqualTo("abcdef");
         assertThat(snapshot.dirtySnapshotDigest()).isEqualTo("sha256:" + "b".repeat(64));
@@ -169,7 +165,7 @@ class GitAdapterTest {
                 broker, () -> "current-" + ids.incrementAndGet(), new SandboxProfileRef("git-read", "1"), "git");
 
         GitReviewResult clean = probe.review(
-                new GitCommandContext(trusted("run-current", "allow")),
+                new GitCommandContext(trusted("run-current")),
                 repository,
                 "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 
@@ -179,14 +175,19 @@ class GitAdapterTest {
                 .containsExactly("CREATE:new.txt", "MOVE:source.txt", "REPLACE:nested-tool");
 
         calls.set(0);
-        GitReviewResult initiallyDirty = probe.review(
-                new GitCommandContext(trusted("run-dirty", "allow")), repository, "sha256:" + "f".repeat(64));
+        GitReviewResult initiallyDirty =
+                probe.review(new GitCommandContext(trusted("run-dirty")), repository, "sha256:" + "f".repeat(64));
         assertThat(initiallyDirty.complete()).isFalse();
     }
 
-    private static TrustedExecutionContext trusted(String runRef, String decisionRef) {
+    private static TrustedExecutionContext trusted(String runRef) {
         return new TrustedExecutionContext(
-                runRef, new PrincipalRef("actor", "user"), Set.of("execution.run", "git.read"), decisionRef);
+                new io.haifa.agent.core.reference.TenantRef("tenant"),
+                runRef,
+                new PrincipalRef("actor", "user"),
+                Set.of("execution.run", "git.read"),
+                ExecutionOrigin.PRODUCT_INTERNAL,
+                Optional.empty());
     }
 
     private static ExecutionBroker broker(

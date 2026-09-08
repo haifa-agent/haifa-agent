@@ -2,10 +2,12 @@ package io.haifa.agent.model.core;
 
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelBindingConsistencyValidator;
+import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -57,6 +59,30 @@ public final class ModelCatalogManifest {
 
     public Optional<ModelCatalogBinding> binding(String bindingId) {
         return Optional.ofNullable(bindingsById.get(new ModelDefinitionId(bindingId)));
+    }
+
+    /**
+     * Returns the authoritative profile for a catalog binding represented by a frozen snapshot.
+     *
+     * <p>The deployment owns endpoint and credential selection, but cannot change model facts under an existing
+     * binding id. A same-named snapshot with different provider, model, API, dialect, capability, or token-limit
+     * facts is not eligible to receive the catalog profile.
+     */
+    public Optional<ModelBindingProfile> profileFor(ResolvedModelSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot must not be null");
+        ModelCatalogBinding binding = bindingsById.get(snapshot.modelId());
+        if (binding == null) return Optional.empty();
+        ModelDefinition definition = binding.definition();
+        if (!definition.providerId().equals(snapshot.providerId())
+                || !definition.providerModelId().equals(snapshot.providerModelId())
+                || !definition.style().equals(snapshot.apiStyle())
+                || !binding.apiBinding().dialect().equals(snapshot.dialect())
+                || !definition.capabilities().equals(snapshot.capabilities())
+                || definition.contextWindow() != snapshot.contextWindow()
+                || definition.maxOutputTokens() != snapshot.maxOutputTokens()) {
+            return Optional.empty();
+        }
+        return Optional.of(binding.profile());
     }
 
     public String digest() {
