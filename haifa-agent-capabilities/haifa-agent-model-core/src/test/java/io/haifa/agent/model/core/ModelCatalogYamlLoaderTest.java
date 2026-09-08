@@ -3,10 +3,10 @@ package io.haifa.agent.model.core;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
+import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelAuthenticationMethod;
 import io.haifa.agent.model.api.ModelCapability;
-import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProfileStatus;
 import io.haifa.agent.model.api.ModelProviderId;
