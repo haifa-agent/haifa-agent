@@ -48,8 +48,7 @@ class AttemptExecutorTest {
     @Test
     void classifiesModelContinuationFailureAsCrossModelContinuationInvalid() {
         var failure = new io.haifa.agent.runtime.core.model.continuation.ModelContinuationException(
-                io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure.CROSS_MODEL_UNCLOSED_TOOL_GROUP,
-                "test");
+                io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure.BINDING_MISMATCH, "test");
 
         assertThat(AttemptExecutor.classifiedErrorCode(null, null, null, null, failure))
                 .isEqualTo(AgentErrorCode.CROSS_MODEL_CONTINUATION_INVALID);
