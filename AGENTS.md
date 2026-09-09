@@ -64,6 +64,10 @@
 ## 修改与测试工作流
 
 - 优先做满足需求的最小变更；不顺带重命名、重排包结构或扩大公共 API。
+- 所有新建、修改或由工具生成的文件必须采用 UTF-8 无 BOM 编码（UTF-8 without BOM），严禁生成
+  UTF-8 with BOM 或 UTF-16LE。在 Windows 环境下使用脚本写文件时，禁止直接使用 Windows
+  PowerShell 5.1 的重定向操作符 `>`（默认 UTF-16LE）或 `Out-File -Encoding utf8`（默认带 BOM）；
+  优先使用 Agent 文件写入工具、Python 脚本或指定 `[System.Text.UTF8Encoding]::new($false)` 写入。
 - 脚本的公共业务逻辑使用 Python，`.ps1` 与 `.sh` 只作为原样透传参数的薄入口；两端统一使用
   小写位置动作和 `--kebab-case` 长参数。
 - 修改公共行为时补充相邻单元测试；修改依赖边界时更新 ArchUnit/Maven Enforcer 约束。Surefire/Failsafe
