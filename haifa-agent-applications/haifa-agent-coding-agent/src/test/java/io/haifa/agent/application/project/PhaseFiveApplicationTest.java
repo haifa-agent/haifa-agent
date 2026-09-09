@@ -124,10 +124,26 @@ class PhaseFiveApplicationTest {
                 .startsWith("diff --git".getBytes(StandardCharsets.UTF_8));
 
         var checker = new PublishedArtifactRequiredChecker(artifactStore);
-        assertThat(checker.isSatisfied(null, decision(List.of(result.artifact()))))
-                .isTrue();
-        assertThat(checker.isSatisfied(null, decision(List.of(new ArtifactRef("missing", "patch", "1", "missing")))))
-                .isFalse();
+        assertThat(checker.evaluate(null, decision(List.of(result.artifact()))).blockers())
+                .isEmpty();
+        for (var invalid : List.of(
+                new ArtifactRef("missing", "patch", "1", "missing"),
+                new ArtifactRef(
+                        result.artifact().artifactId(),
+                        "patch",
+                        "invalid",
+                        result.artifact().title()),
+                new ArtifactRef(
+                        result.artifact().artifactId(),
+                        "wrong-type",
+                        "1",
+                        result.artifact().title()),
+                new ArtifactRef(
+                        result.artifact().artifactId(), result.artifact().artifactType(), "1", "wrong-title"))) {
+            assertThat(checker.evaluate(null, decision(List.of(invalid))).blockers())
+                    .containsExactly(io.haifa.agent.runtime.core.completion.CompletionBlocker.recoverable(
+                            "REQUIRED_ARTIFACT_MISSING", "A required artifact is missing.", "REQUIRED_ARTIFACT"));
+        }
     }
 
     @Test

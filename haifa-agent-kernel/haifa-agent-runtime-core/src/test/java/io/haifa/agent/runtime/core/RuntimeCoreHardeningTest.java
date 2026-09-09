@@ -286,7 +286,13 @@ class RuntimeCoreHardeningTest {
                     if (request.iteration() == 2) repairRequest.set(request);
                     return response(decisions.remove());
                 },
-                builder -> builder.requiredArtifactChecker((run, decision) -> false)
+                builder -> builder.completionPolicy((run, decision) ->
+                                io.haifa.agent.runtime.core.completion.CompletionPolicyResult.blocked(
+                                        List.of(io.haifa.agent.runtime.core.completion.CompletionBlocker.recoverable(
+                                                "REQUIRED_ARTIFACT_MISSING",
+                                                "A required artifact is missing.",
+                                                "REQUIRED_ARTIFACT")),
+                                        List.of()))
                         .repairRetry(new RepairRetryPolicy(1)));
         var blockedRun = blocked.runtime.start(request("artifact-blocked"));
         blocked.scheduler.runAll();
@@ -329,7 +335,13 @@ class RuntimeCoreHardeningTest {
             if (call == 2) throw new AssertionError("simulated process loss after first repair");
             return response(finalDecision("premature-" + call));
         };
-        Fixture fixture = fixture(interrupted, builder -> builder.requiredArtifactChecker((run, decision) -> false)
+        Fixture fixture = fixture(interrupted, builder -> builder.completionPolicy(
+                        (run, decision) -> io.haifa.agent.runtime.core.completion.CompletionPolicyResult.blocked(
+                                List.of(io.haifa.agent.runtime.core.completion.CompletionBlocker.recoverable(
+                                        "REQUIRED_ARTIFACT_MISSING",
+                                        "A required artifact is missing.",
+                                        "REQUIRED_ARTIFACT")),
+                                List.of()))
                 .repairRetry(new RepairRetryPolicy(2))
                 .executionOwnership(attempt -> firstAttemptOwned.get() || attempt.attemptNumber() > 1));
         var accepted = fixture.runtime.start(request("repair-recovery"));

@@ -61,7 +61,6 @@ import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.completion.DefaultCompletionGuard;
 import io.haifa.agent.runtime.core.completion.FrozenStructuredOutputValidator;
 import io.haifa.agent.runtime.core.completion.OutputContractValidator;
-import io.haifa.agent.runtime.core.completion.RequiredArtifactChecker;
 import io.haifa.agent.runtime.core.completion.TodoConvergenceChecker;
 import io.haifa.agent.runtime.core.completion.TodoReconciliationService;
 import io.haifa.agent.runtime.core.control.DefaultRunControlService;
@@ -210,7 +209,6 @@ public final class RuntimeCoreBuilder {
     private OutputContractValidator outputContract =
             (run, decision) -> !decision.outputSchemaId().isBlank()
                     && !decision.outputSchemaVersion().isBlank();
-    private RequiredArtifactChecker requiredArtifacts = (run, decision) -> true;
     private CompletionPolicy completionPolicy = (run, decision) -> CompletionPolicyResult.accepted();
     private final List<AgentRuntimeMiddleware> additionalMiddleware = new ArrayList<>();
     private final List<ContextSource> additionalContextSources = new ArrayList<>();
@@ -455,11 +453,6 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder requiredArtifactChecker(RequiredArtifactChecker value) {
-        requiredArtifacts = Objects.requireNonNull(value);
-        return this;
-    }
-
     public RuntimeCoreBuilder completionPolicy(CompletionPolicy value) {
         completionPolicy = Objects.requireNonNull(value);
         return this;
@@ -628,7 +621,6 @@ public final class RuntimeCoreBuilder {
                 delegations,
                 todoReconciliation,
                 combinedOutputContract,
-                requiredArtifacts,
                 completionPolicy);
         ResumeCheckpointSelector checkpointSelections = new ResumeCheckpointSelector();
         CapabilityCheckpointRegistry capabilityCheckpointRegistry =

@@ -5,12 +5,15 @@ import io.haifa.agent.artifact.ArtifactStatus;
 import io.haifa.agent.artifact.ArtifactStore;
 import io.haifa.agent.artifact.ArtifactVersion;
 import io.haifa.agent.core.run.AgentRun;
-import io.haifa.agent.runtime.core.completion.RequiredArtifactChecker;
+import io.haifa.agent.runtime.core.completion.CompletionBlocker;
+import io.haifa.agent.runtime.core.completion.CompletionPolicy;
+import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
+import java.util.List;
 import java.util.Objects;
 
 /** Completion gate backed by authoritative published Artifact state. */
-public final class PublishedArtifactRequiredChecker implements RequiredArtifactChecker {
+public final class PublishedArtifactRequiredChecker implements CompletionPolicy {
     private final ArtifactStore artifacts;
 
     public PublishedArtifactRequiredChecker(ArtifactStore artifacts) {
@@ -18,8 +21,8 @@ public final class PublishedArtifactRequiredChecker implements RequiredArtifactC
     }
 
     @Override
-    public boolean isSatisfied(AgentRun run, FinalAnswerDecision decision) {
-        return decision.artifacts().stream().allMatch(reference -> {
+    public CompletionPolicyResult evaluate(AgentRun run, FinalAnswerDecision decision) {
+        boolean satisfied = decision.artifacts().stream().allMatch(reference -> {
             long version;
             try {
                 version = Long.parseLong(reference.version());
@@ -33,5 +36,11 @@ public final class PublishedArtifactRequiredChecker implements RequiredArtifactC
                     .filter(value -> value.title().equals(reference.title()))
                     .isPresent();
         });
+        return satisfied
+                ? CompletionPolicyResult.accepted()
+                : CompletionPolicyResult.blocked(
+                        List.of(CompletionBlocker.recoverable(
+                                "REQUIRED_ARTIFACT_MISSING", "A required artifact is missing.", "REQUIRED_ARTIFACT")),
+                        List.of());
     }
 }

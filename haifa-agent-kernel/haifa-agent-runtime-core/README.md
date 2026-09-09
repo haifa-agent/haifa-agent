@@ -253,3 +253,6 @@ unambiguous, active package/script grant pair and every frozen Skill, script, To
 runtime/profile/sandbox, capability, network, and caller-scope fact matches exactly. It never trusts model
 arguments as provenance, never applies to generic `execution.run`, and never fabricates an Approval response.
 Missing or drifted evidence delegates to the existing approval policy.
+
+Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与证据。Artifact 检查由产品的
+`PublishedArtifactRequiredChecker` 实现该接口；Runtime 不再提供单独的 `RequiredArtifactChecker` 配置入口。
