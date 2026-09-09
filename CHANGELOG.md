@@ -1,5 +1,10 @@
 # Changelog
 
+- Runtime Core 删除仅用于字段转换的 `RunFinalizer` / `DefaultRunFinalizer` 及 `DecisionExecutor` 对应构造参数；
+  `RuntimeControlTraceReplay` 移至测试源码，不再进入生产制品。`ResumeCoordinator.prepare` 收口为
+  同一 UoW 内校验后使用的 `prepareValidated`，同步 resume 只执行一次完整前置校验。SDK/Runtime API、
+  最终结果格式、持久化协议与独立恢复/审批重验保持不变。
+
 - Coding Terminal 流式 Transcript 增长不再按渲染行数变化触发全屏清除；模型输出新增换行或自动折行时
   继续由 tui4j 正常更新 Viewport，避免每新增一行闪烁一次，同时保留自动跟随和 PageUp 回看语义。
 - Coding Terminal 在 alternate screen 中启用应用拥有的 Transcript 鼠标交互：滚轮回看，左键拖拽按

@@ -33,7 +33,6 @@ import io.haifa.agent.runtime.api.InteractionState;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.completion.CompletionGuard;
-import io.haifa.agent.runtime.core.completion.RunFinalizer;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
@@ -82,7 +81,6 @@ public final class DecisionExecutor {
             "GH_AUTHENTICATION_UNAVAILABLE");
     private final ToolPipeline tools;
     private final CompletionGuard completionGuard;
-    private final RunFinalizer finalizer;
     private final InteractionPort interactions;
     private final DelegationPort delegations;
     private final RuntimeStateRepository state;
@@ -100,7 +98,6 @@ public final class DecisionExecutor {
     public DecisionExecutor(
             ToolPipeline tools,
             CompletionGuard completionGuard,
-            RunFinalizer finalizer,
             InteractionPort interactions,
             DelegationPort delegations,
             RuntimeStateRepository state,
@@ -116,7 +113,6 @@ public final class DecisionExecutor {
             RuntimeOutboxPublisher outbox) {
         this.tools = Objects.requireNonNull(tools);
         this.completionGuard = Objects.requireNonNull(completionGuard);
-        this.finalizer = Objects.requireNonNull(finalizer);
         this.interactions = Objects.requireNonNull(interactions);
         this.delegations = Objects.requireNonNull(delegations);
         this.state = Objects.requireNonNull(state);
@@ -363,7 +359,14 @@ public final class DecisionExecutor {
         }
         transitions.completedWithOutput(
                 run,
-                finalizer.finalizeResult(run, decision),
+                new AgentRunResult(
+                        decision.outcome(),
+                        decision.summary(),
+                        decision.outputSchemaId(),
+                        decision.outputSchemaVersion(),
+                        decision.structuredOutput(),
+                        decision.artifacts(),
+                        decision.warnings()),
                 decision.summary(),
                 messageDraft(
                         run,

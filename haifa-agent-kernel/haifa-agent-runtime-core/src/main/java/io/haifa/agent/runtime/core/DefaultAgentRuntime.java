@@ -273,7 +273,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             }
             resumeCoordinator.validate(resumable, request, caller);
             request.inputs().forEach(input -> appendResumeMessage(resumable, input));
-            var resumedFrom = resumeCoordinator.prepare(resumable, request, caller);
+            var resumedFrom = resumeCoordinator.prepareValidated(resumable, request);
             idempotency.recordRun(callerScope, "resume", request.idempotencyKey(), resumable.id());
             AgentRunExecutionAttempt attempt = new AgentRunExecutionAttempt(
                     new ExecutionAttemptId(ids.nextValue()),
