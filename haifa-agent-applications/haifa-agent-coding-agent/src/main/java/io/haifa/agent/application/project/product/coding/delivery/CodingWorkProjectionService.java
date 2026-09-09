@@ -184,7 +184,12 @@ public final class CodingWorkProjectionService {
                         .orElse(null);
                 add(refs.get(RefKind.VALIDATION), validationReference(call, family, status, semantic, validation));
             }
-            if (family.equals("DIFF") && (status.equals("SUCCEEDED") || semantic.equals("EXPECTED_VARIANT"))) {
+            boolean diffSuccess = status.equals("SUCCEEDED")
+                    || semantic.equals("EXPECTED_VARIANT")
+                    || ("EXITED".equals(status)
+                            && ("SUCCEEDED".equals(semantic)
+                                    || Integer.valueOf(0).equals(data.get("exitCode"))));
+            if (family.equals("DIFF") && diffSuccess) {
                 add(refs.get(RefKind.DIFF), reference("diff", call.id().value(), status, semantic));
             }
         }

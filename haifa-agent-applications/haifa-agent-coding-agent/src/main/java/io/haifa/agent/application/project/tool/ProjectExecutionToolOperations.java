@@ -870,6 +870,7 @@ public final class ProjectExecutionToolOperations {
         var data = new LinkedHashMap<String, Object>();
         data.put("executionId", result.id().value());
         data.put("status", result.status().name());
+        data.put("processState", result.status().name());
         result.optionalExitCode().ifPresent(value -> data.put("exitCode", value));
         data.put("expectedExitCodes", expectedExitCodes);
         data.put("semanticOutcome", semantic.outcome().name());
@@ -983,7 +984,12 @@ public final class ProjectExecutionToolOperations {
         }
         String headline =
                 switch (semantic.outcome()) {
-                    case SUCCEEDED -> "Command succeeded";
+                    case SUCCEEDED ->
+                        (result.status() == ExecutionStatus.EXITED
+                                        && result.exitCode() != null
+                                        && result.exitCode() != 0)
+                                ? "Command exited"
+                                : "Command succeeded";
                     case EXPECTED_VARIANT -> "Command completed with an expected result variant";
                     case EMPTY_RESULT -> "Command completed with an empty result";
                     case COMMAND_FAILED ->
@@ -1332,7 +1338,9 @@ public final class ProjectExecutionToolOperations {
 
     private static CommandSemanticOutcomeInterpreter.Interpretation semanticOutcome(
             ExecutionResult result, String command, List<Integer> expectedExitCodes) {
-        if (result.status() == ExecutionStatus.FAILED
+        if ((result.status() == ExecutionStatus.EXITED
+                        || result.status() == ExecutionStatus.SUCCEEDED
+                        || result.status() == ExecutionStatus.FAILED)
                 && result.exitCode() != null
                 && result.exitCode() != 0
                 && expectedExitCodes.contains(result.exitCode())

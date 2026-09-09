@@ -98,6 +98,33 @@ class TrustedScriptExecutionToolProviderTest {
     }
 
     @Test
+    void reportsNormallyExitedNonZeroProcessAsSuccessfulToolResultWithSchemaValidFacts() {
+        ExecutionToolProvider provider = provider(
+                new AtomicReference<>(),
+                Set.of("execution.run"),
+                TrustedWorkspacePathValidator.rejectWorkspaceInputs(),
+                1);
+
+        var result = provider.invokeTrustedScript(
+                invocation(),
+                "fixture-runtime",
+                "safe",
+                List.of(),
+                "fixed transform",
+                ".",
+                Duration.ofSeconds(5),
+                Set.of("execution.run"),
+                List.of());
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.summary()).contains("Script exited (exit 1)");
+        assertThat(result.structuredData())
+                .containsEntry("status", "EXITED")
+                .containsEntry("processState", "EXITED")
+                .containsEntry("exitCode", 1);
+    }
+
+    @Test
     void missingCapabilityAndUnconfiguredWorkspaceValidationFailBeforeBrokerDispatch() {
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         var missingCapability = provider(captured, Set.of(), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
@@ -278,11 +305,19 @@ class TrustedScriptExecutionToolProviderTest {
             AtomicReference<ExecutionRequest> captured,
             Set<String> capabilities,
             TrustedWorkspacePathValidator validator) {
+        return provider(captured, capabilities, validator, 0);
+    }
+
+    private static ExecutionToolProvider provider(
+            AtomicReference<ExecutionRequest> captured,
+            Set<String> capabilities,
+            TrustedWorkspacePathValidator validator,
+            int exitCode) {
         ExecutionBroker broker = new ExecutionBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request) {
                 captured.set(request);
-                return success(request.id());
+                return exited(request.id(), exitCode);
             }
 
             @Override
@@ -493,12 +528,16 @@ class TrustedScriptExecutionToolProviderTest {
     }
 
     private static ExecutionResult success(ExecutionId id) {
+        return exited(id, 0);
+    }
+
+    private static ExecutionResult exited(ExecutionId id, int exitCode) {
         var output = new ExecutionOutput("ok", null, 2, "0".repeat(64), false, false);
         var empty = new ExecutionOutput("", null, 0, "0".repeat(64), false, false);
         return new ExecutionResult(
                 id,
-                ExecutionStatus.SUCCEEDED,
-                0,
+                ExecutionStatus.EXITED,
+                exitCode,
                 NOW,
                 NOW.plusMillis(10),
                 output,

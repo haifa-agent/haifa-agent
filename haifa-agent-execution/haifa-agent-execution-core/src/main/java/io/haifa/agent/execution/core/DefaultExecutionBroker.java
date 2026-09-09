@@ -431,7 +431,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
 
     private static ExecutionStatus map(SandboxProcessStatus status, Integer exitCode) {
         return switch (status) {
-            case EXITED -> exitCode != null && exitCode == 0 ? ExecutionStatus.SUCCEEDED : ExecutionStatus.FAILED;
+            case EXITED -> ExecutionStatus.EXITED;
             case OUTPUT_LIMIT_EXCEEDED -> ExecutionStatus.OUTPUT_LIMIT_EXCEEDED;
             case PROCESS_LIMIT_EXCEEDED -> ExecutionStatus.PROCESS_LIMIT_EXCEEDED;
             case TIMED_OUT -> ExecutionStatus.TIMED_OUT;
@@ -442,8 +442,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
 
     private static ExecutionFailure failure(ExecutionStatus status, boolean treeTerminated) {
         return switch (status) {
-            case SUCCEEDED -> null;
-            case FAILED -> new ExecutionFailure("NON_ZERO_EXIT", "process exited with a non-zero status");
+            case SUCCEEDED, EXITED -> null;
+            case FAILED -> new ExecutionFailure("EXECUTION_FAILED", "process execution failed");
             case OUTPUT_LIMIT_EXCEEDED ->
                 new ExecutionFailure(
                         treeTerminated ? "OUTPUT_LIMIT_EXCEEDED" : "OUTPUT_LIMIT_TREE_UNKNOWN",

@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.execution.api.ExecutionBroker;
-import io.haifa.agent.execution.api.ExecutionFailure;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutput;
@@ -166,7 +165,7 @@ class GitTopologyIntegrationTest {
                     String summary = new String(output, StandardCharsets.UTF_8);
                     return new ExecutionResult(
                             request.id(),
-                            exit == 0 ? ExecutionStatus.SUCCEEDED : ExecutionStatus.FAILED,
+                            ExecutionStatus.EXITED,
                             exit,
                             started,
                             Instant.now(),
@@ -174,7 +173,7 @@ class GitTopologyIntegrationTest {
                             new ExecutionOutput("", null, 0, digest(new byte[0]), false, false),
                             "git-test",
                             new ResourceUsageSummary(Duration.between(started, Instant.now()), 1),
-                            exit == 0 ? null : new ExecutionFailure("EXIT", "git command failed"),
+                            null,
                             false);
                 } catch (IOException exception) {
                     throw new IllegalStateException(exception);

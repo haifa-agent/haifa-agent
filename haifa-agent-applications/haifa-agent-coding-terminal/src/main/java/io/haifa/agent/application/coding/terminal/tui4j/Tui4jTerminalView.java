@@ -26,6 +26,7 @@ final class Tui4jTerminalView {
             "APPLIED",
             "APPROVED",
             "COMPLETED",
+            "EXITED",
             "EXPORTED",
             "PASSED",
             "RESOURCES RELOADED FOR FUTURE NEW RUNS",

@@ -24,9 +24,35 @@ public final class ProgressLedger {
         if (call.status() == ToolCallStatus.COMPLETED) {
             var result = call.result().orElseThrow();
             Map<String, Object> data = result.structuredData();
-            changed |= addWorkspaceReference(
-                    ProgressEvidence.Type.WORKSPACE_CHANGE,
-                    firstText(data, "path", "patchSha256", "mutationId", "source", "changeSetId"));
+            boolean observedContentHash = false;
+            if (data.get("afterContentHashes") instanceof Map<?, ?> hashes) {
+                int observed = 0;
+                for (var entry : hashes.entrySet()) {
+                    if (++observed > MAXIMUM_REFERENCES_PER_RESULT) break;
+                    if (entry.getKey() instanceof String p
+                            && !p.isBlank()
+                            && entry.getValue() instanceof String h
+                            && !h.isBlank()) {
+                        observedContentHash = true;
+                        changed |= addWorkspace(ProgressEvidence.Type.WORKSPACE_CHANGE, p + ":" + h);
+                    }
+                }
+            }
+            if (!observedContentHash) {
+                Optional<String> path = firstText(data, "path");
+                Optional<String> afterContentHash = firstText(data, "afterContentHash");
+                if (path.isPresent() && afterContentHash.isPresent()) {
+                    changed |= addWorkspaceReference(
+                            ProgressEvidence.Type.WORKSPACE_CHANGE,
+                            Optional.of(path.get() + ":" + afterContentHash.get()));
+                } else if (afterContentHash.isPresent()) {
+                    changed |= addWorkspaceReference(ProgressEvidence.Type.WORKSPACE_CHANGE, afterContentHash);
+                } else {
+                    changed |= addWorkspaceReference(
+                            ProgressEvidence.Type.WORKSPACE_CHANGE,
+                            firstText(data, "path", "patchSha256", "mutationId", "source", "changeSetId"));
+                }
+            }
             changed |= addWorkspaceReferences(data.get("changeSetIds"));
             for (var artifact : result.artifacts()) {
                 changed |= add(ProgressEvidence.Type.ARTIFACT_CHANGE, artifact.artifactId());
