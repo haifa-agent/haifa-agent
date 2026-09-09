@@ -156,7 +156,134 @@ class LocalFileToolOperationsTest {
         assertThat(result.structuredData())
                 .containsEntry("complete", true)
                 .doesNotContainKeys("changeReviewArtifactRef", "artifactRef", "changeReviewArtifact", "changeSetIds");
+        assertThat(result.structuredData().get("afterContentHash"))
+                .isInstanceOfSatisfying(String.class, hash -> assertThat(hash).matches("sha256:[0-9a-f]{64}"));
+        assertThat(result.structuredData().get("afterContentHashes"))
+                .isInstanceOfSatisfying(Map.class, hashes -> assertThat(hashes)
+                        .containsEntry(hostPath, result.structuredData().get("afterContentHash")));
         assertThat(Files.readString(sourceFile)).isEqualTo("anchor\nnew\n");
+    }
+
+    @Test
+    void appliesUniquePatchBodyWhenOptionalNavigationHintDoesNotMatch() throws Exception {
+        Path sourceFile = root.resolve("unique.txt");
+        Files.writeString(sourceFile, "before\nold\nafter\n", StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+
+        String hostPath = sourceFile.toAbsolutePath().normalize().toString();
+        var result = fixture.operations.execute(
+                "file.patch",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of(
+                        "patch",
+                        """
+                        *** Begin Patch
+                        *** Update File: %s
+                        @@ descriptive navigation hint
+                        -old
+                        +new
+                        *** End Patch
+                        """
+                                .formatted(hostPath))));
+
+        assertThat(result.successful()).isTrue();
+        assertThat(Files.readString(sourceFile)).isEqualTo("before\nnew\nafter\n");
+    }
+
+    @Test
+    void rejectsAmbiguousPatchBodyInsteadOfChangingTheFirstMatch() throws Exception {
+        Path sourceFile = root.resolve("ambiguous.txt");
+        String original = "old\nbetween\nold\n";
+        Files.writeString(sourceFile, original, StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+
+        String hostPath = sourceFile.toAbsolutePath().normalize().toString();
+        var result = fixture.operations.execute(
+                "file.patch",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of(
+                        "patch",
+                        """
+                        *** Begin Patch
+                        *** Update File: %s
+                        @@ descriptive navigation hint
+                        -old
+                        +new
+                        *** End Patch
+                        """
+                                .formatted(hostPath))));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "PATCH_CONFLICT")
+                .containsEntry("stableFailureCode", "PATCH_AMBIGUOUS_MATCH")
+                .containsEntry("hunkIndex", 0)
+                .containsEntry("candidateCount", 2)
+                .containsEntry("failureActionCode", "RE_READ_AND_REGENERATE_PATCH");
+        assertThat(Files.readString(sourceFile)).isEqualTo(original);
+    }
+
+    @Test
+    void usesUniqueNavigationHintToDisambiguateRepeatedPatchBody() throws Exception {
+        Path sourceFile = root.resolve("scoped.txt");
+        Files.writeString(sourceFile, "first section\nold\nsecond section\nold\n", StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+
+        String hostPath = sourceFile.toAbsolutePath().normalize().toString();
+        var result = fixture.operations.execute(
+                "file.patch",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of(
+                        "patch",
+                        """
+                        *** Begin Patch
+                        *** Update File: %s
+                        @@ second section
+                        -old
+                        +new
+                        *** End Patch
+                        """
+                                .formatted(hostPath))));
+
+        assertThat(result.successful()).isTrue();
+        assertThat(Files.readString(sourceFile)).isEqualTo("first section\nold\nsecond section\nnew\n");
+    }
+
+    @Test
+    void rejectsPureInsertionWithoutAUniqueLocation() throws Exception {
+        Path sourceFile = root.resolve("insertion.txt");
+        String original = "first\nsecond\n";
+        Files.writeString(sourceFile, original, StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+
+        String hostPath = sourceFile.toAbsolutePath().normalize().toString();
+        var result = fixture.operations.execute(
+                "file.patch",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of(
+                        "patch",
+                        """
+                        *** Begin Patch
+                        *** Update File: %s
+                        @@
+                        +inserted
+                        *** End Patch
+                        """
+                                .formatted(hostPath))));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("stableFailureCode", "PATCH_AMBIGUOUS_MATCH")
+                .containsEntry("candidateCount", 3);
+        assertThat(Files.readString(sourceFile)).isEqualTo(original);
     }
 
     @Test
@@ -233,6 +360,8 @@ class LocalFileToolOperationsTest {
                 arguments);
 
         assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData().get("afterContentHash"))
+                .isInstanceOfSatisfying(String.class, hash -> assertThat(hash).matches("sha256:[0-9a-f]{64}"));
         assertThat(Files.readString(tracked)).isEqualTo("after");
     }
 
@@ -545,6 +674,8 @@ class LocalFileToolOperationsTest {
                 arguments(Map.of("path", hostPath, "content", "hello world")));
 
         assertThat(createRes.successful()).isTrue();
+        assertThat(createRes.structuredData().get("afterContentHash"))
+                .isInstanceOfSatisfying(String.class, hash -> assertThat(hash).matches("sha256:[0-9a-f]{64}"));
         assertThat(ledger.compactedChanges(f.workspaceId)).hasSize(1);
         SessionFileChangeRecord record = ledger.compactedChanges(f.workspaceId).get(0);
         assertThat(record.path().projectPath().value()).isEqualTo("hello.txt");

@@ -458,7 +458,7 @@ class ProjectExecutionToolOperationsTest {
                 if (calls.getAndIncrement() == 0) {
                     observer.onOutput(chunk("diff --git a/src/A.java b/src/A.java\n@@ -1 +1 @@\n"));
                 }
-                return result(request.id(), ExecutionStatus.FAILED, 1);
+                return result(request.id(), ExecutionStatus.EXITED, 1);
             }
         };
 
@@ -492,7 +492,8 @@ class ProjectExecutionToolOperationsTest {
                 .contains("expected result variant", "exit 1", "observedFiles=1", "observedHunks=1")
                 .doesNotContain("diff --git", "@@ -1 +1 @@");
         assertThat(differences.structuredData())
-                .containsEntry("status", "FAILED")
+                .containsEntry("status", "EXITED")
+                .containsEntry("processState", "EXITED")
                 .containsEntry("semanticOutcome", "EXPECTED_VARIANT")
                 .containsEntry("semanticReasonCode", "DECLARED_EXPECTED_EXIT_CODE")
                 .containsEntry("semanticInterpreterVersion", "3")
@@ -515,11 +516,11 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void keepsUndeclaredNonzeroExitCodesAsFailures() {
+    void deliversUndeclaredNonzeroExitCodesAsCompletedToolResults() {
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                return result(request.id(), ExecutionStatus.FAILED, 1);
+                return result(request.id(), ExecutionStatus.EXITED, 1);
             }
         };
 
@@ -534,12 +535,17 @@ class ProjectExecutionToolOperationsTest {
                                 () -> false),
                         access());
 
-        assertThat(noMatches.successful()).isFalse();
+        assertThat(noMatches.successful()).isTrue();
+        assertThat(noMatches.summary()).contains("Command exited (exit 1)");
         assertThat(noMatches.structuredData())
-                .containsEntry("semanticOutcome", "COMMAND_FAILED")
-                .containsEntry("semanticReasonCode", "COMMAND_NONZERO_EXIT")
+                .containsEntry("status", "EXITED")
+                .containsEntry("processState", "EXITED")
+                .containsEntry("exitCode", 1)
+                .containsEntry("semanticOutcome", "SUCCEEDED")
+                .containsEntry("semanticReasonCode", "COMMAND_EXITED")
                 .containsEntry("semanticInterpreterVersion", "3")
-                .containsEntry("expectedExitCodes", List.of(0));
+                .containsEntry("expectedExitCodes", List.of(0))
+                .doesNotContainKeys("failureCategory", "stableFailureCode", "failureCode");
     }
 
     @Test

@@ -58,6 +58,7 @@ export function statusLabel(status: string): string {
     FAILED: "失败",
     CANCELLED: "已停止",
     TIMEOUT: "已超时",
+    EXITED: "已退出",
     STARTED: "进行中",
     REQUESTED: "准备调用",
     SUCCEEDED: "已完成",

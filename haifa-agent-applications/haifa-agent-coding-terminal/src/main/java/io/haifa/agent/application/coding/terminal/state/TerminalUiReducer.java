@@ -939,7 +939,7 @@ public final class TerminalUiReducer {
         return clipped + suffix;
     }
 
-    private static final Set<String> TOOL_SUCCESS_STATUSES = Set.of("SUCCEEDED", "COMPLETED");
+    private static final Set<String> TOOL_SUCCESS_STATUSES = Set.of("SUCCEEDED", "COMPLETED", "EXITED");
     private static final Set<String> TOOL_FAILURE_STATUSES = Set.of("FAILED", "DENIED", "CANCELLED", "TIMEOUT");
 
     private static TranscriptItem runSummaryItem(

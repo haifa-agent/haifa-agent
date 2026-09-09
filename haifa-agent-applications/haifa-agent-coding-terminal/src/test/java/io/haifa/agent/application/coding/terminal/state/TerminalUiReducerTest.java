@@ -236,6 +236,33 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void normallyExitedNonZeroCommandRemainsACompletedExecutionInsteadOfAnError() {
+        TerminalUiState exited = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ExecutionLifecycle(
+                                "execution-1",
+                                "tool-1",
+                                "EXITED",
+                                "pytest",
+                                "workspace",
+                                "STDOUT",
+                                "no tests collected",
+                                5,
+                                false,
+                                ""))));
+
+        assertThat(exited.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.EXECUTION);
+            assertThat(item.status()).isEqualTo("EXITED");
+            assertThat(item.title()).isEqualTo("pytest · exit 5");
+            assertThat(item.body()).contains("Exit: 5", "no tests collected");
+        });
+    }
+
+    @Test
     void recordsToolAndExecutionDurationsFromEventTimestamps() {
         TerminalUiState requested = reducer.reduce(
                 TerminalUiState.initial(120, 40),

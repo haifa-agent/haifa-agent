@@ -25,17 +25,23 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.model.api.ImageUrlPart;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelAudioPart;
 import io.haifa.agent.model.api.ModelImagePart;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
-import io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HexFormat;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -70,18 +76,18 @@ public final class ModelMessageAssembler {
 
     public List<ModelMessage> assemble(AgentRunId runId, AgentContext context, ResolvedModelSnapshot model) {
         List<ModelMessage> messages = new ArrayList<>();
-        Set<ProviderToolCallCorrelationId> priorProviderCorrelations = new LinkedHashSet<>();
+        Set<ModelMessage> priorModelAssistants = Collections.newSetFromMap(new IdentityHashMap<>());
         context.prompts()
                 .forEach(prompt -> messages.add(ModelMessage.text(
                         ModelMessageRole.SYSTEM, "[" + prompt.layer() + "/" + prompt.role() + "] " + prompt.text())));
         Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
         for (ContextItem item : context.items()) {
             if (item.content() instanceof MessageContextContent message) {
-                messages.addAll(mapMessage(runId, message.message(), toolCallsByRun, model, priorProviderCorrelations));
+                messages.addAll(mapMessage(runId, message.message(), toolCallsByRun, model, priorModelAssistants));
             } else if (item.content() instanceof MessageGroupContextContent group) {
                 group.messages()
                         .forEach(message -> messages.addAll(
-                                mapMessage(runId, message, toolCallsByRun, model, priorProviderCorrelations)));
+                                mapMessage(runId, message, toolCallsByRun, model, priorModelAssistants)));
             } else if (item.content() instanceof TextContextContent text) {
                 messages.add(ModelMessage.text(mapRole(text.role()), text.text()));
             } else if (item.content() instanceof AssetDerivedTextContent asset) {
@@ -102,11 +108,11 @@ public final class ModelMessageAssembler {
             throw new ContextBuildException(
                     ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE, "model context must not be empty");
         }
-        return canonicalizeToolProtocol(messages, priorProviderCorrelations);
+        return canonicalizeToolProtocol(messages, priorModelAssistants, model);
     }
 
     private List<ModelMessage> canonicalizeToolProtocol(List<ModelMessage> messages) {
-        return canonicalizeToolProtocol(messages, Set.of());
+        return canonicalizeToolProtocol(messages, Set.of(), null);
     }
 
     /**
@@ -117,11 +123,14 @@ public final class ModelMessageAssembler {
      * tool result for every provider correlation id. Control messages retain their relative order, but move behind
      * the completed tool group before the request is serialized.
      *
-     * <p>When switching models across providers, completed tool-call groups from prior providers are compressed into
-     * provider-neutral context summaries, removing raw protocol blocks. Unclosed prior-provider tool groups are rejected.
+     * <p>When a later run uses another model binding, historical tool groups remain structured. Provider-specific
+     * continuation data is removed earlier during message mapping, and provider correlation ids are deterministically
+     * projected to transport-safe values without mutating persisted history. A malformed historical group receives a
+     * synthetic structured result so it cannot poison the new request; an incomplete current-model group still fails
+     * closed.
      */
     private List<ModelMessage> canonicalizeToolProtocol(
-            List<ModelMessage> messages, Set<ProviderToolCallCorrelationId> priorProviderCorrelations) {
+            List<ModelMessage> messages, Set<ModelMessage> priorModelAssistants, ResolvedModelSnapshot model) {
         List<ModelMessage> canonical = new ArrayList<>(messages.size());
         int index = 0;
         while (index < messages.size()) {
@@ -132,18 +141,44 @@ public final class ModelMessageAssembler {
                 continue;
             }
 
-            boolean isPrior = message.toolCalls().stream()
-                    .anyMatch(call -> priorProviderCorrelations.contains(call.providerCorrelationId()));
-
-            if (!isPrior) {
-                canonical.add(message);
+            boolean isPrior = priorModelAssistants.contains(message);
+            if (isPrior && requiresNeutralToolGroupSummary(model)) {
+                Map<ProviderToolCallCorrelationId, ModelMessage> matchingResults = new LinkedHashMap<>();
+                var pending = message.toolCalls().stream()
+                        .map(ModelToolCall::providerCorrelationId)
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+                List<ModelMessage> deferred = new ArrayList<>();
+                while (!pending.isEmpty() && index < messages.size()) {
+                    ModelMessage candidate = messages.get(index++);
+                    if (candidate.role() == ModelMessageRole.TOOL
+                            && candidate.providerCorrelationId().isPresent()
+                            && pending.contains(
+                                    candidate.providerCorrelationId().get())) {
+                        ProviderToolCallCorrelationId corrId =
+                                candidate.providerCorrelationId().get();
+                        pending.remove(corrId);
+                        matchingResults.put(corrId, candidate);
+                    } else {
+                        deferred.add(candidate);
+                    }
+                }
+                String summaryText = renderToolGroupSummary(message, message.toolCalls(), matchingResults);
+                canonical.add(ModelMessage.text(ModelMessageRole.ASSISTANT, summaryText));
+                canonical.addAll(deferred);
+                continue;
             }
+            Map<ProviderToolCallCorrelationId, ProviderToolCallCorrelationId> projectedCorrelations = isPrior
+                    ? message.toolCalls().stream()
+                            .collect(Collectors.toUnmodifiableMap(
+                                    ModelToolCall::providerCorrelationId,
+                                    call -> projectHistoricalCorrelation(call.providerCorrelationId())))
+                    : Map.of();
+            canonical.add(isPrior ? projectHistoricalAssistant(message, projectedCorrelations) : message);
 
             var pending = message.toolCalls().stream()
                     .map(ModelToolCall::providerCorrelationId)
                     .collect(Collectors.toCollection(LinkedHashSet::new));
             List<ModelMessage> deferred = new ArrayList<>();
-            Map<ProviderToolCallCorrelationId, ModelMessage> matchingResults = new HashMap<>();
             while (!pending.isEmpty() && index < messages.size()) {
                 ModelMessage candidate = messages.get(index++);
                 if (candidate.role() == ModelMessageRole.TOOL
@@ -153,7 +188,7 @@ public final class ModelMessageAssembler {
                             candidate.providerCorrelationId().get();
                     pending.remove(corrId);
                     if (isPrior) {
-                        matchingResults.put(corrId, candidate);
+                        canonical.add(projectHistoricalToolResult(candidate, projectedCorrelations.get(corrId)));
                     } else {
                         canonical.add(candidate);
                     }
@@ -163,14 +198,11 @@ public final class ModelMessageAssembler {
             }
             if (!pending.isEmpty()) {
                 if (isPrior) {
-                    throw new ModelContinuationException(
-                            ModelContinuationFailure.CROSS_MODEL_UNCLOSED_TOOL_GROUP, "模型切换需要新会话或先完成原模型工具轮次");
+                    pending.forEach(correlationId ->
+                            canonical.add(missingHistoricalToolResult(projectedCorrelations.get(correlationId))));
+                } else {
+                    throw new IllegalStateException("model context contains an incomplete tool-call group");
                 }
-                throw new IllegalStateException("model context contains an incomplete tool-call group");
-            }
-            if (isPrior) {
-                String summaryText = renderToolGroupSummary(message, message.toolCalls(), matchingResults);
-                canonical.add(ModelMessage.text(ModelMessageRole.ASSISTANT, summaryText));
             }
             canonical.addAll(deferred);
         }
@@ -195,7 +227,7 @@ public final class ModelMessageAssembler {
             AgentMessage message,
             Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun,
             ResolvedModelSnapshot model,
-            Set<ProviderToolCallCorrelationId> priorProviderCorrelations) {
+            Set<ModelMessage> priorModelAssistants) {
         AgentRunId messageRunId = message.runId().orElse(currentRunId);
         Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> authoritativeCalls =
                 toolCallsByRun.computeIfAbsent(messageRunId, this::toolCallsById);
@@ -243,9 +275,10 @@ public final class ModelMessageAssembler {
                                 call.arguments().values());
                     })
                     .toList();
-            if (isPriorProvider(message, model)) {
-                mapped.forEach(call -> priorProviderCorrelations.add(call.providerCorrelationId()));
-                return List.of(ModelMessage.assistant(text, mapped));
+            if (isPriorModel(message, model)) {
+                ModelMessage historicalAssistant = ModelMessage.assistant(text, mapped);
+                priorModelAssistants.add(historicalAssistant);
+                return List.of(historicalAssistant);
             }
             var continuation = state.continuationForMessage(message.id());
             if (continuation.isEmpty()) return List.of(ModelMessage.assistant(text, mapped));
@@ -362,26 +395,90 @@ public final class ModelMessageAssembler {
                 "unsupported context item content: " + item.content().getClass().getSimpleName());
     }
 
-    private boolean isPriorProvider(AgentMessage message, ResolvedModelSnapshot model) {
+    private boolean isPriorModel(AgentMessage message, ResolvedModelSnapshot model) {
         if (model == null) {
             return false;
         }
-        String currentProvider = model.providerId().value();
         var continuation = state.continuationForMessage(message.id());
         if (continuation.isPresent()) {
-            return !continuation.get().providerId().equals(currentProvider);
+            var record = continuation.orElseThrow();
+            return !matchesModelBinding(record.providerId(), record.modelId(), record.configurationDigest(), model);
         }
         Object metaProvider = message.metadata().get("providerId");
-        if (metaProvider instanceof String pid && !pid.isBlank()) {
-            return !pid.equals(currentProvider);
+        Object metaModel = message.metadata().get("modelId");
+        Object metaConfiguration = message.metadata().get("configurationDigest");
+        if (metaProvider instanceof String providerId
+                && !providerId.isBlank()
+                && !providerId.equals(model.providerId().value())) {
+            return true;
+        }
+        if (metaModel instanceof String modelId && !modelId.isBlank() && !modelId.equals(model.providerModelId())) {
+            return true;
+        }
+        if (metaConfiguration instanceof String configurationDigest
+                && !configurationDigest.isBlank()
+                && !configurationDigest.equals(model.configurationDigest())) {
+            return true;
         }
         if (message.runId().isPresent()) {
             var continuations = state.modelContinuations(message.runId().get());
             if (!continuations.isEmpty()) {
-                return !continuations.getFirst().providerId().equals(currentProvider);
+                var record = continuations.getFirst();
+                return !matchesModelBinding(record.providerId(), record.modelId(), record.configurationDigest(), model);
             }
         }
         return false;
+    }
+
+    private boolean matchesModelBinding(
+            String providerId, String modelId, String configurationDigest, ResolvedModelSnapshot model) {
+        return providerId.equals(model.providerId().value())
+                && modelId.equals(model.providerModelId())
+                && configurationDigest.equals(model.configurationDigest());
+    }
+
+    private ModelMessage projectHistoricalAssistant(
+            ModelMessage assistant,
+            Map<ProviderToolCallCorrelationId, ProviderToolCallCorrelationId> projectedCorrelations) {
+        List<ModelToolCall> projectedCalls = assistant.toolCalls().stream()
+                .map(call -> new ModelToolCall(
+                        projectedCorrelations.get(call.providerCorrelationId()), call.name(), call.arguments()))
+                .toList();
+        return ModelMessage.assistant(assistant.content(), projectedCalls);
+    }
+
+    private ModelMessage projectHistoricalToolResult(
+            ModelMessage result, ProviderToolCallCorrelationId projectedCorrelation) {
+        return ModelMessage.tool(
+                projectedCorrelation, result.content(), result.toolResultData(), result.toolResultTruncated());
+    }
+
+    private ModelMessage missingHistoricalToolResult(ProviderToolCallCorrelationId projectedCorrelation) {
+        return ModelMessage.tool(
+                projectedCorrelation,
+                "Historical tool result was not recorded.",
+                Map.of("status", "UNKNOWN", "reasonCode", "HISTORICAL_TOOL_RESULT_MISSING"),
+                false);
+    }
+
+    private ProviderToolCallCorrelationId projectHistoricalCorrelation(
+            ProviderToolCallCorrelationId providerCorrelationId) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(providerCorrelationId.value().getBytes(StandardCharsets.UTF_8));
+            return new ProviderToolCallCorrelationId(
+                    "haifa_handoff_" + HexFormat.of().formatHex(digest, 0, 20));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private static boolean requiresNeutralToolGroupSummary(ResolvedModelSnapshot model) {
+        if (model == null) {
+            return false;
+        }
+        return ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(model.apiStyle())
+                || "google-antigravity".equals(model.providerId().value());
     }
 
     private String renderToolGroupSummary(
@@ -404,6 +501,9 @@ public final class ModelMessageAssembler {
                 if (resultMsg.toolResultTruncated()) {
                     lines.add("[output truncated]");
                 }
+            } else {
+                lines.add("[tool-result: " + call.name() + "]");
+                lines.add("Historical tool result was not recorded.");
             }
         }
         return String.join("\n", lines);

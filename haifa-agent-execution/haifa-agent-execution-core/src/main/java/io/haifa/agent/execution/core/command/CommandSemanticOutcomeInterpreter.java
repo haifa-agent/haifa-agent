@@ -3,7 +3,7 @@ package io.haifa.agent.execution.core.command;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import java.util.Objects;
 
-/** Product-neutral status semantics. Product Tools must explicitly declare accepted non-zero exit codes. */
+/** Product-neutral status semantics. Captured exit codes are facts; product Tools may add domain interpretation. */
 public final class CommandSemanticOutcomeInterpreter {
     public static final String VERSION = "3";
 
@@ -12,7 +12,13 @@ public final class CommandSemanticOutcomeInterpreter {
     public static Interpretation interpret(String command, ExecutionStatus status, Integer exitCode) {
         Objects.requireNonNull(command, "command must not be null");
         Objects.requireNonNull(status, "status must not be null");
-        if (status == ExecutionStatus.SUCCEEDED) {
+        if (status == ExecutionStatus.SUCCEEDED || status == ExecutionStatus.EXITED) {
+            if (exitCode != null && exitCode == 0) {
+                return new Interpretation(CommandSemanticOutcome.SUCCEEDED, "COMMAND_EXIT_ZERO");
+            }
+            if (exitCode != null) {
+                return new Interpretation(CommandSemanticOutcome.SUCCEEDED, "COMMAND_EXITED");
+            }
             return new Interpretation(CommandSemanticOutcome.SUCCEEDED, "COMMAND_EXIT_ZERO");
         }
         if (status == ExecutionStatus.PROCESS_LIMIT_EXCEEDED) {
@@ -27,10 +33,7 @@ public final class CommandSemanticOutcomeInterpreter {
         if (status == ExecutionStatus.CANCELLED || status == ExecutionStatus.UNKNOWN) {
             return new Interpretation(CommandSemanticOutcome.OUTCOME_UNKNOWN, "EXECUTION_OUTCOME_UNKNOWN");
         }
-        if (exitCode == null) {
-            return new Interpretation(CommandSemanticOutcome.COMMAND_FAILED, "COMMAND_NONZERO_EXIT");
-        }
-        return new Interpretation(CommandSemanticOutcome.COMMAND_FAILED, "COMMAND_NONZERO_EXIT");
+        return new Interpretation(CommandSemanticOutcome.COMMAND_FAILED, "EXECUTION_FAILED");
     }
 
     public record Interpretation(CommandSemanticOutcome outcome, String reasonCode) {

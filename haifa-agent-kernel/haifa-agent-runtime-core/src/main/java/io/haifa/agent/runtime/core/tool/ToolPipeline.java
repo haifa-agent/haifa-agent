@@ -970,7 +970,9 @@ public final class ToolPipeline {
                                 : call.id().value());
                 event.put("toolCallId", call.id().value());
                 event.put("rawStatus", lifecycle);
-                event.put("status", result.successful() ? "SUCCEEDED" : lifecycle);
+                event.put(
+                        "status",
+                        result.successful() ? (lifecycle.equals("EXITED") ? "COMPLETED" : "SUCCEEDED") : lifecycle);
                 if (data.get("semanticOutcome") instanceof String semanticOutcome) {
                     event.put("semanticOutcome", semanticOutcome);
                 }

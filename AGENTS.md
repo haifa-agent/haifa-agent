@@ -42,6 +42,10 @@
 
 ## 全局实现约束
 
+- 新能力先从当前产品的具体场景和失败模式出发。不得仅因“可审计、可追踪、企业级、未来扩展”而新增
+  领域对象、持久化 Store、状态机、通用 SPI 或跨产品抽象；这些结构须有当前不可替代的不变量，或至少两个
+  已确认消费者。审计/恢复/扩展只按实际副作用、重启需求和产品承诺建模，详细检查见
+  [`docs/engineering/evidence-driven-abstraction.md`](docs/engineering/evidence-driven-abstraction.md)。
 - Core 对象不是 JPA Entity，公共 API 不暴露框架、Provider SDK 或 Runtime Core 类型。Spring Framework
   从 Adapter/Integration 边界引入，Spring Boot 只进入 Starter 和最高层 Application。
 - `AgentRun` 生命周期只由 Core 的命名行为决定；Runtime 不维护第二份状态转换表，也不绕过聚合行为。
@@ -60,6 +64,10 @@
 ## 修改与测试工作流
 
 - 优先做满足需求的最小变更；不顺带重命名、重排包结构或扩大公共 API。
+- 所有新建、修改或由工具生成的文件必须采用 UTF-8 无 BOM 编码（UTF-8 without BOM），严禁生成
+  UTF-8 with BOM 或 UTF-16LE。在 Windows 环境下使用脚本写文件时，禁止直接使用 Windows
+  PowerShell 5.1 的重定向操作符 `>`（默认 UTF-16LE）或 `Out-File -Encoding utf8`（默认带 BOM）；
+  优先使用 Agent 文件写入工具、Python 脚本或指定 `[System.Text.UTF8Encoding]::new($false)` 写入。
 - 脚本的公共业务逻辑使用 Python，`.ps1` 与 `.sh` 只作为原样透传参数的薄入口；两端统一使用
   小写位置动作和 `--kebab-case` 长参数。
 - 修改公共行为时补充相邻单元测试；修改依赖边界时更新 ArchUnit/Maven Enforcer 约束。Surefire/Failsafe

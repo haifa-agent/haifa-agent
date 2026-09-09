@@ -133,8 +133,13 @@ public final class CodingDeliveryEvidenceLedger {
                 && trustedOperationFamily(data, evidenceFamily)) {
             facts.add(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION);
         }
+        boolean diffSuccess = "SUCCEEDED".equals(status)
+                || "EXPECTED_VARIANT".equals(semanticOutcome)
+                || ("EXITED".equals(status)
+                        && ("SUCCEEDED".equals(semanticOutcome)
+                                || Integer.valueOf(0).equals(data.get("exitCode"))));
         if ("DIFF".equals(evidenceFamily)
-                && ("SUCCEEDED".equals(status) || "EXPECTED_VARIANT".equals(semanticOutcome))
+                && diffSuccess
                 && trustedReadOnly
                 && trustedOperationFamily(data, evidenceFamily)) {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
