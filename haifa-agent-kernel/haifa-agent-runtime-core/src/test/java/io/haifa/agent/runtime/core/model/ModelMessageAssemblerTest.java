@@ -567,6 +567,39 @@ class ModelMessageAssemblerTest {
         assertThat(messages.get(2).toolResultTruncated()).isFalse();
         assertThat(store.toolCalls(previousRunId).getFirst().providerCorrelationId())
                 .isEqualTo(correlationId);
+
+        ResolvedModelSnapshot geminiModel = ResolvedModelSnapshot.create(
+                new ModelProviderId("google-antigravity"),
+                "2026-07-21",
+                new ModelDefinitionId("gemini-3-flash"),
+                "2026-07-21",
+                "gemini-3-flash",
+                ModelApiStyles.GOOGLE_GEMINI_ADAPTER,
+                "1.0.0",
+                ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT,
+                "antigravity-direct",
+                URI.create("https://generativelanguage.googleapis.com"),
+                new CredentialRef("env://GEMINI_API_KEY"),
+                true,
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                128_000,
+                4_096,
+                Map.of(),
+                Map.of());
+
+        var geminiMessages = new ModelMessageAssembler(store).assemble(RUN_ID, context, geminiModel);
+
+        assertThat(geminiMessages).noneMatch(m -> m.role() == ModelMessageRole.TOOL);
+        List<ModelMessage> assistantMessages = geminiMessages.stream()
+                .filter(m -> m.role() == ModelMessageRole.ASSISTANT)
+                .toList();
+        assertThat(assistantMessages).singleElement().satisfies(msg -> {
+            assertThat(msg.toolCalls()).isEmpty();
+            assertThat(msg.content()).contains("Let me search for that.");
+            assertThat(msg.content()).contains("[tool-call: utility_search arguments: {\"query\": \"haifa agent\"}]");
+            assertThat(msg.content()).contains("[tool-result: utility_search]");
+            assertThat(msg.content()).contains("found 3 results for haifa agent");
+        });
     }
 
     @Test
