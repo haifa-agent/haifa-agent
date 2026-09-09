@@ -214,8 +214,9 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 Catalog 保留 `file.search` 供显式配置兼容，但 Coding CLI 默认不冻结该能力；大型仓库的文件发现和内容
 搜索使用通用 `execution.run`，由模型根据冻结 Shell 与 `PATH` 选择 `rg`、`rg --files` 或平台适配的
 替代命令。应用不增加搜索专用 Executor、不解析搜索意图，也不在 Java 中拼接命令选项。
-普通手工源码更新优先使用 `file.patch` 1.1：它接受 Codex 风格的上下文 Patch，覆盖新增、删除、更新、
-移动和多文件调用；本地实现流式转换大文件并通过同目录临时文件与提交前哈希复核完成原子替换。
+普通手工源码更新优先使用 `file.patch` 2.1.0：它接受 Codex 风格的上下文 Patch，覆盖新增、更新和同一授权
+目录内的多文件调用；删除和移动分别使用 `file.delete`、`file.move`。Update hunk 的 `@@ <text>` 只是可选
+导航提示，旧正文/context 的唯一精确匹配才决定落点；多处匹配无法由唯一提示消歧时 fail closed，不选择第一个位置。
 `file.write` 保留给有意整体替换的小文件；目标不存在时会原子创建，生成代码和机械批量修改继续通过通用 CLI/生成器完成。
 文件 Mutation 保证完整原子替换；遇到外部冲突或不确定结果时 fail closed 返回错误，不自动重放或自动对账。`execution.run` 会在进程启动时记录 execution ID、PID 和工作目录
 摘要；已得到终态进程结果可直接对账，未知终止或失败不得自动重放。

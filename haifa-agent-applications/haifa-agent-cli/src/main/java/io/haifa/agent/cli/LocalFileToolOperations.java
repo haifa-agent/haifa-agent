@@ -646,6 +646,15 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                         publicErrorCode(exception),
                         "RE_READ_AND_REGENERATE_PATCH",
                         false);
+            } catch (PatchMatchException exception) {
+                return patchFailure(
+                        patchText,
+                        List.of(),
+                        target.displayPath(),
+                        "PATCH_CONFLICT",
+                        "RE_READ_AND_REGENERATE_PATCH",
+                        false,
+                        exception);
             } catch (IllegalArgumentException exception) {
                 return patchFailure(
                         patchText,
@@ -730,6 +739,24 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             String errorCode,
             String failureActionCode,
             boolean reconciliationRequired) {
+        return patchFailure(
+                patchText,
+                appliedPaths,
+                failedPath,
+                errorCode,
+                failureActionCode,
+                reconciliationRequired,
+                null);
+    }
+
+    private static ToolResult patchFailure(
+            String patchText,
+            List<String> appliedPaths,
+            String failedPath,
+            String errorCode,
+            String failureActionCode,
+            boolean reconciliationRequired,
+            PatchMatchException matchFailure) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("patchSha256", "sha256:" + digest(patchText.getBytes(StandardCharsets.UTF_8)));
         data.put("complete", false);
@@ -739,7 +766,18 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         data.put("errorCode", errorCode);
         data.put("failureActionCode", failureActionCode);
         data.put("reconciliationRequired", reconciliationRequired);
-        data.put("conflicts", List.of(Map.of("path", failedPath, "code", errorCode)));
+        Map<String, Object> conflict = new LinkedHashMap<>();
+        conflict.put("path", failedPath);
+        conflict.put("code", errorCode);
+        if (matchFailure != null) {
+            data.put("stableFailureCode", matchFailure.stableFailureCode());
+            data.put("hunkIndex", matchFailure.hunkIndex());
+            data.put("candidateCount", matchFailure.candidateCount());
+            conflict.put("stableFailureCode", matchFailure.stableFailureCode());
+            conflict.put("hunkIndex", matchFailure.hunkIndex());
+            conflict.put("candidateCount", matchFailure.candidateCount());
+        }
+        data.put("conflicts", List.of(Map.copyOf(conflict)));
         return failure("Patch was not fully applied", Map.copyOf(data));
     }
 
@@ -755,16 +793,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                         .filter(line -> line.type() != PatchLineType.ADD)
                         .map(PatchLine::text)
                         .toList();
-                if (hunk.changeContext() != null) {
-                    int anchor = findSequence(original, List.of(hunk.changeContext()), cursor);
-                    if (anchor < 0)
-                        throw new IllegalArgumentException("failed to find context anchor: " + hunk.changeContext());
-                    target = expected.isEmpty() ? anchor : findSequence(original, expected, anchor);
-                } else {
-                    target = findSequence(original, expected, cursor);
-                }
-                if (target < 0)
-                    throw new IllegalArgumentException("failed to find expected lines in hunk " + hunkIndex);
+                target = locateContextualHunk(original, expected, hunk, cursor, hunkIndex);
             } else {
                 target = hunk.oldStart() == 0 ? 0 : hunk.oldStart() - 1;
             }
@@ -792,11 +821,51 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         return joined.getBytes(StandardCharsets.UTF_8);
     }
 
-    private static int findSequence(List<String> source, List<String> expected, int start) {
-        for (int index = start; index <= source.size() - expected.size(); index++) {
-            if (source.subList(index, index + expected.size()).equals(expected)) return index;
+    private static int locateContextualHunk(
+            List<String> source, List<String> expected, PatchHunk hunk, int start, int hunkIndex) {
+        if (expected.isEmpty()) {
+            if (hunk.endOfFile()) return source.size();
+            if (hunk.changeContext() == null) {
+                throw new PatchMatchException("PATCH_AMBIGUOUS_MATCH", hunkIndex, source.size() - start + 1);
+            }
+            List<Integer> anchors = findSequences(source, List.of(hunk.changeContext()), start);
+            if (anchors.isEmpty()) {
+                throw new PatchMatchException("PATCH_CHANGE_CONTEXT_NOT_FOUND", hunkIndex, 0);
+            }
+            if (anchors.size() > 1) {
+                throw new PatchMatchException("PATCH_AMBIGUOUS_MATCH", hunkIndex, anchors.size());
+            }
+            return anchors.getFirst();
         }
-        return -1;
+
+        List<Integer> candidates = findSequences(source, expected, start);
+        if (hunk.endOfFile()) {
+            candidates = candidates.stream()
+                    .filter(candidate -> candidate + expected.size() == source.size())
+                    .toList();
+        }
+        if (candidates.isEmpty()) {
+            throw new PatchMatchException("PATCH_EXPECTED_LINES_NOT_FOUND", hunkIndex, 0);
+        }
+        if (candidates.size() == 1) return candidates.getFirst();
+
+        if (hunk.changeContext() != null) {
+            List<Integer> anchors = findSequences(source, List.of(hunk.changeContext()), start);
+            if (anchors.size() == 1) {
+                int anchor = anchors.getFirst();
+                List<Integer> scoped = candidates.stream().filter(candidate -> candidate >= anchor).toList();
+                if (scoped.size() == 1) return scoped.getFirst();
+            }
+        }
+        throw new PatchMatchException("PATCH_AMBIGUOUS_MATCH", hunkIndex, candidates.size());
+    }
+
+    private static List<Integer> findSequences(List<String> source, List<String> expected, int start) {
+        List<Integer> matches = new ArrayList<>();
+        for (int index = start; index <= source.size() - expected.size(); index++) {
+            if (source.subList(index, index + expected.size()).equals(expected)) matches.add(index);
+        }
+        return List.copyOf(matches);
     }
 
     private static List<String> splitLines(String source) {
@@ -998,6 +1067,31 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     }
 
     private record ReadCursor(long offset, int startLine, String sourceVersion, String path) {}
+
+    private static final class PatchMatchException extends IllegalArgumentException {
+        private final String stableFailureCode;
+        private final int hunkIndex;
+        private final int candidateCount;
+
+        private PatchMatchException(String stableFailureCode, int hunkIndex, int candidateCount) {
+            super(stableFailureCode);
+            this.stableFailureCode = stableFailureCode;
+            this.hunkIndex = hunkIndex;
+            this.candidateCount = candidateCount;
+        }
+
+        private String stableFailureCode() {
+            return stableFailureCode;
+        }
+
+        private int hunkIndex() {
+            return hunkIndex;
+        }
+
+        private int candidateCount() {
+            return candidateCount;
+        }
+    }
 
     private static MutationContext context(
             String idempotencyKey, String runRef, String toolCallRef, PrincipalRef actor) {

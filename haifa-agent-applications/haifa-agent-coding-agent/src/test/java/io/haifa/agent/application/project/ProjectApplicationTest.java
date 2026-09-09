@@ -316,6 +316,16 @@ class ProjectApplicationTest {
                     assertThat(binding.definition().version().value()).isEqualTo("2.0.0");
                     assertThat(binding.definition().description()).contains("creates the file atomically");
                 });
+        assertThat(frozen.snapshot().bindings())
+                .filteredOn(binding -> binding.alias().value().equals("file_patch"))
+                .singleElement()
+                .satisfies(binding -> {
+                    assertThat(binding.definition().version().value()).isEqualTo("2.1.0");
+                    assertThat(binding.definition().description())
+                            .contains("optional navigation hint", "unique exact match", "ambiguous");
+                    assertThat(binding.definition().inputSchema().document().toString())
+                            .contains("@@ <text>", "optional navigation hint", "unique exact match");
+                });
     }
 
     @Test

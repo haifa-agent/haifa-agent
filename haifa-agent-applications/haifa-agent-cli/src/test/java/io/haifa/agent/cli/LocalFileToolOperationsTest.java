@@ -165,6 +165,128 @@ class LocalFileToolOperationsTest {
     }
 
     @Test
+    void appliesUniquePatchBodyWhenOptionalNavigationHintDoesNotMatch() throws Exception {
+        Path sourceFile = root.resolve("unique.txt");
+        Files.writeString(sourceFile, "before\nold\nafter\n", StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+
+        String hostPath = sourceFile.toAbsolutePath().normalize().toString();
+        var result = fixture.operations.execute(
+                "file.patch",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of(
+                        "patch",
+                        """
+                        *** Begin Patch
+                        *** Update File: %s
+                        @@ descriptive navigation hint
+                        -old
+                        +new
+                        *** End Patch
+                        """
+                                .formatted(hostPath))));
+
+        assertThat(result.successful()).isTrue();
+        assertThat(Files.readString(sourceFile)).isEqualTo("before\nnew\nafter\n");
+    }
+
+    @Test
+    void rejectsAmbiguousPatchBodyInsteadOfChangingTheFirstMatch() throws Exception {
+        Path sourceFile = root.resolve("ambiguous.txt");
+        String original = "old\nbetween\nold\n";
+        Files.writeString(sourceFile, original, StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+
+        String hostPath = sourceFile.toAbsolutePath().normalize().toString();
+        var result = fixture.operations.execute(
+                "file.patch",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of(
+                        "patch",
+                        """
+                        *** Begin Patch
+                        *** Update File: %s
+                        @@ descriptive navigation hint
+                        -old
+                        +new
+                        *** End Patch
+                        """
+                                .formatted(hostPath))));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "PATCH_CONFLICT")
+                .containsEntry("stableFailureCode", "PATCH_AMBIGUOUS_MATCH")
+                .containsEntry("hunkIndex", 0)
+                .containsEntry("candidateCount", 2)
+                .containsEntry("failureActionCode", "RE_READ_AND_REGENERATE_PATCH");
+        assertThat(Files.readString(sourceFile)).isEqualTo(original);
+    }
+
+    @Test
+    void usesUniqueNavigationHintToDisambiguateRepeatedPatchBody() throws Exception {
+        Path sourceFile = root.resolve("scoped.txt");
+        Files.writeString(sourceFile, "first section\nold\nsecond section\nold\n", StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+
+        String hostPath = sourceFile.toAbsolutePath().normalize().toString();
+        var result = fixture.operations.execute(
+                "file.patch",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of(
+                        "patch",
+                        """
+                        *** Begin Patch
+                        *** Update File: %s
+                        @@ second section
+                        -old
+                        +new
+                        *** End Patch
+                        """
+                                .formatted(hostPath))));
+
+        assertThat(result.successful()).isTrue();
+        assertThat(Files.readString(sourceFile)).isEqualTo("first section\nold\nsecond section\nnew\n");
+    }
+
+    @Test
+    void rejectsPureInsertionWithoutAUniqueLocation() throws Exception {
+        Path sourceFile = root.resolve("insertion.txt");
+        String original = "first\nsecond\n";
+        Files.writeString(sourceFile, original, StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+
+        String hostPath = sourceFile.toAbsolutePath().normalize().toString();
+        var result = fixture.operations.execute(
+                "file.patch",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of(
+                        "patch",
+                        """
+                        *** Begin Patch
+                        *** Update File: %s
+                        @@
+                        +inserted
+                        *** End Patch
+                        """
+                                .formatted(hostPath))));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("stableFailureCode", "PATCH_AMBIGUOUS_MATCH")
+                .containsEntry("candidateCount", 3);
+        assertThat(Files.readString(sourceFile)).isEqualTo(original);
+    }
+
+    @Test
     void returnsKnownToolFailureWhenWorkspaceMutationIsRejected() throws IOException {
         Fixture fixture = fixture();
         Files.writeString(root.resolve("existing.txt"), "existing", StandardCharsets.UTF_8);
