@@ -35,6 +35,9 @@ Integration 与 E2E 之间的层级：
 主仓绑定的手工 Terminal 测试驱动位于 [`scripts/`](scripts/README.md)。它们保留公共测试选择器、
 产品级断言与证据生成逻辑；独立 `test-config` 只负责 Suite、环境和预算编排。
 
+操作者不得从本实现说明拼接 Live 命令；Critical Path 与 Autonomous Delivery 的唯一人工运行手册位于
+[`../test-config/runbooks/live-suite-operation.md`](../test-config/runbooks/live-suite-operation.md)。
+
 真实外部 Provider 的窄 Adapter Probe 与对应集成模块相邻保存；CP-01～CP-11 的正式产品语义统一在
 E2E 模块通过注入的 `CodingSessionClient` 验证，不把任一 Provider Adapter 当作产品客户端。
 
