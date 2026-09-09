@@ -608,6 +608,9 @@ worktree/submodule 拓扑变化。Git 只决定 Review 证据来源，不扩大�
 删除和移动仍分别调用 `file.delete`、`file.move`；跨目录根的 patch 和移动明确拒绝。所有文件会在第一次写盘前完成
 路径、Hunk 与内容版本的乐观预检；它不是事务，提交期的 IO 或权限异常可能留下已提交前缀。此时工具返回
 `appliedPaths`、`failedPath` 和 `reconciliationRequired: true`，Coding Agent 必须重新读取实际文件后生成新 patch。
+Update hunk 的 `@@ <text>` 是可选导航提示：旧正文/context 只有一个精确匹配时，即使提示失效也允许应用；
+正文重复时，提示必须把候选确定性缩小到一个，否则返回 `PATCH_AMBIGUOUS_MATCH` 且不写入任何预检文件。没有旧正文
+的纯新增 hunk 必须包含唯一提示、精确 context 或 `*** End of File`，不能默认选择第一个行间位置。
 `file.delete` 可删除普通文件或空目录；不支持递归删除非空目录（非空目录清理须经命令审计走 `execution.run`）。主目录与附加目录对不存在路径统一
 返回 `PATH_NOT_FOUND`，对非空目录、链接、reparse point 或特殊节点统一返回 `PATH_DENIED`。
 
