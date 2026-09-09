@@ -4,6 +4,7 @@ import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.compression.ConversationSummaryRepository;
 import io.haifa.agent.core.checkpoint.Checkpoint;
+import io.haifa.agent.core.checkpoint.CheckpointId;
 import io.haifa.agent.core.checkpoint.CheckpointType;
 import io.haifa.agent.core.message.MessageCursor;
 import io.haifa.agent.core.run.AgentRun;
@@ -23,7 +24,6 @@ public final class CheckpointManager {
     private final CheckpointRepository repository;
     private final CheckpointPolicy policy;
     private final CheckpointSnapshotBuilder snapshotBuilder;
-    private final ResumeCheckpointSelector selections;
     private final RuntimeStateRepository state;
     private final ConversationSummaryRepository summaries;
     private final MemoryCheckpointValidator memoryValidator;
@@ -35,7 +35,6 @@ public final class CheckpointManager {
             CheckpointRepository repository,
             CheckpointPolicy policy,
             CheckpointSnapshotBuilder snapshotBuilder,
-            ResumeCheckpointSelector selections,
             RuntimeStateRepository state,
             ConversationSummaryRepository summaries,
             MemoryCheckpointValidator memoryValidator) {
@@ -43,7 +42,6 @@ public final class CheckpointManager {
                 repository,
                 policy,
                 snapshotBuilder,
-                selections,
                 state,
                 summaries,
                 memoryValidator,
@@ -56,7 +54,6 @@ public final class CheckpointManager {
             CheckpointRepository repository,
             CheckpointPolicy policy,
             CheckpointSnapshotBuilder snapshotBuilder,
-            ResumeCheckpointSelector selections,
             RuntimeStateRepository state,
             ConversationSummaryRepository summaries,
             MemoryCheckpointValidator memoryValidator,
@@ -65,7 +62,6 @@ public final class CheckpointManager {
                 repository,
                 policy,
                 snapshotBuilder,
-                selections,
                 state,
                 summaries,
                 memoryValidator,
@@ -78,30 +74,18 @@ public final class CheckpointManager {
             CheckpointRepository repository,
             CheckpointPolicy policy,
             CheckpointSnapshotBuilder snapshotBuilder,
-            ResumeCheckpointSelector selections,
             RuntimeStateRepository state,
             ConversationSummaryRepository summaries,
             MemoryCheckpointValidator memoryValidator,
             CapabilityCheckpointRegistry capabilityCheckpoints,
             TimeProvider time) {
-        this(
-                repository,
-                policy,
-                snapshotBuilder,
-                selections,
-                state,
-                summaries,
-                memoryValidator,
-                capabilityCheckpoints,
-                time,
-                null);
+        this(repository, policy, snapshotBuilder, state, summaries, memoryValidator, capabilityCheckpoints, time, null);
     }
 
     public CheckpointManager(
             CheckpointRepository repository,
             CheckpointPolicy policy,
             CheckpointSnapshotBuilder snapshotBuilder,
-            ResumeCheckpointSelector selections,
             RuntimeStateRepository state,
             ConversationSummaryRepository summaries,
             MemoryCheckpointValidator memoryValidator,
@@ -111,7 +95,6 @@ public final class CheckpointManager {
         this.repository = Objects.requireNonNull(repository);
         this.policy = Objects.requireNonNull(policy);
         this.snapshotBuilder = Objects.requireNonNull(snapshotBuilder);
-        this.selections = Objects.requireNonNull(selections);
         this.state = Objects.requireNonNull(state);
         this.summaries = Objects.requireNonNull(summaries);
         this.memoryValidator = Objects.requireNonNull(memoryValidator);
@@ -177,25 +160,36 @@ public final class CheckpointManager {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
     }
 
-    public Optional<RuntimeCheckpointState> restoreLatest(AgentRun run) {
-        var selected = selections.consume(run.id());
+    /** Restores the durable Attempt source, or the latest checkpoint when no source was recorded. */
+    public Optional<RuntimeCheckpointState> restore(AgentRun run, Optional<CheckpointId> selected) {
+        Objects.requireNonNull(selected, "selected checkpoint must not be null");
         Optional<Checkpoint> checkpoint = selected.isPresent()
                 ? repository.checkpointsFor(run.id()).stream()
                         .filter(value -> value.id().equals(selected.orElseThrow()))
                         .findFirst()
                 : repository.latest(run.id());
-        return checkpoint.flatMap(value -> repository.state(value.id().value()).map(restored -> {
-            validateState(run, restored);
-            if (!value.stateHash().equals(RuntimeCheckpointStateHasher.digest(restored))) {
-                throw new CheckpointRestoreException(
-                        CheckpointRestoreFailure.CHECKPOINT_HASH_INVALID,
-                        "checkpoint state hash does not match the stored state");
+        if (selected.isPresent() && checkpoint.isEmpty()) {
+            throw new IllegalStateException("attempt checkpoint is not available for this run");
+        }
+        return checkpoint.flatMap(value -> {
+            var stored = repository.state(value.id().value());
+            if (selected.isPresent() && stored.isEmpty()) {
+                throw new IllegalStateException("attempt checkpoint state is unavailable");
             }
-            var configuration = state.configuration(run.configurationSnapshot()).orElseThrow();
-            capabilityCheckpoints.validateAndRestore(
-                    run, configuration.capabilities(), restored.capabilityCheckpoints(), time.now());
-            return restored;
-        }));
+            return stored.map(restored -> {
+                validateState(run, restored);
+                if (!value.stateHash().equals(RuntimeCheckpointStateHasher.digest(restored))) {
+                    throw new CheckpointRestoreException(
+                            CheckpointRestoreFailure.CHECKPOINT_HASH_INVALID,
+                            "checkpoint state hash does not match the stored state");
+                }
+                var configuration =
+                        state.configuration(run.configurationSnapshot()).orElseThrow();
+                capabilityCheckpoints.validateAndRestore(
+                        run, configuration.capabilities(), restored.capabilityCheckpoints(), time.now());
+                return restored;
+            });
+        });
     }
 
     public void validateState(AgentRun run, RuntimeCheckpointState checkpoint) {

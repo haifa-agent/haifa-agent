@@ -411,6 +411,7 @@ class RuntimeCoreHardeningTest {
         AtomicReference<DefaultAgentRuntime> runtime = new AtomicReference<>();
         AtomicReference<AgentRunId> runId = new AtomicReference<>();
         Queue<AgentChatResponse> responses = new ArrayDeque<>();
+        AtomicInteger resumedIteration = new AtomicInteger();
         AgentChatModel client = request -> {
             if (responses.isEmpty()) {
                 runtime.get()
@@ -423,6 +424,7 @@ class RuntimeCoreHardeningTest {
                                 NOW));
                 return response(finalDecision("pause"));
             }
+            resumedIteration.set(request.iteration());
             return responses.remove();
         };
         AtomicInteger validations = new AtomicInteger();
@@ -442,8 +444,24 @@ class RuntimeCoreHardeningTest {
         var suspended = fixture.store.find(accepted.runId()).orElseThrow();
         long suspendedVersion = suspended.version();
         var messagesBefore = fixture.store.messages(accepted.runId());
+        var selected = fixture.store.latest(accepted.runId()).orElseThrow();
+        int expectedIteration =
+                fixture.store.state(selected.id().value()).orElseThrow().nextIteration();
+        var snapshotBuilder = new io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder(
+                () -> "later-checkpoint",
+                () -> NOW,
+                fixture.store,
+                fixture.store,
+                new io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort());
+        var later = snapshotBuilder.build(
+                suspended, expectedIteration + 3, List.of(), 0, CheckpointType.AUTOMATIC, selected.sequence() + 1);
+        fixture.store.append(later.checkpoint(), later.state());
         var resume = new ResumeAgentRunRequest(
-                "resume", accepted.runId(), List.of(new TextPart("continue with the frozen configuration", "plain")));
+                "resume",
+                accepted.runId(),
+                Optional.of(selected.id()),
+                java.util.OptionalLong.empty(),
+                List.of(new TextPart("continue with the frozen configuration", "plain")));
         denyResume.set(true);
         assertThatThrownBy(() -> fixture.runtime.resume(resume)).isInstanceOf(SecurityException.class);
         assertThat(fixture.store.messages(accepted.runId())).isEqualTo(messagesBefore);
@@ -481,10 +499,11 @@ class RuntimeCoreHardeningTest {
         assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
         assertThat(fixture.scheduler.pending()).isEqualTo(1);
         var attempts = fixture.store.attemptsFor(accepted.runId());
-        assertThat(attempts.get(1).resumedFromCheckpointId()).isPresent();
+        assertThat(attempts.get(1).resumedFromCheckpointId()).contains(selected.id());
         assertThat(fixture.store.find(accepted.runId()).orElseThrow().configurationSnapshot())
                 .isEqualTo(before);
         fixture.scheduler.runAll();
+        assertThat(resumedIteration).hasValue(expectedIteration);
         assertThat(fixture.store.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
     }
 

@@ -1,5 +1,7 @@
 # Changelog
 
+- Runtime Core removes `ResumeCheckpointSelector`; Checkpoint restore receives the persisted Attempt source directly. Explicit missing sources fail closed; unselected restore retains latest fallback. Core constructors and restore method change; persistence schema is unchanged.
+
 - Runtime Core: removed `RequiredArtifactChecker`, its Builder setter and Guard constructor parameter; product artifact checks now implement `CompletionPolicy`. Stable Runtime API and persistence formats are unchanged.
 
 - Runtime Core 删除仅用于字段转换的 `RunFinalizer` / `DefaultRunFinalizer` 及 `DecisionExecutor` 对应构造参数；

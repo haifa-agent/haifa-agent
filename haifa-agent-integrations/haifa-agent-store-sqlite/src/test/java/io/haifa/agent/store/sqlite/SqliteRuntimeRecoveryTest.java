@@ -318,6 +318,116 @@ class SqliteRuntimeRecoveryTest {
     }
 
     @Test
+    void reopensAttemptAndRestoresItsExactCheckpointWithoutAnInMemorySelection() {
+        AgentRunId runId;
+        io.haifa.agent.core.checkpoint.CheckpointId selectedId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            AtomicReference<DefaultAgentRuntime> runtimeRef = new AtomicReference<>();
+            AtomicReference<AgentRunId> runRef = new AtomicReference<>();
+            RuntimeInstance process = runtime(
+                    first,
+                    ignored -> {
+                        runtimeRef.get().command(pause(runRef.get()));
+                        return finalResponse("paused");
+                    },
+                    "source-worker",
+                    new TestIds("exact-source"));
+            runtimeRef.set(process.runtime());
+            runId = process.runtime().start(request("exact-source")).runId();
+            runRef.set(runId);
+            process.scheduler().runAll();
+            var ports = process.ports();
+            var run = ports.runs().find(runId).orElseThrow();
+            var snapshots = new io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder(
+                    new TestIds("source-snapshot"),
+                    TIME,
+                    ports.state(),
+                    ports.conversationSummaries(),
+                    ports.interactions());
+            long sequence = ports.checkpoints().latest(runId).orElseThrow().sequence();
+            var selected = snapshots.build(
+                    run, 3, List.of(), 0, io.haifa.agent.core.checkpoint.CheckpointType.AUTOMATIC, sequence + 1);
+            var later = snapshots.build(
+                    run, 7, List.of(), 0, io.haifa.agent.core.checkpoint.CheckpointType.AUTOMATIC, sequence + 2);
+            ports.checkpoints().append(selected.checkpoint(), selected.state());
+            ports.checkpoints().append(later.checkpoint(), later.state());
+            selectedId = selected.checkpoint().id();
+            process.runtime()
+                    .resume(new ResumeAgentRunRequest(
+                            "select-older", runId, Optional.of(selectedId), java.util.OptionalLong.empty(), List.of()));
+            // Close the store before the queued Attempt runs, losing all process-local objects.
+        }
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            var ports = reopened.persistencePorts(protector());
+            var run = ports.runs().find(runId).orElseThrow();
+            var attempt = ports.attempts().activeFor(runId).orElseThrow();
+            assertThat(attempt.resumedFromCheckpointId()).contains(selectedId);
+            var snapshots = new io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder(
+                    new TestIds("reopened"), TIME, ports.state(), ports.conversationSummaries(), ports.interactions());
+            var memories = new io.haifa.agent.runtime.core.checkpoint.MemoryCheckpointValidator(
+                    new io.haifa.agent.memory.core.DefaultMemoryRetriever(
+                            new io.haifa.agent.memory.core.InMemoryMemoryStore(),
+                            new io.haifa.agent.memory.core.DefaultMemoryPolicy()),
+                    ignored -> {},
+                    TIME);
+            var manager = new io.haifa.agent.runtime.core.checkpoint.CheckpointManager(
+                    ports.checkpoints(),
+                    io.haifa.agent.runtime.core.checkpoint.CheckpointPolicy.everyIteration(),
+                    snapshots,
+                    ports.state(),
+                    ports.conversationSummaries(),
+                    memories);
+            assertThat(manager.restore(run, attempt.resumedFromCheckpointId())
+                            .orElseThrow()
+                            .nextIteration())
+                    .isEqualTo(4);
+            assertThat(manager.restore(run, attempt.resumedFromCheckpointId())
+                            .orElseThrow()
+                            .nextIteration())
+                    .isEqualTo(4);
+            assertThat(manager.restore(run, Optional.empty()).orElseThrow().nextIteration())
+                    .isEqualTo(8);
+            assertThatThrownBy(() -> manager.restore(
+                            run, Optional.of(new io.haifa.agent.core.checkpoint.CheckpointId("missing-source"))))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("not available");
+            var missingState = new io.haifa.agent.runtime.core.storage.CheckpointRepository() {
+                @Override
+                public void append(
+                        io.haifa.agent.core.checkpoint.Checkpoint checkpoint,
+                        io.haifa.agent.runtime.core.checkpoint.RuntimeCheckpointState state) {
+                    throw new UnsupportedOperationException("read-only test repository");
+                }
+
+                @Override
+                public Optional<io.haifa.agent.core.checkpoint.Checkpoint> latest(AgentRunId id) {
+                    return ports.checkpoints().latest(id);
+                }
+
+                @Override
+                public Optional<io.haifa.agent.runtime.core.checkpoint.RuntimeCheckpointState> state(String id) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public List<io.haifa.agent.core.checkpoint.Checkpoint> checkpointsFor(AgentRunId id) {
+                    return ports.checkpoints().checkpointsFor(id);
+                }
+            };
+            var missingStateManager = new io.haifa.agent.runtime.core.checkpoint.CheckpointManager(
+                    missingState,
+                    io.haifa.agent.runtime.core.checkpoint.CheckpointPolicy.everyIteration(),
+                    snapshots,
+                    ports.state(),
+                    ports.conversationSummaries(),
+                    memories);
+            assertThatThrownBy(() -> missingStateManager.restore(run, attempt.resumedFromCheckpointId()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("state is unavailable");
+        }
+    }
+
+    @Test
     void recoversProtectedReasoningContinuationFromCheckpointForToolRoundTrip() throws Exception {
         AtomicInteger providerCalls = new AtomicInteger();
         AgentRunId runId;
