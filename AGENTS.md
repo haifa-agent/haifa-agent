@@ -42,6 +42,10 @@
 
 ## 全局实现约束
 
+- 新能力先从当前产品的具体场景和失败模式出发。不得仅因“可审计、可追踪、企业级、未来扩展”而新增
+  领域对象、持久化 Store、状态机、通用 SPI 或跨产品抽象；这些结构须有当前不可替代的不变量，或至少两个
+  已确认消费者。审计/恢复/扩展只按实际副作用、重启需求和产品承诺建模，详细检查见
+  [`docs/engineering/evidence-driven-abstraction.md`](docs/engineering/evidence-driven-abstraction.md)。
 - Core 对象不是 JPA Entity，公共 API 不暴露框架、Provider SDK 或 Runtime Core 类型。Spring Framework
   从 Adapter/Integration 边界引入，Spring Boot 只进入 Starter 和最高层 Application。
 - `AgentRun` 生命周期只由 Core 的命名行为决定；Runtime 不维护第二份状态转换表，也不绕过聚合行为。

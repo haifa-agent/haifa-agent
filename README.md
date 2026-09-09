@@ -6,12 +6,18 @@
 ![Spring Boot 3.5.16](https://img.shields.io/badge/Spring%20Boot-3.5.16-6DB33F?logo=springboot&logoColor=white)
 ![Version](https://img.shields.io/badge/version-0.1.0--SNAPSHOT-blue)
 
-Haifa Agent 是面向 Java 与 Spring 生态的通用 Agent Runtime、SDK 和产品开发平台。它把模型调用、
-Tool、MCP、Skill、Memory、Workspace、Policy、Credential、持久化与恢复放进同一套可测试、可冻结、
-可审计的运行语义中，帮助 Java 应用从一次模型请求演进为可以长期运行和治理的 Agent 产品。
+Haifa Agent 是面向 Java 与 Spring 生态的 Agent Runtime、SDK 和产品开发平台。它提供模型调用、
+Tool、MCP、Skill、Memory、Workspace、Policy、Credential、持久化与恢复等可组合能力；产品只装配当前
+场景需要的那一部分。它帮助 Java 应用在确有失败恢复、审批或外部副作用等需求时，以可测试的运行语义
+处理这些问题，而不是把每一次模型请求预先做成完整的平台。
 
 > **项目状态**：当前版本为 `0.1.0-SNAPSHOT`，仍处于活跃开发阶段。本文只描述当前源码、POM 和测试中
 > 已落地的能力；未实现范围在文末单独列出。
+
+> **设计基线**：可恢复、可审计、可追踪、可扩展不是每个能力的默认需求。新增领域对象、持久化、状态机、
+> 通用 SPI 或跨产品抽象前，先用当前产品场景、不可替代的不变量和相邻测试证明它们确有必要；否则优先采用
+> 产品内、一次性且可删除的最小实现。具体检查见
+> [`docs/engineering/evidence-driven-abstraction.md`](docs/engineering/evidence-driven-abstraction.md)。
 
 ## 为什么使用 Haifa Agent
 
