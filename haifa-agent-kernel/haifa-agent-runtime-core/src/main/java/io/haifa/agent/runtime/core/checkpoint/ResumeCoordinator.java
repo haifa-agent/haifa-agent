@@ -70,8 +70,8 @@ public final class ResumeCoordinator {
         this.skills = Objects.requireNonNull(skills);
     }
 
-    public Optional<CheckpointId> prepare(AgentRun run, ResumeAgentRunRequest request, RuntimeCallerContext caller) {
-        validate(run, request, caller);
+    /** Applies a resume only after validate has succeeded in the same resume Unit of Work. */
+    public Optional<CheckpointId> prepareValidated(AgentRun run, ResumeAgentRunRequest request) {
         Optional<CheckpointId> checkpoint = request.checkpointId().or(() -> latestFor(run));
         checkpoint.ifPresent(checkpointId -> selections.select(run.id(), checkpointId));
         transitions.resumed(run);

@@ -1,14 +1,10 @@
 package io.haifa.agent.runtime.core.recovery;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.Objects;
 import java.util.Optional;
 
 /** Bounded cross-call semantic failure controller. */
 public final class RecoveryController {
-    private static final int HISTORY_LIMIT = 16;
-    private final Deque<FailureCluster> history = new ArrayDeque<>();
     private FailureCluster active;
 
     public Update observe(ToolOutcomeObservation observation) {
@@ -24,8 +20,6 @@ public final class RecoveryController {
         } else {
             active = new FailureCluster(observation.fingerprint().digest(), 1, observation.category());
         }
-        history.addLast(active);
-        while (history.size() > HISTORY_LIMIT) history.removeFirst();
         RecoveryDirective directive = direct(observation.category(), active.attempts());
         return new Update(observation, active.attempts(), directive);
     }

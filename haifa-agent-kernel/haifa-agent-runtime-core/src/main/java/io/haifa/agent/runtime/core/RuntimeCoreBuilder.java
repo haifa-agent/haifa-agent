@@ -59,7 +59,6 @@ import io.haifa.agent.runtime.core.compaction.SummaryModelInvoker;
 import io.haifa.agent.runtime.core.completion.CompletionPolicy;
 import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.completion.DefaultCompletionGuard;
-import io.haifa.agent.runtime.core.completion.DefaultRunFinalizer;
 import io.haifa.agent.runtime.core.completion.FrozenStructuredOutputValidator;
 import io.haifa.agent.runtime.core.completion.OutputContractValidator;
 import io.haifa.agent.runtime.core.completion.RequiredArtifactChecker;
@@ -648,7 +647,6 @@ public final class RuntimeCoreBuilder {
         DecisionExecutor decisionExecutor = new DecisionExecutor(
                 pipeline,
                 completion,
-                new DefaultRunFinalizer(),
                 interactions,
                 delegations,
                 state,

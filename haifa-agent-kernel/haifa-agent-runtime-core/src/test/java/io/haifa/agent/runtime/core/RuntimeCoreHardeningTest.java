@@ -99,6 +99,57 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
+    void structuredFinalCompletionPersistsTheFrozenContractAndUserOutput() {
+        Map<String, Object> payload = Map.of("answer", "complete");
+        Fixture fixture = fixture(
+                request -> new AgentChatResponse(
+                        "structured-response",
+                        "deepseek-v4-pro",
+                        "Structured result",
+                        List.of(),
+                        ModelFinishReason.STOP,
+                        ModelUsage.unpriced(1, 1),
+                        "",
+                        Map.of(),
+                        Optional.empty(),
+                        Optional.of(payload)),
+                builder -> builder.structuredOutputSchemaValidator(
+                        (schema, instance) -> new io.haifa.agent.tool.api.ToolSchemaValidationResult(List.of())));
+        AgentRunRequest request = new AgentRunRequest(
+                "structured-completion",
+                new AgentDefinitionId("test-agent"),
+                Optional.empty(),
+                "test-profile",
+                new AgentSessionId("session-1"),
+                Optional.empty(),
+                "objective",
+                List.of(),
+                RuntimeOverrides.NONE,
+                Optional.of(new StructuredOutputRequirement(
+                        "test.structured", "2", "TestStructured", Map.of("type", "object"))));
+        var accepted = fixture.runtime.start(request);
+        fixture.scheduler.runAll();
+        var run = fixture.store.find(accepted.runId()).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(run.result()).hasValueSatisfying(result -> {
+            assertThat(result.outcome()).isEqualTo(AgentRunOutcome.SUCCESS);
+            assertThat(result.summary()).isEqualTo("Structured result");
+            assertThat(result.outputSchemaId()).isEqualTo("test.structured");
+            assertThat(result.outputSchemaVersion()).isEqualTo("2");
+            assertThat(result.structuredOutput()).isEqualTo(payload);
+            assertThat(result.artifacts()).isEmpty();
+            assertThat(result.warnings()).isEmpty();
+        });
+        assertThat(fixture.store.output(run.id())).contains("Structured result");
+        assertThat(fixture.store.messages(run.id()).stream()
+                        .filter(message ->
+                                Boolean.TRUE.equals(message.metadata().get("final"))))
+                .singleElement()
+                .satisfies(message ->
+                        assertThat(message.contents()).containsExactly(new TextPart("Structured result", "plain")));
+    }
+
+    @Test
     void listenerFailureCannotChangeCommittedCompletion() {
         Fixture fixture = fixture(model(finalDecision("committed")));
         fixture.runtime.addListener(snapshot -> {
@@ -362,18 +413,67 @@ class RuntimeCoreHardeningTest {
             }
             return responses.remove();
         };
-        Fixture fixture = fixture(client);
+        AtomicInteger validations = new AtomicInteger();
+        AtomicBoolean denyResume = new AtomicBoolean();
+        Fixture fixture = fixture(
+                client,
+                builder -> builder.accessValidator((caller, session, project) -> {
+                    validations.incrementAndGet();
+                    if (denyResume.get()) throw new SecurityException("resume access denied");
+                }));
         runtime.set(fixture.runtime);
         var accepted = fixture.runtime.start(request("resume-checkpoint"));
         runId.set(accepted.runId());
         fixture.scheduler.runAll();
         var before = fixture.store.find(accepted.runId()).orElseThrow().configurationSnapshot();
         responses.add(response(finalDecision("done")));
-        fixture.runtime.resume(new ResumeAgentRunRequest("resume", accepted.runId(), List.of()));
+        var suspended = fixture.store.find(accepted.runId()).orElseThrow();
+        long suspendedVersion = suspended.version();
+        var messagesBefore = fixture.store.messages(accepted.runId());
+        var resume = new ResumeAgentRunRequest(
+                "resume", accepted.runId(), List.of(new TextPart("continue with the frozen configuration", "plain")));
+        denyResume.set(true);
+        assertThatThrownBy(() -> fixture.runtime.resume(resume)).isInstanceOf(SecurityException.class);
+        assertThat(fixture.store.messages(accepted.runId())).isEqualTo(messagesBefore);
+        assertThat(suspended.version()).isEqualTo(suspendedVersion);
+        assertThat(suspended.status()).isEqualTo(AgentRunStatus.SUSPENDED);
+        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(1);
+        assertThat(fixture.scheduler.pending()).isZero();
+        assertThat(fixture.store.findRun("local|user|local-user", "resume", "resume"))
+                .isEmpty();
+
+        denyResume.set(false);
+        var invalidCheckpoint = new ResumeAgentRunRequest(
+                "invalid-checkpoint",
+                accepted.runId(),
+                Optional.of(new io.haifa.agent.core.checkpoint.CheckpointId("missing-checkpoint")),
+                java.util.OptionalLong.empty(),
+                resume.inputs());
+        assertThatThrownBy(() -> fixture.runtime.resume(invalidCheckpoint))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(fixture.store.messages(accepted.runId())).isEqualTo(messagesBefore);
+        assertThat(suspended.version()).isEqualTo(suspendedVersion);
+        assertThat(suspended.status()).isEqualTo(AgentRunStatus.SUSPENDED);
+        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(1);
+        assertThat(fixture.scheduler.pending()).isZero();
+        assertThat(fixture.store.findRun("local|user|local-user", "resume", "invalid-checkpoint"))
+                .isEmpty();
+        validations.set(0);
+        fixture.runtime.resume(resume);
+        assertThat(validations).hasValue(1);
+        assertThat(fixture.store.messages(accepted.runId())).hasSize(messagesBefore.size() + 1);
+        assertThat(fixture.scheduler.pending()).isEqualTo(1);
+        fixture.runtime.resume(resume);
+        assertThat(validations).hasValue(1);
+        assertThat(fixture.store.messages(accepted.runId())).hasSize(messagesBefore.size() + 1);
+        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
+        assertThat(fixture.scheduler.pending()).isEqualTo(1);
         var attempts = fixture.store.attemptsFor(accepted.runId());
         assertThat(attempts.get(1).resumedFromCheckpointId()).isPresent();
         assertThat(fixture.store.find(accepted.runId()).orElseThrow().configurationSnapshot())
                 .isEqualTo(before);
+        fixture.scheduler.runAll();
+        assertThat(fixture.store.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
     }
 
     @Test
