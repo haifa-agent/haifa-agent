@@ -20,7 +20,6 @@ import java.util.Optional;
 public final class ResumeCoordinator {
     private final InteractionPort interactions;
     private final CheckpointRepository checkpoints;
-    private final ResumeCheckpointSelector selections;
     private final RunTransitionCoordinator transitions;
     private final RuntimeStateRepository state;
     private final RunAccessValidator access;
@@ -31,7 +30,6 @@ public final class ResumeCoordinator {
     public ResumeCoordinator(
             InteractionPort interactions,
             CheckpointRepository checkpoints,
-            ResumeCheckpointSelector selections,
             RunTransitionCoordinator transitions,
             RuntimeStateRepository state,
             RunAccessValidator access,
@@ -40,7 +38,6 @@ public final class ResumeCoordinator {
         this(
                 interactions,
                 checkpoints,
-                selections,
                 transitions,
                 state,
                 access,
@@ -52,7 +49,6 @@ public final class ResumeCoordinator {
     public ResumeCoordinator(
             InteractionPort interactions,
             CheckpointRepository checkpoints,
-            ResumeCheckpointSelector selections,
             RunTransitionCoordinator transitions,
             RuntimeStateRepository state,
             RunAccessValidator access,
@@ -61,7 +57,6 @@ public final class ResumeCoordinator {
             SkillContentLoader skills) {
         this.interactions = Objects.requireNonNull(interactions);
         this.checkpoints = Objects.requireNonNull(checkpoints);
-        this.selections = Objects.requireNonNull(selections);
         this.transitions = Objects.requireNonNull(transitions);
         this.state = Objects.requireNonNull(state);
         this.access = Objects.requireNonNull(access);
@@ -73,7 +68,6 @@ public final class ResumeCoordinator {
     /** Applies a resume only after validate has succeeded in the same resume Unit of Work. */
     public Optional<CheckpointId> prepareValidated(AgentRun run, ResumeAgentRunRequest request) {
         Optional<CheckpointId> checkpoint = request.checkpointId().or(() -> latestFor(run));
-        checkpoint.ifPresent(checkpointId -> selections.select(run.id(), checkpointId));
         transitions.resumed(run);
         return checkpoint;
     }

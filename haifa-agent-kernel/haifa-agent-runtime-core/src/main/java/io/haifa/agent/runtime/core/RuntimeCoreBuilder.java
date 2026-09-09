@@ -51,7 +51,6 @@ import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointPolicy;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder;
 import io.haifa.agent.runtime.core.checkpoint.MemoryCheckpointValidator;
-import io.haifa.agent.runtime.core.checkpoint.ResumeCheckpointSelector;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCoordinator;
 import io.haifa.agent.runtime.core.compaction.CompactionTriggerEvaluator;
 import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
@@ -622,14 +621,12 @@ public final class RuntimeCoreBuilder {
                 todoReconciliation,
                 combinedOutputContract,
                 completionPolicy);
-        ResumeCheckpointSelector checkpointSelections = new ResumeCheckpointSelector();
         CapabilityCheckpointRegistry capabilityCheckpointRegistry =
                 new CapabilityCheckpointRegistry(capabilityCheckpointParticipants);
         CheckpointManager checkpoints = new CheckpointManager(
                 checkpointsRepository,
                 CheckpointPolicy.everyIteration(),
                 new CheckpointSnapshotBuilder(ids, time, state, summaries, interactions, capabilityCheckpointRegistry),
-                checkpointSelections,
                 state,
                 summaries,
                 new MemoryCheckpointValidator(configuredMemoryRetriever, configuredMemoryAudit, time),
@@ -655,7 +652,6 @@ public final class RuntimeCoreBuilder {
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
                 interactions,
                 checkpointsRepository,
-                checkpointSelections,
                 transitions,
                 state,
                 access,

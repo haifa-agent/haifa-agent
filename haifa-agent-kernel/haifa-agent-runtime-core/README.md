@@ -256,3 +256,6 @@ Missing or drifted evidence delegates to the existing approval policy.
 
 Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与证据。Artifact 检查由产品的
 `PublishedArtifactRequiredChecker` 实现该接口；Runtime 不再提供单独的 `RequiredArtifactChecker` 配置入口。
+
+恢复来源直接读取持久 Attempt 的 `resumedFromCheckpointId`，不再经过进程内 Selector。已记录来源必须精确存在，
+缺失记录或状态会拒绝恢复；没有来源时保留 latest fallback。Checkpoint 完整性与能力重验保持不变。
