@@ -18,7 +18,6 @@ public final class DefaultCompletionGuard implements CompletionGuard {
     private final DelegationPort delegations;
     private final TodoReconciliationService todos;
     private final OutputContractValidator outputContract;
-    private final RequiredArtifactChecker artifacts;
     private final CompletionPolicy policy;
 
     public DefaultCompletionGuard(
@@ -28,7 +27,6 @@ public final class DefaultCompletionGuard implements CompletionGuard {
             DelegationPort delegations,
             TodoReconciliationService todos,
             OutputContractValidator outputContract,
-            RequiredArtifactChecker artifacts,
             CompletionPolicy policy) {
         this.state = Objects.requireNonNull(state);
         this.tools = Objects.requireNonNull(tools);
@@ -36,7 +34,6 @@ public final class DefaultCompletionGuard implements CompletionGuard {
         this.delegations = Objects.requireNonNull(delegations);
         this.todos = Objects.requireNonNull(todos);
         this.outputContract = Objects.requireNonNull(outputContract);
-        this.artifacts = Objects.requireNonNull(artifacts);
         this.policy = Objects.requireNonNull(policy);
     }
 
@@ -54,9 +51,6 @@ public final class DefaultCompletionGuard implements CompletionGuard {
                             : "Output contract is incomplete.",
                     "VALID_OUTPUT"));
         }
-        if (!artifacts.isSatisfied(run, decision))
-            blockers.add(CompletionBlocker.recoverable(
-                    "REQUIRED_ARTIFACT_MISSING", "A required artifact is missing.", "REQUIRED_ARTIFACT"));
         CompletionPolicyResult policyResult = policy.evaluate(run, decision);
         blockers.addAll(policyResult.blockers());
         if (run.quotaPolicy().mode() == io.haifa.agent.core.run.QuotaMode.HARD_STOP

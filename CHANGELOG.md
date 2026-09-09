@@ -1,5 +1,7 @@
 # Changelog
 
+- Runtime Core: removed `RequiredArtifactChecker`, its Builder setter and Guard constructor parameter; product artifact checks now implement `CompletionPolicy`. Stable Runtime API and persistence formats are unchanged.
+
 - Runtime Core 删除仅用于字段转换的 `RunFinalizer` / `DefaultRunFinalizer` 及 `DecisionExecutor` 对应构造参数；
   `RuntimeControlTraceReplay` 移至测试源码，不再进入生产制品。`ResumeCoordinator.prepare` 收口为
   同一 UoW 内校验后使用的 `prepareValidated`，同步 resume 只执行一次完整前置校验。SDK/Runtime API、
