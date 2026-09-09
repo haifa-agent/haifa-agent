@@ -61,7 +61,7 @@
       "lifecycle": "ACTIVE",
       "disposition": "KEEP",
       "owner": "testing-platform",
-      "referencedBy": ["haifa-agent-testing/scripts/README.md", "docs/testing/07-coding-agent-terminal-test-plan.md"],
+      "referencedBy": ["haifa-agent-testing/scripts/README.md", "docs/testing/archive/07-coding-agent-terminal-test-plan.md"],
       "replacement": "",
       "rationale": "No-provider Windows ConPTY smoke driver for production CLI startup and deferred command behavior.",
       "coverageMode": "EXACT"

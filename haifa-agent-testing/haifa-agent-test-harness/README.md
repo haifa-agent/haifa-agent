@@ -10,6 +10,10 @@ haifa-test plan --suite <id> --profile <id> --platform <id> --mode <dev|live|rel
 haifa-test run --plan <execution-plan.json> [--approve-budget <amount>]
 ```
 
+操作者的 Suite 选择、预算单位、跨 Phase 顺序和结果判读统一见
+[`../../test-config/runbooks/live-suite-operation.md`](../../test-config/runbooks/live-suite-operation.md)；本文只
+维护 Harness 实现契约。
+
 `plan` 生成不含 Secret 的 `ExecutionPlanDocument`，冻结 Suite、标准 Agent Client 装配摘要、Platform、
 Fixture Package、两仓 Revision、预算、Case 选择和当前 Runner JAR 摘要。`run` 不再构建 Runner，只接受
 同一内容寻址制品；它只解析一次当前 Suite、Profile、Platform、Fixture 和起始 Revision，校验 Plan SHA
