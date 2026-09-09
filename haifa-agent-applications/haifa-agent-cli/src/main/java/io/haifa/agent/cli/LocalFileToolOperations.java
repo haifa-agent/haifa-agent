@@ -740,13 +740,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             String failureActionCode,
             boolean reconciliationRequired) {
         return patchFailure(
-                patchText,
-                appliedPaths,
-                failedPath,
-                errorCode,
-                failureActionCode,
-                reconciliationRequired,
-                null);
+                patchText, appliedPaths, failedPath, errorCode, failureActionCode, reconciliationRequired, null);
     }
 
     private static ToolResult patchFailure(
@@ -853,7 +847,9 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             List<Integer> anchors = findSequences(source, List.of(hunk.changeContext()), start);
             if (anchors.size() == 1) {
                 int anchor = anchors.getFirst();
-                List<Integer> scoped = candidates.stream().filter(candidate -> candidate >= anchor).toList();
+                List<Integer> scoped = candidates.stream()
+                        .filter(candidate -> candidate >= anchor)
+                        .toList();
                 if (scoped.size() == 1) return scoped.getFirst();
             }
         }

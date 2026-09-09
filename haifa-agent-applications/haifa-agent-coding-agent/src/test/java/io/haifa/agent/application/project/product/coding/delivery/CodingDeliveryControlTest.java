@@ -201,6 +201,43 @@ class CodingDeliveryControlTest {
     }
 
     @Test
+    void recognizesZeroExitCodeExitedExecutionAsDiffInspectionEvidenceAndReference() {
+        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
+        changeTool(fixture, "file.write", "change-1");
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of("operationFamily", "TEST", "status", "EXITED", "exitCode", 0, "semanticOutcome", "SUCCEEDED"));
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of(
+                        "operationFamily", "DIFF",
+                        "status", "EXITED",
+                        "exitCode", 0,
+                        "semanticOutcome", "SUCCEEDED",
+                        "commandTarget", "GIT",
+                        "commandRisk", "LOCAL_READ",
+                        "commandOperation", "DIFF",
+                        "commandClassificationReason", "GIT_DIFF"));
+
+        CodingDeliveryEvidenceLedger.Snapshot snapshot = new CodingDeliveryEvidenceLedger(fixture.store())
+                .reconstruct(fixture.run().id());
+        assertThat(snapshot.kinds()).contains(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
+
+        CodingWorkProjection projection = new CodingWorkProjectionService(
+                        fixture.store(),
+                        new CodingTaskModeResolver(fixture.store()),
+                        new CodingDeliveryEvidenceLedger(fixture.store()),
+                        new CodingDeliveryProfile(20, 25, 20, true),
+                        () -> NOW)
+                .project(fixture.run());
+        assertThat(projection.diffEvidenceRefs()).isNotEmpty();
+    }
+
+    @Test
     void genericCommandsRetainDeclaredDeliveryIntentWithoutOverridingGitClassification() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));

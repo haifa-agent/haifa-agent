@@ -25,6 +25,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.model.api.ImageUrlPart;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelAudioPart;
 import io.haifa.agent.model.api.ModelImagePart;
 import io.haifa.agent.model.api.ModelMessage;
@@ -40,6 +41,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -106,11 +108,11 @@ public final class ModelMessageAssembler {
             throw new ContextBuildException(
                     ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE, "model context must not be empty");
         }
-        return canonicalizeToolProtocol(messages, priorModelAssistants);
+        return canonicalizeToolProtocol(messages, priorModelAssistants, model);
     }
 
     private List<ModelMessage> canonicalizeToolProtocol(List<ModelMessage> messages) {
-        return canonicalizeToolProtocol(messages, Set.of());
+        return canonicalizeToolProtocol(messages, Set.of(), null);
     }
 
     /**
@@ -128,7 +130,7 @@ public final class ModelMessageAssembler {
      * closed.
      */
     private List<ModelMessage> canonicalizeToolProtocol(
-            List<ModelMessage> messages, Set<ModelMessage> priorModelAssistants) {
+            List<ModelMessage> messages, Set<ModelMessage> priorModelAssistants, ResolvedModelSnapshot model) {
         List<ModelMessage> canonical = new ArrayList<>(messages.size());
         int index = 0;
         while (index < messages.size()) {
@@ -140,6 +142,31 @@ public final class ModelMessageAssembler {
             }
 
             boolean isPrior = priorModelAssistants.contains(message);
+            if (isPrior && requiresNeutralToolGroupSummary(model)) {
+                Map<ProviderToolCallCorrelationId, ModelMessage> matchingResults = new LinkedHashMap<>();
+                var pending = message.toolCalls().stream()
+                        .map(ModelToolCall::providerCorrelationId)
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+                List<ModelMessage> deferred = new ArrayList<>();
+                while (!pending.isEmpty() && index < messages.size()) {
+                    ModelMessage candidate = messages.get(index++);
+                    if (candidate.role() == ModelMessageRole.TOOL
+                            && candidate.providerCorrelationId().isPresent()
+                            && pending.contains(
+                                    candidate.providerCorrelationId().get())) {
+                        ProviderToolCallCorrelationId corrId =
+                                candidate.providerCorrelationId().get();
+                        pending.remove(corrId);
+                        matchingResults.put(corrId, candidate);
+                    } else {
+                        deferred.add(candidate);
+                    }
+                }
+                String summaryText = renderToolGroupSummary(message, message.toolCalls(), matchingResults);
+                canonical.add(ModelMessage.text(ModelMessageRole.ASSISTANT, summaryText));
+                canonical.addAll(deferred);
+                continue;
+            }
             Map<ProviderToolCallCorrelationId, ProviderToolCallCorrelationId> projectedCorrelations = isPrior
                     ? message.toolCalls().stream()
                             .collect(Collectors.toUnmodifiableMap(
@@ -444,5 +471,131 @@ public final class ModelMessageAssembler {
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException("SHA-256 is unavailable", impossible);
         }
+    }
+
+    private static boolean requiresNeutralToolGroupSummary(ResolvedModelSnapshot model) {
+        if (model == null) {
+            return false;
+        }
+        return ModelApiStyles.GOOGLE_GEMINI_GENERATE_CONTENT.equals(model.apiStyle())
+                || "google-antigravity".equals(model.providerId().value());
+    }
+
+    private String renderToolGroupSummary(
+            ModelMessage assistantMessage,
+            List<ModelToolCall> toolCalls,
+            Map<ProviderToolCallCorrelationId, ModelMessage> matchingResults) {
+        List<String> lines = new ArrayList<>();
+        if (!assistantMessage.content().isBlank()) {
+            lines.add(assistantMessage.content().trim());
+        }
+        for (ModelToolCall call : toolCalls) {
+            String argJson = formatArguments(call.arguments());
+            lines.add("[tool-call: " + call.name() + " arguments: " + argJson + "]");
+            ModelMessage resultMsg = matchingResults.get(call.providerCorrelationId());
+            if (resultMsg != null) {
+                lines.add("[tool-result: " + call.name() + "]");
+                if (!resultMsg.content().isBlank()) {
+                    lines.add(resultMsg.content().trim());
+                }
+                if (resultMsg.toolResultTruncated()) {
+                    lines.add("[output truncated]");
+                }
+            } else {
+                lines.add("[tool-result: " + call.name() + "]");
+                lines.add("Historical tool result was not recorded.");
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String formatArguments(Map<String, Object> arguments) {
+        if (arguments == null || arguments.isEmpty()) {
+            return "{}";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        boolean first = true;
+        for (Map.Entry<String, Object> entry : arguments.entrySet()) {
+            if (!first) {
+                sb.append(", ");
+            }
+            first = false;
+            sb.append("\"").append(escapeString(entry.getKey())).append("\": ");
+            sb.append(formatValue(entry.getValue()));
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private String formatValue(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof String s) {
+            return "\"" + escapeString(s) + "\"";
+        }
+        if (value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
+        }
+        if (value instanceof Map<?, ?> map) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("{");
+            boolean first = true;
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (!first) {
+                    sb.append(", ");
+                }
+                first = false;
+                sb.append("\"")
+                        .append(escapeString(String.valueOf(entry.getKey())))
+                        .append("\": ");
+                sb.append(formatValue(entry.getValue()));
+            }
+            sb.append("}");
+            return sb.toString();
+        }
+        if (value instanceof Iterable<?> iterable) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("[");
+            boolean first = true;
+            for (Object item : iterable) {
+                if (!first) {
+                    sb.append(", ");
+                }
+                first = false;
+                sb.append(formatValue(item));
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+        return "\"" + escapeString(String.valueOf(value)) + "\"";
+    }
+
+    private String escapeString(String s) {
+        if (s == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.toString();
     }
 }
