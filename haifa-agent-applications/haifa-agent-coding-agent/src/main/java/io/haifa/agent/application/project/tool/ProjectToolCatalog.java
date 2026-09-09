@@ -273,6 +273,7 @@ public final class ProjectToolCatalog {
         String version =
                 switch (name) {
                     case "execution.run" -> "2.0.0";
+                    case "file.patch" -> "2.1.0";
                     case "file.list",
                             "file.read",
                             "file.search",
@@ -281,7 +282,6 @@ public final class ProjectToolCatalog {
                             "file.delete",
                             "file.move",
                             "file.diff",
-                            "file.patch",
                             "file.stat" -> "2.0.0";
                     case "workspace.attach" -> "3.0.0";
                     case ProjectWorktreeToolOperations.TOOL_NAME -> "2.0.0";
@@ -375,7 +375,11 @@ public final class ProjectToolCatalog {
         if (name.equals("file.patch")) {
             return "Apply a bounded, non-atomic context patch to up to 100 files in one authorized directory using host absolute paths. Use "
                     + "*** Begin Patch / *** End Patch with Add File or Update File sections; use file.delete and "
-                    + "file.move for those operations. All files are preflighted with optimistic checks before the "
+                    + "file.move for those operations. An Update File hunk starts with @@ and may include @@ <text> as an "
+                    + "optional navigation hint. The old and context lines determine the edit: a unique exact match applies "
+                    + "even when the hint is stale; repeated matches must be reduced to one by a unique exact hint or the patch is ambiguous. "
+                    + "A pure insertion needs a unique hint, an exact context line, or *** End of File. "
+                    + "All files are preflighted with optimistic checks before the "
                     + "first write. Cross-directory patches are rejected. A commit-time failure reports its committed prefix "
                     + "and requires a fresh read before regenerating the patch.";
         }
@@ -453,7 +457,8 @@ public final class ProjectToolCatalog {
                                 "maxLength",
                                 4194304,
                                 "description",
-                                "Context patch beginning with *** Begin Patch and ending with *** End Patch, declaring host absolute paths for each file."));
+                                "Context patch beginning with *** Begin Patch and ending with *** End Patch, declaring host absolute paths for each file. "
+                                        + "Each Update File hunk begins with @@; @@ <text> adds an optional navigation hint. Old/context lines must have a unique exact match, or a unique exact hint must reduce repeated matches to one; otherwise the patch is ambiguous. A pure insertion needs a unique hint, an exact context line, or *** End of File."));
                 required.add("patch");
             }
             case "workspace.attach" -> {
