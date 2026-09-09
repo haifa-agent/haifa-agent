@@ -176,8 +176,6 @@ class TerminalUiReducerTest {
         });
         assertThat(TerminalRecovery.fromCode("RUN_BUDGET_EXCEEDED").action())
                 .contains("smaller request", "larger budget");
-        assertThat(TerminalRecovery.fromCode("AGENT_LOOP_DETECTED").action())
-                .contains("completed workspace changes", "new run", "more specific next step");
     }
 
     @Test
@@ -589,8 +587,8 @@ class TerminalUiReducerTest {
                         "event-1",
                         new RunEventPayloads.DeliveryLifecycle(
                                 "RECOVERING",
-                                "RECOVERY_REQUIRED",
-                                "REPEATED_ENVIRONMENT_FAILURE",
+                                "COMPLETION_DEFERRED",
+                                "WORKSPACE_CHANGE_MISSING",
                                 List.of("WORKSPACE_CHANGE"),
                                 30,
                                 1))));

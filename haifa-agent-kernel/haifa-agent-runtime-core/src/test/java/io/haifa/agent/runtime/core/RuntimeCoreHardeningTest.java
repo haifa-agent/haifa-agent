@@ -454,7 +454,7 @@ class RuntimeCoreHardeningTest {
                 fixture.store,
                 new io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort());
         var later = snapshotBuilder.build(
-                suspended, expectedIteration + 3, List.of(), 0, CheckpointType.AUTOMATIC, selected.sequence() + 1);
+                suspended, expectedIteration + 3, 0, CheckpointType.AUTOMATIC, selected.sequence() + 1);
         fixture.store.append(later.checkpoint(), later.state());
         var resume = new ResumeAgentRunRequest(
                 "resume",
@@ -626,13 +626,15 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void repeatedIdenticalEnvironmentFailuresConvergeWithinBoundedModelAndToolCalls() {
+    void ordinaryFailuresAllowTheModelToChangeStrategyAndFinish() {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger toolCalls = new AtomicInteger();
         Queue<io.haifa.agent.runtime.core.decision.AgentDecision> decisions = new ArrayDeque<>(List.of(
                 environmentFailureRequest("failure-1", "/private/random-a", "probe"),
                 environmentFailureRequest("failure-2", "/private/random-a", "probe"),
-                environmentFailureRequest("failure-3", "/private/random-a", "probe")));
+                environmentFailureRequest("failure-3", "/private/random-a", "probe"),
+                environmentFailureRequest("failure-4", "/private/random-a", "probe"),
+                finalDecision("Use an available alternative instead")));
         AgentChatModel boundedModel = request -> {
             modelCalls.incrementAndGet();
             return response(decisions.remove());
@@ -666,24 +668,15 @@ class RuntimeCoreHardeningTest {
         var accepted = fixture.runtime.start(request("bounded-environment-recovery"));
         fixture.scheduler.runAll();
 
-        assertThat(modelCalls).hasValue(3);
-        assertThat(toolCalls).hasValue(3);
+        assertThat(modelCalls).hasValue(5);
+        assertThat(toolCalls).hasValue(4);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.FAILED);
-        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().output())
-                .hasValueSatisfying(summary -> assertThat(summary)
-                        .contains("The task did not fully complete", "probe", "REPEATED_TOOL_FAILURE")
-                        .doesNotContain("/private/random"));
-        assertThat(fixture.store.messages(accepted.runId())).anySatisfy(message -> {
-            assertThat(message.role()).isEqualTo(io.haifa.agent.core.message.MessageRole.ASSISTANT);
-            assertThat(message.visibility()).isEqualTo(io.haifa.agent.core.message.MessageVisibility.USER_VISIBLE);
-            assertThat(message.metadata())
-                    .containsEntry("partial", true)
-                    .containsEntry("terminalErrorCode", "REPEATED_TOOL_FAILURE");
-        });
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.store.messages(accepted.runId())).noneMatch(message -> "RECOVERY_STRATEGY"
+                .equals(message.metadata().get("runtimeControlType")));
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
-                .contains("loop.stall-detected", "tool.recovery-strategy-required", "run.structured-termination");
+                .doesNotContain("loop.progress-observed", "loop.stall-detected", "tool.recovery-strategy-required");
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .filteredOn(event -> event.type().equals("tool.failed"))
                 .allSatisfy(
@@ -837,7 +830,7 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void stalledActionsReceiveOnePersistedStrategySwitchBeforeBoundedTermination() {
+    void alternatingActionsDoNotRequireRuntimeStrategyPermission() {
         Queue<ToolCallDecision> decisions = new ArrayDeque<>(List.of(
                 progressRequest("stall-1", "deliver"),
                 progressRequest("stall-2", "inspect-a"),
@@ -857,7 +850,7 @@ class RuntimeCoreHardeningTest {
                         .map(message -> message.content())
                         .toList());
             }
-            return response(decisions.remove());
+            return response(decisions.isEmpty() ? finalDecision("investigation complete") : decisions.remove());
         };
         Fixture fixture = fixture(
                 stalledModel,
@@ -880,30 +873,16 @@ class RuntimeCoreHardeningTest {
         var accepted = fixture.runtime.start(request("bounded-stall-recovery"));
         fixture.scheduler.runAll();
 
-        assertThat(modelCalls).hasValue(9);
-        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
-            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.AGENT_LOOP_DETECTED);
-        });
-        assertThat(recoveryContext.get())
-                .anyMatch(message -> message.contains("type=STALL_RECOVERY")
-                        && message.contains("nextAction=choose one different semantic action"))
-                .noneMatch(message -> message.contains("inspect-a") || message.contains("inspect-b"));
+        assertThat(modelCalls).hasValue(10);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(recoveryContext.get()).noneMatch(message -> message.contains("type=STALL_RECOVERY"));
         assertThat(fixture.store.messages(accepted.runId()))
-                .filteredOn(
-                        message -> "STALL_RECOVERY".equals(message.metadata().get("runtimeControlType")))
-                .singleElement()
-                .satisfies(message -> assertThat(message.metadata())
-                        .containsEntry("schemaVersion", "stall-recovery/1")
-                        .containsEntry("recoveryAttempts", 1)
-                        .containsKeys("progressDigest", "stallReason"));
-        assertThat(fixture.store.eventsFor(accepted.runId()))
-                .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
-                .contains("loop.stall-detected", "loop.recovery-strategy-required", "loop.recovery-exhausted");
+                .noneMatch(message -> "STALL_RECOVERY".equals(message.metadata().get("runtimeControlType")));
     }
 
     @Test
-    void stallStrategySwitchBudgetSurvivesProcessRecovery() {
+    void processRecoveryContinuesWithoutRebuildingTaskStrategy() {
         AtomicBoolean firstAttemptOwned = new AtomicBoolean(true);
         AtomicInteger modelCalls = new AtomicInteger();
         Queue<ToolCallDecision> decisions = new ArrayDeque<>(List.of(
@@ -918,8 +897,8 @@ class RuntimeCoreHardeningTest {
                 progressRequest("restart-stall-9", "strategy-d")));
         AgentChatModel interrupted = request -> {
             int call = modelCalls.incrementAndGet();
-            if (call == 6) throw new AssertionError("simulated process loss after persisted stall recovery");
-            return response(decisions.remove());
+            if (call == 6) throw new AssertionError("simulated process loss during repeated investigation");
+            return response(decisions.isEmpty() ? finalDecision("investigation complete") : decisions.remove());
         };
         Fixture fixture = fixture(interrupted, builder -> TestToolPlatform.install(
                         builder,
@@ -944,18 +923,13 @@ class RuntimeCoreHardeningTest {
         fixture.runtime.recover(accepted.runId());
         fixture.scheduler.runAll();
 
-        assertThat(modelCalls).hasValue(10);
-        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
-            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.AGENT_LOOP_DETECTED);
-        });
+        assertThat(modelCalls).hasValue(11);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(fixture.store.messages(accepted.runId()))
-                .filteredOn(
-                        message -> "STALL_RECOVERY".equals(message.metadata().get("runtimeControlType")))
-                .hasSize(1);
+                .noneMatch(message -> "STALL_RECOVERY".equals(message.metadata().get("runtimeControlType")));
         assertThat(fixture.store.eventsFor(accepted.runId()))
-                .filteredOn(event -> event.type().equals("loop.recovery-strategy-required"))
-                .hasSize(1);
+                .noneMatch(event -> event.type().equals("loop.recovery-strategy-required"));
     }
 
     @Test
@@ -1143,7 +1117,7 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void semanticDuplicateToolCallsAreDetected() {
+    void repeatedReadsWithNewCallIdentitiesCanComplete() {
         ToolRequest first =
                 toolRequest("key-1", "read", "1.0.0", new ToolArguments("read.input", "1", Map.of("path", "same")));
         ToolRequest second =
@@ -1155,16 +1129,104 @@ class RuntimeCoreHardeningTest {
                 model(
                         new ToolCallDecision(List.of(first)),
                         new ToolCallDecision(List.of(second)),
-                        new ToolCallDecision(List.of(third))),
+                        new ToolCallDecision(List.of(third)),
+                        finalDecision("read results compared")),
                 builder -> TestToolPlatform.install(builder, "read", "1.0.0", "read.input", false, request -> {
                     executions.incrementAndGet();
                     return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
                 }));
         var duplicateRun = duplicate.runtime.start(request("semantic-duplicate"));
         duplicate.scheduler.runAll();
-        assertThat(executions).hasValue(2);
+        assertThat(executions).hasValue(3);
         assertThat(duplicate.runtime.find(duplicateRun.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.FAILED);
+                .isEqualTo(AgentRunStatus.COMPLETED);
+    }
+
+    @Test
+    void endlesslyRepeatedReadsStopAtTheFrozenModelCallBudget() {
+        AtomicInteger calls = new AtomicInteger();
+        AtomicInteger tools = new AtomicInteger();
+        Fixture fixture = fixture(
+                request -> response(new ToolCallDecision(List.of(toolRequest(
+                        "repeat-" + calls.incrementAndGet(),
+                        "read",
+                        "1.0.0",
+                        new ToolArguments("read.input", "1", Map.of()))))),
+                builder -> TestToolPlatform.install(builder, "read", "1.0.0", "read.input", false, request -> {
+                    tools.incrementAndGet();
+                    return new ToolResult(true, "observed", Map.of(), List.of(), List.of(), false);
+                }));
+        var accepted = fixture.runtime.start(request("bounded-repetition"));
+        var run = fixture.store.find(accepted.runId()).orElseThrow();
+        long expected = run.version();
+        run.recordUsage(new AgentRunUsageDelta(0, 0, 0, run.limits().maxModelCalls() - 4, 0, 0, 0, 0));
+        fixture.store.save(run, expected);
+        fixture.scheduler.runAll();
+        assertThat(calls).hasValue(4);
+        assertThat(tools).hasValue(3);
+        assertThat(run.result())
+                .hasValueSatisfying(result -> assertThat(result.warnings()).contains("BUDGET_LIMITED:MODEL_CALLS"));
+    }
+
+    @Test
+    void duplicateIdempotencyKeysWithinOneDecisionRemainRejected() {
+        ToolRequest call = toolRequest("same-key", "read", "1.0.0", new ToolArguments("read.input", "1", Map.of()));
+        var guard = new io.haifa.agent.runtime.core.guard.DuplicateToolCallGuard();
+        assertThatThrownBy(() -> guard.check(new ToolCallDecision(List.of(call, call))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("duplicate tool request idempotency key");
+    }
+
+    @Test
+    void unknownAndCancellationRemainTerminalWithoutTaskFailureClustering() {
+        for (String category : List.of("OUTCOME_UNKNOWN", "CANCELLED")) {
+            AtomicInteger calls = new AtomicInteger();
+            AtomicInteger executions = new AtomicInteger();
+            Fixture fixture = fixture(
+                    request -> {
+                        if (calls.incrementAndGet() > 1)
+                            throw new AssertionError("safety outcome must stop before another model call");
+                        return response(new ToolCallDecision(List.of(
+                                environmentFailureRequest("terminal", "bounded", "probe")
+                                        .requests()
+                                        .getFirst(),
+                                environmentFailureRequest("pending-sibling", "bounded", "probe")
+                                        .requests()
+                                        .getFirst())));
+                    },
+                    builder -> TestToolPlatform.install(
+                            builder, "environment-probe", "1.0.0", "environment-probe.input", false, request -> {
+                                executions.incrementAndGet();
+                                return new ToolResult(
+                                        false,
+                                        "terminal tool outcome",
+                                        Map.of("failureCategory", category),
+                                        List.of(),
+                                        List.of(),
+                                        false);
+                            }));
+            var accepted = fixture.runtime.start(request("terminal-" + category));
+            fixture.scheduler.runAll();
+            assertThat(calls).hasValue(1);
+            assertThat(executions).hasValue(1);
+            assertThat(fixture.store.toolCalls(accepted.runId())).hasSize(2);
+            assertThat(fixture.store.toolCalls(accepted.runId()).getLast().status())
+                    .isEqualTo(io.haifa.agent.core.tool.ToolCallStatus.CANCELLED);
+            assertThat(fixture.store.messages(accepted.runId()).stream()
+                            .flatMap(message -> message.contents().stream())
+                            .filter(io.haifa.agent.core.content.ToolResultPart.class::isInstance)
+                            .count())
+                    .isEqualTo(2);
+            var run = fixture.store.find(accepted.runId()).orElseThrow();
+            if (category.equals("OUTCOME_UNKNOWN")) {
+                assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+                assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
+                assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().output())
+                        .isPresent();
+            } else {
+                assertThat(run.status()).isEqualTo(AgentRunStatus.CANCELLED);
+            }
+        }
     }
 
     @Test

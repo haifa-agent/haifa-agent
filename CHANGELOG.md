@@ -1,5 +1,7 @@
 # Changelog
 
+- Runtime removes task-progress ledgers, failure-cluster strategy escalation and semantic repetition termination. The model selects task strategy within existing resource and authorization limits. Duplicate batch keys and unknown/cancellation safety remain enforced; checkpoint payload 5.0 removes decision fingerprints without legacy readers or migration; obsolete strategy event projections and error codes are removed. Coding prompt is now 1.8.0 and Personal Profile is 1.0.1. Removed Runtime Core Java strategy types and constructor parameters are source-incompatible.
+
 - Runtime Core removes `ResumeCheckpointSelector`; Checkpoint restore receives the persisted Attempt source directly. Explicit missing sources fail closed; unselected restore retains latest fallback. Core constructors and restore method change; persistence schema is unchanged.
 
 - Runtime Core: removed `RequiredArtifactChecker`, its Builder setter and Guard constructor parameter; product artifact checks now implement `CompletionPolicy`. Stable Runtime API and persistence formats are unchanged.

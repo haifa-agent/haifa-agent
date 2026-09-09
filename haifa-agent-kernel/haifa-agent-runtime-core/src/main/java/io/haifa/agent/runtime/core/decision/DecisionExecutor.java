@@ -466,18 +466,50 @@ public final class DecisionExecutor {
                     new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
             state.appendStep(step);
             appendToolResult(run, call, result.summary());
+            if (stopForTerminalToolOutcome(run, call)) return AgentLoopDirective.STOP;
             checkpoints.capture(
-                    run,
-                    loopContext.iteration(),
-                    loopContext.fingerprints(),
-                    loopContext.forcedContextRebuildAttempts(),
-                    CheckpointType.AUTOMATIC);
+                    run, loopContext.iteration(), loopContext.forcedContextRebuildAttempts(), CheckpointType.AUTOMATIC);
             if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
                 throw new CancellationObservedException();
             }
             if (controls.signal(run.id()) == RunControlSignal.PAUSE) break;
         }
         return AgentLoopDirective.CONTINUE;
+    }
+
+    /** Safety outcomes are execution facts, independent of task progress or retry strategy. */
+    private boolean stopForTerminalToolOutcome(AgentRun run, ToolCall call) {
+        if (call.status() == io.haifa.agent.core.tool.ToolCallStatus.COMPLETED
+                || call.error().isEmpty()) return false;
+        AgentError failure = call.error().orElseThrow().error();
+        String category = String.valueOf(failure.details()
+                        .getOrDefault("failureCategory", failure.code().wireCode()))
+                .toUpperCase(java.util.Locale.ROOT);
+        boolean unknown = failure.code() == AgentErrorCode.TOOL_OUTCOME_UNKNOWN || category.contains("OUTCOME_UNKNOWN");
+        boolean cancelled = category.equals("CANCELLED")
+                || (call.status() == io.haifa.agent.core.tool.ToolCallStatus.CANCELLED && category.contains("CANCEL"));
+        if (!unknown && !cancelled) return false;
+        cancelPendingSiblingTools(run, call);
+        String reason = unknown ? "TERMINATE_OUTCOME_UNKNOWN" : "TERMINATE_CANCELLED";
+        events.append(run.id(), "run.structured-termination", Map.of("reason", reason), time.now());
+        if (unknown) {
+            AgentError error = new AgentError(
+                    AgentErrorCode.TOOL_OUTCOME_UNKNOWN,
+                    Map.of("failureCategory", "OUTCOME_UNKNOWN"),
+                    ids.nextValue(),
+                    time.now());
+            failWithSummary(
+                    run,
+                    error,
+                    io.haifa.agent.runtime.core.recovery.TerminalFailureSummary.create(
+                            error, state.toolCalls(run.id()), state.steps(run.id())));
+        } else {
+            transitions.cancelled(
+                    run,
+                    new io.haifa.agent.core.run.RunTerminationReason(
+                            "TOOL_CANCELLED", "Tool cancellation ended the current run"));
+        }
+        return true;
     }
 
     private void rejectToolRequest(
@@ -566,7 +598,6 @@ public final class DecisionExecutor {
             checkpoints.capture(
                     run,
                     loopContext.iteration(),
-                    loopContext.fingerprints(),
                     loopContext.forcedContextRebuildAttempts(),
                     CheckpointType.INTERACTION);
             transitions.waiting(run, new InteractionRequestRef(requestId, interactionType), true);
@@ -649,12 +680,9 @@ public final class DecisionExecutor {
                     new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
             state.appendStep(step);
             appendToolResult(run, call, result.summary());
+            if (stopForTerminalToolOutcome(run, call)) return Optional.of(AgentLoopDirective.STOP);
             checkpoints.capture(
-                    run,
-                    loopContext.iteration(),
-                    loopContext.fingerprints(),
-                    loopContext.forcedContextRebuildAttempts(),
-                    CheckpointType.AUTOMATIC);
+                    run, loopContext.iteration(), loopContext.forcedContextRebuildAttempts(), CheckpointType.AUTOMATIC);
         }
         return Optional.of(AgentLoopDirective.CONTINUE);
     }
@@ -679,6 +707,11 @@ public final class DecisionExecutor {
         }
         appendToolResult(run, failedCall, toolError.message());
 
+        cancelPendingSiblingTools(run, failedCall);
+        return new AgentExecutionFailureException(toolError, failure);
+    }
+
+    private void cancelPendingSiblingTools(AgentRun run, ToolCall failedCall) {
         for (ToolCall sibling : state.toolCalls(run.id())) {
             if (sibling.id().equals(failedCall.id()) || sibling.startedAt().isPresent() || terminal(sibling.status()))
                 continue;
@@ -711,7 +744,6 @@ public final class DecisionExecutor {
                             ""),
                     time.now());
         }
-        return new AgentExecutionFailureException(toolError, failure);
     }
 
     private static boolean terminal(ToolCallStatus status) {
@@ -769,7 +801,6 @@ public final class DecisionExecutor {
             checkpoints.capture(
                     run,
                     loopContext.iteration(),
-                    loopContext.fingerprints(),
                     loopContext.forcedContextRebuildAttempts(),
                     CheckpointType.INTERACTION);
             transitions.waiting(run, new InteractionRequestRef(requestId.value(), EXECUTION_RECOVERY_TYPE), false);
@@ -999,11 +1030,7 @@ public final class DecisionExecutor {
                         "warnings", result.warnings()));
         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 0, 1, 0, 0));
         checkpoints.capture(
-                run,
-                loopContext.iteration(),
-                loopContext.fingerprints(),
-                loopContext.forcedContextRebuildAttempts(),
-                CheckpointType.AUTOMATIC);
+                run, loopContext.iteration(), loopContext.forcedContextRebuildAttempts(), CheckpointType.AUTOMATIC);
         if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
         return AgentLoopDirective.CONTINUE;
     }
@@ -1032,7 +1059,6 @@ public final class DecisionExecutor {
             checkpoints.capture(
                     run,
                     loopContext.iteration(),
-                    loopContext.fingerprints(),
                     loopContext.forcedContextRebuildAttempts(),
                     CheckpointType.INTERACTION);
             transitions.waiting(

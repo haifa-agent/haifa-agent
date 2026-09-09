@@ -46,28 +46,7 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
                     "execution.failed",
                     Map.of("toolCallId", "call-rejected", "executionId", "call-rejected"));
             insertEvent(
-                    connection,
-                    6,
-                    "tool.failure-cluster-updated",
-                    Map.of(
-                            "iteration",
-                            2,
-                            "fingerprintDigest",
-                            "a".repeat(64),
-                            "failureCategory",
-                            "FILESYSTEM_DENIED",
-                            "attempts",
-                            2,
-                            "directive",
-                            "REQUIRE_STRATEGY_CHANGE",
-                            "unsafeHostPath",
-                            "/private/secret"));
-            insertEvent(
-                    connection,
-                    7,
-                    "loop.progress-observed",
-                    Map.of("iteration", 3, "progressDigest", "b".repeat(64), "unsafePrompt", "do not project"));
-            insertEvent(connection, 8, "run.completed", Map.of("status", "COMPLETED"));
+                    connection, 8, "run.completed", Map.of("status", "COMPLETED", "unsafePrompt", "do not project"));
         }
 
         var evidence = new AutonomousDeliveryRuntimeEvidenceReader(json).read(database);
@@ -83,16 +62,8 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
         assertTrue(evidence.diffInspected());
         assertEquals(2, evidence.scratchProvisionedCount());
         assertTrue(evidence.scratchSatisfied());
-        assertEquals(2, evidence.maximumClusterAttempts());
         assertTrue(evidence.terminalStateObserved());
-        evidence.failureClusters().forEach(event -> {
-            assertFalse(event.containsKey("unsafeHostPath"));
-            assertFalse(event.containsKey("unsafePrompt"));
-        });
-        evidence.progress().forEach(event -> {
-            assertFalse(event.containsKey("unsafeHostPath"));
-            assertFalse(event.containsKey("unsafePrompt"));
-        });
+        assertFalse(json.writeValueAsString(evidence).contains("do not project"));
     }
 
     @Test

@@ -49,43 +49,24 @@ Runtime Core 不依赖 Coding 产品类型，也不读取 Coding 表。Final 缺
 Client Event 投影只把结构化字段映射为 `DeliveryLifecycle`，用于 Recovering、Verifying 和 Budget
 Threshold 展示；Prompt、Host Path、stderr、Fingerprint 和 Tool 原始参数不进入公共投影。
 
-测试源码中的 `RuntimeControlTraceReplay` 为这些生产控制事件提供确定性只读 Reducer，不进入生产 JAR。
-`RuntimeControlTraceReplayTest` 保持 Harness 的既有测试入口。Replay 输入只接受安全事件
-类型与白名单化结构字段，不读取 Prompt、Credential、Provider Response、命令、stderr 或 Host Path；
-测试覆盖环境恢复、失败簇策略切换、结构化终止、Completion Repair、验证完成、outcome unknown、
-Checkpoint 恢复、失败副作用和 Interaction/Approval 继续等十类控制序列。未知事件保持前向兼容，
-非幂等 outcome unknown 只记录为不可重放，不触发执行。
+测试源码中的 `RuntimeControlTraceReplay` 只验证当前 Completion、预算、交互及执行事件的安全控制字段；不包含旧进展/策略事件的兼容读取。
 
-## 自主恢复与有效进展
+## 模型负责进展判断，Runtime 执行硬边界
 
-AgentLoop 按 Tool 坐标摘要、命令目标、可信有效操作族、语义失败类别、稳定错误码、完整规范化 Tool
-请求的不可逆摘要、工作区范围摘要、资源类别和 Sandbox 摘要生成 SHA-256 Failure Fingerprint；原始
-Tool 参数、命令、路径、描述、stderr 和 Credential 不进入恢复事件。无有效进展的完全相同请求失败簇按“首次诊断、第二次强制改变策略、
-第三次结构化终止”推进；`OUTCOME_UNKNOWN`、取消和 Policy 拒绝继续服从
-各自更严格的既有边界。Decision 使用 `action/1:<type>:<sha256>` 的有界动作身份，原始 Prompt、正文、
-路径、Tool 参数和运行标识不写入 Step 或 Checkpoint。完全重复 Tool Call 仍由专门 Guard 处理；
-Decision 重复或 A-B 模式只有与冻结窗口内不变的权威 Progress Digest 同时出现才形成停滞。
+Runtime 不再维护 Progress Ledger、失败指纹/失败簇、重复或 A-B 决策的停滞裁决，也不会在第三次普通
+Tool 失败时自动终止或要求模型换策略。主模型从工具结果决定继续、换方法、请求帮助或完成；产品提示词
+提供工作指导，Runtime 不增加额外的进展评审模型调用。不同调用身份的相同工具参数允许再次执行；
+同一批次重复幂等键仍拒绝。
 
-重复 Tool 失败或 Outcome Unknown 触发结构化终止时，Run 仍保持 `FAILED`，但 Runtime 会在同一
-Unit of Work 中持久化一条用户可见的部分完成总结和 Run output。总结只使用已持久化的安全事实：
-成功 Tool 的有界 `purpose`、最后未完成的有界 `purpose`、稳定错误码和安全 Step 错误；不读取或
-回显 Tool 参数正文、Prompt、stderr、Provider 原始响应或凭据。Conversation 刷新或进程重启后仍可
-看到已完成事项、未完成事项和需要人工处理的下一步，且不会把部分结果伪装成成功。
+取消、ownership、冻结次数/时间/Token 限制、Tool Journal/unknown、当前 Policy/Approval、输入协议校验、
+技术重试、Completion Repair、Context 压缩保持原边界。工具已确认的 unknown/cancelled 事实在执行边界
+终止并取消未派发的同批工具，保留关联 Tool Result；unknown 的安全部分结果不会被伪装成成功。
+普通工具失败不再生成 REPEATED_TOOL_FAILURE，资源耗尽继续使用明确资源原因及既有 partial/failed 规则。
 
-有效进展只来自 Workspace/Artifact 变化、Todo 状态推进、绑定当前 Workspace 的可信 Build/Test Validation、Blocker 移除、
-Interaction 输入或 Child Result；Message 数与失败 Tool Call 数不算进展。最近 32 条安全摘要组成
-`progress/2` 有界 Ledger；只读 DIFF 成功不算进展。单文件 Mutation 的 `changeSetId`、执行观察的 `fileChangeSetId` 以及多文件 Patch 的
-`changeSetIds` 都作为权威 Workspace 进展，重复引用不会重复计数。通用无进展窗口在首次权威有效进展后才开始计数；初始只读侦察仍受完全重复 Decision、
-失败簇和硬预算约束，不会被误当成已停滞的交付。首次停滞只持久化一次 Agent-visible
-`STALL_RECOVERY` 控制事实并要求改变语义动作；仍无进展才以 `AGENT_LOOP_DETECTED` 终止。恢复时从权威 ToolCall、Plan、Child Run、
-Interaction 与 Usage 重建控制状态；旧
-Checkpoint 无需 Schema 升级。精确剩余模型、工具、迭代、时间和 Token 预算只写入安全 Trace，不再逐轮
-改变模型请求；模型仅在失败恢复或 50%、25%、10% 阈值首次跨越时收到控制指导。动态指导作为新的
-Agent-visible Session Message 追加，不替换或插入既有消息，因此正常请求可复用稳定 Prompt 与完整历史前缀。
-失败簇和有效进展在 Resume 时继续从权威 ToolCall、Plan、Child Run、Interaction 与 Usage 重建；恢复后
-观察到同一停滞仍会结构化终止，不会因进程重启重置策略切换预算。客户端事件将
-`loop.progress-observed`、`loop.stall-detected`、`loop.recovery-strategy-required` 和
-`loop.recovery-exhausted` 投影为既有 `DeliveryLifecycle`，不暴露内部 Digest 或动作内容。
+Checkpoint 删除 decisionFingerprints 字段，载荷版本为 5.0，不提供旧策略数据的兼容或迁移，
+恢复不重建策略计数。旧进展/策略事件投影、错误码及 Harness 读取均已删除。
+50%、25%、10% 预算阈值仍按现有机制追加安全提示，恢复后不重复已跨越的阈值。Completion 与参数修复
+共享的 RepairRetryPolicy 本批未调整，不将普通工具失败与无效请求协议混为一类。
 
 冻结 Tool Definition 含 `FILE_WRITE` 或 `PROCESS_EXECUTION` 时，Runtime 在首次实际 dispatch 前捕获
 `WORKSPACE_SNAPSHOT` checkpoint；纯读 Tool 不触发该基线。已注册 Capability Participant 的 Host 会在同一
@@ -197,13 +178,11 @@ Model、Tool、预算和完成门禁在拥有语义的边界映射到稳定 `Age
 `RUNTIME_EXECUTION_FAILED` 只处理无法更精确分类的软件故障。可选 `FailureDiagnosticSink`
 接收所有终止 Attempt 的原始 Throwable 与已分类安全上下文，由实现负责有界脱敏存储；Trace 或诊断 Sink 失败属于观测投影失败，不会改变已经确定的
 Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOOL_OUTCOME_UNKNOWN` 并禁止盲目重放。
-重复 Decision、A-B Decision 或已发生有效进展后的无进展窗口统一映射为稳定
-`AGENT_LOOP_DETECTED`；安全详情只包含枚举化 `loopReason`，不投影 Decision fingerprint、Tool 参数或 Prompt。
 - Runtime 只调用 Core `AgentRun` 的受控行为，不复制生命周期合法性表。
 - `start` 在 Run 持久化并提交执行后返回 `PENDING/QUEUED` 快照；等待完成由 `AgentRunHandle` 显式提供。
 - 本地执行调度器按 Run 跟踪活动任务；取消 `RUNNING/SUSPENDING` Run 时会同时写入控制信号并尽力中断阻塞中的执行线程。模型边界把由该信号触发的中断收敛为 `CANCELLED`，不会误记为模型失败或 Run 失败。
 - 每次 Start、Resume 或崩溃恢复都创建新的 `AgentRunExecutionAttempt`；它记录 Worker、Heartbeat、错误和恢复 Checkpoint，同一逻辑 Run 同时最多一个活动 Attempt。`ExecutionOwnershipPort` 为未来分布式 Lease 保留真实校验边界。
-- AgentLoop 固定执行控制检查、状态协调、预算/循环 Guard、Context IR 构建、冻结模型调用、响应归一化、Decision 校验/执行、持久化和 Checkpoint；全部 Middleware 阶段及失败策略显式可测。模型、工具、交互、委派、Trace 和持久化均通过最小 Port 注入。
+- AgentLoop 固定执行控制检查、状态协调、预算/迭代 Guard、Context IR 构建、冻结模型调用、响应归一化、Decision 校验/执行、持久化和 Checkpoint；全部 Middleware 阶段及失败策略显式可测。模型、工具、交互、委派、Trace 和持久化均通过最小 Port 注入。
 - Runtime 只接受带 `adapterType + adapterVersion` 的 `AgentChatModel` 注册。`FrozenModelInvoker` 按 Run 快照精确绑定 Adapter；缺失版本时确定性失败，不回退到当前版本，也不重新读取模型目录。
 - `ModelMessageAssembler` 是 `AgentContext(PromptComponent/ContextItem)` 到供应商无关 `ModelMessage` 的唯一转换边界；Middleware 产生结构化 Context IR，不拼接共享 Prompt 字符串。跨 Run 的 Session 历史按每条消息所属 Run 解析权威 ToolCall，批准或拒绝工具后的下一轮仍可重建完整 Provider Tool 协议。跨模型历史继续投影为结构化 Tool Call/Result，同时剥离旧 continuation，并仅在模型请求内确定性重映射 Provider correlation；持久化事实不变。`SessionMessageSource` 正常丢弃未闭合历史组，Assembler 对绕过该筛选的跨模型历史防御性补充“结果未记录”的结构化 Tool Result；当前模型组不完整仍 fail closed。
 - 大型 Tool Result 先归一化为有界内联事实，再尽力写入外部 Asset；Asset 写入失败不会覆盖已知 Tool Outcome，也不会阻断下一轮模型诊断。只有权威内联结果本身无法持久化时才以 `TOOL_RESULT_PERSISTENCE_FAILED` 终止。

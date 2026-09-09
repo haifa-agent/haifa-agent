@@ -11,7 +11,6 @@ import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.runtime.core.storage.CheckpointRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -104,19 +103,14 @@ public final class CheckpointManager {
     }
 
     public Optional<Checkpoint> capture(
-            AgentRun run,
-            int completedIteration,
-            List<String> fingerprints,
-            int forcedContextRebuildAttempts,
-            CheckpointType type) {
+            AgentRun run, int completedIteration, int forcedContextRebuildAttempts, CheckpointType type) {
         if (!policy.shouldCapture(run, completedIteration, type)) return Optional.empty();
         long started = System.nanoTime();
         long phaseStarted = started;
         long sequence = repository.latest(run.id()).map(Checkpoint::sequence).orElse(0L) + 1L;
         long latestMillis = elapsedMillis(phaseStarted);
         phaseStarted = System.nanoTime();
-        var snapshot = snapshotBuilder.build(
-                run, completedIteration, fingerprints, forcedContextRebuildAttempts, type, sequence);
+        var snapshot = snapshotBuilder.build(run, completedIteration, forcedContextRebuildAttempts, type, sequence);
         long snapshotMillis = elapsedMillis(phaseStarted);
         phaseStarted = System.nanoTime();
         repository.append(snapshot.checkpoint(), snapshot.state());

@@ -184,7 +184,6 @@ class SqliteCheckpointRepositoryTest {
                 new TenantRef("tenant"),
                 new PrincipalRef("principal", "user"),
                 1,
-                List.of("decision"),
                 MessageCursor.BEFORE_FIRST,
                 Optional.empty(),
                 new RunConfigurationSnapshotRef("config", "sha256:config"),

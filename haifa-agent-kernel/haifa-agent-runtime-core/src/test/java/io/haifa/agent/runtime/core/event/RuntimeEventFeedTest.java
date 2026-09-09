@@ -369,45 +369,6 @@ class RuntimeEventFeedTest {
                 .isEmpty();
     }
 
-    @Test
-    void projectsProgressAndStallLifecycleWithoutLeakingInternalEvidence() {
-        InMemoryRuntimeStore store = storeWithRun("run-stall-events");
-        AgentRunId runId = new AgentRunId("run-stall-events");
-        RuntimeClientEventProjector projector = new RuntimeClientEventProjector(store);
-
-        List<io.haifa.agent.runtime.api.AgentRunEvent> events = List.of(
-                projected(projector, runId, 1, "loop.progress-observed", Map.of("evidence", "MEANINGFUL")),
-                projected(
-                        projector,
-                        runId,
-                        2,
-                        "loop.stall-detected",
-                        Map.of("reason", "ALTERNATING_DECISION", "recoveryAttempts", 1)),
-                projected(
-                        projector,
-                        runId,
-                        3,
-                        "loop.recovery-strategy-required",
-                        Map.of("reason", "ALTERNATING_DECISION", "recoveryAttempts", 1)),
-                projected(
-                        projector,
-                        runId,
-                        4,
-                        "loop.recovery-exhausted",
-                        Map.of("reason", "ALTERNATING_DECISION", "recoveryAttempts", 1)));
-
-        assertThat(events)
-                .extracting(io.haifa.agent.runtime.api.AgentRunEvent::eventType)
-                .containsExactly(
-                        "progress.observed", "stall.detected", "recovery.strategy-required", "recovery.exhausted");
-        assertThat(events)
-                .extracting(event -> ((RunEventPayloads.DeliveryLifecycle) event.payload()).status())
-                .containsExactly(
-                        "PROGRESS_OBSERVED", "STALL_DETECTED", "STRATEGY_CHANGE_REQUIRED", "RECOVERY_EXHAUSTED");
-        assertThat(events).allSatisfy(event -> assertThat(event.payload().toString())
-                .doesNotContain("progressDigest", "rawPath", "CANARY_PRIVATE_ACTION"));
-    }
-
     private static io.haifa.agent.runtime.api.AgentRunEvent projected(
             RuntimeClientEventProjector projector,
             AgentRunId runId,

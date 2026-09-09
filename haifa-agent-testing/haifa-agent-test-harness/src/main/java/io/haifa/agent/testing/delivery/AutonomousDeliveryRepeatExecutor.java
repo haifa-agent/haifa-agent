@@ -125,10 +125,8 @@ final class AutonomousDeliveryRepeatExecutor {
                 remainingGraderBudget(suite, wallTimeMillis),
                 toolchains.minimalPath());
         Map<String, Object> acceptanceArtifact = acceptanceArtifact(testCase, grade);
-        boolean bounded = client.contract().completedWithinBudget()
-                && client.contract().assemblyClosed()
-                && withinBudget
-                && authoritative.maximumClusterAttempts() <= 4;
+        boolean bounded =
+                client.contract().completedWithinBudget() && client.contract().assemblyClosed() && withinBudget;
         boolean caseTenConverged = testCase.caseId().equals("10") && bounded && wallTimeMillis < 900_000;
         boolean preliminaryGatePassed = gateEligible(
                 grade.passed(),
