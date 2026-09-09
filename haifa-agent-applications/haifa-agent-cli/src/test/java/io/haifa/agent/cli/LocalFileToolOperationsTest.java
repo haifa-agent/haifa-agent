@@ -156,6 +156,11 @@ class LocalFileToolOperationsTest {
         assertThat(result.structuredData())
                 .containsEntry("complete", true)
                 .doesNotContainKeys("changeReviewArtifactRef", "artifactRef", "changeReviewArtifact", "changeSetIds");
+        assertThat(result.structuredData().get("afterContentHash"))
+                .isInstanceOfSatisfying(String.class, hash -> assertThat(hash).matches("sha256:[0-9a-f]{64}"));
+        assertThat(result.structuredData().get("afterContentHashes"))
+                .isInstanceOfSatisfying(Map.class, hashes -> assertThat(hashes)
+                        .containsEntry(hostPath, result.structuredData().get("afterContentHash")));
         assertThat(Files.readString(sourceFile)).isEqualTo("anchor\nnew\n");
     }
 
@@ -233,6 +238,8 @@ class LocalFileToolOperationsTest {
                 arguments);
 
         assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData().get("afterContentHash"))
+                .isInstanceOfSatisfying(String.class, hash -> assertThat(hash).matches("sha256:[0-9a-f]{64}"));
         assertThat(Files.readString(tracked)).isEqualTo("after");
     }
 
@@ -545,6 +552,8 @@ class LocalFileToolOperationsTest {
                 arguments(Map.of("path", hostPath, "content", "hello world")));
 
         assertThat(createRes.successful()).isTrue();
+        assertThat(createRes.structuredData().get("afterContentHash"))
+                .isInstanceOfSatisfying(String.class, hash -> assertThat(hash).matches("sha256:[0-9a-f]{64}"));
         assertThat(ledger.compactedChanges(f.workspaceId)).hasSize(1);
         SessionFileChangeRecord record = ledger.compactedChanges(f.workspaceId).get(0);
         assertThat(record.path().projectPath().value()).isEqualTo("hello.txt");

@@ -1306,6 +1306,48 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void normallyExitedNonZeroExecutionCompletesTheToolAndPublishesOnlyCompletionEvents() {
+        ToolRequest request = toolRequest(
+                "non-zero-exit", "execution_run", "1.0.0", new ToolArguments("execution.run.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("handled exit code")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "execution.run",
+                        "1.0.0",
+                        "execution.run.input",
+                        true,
+                        invocation -> new ToolResult(
+                                true,
+                                "Command exited (exit 1)",
+                                Map.of("status", "EXITED", "exitCode", 1, "truncated", false),
+                                List.of(),
+                                List.of(),
+                                false)));
+
+        var accepted = fixture.runtime.start(request("non-zero-exit"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        var persistedCall = fixture.store.toolCalls(accepted.runId()).getFirst();
+        assertThat(fixture.store.toolCalls(accepted.runId())).singleElement();
+        assertThat(persistedCall.status()).isEqualTo(ToolCallStatus.COMPLETED);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
+                .contains("tool.succeeded", "execution.completed")
+                .doesNotContain("tool.failed", "execution.failed");
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("execution.completed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("toolCallId", persistedCall.id().value())
+                        .containsEntry("rawStatus", "EXITED")
+                        .containsEntry("status", "COMPLETED")
+                        .containsEntry("exitCode", 1));
+    }
+
+    @Test
     void projectsUnknownStableProviderFailureCodeWithoutReplacingItWithTheGenericRunCode() {
         ToolRequest request =
                 toolRequest("sandbox-provision", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));

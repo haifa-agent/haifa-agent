@@ -322,7 +322,10 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         ensureAbsent(target);
         createTarget(mutationContext, target, bytes);
         recordCreate(target, bytes, mutationContext);
-        return success("Created " + target.displayPath(), Map.of("path", target.displayPath()));
+        String afterContentHash = "sha256:" + digest(bytes);
+        return success(
+                "Created " + target.displayPath(),
+                Map.of("path", target.displayPath(), "afterContentHash", afterContentHash));
     }
 
     private ToolResult write(
@@ -339,11 +342,17 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             if (exception.code() != WorkspaceFileErrorCode.PATH_NOT_FOUND) throw exception;
             createTarget(mutationContext, target, bytes);
             recordCreate(target, bytes, mutationContext);
-            return success("Created " + target.displayPath(), Map.of("path", target.displayPath()));
+            String afterContentHash = "sha256:" + digest(bytes);
+            return success(
+                    "Created " + target.displayPath(),
+                    Map.of("path", target.displayPath(), "afterContentHash", afterContentHash));
         }
         writeTarget(mutationContext, target, bytes, before.contentHash());
         recordReplace(target, before, bytes, mutationContext);
-        return success("Wrote " + target.displayPath(), Map.of("path", target.displayPath()));
+        String afterContentHash = "sha256:" + digest(bytes);
+        return success(
+                "Wrote " + target.displayPath(),
+                Map.of("path", target.displayPath(), "afterContentHash", afterContentHash));
     }
 
     private ToolResult delete(
@@ -649,10 +658,12 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         }
 
         List<String> appliedPaths = new ArrayList<>();
+        Map<String, String> afterContentHashes = new LinkedHashMap<>();
         for (PatchPlanItem item : plan) {
             try {
                 commitPatchFile(mutationContext, item);
                 appliedPaths.add(item.target().displayPath());
+                afterContentHashes.put(item.target().displayPath(), "sha256:" + digest(item.content()));
             } catch (WorkspaceFileException | WorkspaceMutationException exception) {
                 return patchFailure(
                         patchText,
@@ -678,6 +689,14 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         data.put("atomic", false);
         data.put("appliedPaths", List.copyOf(appliedPaths));
         data.put("conflicts", List.of());
+        if (!afterContentHashes.isEmpty()) {
+            data.put("afterContentHashes", Map.copyOf(afterContentHashes));
+            if (afterContentHashes.size() == 1) {
+                data.put(
+                        "afterContentHash",
+                        afterContentHashes.values().iterator().next());
+            }
+        }
         return success("Applied patch to " + document.files().size() + " file(s).", Map.copyOf(data));
     }
 

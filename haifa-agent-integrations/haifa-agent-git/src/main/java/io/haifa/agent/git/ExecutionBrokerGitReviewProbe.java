@@ -2,7 +2,6 @@ package io.haifa.agent.git;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.execution.api.ExecutionBroker;
-import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.path.ProjectPath;
@@ -28,16 +27,13 @@ public final class ExecutionBrokerGitReviewProbe implements GitReviewProbe {
     @Override
     public GitReviewSnapshot captureBaseline(GitCommandContext context, GitRepositoryRef repository) {
         var head = git.run(context, repository.root(), List.of("rev-parse", "--verify", "HEAD"), 4096);
-        String revision = head.status() == ExecutionStatus.SUCCEEDED
-                ? head.stdout().summary().trim()
-                : "";
+        String revision = head.isZeroExit() ? head.stdout().summary().trim() : "";
         var status = git.run(
                 context,
                 repository.root(),
                 List.of("status", "--porcelain=v1", "--untracked-files=normal"),
                 256 * 1024);
-        boolean complete =
-                status.status() == ExecutionStatus.SUCCEEDED && !status.stdout().truncated();
+        boolean complete = status.isZeroExit() && !status.stdout().truncated();
         return new GitReviewSnapshot(revision, outputDigest(status.stdout().sha256()), complete);
     }
 
@@ -52,8 +48,8 @@ public final class ExecutionBrokerGitReviewProbe implements GitReviewProbe {
         var diff = git.run(context, repository.root(), List.of("diff", "--numstat", "HEAD", "--"), 256 * 1024);
         String evidenceDigest =
                 digest(status.stdout().sha256() + "\n" + diff.stdout().sha256());
-        boolean commandsComplete = status.status() == ExecutionStatus.SUCCEEDED
-                && diff.status() == ExecutionStatus.SUCCEEDED
+        boolean commandsComplete = status.isZeroExit()
+                && diff.isZeroExit()
                 && !status.stdout().truncated()
                 && !diff.stdout().truncated();
         List<GitReviewChange> changes;

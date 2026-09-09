@@ -213,6 +213,7 @@ public final class ExecutionToolDefinitionFactory {
                 "properties",
                 Map.ofEntries(
                         Map.entry("status", Map.of("type", "string")),
+                        Map.entry("processState", Map.of("type", "string")),
                         Map.entry("mode", Map.of("type", "string")),
                         Map.entry("language", Map.of("type", "string")),
                         Map.entry("exitCode", Map.of("type", "integer")),
@@ -228,6 +229,7 @@ public final class ExecutionToolDefinitionFactory {
                 "required",
                 List.of(
                         "status",
+                        "processState",
                         "mode",
                         "timedOut",
                         "cancelled",

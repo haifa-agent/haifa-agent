@@ -7,28 +7,39 @@ import org.junit.jupiter.api.Test;
 
 class CommandSemanticOutcomeInterpreterTest {
     @Test
-    void keepsNonzeroExitCodesAsFailuresUntilTheProductDeclaresThemExpected() {
-        assertThat(interpret("git diff --exit-code", ExecutionStatus.SUCCEEDED, 0))
+    void treatsExitedProcessOutcomesAsSucceededWithStructuredReasonCodes() {
+        assertThat(interpret("git diff --exit-code", ExecutionStatus.EXITED, 0))
                 .isEqualTo(CommandSemanticOutcome.SUCCEEDED);
-        assertThat(interpret("git diff --exit-code", ExecutionStatus.FAILED, 1))
-                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
-        assertThat(interpret("git diff --no-index before after", ExecutionStatus.FAILED, 1))
-                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
-        assertThat(interpret("git grep needle", ExecutionStatus.FAILED, 1))
-                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
+        assertThat(CommandSemanticOutcomeInterpreter.interpret("git diff --exit-code", ExecutionStatus.EXITED, 0)
+                        .reasonCode())
+                .isEqualTo("COMMAND_EXIT_ZERO");
+
+        assertThat(interpret("git diff --exit-code", ExecutionStatus.EXITED, 1))
+                .isEqualTo(CommandSemanticOutcome.SUCCEEDED);
+        assertThat(CommandSemanticOutcomeInterpreter.interpret("git diff --exit-code", ExecutionStatus.EXITED, 1)
+                        .reasonCode())
+                .isEqualTo("COMMAND_EXITED");
+
+        assertThat(interpret("pytest -k test_fail", ExecutionStatus.EXITED, 1))
+                .isEqualTo(CommandSemanticOutcome.SUCCEEDED);
+        assertThat(interpret("pytest --interrupted", ExecutionStatus.EXITED, 2))
+                .isEqualTo(CommandSemanticOutcome.SUCCEEDED);
+        assertThat(interpret("pytest --usage-error", ExecutionStatus.EXITED, 4))
+                .isEqualTo(CommandSemanticOutcome.SUCCEEDED);
+
+        assertThat(interpret("rg needle .", ExecutionStatus.EXITED, 1)).isEqualTo(CommandSemanticOutcome.SUCCEEDED);
+        assertThat(interpret("rg needle .", ExecutionStatus.EXITED, 2)).isEqualTo(CommandSemanticOutcome.SUCCEEDED);
     }
 
     @Test
-    void doesNotInferSuccessfulVariantsFromTheCommandText() {
-        assertThat(interpret("rg needle .", ExecutionStatus.FAILED, 1))
+    void keepsActualInfrastructureFailuresAsCommandFailed() {
+        assertThat(interpret("git diff --exit-code", ExecutionStatus.FAILED, null))
                 .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
-        assertThat(interpret("rg needle . | Select-Object -First 20", ExecutionStatus.FAILED, 1))
+        assertThat(interpret("git diff --exit-code", ExecutionStatus.FAILED, 1))
                 .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
-        assertThat(interpret("& 'C:\\tools\\rg.exe' needle .", ExecutionStatus.FAILED, 1))
-                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
-        assertThat(interpret("rg needle .", ExecutionStatus.FAILED, 2))
-                .isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
-        assertThat(interpret("echo rg", ExecutionStatus.FAILED, 1)).isEqualTo(CommandSemanticOutcome.COMMAND_FAILED);
+        assertThat(CommandSemanticOutcomeInterpreter.interpret("git diff --exit-code", ExecutionStatus.FAILED, null)
+                        .reasonCode())
+                .isEqualTo("EXECUTION_FAILED");
     }
 
     @Test

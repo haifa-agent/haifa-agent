@@ -268,6 +268,54 @@ class AutonomousDeliveryRecoveryControlTest {
     }
 
     @Test
+    void contentHashesOnlyAdvanceProgressWhenTheResultingFileContentChanges() {
+        var ledger = new ProgressLedger();
+
+        assertThat(ledger.observe(contentMutation("write-1", 'a'))).isTrue();
+        assertThat(ledger.observe(contentMutation("write-2", 'a'))).isFalse();
+        assertThat(ledger.observe(contentMutation("write-3", 'b'))).isTrue();
+        assertThat(ledger.size()).isEqualTo(2);
+    }
+
+    @Test
+    void batchContentHashesDeduplicateEachPathAndIgnorePatchRepresentationChanges() {
+        var ledger = new ProgressLedger();
+        assertThat(ledger.observe(patchMutation("patch-1", '1', 'a', 'b'))).isTrue();
+        assertThat(ledger.observe(patchMutation("patch-2", '2', 'a', 'b'))).isFalse();
+        assertThat(ledger.observe(patchMutation("patch-3", '3', 'c', 'b'))).isTrue();
+        assertThat(ledger.size()).isEqualTo(3);
+    }
+
+    @Test
+    void onlyNewFileContentResetsAnActiveFailureCluster() {
+        var context = new AgentLoopContext(1, List.of());
+        var calls = new java.util.ArrayList<ToolCall>();
+
+        calls.add(recoveryFailure("failure-1"));
+        context.observeAuthoritativeState(calls, Optional.empty(), 0);
+        assertThat(context.failureClusterAttempts()).isOne();
+        calls.add(contentMutation("write-1", 'a'));
+        assertThat(context.observeAuthoritativeState(calls, Optional.empty(), 0).progressObserved())
+                .isTrue();
+        assertThat(context.failureClusterAttempts()).isZero();
+
+        calls.add(recoveryFailure("failure-2"));
+        context.observeAuthoritativeState(calls, Optional.empty(), 0);
+        assertThat(context.failureClusterAttempts()).isOne();
+        calls.add(contentMutation("write-2", 'a'));
+        assertThat(context.observeAuthoritativeState(calls, Optional.empty(), 0).progressObserved())
+                .isFalse();
+        calls.add(recoveryFailure("failure-3"));
+        context.observeAuthoritativeState(calls, Optional.empty(), 0);
+        assertThat(context.failureClusterAttempts()).isEqualTo(2);
+
+        calls.add(contentMutation("write-3", 'b'));
+        assertThat(context.observeAuthoritativeState(calls, Optional.empty(), 0).progressObserved())
+                .isTrue();
+        assertThat(context.failureClusterAttempts()).isZero();
+    }
+
+    @Test
     void successfulPluralPatchBreaksTheNoProgressWindow() {
         var context = new AgentLoopContext(1, List.of("inspect-a", "inspect-b", "patch-a"));
         assertThat(context.observeInteractions(List.of("interaction-1"))).isPresent();
@@ -532,14 +580,44 @@ class AutonomousDeliveryRecoveryControlTest {
     }
 
     private static ToolCall completedChangeSets(String id, List<String> changeSetIds) {
+        return completedMutation(id, Map.of("changeSetIds", changeSetIds));
+    }
+
+    private static ToolCall contentMutation(String id, char hash) {
+        return completedMutation(
+                id,
+                Map.of(
+                        "path",
+                        "src/App.java",
+                        "afterContentHash",
+                        "sha256:" + String.valueOf(hash).repeat(64)));
+    }
+
+    private static ToolCall patchMutation(String id, char patchHash, char appHash, char testHash) {
+        return completedMutation(
+                id,
+                Map.of(
+                        "patchSha256",
+                        "sha256:" + String.valueOf(patchHash).repeat(64),
+                        "afterContentHashes",
+                        Map.of(
+                                "src/App.java",
+                                "sha256:" + String.valueOf(appHash).repeat(64),
+                                "src/AppTest.java",
+                                "sha256:" + String.valueOf(testHash).repeat(64))));
+    }
+
+    private static ToolCall recoveryFailure(String id) {
+        return failed(id, "bounded", PROFILE_A, "DEPENDENCY_UNAVAILABLE", "CACHE_UNAVAILABLE");
+    }
+
+    private static ToolCall completedMutation(String id, Map<String, Object> data) {
         ToolCall call = requested(id);
         call.beginValidation();
         call.beginPolicyCheck();
         call.start(NOW.plusSeconds(1));
         call.complete(
-                new ToolResult(
-                        true, "patch applied", Map.of("changeSetIds", changeSetIds), List.of(), List.of(), false),
-                NOW.plusSeconds(2));
+                new ToolResult(true, "mutation completed", data, List.of(), List.of(), false), NOW.plusSeconds(2));
         return call;
     }
 

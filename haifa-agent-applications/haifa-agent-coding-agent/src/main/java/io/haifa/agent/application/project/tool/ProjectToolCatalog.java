@@ -602,6 +602,7 @@ public final class ProjectToolCatalog {
             properties.put("toolCallId", Map.of("type", "string"));
             properties.put("executionId", Map.of("type", "string"));
             properties.put("status", Map.of("type", "string"));
+            properties.put("processState", Map.of("type", "string"));
             properties.put("exitCode", Map.of("type", "integer"));
             properties.put("expectedExitCodes", Map.of("type", "array", "items", Map.of("type", "integer")));
             properties.put("semanticOutcome", Map.of("type", "string"));
@@ -670,7 +671,7 @@ public final class ProjectToolCatalog {
                     "properties",
                     Map.copyOf(properties),
                     "required",
-                    List.of("executionId", "status", "output", "truncated", "durationMillis"),
+                    List.of("executionId", "status", "processState", "output", "truncated", "durationMillis"),
                     "additionalProperties",
                     false);
         }

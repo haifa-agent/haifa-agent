@@ -403,6 +403,7 @@ public final class ExecutionToolProvider implements ToolProvider {
                 || result.stderr().truncated();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", result.status().name());
+        data.put("processState", result.status().name());
         data.put("mode", parsed.mode);
         if (!parsed.language.isEmpty()) data.put("language", parsed.language);
         result.optionalExitCode().ifPresent(value -> data.put("exitCode", value));
@@ -417,6 +418,7 @@ public final class ExecutionToolProvider implements ToolProvider {
         data.put("scratchCleanupFailed", result.scratchCleanupFailed());
         String headline =
                 switch (result.status()) {
+                    case EXITED -> parsed.mode.equals("SCRIPT") ? "Script exited" : "Command exited";
                     case SUCCEEDED -> parsed.mode.equals("SCRIPT") ? "Script succeeded" : "Command succeeded";
                     case FAILED -> parsed.mode.equals("SCRIPT") ? "Script failed" : "Command failed";
                     case OUTPUT_LIMIT_EXCEEDED -> "Execution stopped after reaching its output budget";
@@ -428,13 +430,8 @@ public final class ExecutionToolProvider implements ToolProvider {
         if (result.exitCode() != null) headline += " (exit " + result.exitCode() + ")";
         String output = stdout.isBlank() ? stderr : stdout;
         String summary = output.isBlank() ? headline : headline + "\n" + output;
-        return new ToolResult(
-                result.status() == ExecutionStatus.SUCCEEDED,
-                summary,
-                Map.copyOf(data),
-                List.of(),
-                List.of(),
-                truncated);
+        boolean successful = result.status() == ExecutionStatus.SUCCEEDED || result.status() == ExecutionStatus.EXITED;
+        return new ToolResult(successful, summary, Map.copyOf(data), List.of(), List.of(), truncated);
     }
 
     private String sanitizeSummary(String value) {
