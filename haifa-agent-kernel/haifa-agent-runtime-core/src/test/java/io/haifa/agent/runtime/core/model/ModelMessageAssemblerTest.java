@@ -58,8 +58,6 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
 import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
-import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
-import io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
@@ -435,19 +433,40 @@ class ModelMessageAssemblerTest {
                 previousModel.providerOptions(),
                 previousModel.invocationOptions());
 
+        var sameModelMessages = new ModelMessageAssembler(store).assemble(RUN_ID, context, previousModel);
+        assertThat(sameModelMessages.get(1).reasoning()).contains(reasoning);
+        assertThat(sameModelMessages.get(1).toolCalls().getFirst().providerCorrelationId())
+                .isEqualTo(correlationId);
+
         var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context, anthropicModel);
 
+        ModelMessage switchedAssistant = messages.stream()
+                .filter(message -> message.role() == ModelMessageRole.ASSISTANT)
+                .findFirst()
+                .orElseThrow();
+        assertThat(switchedAssistant.reasoning()).isEmpty();
+        ProviderToolCallCorrelationId switchedCorrelation =
+                switchedAssistant.toolCalls().getFirst().providerCorrelationId();
+        assertThat(switchedCorrelation).isNotEqualTo(correlationId);
+        assertThat(switchedCorrelation.value()).matches("haifa_handoff_[0-9a-f]{40}");
         assertThat(messages)
-                .filteredOn(message -> message.role() == ModelMessageRole.ASSISTANT)
+                .filteredOn(message -> message.role() == ModelMessageRole.TOOL)
                 .singleElement()
-                .satisfies(message -> {
-                    assertThat(message.toolCalls()).singleElement();
-                    assertThat(message.reasoning()).isEmpty();
-                });
+                .satisfies(
+                        message -> assertThat(message.providerCorrelationId()).contains(switchedCorrelation));
+        assertThat(new ModelMessageAssembler(store)
+                        .assemble(RUN_ID, context, anthropicModel)
+                        .get(1)
+                        .toolCalls()
+                        .getFirst()
+                        .providerCorrelationId())
+                .isEqualTo(switchedCorrelation);
+        assertThat(store.toolCalls(previousRunId).getFirst().providerCorrelationId())
+                .isEqualTo(correlationId);
     }
 
     @Test
-    void compressesCompletedPriorProviderToolGroupIntoNeutralSummaryWhenSwitchingProvider() {
+    void preservesCompletedPriorModelToolGroupStructurallyWhenSwitchingProvider() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AgentRunId previousRunId = new AgentRunId("run-previous");
         AgentSessionId sessionId = new AgentSessionId("session-1");
@@ -525,22 +544,33 @@ class ModelMessageAssemblerTest {
 
         var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context, openAiModel);
 
-        assertThat(messages).noneMatch(m -> m.role() == ModelMessageRole.TOOL);
-
-        List<ModelMessage> assistantMessages = messages.stream()
-                .filter(m -> m.role() == ModelMessageRole.ASSISTANT)
-                .toList();
-        assertThat(assistantMessages).singleElement().satisfies(msg -> {
-            assertThat(msg.toolCalls()).isEmpty();
-            assertThat(msg.content()).contains("Let me search for that.");
-            assertThat(msg.content()).contains("[tool-call: utility_search arguments: {\"query\": \"haifa agent\"}]");
-            assertThat(msg.content()).contains("[tool-result: utility_search]");
-            assertThat(msg.content()).contains("found 3 results for haifa agent");
+        assertThat(messages)
+                .extracting(ModelMessage::role)
+                .containsExactly(
+                        ModelMessageRole.SYSTEM,
+                        ModelMessageRole.ASSISTANT,
+                        ModelMessageRole.TOOL,
+                        ModelMessageRole.USER);
+        ModelMessage assistantMessage = messages.get(1);
+        assertThat(assistantMessage.content()).isEqualTo("Let me search for that.");
+        assertThat(assistantMessage.toolCalls()).singleElement().satisfies(projectedCall -> {
+            assertThat(projectedCall.name()).isEqualTo("utility_search");
+            assertThat(projectedCall.arguments()).containsEntry("query", "haifa agent");
+            assertThat(projectedCall.providerCorrelationId()).isNotEqualTo(correlationId);
+            assertThat(projectedCall.providerCorrelationId().value()).matches("haifa_handoff_[0-9a-f]{40}");
         });
+        ProviderToolCallCorrelationId handoffCorrelation =
+                assistantMessage.toolCalls().getFirst().providerCorrelationId();
+        assertThat(messages.get(2).providerCorrelationId()).contains(handoffCorrelation);
+        assertThat(messages.get(2).content()).isEqualTo("found 3 results for haifa agent");
+        assertThat(messages.get(2).toolResultData()).containsEntry("count", 3);
+        assertThat(messages.get(2).toolResultTruncated()).isFalse();
+        assertThat(store.toolCalls(previousRunId).getFirst().providerCorrelationId())
+                .isEqualTo(correlationId);
     }
 
     @Test
-    void rejectsUnclosedPriorProviderToolGroupWhenSwitchingProvider() {
+    void closesUnfinishedPriorModelToolGroupStructurallyWhenSwitchingProvider() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AgentRunId previousRunId = new AgentRunId("run-previous");
         AgentSessionId sessionId = new AgentSessionId("session-1");
@@ -569,7 +599,10 @@ class ModelMessageAssemblerTest {
                 MessageStatus.COMPLETED,
                 MessageVisibility.AGENT_VISIBLE,
                 List.of(new ToolCallPart(toolCallId, correlationId, "utility_search", "1.0.0")),
-                Map.of("providerId", deepSeekModel.providerId().value()),
+                Map.of(
+                        "providerId", deepSeekModel.providerId().value(),
+                        "modelId", deepSeekModel.providerModelId(),
+                        "configurationDigest", deepSeekModel.configurationDigest()),
                 Instant.parse("2026-07-21T00:00:02Z")));
         AgentMessage user = message(
                 "next-user", sessionId, RUN_ID, MessageRole.USER, 2, List.of(new TextPart("continue", "plain")));
@@ -601,13 +634,26 @@ class ModelMessageAssemblerTest {
                 Map.of(),
                 Map.of());
 
-        assertThatThrownBy(() -> new ModelMessageAssembler(store).assemble(RUN_ID, context, openAiModel))
-                .isInstanceOf(ModelContinuationException.class)
-                .satisfies(error -> {
-                    ModelContinuationException mce = (ModelContinuationException) error;
-                    assertThat(mce.failure()).isEqualTo(ModelContinuationFailure.CROSS_MODEL_UNCLOSED_TOOL_GROUP);
-                    assertThat(mce.getMessage()).contains("模型切换需要新会话或先完成原模型工具轮次");
-                });
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context, openAiModel);
+
+        assertThat(messages)
+                .extracting(ModelMessage::role)
+                .containsExactly(
+                        ModelMessageRole.SYSTEM,
+                        ModelMessageRole.ASSISTANT,
+                        ModelMessageRole.TOOL,
+                        ModelMessageRole.USER);
+        ProviderToolCallCorrelationId handoffCorrelation =
+                messages.get(1).toolCalls().getFirst().providerCorrelationId();
+        assertThat(handoffCorrelation.value()).matches("haifa_handoff_[0-9a-f]{40}");
+        assertThat(messages.get(2).providerCorrelationId()).contains(handoffCorrelation);
+        assertThat(messages.get(2).content()).isEqualTo("Historical tool result was not recorded.");
+        assertThat(messages.get(2).toolResultData())
+                .containsEntry("status", "UNKNOWN")
+                .containsEntry("reasonCode", "HISTORICAL_TOOL_RESULT_MISSING");
+        assertThat(messages.get(3).content()).isEqualTo("continue");
+        assertThat(store.toolCalls(previousRunId).getFirst().providerCorrelationId())
+                .isEqualTo(correlationId);
     }
 
     @Test
