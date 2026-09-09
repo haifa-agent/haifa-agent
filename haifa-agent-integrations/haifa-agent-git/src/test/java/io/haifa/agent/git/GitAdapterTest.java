@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.execution.api.ExecutionBroker;
-import io.haifa.agent.execution.api.ExecutionFailure;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutput;
@@ -222,7 +221,7 @@ class GitAdapterTest {
         ExecutionOutput err = new ExecutionOutput("", null, 0, "sha256:empty", false, false);
         return new ExecutionResult(
                 id,
-                exitCode == 0 ? ExecutionStatus.SUCCEEDED : ExecutionStatus.FAILED,
+                ExecutionStatus.EXITED,
                 exitCode,
                 now,
                 now.plusMillis(1),
@@ -230,7 +229,7 @@ class GitAdapterTest {
                 err,
                 "session",
                 new ResourceUsageSummary(Duration.ofMillis(1), 1),
-                exitCode == 0 ? null : new ExecutionFailure("EXIT", "non-zero"),
+                null,
                 false);
     }
 }

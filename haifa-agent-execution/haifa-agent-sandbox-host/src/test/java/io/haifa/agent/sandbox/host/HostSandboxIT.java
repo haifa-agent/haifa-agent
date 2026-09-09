@@ -112,7 +112,7 @@ class HostSandboxIT {
                     Map.of(),
                     new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)))) {
                 var managedExit = managed.exit().get(5, TimeUnit.SECONDS);
-                assertThat(managedExit.status()).isEqualTo(io.haifa.agent.execution.api.ExecutionStatus.SUCCEEDED);
+                assertThat(managedExit.status()).isEqualTo(io.haifa.agent.execution.api.ExecutionStatus.EXITED);
                 assertThat(managed.observedProcessCount()).isGreaterThanOrEqualTo(0);
             }
 

@@ -526,9 +526,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                             ? io.haifa.agent.execution.api.ExecutionStatus.TIMED_OUT
                             : cancelRequested
                                     ? io.haifa.agent.execution.api.ExecutionStatus.CANCELLED
-                                    : process.exitValue() == 0
-                                            ? io.haifa.agent.execution.api.ExecutionStatus.SUCCEEDED
-                                            : io.haifa.agent.execution.api.ExecutionStatus.FAILED;
+                                    : io.haifa.agent.execution.api.ExecutionStatus.EXITED;
                     cancelRequested = false;
                     current = null;
                     boolean cleaned = cleanupScratchOnce();

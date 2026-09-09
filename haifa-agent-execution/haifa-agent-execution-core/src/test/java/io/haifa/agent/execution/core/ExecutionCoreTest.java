@@ -104,7 +104,10 @@ class ExecutionCoreTest {
 
         var result = broker.execute(request);
 
-        assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
+        assertThat(result.isExited()).isTrue();
+        assertThat(result.isZeroExit()).isTrue();
+        assertThat(result.optionalFailure()).isEmpty();
         assertThat(result.stdout().summary()).doesNotContain("secret-token", "remote-secret");
         assertThat(result.stdout().optionalAssetRef()).isPresent();
         byte[] stored = fixture.outputs.load(result.stdout().assetRef()).orElseThrow();
@@ -271,7 +274,7 @@ class ExecutionCoreTest {
                 chunk -> {
                     throw new IllegalStateException("presentation failed");
                 });
-        assertThat(observerFailureResult.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
+        assertThat(observerFailureResult.status()).isEqualTo(ExecutionStatus.EXITED);
     }
 
     @Test
@@ -299,7 +302,7 @@ class ExecutionCoreTest {
         var result = broker.execute(
                 fixture.request("redaction-policy", "redaction-policy-key", Set.of("execution.run"), List.of("fake")));
 
-        assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
         assertThat(result.stdout().summary())
                 .contains(
                         "port 8080 build 1234 color truecolor; cat in C:\\Users\\dev and C:\\Windows\\System32; key: ***; token: ***\n")
@@ -397,11 +400,11 @@ class ExecutionCoreTest {
             assertThat(session.exit()
                             .get(2, java.util.concurrent.TimeUnit.SECONDS)
                             .status())
-                    .isEqualTo(ExecutionStatus.SUCCEEDED);
+                    .isEqualTo(ExecutionStatus.EXITED);
         }
 
         var result = broker.find(request.id()).orElseThrow();
-        assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
         assertThat(result.stdout().summary()).doesNotContain("remote-secret");
         assertThat(policyCalls)
                 .as("managed execution must pass the same final ExecutionPolicy choke point")
@@ -430,7 +433,7 @@ class ExecutionCoreTest {
                     java.util.concurrent.CompletableFuture.delayedExecutor(
                                     20, java.util.concurrent.TimeUnit.MILLISECONDS)
                             .execute(() -> exit.complete(new io.haifa.agent.execution.api.ProcessExit(
-                                    ExecutionStatus.SUCCEEDED, 0, true, NOW.plusSeconds(1))));
+                                    ExecutionStatus.EXITED, 0, true, NOW.plusSeconds(1))));
                     return Optional.of(new io.haifa.agent.execution.api.ProcessOutputChunk(
                             ExecutionOutputChannel.STDOUT,
                             "{\"result\":\"partial-sec".getBytes(StandardCharsets.UTF_8),
@@ -480,7 +483,7 @@ class ExecutionCoreTest {
             assertThat(session.exit()
                             .get(2, java.util.concurrent.TimeUnit.SECONDS)
                             .status())
-                    .isEqualTo(ExecutionStatus.SUCCEEDED);
+                    .isEqualTo(ExecutionStatus.EXITED);
         }
 
         var result = broker.find(request.id()).orElseThrow();
@@ -561,11 +564,34 @@ class ExecutionCoreTest {
         return new Fixture(workspaceId, root, workspaces, bindings, manifests, new InMemoryExecutionOutputStore());
     }
 
+    @Test
+    void brokerCapturesNonzeroExitAsExitedStatusWithoutFailureObject() {
+        Fixture fixture = fixture();
+        SandboxProvider provider = fakeProvider(
+                () -> {}, "diff output\n".getBytes(StandardCharsets.UTF_8), SandboxProcessStatus.EXITED, 1);
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
+
+        var result = broker.execute(
+                fixture.request("nonzero-exit", "nonzero-key", Set.of("execution.run"), List.of("git", "diff")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.isExited()).isTrue();
+        assertThat(result.isZeroExit()).isFalse();
+        assertThat(result.optionalFailure()).isEmpty();
+        assertThat(result.stdout().summary()).isEqualTo("diff output\n");
+    }
+
     private static SandboxProvider fakeProvider(Runnable effect, byte[] stdout) {
-        return fakeProvider(effect, stdout, SandboxProcessStatus.EXITED);
+        return fakeProvider(effect, stdout, SandboxProcessStatus.EXITED, 0);
     }
 
     private static SandboxProvider fakeProvider(Runnable effect, byte[] stdout, SandboxProcessStatus processStatus) {
+        return fakeProvider(effect, stdout, processStatus, processStatus == SandboxProcessStatus.EXITED ? 0 : null);
+    }
+
+    private static SandboxProvider fakeProvider(
+            Runnable effect, byte[] stdout, SandboxProcessStatus processStatus, Integer exitCode) {
         return new SandboxProvider() {
             @Override
             public String providerId() {
@@ -590,7 +616,7 @@ class ExecutionCoreTest {
                         effect.run();
                         return new SandboxProcessResult(
                                 processStatus,
-                                processStatus == SandboxProcessStatus.EXITED ? 0 : null,
+                                exitCode,
                                 stdout,
                                 new byte[0],
                                 NOW,
@@ -642,7 +668,7 @@ class ExecutionCoreTest {
                         java.util.concurrent.CompletableFuture.delayedExecutor(
                                         20, java.util.concurrent.TimeUnit.MILLISECONDS)
                                 .execute(() -> exit.complete(new io.haifa.agent.execution.api.ProcessExit(
-                                        ExecutionStatus.SUCCEEDED, 0, true, NOW.plusSeconds(1))));
+                                        ExecutionStatus.EXITED, 0, true, NOW.plusSeconds(1))));
                         return java.util.Optional.of(new io.haifa.agent.execution.api.ProcessOutputChunk(
                                 io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
                                 "secret@github.example/repo.git\n".getBytes(StandardCharsets.UTF_8),

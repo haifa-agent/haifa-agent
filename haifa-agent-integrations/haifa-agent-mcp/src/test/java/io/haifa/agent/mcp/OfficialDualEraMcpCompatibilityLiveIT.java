@@ -223,10 +223,7 @@ class OfficialDualEraMcpCompatibilityLiveIT {
             Thread.ofVirtual().start(() -> pump(process.getErrorStream(), ExecutionOutputChannel.STDERR));
             exit = process.onExit()
                     .thenApply(completed -> new ProcessExit(
-                            completed.exitValue() == 0 ? ExecutionStatus.SUCCEEDED : ExecutionStatus.FAILED,
-                            completed.exitValue(),
-                            true,
-                            java.time.Instant.now()));
+                            ExecutionStatus.EXITED, completed.exitValue(), true, java.time.Instant.now()));
         }
 
         @Override

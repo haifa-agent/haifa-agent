@@ -3,7 +3,6 @@ package io.haifa.agent.git;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionResult;
-import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import java.util.List;
 
@@ -18,8 +17,7 @@ public final class ExecutionBrokerGitRevisionProbe implements GitRevisionProbe {
     @Override
     public GitRevision inspectHead(GitCommandContext context, GitRepositoryRef repository) {
         ExecutionResult inside = run(context, repository, List.of("rev-parse", "--is-inside-work-tree"), 4096);
-        if (inside.status() != ExecutionStatus.SUCCEEDED
-                || !inside.stdout().summary().trim().equals("true")) {
+        if (!inside.isZeroExit() || !inside.stdout().summary().trim().equals("true")) {
             return new GitRevision(false, "", "", false, false);
         }
         String commit = run(context, repository, List.of("rev-parse", "HEAD"), 4096)
@@ -27,12 +25,11 @@ public final class ExecutionBrokerGitRevisionProbe implements GitRevisionProbe {
                 .summary()
                 .trim();
         ExecutionResult branchResult = run(context, repository, List.of("symbolic-ref", "--short", "-q", "HEAD"), 4096);
-        String branch = branchResult.status() == ExecutionStatus.SUCCEEDED
-                ? branchResult.stdout().summary().trim()
-                : "";
+        String branch =
+                branchResult.isZeroExit() ? branchResult.stdout().summary().trim() : "";
         ExecutionResult modules = run(context, repository, List.of("submodule", "status"), 4096);
-        boolean hasSubmodules = modules.status() == ExecutionStatus.SUCCEEDED
-                && !modules.stdout().summary().isBlank();
+        boolean hasSubmodules =
+                modules.isZeroExit() && !modules.stdout().summary().isBlank();
         return new GitRevision(true, commit, branch, branch.isEmpty(), hasSubmodules);
     }
 

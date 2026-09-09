@@ -123,7 +123,7 @@ final class CodingExecutionFailureClassifier {
         }
         return new Classification(
                 "COMMAND_FAILED",
-                providerCode.isBlank() ? "NON_ZERO_EXIT" : providerCode,
+                providerCode.isBlank() ? "EXECUTION_FAILED" : providerCode,
                 "COMMAND",
                 "Review the bounded command output and choose the smallest corrective action.");
     }
