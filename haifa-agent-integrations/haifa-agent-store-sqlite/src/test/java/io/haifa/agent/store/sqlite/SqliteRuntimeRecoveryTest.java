@@ -345,10 +345,10 @@ class SqliteRuntimeRecoveryTest {
                     ports.conversationSummaries(),
                     ports.interactions());
             long sequence = ports.checkpoints().latest(runId).orElseThrow().sequence();
-            var selected = snapshots.build(
-                    run, 3, List.of(), 0, io.haifa.agent.core.checkpoint.CheckpointType.AUTOMATIC, sequence + 1);
-            var later = snapshots.build(
-                    run, 7, List.of(), 0, io.haifa.agent.core.checkpoint.CheckpointType.AUTOMATIC, sequence + 2);
+            var selected =
+                    snapshots.build(run, 3, 0, io.haifa.agent.core.checkpoint.CheckpointType.AUTOMATIC, sequence + 1);
+            var later =
+                    snapshots.build(run, 7, 0, io.haifa.agent.core.checkpoint.CheckpointType.AUTOMATIC, sequence + 2);
             ports.checkpoints().append(selected.checkpoint(), selected.state());
             ports.checkpoints().append(later.checkpoint(), later.state());
             selectedId = selected.checkpoint().id();

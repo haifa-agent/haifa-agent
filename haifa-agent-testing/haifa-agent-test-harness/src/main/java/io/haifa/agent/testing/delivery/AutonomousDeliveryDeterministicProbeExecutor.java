@@ -132,7 +132,7 @@ final class AutonomousDeliveryDeterministicProbeExecutor {
                 ":haifa-agent-cli",
                 "LocalCodingAgentTest#stubAnalyzeRunUsesReadOnlyEvidenceWithoutRequiringWorkspaceChange",
                 null),
-        TRACE_REPLAY("deterministic-trace-replay", ":haifa-agent-runtime-core", "RuntimeControlTraceReplayTest", 10);
+        TRACE_REPLAY("deterministic-trace-replay", ":haifa-agent-runtime-core", "RuntimeControlTraceReplayTest", 8);
 
         private final String evidenceDirectory;
         private final String module;

@@ -232,3 +232,5 @@ Broker dispatch. The market-data Tool requires explicit frozen hosts, while work
 This reference vertical uses the shared package/script grant, Runtime policy, and fixed-script execution
 facility. Removing it does not change public Trust, Policy, Runtime, or Execution code. A missing manifest keeps
 the feature disabled; invalid, unknown, duplicate, drifted, expired, or revoked entries fail closed.
+
+Personal Profile 1.0.1 指导模型在当前任务内根据真实结果判断进展、诊断后尝试或请求帮助；此前任务的失败调用仍需当前用户明确请求才能恢复。Runtime 资源/权限/unknown 边界不变。

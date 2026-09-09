@@ -15,14 +15,13 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Runtime-owned continuation state referenced by a Core checkpoint. */
+/** Runtime-owned continuation state. */
 public record RuntimeCheckpointState(
         AgentRunId runId,
         AgentSessionId sessionId,
         TenantRef tenant,
         PrincipalRef principal,
         int nextIteration,
-        List<String> decisionFingerprints,
         MessageCursor sessionMessageCursor,
         Optional<SummaryCheckpointRef> activeSummary,
         RunConfigurationSnapshotRef configurationSnapshot,
@@ -47,7 +46,6 @@ public record RuntimeCheckpointState(
             TenantRef tenant,
             PrincipalRef principal,
             int nextIteration,
-            List<String> decisionFingerprints,
             MessageCursor sessionMessageCursor,
             Optional<SummaryCheckpointRef> activeSummary,
             RunConfigurationSnapshotRef configurationSnapshot,
@@ -70,7 +68,6 @@ public record RuntimeCheckpointState(
                 tenant,
                 principal,
                 nextIteration,
-                decisionFingerprints,
                 sessionMessageCursor,
                 activeSummary,
                 configurationSnapshot,
@@ -97,7 +94,6 @@ public record RuntimeCheckpointState(
             TenantRef tenant,
             PrincipalRef principal,
             int nextIteration,
-            List<String> decisionFingerprints,
             MessageCursor sessionMessageCursor,
             Optional<SummaryCheckpointRef> activeSummary,
             RunConfigurationSnapshotRef configurationSnapshot,
@@ -119,7 +115,6 @@ public record RuntimeCheckpointState(
                 tenant,
                 principal,
                 nextIteration,
-                decisionFingerprints,
                 sessionMessageCursor,
                 activeSummary,
                 configurationSnapshot,
@@ -146,8 +141,6 @@ public record RuntimeCheckpointState(
         tenant = Objects.requireNonNull(tenant, "tenant must not be null");
         principal = Objects.requireNonNull(principal, "principal must not be null");
         if (nextIteration < 1) throw new IllegalArgumentException("nextIteration must be positive");
-        decisionFingerprints =
-                List.copyOf(Objects.requireNonNull(decisionFingerprints, "decisionFingerprints must not be null"));
         sessionMessageCursor = Objects.requireNonNull(sessionMessageCursor, "sessionMessageCursor must not be null");
         activeSummary = Objects.requireNonNull(activeSummary, "activeSummary must not be null");
         configurationSnapshot = Objects.requireNonNull(configurationSnapshot, "configurationSnapshot must not be null");

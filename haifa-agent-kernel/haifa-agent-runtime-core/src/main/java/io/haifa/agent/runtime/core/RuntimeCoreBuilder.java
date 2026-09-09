@@ -81,7 +81,6 @@ import io.haifa.agent.runtime.core.guard.BudgetGuard;
 import io.haifa.agent.runtime.core.guard.ChildRunGuard;
 import io.haifa.agent.runtime.core.guard.DuplicateToolCallGuard;
 import io.haifa.agent.runtime.core.guard.IterationGuard;
-import io.haifa.agent.runtime.core.guard.LoopDetectionGuard;
 import io.haifa.agent.runtime.core.input.RunInputApplier;
 import io.haifa.agent.runtime.core.input.RunInputPort;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
@@ -679,7 +678,7 @@ public final class RuntimeCoreBuilder {
                 events);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
-                List.of(new BudgetGuard(), new IterationGuard(), new LoopDetectionGuard(3)),
+                List.of(new BudgetGuard(), new IterationGuard()),
                 new DefaultRuntimeContextBuilder(
                         state,
                         middleware,
@@ -689,7 +688,7 @@ public final class RuntimeCoreBuilder {
                         memoryContextSource,
                         skillContentLoader),
                 models,
-                new DefaultDecisionValidator(new DuplicateToolCallGuard(state), new ChildRunGuard(state)),
+                new DefaultDecisionValidator(new DuplicateToolCallGuard(), new ChildRunGuard(state)),
                 decisionExecutor,
                 checkpoints,
                 transitions,

@@ -11,33 +11,10 @@ class RuntimeControlTraceReplayTest {
     private final RuntimeControlTraceReplay replay = new RuntimeControlTraceReplay();
 
     @Test
-    void replaysEnvironmentFailureThenRecoverySuccess() {
-        var result = replay.replay(List.of(
-                event("tool.failure-cluster-updated", "attempts", 1),
-                event("tool.recovery-strategy-required"),
-                event("loop.progress-observed"),
-                event("run.completed")));
-        assertThat(result.phase()).isEqualTo("COMPLETED");
-        assertThat(result.maximumFailureClusterAttempts()).isEqualTo(1);
-        assertThat(result.meaningfulProgressEvents()).isEqualTo(1);
-    }
-
-    @Test
-    void replaysRepeatedFailureStrategySwitch() {
-        var result = replay.replay(List.of(
-                event("tool.failure-cluster-updated", "attempts", 1),
-                event("tool.failure-cluster-updated", "attempts", 2),
-                event("tool.recovery-strategy-required")));
-        assertThat(result.phase()).isEqualTo("RECOVERING");
-        assertThat(result.maximumFailureClusterAttempts()).isEqualTo(2);
-    }
-
-    @Test
     void replaysStructuredTermination() {
-        var result = replay.replay(
-                List.of(event("run.structured-termination", "reason", "REPEATED_TOOL_FAILURE_WITHOUT_PROGRESS")));
+        var result = replay.replay(List.of(event("run.structured-termination", "reason", "TERMINATE_OUTCOME_UNKNOWN")));
         assertThat(result.phase()).isEqualTo("FAILED");
-        assertThat(result.terminationReason()).isEqualTo("REPEATED_TOOL_FAILURE_WITHOUT_PROGRESS");
+        assertThat(result.terminationReason()).isEqualTo("TERMINATE_OUTCOME_UNKNOWN");
     }
 
     @Test
@@ -80,12 +57,9 @@ class RuntimeControlTraceReplayTest {
 
     @Test
     void checkpointRestorePreservesReducedControlFacts() {
-        var result = replay.replay(List.of(
-                event("tool.failure-cluster-updated", "attempts", 2),
-                event("checkpoint.restored"),
-                event("loop.budget-snapshot", "remainingPercent", 25)));
+        var result = replay.replay(
+                List.of(event("checkpoint.restored"), event("loop.budget-snapshot", "remainingPercent", 25)));
         assertThat(result.checkpointRestored()).isTrue();
-        assertThat(result.maximumFailureClusterAttempts()).isEqualTo(2);
         assertThat(result.remainingPercent()).isEqualTo(25);
     }
 

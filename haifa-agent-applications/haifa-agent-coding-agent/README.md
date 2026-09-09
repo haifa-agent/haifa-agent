@@ -302,3 +302,5 @@ Workspace Checkpoint Adapter 可由受信 Host 注册为通用 Runtime Capabilit
 
 Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与证据。Artifact 检查由产品的
 `PublishedArtifactRequiredChecker` 实现该接口；Runtime 不再提供单独的 `RequiredArtifactChecker` 配置入口。
+
+Coding base prompt 1.8.0 将任务进展和方法选择交给主模型；Runtime 不再按普通失败簇次数裁决任务终止。权限、unknown、资源上限与产品 Completion 门禁保持独立。

@@ -19,7 +19,7 @@ public final class DefaultDecisionValidator implements DecisionValidator {
         Objects.requireNonNull(run, "run must not be null");
         Objects.requireNonNull(decision, "decision must not be null");
         if (decision instanceof ToolCallDecision tools) {
-            duplicateToolCalls.check(run, tools);
+            duplicateToolCalls.check(tools);
         }
         if (decision instanceof DelegationDecision delegation) {
             childRuns.check(run, delegation);

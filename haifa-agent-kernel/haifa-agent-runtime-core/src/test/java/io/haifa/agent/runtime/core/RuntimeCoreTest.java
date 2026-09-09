@@ -1657,7 +1657,7 @@ class RuntimeCoreTest {
 
         now.set(now.get().plus(Duration.ofDays(365)));
         var waitingRun = fixture.store.find(accepted.runId()).orElseThrow();
-        assertThat(RunBudgetSnapshot.from(waitingRun, 1, 0, 0, now.get()).remainingWallTimeMillis())
+        assertThat(RunBudgetSnapshot.from(waitingRun, 1, 0, now.get()).remainingWallTimeMillis())
                 .isEqualTo(waitingRun.limits().maxWallTimeMillis());
         fixture.runtime.respond(new InteractionResponse(
                 new InteractionResponseId("long-wait-response"),

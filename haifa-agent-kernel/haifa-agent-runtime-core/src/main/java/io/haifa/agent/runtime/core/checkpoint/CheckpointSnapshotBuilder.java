@@ -13,7 +13,6 @@ import io.haifa.agent.core.reference.InteractionRequestRef;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -59,7 +58,6 @@ public final class CheckpointSnapshotBuilder {
     public Snapshot build(
             AgentRun run,
             int completedIteration,
-            List<String> fingerprints,
             int forcedContextRebuildAttempts,
             CheckpointType type,
             long sequence) {
@@ -124,7 +122,6 @@ public final class CheckpointSnapshotBuilder {
                 run.tenant(),
                 run.principal(),
                 completedIteration + 1,
-                fingerprints,
                 messageCursor,
                 summary,
                 run.configurationSnapshot(),
@@ -154,7 +151,7 @@ public final class CheckpointSnapshotBuilder {
                 type,
                 CheckpointStatus.VERIFIED,
                 sequence,
-                new CheckpointPayloadRef("runtime-store", "checkpoint/" + id, "runtime-loop-state", "4.0"),
+                new CheckpointPayloadRef("runtime-store", "checkpoint/" + id, "runtime-loop-state", "5.0"),
                 stateHash,
                 time.now());
         LOGGER.info(

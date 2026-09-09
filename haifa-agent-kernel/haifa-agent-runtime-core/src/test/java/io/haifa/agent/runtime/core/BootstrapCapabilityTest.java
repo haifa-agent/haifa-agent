@@ -299,7 +299,7 @@ class BootstrapCapabilityTest {
                         store,
                         store,
                         new InMemoryInteractionPort())
-                .build(bootstrap.run(), 1, List.of(), 0, CheckpointType.AUTOMATIC, 1);
+                .build(bootstrap.run(), 1, 0, CheckpointType.AUTOMATIC, 1);
         assertThat(checkpoint.state().skillActivations()).singleElement().satisfies(reference -> {
             assertThat(reference.alias()).isEqualTo(first.binding().alias());
             assertThat(reference.coordinate()).isEqualTo(first.binding().coordinate());
