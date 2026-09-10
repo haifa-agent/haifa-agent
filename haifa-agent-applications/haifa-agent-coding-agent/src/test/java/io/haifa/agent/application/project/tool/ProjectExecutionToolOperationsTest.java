@@ -1454,7 +1454,7 @@ class ProjectExecutionToolOperationsTest {
                 NOW.plusSeconds(30),
                 Optional.of("execution-key"),
                 cancellation,
-                List.of(),
+                Map.of(),
                 observer);
     }
 
@@ -1476,10 +1476,7 @@ class ProjectExecutionToolOperationsTest {
                 io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("test")),
                 Set.of(),
                 Set.of(),
-                true,
-                io.haifa.agent.sandbox.api.NetworkPolicy.ALLOW,
-                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
-                new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, false, false, false));
+                true);
     }
 
     private static io.haifa.agent.sandbox.api.SandboxProfile deniedExecutionProfile() {
@@ -1489,10 +1486,7 @@ class ProjectExecutionToolOperationsTest {
                 io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("denied")),
                 Set.of(),
                 Set.of(),
-                true,
-                io.haifa.agent.sandbox.api.NetworkPolicy.DENY,
-                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
-                new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, true, false, false));
+                true);
     }
 
     private static ProcessOutputChunk chunk(String value) {
