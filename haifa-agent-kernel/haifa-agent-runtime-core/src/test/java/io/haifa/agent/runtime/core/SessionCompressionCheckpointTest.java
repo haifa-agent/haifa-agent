@@ -145,7 +145,7 @@ class SessionCompressionCheckpointTest {
 
         assertThat(summary.sourceMessageIds())
                 .containsSubsequence(new AgentMessageId("assistant-tool"), new AgentMessageId("tool-result"));
-        assertThat(source.select(run, 0).summary().orElseThrow().version()).isEqualTo(summary.version());
+        assertThat(source.select(run).summary().orElseThrow().version()).isEqualTo(summary.version());
         assertThatThrownBy(() -> store.compareAndSet(summary, 0)).isInstanceOf(OptimisticLockException.class);
 
         store.redactMessage(summary.sourceMessageIds().getFirst());
@@ -184,7 +184,7 @@ class SessionCompressionCheckpointTest {
 
         store.appendSessionMessage(
                 draft("stable-four", run.sessionId(), run.id().value(), MessageRole.USER, "four"));
-        var second = source.select(run, 0);
+        var second = source.select(run);
 
         assertThat(second.summary()).contains(checkpoint);
         assertThat(second.items().stream().map(item -> item.id().value()).toList())
@@ -222,7 +222,7 @@ class SessionCompressionCheckpointTest {
         var firstMessages = assembler.assemble(runId, context(first));
 
         store.appendSessionMessage(draft("prefix-four", session, runId.value(), MessageRole.USER, "four"));
-        var second = source.select(run, 0);
+        var second = source.select(run);
         var secondMessages = assembler.assemble(runId, context(second));
 
         assertThat(second.summary()).isEqualTo(first.summary());
@@ -251,18 +251,18 @@ class SessionCompressionCheckpointTest {
                 () -> "token-summary-" + ids.incrementAndGet(),
                 () -> NOW);
 
-        var belowThreshold = source.select(run, 0, 10_000);
+        var belowThreshold = source.compactIfNeeded(run, 0, 10_000);
         assertThat(belowThreshold.summary()).isEmpty();
         assertThat(belowThreshold.compacted()).isFalse();
 
-        var threshold = source.select(run, 0, 80);
+        var threshold = source.compactIfNeeded(run, 0, 80);
         var checkpoint = threshold.summary().orElseThrow();
         assertThat(threshold.compacted()).isTrue();
         assertThat(threshold.compactionReason()).isEqualTo(SessionMessageSource.CompactionReason.TOKEN_THRESHOLD);
 
         store.appendSessionMessage(
                 draft("token-message-16", run.sessionId(), run.id().value(), MessageRole.USER, "short-16"));
-        var reused = source.select(run, 0, 10_000);
+        var reused = source.select(run);
         assertThat(reused.summary()).contains(checkpoint);
         assertThat(reused.compacted()).isFalse();
         assertThat(reused.compactionReason()).isEqualTo(SessionMessageSource.CompactionReason.NONE);
@@ -927,7 +927,7 @@ class SessionCompressionCheckpointTest {
                 new io.haifa.agent.core.reference.RunConfigurationSnapshotRef("cfg-1", "hash"));
         var runObj = io.haifa.agent.core.run.AgentRun.createRoot(run, spec, NOW);
 
-        var selection = source.select(runObj, 0);
+        var selection = source.select(runObj);
         assertThat(selection.summary()).isEmpty();
     }
 

@@ -93,7 +93,7 @@ class ModelMessageAssemblerTest {
         assertThat(messages)
                 .extracting(message -> message.role())
                 .containsExactly(ModelMessageRole.SYSTEM, ModelMessageRole.USER, ModelMessageRole.SYSTEM);
-        assertThat(messages.get(0).content()).isEqualTo("[SYSTEM_SAFETY/SYSTEM] follow safety policy");
+        assertThat(messages.get(0).content()).isEqualTo("follow safety policy");
         assertThat(messages.get(1).content()).isEqualTo("question");
         assertThat(messages.get(2).content()).isEqualTo("continue");
     }
