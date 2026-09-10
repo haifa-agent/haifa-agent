@@ -307,7 +307,8 @@ public final class DefaultAgentLoop implements AgentLoop {
                     RuntimeTraceStatus.SUCCESS,
                     Map.<String, Object>ofEntries(
                             Map.entry(
-                                    "modelConfigDigest", built.context().trace().modelConfigurationDigest()),
+                                    "modelConfigDigest",
+                                    built.context().report().modelConfigurationDigest()),
                             Map.entry(
                                     "runConfigurationDigest",
                                     model.configuration().reference().contentHash()),
@@ -319,20 +320,25 @@ public final class DefaultAgentLoop implements AgentLoop {
                                     built.context().context().items().size()),
                             Map.entry(
                                     "traceItems",
-                                    built.context().trace().items().size()),
+                                    built.context().report().components().stream()
+                                            .filter(component -> component.kind()
+                                                    == io.haifa.agent.context.trace.ContextReportComponent.ComponentKind
+                                                            .CONTEXT)
+                                            .count()),
                             Map.entry(
-                                    "estimatorVersion", built.context().trace().estimatorVersion()),
+                                    "estimatorVersion", built.context().report().estimatorVersion()),
                             Map.entry(
                                     "selectionPolicyVersion",
-                                    built.context().trace().selectionPolicyVersion()),
+                                    built.context().report().selectionPolicyVersion()),
                             Map.entry(
                                     "compressionPolicyVersion",
-                                    built.context().trace().compressionPolicyVersion()),
+                                    built.context().report().compressionPolicyVersion()),
                             Map.entry(
-                                    "compressorVersion", built.context().trace().compressorVersion()),
+                                    "compressorVersion",
+                                    built.context().report().compressorVersion()),
                             Map.entry(
                                     "forcedRebuildAttempt",
-                                    built.context().trace().forcedRebuildAttempt()),
+                                    built.context().report().forcedRebuildAttempt()),
                             Map.entry("windowGeneration", built.windowIdentity()),
                             Map.entry(
                                     "compactionGeneration",
@@ -360,16 +366,21 @@ public final class DefaultAgentLoop implements AgentLoop {
                                             .orElse("none")),
                             Map.entry(
                                     "instructionComponentDigests",
-                                    built.context().trace().prompts().stream()
-                                            .map(prompt -> prompt.componentId().value() + "@" + prompt.version() + ":"
-                                                    + prompt.contentHash())
+                                    built.context().report().components().stream()
+                                            .filter(component -> component.kind()
+                                                    == io.haifa.agent.context.trace.ContextReportComponent.ComponentKind
+                                                            .PROMPT)
+                                            .map(component -> component.id() + "@" + component.version() + ":"
+                                                    + component.contentHash())
                                             .toList()),
                             Map.entry(
                                     "sourceIds",
-                                    built.context().context().items().stream()
-                                            .map(item -> item.provenance().sourceType() + ":"
-                                                    + item.provenance().sourceId() + "@"
-                                                    + item.provenance().sourceVersion())
+                                    built.context().report().components().stream()
+                                            .filter(component -> component.kind()
+                                                    == io.haifa.agent.context.trace.ContextReportComponent.ComponentKind
+                                                            .CONTEXT)
+                                            .map(component -> component.sourceType() + ":" + component.sourceId() + "@"
+                                                    + component.version())
                                             .toList())),
                     time.now()));
             RuntimeContextBuildResult[] builtRef = {built};
@@ -459,15 +470,15 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         RuntimeTraceStatus.SUCCESS,
                                         Map.of(
                                                 "modelConfigDigest",
-                                                builtRef[0].context().trace().modelConfigurationDigest(),
+                                                builtRef[0].context().report().modelConfigurationDigest(),
                                                 "forcedRebuildAttempt",
                                                 progress.forcedContextRebuildAttempts(),
                                                 "estimatedInputTokens",
                                                 builtRef[0].context().context().estimatedInputTokens(),
                                                 "compressionPolicyVersion",
-                                                builtRef[0].context().trace().compressionPolicyVersion(),
+                                                builtRef[0].context().report().compressionPolicyVersion(),
                                                 "compressorVersion",
-                                                builtRef[0].context().trace().compressorVersion()),
+                                                builtRef[0].context().report().compressorVersion()),
                                         time.now()));
                                 AgentStep recoveryStep = new AgentStep(
                                         new AgentStepId(ids.nextValue()),
@@ -700,14 +711,7 @@ public final class DefaultAgentLoop implements AgentLoop {
 
     private void recordPromptDiagnostics(RuntimeContextBuildResult built) {
         try {
-            promptDiagnostics.record(
-                    built.context().trace(),
-                    built.context().context().prompts().stream()
-                            .map(io.haifa.agent.context.prompt.PromptComponent::id)
-                            .toList(),
-                    built.context().context().items().stream()
-                            .map(io.haifa.agent.context.item.ContextItem::id)
-                            .toList());
+            promptDiagnostics.record(built.context().report());
         } catch (RuntimeException ignored) {
             // Diagnostics are a best-effort projection and never change Agent execution semantics.
         }

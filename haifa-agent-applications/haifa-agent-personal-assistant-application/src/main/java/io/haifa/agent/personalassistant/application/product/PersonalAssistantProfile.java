@@ -69,7 +69,6 @@ public final class PersonalAssistantProfile {
         required(requirements, ProductCapabilities.EXECUTION, coordinates.execution());
         required(requirements, ProductCapabilities.APPROVAL, coordinates.approval());
         required(requirements, ProductCapabilities.CREDENTIAL, coordinates.credential());
-        none(requirements, ProductCapabilities.CONTEXT);
 
         Set<String> skills = java.util.stream.Stream.concat(
                         java.util.stream.Stream.of(

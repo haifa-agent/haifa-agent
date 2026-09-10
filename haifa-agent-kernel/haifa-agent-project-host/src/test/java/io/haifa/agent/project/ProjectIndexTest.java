@@ -145,7 +145,6 @@ class ProjectIndexTest {
                 "coding",
                 "1",
                 Set.of("file.read"),
-                Set.of("project.workspace.files"),
                 Set.of("file.read"),
                 "policy-1");
         store.publish(configuration);
@@ -158,7 +157,6 @@ class ProjectIndexTest {
                 "coding",
                 "1",
                 Set.of("file.read", "file.write"),
-                configuration.contextSources(),
                 configuration.tools(),
                 "policy-1");
         assertThatThrownBy(() -> store.publish(changed)).isInstanceOf(IllegalStateException.class);

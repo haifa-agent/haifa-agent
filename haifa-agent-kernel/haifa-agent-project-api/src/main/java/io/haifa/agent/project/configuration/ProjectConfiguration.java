@@ -15,7 +15,6 @@ public record ProjectConfiguration(
         String productProfileId,
         String productProfileVersion,
         Set<String> capabilities,
-        Set<String> contextSources,
         Set<String> tools,
         String securityPolicyRef,
         String digest) {
@@ -26,7 +25,6 @@ public record ProjectConfiguration(
         productProfileId = requireText(productProfileId, "productProfileId");
         productProfileVersion = requireText(productProfileVersion, "productProfileVersion");
         capabilities = Set.copyOf(Objects.requireNonNull(capabilities, "capabilities must not be null"));
-        contextSources = Set.copyOf(Objects.requireNonNull(contextSources, "contextSources must not be null"));
         tools = Set.copyOf(Objects.requireNonNull(tools, "tools must not be null"));
         securityPolicyRef = requireText(securityPolicyRef, "securityPolicyRef");
         String expected = calculateDigest(
@@ -36,7 +34,6 @@ public record ProjectConfiguration(
                 productProfileId,
                 productProfileVersion,
                 capabilities,
-                contextSources,
                 tools,
                 securityPolicyRef);
         digest = digest == null ? expected : requireText(digest, "digest");
@@ -50,7 +47,6 @@ public record ProjectConfiguration(
             String productProfileId,
             String productProfileVersion,
             Set<String> capabilities,
-            Set<String> contextSources,
             Set<String> tools,
             String securityPolicyRef) {
         return new ProjectConfiguration(
@@ -60,7 +56,6 @@ public record ProjectConfiguration(
                 productProfileId,
                 productProfileVersion,
                 capabilities,
-                contextSources,
                 tools,
                 securityPolicyRef,
                 null);
@@ -78,7 +73,6 @@ public record ProjectConfiguration(
             String profileId,
             String profileVersion,
             Set<String> capabilities,
-            Set<String> sources,
             Set<String> tools,
             String policy) {
         String canonical = String.join(
@@ -89,7 +83,6 @@ public record ProjectConfiguration(
                 profileId,
                 profileVersion,
                 capabilities.stream().sorted().toList().toString(),
-                sources.stream().sorted().toList().toString(),
                 tools.stream().sorted().toList().toString(),
                 policy);
         try {

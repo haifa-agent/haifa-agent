@@ -703,7 +703,6 @@ class ProjectPersistenceAssemblyTest {
                 "coding",
                 "1",
                 Set.of("file.read"),
-                Set.of("project.workspace.files"),
                 Set.of("file.read"),
                 "policy-1"));
         return new ProductFixture(projectId, projects, workspaces, configurations);

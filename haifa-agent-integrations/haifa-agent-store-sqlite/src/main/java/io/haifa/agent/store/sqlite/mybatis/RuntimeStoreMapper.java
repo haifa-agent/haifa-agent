@@ -221,8 +221,6 @@ public interface RuntimeStoreMapper {
 
     ConversationSummaryRow latestValidSummary(@Param("sessionId") String sessionId);
 
-    ConversationSummaryRow findSummary(@Param("summaryId") String summaryId, @Param("version") long version);
-
     long latestSummaryVersion(@Param("sessionId") String sessionId);
 
     int insertSummary(@Param("row") ConversationSummaryRow row);

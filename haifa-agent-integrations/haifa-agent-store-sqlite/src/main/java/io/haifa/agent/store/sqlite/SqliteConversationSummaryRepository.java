@@ -39,13 +39,6 @@ public final class SqliteConversationSummaryRepository implements ConversationSu
     }
 
     @Override
-    public Optional<ConversationSummary> find(SummaryId id, SummaryVersion version) {
-        return execute(() -> Optional.ofNullable(
-                        unitOfWork.mapper(RuntimeStoreMapper.class).findSummary(id.value(), version.value()))
-                .map(this::fromRow));
-    }
-
-    @Override
     public long latestVersion(AgentSessionId sessionId) {
         return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).latestSummaryVersion(sessionId.value()));
     }

@@ -1252,11 +1252,6 @@
         ORDER BY summary_version DESC LIMIT 1
     </select>
 
-    <select id="findSummary" resultMap="conversationSummaryRow">
-        SELECT <include refid="summaryColumns"/> FROM conversation_summary
-        WHERE summary_id = #{summaryId} AND summary_version = #{version}
-    </select>
-
     <select id="latestSummaryVersion" resultType="long">
         SELECT COALESCE(MAX(summary_version), 0) FROM conversation_summary
         WHERE session_id = #{sessionId}

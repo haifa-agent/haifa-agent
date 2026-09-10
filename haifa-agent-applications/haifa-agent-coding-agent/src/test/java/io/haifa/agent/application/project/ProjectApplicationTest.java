@@ -434,7 +434,6 @@ class ProjectApplicationTest {
                 "coding",
                 "1",
                 Set.of("file.read"),
-                Set.of("project.workspace.files"),
                 Set.of("file.read"),
                 "policy-1");
         configurationStore.publish(configuration);
