@@ -16,8 +16,7 @@ public final class McpStdioCredentialContext implements McpRequestContext {
     }
 
     @Override
-    public <T> T withInvocation(
-            Map<String, String> credentials, ToolInvocationObserver observer, Supplier<T> action) {
+    public <T> T withInvocation(Map<String, String> credentials, ToolInvocationObserver observer, Supplier<T> action) {
         if (current.get() != null) throw new IllegalStateException("nested MCP credential context is forbidden");
         current.set(new RequestScope(Map.copyOf(credentials), observer));
         try {

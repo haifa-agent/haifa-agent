@@ -10,8 +10,7 @@ public interface McpRequestContext {
 
     McpTransportContext snapshot();
 
-    default <T> T withInvocation(
-            Map<String, String> credentials, ToolInvocationObserver observer, Supplier<T> action) {
+    default <T> T withInvocation(Map<String, String> credentials, ToolInvocationObserver observer, Supplier<T> action) {
         return withCredentials(credentials, action);
     }
 }

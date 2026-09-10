@@ -131,10 +131,7 @@ class StreamableHttpMcpComponentTest {
             client.initialize(Map.of());
             var tools = client.listTools(null, Map.of());
             var result = client.callTool(
-                    "time_now",
-                    Map.of("zone", "UTC"),
-                    Map.of(),
-                    io.haifa.agent.tool.api.ToolInvocationObserver.noop());
+                    "time_now", Map.of("zone", "UTC"), Map.of(), io.haifa.agent.tool.api.ToolInvocationObserver.noop());
 
             assertThat(tools.tools()).extracting(tool -> tool.name()).containsExactly("time_now");
             assertThat(result.structuredContent()).containsEntry("zone", "UTC");

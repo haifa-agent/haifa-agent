@@ -32,8 +32,8 @@ public final class McpStdioEnvironmentRegistry implements EnvironmentLeaseResolv
         for (McpCredentialInjection injection : injections) {
             String secret = credentials.get(injection.requirement().credentialId());
             if (secret == null || secret.isBlank()) {
-                throw new SecurityException(
-                        "MCP stdio credential is missing: " + injection.requirement().credentialId());
+                throw new SecurityException("MCP stdio credential is missing: "
+                        + injection.requirement().credentialId());
             }
             if (!environmentAllowlist.contains(injection.targetName())) {
                 throw new SecurityException("MCP stdio credential target is not allowlisted");
