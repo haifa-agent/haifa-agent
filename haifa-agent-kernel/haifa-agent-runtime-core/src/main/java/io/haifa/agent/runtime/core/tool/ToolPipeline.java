@@ -28,7 +28,6 @@ import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
-import io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.retry.ToolRetryPolicy;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -758,67 +757,47 @@ public final class ToolPipeline {
         }
     }
 
-    public boolean isExecutionRecoverySource(AgentRun run, ToolCall call) {
-        Objects.requireNonNull(run, "run must not be null");
-        Objects.requireNonNull(call, "call must not be null");
-        if (call.status() != ToolCallStatus.FAILED) return false;
-        ToolRequest request = canonicalize(run, request(call));
-        FrozenToolBinding binding = binding(run, request);
-        return "execution.run".equals(binding.definition().name().value())
-                && journal.state(run.id(), call.idempotencyKey())
-                        .filter(value -> value == ToolJournalState.FAILED)
-                        .isPresent();
+    public boolean isTrustedNotDispatched(AgentRun run, ToolCall call, Throwable failure) {
+        if (run == null || call == null || failure == null) {
+            return false;
+        }
+        if (call.status() != ToolCallStatus.FAILED) {
+            return false;
+        }
+        io.haifa.agent.tool.api.ToolInvocationException invocation = findToolInvocationException(failure);
+        if (invocation == null
+                || invocation.dispatchState() != io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED
+                || "TOOL_INVOCATION_FAILED".equals(invocation.failureCode())
+                || !isStableFailureCode(invocation.failureCode())) {
+            return false;
+        }
+        var journalState = journal.state(run.id(), call.idempotencyKey());
+        if (journalState.filter(value -> value == ToolJournalState.FAILED).isEmpty()) {
+            return false;
+        }
+        if (journal.dispatchEvidence(run.id(), call.idempotencyKey()).isPresent()) {
+            return false;
+        }
+        if (journal.uncertainResult(run.id(), call.idempotencyKey()).isPresent()) {
+            return false;
+        }
+        return call.error()
+                .map(ToolExecutionError::error)
+                .map(error -> Boolean.TRUE.equals(error.details().get("outcomeKnown"))
+                        && "NOT_DISPATCHED".equals(error.details().get("dispatchState"))
+                        && !"TOOL_INVOCATION_FAILED".equals(error.details().get("failureCode")))
+                .orElse(false);
     }
 
-    public ToolApprovalTarget executionRecoveryTarget(AgentRun run, ToolCall call, String failureCode) {
-        ToolRequest request = canonicalize(run, request(call));
-        FrozenToolBinding binding = binding(run, request);
-        String argumentsDigest = argumentsDigest(request);
-        String principalScope = principalScope(run);
-        return new ToolApprovalTarget(
-                call.id(),
-                binding.coordinate().externalForm(),
-                binding.coordinate().definitionHash().value(),
-                argumentsDigest,
-                principalScope,
-                ExecutionRecoveryKeys.requirementDigest(
-                        run.id(),
-                        call.id(),
-                        binding.coordinate().externalForm(),
-                        binding.coordinate().definitionHash().value(),
-                        argumentsDigest,
-                        run.configurationSnapshot().contentHash(),
-                        failureCode,
-                        principalScope));
-    }
-
-    public void validateExecutionRecoveryTarget(
-            AgentRun run, ToolCall call, String failureCode, ToolApprovalTarget target) {
-        if (!isExecutionRecoverySource(run, call)) {
-            throw new SecurityException("execution recovery source is no longer eligible");
+    private static io.haifa.agent.tool.api.ToolInvocationException findToolInvocationException(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof io.haifa.agent.tool.api.ToolInvocationException invocation) {
+                return invocation;
+            }
+            current = current.getCause();
         }
-        ToolApprovalTarget current = executionRecoveryTarget(run, call, failureCode);
-        if (!current.equals(target)) {
-            throw new SecurityException("execution recovery target drifted from the frozen invocation");
-        }
-        ToolRequest request = canonicalize(run, request(call));
-        FrozenToolBinding binding = binding(run, request);
-        if (!capabilityAuthorizer.isAllowed(run, binding)) {
-            throw new SecurityException("execution recovery capability is no longer allowed");
-        }
-        ToolSchemaValidationResult inputValidation = schemaValidator.validate(
-                binding.definition().inputSchema(), request.arguments().values());
-        if (!inputValidation.valid()) {
-            throw new SecurityException("execution recovery input no longer matches the frozen schema");
-        }
-        if (policy.evaluate(run, binding, request).effect() == PolicyEffect.DENY) {
-            throw new SecurityException("execution recovery is denied by current policy");
-        }
-    }
-
-    private static String principalScope(AgentRun run) {
-        return run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
-                + run.principal().principalId();
+        return null;
     }
 
     private ToolResult persistResult(

@@ -8,7 +8,6 @@ import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolCoordinate;
 import io.haifa.agent.tool.api.ToolDefinitionHash;
-import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSchema;
 import java.util.LinkedHashMap;
@@ -120,7 +119,7 @@ class ToolCatalogBuilderTest {
                 original.catalogDigest());
 
         assertThatThrownBy(() -> new DefaultToolInvoker(catalog).validateBinding(drifted))
-                .isInstanceOf(ToolInvocationException.class)
+                .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("coordinate");
     }
 }
