@@ -103,8 +103,8 @@ final class CliExecutionPlatform implements AutoCloseable {
         HostShell shell = shell(configuration);
         Path controlRoot = controlRoot();
         Path scratchRoot = controlRoot.resolve("host-scratch");
-        var host = new HostGuardedSandboxProvider(
-                workspaces, bindings, locations, identifiers, time, shell, scratchRoot);
+        var host =
+                new HostGuardedSandboxProvider(workspaces, bindings, locations, identifiers, time, shell, scratchRoot);
         if (!configuration.provider().equals(host.providerId())) {
             throw new IllegalArgumentException(
                     "SANDBOX_ADAPTER_UNAVAILABLE: configured execution provider is unavailable");

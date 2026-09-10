@@ -19,7 +19,6 @@ import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
-import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.Workspace;
