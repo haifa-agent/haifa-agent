@@ -2,8 +2,6 @@ package io.haifa.agent.runtime.core.storage;
 
 import io.haifa.agent.context.compression.ConversationSummary;
 import io.haifa.agent.context.compression.ConversationSummaryRepository;
-import io.haifa.agent.context.compression.SummaryId;
-import io.haifa.agent.context.compression.SummaryVersion;
 import io.haifa.agent.core.checkpoint.Checkpoint;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.AgentMessage;
@@ -719,14 +717,6 @@ public final class InMemoryRuntimeStore
         return summaries.getOrDefault(sessionId, List.of()).stream()
                 .filter(ConversationSummary::valid)
                 .max(Comparator.comparingLong(summary -> summary.version().value()));
-    }
-
-    @Override
-    public synchronized Optional<ConversationSummary> find(SummaryId id, SummaryVersion version) {
-        return summaries.values().stream()
-                .flatMap(List::stream)
-                .filter(summary -> summary.id().equals(id) && summary.version().equals(version))
-                .findFirst();
     }
 
     @Override

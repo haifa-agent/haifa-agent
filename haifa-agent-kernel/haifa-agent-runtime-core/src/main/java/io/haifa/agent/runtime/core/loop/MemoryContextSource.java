@@ -27,7 +27,6 @@ import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.storage.RuntimeMemorySelection;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /** Retrieves governed Memory using trusted Run identity and maps authorized results to Context IR. */
@@ -83,28 +82,14 @@ public final class MemoryContextSource {
                             result.estimatedTokens(),
                             ContextPriority.NORMAL,
                             ContextRetention.COMPRESSIBLE,
-                            new ContextSecurity(
-                                    memory.securityLabels().stream()
-                                            .map(label -> label.name().toLowerCase(java.util.Locale.ROOT))
-                                            .collect(java.util.stream.Collectors.toSet()),
-                                    true),
+                            new ContextSecurity(memory.securityLabels().stream()
+                                    .map(label -> label.name().toLowerCase(java.util.Locale.ROOT))
+                                    .collect(java.util.stream.Collectors.toSet())),
                             new ContextProvenance(
                                     "governed-memory",
                                     memory.id().value(),
                                     Long.toString(memory.version().value()),
-                                    memory.normalizedDigest()),
-                            Map.of(
-                                    "scope",
-                                            memory.scope().type() + ":"
-                                                    + memory.scope().targetId(),
-                                    "selectionReason", result.selectionReason(),
-                                    "sourceTypes",
-                                            memory.sources().stream()
-                                                    .map(source -> source.type().name())
-                                                    .distinct()
-                                                    .sorted()
-                                                    .toList()
-                                                    .toString()));
+                                    memory.normalizedDigest()));
                 })
                 .toList();
     }

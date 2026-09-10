@@ -8,8 +8,6 @@ import java.util.Optional;
 public interface ConversationSummaryRepository {
     Optional<ConversationSummary> latestValid(AgentSessionId sessionId);
 
-    Optional<ConversationSummary> find(SummaryId id, SummaryVersion version);
-
     long latestVersion(AgentSessionId sessionId);
 
     ConversationSummary compareAndSet(ConversationSummary summary, long expectedPreviousVersion);

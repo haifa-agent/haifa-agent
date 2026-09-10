@@ -14,7 +14,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
-import java.util.Map;
 import java.util.Set;
 
 final class RuntimeContextItems {
@@ -38,9 +37,8 @@ final class RuntimeContextItems {
                 HeuristicTokenEstimator.tokens(text) + 4,
                 priority,
                 retention,
-                new ContextSecurity(labels, true),
-                new ContextProvenance(sourceType, sourceId, sourceVersion, hash(text)),
-                Map.of());
+                new ContextSecurity(labels),
+                new ContextProvenance(sourceType, sourceId, sourceVersion, hash(text)));
     }
 
     private static String hash(String value) {

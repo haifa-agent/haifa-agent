@@ -11,11 +11,8 @@ import io.haifa.agent.context.budget.TokenEstimator;
 import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.item.ContextRetention;
 import io.haifa.agent.context.selection.ContextSelectionPolicy;
-import io.haifa.agent.context.source.ContextSource;
-import io.haifa.agent.context.trace.ContextSelectionDecision;
-import io.haifa.agent.context.trace.ContextTrace;
-import io.haifa.agent.context.trace.ContextTraceItem;
-import io.haifa.agent.context.trace.PromptTraceItem;
+import io.haifa.agent.context.trace.ContextReport;
+import io.haifa.agent.context.trace.ContextReportComponent;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -30,13 +27,10 @@ import java.util.Set;
 public final class DefaultAgentContextBuilder implements AgentContextBuilder {
     private final TokenEstimator estimator;
     private final ContextSelectionPolicy selectionPolicy;
-    private final List<ContextSource> sources;
 
-    public DefaultAgentContextBuilder(
-            TokenEstimator estimator, ContextSelectionPolicy selectionPolicy, List<ContextSource> sources) {
+    public DefaultAgentContextBuilder(TokenEstimator estimator, ContextSelectionPolicy selectionPolicy) {
         this.estimator = Objects.requireNonNull(estimator, "estimator must not be null");
         this.selectionPolicy = Objects.requireNonNull(selectionPolicy, "selectionPolicy must not be null");
-        this.sources = List.copyOf(Objects.requireNonNull(sources, "sources must not be null"));
     }
 
     @Override
@@ -56,11 +50,6 @@ public final class DefaultAgentContextBuilder implements AgentContextBuilder {
         }
 
         List<ContextItem> candidates = new ArrayList<>(request.items());
-        for (ContextSource source : sources) {
-            if (!source.supports(request)) continue;
-            List<ContextItem> loaded = List.copyOf(source.load(request));
-            candidates.addAll(loaded);
-        }
         List<IndexedItem> ranked = new ArrayList<>();
         for (int index = 0; index < candidates.size(); index++) {
             ranked.add(new IndexedItem(index, candidates.get(index)));
@@ -72,29 +61,20 @@ public final class DefaultAgentContextBuilder implements AgentContextBuilder {
         long remaining = budget.availableInputTokens() - fixedTokens;
         Set<String> hashes = new HashSet<>();
         List<IndexedItem> selected = new ArrayList<>();
-        List<ContextTraceItem> traceItems = new ArrayList<>();
         for (IndexedItem candidate : ranked) {
             ContextItem item = candidate.item();
-            if (!item.security().providerDisclosureAllowed()) {
-                traceItems.add(trace(item, ContextSelectionDecision.DROPPED_SECURITY));
-                continue;
-            }
             String deduplicationKey = item.type() + ":" + item.provenance().contentHash();
             if (!hashes.add(deduplicationKey)) {
-                traceItems.add(trace(item, ContextSelectionDecision.DROPPED_DUPLICATE));
                 continue;
             }
             long tokens = estimator.estimate(item);
             if (tokens <= remaining) {
                 selected.add(candidate);
                 remaining -= tokens;
-                traceItems.add(trace(item, ContextSelectionDecision.SELECTED));
             } else if (item.retention() == ContextRetention.MUST_KEEP) {
                 throw new ContextBuildException(
                         ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE,
                         "required context item does not fit: " + item.id().value());
-            } else {
-                traceItems.add(trace(item, ContextSelectionDecision.DROPPED_BUDGET));
             }
         }
         selected.sort(Comparator.comparingInt(IndexedItem::index));
@@ -110,7 +90,10 @@ public final class DefaultAgentContextBuilder implements AgentContextBuilder {
                 request.tools(),
                 budget,
                 totalTokens);
-        ContextTrace trace = new ContextTrace(
+        List<ContextReportComponent> components = new ArrayList<>();
+        context.prompts().forEach(prompt -> components.add(promptComponent(prompt)));
+        selectedItems.forEach(item -> components.add(contextComponent(item)));
+        ContextReport report = new ContextReport(
                 request.runId(),
                 request.sessionId(),
                 request.iteration(),
@@ -120,30 +103,31 @@ public final class DefaultAgentContextBuilder implements AgentContextBuilder {
                 request.compressionPolicyVersion(),
                 request.compressorVersion(),
                 request.forcedRebuildAttempt(),
-                promptTokens,
-                toolTokens,
-                itemTokens,
-                request.prompts().stream().map(this::trace).toList(),
-                traceItems);
-        return new ContextBuildResult(context, trace);
+                totalTokens,
+                components);
+        return new ContextBuildResult(context, report);
     }
 
-    private ContextTraceItem trace(ContextItem item, ContextSelectionDecision decision) {
-        return new ContextTraceItem(
-                item.id(),
-                item.type(),
+    private ContextReportComponent contextComponent(ContextItem item) {
+        return new ContextReportComponent(
+                item.id().value(),
+                ContextReportComponent.ComponentKind.CONTEXT,
                 item.provenance().sourceType(),
                 item.provenance().sourceId(),
+                null,
+                null,
                 item.provenance().sourceVersion(),
                 estimator.estimate(item),
-                decision,
                 item.provenance().contentHash(),
                 item.security().labels());
     }
 
-    private PromptTraceItem trace(io.haifa.agent.context.prompt.PromptComponent prompt) {
-        return new PromptTraceItem(
-                prompt.id(),
+    private ContextReportComponent promptComponent(io.haifa.agent.context.prompt.PromptComponent prompt) {
+        return new ContextReportComponent(
+                prompt.id().value(),
+                ContextReportComponent.ComponentKind.PROMPT,
+                "prompt",
+                "prompt",
                 prompt.layer(),
                 prompt.role(),
                 prompt.version(),

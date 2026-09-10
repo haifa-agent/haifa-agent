@@ -29,7 +29,6 @@ import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.sdk.contribution.ApprovalPlatformContribution;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
-import io.haifa.agent.sdk.contribution.ContextSourceContribution;
 import io.haifa.agent.sdk.contribution.CredentialPlatformContribution;
 import io.haifa.agent.sdk.contribution.ExecutionPlatformContribution;
 import io.haifa.agent.sdk.contribution.McpToolCatalogContribution;
@@ -215,8 +214,6 @@ public final class HaifaAgentBuilder {
         persistence = require(resolution.selected(), ProductCapabilities.PERSISTENCE, SdkPersistenceContribution.class);
         conversation =
                 require(resolution.selected(), ProductCapabilities.CONVERSATION, SdkConversationContribution.class);
-        ContextSourceContribution context =
-                optional(resolution.selected(), ProductCapabilities.CONTEXT, ContextSourceContribution.class);
         MemoryPlatformContribution memory =
                 optional(resolution.selected(), ProductCapabilities.MEMORY, MemoryPlatformContribution.class);
         ArtifactPlatformContribution artifact =
@@ -330,9 +327,6 @@ public final class HaifaAgentBuilder {
                 }
             } else {
                 runtimeBuilder.publicToolPolicyDecorator(publicToolPolicyDecorator);
-            }
-            if (context != null) {
-                context.sources().forEach(runtimeBuilder::registerContextSource);
             }
             if (memory != null) {
                 runtimeBuilder.memory(memory.service(), memory.retriever());
