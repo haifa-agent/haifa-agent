@@ -836,12 +836,6 @@ public final class ToolPipeline {
                 "failureCategory",
                 "stableFailureCode",
                 "resourceClass",
-                "operationFamily",
-                "effectiveOperationFamily",
-                "commandOperation",
-                "commandTarget",
-                "sandboxProfileDigest",
-                "deliveryRepositoryScopeDigest",
                 "failureActionCode",
                 "failureCode",
                 "status")) {

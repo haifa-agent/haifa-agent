@@ -893,7 +893,7 @@ public final class TerminalUiReducer {
         return prefix + target.substring(0, end) + "…";
     }
 
-    private static final Set<String> TOOL_SUCCESS_STATUSES = Set.of("SUCCEEDED", "COMPLETED", "EXITED");
+    private static final Set<String> TOOL_SUCCESS_STATUSES = Set.of("SUCCEEDED");
     private static final Set<String> TOOL_FAILURE_STATUSES = Set.of("FAILED", "DENIED", "CANCELLED", "TIMEOUT");
 
     private static TranscriptItem runSummaryItem(
@@ -911,7 +911,7 @@ public final class TerminalUiReducer {
         long earliestStart = Long.MAX_VALUE;
         for (int position = segmentStart; position < items.size(); position++) {
             TranscriptItem item = items.get(position);
-            if (item.kind() == TranscriptItem.Kind.TOOL) {
+            if (item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION) {
                 if (TOOL_SUCCESS_STATUSES.contains(item.status())) toolsSucceeded++;
                 else if (TOOL_FAILURE_STATUSES.contains(item.status())) toolsFailed++;
             } else if (item.kind() == TranscriptItem.Kind.RESOURCE
