@@ -35,7 +35,7 @@ public final class RuntimeControlTraceReplay {
                 case "loop.budget-snapshot" ->
                     remainingPercent = Math.max(0, Math.min(100, integer(data, "remainingPercent", remainingPercent)));
                 case "tool.failed" -> {
-                    if ("UNKNOWN".equals(String.valueOf(data.get("status")))) {
+                    if ("OUTCOME_UNKNOWN".equals(String.valueOf(data.get("status")))) {
                         nonReplayableOutcomeUnknown++;
                     }
                 }

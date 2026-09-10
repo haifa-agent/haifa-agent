@@ -278,6 +278,21 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void includesLocalShellExecutionInTheRunSummary() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40), new TerminalUiAction.ShellCompleted("!pwd", "D:/workspace", "SUCCEEDED"));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"),
+                        Instant.parse("2026-07-27T00:00:01Z"))));
+
+        assertThat(state.transcript().getLast().body()).contains("Tools: 1 succeeded");
+    }
+
+    @Test
     void advancesTheActivityClockAtToolAndModelBoundariesWithoutResettingForOutput() {
         TerminalUiState thinking = reducer.reduce(
                 TerminalUiState.initial(120, 40),

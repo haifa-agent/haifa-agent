@@ -1286,6 +1286,47 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void executionSpecificFailureAttributesDoNotEnterTheRunError() {
+        ToolRequest request = toolRequest(
+                "execution-failure-attributes",
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.run.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("handled failure")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "execution.run",
+                        "1.0.0",
+                        "execution.run.input",
+                        true,
+                        invocation -> new ToolResult(
+                                false,
+                                "execution failed",
+                                Map.of(
+                                        "stableFailureCode", "NON_ZERO_EXIT",
+                                        "operationFamily", "TEST",
+                                        "commandTarget", "mvn test",
+                                        "sandboxProfileDigest", "sha256:sandbox"),
+                                List.of(),
+                                List.of(),
+                                false)));
+
+        var accepted = fixture.runtime.start(request("execution-failure-attributes"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.store
+                        .toolCalls(accepted.runId())
+                        .getFirst()
+                        .error()
+                        .orElseThrow()
+                        .error()
+                        .details())
+                .containsEntry("stableFailureCode", "NON_ZERO_EXIT")
+                .doesNotContainKeys("operationFamily", "commandTarget", "sandboxProfileDigest");
+    }
+
+    @Test
     void normallyExitedNonZeroExecutionCompletesTheToolAndPublishesOnlyCompletionEvents() {
         ToolRequest request = toolRequest(
                 "non-zero-exit", "execution_run", "1.0.0", new ToolArguments("execution.run.input", "1.0", Map.of()));
