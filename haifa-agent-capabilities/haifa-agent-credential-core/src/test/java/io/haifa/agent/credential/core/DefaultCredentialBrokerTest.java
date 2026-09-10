@@ -41,7 +41,6 @@ class DefaultCredentialBrokerTest {
                 definitionId, Set.of("repository:read"), Set.of(CredentialExposureMode.HTTP_HEADER));
         var scope = new CredentialBindingScope(CredentialScopeKind.USER, "user");
         var binding = new CredentialBinding(
-                "binding",
                 tenant,
                 Optional.of(principal),
                 definitionId,
@@ -86,7 +85,6 @@ class DefaultCredentialBrokerTest {
                 definitionId, Set.of("mcp:tools:list"), Set.of(CredentialExposureMode.HTTP_HEADER));
         var scope = new CredentialBindingScope(CredentialScopeKind.USER, "user");
         var binding = new CredentialBinding(
-                "mcp-binding",
                 tenant,
                 Optional.of(principal),
                 definitionId,

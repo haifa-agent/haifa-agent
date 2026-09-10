@@ -38,7 +38,7 @@ class DefaultCredentialResolverTest {
 
         CredentialBinding resolved = new DefaultCredentialResolver().resolve(request(), List.of(user, project));
 
-        assertThat(resolved.bindingId()).isEqualTo("project");
+        assertThat(resolved.reference().value()).isEqualTo("project");
         assertThatThrownBy(() -> new DefaultCredentialResolver()
                         .resolve(request(), List.of(binding("other", PROJECT, new PrincipalRef("other", "human")))))
                 .isInstanceOf(CredentialException.class)
@@ -60,7 +60,6 @@ class DefaultCredentialResolverTest {
         assertUnavailable(binding("disabled", PROJECT, PRINCIPAL, CredentialStatus.DISABLED, NOW.plusSeconds(60)));
         assertUnavailable(binding("expired", PROJECT, PRINCIPAL, CredentialStatus.ACTIVE, NOW));
         assertUnavailable(new CredentialBinding(
-                "wrong-scope",
                 TENANT,
                 Optional.of(PRINCIPAL),
                 DEFINITION,
@@ -73,7 +72,6 @@ class DefaultCredentialResolverTest {
                 CredentialStatus.ACTIVE,
                 Optional.of(NOW.plusSeconds(60))));
         assertUnavailable(new CredentialBinding(
-                "wrong-capability",
                 TENANT,
                 Optional.of(PRINCIPAL),
                 DEFINITION,
@@ -117,7 +115,6 @@ class DefaultCredentialResolverTest {
             CredentialStatus status,
             Instant expiresAt) {
         return new CredentialBinding(
-                id,
                 TENANT,
                 Optional.of(principal),
                 DEFINITION,
