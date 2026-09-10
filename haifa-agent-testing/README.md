@@ -84,36 +84,19 @@ workflow 中的 Fast/Integration/Local Native Job。私有配置仓通过仅登�
 私有仓 checkout 共同证明该 Key 在 Actions 中可用，Deploy Key 的 `read_only` 状态仍需从目标仓库
 设置或 API 审计，不能从掩码日志推断。
 
-Critical Path 与 Autonomous Delivery 保留各自原生状态和 Budget，但每个顶层 Run 只生成一个权威
-`run-result.json`；AD Repeat 只生成局部 `repeat-result.json`。公共 Envelope、Secret Scan、Manifest 和
-只读终结由同一个 Writer 完成，不存在可独立漂移的第二套顶层结果 Projection。
-
-`testing-assets-v2.json` 是当前公共测试资产台账。主仓只对 Autonomous Delivery Fixture、Coding
-E2E Fixture 和 Harness Schema 镜像等机器资产目录启用 Coverage Root，不机械枚举整个 Testing
-源码树。目录资产默认只登记自身生命周期；只有显式 `SUBTREE` 的完整 Case/Fixture 包可以覆盖后代。
-Release 模式校验两仓完整 v2 台账；Live 只校验本次引用闭包，Dev 不执行全库资产扫描。
+Critical Path 与 Autonomous Delivery 专注于能力验证与防退化，执行标准测试生命周期。
 
 边界约束：
 
 - 产品模块不得依赖本目录中的模块；
 - 测试模块可以按用例需要单向依赖产品模块；
-- Harness 主代码、产品语义 Suite、E2E 用例和共享 Fixture 的文件名、类型名、协议字段及测试数据都
-  必须保持供应商中立；具体供应商只能由 Agent Profile 引用的最高层产品配置注入；
+- 共享 Fixture 的文件名、类型名、协议字段及测试数据都必须保持供应商中立；具体供应商由产品配置注入；
 - 模块私有 Fixture 优先留在相邻模块的 `src/test/resources`；
 - API Key、Token、生产数据、真实 Host Path、原始 Prompt/Provider 响应和运行生成的数据库、Trace、
   Transcript、Workspace 不得进入本目录；
-- 真实模型、外部 MCP、Web Provider 和高成本 E2E 必须保持显式 opt-in，并使用独立测试凭据与预算。
-- Suite Runner 在执行前必须一次性验证所选 Suite 的全部开关、Secret、运行根和预算，不能运行到
-  后续 Case 才发现缺少凭据；JUnit assumption skip 不能被报告为通过；
-- Suite Runner 与 Evaluation Harness 必须复用同一跨平台进程树 Tracker；超时或父进程先退出时仍需
-  收敛已观察后代，存在清理介入或残留进程不能成为 PASS；
-- Critical Path 与 Evaluation 必须复用同一证据 Manifest 和只读终结能力；每次执行使用唯一证据根，
-  禁止覆盖历史报告或把后续批次追加到已终结目录；
-- Critical Path 与 Evaluation 必须复用同一 `SafeRunRoot`，解析符号链接祖先并拒绝文件系统根、
-  用户 Home、代码仓内部及包含代码仓的上层目录；
-- Critical Path 与 Evaluation 必须复用同一流式 Secret Scanner；扫描只记录命中文件的逻辑路径，
-  不记录 Secret 值，任一命中必须让批次失败并在只读终结前写入报告；
-- 测试运行产物写入 `HAIFA_TEST_RUN_ROOT`，不得写入主仓或 `test-config`。
+- 真实模型、外部 MCP、Web Provider 和高成本 E2E 必须保持显式 opt-in，并使用独立测试凭据；
+- 超时或父进程先退出时仍需使用跨平台进程树治理收敛已观察后代；
+- 测试运行产物写入指定测试临时目录，不得写入代码仓库。
 
 11 号能力 Task 02 的 Journal Contract 测试与 SQLite Adapter 相邻放置，并以同一测试方法验证
 `InMemoryRuntimeStore` 与 `SqliteRuntimeEventAppender` 的 eventId、sequence、range、head/earliest、
