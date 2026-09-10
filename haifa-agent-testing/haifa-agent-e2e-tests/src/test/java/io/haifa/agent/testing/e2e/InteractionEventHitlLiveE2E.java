@@ -11,6 +11,7 @@ import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.RunEventCursor;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -43,29 +44,25 @@ import org.junit.jupiter.api.parallel.ExecutionMode;
 class InteractionEventHitlLiveE2E {
     private static final Duration RUN_TIMEOUT = Duration.ofMinutes(12);
     private static Path projectRoot;
-    private static Path configRoot;
     private static Path runRoot;
     private static Path agentConfiguration;
 
     @BeforeAll
-    static void requireSuiteExecution() {
-        Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("HAIFA_SUITE_EXECUTION")));
-        Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("HAIFA_CODING_CLIENT_LIVE_TEST")));
-        projectRoot = requireDirectory("HAIFA_AGENT_ROOT");
-        configRoot = requireDirectory("HAIFA_TEST_CONFIG_ROOT");
-        runRoot = requireAbsolutePath("HAIFA_TEST_RUN_ROOT");
-        agentConfiguration = requireFile("HAIFA_TEST_AGENT_CONFIG");
-        if (runRoot.startsWith(projectRoot) || runRoot.startsWith(configRoot)) {
-            throw new IllegalStateException("HAIFA_TEST_RUN_ROOT must be outside both Git repositories");
-        }
+    static void requireLiveExecution() throws Exception {
+        Assumptions.assumeTrue(
+                "true".equalsIgnoreCase(System.getenv("HAIFA_CODING_CLIENT_LIVE_TEST")),
+                "Live Interaction/HITL E2E requires HAIFA_CODING_CLIENT_LIVE_TEST=true");
+        projectRoot = resolveProjectRoot();
+        runRoot = resolveRunRoot();
+        agentConfiguration = resolveAgentConfiguration();
     }
 
     @Test
     void completesInteractionEventAndHitlRoundTrip(CodingAgentClientFactory clients) throws Exception {
         Path caseRoot = newCaseRoot();
         Path workspace = Files.createDirectory(caseRoot.resolve("workspace"));
-        Path database = requireAbsolutePath("HAIFA_SQLITE_DATABASE_PATH");
-        Path transcripts = requireAbsolutePath("HAIFA_TRANSCRIPT_ROOT");
+        Path database = resolveDatabasePath(caseRoot);
+        Path transcripts = resolveTranscriptsPath(caseRoot);
         Files.createDirectories(database.getParent());
         Files.createDirectories(transcripts);
 
@@ -386,24 +383,68 @@ class InteractionEventHitlLiveE2E {
         return Files.createDirectory(runRoot.resolve("runs-cp-11-" + UUID.randomUUID()));
     }
 
-    private static Path requireDirectory(String environmentName) {
-        Path path = requireAbsolutePath(environmentName);
-        if (!Files.isDirectory(path)) throw new IllegalStateException(environmentName + " must be a directory");
-        return path;
+    private static Path resolveProjectRoot() {
+        String env = System.getenv("HAIFA_AGENT_ROOT");
+        if (env != null && !env.isBlank()) {
+            Path path = Path.of(env).toAbsolutePath().normalize();
+            if (Files.isDirectory(path)) {
+                return path;
+            }
+        }
+        Path current =
+                Path.of(System.getProperty("basedir", ".")).toAbsolutePath().normalize();
+        while (current != null) {
+            if (Files.isDirectory(current.resolve(".mvn")) && Files.isRegularFile(current.resolve("pom.xml"))) {
+                return current;
+            }
+            current = current.getParent();
+        }
+        return Path.of(".").toAbsolutePath().normalize();
     }
 
-    private static Path requireFile(String environmentName) {
-        Path path = requireAbsolutePath(environmentName);
-        if (!Files.isRegularFile(path)) throw new IllegalStateException(environmentName + " must be a file");
-        return path;
+    private static Path resolveRunRoot() throws Exception {
+        String env = System.getenv("HAIFA_TEST_RUN_ROOT");
+        if (env != null && !env.isBlank()) {
+            Path path = Path.of(env).toAbsolutePath().normalize();
+            Files.createDirectories(path);
+            return path;
+        }
+        Path temp = Files.createTempDirectory("haifa-hitl-live-run-");
+        temp.toFile().deleteOnExit();
+        return temp;
     }
 
-    private static Path requireAbsolutePath(String environmentName) {
-        String value = System.getenv(environmentName);
-        if (value == null || value.isBlank()) throw new IllegalStateException(environmentName + " is required");
-        Path configured = Path.of(value);
-        if (!configured.isAbsolute()) throw new IllegalStateException(environmentName + " must be absolute");
-        return configured.normalize();
+    private static Path resolveAgentConfiguration() {
+        String env = System.getenv("HAIFA_TEST_AGENT_CONFIG");
+        if (env != null && !env.isBlank()) {
+            Path path = Path.of(env).toAbsolutePath().normalize();
+            if (Files.isRegularFile(path)) {
+                return path;
+            }
+        }
+        Path repoRoot = resolveProjectRoot();
+        Path defaultYaml = repoRoot.resolve("haifa-agent-applications/haifa-agent-cli/distribution/haifa-coding.yaml");
+        if (Files.isRegularFile(defaultYaml)) {
+            return defaultYaml;
+        }
+        throw new IllegalStateException("Cannot resolve agent configuration: please set HAIFA_TEST_AGENT_CONFIG");
+    }
+
+    private static Path resolveDatabasePath(Path caseRoot) throws IOException {
+        String env = System.getenv("HAIFA_SQLITE_DATABASE_PATH");
+        if (env != null && !env.isBlank()) {
+            return Path.of(env).toAbsolutePath().normalize();
+        }
+        Path dir = Files.createDirectories(caseRoot.resolve("persistence"));
+        return dir.resolve("runtime.db");
+    }
+
+    private static Path resolveTranscriptsPath(Path caseRoot) throws IOException {
+        String env = System.getenv("HAIFA_TRANSCRIPT_ROOT");
+        if (env != null && !env.isBlank()) {
+            return Path.of(env).toAbsolutePath().normalize();
+        }
+        return Files.createDirectories(caseRoot.resolve("persistence").resolve("transcripts"));
     }
 
     private record ToolCallRecord(String toolName, String status) {}
