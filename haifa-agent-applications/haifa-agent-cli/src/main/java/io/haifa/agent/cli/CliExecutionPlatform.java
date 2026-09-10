@@ -133,6 +133,7 @@ final class CliExecutionPlatform implements AutoCloseable {
                         provisioning,
                         tenant,
                         principal,
+                        environmentRef,
                         profile.ref(),
                         CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                         configuration.defaultTimeout(),
