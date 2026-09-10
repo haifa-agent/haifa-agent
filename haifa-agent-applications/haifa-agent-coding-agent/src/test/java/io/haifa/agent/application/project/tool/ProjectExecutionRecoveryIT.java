@@ -72,10 +72,7 @@ import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationPro
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
-import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
-import io.haifa.agent.sandbox.api.SandboxFilesystemPolicy;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
@@ -513,24 +510,21 @@ class ProjectExecutionRecoveryIT {
     }
 
     private static SandboxProfile normalProfile() {
-        return profile("normal", NetworkPolicy.DENY);
+        return profile("normal");
     }
 
     private static SandboxProfile recoveryProfile() {
-        return profile("recovery", NetworkPolicy.ALLOW);
+        return profile("recovery");
     }
 
-    private static SandboxProfile profile(String id, NetworkPolicy network) {
+    private static SandboxProfile profile(String id) {
         return new SandboxProfile(
                 new SandboxProfileRef(id, "1"),
                 "host-guarded",
-                SandboxConfigurationDigest.sha256Fields(List.of(id, network.name())),
+                SandboxConfigurationDigest.sha256Fields(List.of(id)),
                 Set.of(),
                 Set.of(),
-                true,
-                network,
-                SandboxFilesystemPolicy.hostCompatible(),
-                new SandboxCapabilities(true, false, network == NetworkPolicy.DENY, false, false));
+                true);
     }
 
     private static void ensureSession(RuntimePersistencePorts ports) {

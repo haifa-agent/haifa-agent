@@ -113,7 +113,7 @@ public final class IdeCodingAgentMain {
                   model       : %s / %s (%s, %s)
                   tools       : %s
                   skills      : %s
-                  execution   : %s provider, network=%s, shell=%s
+                  execution   : %s provider, network=host, shell=%s
                   approval    : %s (threshold=%s)
                   persistence : %s
                   runtime     : timeout=%s, maxIterations=%d, maxModelCalls=%d, maxToolCalls=%d
@@ -130,7 +130,6 @@ public final class IdeCodingAgentMain {
                         tools,
                         skills,
                         execution.provider(),
-                        execution.network(),
                         execution.shell(),
                         configuration.approval().name(),
                         configuration.approvalThreshold().name(),

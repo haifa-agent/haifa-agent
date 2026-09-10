@@ -6,7 +6,6 @@ import io.haifa.agent.execution.core.tool.ExecutionToolProvider;
 import io.haifa.agent.execution.core.tool.ScriptRuntimeResolver;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
 import io.haifa.agent.policy.api.PolicyDigest;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.ApprovalPlatformContribution;
@@ -62,7 +61,7 @@ public record PersonalExecutionPlatform(
                 profileIdentity,
                 provider.configurationIdentity(),
                 provider.scratchSpecDigest(),
-                profile.networkPolicy() == NetworkPolicy.ALLOW,
+                true,
                 false,
                 runtimes.languages());
         return new PersonalExecutionPlatform(

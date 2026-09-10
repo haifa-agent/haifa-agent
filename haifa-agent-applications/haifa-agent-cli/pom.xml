@@ -39,7 +39,6 @@
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-git</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-sandbox-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-sandbox-host</artifactId></dependency>
-        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-sandbox-local-native</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-model-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-model-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-model-openai-compatible</artifactId></dependency>
