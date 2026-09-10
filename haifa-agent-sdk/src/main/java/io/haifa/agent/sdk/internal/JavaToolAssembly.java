@@ -159,7 +159,7 @@ public final class JavaToolAssembly {
                             request.deadline(),
                             request.idempotencyKey(),
                             request.cancellation(),
-                            request.credentialLeases());
+                            request.credentials());
                     request.observer().dispatched();
                     dispatchState = ToolDispatchState.DISPATCHED;
                     O output =
@@ -373,7 +373,7 @@ public final class JavaToolAssembly {
                     request.deadline(),
                     request.idempotencyKey(),
                     request.cancellation(),
-                    request.credentialLeases(),
+                    request.credentials(),
                     request.observer());
             return source.invoker().invoke(delegated);
         }

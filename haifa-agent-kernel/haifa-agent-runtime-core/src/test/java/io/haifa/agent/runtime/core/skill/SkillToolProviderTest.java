@@ -70,7 +70,7 @@ class SkillToolProviderTest {
                 Instant.parse("2026-08-15T00:00:00Z"),
                 Optional.of("key-1"),
                 () -> false,
-                List.of(),
+                Map.of(),
                 new ToolInvocationObserver() {
                     @Override
                     public void dispatched() {

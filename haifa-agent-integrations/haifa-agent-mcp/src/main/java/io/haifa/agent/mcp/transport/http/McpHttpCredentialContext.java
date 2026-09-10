@@ -1,14 +1,11 @@
 package io.haifa.agent.mcp.transport.http;
 
-import io.haifa.agent.credential.api.CredentialExposureMode;
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.mcp.config.McpCredentialInjection;
 import io.haifa.agent.mcp.internal.McpRequestContext;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.modelcontextprotocol.common.McpTransportContext;
 import java.net.URI;
 import java.net.http.HttpRequest;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -25,15 +22,16 @@ public final class McpHttpCredentialContext implements McpRequestContext {
         this.allowedOrigin = Objects.requireNonNull(allowedOrigin, "allowedOrigin");
     }
 
-    public <T> T withCredentials(List<CredentialLease> credentials, Supplier<T> action) {
+    @Override
+    public <T> T withCredentials(Map<String, String> credentials, Supplier<T> action) {
         return withInvocation(credentials, ToolInvocationObserver.noop(), action);
     }
 
     @Override
     public <T> T withInvocation(
-            List<CredentialLease> credentials, ToolInvocationObserver observer, Supplier<T> action) {
+            Map<String, String> credentials, ToolInvocationObserver observer, Supplier<T> action) {
         if (current.get() != null) throw new IllegalStateException("nested MCP credential context is forbidden");
-        current.set(new RequestScope(List.copyOf(credentials), observer));
+        current.set(new RequestScope(Map.copyOf(credentials), observer));
         try {
             return action.get();
         } finally {
@@ -55,23 +53,15 @@ public final class McpHttpCredentialContext implements McpRequestContext {
         Object value = context.get(CONTEXT_KEY);
         RequestScope scope = value instanceof RequestScope requestScope
                 ? requestScope
-                : new RequestScope(List.of(), ToolInvocationObserver.noop());
-        List<CredentialLease> credentials = scope.credentials();
-        if (credentials.size() != injections.size()) {
-            if (!injections.isEmpty()) throw new SecurityException("MCP HTTP credential lease set is incomplete");
-            return;
-        }
-        for (int index = 0; index < injections.size(); index++) {
-            McpCredentialInjection injection = injections.get(index);
-            if (injection.requirement().exposureMode() != CredentialExposureMode.HTTP_HEADER) {
-                throw new SecurityException("non-header credential cannot be injected into MCP HTTP");
+                : new RequestScope(Map.of(), ToolInvocationObserver.noop());
+        Map<String, String> credentials = scope.credentials();
+        for (McpCredentialInjection injection : injections) {
+            String secret = credentials.get(injection.requirement().credentialId());
+            if (secret == null || secret.isBlank()) {
+                throw new SecurityException(
+                        "MCP HTTP credential is missing: " + injection.requirement().credentialId());
             }
-            CredentialLease lease = credentials.get(index);
-            lease.use(secret -> {
-                request.header(
-                        injection.targetName(), injection.valuePrefix() + new String(secret, StandardCharsets.UTF_8));
-                return null;
-            });
+            request.header(injection.targetName(), injection.valuePrefix() + secret);
         }
         scope.dispatched();
     }
@@ -82,12 +72,12 @@ public final class McpHttpCredentialContext implements McpRequestContext {
     }
 
     private record RequestScope(
-            List<CredentialLease> credentials,
+            Map<String, String> credentials,
             ToolInvocationObserver observer,
             java.util.concurrent.atomic.AtomicBoolean dispatchRecorded) {
-        private RequestScope(List<CredentialLease> credentials, ToolInvocationObserver observer) {
+        private RequestScope(Map<String, String> credentials, ToolInvocationObserver observer) {
             this(
-                    List.copyOf(credentials),
+                    Map.copyOf(credentials),
                     Objects.requireNonNull(observer, "observer"),
                     new java.util.concurrent.atomic.AtomicBoolean());
         }

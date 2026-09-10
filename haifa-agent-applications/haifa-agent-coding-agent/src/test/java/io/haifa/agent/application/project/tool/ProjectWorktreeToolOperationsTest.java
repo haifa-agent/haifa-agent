@@ -320,7 +320,7 @@ class ProjectWorktreeToolOperationsTest {
                 NOW.plusSeconds(30),
                 Optional.of("worktree-key"),
                 () -> false,
-                List.of(),
+                Map.of(),
                 observer);
     }
 

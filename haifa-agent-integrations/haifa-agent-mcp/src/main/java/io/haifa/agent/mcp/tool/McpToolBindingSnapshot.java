@@ -57,16 +57,7 @@ public record McpToolBindingSnapshot(
                 "transportIdentityReference", server.transport().identityReference(),
                 "credentialRequirements",
                         credentialRequirements.stream()
-                                .map(requirement -> Map.of(
-                                        "definitionId",
-                                                requirement.definitionId().value(),
-                                        "purpose", requirement.purpose(),
-                                        "scopes",
-                                                requirement.scopes().stream()
-                                                        .sorted()
-                                                        .toList(),
-                                        "exposureMode",
-                                                requirement.exposureMode().name()))
+                                .map(requirement -> Map.of("credentialId", requirement.credentialId()))
                                 .toList(),
                 "localDefinitionHash", localDefinitionHash.value());
         String digest = McpCanonicalizer.digest(document);

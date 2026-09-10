@@ -154,13 +154,7 @@ public record McpServerDefinition(
                 "maxReconnectAttempts", connectionPolicy.maxReconnectAttempts());
         List<Map<String, Object>> credentialDocument = discoveryCredentials.stream()
                 .map(injection -> Map.<String, Object>of(
-                        "definitionId", injection.requirement().definitionId().value(),
-                        "purpose", injection.requirement().purpose(),
-                        "scopes",
-                                injection.requirement().scopes().stream()
-                                        .sorted()
-                                        .toList(),
-                        "exposureMode", injection.requirement().exposureMode().name(),
+                        "credentialId", injection.requirement().credentialId(),
                         "targetName", injection.targetName(),
                         "valuePrefix", injection.valuePrefix()))
                 .toList();

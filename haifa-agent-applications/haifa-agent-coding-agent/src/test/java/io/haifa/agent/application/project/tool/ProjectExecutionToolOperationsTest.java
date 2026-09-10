@@ -1575,7 +1575,7 @@ class ProjectExecutionToolOperationsTest {
                 NOW.plusSeconds(30),
                 Optional.of("execution-key"),
                 cancellation,
-                List.of(),
+                Map.of(),
                 observer);
     }
 
@@ -1677,7 +1677,7 @@ class ProjectExecutionToolOperationsTest {
                 base.deadline(),
                 Optional.of(keys.idempotencyKey().value()),
                 base.cancellation(),
-                base.credentialLeases(),
+                base.credentials(),
                 base.observer());
     }
 

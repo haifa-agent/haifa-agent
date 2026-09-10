@@ -3,10 +3,8 @@ package io.haifa.agent.cli;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.credential.api.CredentialBroker;
-import io.haifa.agent.credential.api.CredentialLease;
-import io.haifa.agent.credential.api.CredentialOperationRequest;
-import io.haifa.agent.credential.api.CredentialRequest;
 import io.haifa.agent.credential.api.SecretRedactor;
+import io.haifa.agent.credential.core.DefaultCredentialBroker;
 import io.haifa.agent.credential.core.DefaultSecretRedactor;
 import io.haifa.agent.mcp.client.McpConnectionManager;
 import io.haifa.agent.mcp.client.SdkMcpClientFactory;
@@ -177,21 +175,6 @@ final class CliMcpPlatform implements AutoCloseable {
     }
 
     private static CredentialBroker noCredentialBroker(SecretRedactor redactor) {
-        return new CredentialBroker() {
-            @Override
-            public CredentialLease issue(CredentialRequest request) {
-                throw new IllegalStateException("CLI MCP credentials are not configured");
-            }
-
-            @Override
-            public CredentialLease issue(CredentialOperationRequest request) {
-                throw new IllegalStateException("CLI MCP credentials are not configured");
-            }
-
-            @Override
-            public SecretRedactor redactor() {
-                return redactor;
-            }
-        };
+        return new DefaultCredentialBroker(Map.of(), redactor);
     }
 }

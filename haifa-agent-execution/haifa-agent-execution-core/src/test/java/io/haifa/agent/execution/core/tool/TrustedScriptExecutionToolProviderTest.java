@@ -397,7 +397,7 @@ class TrustedScriptExecutionToolProviderTest {
                 NOW.plusSeconds(30),
                 Optional.of("idempotency"),
                 () -> false,
-                List.of(),
+                Map.of(),
                 observer);
     }
 

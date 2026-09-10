@@ -1,9 +1,10 @@
 package io.haifa.agent.credential.api;
 
+@FunctionalInterface
 public interface SecretRedactor {
-    default void track(CredentialLease lease) {}
+    String redact(String text);
 
-    default void forget(CredentialLease lease) {}
-
-    String redact(String value);
+    static SecretRedactor noop() {
+        return text -> text;
+    }
 }

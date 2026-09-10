@@ -3,24 +3,14 @@ package io.haifa.agent.personalassistant.application.web;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.credential.api.CredentialBinding;
-import io.haifa.agent.credential.api.CredentialBindingScope;
-import io.haifa.agent.credential.api.CredentialDefinition;
-import io.haifa.agent.credential.api.CredentialExposureMode;
-import io.haifa.agent.credential.api.CredentialReference;
-import io.haifa.agent.credential.api.CredentialScopeKind;
-import io.haifa.agent.credential.api.CredentialStatus;
-import io.haifa.agent.credential.core.AesGcmCredentialStore;
 import io.haifa.agent.credential.core.DefaultCredentialBroker;
-import io.haifa.agent.credential.core.DefaultCredentialResolver;
+import java.util.HashMap;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.CredentialPlatformContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductProviderSuitability;
-import io.haifa.agent.tool.api.ToolCoordinate;
-import io.haifa.agent.tool.core.ToolDefinitionCanonicalizer;
 import io.haifa.agent.web.DefaultWebUrlPolicy;
 import io.haifa.agent.web.WebContentFormat;
 import io.haifa.agent.web.WebFetchProvider;
@@ -49,18 +39,15 @@ import io.haifa.agent.web.provider.TavilyWebSearchProvider;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
-import java.security.GeneralSecurityException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import javax.crypto.KeyGenerator;
 
 /** Product-level Web provider selection and in-memory credential binding. */
 public record PersonalWebPlatform(
@@ -246,44 +233,16 @@ public record PersonalWebPlatform(
             List<WebToolCatalogContribution> contributions,
             ProviderConfiguration search,
             ProviderConfiguration fetch) {
-        var store = encryptedStore();
-        List<CredentialDefinition> definitions = new ArrayList<>();
-        List<CredentialBinding> bindings = new ArrayList<>();
+        Map<String, String> secrets = new HashMap<>();
         for (WebToolCatalogContribution contribution : contributions) {
             var requirement = contribution.definition().credentialRequirements().stream()
                     .findFirst()
                     .orElseThrow(() -> new IllegalStateException("Web provider credential requirement is missing"));
             String operation = contribution.definition().name().value();
             ProviderConfiguration configuration = operation.equals("web.search") ? search : fetch;
-            String suffix = operation.substring("web.".length()) + "-" + configuration.providerId();
-            var reference = new CredentialReference("personal-web-" + suffix);
-            byte[] secretBytes = configuration.credential().getBytes(StandardCharsets.UTF_8);
-            try {
-                store.store(reference, tenant, requirement.definitionId(), secretBytes);
-            } finally {
-                Arrays.fill(secretBytes, (byte) 0);
-            }
-            definitions.add(new CredentialDefinition(
-                    requirement.definitionId(), requirement.scopes(), Set.of(CredentialExposureMode.HTTP_HEADER)));
-            ToolCoordinate coordinate = new ToolCoordinate(
-                    contribution.definition().name(),
-                    contribution.definition().version(),
-                    contribution.definition().providerId(),
-                    new ToolDefinitionCanonicalizer().hash(contribution.definition()));
-            bindings.add(new CredentialBinding(
-                    tenant,
-                    Optional.of(principal),
-                    requirement.definitionId(),
-                    reference,
-                    new CredentialBindingScope(CredentialScopeKind.SYSTEM, "system"),
-                    Set.of(coordinate.externalForm()),
-                    Set.of(requirement.purpose()),
-                    requirement.scopes(),
-                    Set.of(CredentialExposureMode.HTTP_HEADER),
-                    CredentialStatus.ACTIVE,
-                    Optional.empty()));
+            secrets.put(requirement.credentialId(), configuration.credential());
         }
-        return new DefaultCredentialBroker(definitions, bindings, new DefaultCredentialResolver(), store);
+        return new DefaultCredentialBroker(secrets);
     }
 
     private static WebSearchProvider searchProvider(
@@ -349,19 +308,7 @@ public record PersonalWebPlatform(
     }
 
     private static DefaultCredentialBroker emptyBroker() {
-        return new DefaultCredentialBroker(List.of(), List.of(), new DefaultCredentialResolver(), encryptedStore());
-    }
-
-    private static AesGcmCredentialStore encryptedStore() {
-        try {
-            KeyGenerator generator = KeyGenerator.getInstance("AES");
-            generator.init(256);
-            var key = generator.generateKey();
-            return new AesGcmCredentialStore(() -> key);
-        } catch (GeneralSecurityException exception) {
-            throw new IllegalStateException(
-                    "unable to initialize the in-memory Personal Web credential store", exception);
-        }
+        return new DefaultCredentialBroker(Map.of());
     }
 
     private static String sha256(String value) {
