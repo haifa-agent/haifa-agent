@@ -6,8 +6,6 @@ import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
-import io.haifa.agent.credential.api.CredentialDefinitionId;
-import io.haifa.agent.credential.api.CredentialExposureMode;
 import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
@@ -201,10 +199,6 @@ class DefaultToolPolicyTest {
     }
 
     private static List<CredentialRequirement> credentialRequirement() {
-        return List.of(new CredentialRequirement(
-                new CredentialDefinitionId("api-key"),
-                "invoke",
-                Set.of("api:call"),
-                CredentialExposureMode.HTTP_HEADER));
+        return List.of(new CredentialRequirement("api-key"));
     }
 }

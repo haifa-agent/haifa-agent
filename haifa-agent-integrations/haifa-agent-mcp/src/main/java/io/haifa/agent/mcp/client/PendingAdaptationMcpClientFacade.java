@@ -1,6 +1,5 @@
 package io.haifa.agent.mcp.client;
 
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.mcp.config.McpProtocolProfile;
 import io.haifa.agent.mcp.config.McpServerDefinition;
 import io.haifa.agent.mcp.protocol.McpListToolsPage;
@@ -8,7 +7,6 @@ import io.haifa.agent.mcp.protocol.McpRemoteToolResult;
 import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
-import java.util.List;
 import java.util.Map;
 
 final class PendingAdaptationMcpClientFacade implements McpClientFacade {
@@ -22,12 +20,12 @@ final class PendingAdaptationMcpClientFacade implements McpClientFacade {
     }
 
     @Override
-    public McpServerSnapshot initialize(List<CredentialLease> credentials) {
+    public McpServerSnapshot initialize(Map<String, String> credentials) {
         throw pendingAdaptation();
     }
 
     @Override
-    public McpListToolsPage listTools(String cursor, List<CredentialLease> credentials) {
+    public McpListToolsPage listTools(String cursor, Map<String, String> credentials) {
         throw pendingAdaptation();
     }
 
@@ -35,7 +33,7 @@ final class PendingAdaptationMcpClientFacade implements McpClientFacade {
     public McpRemoteToolResult callTool(
             String name,
             Map<String, Object> arguments,
-            List<CredentialLease> credentials,
+            Map<String, String> credentials,
             ToolInvocationObserver observer) {
         throw pendingAdaptation();
     }

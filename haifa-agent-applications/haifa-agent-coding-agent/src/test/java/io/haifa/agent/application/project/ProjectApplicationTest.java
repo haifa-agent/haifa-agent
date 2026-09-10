@@ -387,7 +387,7 @@ class ProjectApplicationTest {
                 NOW.plusSeconds(30),
                 Optional.of("key"),
                 () -> false,
-                List.of(),
+                java.util.Map.of(),
                 io.haifa.agent.tool.api.ToolInvocationObserver.noop());
 
         assertThat(executor.invoke(request).successful()).isTrue();

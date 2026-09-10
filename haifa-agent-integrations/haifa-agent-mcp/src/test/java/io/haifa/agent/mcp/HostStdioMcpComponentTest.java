@@ -79,16 +79,16 @@ class HostStdioMcpComponentTest {
 
         io.haifa.agent.mcp.client.McpServerSnapshot initialized;
         try {
-            initialized = client.initialize(List.of());
+            initialized = client.initialize(Map.of());
         } catch (RuntimeException exception) {
             client.close();
             var execution = awaitExecution(fixture.broker(), executionId);
             throw new AssertionError(
                     "Host stdio stub failed: " + execution.stderr().summary(), exception);
         }
-        var tools = client.listTools(null, List.of());
+        var tools = client.listTools(null, Map.of());
         var result = client.callTool(
-                "echo", Map.of("value", "hello"), List.of(), io.haifa.agent.tool.api.ToolInvocationObserver.noop());
+                "echo", Map.of("value", "hello"), Map.of(), io.haifa.agent.tool.api.ToolInvocationObserver.noop());
         client.close();
 
         assertThat(initialized.negotiatedProtocolVersion()).isEqualTo(McpProtocolProfile.VERSION_2025_11_25);

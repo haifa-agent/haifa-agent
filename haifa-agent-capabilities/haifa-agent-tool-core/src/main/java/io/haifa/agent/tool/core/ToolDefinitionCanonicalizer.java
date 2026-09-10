@@ -62,11 +62,7 @@ public final class ToolDefinitionCanonicalizer implements ToolDefinitionHasher {
     }
 
     private static Map<String, Object> credentialDocument(CredentialRequirement requirement) {
-        return Map.of(
-                "definitionId", requirement.definitionId().value(),
-                "purpose", requirement.purpose(),
-                "scopes", sorted(requirement.scopes()),
-                "exposureMode", requirement.exposureMode().name());
+        return Map.of("credentialId", requirement.credentialId());
     }
 
     private static List<String> sorted(Set<String> values) {

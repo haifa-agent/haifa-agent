@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.mcp.client.McpClientFacade;
 import io.haifa.agent.mcp.client.McpConnectionManager;
 import io.haifa.agent.mcp.client.McpConnectionState;
@@ -121,7 +120,7 @@ class McpToolProviderTest {
                 deadline,
                 Optional.empty(),
                 cancellation,
-                List.of());
+                Map.of());
     }
 
     private record Fixture(McpToolProvider provider, FrozenToolBinding binding) {}
@@ -131,7 +130,7 @@ class McpToolProviderTest {
         private volatile boolean closed;
 
         @Override
-        public McpServerSnapshot initialize(List<CredentialLease> credentials) {
+        public McpServerSnapshot initialize(Map<String, String> credentials) {
             return new McpServerSnapshot(
                     new io.haifa.agent.mcp.config.McpServerId("utility"),
                     "mcp-server:binding",
@@ -147,7 +146,7 @@ class McpToolProviderTest {
         }
 
         @Override
-        public McpListToolsPage listTools(String cursor, List<CredentialLease> credentials) {
+        public McpListToolsPage listTools(String cursor, Map<String, String> credentials) {
             return new McpListToolsPage(List.of(), Optional.empty());
         }
 
@@ -155,7 +154,7 @@ class McpToolProviderTest {
         public McpRemoteToolResult callTool(
                 String name,
                 Map<String, Object> arguments,
-                List<CredentialLease> credentials,
+                Map<String, String> credentials,
                 ToolInvocationObserver observer) {
             observer.dispatched();
             dispatched.countDown();

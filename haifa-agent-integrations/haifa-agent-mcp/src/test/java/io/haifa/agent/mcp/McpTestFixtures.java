@@ -2,8 +2,6 @@ package io.haifa.agent.mcp;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.credential.api.CredentialLease;
-import io.haifa.agent.credential.api.CredentialReference;
 import io.haifa.agent.mcp.client.McpConnectionIdentity;
 import io.haifa.agent.mcp.config.McpConnectionPolicy;
 import io.haifa.agent.mcp.config.McpCredentialInjection;
@@ -17,9 +15,7 @@ import io.haifa.agent.tool.api.ToolIdempotency;
 import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSideEffect;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -97,37 +93,5 @@ final class McpTestFixtures {
                 server.connectionPolicy(),
                 discoveryCredentials,
                 server.bindingVersion());
-    }
-
-    static CredentialLease lease(String reference, String secret) {
-        return new CredentialLease() {
-            private boolean closed;
-
-            @Override
-            public CredentialReference reference() {
-                return new CredentialReference(reference);
-            }
-
-            @Override
-            public Instant expiresAt() {
-                return Instant.parse("2030-01-01T00:00:00Z");
-            }
-
-            @Override
-            public boolean isClosed() {
-                return closed;
-            }
-
-            @Override
-            public <T> T use(io.haifa.agent.credential.api.SecretFunction<T> action) {
-                if (closed) throw new IllegalStateException("closed");
-                return action.apply(secret.getBytes(StandardCharsets.UTF_8));
-            }
-
-            @Override
-            public void close() {
-                closed = true;
-            }
-        };
     }
 }
