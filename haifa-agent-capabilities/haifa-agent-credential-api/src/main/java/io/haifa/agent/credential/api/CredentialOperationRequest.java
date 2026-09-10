@@ -5,7 +5,6 @@ import io.haifa.agent.core.reference.TenantRef;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 /** Trusted control-plane credential request. It deliberately has no synthetic Run identity. */
 public record CredentialOperationRequest(
@@ -15,7 +14,6 @@ public record CredentialOperationRequest(
         String targetBindingReference,
         CredentialRequirement requirement,
         List<CredentialBindingScope> scopeChain,
-        Optional<String> explicitBindingId,
         Instant requestedAt,
         Instant expiresAt) {
     public CredentialOperationRequest {
@@ -25,7 +23,6 @@ public record CredentialOperationRequest(
         targetBindingReference = CredentialValues.text(targetBindingReference, "targetBindingReference");
         Objects.requireNonNull(requirement, "requirement");
         scopeChain = List.copyOf(Objects.requireNonNull(scopeChain, "scopeChain"));
-        explicitBindingId = Objects.requireNonNull(explicitBindingId, "explicitBindingId");
         Objects.requireNonNull(requestedAt, "requestedAt");
         Objects.requireNonNull(expiresAt, "expiresAt");
         if (!expiresAt.isAfter(requestedAt)) {

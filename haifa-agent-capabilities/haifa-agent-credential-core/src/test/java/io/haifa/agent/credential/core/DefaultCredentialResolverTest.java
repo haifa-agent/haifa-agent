@@ -102,7 +102,6 @@ class DefaultCredentialResolverTest {
                 new CredentialRequirement(
                         DEFINITION, "read", Set.of("repository:read"), CredentialExposureMode.HTTP_HEADER),
                 List.of(PROJECT, USER),
-                Optional.empty(),
                 NOW,
                 NOW.plusSeconds(30));
     }

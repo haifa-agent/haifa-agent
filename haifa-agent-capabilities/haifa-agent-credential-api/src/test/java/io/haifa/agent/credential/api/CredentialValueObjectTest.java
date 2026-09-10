@@ -7,25 +7,17 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class CredentialValueObjectTest {
     @Test
-    void definitionsAndBindingsDefensivelyCopyMetadataAndAuthorizationSets() {
-        var metadata = new HashMap<>(Map.of("issuer", "example"));
+    void definitionsAndBindingsDefensivelyCopyAuthorizationSets() {
         var scopes = new HashSet<>(Set.of("repository:read"));
         var definition = new CredentialDefinition(
-                new CredentialDefinitionId("source-token"),
-                "source-provider",
-                CredentialType.BEARER_TOKEN,
-                scopes,
-                Set.of(CredentialExposureMode.HTTP_HEADER),
-                metadata);
+                new CredentialDefinitionId("source-token"), scopes, Set.of(CredentialExposureMode.HTTP_HEADER));
         var binding = new CredentialBinding(
                 "binding-1",
                 new TenantRef("tenant"),
@@ -40,15 +32,15 @@ class CredentialValueObjectTest {
                 CredentialStatus.ACTIVE,
                 Optional.of(Instant.parse("2026-01-01T01:00:00Z")));
 
-        metadata.put("secret", "must-not-appear");
         scopes.add("repository:write");
 
-        assertEquals(Map.of("issuer", "example"), definition.metadata());
+        assertEquals(Set.of("repository:read"), definition.allowedScopes());
         assertEquals(Set.of("repository:read"), binding.allowedScopes());
         assertThrows(
-                UnsupportedOperationException.class, () -> definition.metadata().put("x", "y"));
-        assertFalse(definition.toString().contains("must-not-appear"));
-        assertFalse(binding.toString().contains("must-not-appear"));
+                UnsupportedOperationException.class,
+                () -> definition.allowedScopes().add("repository:write"));
+        assertFalse(definition.toString().contains("repository:write"));
+        assertFalse(binding.toString().contains("repository:write"));
     }
 
     @Test
@@ -67,7 +59,6 @@ class CredentialValueObjectTest {
                                 Set.of("repository:read"),
                                 CredentialExposureMode.HTTP_HEADER),
                         java.util.List.of(new CredentialBindingScope(CredentialScopeKind.USER, "user")),
-                        Optional.empty(),
                         now,
                         now));
     }

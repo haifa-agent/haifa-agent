@@ -10,7 +10,6 @@ import io.haifa.agent.credential.api.CredentialExposureMode;
 import io.haifa.agent.credential.api.CredentialReference;
 import io.haifa.agent.credential.api.CredentialScopeKind;
 import io.haifa.agent.credential.api.CredentialStatus;
-import io.haifa.agent.credential.api.CredentialType;
 import io.haifa.agent.credential.core.AesGcmCredentialStore;
 import io.haifa.agent.credential.core.DefaultCredentialBroker;
 import io.haifa.agent.credential.core.DefaultCredentialResolver;
@@ -37,7 +36,6 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -112,12 +110,7 @@ final class CliWebPlatform {
                 Arrays.fill(secretBytes, (byte) 0);
             }
             definitions.add(new CredentialDefinition(
-                    requirement.definitionId(),
-                    providerConfiguration.providerId(),
-                    CredentialType.API_KEY,
-                    requirement.scopes(),
-                    Set.of(CredentialExposureMode.HTTP_HEADER),
-                    Map.of("source", "environment-reference")));
+                    requirement.definitionId(), requirement.scopes(), Set.of(CredentialExposureMode.HTTP_HEADER)));
             ToolCoordinate coordinate = new ToolCoordinate(
                     contribution.definition().name(),
                     contribution.definition().version(),

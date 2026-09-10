@@ -15,12 +15,10 @@ import java.util.Objects;
 
 public final class DefaultCredentialResolver implements CredentialResolver {
     private static final Map<CredentialScopeKind, Integer> PRECEDENCE = Map.of(
-            CredentialScopeKind.EXPLICIT_INVOCATION, 0,
-            CredentialScopeKind.SESSION, 1,
-            CredentialScopeKind.PROJECT, 2,
-            CredentialScopeKind.USER, 3,
-            CredentialScopeKind.ORGANIZATION, 4,
-            CredentialScopeKind.SYSTEM, 5);
+            CredentialScopeKind.SESSION, 0,
+            CredentialScopeKind.PROJECT, 1,
+            CredentialScopeKind.USER, 2,
+            CredentialScopeKind.SYSTEM, 3);
 
     @Override
     public CredentialBinding resolve(CredentialRequest request, Collection<CredentialBinding> bindings) {
@@ -30,7 +28,6 @@ public final class DefaultCredentialResolver implements CredentialResolver {
                 request.principal(),
                 request.requirement(),
                 request.scopeChain(),
-                request.explicitBindingId(),
                 request.requestedAt(),
                 request.toolCoordinate(),
                 bindings);
@@ -44,7 +41,6 @@ public final class DefaultCredentialResolver implements CredentialResolver {
                 request.principal(),
                 request.requirement(),
                 request.scopeChain(),
-                request.explicitBindingId(),
                 request.requestedAt(),
                 request.targetBindingReference(),
                 bindings);
@@ -55,14 +51,12 @@ public final class DefaultCredentialResolver implements CredentialResolver {
             io.haifa.agent.core.reference.PrincipalRef principal,
             io.haifa.agent.credential.api.CredentialRequirement requirement,
             List<io.haifa.agent.credential.api.CredentialBindingScope> scopeChain,
-            java.util.Optional<String> explicitBindingId,
             java.time.Instant requestedAt,
             String target,
             Collection<CredentialBinding> bindings) {
         Objects.requireNonNull(bindings, "bindings");
         List<CredentialBinding> candidates = bindings.stream()
-                .filter(binding -> authorized(
-                        tenant, principal, requirement, scopeChain, explicitBindingId, requestedAt, target, binding))
+                .filter(binding -> authorized(tenant, principal, requirement, scopeChain, requestedAt, target, binding))
                 .sorted(Comparator.comparingInt(
                         binding -> PRECEDENCE.get(binding.scope().kind())))
                 .toList();
@@ -84,7 +78,6 @@ public final class DefaultCredentialResolver implements CredentialResolver {
             io.haifa.agent.core.reference.PrincipalRef principal,
             io.haifa.agent.credential.api.CredentialRequirement requirement,
             List<io.haifa.agent.credential.api.CredentialBindingScope> scopeChain,
-            java.util.Optional<String> explicitBindingId,
             java.time.Instant requestedAt,
             String target,
             CredentialBinding binding) {
@@ -97,11 +90,7 @@ public final class DefaultCredentialResolver implements CredentialResolver {
                 || binding.principal().filter(value -> !value.equals(principal)).isPresent()) {
             return false;
         }
-        if (explicitBindingId.isPresent() && !explicitBindingId.orElseThrow().equals(binding.bindingId())) {
-            return false;
-        }
-        boolean inScopeChain = scopeChain.contains(binding.scope());
-        if (!inScopeChain && binding.scope().kind() != CredentialScopeKind.EXPLICIT_INVOCATION) {
+        if (!scopeChain.contains(binding.scope())) {
             return false;
         }
         return permits(binding.allowedToolCoordinates(), target)

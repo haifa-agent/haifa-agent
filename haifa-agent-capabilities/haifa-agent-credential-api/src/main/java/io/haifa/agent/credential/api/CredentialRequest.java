@@ -6,7 +6,6 @@ import io.haifa.agent.core.run.AgentRunId;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 public record CredentialRequest(
         TenantRef tenant,
@@ -15,7 +14,6 @@ public record CredentialRequest(
         String toolCoordinate,
         CredentialRequirement requirement,
         List<CredentialBindingScope> scopeChain,
-        Optional<String> explicitBindingId,
         Instant requestedAt,
         Instant expiresAt) {
     public CredentialRequest {
@@ -25,7 +23,6 @@ public record CredentialRequest(
         toolCoordinate = CredentialValues.text(toolCoordinate, "toolCoordinate");
         Objects.requireNonNull(requirement, "requirement");
         scopeChain = List.copyOf(Objects.requireNonNull(scopeChain, "scopeChain"));
-        explicitBindingId = Objects.requireNonNull(explicitBindingId, "explicitBindingId");
         Objects.requireNonNull(requestedAt, "requestedAt");
         Objects.requireNonNull(expiresAt, "expiresAt");
         if (!expiresAt.isAfter(requestedAt)) {

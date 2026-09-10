@@ -18,7 +18,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class PersonalWebPlatformTest {
@@ -75,7 +74,6 @@ class PersonalWebPlatformTest {
                             coordinate.externalForm(),
                             requirement,
                             List.of(new CredentialBindingScope(CredentialScopeKind.SYSTEM, "system")),
-                            Optional.empty(),
                             now,
                             now.plusSeconds(30)));
             String actual = lease.use(secret -> new String(secret, StandardCharsets.UTF_8));

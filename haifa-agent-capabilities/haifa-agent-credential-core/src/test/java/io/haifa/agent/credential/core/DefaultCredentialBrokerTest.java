@@ -19,12 +19,10 @@ import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.credential.api.CredentialScopeKind;
 import io.haifa.agent.credential.api.CredentialStatus;
 import io.haifa.agent.credential.api.CredentialStore;
-import io.haifa.agent.credential.api.CredentialType;
 import java.lang.reflect.RecordComponent;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -40,12 +38,7 @@ class DefaultCredentialBrokerTest {
         CredentialReference reference = new CredentialReference("reference-1");
         Instant bindingExpiry = NOW.plusSeconds(10);
         var definition = new CredentialDefinition(
-                definitionId,
-                "source",
-                CredentialType.BEARER_TOKEN,
-                Set.of("repository:read"),
-                Set.of(CredentialExposureMode.HTTP_HEADER),
-                Map.of());
+                definitionId, Set.of("repository:read"), Set.of(CredentialExposureMode.HTTP_HEADER));
         var scope = new CredentialBindingScope(CredentialScopeKind.USER, "user");
         var binding = new CredentialBinding(
                 "binding",
@@ -68,7 +61,6 @@ class DefaultCredentialBrokerTest {
                 new CredentialRequirement(
                         definitionId, "read", Set.of("repository:read"), CredentialExposureMode.HTTP_HEADER),
                 List.of(scope),
-                Optional.empty(),
                 NOW,
                 NOW.plusSeconds(30));
         var broker = new DefaultCredentialBroker(
@@ -91,12 +83,7 @@ class DefaultCredentialBrokerTest {
         CredentialDefinitionId definitionId = new CredentialDefinitionId("mcp-token");
         CredentialReference reference = new CredentialReference("mcp-reference");
         var definition = new CredentialDefinition(
-                definitionId,
-                "mcp",
-                CredentialType.BEARER_TOKEN,
-                Set.of("mcp:tools:list"),
-                Set.of(CredentialExposureMode.HTTP_HEADER),
-                Map.of());
+                definitionId, Set.of("mcp:tools:list"), Set.of(CredentialExposureMode.HTTP_HEADER));
         var scope = new CredentialBindingScope(CredentialScopeKind.USER, "user");
         var binding = new CredentialBinding(
                 "mcp-binding",
@@ -119,7 +106,6 @@ class DefaultCredentialBrokerTest {
                 new CredentialRequirement(
                         definitionId, "discover", Set.of("mcp:tools:list"), CredentialExposureMode.HTTP_HEADER),
                 List.of(scope),
-                Optional.empty(),
                 NOW,
                 NOW.plusSeconds(30));
         var broker = new DefaultCredentialBroker(
@@ -136,7 +122,7 @@ class DefaultCredentialBrokerTest {
         List<String> components = Arrays.stream(CredentialOperationRequest.class.getRecordComponents())
                 .map(RecordComponent::getName)
                 .toList();
-        assertThat(components).doesNotContain("runId", "toolCoordinate");
+        assertThat(components).doesNotContain("runId", "toolCoordinate", "explicitBindingId");
         assertThat(components).contains("operation", "targetBindingReference");
     }
 

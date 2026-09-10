@@ -14,7 +14,6 @@ import io.haifa.agent.tool.core.ToolDefinitionCanonicalizer;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class CliWebPlatformTest {
@@ -53,7 +52,6 @@ class CliWebPlatformTest {
                             coordinate.externalForm(),
                             requirement,
                             List.of(new CredentialBindingScope(CredentialScopeKind.SYSTEM, "system")),
-                            Optional.empty(),
                             now,
                             now.plusSeconds(30)));
             String value = lease.use(secret -> new String(secret, StandardCharsets.UTF_8));
