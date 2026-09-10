@@ -196,7 +196,44 @@ class TrustedScriptExecutionToolProviderTest {
                     assertThat(exception.failureCode()).isEqualTo("POLICY_RESOURCE_MISMATCH");
                     assertThat(exception.dispatchState())
                             .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
+                    assertThat(exception.isPreflight()).isTrue();
+                    assertThat(exception.failureKind()).isEqualTo(io.haifa.agent.tool.api.ToolFailureKind.PREFLIGHT);
                 });
+    }
+
+    @Test
+    void propagatesUnexpectedBrokerRuntimeExceptionWithoutSynthesizingPreflightOrNotDispatched() {
+        ExecutionBroker broker = new ExecutionBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request) {
+                throw new NullPointerException("unexpected broker internal fault");
+            }
+
+            @Override
+            public boolean cancel(ExecutionId id) {
+                return false;
+            }
+
+            @Override
+            public Optional<ExecutionResult> find(ExecutionId id) {
+                return Optional.empty();
+            }
+        };
+        ExecutionToolProvider provider =
+                provider(broker, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+
+        assertThatThrownBy(() -> provider.invokeTrustedScript(
+                        invocation(),
+                        "fixture-runtime",
+                        "safe",
+                        List.of(),
+                        "fixed transform",
+                        ".",
+                        Duration.ofSeconds(5),
+                        Set.of("execution.run"),
+                        List.of()))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("unexpected broker internal fault");
     }
 
     @Test

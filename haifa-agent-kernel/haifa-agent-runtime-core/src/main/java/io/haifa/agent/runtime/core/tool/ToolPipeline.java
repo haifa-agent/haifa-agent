@@ -556,7 +556,9 @@ public final class ToolPipeline {
                         "sideEffecting", !definition.sideEffects().isEmpty(),
                         "outcomeKnown", !uncertain,
                         "failureCode", invocationFailure.failureCode(),
-                        "dispatchState", invocationFailure.dispatchState().name());
+                        "dispatchState", invocationFailure.dispatchState().name(),
+                        "preflight", invocationFailure.isPreflight(),
+                        "failureKind", invocationFailure.failureKind().name());
             } else {
                 errorDetails = Map.of(
                         "tool", definition.name().value(),
@@ -766,6 +768,8 @@ public final class ToolPipeline {
         }
         io.haifa.agent.tool.api.ToolInvocationException invocation = findToolInvocationException(failure);
         if (invocation == null
+                || !invocation.isPreflight()
+                || invocation.failureKind() != io.haifa.agent.tool.api.ToolFailureKind.PREFLIGHT
                 || invocation.dispatchState() != io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED
                 || "TOOL_INVOCATION_FAILED".equals(invocation.failureCode())
                 || !isStableFailureCode(invocation.failureCode())) {
@@ -784,8 +788,11 @@ public final class ToolPipeline {
         return call.error()
                 .map(ToolExecutionError::error)
                 .map(error -> Boolean.TRUE.equals(error.details().get("outcomeKnown"))
+                        && Boolean.TRUE.equals(error.details().get("preflight"))
+                        && "PREFLIGHT".equals(error.details().get("failureKind"))
                         && "NOT_DISPATCHED".equals(error.details().get("dispatchState"))
-                        && !"TOOL_INVOCATION_FAILED".equals(error.details().get("failureCode")))
+                        && !"TOOL_INVOCATION_FAILED".equals(error.details().get("failureCode"))
+                        && isStableFailureCode(String.valueOf(error.details().get("failureCode"))))
                 .orElse(false);
     }
 
