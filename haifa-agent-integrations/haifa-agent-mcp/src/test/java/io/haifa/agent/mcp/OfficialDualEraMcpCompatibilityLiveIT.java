@@ -97,9 +97,9 @@ class OfficialDualEraMcpCompatibilityLiveIT {
     }
 
     private static void assertHelloWorld(McpClientFacade client, String version) {
-        var snapshot = client.initialize(List.of());
-        var tools = client.listTools(null, List.of());
-        var result = client.callTool("greet", Map.of("name", version), List.of(), ToolInvocationObserver.noop());
+        var snapshot = client.initialize(Map.of());
+        var tools = client.listTools(null, Map.of());
+        var result = client.callTool("greet", Map.of("name", version), Map.of(), ToolInvocationObserver.noop());
 
         assertThat(snapshot.targetProtocolVersion()).isEqualTo(version);
         assertThat(snapshot.negotiatedProtocolVersion()).isEqualTo(version);
