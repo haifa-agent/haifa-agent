@@ -22,13 +22,6 @@ public interface SandboxProvider {
         if (!configurationDigest().equals(profile.providerConfigurationDigest())) {
             throw new SandboxException("CAPABILITY_UNAVAILABLE", "sandbox provider configuration does not match");
         }
-        if (!capabilities().satisfies(profile.requiredCapabilities())) {
-            String code = profile.networkPolicy() == NetworkPolicy.DENY
-                            && !capabilities().networkIsolation()
-                    ? "NETWORK_POLICY_UNENFORCEABLE"
-                    : "CAPABILITY_UNAVAILABLE";
-            throw new SandboxPreflightException(code, "sandbox provider cannot satisfy the required capabilities");
-        }
         return new SandboxPreflight(
                 providerId(), providerId(), configurationDigest(), capabilities(), supportsManagedProcess());
     }

@@ -4,10 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.execution.api.SandboxProfileRef;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxException;
-import io.haifa.agent.sandbox.api.SandboxFilesystemPolicy;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxProvider;
 import io.haifa.agent.sandbox.api.SandboxSession;
@@ -18,7 +16,7 @@ import org.junit.jupiter.api.Test;
 class SandboxRegistryTest {
     @Test
     void resolvesExactImmutableProfileAndProvider() {
-        SandboxProvider provider = provider("local-native");
+        SandboxProvider provider = provider("host-guarded");
         SandboxProfile profile = profile(provider, "profile-1");
         var profiles = new ImmutableSandboxProfileRegistry(List.of(profile));
         var providers = new ImmutableSandboxProviderRegistry(List.of(provider));
@@ -29,8 +27,8 @@ class SandboxRegistryTest {
 
     @Test
     void rejectsDuplicateAndUnknownBindings() {
-        SandboxProvider first = provider("local-native");
-        SandboxProvider second = provider("local-native");
+        SandboxProvider first = provider("host-guarded");
+        SandboxProvider second = provider("host-guarded");
         assertThatThrownBy(() -> new ImmutableSandboxProviderRegistry(List.of(first, second)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("duplicate");
@@ -42,10 +40,7 @@ class SandboxRegistryTest {
                 profile.providerConfigurationDigest(),
                 Set.of("git"),
                 profile.allowedEnvironmentNames(),
-                profile.shellAllowed(),
-                profile.networkPolicy(),
-                profile.filesystemPolicy(),
-                profile.requiredCapabilities());
+                profile.shellAllowed());
         assertThatThrownBy(() -> new ImmutableSandboxProfileRegistry(List.of(profile, conflict)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("conflicting");
@@ -68,10 +63,7 @@ class SandboxRegistryTest {
                 provider.configurationDigest(),
                 Set.of("java"),
                 Set.of(),
-                false,
-                NetworkPolicy.ALLOW,
-                SandboxFilesystemPolicy.hostCompatible(),
-                new SandboxCapabilities(true, false, false, false, false));
+                false);
     }
 
     private static SandboxProvider provider(String id) {
@@ -83,7 +75,7 @@ class SandboxRegistryTest {
 
             @Override
             public SandboxCapabilities capabilities() {
-                return new SandboxCapabilities(true, false, false, false, false);
+                return new SandboxCapabilities(true);
             }
 
             @Override

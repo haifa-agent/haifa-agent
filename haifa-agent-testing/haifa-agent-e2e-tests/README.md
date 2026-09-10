@@ -17,8 +17,8 @@ YAML 加载、stdio 与退出码由独立 CLI Platform Gate 验证，不属于 C
   打开，并验证 Interaction、Tool Call、Event Journal、Outbox、Transcript 与 Secret
   不泄露。
 
-这些都是显式 opt-in Live E2E。普通构建和 `ci-fast` 跳过；Suite Runner 会验证 Secret、预算和安全
-运行根后串行执行。三端默认执行配置与产品一致，为
+这些都是显式 opt-in Live E2E。普通构建和 `ci-fast` 跳过；只有设置 `HAIFA_CODING_CLIENT_LIVE_TEST=true`
+（或对应显式开关）并提供凭据后才会执行。三端默认执行配置与产品一致，为
 `host-guarded + allow + shell auto + TRUSTED_HOST_ONLY`，不再要求 Windows 专属覆盖；macOS/Linux
 Local Native 严格验证由独立 Gate 负责，真实 Provider 仍不会由普通测试自动调用。
 
@@ -31,4 +31,4 @@ Case 009 验证审批拒绝后的零副作用，不包含验证脚本。隐藏 O
 
 `CP-11` 的 Approval 驱动只根据 `CodingSessionClient.pendingInteraction` 返回的权威 Target 响应；
 任何 Target 错位、缺失或额外 Approval 都会 fail closed。HTTP/SSE、Cursor
-重连和跨产品 Interaction Fixture 继续由 `haifa-agent-transport-tck` 确定性验证。
+重连和跨产品 Interaction Fixture 继续由 `haifa-agent-integration-tests` 确定性验证。

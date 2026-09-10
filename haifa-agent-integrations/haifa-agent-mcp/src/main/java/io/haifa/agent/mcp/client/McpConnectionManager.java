@@ -2,7 +2,6 @@ package io.haifa.agent.mcp.client;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.mcp.config.McpServerDefinition;
 import io.haifa.agent.mcp.config.McpServerId;
 import io.haifa.agent.tool.api.ToolDispatchState;
@@ -30,17 +29,14 @@ public final class McpConnectionManager implements AutoCloseable {
     }
 
     public McpConnection acquire(
-            McpServerId serverId, TenantRef tenant, PrincipalRef principal, List<CredentialLease> credentials) {
+            McpServerId serverId, TenantRef tenant, PrincipalRef principal, Map<String, String> credentials) {
         McpServerDefinition server = definition(serverId);
         PoolKey key = new PoolKey(
                 server.bindingReference(),
                 tenant.tenantId(),
                 principal.principalType(),
                 principal.principalId(),
-                credentials.stream()
-                        .map(lease -> lease.reference().value())
-                        .sorted()
-                        .toList());
+                credentials.keySet().stream().sorted().toList());
         McpConnection existing = connections.get(key);
         if (existing != null && existing.client().state() == McpConnectionState.READY) return existing;
         synchronized (connections) {

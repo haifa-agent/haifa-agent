@@ -1,12 +1,11 @@
 package io.haifa.agent.mcp.transport.stdio;
 
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.mcp.client.McpConnectionIdentity;
 import io.haifa.agent.mcp.config.McpServerDefinition;
 import io.haifa.agent.mcp.config.StdioDefinition;
 import java.util.ArrayList;
-import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 public final class DefaultMcpManagedProcessLaunchFactory implements McpManagedProcessLaunchFactory {
@@ -21,7 +20,7 @@ public final class DefaultMcpManagedProcessLaunchFactory implements McpManagedPr
 
     @Override
     public McpManagedProcessLaunch prepare(
-            McpServerDefinition server, McpConnectionIdentity identity, List<CredentialLease> credentials) {
+            McpServerDefinition server, McpConnectionIdentity identity, Map<String, String> credentials) {
         if (!(server.transport() instanceof StdioDefinition stdio)) {
             throw new IllegalArgumentException("managed process factory only accepts stdio definitions");
         }

@@ -58,7 +58,7 @@ class CliMcpPlatformTest {
                             Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(10),
                             Optional.empty(),
                             () -> false,
-                            List.of()));
+                            Map.of()));
 
             assertThat(result.successful()).isTrue();
             assertThat(result.structuredData()).containsEntry("timezone", "UTC");

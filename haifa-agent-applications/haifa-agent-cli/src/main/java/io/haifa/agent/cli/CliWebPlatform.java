@@ -2,20 +2,7 @@ package io.haifa.agent.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.credential.api.CredentialBinding;
-import io.haifa.agent.credential.api.CredentialBindingScope;
-import io.haifa.agent.credential.api.CredentialDefinition;
-import io.haifa.agent.credential.api.CredentialExposureMode;
-import io.haifa.agent.credential.api.CredentialReference;
-import io.haifa.agent.credential.api.CredentialScopeKind;
-import io.haifa.agent.credential.api.CredentialStatus;
-import io.haifa.agent.credential.api.CredentialType;
-import io.haifa.agent.credential.core.AesGcmCredentialStore;
 import io.haifa.agent.credential.core.DefaultCredentialBroker;
-import io.haifa.agent.credential.core.DefaultCredentialResolver;
-import io.haifa.agent.tool.api.ToolCoordinate;
-import io.haifa.agent.tool.core.ToolDefinitionCanonicalizer;
 import io.haifa.agent.web.DefaultWebUrlPolicy;
 import io.haifa.agent.web.WebFetchProvider;
 import io.haifa.agent.web.WebFetchProviderRegistry;
@@ -31,21 +18,15 @@ import io.haifa.agent.web.provider.BrowserlessFetchProvider;
 import io.haifa.agent.web.provider.TavilyFetchProvider;
 import io.haifa.agent.web.provider.TavilyWebSearchProvider;
 import java.net.http.HttpClient;
-import java.nio.charset.StandardCharsets;
-import java.security.GeneralSecurityException;
 import java.time.Clock;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 import java.util.function.Function;
-import javax.crypto.KeyGenerator;
 
 /** Product-level Web provider selection and Credential Broker assembly for the local CLI profile. */
 final class CliWebPlatform {
-    private static final TenantRef LOCAL_TENANT = new TenantRef("local");
     private final List<WebToolCatalogContribution> contributions;
     private final DefaultCredentialBroker credentialBroker;
 
@@ -81,15 +62,10 @@ final class CliWebPlatform {
             contributions.add(toolCatalog.fetch(selected, new DefaultWebUrlPolicy()));
         }
         if (contributions.isEmpty()) {
-            return new CliWebPlatform(
-                    List.of(),
-                    new DefaultCredentialBroker(
-                            List.of(), List.of(), new DefaultCredentialResolver(), encryptedStore()));
+            return new CliWebPlatform(List.of(), new DefaultCredentialBroker(Map.of()));
         }
 
-        var store = encryptedStore();
-        List<CredentialDefinition> definitions = new ArrayList<>();
-        List<CredentialBinding> bindings = new ArrayList<>();
+        Map<String, String> secrets = new HashMap<>();
         for (WebToolCatalogContribution contribution : contributions) {
             var requirement = contribution.definition().credentialRequirements().stream()
                     .findFirst()
@@ -103,41 +79,9 @@ final class CliWebPlatform {
                 throw new IllegalArgumentException(
                         "Web credential environment variable is unavailable: " + environmentName);
             }
-            String suffix = operation.substring("web.".length()) + "-" + providerConfiguration.providerId();
-            var reference = new CredentialReference("cli-web-" + suffix);
-            byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
-            try {
-                store.store(reference, LOCAL_TENANT, requirement.definitionId(), secretBytes);
-            } finally {
-                Arrays.fill(secretBytes, (byte) 0);
-            }
-            definitions.add(new CredentialDefinition(
-                    requirement.definitionId(),
-                    providerConfiguration.providerId(),
-                    CredentialType.API_KEY,
-                    requirement.scopes(),
-                    Set.of(CredentialExposureMode.HTTP_HEADER),
-                    Map.of("source", "environment-reference")));
-            ToolCoordinate coordinate = new ToolCoordinate(
-                    contribution.definition().name(),
-                    contribution.definition().version(),
-                    contribution.definition().providerId(),
-                    new ToolDefinitionCanonicalizer().hash(contribution.definition()));
-            bindings.add(new CredentialBinding(
-                    "cli-web-" + suffix,
-                    LOCAL_TENANT,
-                    Optional.of(principal),
-                    requirement.definitionId(),
-                    reference,
-                    new CredentialBindingScope(CredentialScopeKind.SYSTEM, "system"),
-                    Set.of(coordinate.externalForm()),
-                    Set.of(requirement.purpose()),
-                    requirement.scopes(),
-                    Set.of(CredentialExposureMode.HTTP_HEADER),
-                    CredentialStatus.ACTIVE,
-                    Optional.empty()));
+            secrets.put(requirement.credentialId(), secret);
         }
-        var broker = new DefaultCredentialBroker(definitions, bindings, new DefaultCredentialResolver(), store);
+        var broker = new DefaultCredentialBroker(secrets);
         return new CliWebPlatform(contributions, broker);
     }
 
@@ -209,16 +153,5 @@ final class CliWebPlatform {
                         clock);
             default -> throw new IllegalArgumentException("unsupported Web Fetch provider");
         };
-    }
-
-    private static AesGcmCredentialStore encryptedStore() {
-        try {
-            KeyGenerator generator = KeyGenerator.getInstance("AES");
-            generator.init(256);
-            var key = generator.generateKey();
-            return new AesGcmCredentialStore(() -> key);
-        } catch (GeneralSecurityException exception) {
-            throw new IllegalStateException("unable to initialize the in-memory Web credential store", exception);
-        }
     }
 }

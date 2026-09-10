@@ -11,11 +11,7 @@ import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.credential.api.CredentialBindingScope;
 import io.haifa.agent.credential.api.CredentialBroker;
-import io.haifa.agent.credential.api.CredentialLease;
-import io.haifa.agent.credential.api.CredentialRequest;
-import io.haifa.agent.credential.api.CredentialScopeKind;
 import io.haifa.agent.policy.api.ApprovalTargetRef;
 import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.policy.api.PolicyEffect;
@@ -508,94 +504,74 @@ public final class ToolPipeline {
         var definition = binding.definition();
         var now = time.now();
         var deadline = now.plus(definition.timeout());
-        List<CredentialLease> leases = new ArrayList<>();
-        try {
-            if (!definition.credentialRequirements().isEmpty() && credentials == null) {
+        java.util.Map<String, String> resolvedCredentials = new java.util.LinkedHashMap<>();
+        if (!definition.credentialRequirements().isEmpty()) {
+            if (credentials == null) {
                 throw new SecurityException("tool requires credentials but no credential broker is configured");
             }
             for (var requirement : definition.credentialRequirements()) {
-                List<CredentialBindingScope> scopes = new ArrayList<>();
-                scopes.add(new CredentialBindingScope(
-                        CredentialScopeKind.SESSION, run.sessionId().value()));
-                run.project()
-                        .ifPresent(project -> scopes.add(
-                                new CredentialBindingScope(CredentialScopeKind.PROJECT, project.projectId())));
-                scopes.add(new CredentialBindingScope(
-                        CredentialScopeKind.USER, run.principal().principalId()));
-                scopes.add(new CredentialBindingScope(CredentialScopeKind.SYSTEM, "system"));
-                leases.add(credentials.issue(new CredentialRequest(
-                        run.tenant(),
-                        run.principal(),
-                        run.id(),
-                        binding.coordinate().externalForm(),
-                        requirement,
-                        scopes,
-                        java.util.Optional.empty(),
-                        now,
-                        deadline)));
+                resolvedCredentials.put(
+                        requirement.credentialId(), credentials.requireSecret(requirement.credentialId()));
             }
-            try {
-                ToolResult result = invoker.invoke(new ToolInvocationRequest(
-                        binding,
-                        call.id(),
-                        run.id(),
-                        run.tenant(),
-                        run.principal(),
-                        request.arguments(),
-                        deadline,
-                        java.util.Optional.of(request.idempotencyKey().value()),
-                        (ToolCancellation) () -> controls.signal(run.id()) == RunControlSignal.CANCEL,
-                        leases,
-                        new io.haifa.agent.tool.api.ToolInvocationObserver() {
-                            @Override
-                            public void dispatched() {
-                                journal.recordDispatched(run.id(), request.idempotencyKey());
-                            }
+        }
+        try {
+            ToolResult result = invoker.invoke(new ToolInvocationRequest(
+                    binding,
+                    call.id(),
+                    run.id(),
+                    run.tenant(),
+                    run.principal(),
+                    request.arguments(),
+                    deadline,
+                    java.util.Optional.of(request.idempotencyKey().value()),
+                    (ToolCancellation) () -> controls.signal(run.id()) == RunControlSignal.CANCEL,
+                    java.util.Map.copyOf(resolvedCredentials),
+                    new io.haifa.agent.tool.api.ToolInvocationObserver() {
+                        @Override
+                        public void dispatched() {
+                            journal.recordDispatched(run.id(), request.idempotencyKey());
+                        }
 
-                            @Override
-                            public void dispatched(ToolDispatchEvidence evidence) {
-                                journal.recordDispatched(run.id(), request.idempotencyKey(), evidence);
-                                var dispatchEvent = new java.util.LinkedHashMap<String, Object>();
-                                dispatchEvent.put("toolCallId", call.id().value());
-                                dispatchEvent.put("executionId", evidence.executionId());
-                                evidence.processId().ifPresent(value -> dispatchEvent.put("processId", value));
-                                dispatchEvent.put("workingDirectoryDigest", evidence.workingDirectoryDigest());
-                                events.append(run.id(), "tool.dispatched", Map.copyOf(dispatchEvent), time.now());
-                            }
+                        @Override
+                        public void dispatched(ToolDispatchEvidence evidence) {
+                            journal.recordDispatched(run.id(), request.idempotencyKey(), evidence);
+                            var dispatchEvent = new java.util.LinkedHashMap<String, Object>();
+                            dispatchEvent.put("toolCallId", call.id().value());
+                            dispatchEvent.put("executionId", evidence.executionId());
+                            evidence.processId().ifPresent(value -> dispatchEvent.put("processId", value));
+                            dispatchEvent.put("workingDirectoryDigest", evidence.workingDirectoryDigest());
+                            events.append(run.id(), "tool.dispatched", java.util.Map.copyOf(dispatchEvent), time.now());
+                        }
 
-                            @Override
-                            public void acknowledged() {
-                                journal.recordAcknowledged(run.id(), request.idempotencyKey());
-                            }
-                        }));
-                return leases.isEmpty() ? result : redactResult(result, credentials.redactor());
-            } catch (RuntimeException exception) {
-                if (leases.isEmpty()) throw exception;
-                String detail = credentials.redactor().redact(exception.getMessage());
-                if (exception instanceof io.haifa.agent.tool.api.ToolInvocationException invocationFailure) {
-                    throw new io.haifa.agent.tool.api.ToolInvocationException(
-                            invocationFailure.failureCode(),
-                            invocationFailure.dispatchState(),
-                            invocationFailure.failureKind(),
-                            detail == null || detail.isBlank() ? "tool provider invocation failed" : detail);
-                }
-                StackTraceElement location =
-                        exception.getStackTrace().length == 0 ? null : exception.getStackTrace()[0];
-                LOGGER.warn(
-                        "event=tool.provider.failure runId={} toolCallId={} tool={} failureType={} failureLocation={}",
-                        run.id().value(),
-                        call.id().value(),
-                        definition.name().value(),
-                        exception.getClass().getSimpleName(),
-                        location == null ? "" : location.getClassName() + "." + location.getMethodName());
-                throw new IllegalStateException(
-                        detail == null || detail.isBlank()
-                                ? "tool provider invocation failed"
-                                : "tool provider invocation failed: " + detail);
+                        @Override
+                        public void acknowledged() {
+                            journal.recordAcknowledged(run.id(), request.idempotencyKey());
+                        }
+                    }));
+            return resolvedCredentials.isEmpty() ? result : redactResult(result, credentials.redactor());
+        } catch (RuntimeException exception) {
+            if (resolvedCredentials.isEmpty() || credentials == null) throw exception;
+            String detail = credentials.redactor().redact(exception.getMessage());
+            if (exception instanceof io.haifa.agent.tool.api.ToolInvocationException invocationFailure) {
+                throw new io.haifa.agent.tool.api.ToolInvocationException(
+                        invocationFailure.failureCode(),
+                        invocationFailure.dispatchState(),
+                        invocationFailure.failureKind(),
+                        detail == null || detail.isBlank() ? "tool provider invocation failed" : detail);
             }
-        } finally {
-            for (int index = leases.size() - 1; index >= 0; index--)
-                leases.get(index).close();
+            StackTraceElement location =
+                    exception.getStackTrace().length == 0 ? null : exception.getStackTrace()[0];
+            LOGGER.warn(
+                    "event=tool.provider.failure runId={} toolCallId={} tool={} failureType={} failureLocation={}",
+                    run.id().value(),
+                    call.id().value(),
+                    definition.name().value(),
+                    exception.getClass().getSimpleName(),
+                    location == null ? "" : location.getClassName() + "." + location.getMethodName());
+            throw new IllegalStateException(
+                    detail == null || detail.isBlank()
+                            ? "tool provider invocation failed"
+                            : "tool provider invocation failed: " + detail);
         }
     }
 

@@ -18,6 +18,7 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -111,7 +112,7 @@ public final class ExecutionBrokerMcpTransport implements McpClientTransport {
         return List.of(server.protocol().targetVersion());
     }
 
-    private ManagedProcessSession ensureSession(List<io.haifa.agent.credential.api.CredentialLease> leases) {
+    private ManagedProcessSession ensureSession(Map<String, String> leases) {
         ManagedProcessSession current = session;
         if (current != null && !current.isClosed()) return current;
         synchronized (lifecycleLock) {

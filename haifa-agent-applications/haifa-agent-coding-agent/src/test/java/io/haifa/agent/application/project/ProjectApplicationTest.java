@@ -50,12 +50,8 @@ import io.haifa.agent.runtime.api.RuntimeCommandResult;
 import io.haifa.agent.runtime.core.skill.SkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillResourceRead;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
-import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
-import io.haifa.agent.sandbox.api.SandboxFilesystemPolicy;
 import io.haifa.agent.sandbox.api.SandboxProfile;
-import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import io.haifa.agent.skill.api.SkillActivation;
 import io.haifa.agent.skill.api.SkillActivationRequest;
 import io.haifa.agent.skill.api.SkillContent;
@@ -97,7 +93,7 @@ class ProjectApplicationTest {
                 Set.of("file.read", "execution.run"),
                 true,
                 provider,
-                executionProfile("local-native", NetworkPolicy.DENY, "one"));
+                executionProfile("host-guarded", "one"));
         assertThat(disclosed.snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
                 .containsExactly("execution_run", "file_read");
@@ -136,9 +132,11 @@ class ProjectApplicationTest {
         assertThat(execution.definition().resources().executionProfiles())
                 .singleElement()
                 .asString()
-                .contains("cli-local-native@1");
+                .contains("cli-host-guarded@1");
         assertThat(execution.definition().sideEffects())
-                .containsExactly(io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION);
+                .containsExactlyInAnyOrder(
+                        io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION,
+                        io.haifa.agent.tool.api.ToolSideEffect.NETWORK_ACCESS);
         assertThat(execution.definition().effectClass())
                 .isEqualTo(io.haifa.agent.tool.api.ToolEffectClass.SIDE_EFFECTING);
         assertThat(fileRead.definition().effectClass()).isEqualTo(io.haifa.agent.tool.api.ToolEffectClass.PURE_READ);
@@ -244,7 +242,7 @@ class ProjectApplicationTest {
                 Set.of("file.read", "file.write", "execution.run"),
                 true,
                 providerThatMustNotRun(),
-                executionProfile("host-guarded", NetworkPolicy.ALLOW, "two"));
+                executionProfile("host-guarded", "two"));
 
         assertThat(frozen.snapshot().bindings())
                 .hasSize(13)
@@ -329,35 +327,35 @@ class ProjectApplicationTest {
     }
 
     @Test
-    void executionProfileAndNetworkChangeFrozenToolIdentity() {
+    void executionProfileChangeFrozenToolIdentity() {
         var catalog = new ProjectToolCatalog();
-        var denied = catalog.freeze(
+        var first = catalog.freeze(
                         Set.of("execution.run"),
                         Set.of("execution.run"),
                         true,
                         providerThatMustNotRun(),
-                        executionProfile("local-native", NetworkPolicy.DENY, "deny"))
+                        executionProfile("host-guarded", "3-first", "first"))
                 .snapshot()
                 .bindings()
                 .getFirst();
-        var allowed = catalog.freeze(
+        var second = catalog.freeze(
                         Set.of("execution.run"),
                         Set.of("execution.run"),
                         true,
                         providerThatMustNotRun(),
-                        executionProfile("local-native", NetworkPolicy.ALLOW, "allow"))
+                        executionProfile("host-guarded", "3-second", "second"))
                 .snapshot()
                 .bindings()
                 .getFirst();
 
-        assertThat(denied.coordinate().definitionHash())
-                .isNotEqualTo(allowed.coordinate().definitionHash());
-        assertThat(allowed.definition().sideEffects())
+        assertThat(first.coordinate().definitionHash())
+                .isNotEqualTo(second.coordinate().definitionHash());
+        assertThat(first.definition().sideEffects())
                 .containsExactlyInAnyOrder(
                         io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION,
                         io.haifa.agent.tool.api.ToolSideEffect.NETWORK_ACCESS);
-        assertThat(denied.definition().resources().networkHosts()).isEmpty();
-        assertThat(allowed.definition().resources().networkHosts()).containsExactly("unrestricted-network");
+        assertThat(first.definition().resources().networkHosts()).containsExactly("unrestricted-network");
+        assertThat(second.definition().resources().networkHosts()).containsExactly("unrestricted-network");
     }
 
     @Test
@@ -387,7 +385,7 @@ class ProjectApplicationTest {
                 NOW.plusSeconds(30),
                 Optional.of("key"),
                 () -> false,
-                List.of(),
+                java.util.Map.of(),
                 io.haifa.agent.tool.api.ToolInvocationObserver.noop());
 
         assertThat(executor.invoke(request).successful()).isTrue();
@@ -542,19 +540,18 @@ class ProjectApplicationTest {
         };
     }
 
-    private static SandboxProfile executionProfile(String provider, NetworkPolicy network, String configurationSeed) {
+    private static SandboxProfile executionProfile(String provider, String configurationSeed) {
+        return executionProfile(provider, "1", configurationSeed);
+    }
+
+    /** The CLI encodes the frozen configuration digest into the profile ref version. */
+    private static SandboxProfile executionProfile(String provider, String version, String configurationSeed) {
         return new SandboxProfile(
-                new SandboxProfileRef("cli-" + provider, "1"),
+                new SandboxProfileRef("cli-" + provider, version),
                 provider,
                 SandboxConfigurationDigest.sha256Fields(List.of(configurationSeed)),
                 Set.of(),
                 Set.of(),
-                true,
-                network,
-                provider.equals("host-guarded")
-                        ? SandboxFilesystemPolicy.hostCompatible()
-                        : new SandboxFilesystemPolicy(SandboxWorkspaceAccess.READ_WRITE, true, Set.of()),
-                new SandboxCapabilities(
-                        true, !provider.equals("host-guarded"), network == NetworkPolicy.DENY, false, false));
+                true);
     }
 }

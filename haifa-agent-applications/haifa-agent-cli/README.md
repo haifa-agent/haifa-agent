@@ -177,8 +177,8 @@ JSONL 只用于审计投影，不参与恢复。启动器按自身目录设置�
 `haifa-coding --config /absolute/path/to/config.yaml` 使用自定义配置，也可显式传
 `--workspace /absolute/path/to/project`；调用方参数位于默认参数之后，因此优先级更高。
 
-需要让 `execution.run` 读取 JDK、SDK 或其他 Workspace 外工具链目录时，应将其物理绝对路径作为
-只读 `execution.extraPathPolicies` 写入可信的自定义配置。不要把 API Key 写进 YAML。Java 21
+`execution.run` 直接在宿主机上运行，因此 JDK、SDK 及其他 Workspace 外工具链目录无需额外配置即可读取；
+平台不再提供 bind-mount 式路径授权。不要把 API Key 写进 YAML。Java 21
 必须能从 `JAVA_HOME/bin/java` 或 `PATH` 找到。
 
 该发行入口用于日常本地项目。`haifa-agent-testing/scripts/run-haifa-coding-terminal.command` 继续保留，
@@ -341,7 +341,6 @@ approval:
   threshold: low
 execution:
   provider: host-guarded
-  network: allow
   shell: powershell
 persistence:
   mode: SQLITE
@@ -521,7 +520,6 @@ approval:
   threshold: low
 execution:
   provider: host-guarded
-  network: allow
   shell: auto
   defaultTimeoutMillis: 120000
   maxTimeoutMillis: 1800000
@@ -531,7 +529,6 @@ execution:
   # "*" inherits ordinary host variables after secret-like names are removed.
   # An explicit list remains supported for stricter deployments.
   inheritEnvironment: ["*"]
-  extraPathPolicies: []
 runtime:
   maxIterations: 50
   maxModelCalls: 64
@@ -614,22 +611,22 @@ Update hunk 的 `@@ <text>` 是可选导航提示：旧正文/context 只有一�
 `file.delete` 可删除普通文件或空目录；不支持递归删除非空目录（非空目录清理须经命令审计走 `execution.run`）。主目录与附加目录对不存在路径统一
 返回 `PATH_NOT_FOUND`，对非空目录、链接、reparse point 或特殊节点统一返回 `PATH_DENIED`。
 
-`execution.provider` 只接受 `local-native` 或 `host-guarded`，`execution.network` 只接受 `deny`
-或 `allow`。macOS、Linux、Windows 缺省值统一为 `host-guarded + allow + shell auto`，面向用户已经
-检查并信任的本地 Workspace；命令输出保留进程产生的真实可用路径，并可在同一命令生命周期内启动、
-访问和清理临时 loopback Server。普通宿主网络能力可用，因此不能把该默认值描述成外部网络隔离。
+`execution.provider` 只接受 `host-guarded`；平台已放弃 OS namespace / 容器级强隔离，底层统一为
+受控宿主执行（见 `docs/34-sandbox-simplification-and-host-execution-design.md`）。macOS、Linux、
+Windows 缺省值统一为 `host-guarded + shell auto`，三端体验完全一致，面向用户已经检查并信任的
+本地 Workspace；命令输出保留进程产生的真实可用路径，并可在同一命令生命周期内启动、访问和清理
+临时 loopback Server。命令使用普通宿主网络，因此不能把它描述成任何形式的网络隔离。
 
-macOS/Linux 可显式配置 `local-native + deny`，分别由 Seatbelt/bubblewrap Adapter 在启动期预检并
-兑现文件、网络和子进程边界。Windows 对 Local Native 返回 `SANDBOX_ADAPTER_UNAVAILABLE`，当前
-不提供或伪装成同等级严格模式。
+已移除的 `execution.network` 与 `execution.extraPathPolicies` 配置键不再生效：它们只服务于已删除的
+`local-native` bind-mount 与断网机制。旧配置文件中残留这两个键会被忽略，而 `provider: local-native`
+在启动期 fail closed，报 `execution.provider is unsupported`。
 
-Local Native 的安全摘要会显示 Adapter、Workspace 模式、网络策略、无 Credential 注入，以及
-CPU/内存/Kernel 未强制隔离。Host Guarded 以当前 OS 用户身份运行，不能阻止 Workspace 外文件、
-普通网络或系统资源访问，Approval 也不等于隔离，因此不适合陌生仓库无人值守执行。长期 Server、
-后台任务和 PTY 当前均不作为产品入口支持。
-`extraPathPolicies` 只来自本地可信配置，包含稳定 `id`、绝对 `path` 和 `readOnly`；路径不会进入
-模型 Schema。敏感目录、代理/Socket/Credential 环境、Host + DENY、未知 Provider/网络模式和
-无法兑现的 Adapter 配置都在进程启动前 fail closed。
+安全摘要显示 Provider、Adapter、宿主网络事实、当前 OS 用户，以及 Workspace 外文件、网络、
+CPU/内存/Kernel 均未隔离。Host Guarded 以当前 OS 用户身份运行，不能阻止 Workspace 外文件、
+普通网络或系统资源访问，Approval 也不等于隔离，因此不适合陌生仓库无人值守执行；面对完全不可信的
+第三方代码，必须把整个运行环境放进外部容器或虚拟机。长期 Server、后台任务和 PTY 当前均不作为
+产品入口支持。敏感目录、代理/Socket/Credential 环境、未知 Provider 和无法兑现的 Shell 配置都在
+进程启动前 fail closed。
 
 CLI Coding Profile 显式允许 `task-planning` 与 `result-verification` 两个 SDK 基础 Skill，并把
 `skill_load`、`skill_resource_read` 注册到同一个 Runtime Tool Pipeline。模型开始时只看到 Skill

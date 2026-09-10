@@ -159,7 +159,7 @@ public final class StandaloneCodingAgents {
                 "mcp=" + String.join(",", mcpServers),
                 "skills=" + String.join(",", skills),
                 "executionProvider=" + configuration.execution().provider(),
-                "executionNetwork=" + configuration.execution().network(),
+                "executionNetwork=host",
                 "executionShell=" + configuration.execution().shell(),
                 "approval=" + configuration.approval().name(),
                 "approval-threshold=" + configuration.approvalThreshold().name(),

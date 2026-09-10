@@ -18,7 +18,7 @@ final class WebToolProviderSupport {
         return new WebProviderInvocationContext(
                 request.deadline(),
                 request.cancellation()::isCancellationRequested,
-                request.credentialLeases(),
+                request.credentials(),
                 new io.haifa.agent.web.WebInvocationObserver() {
                     @Override
                     public void dispatched() {

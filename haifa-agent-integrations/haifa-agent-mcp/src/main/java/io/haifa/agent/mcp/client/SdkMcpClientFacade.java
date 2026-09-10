@@ -2,7 +2,6 @@ package io.haifa.agent.mcp.client;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.mcp.config.McpProtocolProfile;
 import io.haifa.agent.mcp.config.McpServerDefinition;
 import io.haifa.agent.mcp.internal.McpRequestContext;
@@ -48,7 +47,7 @@ final class SdkMcpClientFacade implements McpClientFacade {
     }
 
     @Override
-    public synchronized McpServerSnapshot initialize(List<CredentialLease> leases) {
+    public synchronized McpServerSnapshot initialize(Map<String, String> leases) {
         if (state.get() == McpConnectionState.READY) return snapshot(client.getCurrentInitializationResult());
         if (!state.compareAndSet(McpConnectionState.DISCONNECTED, McpConnectionState.CONNECTING)) {
             throw new IllegalStateException("MCP connection cannot initialize from " + state.get());
@@ -86,7 +85,7 @@ final class SdkMcpClientFacade implements McpClientFacade {
     }
 
     @Override
-    public McpListToolsPage listTools(String cursor, List<CredentialLease> leases) {
+    public McpListToolsPage listTools(String cursor, Map<String, String> leases) {
         requireReady();
         try {
             transportFailures.clearFailure();
@@ -102,7 +101,7 @@ final class SdkMcpClientFacade implements McpClientFacade {
 
     @Override
     public McpRemoteToolResult callTool(
-            String name, Map<String, Object> arguments, List<CredentialLease> leases, ToolInvocationObserver observer) {
+            String name, Map<String, Object> arguments, Map<String, String> leases, ToolInvocationObserver observer) {
         requireReady();
         try {
             transportFailures.clearFailure();

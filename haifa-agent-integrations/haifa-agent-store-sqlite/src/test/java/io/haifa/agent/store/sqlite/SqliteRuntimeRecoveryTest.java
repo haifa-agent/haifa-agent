@@ -19,12 +19,6 @@ import io.haifa.agent.core.session.SessionScope;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.credential.api.CredentialBroker;
-import io.haifa.agent.credential.api.CredentialDefinitionId;
-import io.haifa.agent.credential.api.CredentialExposureMode;
-import io.haifa.agent.credential.api.CredentialLease;
-import io.haifa.agent.credential.api.CredentialOperationRequest;
-import io.haifa.agent.credential.api.CredentialReference;
-import io.haifa.agent.credential.api.CredentialRequest;
 import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.credential.api.SecretRedactor;
 import io.haifa.agent.model.api.AgentChatModel;
@@ -1119,11 +1113,7 @@ class SqliteRuntimeRecoveryTest {
                 ToolRisk.LOW,
                 Set.of(ToolSideEffect.CREDENTIAL_USE),
                 ToolResourceRequirements.none(),
-                List.of(new CredentialRequirement(
-                        new CredentialDefinitionId("test-secret"),
-                        "test",
-                        Set.of("test"),
-                        CredentialExposureMode.PROVIDER_CHANNEL)),
+                List.of(new CredentialRequirement("test-secret")),
                 ToolApprovalRequirement.NEVER,
                 "test",
                 false,
@@ -1153,13 +1143,8 @@ class SqliteRuntimeRecoveryTest {
                 : value.replace(secret, "[REDACTED]").replace("provider-raw-negative-sample", "[REDACTED]");
         CredentialBroker broker = new CredentialBroker() {
             @Override
-            public CredentialLease issue(CredentialRequest request) {
-                return lease(secret);
-            }
-
-            @Override
-            public CredentialLease issue(CredentialOperationRequest request) {
-                return lease(secret);
+            public Optional<String> getSecret(String credentialId) {
+                return Optional.of(secret);
             }
 
             @Override
@@ -1170,38 +1155,6 @@ class SqliteRuntimeRecoveryTest {
         return builder.credentialBroker(broker)
                 .publicToolPolicy((run, binding, request) -> allow())
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
-    }
-
-    private static CredentialLease lease(String secret) {
-        return new CredentialLease() {
-            private boolean closed;
-
-            @Override
-            public CredentialReference reference() {
-                return new CredentialReference("test-secret-ref");
-            }
-
-            @Override
-            public Instant expiresAt() {
-                return NOW.plusSeconds(60);
-            }
-
-            @Override
-            public boolean isClosed() {
-                return closed;
-            }
-
-            @Override
-            public <T> T use(io.haifa.agent.credential.api.SecretFunction<T> action) {
-                if (closed) throw new IllegalStateException("lease is closed");
-                return action.apply(secret.getBytes(StandardCharsets.UTF_8));
-            }
-
-            @Override
-            public void close() {
-                closed = true;
-            }
-        };
     }
 
     private static RuntimePersistencePorts withFailingAttemptInsert(RuntimePersistencePorts base) {

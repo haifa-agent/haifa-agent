@@ -17,73 +17,9 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
-    suite-governance-plan:
-        name: Release Suite plan (${{ matrix.combination }})
-        if: github.event_name != 'merge_group' || github.event.merge_group.base_ref == 'refs/heads/main'
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - os: ubuntu-latest
-                      combination: linux-release
-                    - os: macos-latest
-                      combination: macos-release
-                    - os: windows-latest
-                      combination: windows-release
-        runs-on: ${{ matrix.os }}
-        timeout-minutes: 15
-        env:
-            HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
-            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-flash-2026-07-15
-        steps:
-            - uses: actions/checkout@v4
-            - name: Require private test-config deploy key
-              shell: bash
-              env:
-                  TEST_CONFIG_SSH_KEY: ${{ secrets.HAIFA_TEST_CONFIG_SSH_KEY }}
-              run: test -n "$TEST_CONFIG_SSH_KEY"
-            - uses: actions/checkout@v4
-              with:
-                  repository: haifa-agent/haifa-agent-test-config
-                  ssh-key: ${{ secrets.HAIFA_TEST_CONFIG_SSH_KEY }}
-                  path: test-config
-            - uses: actions/setup-java@v4
-              with:
-                  distribution: temurin
-                  java-version: "21"
-                  cache: maven
-            - name: Prepare external run root (Unix)
-              if: runner.os != 'Windows'
-              run: |
-                  mkdir -p "$RUNNER_TEMP/haifa-test-runs"
-                  echo "HAIFA_TEST_RUN_ROOT=$RUNNER_TEMP/haifa-test-runs" >> "$GITHUB_ENV"
-            - name: Prepare external run root (Windows)
-              if: runner.os == 'Windows'
-              shell: pwsh
-              run: |
-                  $runRoot = Join-Path $env:RUNNER_TEMP 'haifa-test-runs'
-                  New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
-                  "HAIFA_TEST_RUN_ROOT=$runRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            - name: Plan Release Suite (Unix)
-              if: runner.os != 'Windows'
-              run: >-
-                  bash test-config/scripts/run-suite.sh plan
-                  --suite release-v1
-                  --mode release
-                  --output "$RUNNER_TEMP/haifa-test-runs/release-plan.json"
-            - name: Plan Release Suite (Windows)
-              if: runner.os == 'Windows'
-              shell: pwsh
-              run: >-
-                  .\test-config\scripts\run-suite.ps1 plan
-                  --suite release-v1
-                  --mode release
-                  --output (Join-Path $env:HAIFA_TEST_RUN_ROOT 'release-plan.json')
-
     release-unit:
         name: Release unit gate
         if: github.event_name != 'merge_group' || github.event.merge_group.base_ref == 'refs/heads/main'
-        needs: suite-governance-plan
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
@@ -151,7 +87,6 @@ jobs:
             always() &&
             (github.event_name != 'merge_group' || github.event.merge_group.base_ref == 'refs/heads/main')
         needs:
-            - suite-governance-plan
             - release-unit
             - release-integration
             - release-artifacts
@@ -159,12 +94,11 @@ jobs:
         steps:
             - name: Require every same-SHA release gate to pass
               env:
-                  SUITE_RESULT: ${{ needs.suite-governance-plan.result }}
                   UNIT_RESULT: ${{ needs.release-unit.result }}
                   INTEGRATION_RESULT: ${{ needs.release-integration.result }}
                   ARTIFACT_RESULT: ${{ needs.release-artifacts.result }}
               run: |
-                  test "$SUITE_RESULT" = success
+                  test "$UNIT_RESULT" = success
                   test "$UNIT_RESULT" = success
                   test "$INTEGRATION_RESULT" = success
                   test "$ARTIFACT_RESULT" = success

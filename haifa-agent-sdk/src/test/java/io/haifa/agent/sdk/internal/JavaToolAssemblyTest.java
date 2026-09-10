@@ -89,7 +89,7 @@ public class JavaToolAssemblyTest {
                         Instant.parse("2026-08-05T01:02:03Z"),
                         java.util.Optional.empty(),
                         () -> false,
-                        List.of(),
+                        Map.of(),
                         new ToolInvocationObserver() {
                             @Override
                             public void dispatched() {
@@ -119,7 +119,7 @@ public class JavaToolAssemblyTest {
                                 Instant.parse("2026-08-05T01:02:03Z"),
                                 java.util.Optional.empty(),
                                 () -> false,
-                                List.of())))
+                                Map.of())))
                 .isInstanceOf(ToolInvocationException.class)
                 .satisfies(failure -> {
                     ToolInvocationException invocation = (ToolInvocationException) failure;

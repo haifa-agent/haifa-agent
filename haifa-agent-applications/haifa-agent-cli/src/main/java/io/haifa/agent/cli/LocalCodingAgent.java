@@ -619,12 +619,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     TrustedWorkspaceEnvironmentCatalog.EnvironmentFacts.capture(
                             executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName(),
                             executionPlatform != null,
-                            executionPlatform == null
-                                    ? "UNAVAILABLE"
-                                    : executionPlatform
-                                            .profile()
-                                            .networkPolicy()
-                                            .name(),
+                            executionPlatform == null ? "UNAVAILABLE" : "ALLOW",
                             configuration.execution().defaultTimeout(),
                             configuration.execution().maximumTimeout()));
             var interactions = persistence.ports().interactions();

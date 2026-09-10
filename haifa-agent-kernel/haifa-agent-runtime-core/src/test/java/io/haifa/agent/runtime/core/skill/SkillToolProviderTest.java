@@ -16,7 +16,6 @@ import io.haifa.agent.tool.api.ToolDefinitionHash;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -70,7 +69,7 @@ class SkillToolProviderTest {
                 Instant.parse("2026-08-15T00:00:00Z"),
                 Optional.of("key-1"),
                 () -> false,
-                List.of(),
+                Map.of(),
                 new ToolInvocationObserver() {
                     @Override
                     public void dispatched() {
