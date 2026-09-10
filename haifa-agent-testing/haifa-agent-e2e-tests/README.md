@@ -17,8 +17,8 @@ YAML 加载、stdio 与退出码由独立 CLI Platform Gate 验证，不属于 C
   打开，并验证 Interaction、Tool Call、Event Journal、Outbox、Transcript 与 Secret
   不泄露。
 
-这些都是显式 opt-in Live E2E。普通构建和 `ci-fast` 跳过；Suite Runner 会验证 Secret、预算和安全
-运行根后串行执行。三端默认执行配置与产品一致，为
+这些都是显式 opt-in Live E2E。普通构建和 `ci-fast` 跳过；只有设置 `HAIFA_CODING_CLIENT_LIVE_TEST=true`
+（或对应显式开关）并提供凭据后才会执行。三端默认执行配置与产品一致，为
 `host-guarded + allow + shell auto + TRUSTED_HOST_ONLY`，不再要求 Windows 专属覆盖；macOS/Linux
 Local Native 严格验证由独立 Gate 负责，真实 Provider 仍不会由普通测试自动调用。
 
