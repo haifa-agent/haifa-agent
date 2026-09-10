@@ -27,6 +27,7 @@ class TestingModuleArchitectureTest {
         try (var paths = Files.walk(repositoryRoot)) {
             for (Path pom : paths.filter(path -> path.getFileName().toString().equals("pom.xml"))
                     .filter(path -> !isBuildOutput(repositoryRoot, path))
+                    .filter(path -> !isNestedGitWorktree(repositoryRoot, path))
                     .filter(path -> !isTestingModule(repositoryRoot, path))
                     .toList()) {
                 inspectDirectDependencies(repositoryRoot, pom, violations);
@@ -89,6 +90,17 @@ class TestingModuleArchitectureTest {
     private static boolean isTestingModule(Path root, Path path) {
         Path relative = root.relativize(path.toAbsolutePath()).normalize();
         return relative.startsWith(TESTING_DIRECTORY);
+    }
+
+    private static boolean isNestedGitWorktree(Path root, Path path) {
+        Path current = path.toAbsolutePath().normalize().getParent();
+        while (current != null && !current.equals(root)) {
+            if (Files.isRegularFile(current.resolve(".git"))) {
+                return true;
+            }
+            current = current.getParent();
+        }
+        return false;
     }
 
     private static Path findRepositoryRoot() {
