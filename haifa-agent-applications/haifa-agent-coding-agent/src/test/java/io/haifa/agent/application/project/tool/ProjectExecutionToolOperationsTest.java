@@ -1365,7 +1365,7 @@ class ProjectExecutionToolOperationsTest {
                 new ProjectExecutionRecoveryAuthorization(state, interactions),
                 normal,
                 recovery,
-                deniedExecutionProfile(),
+                normalExecutionProfile(),
                 executionProfile());
         ToolInvocationRequest originalInvocation =
                 invocation(Map.of("command", "git ls-remote origin", "timeoutMillis", 30_000L), () -> false);
@@ -1400,7 +1400,7 @@ class ProjectExecutionToolOperationsTest {
                 new ProjectExecutionRecoveryAuthorization(state, interactions),
                 normal,
                 recovery,
-                deniedExecutionProfile(),
+                normalExecutionProfile(),
                 executionProfile());
         ToolInvocationRequest base = invocation(Map.of("command", "git clean -fd"), () -> false);
         ToolCall source = failedRecoverySource(base, "NETWORK_PERMISSION_REQUIRED");
@@ -1426,7 +1426,7 @@ class ProjectExecutionToolOperationsTest {
                 new ProjectExecutionRecoveryAuthorization(genericState, genericInteractions),
                 normal,
                 recovery,
-                deniedExecutionProfile(),
+                normalExecutionProfile(),
                 executionProfile());
         ToolCall genericHostFailure = failedRecoverySource(base, "HOST_AUTHENTICATION_UNAVAILABLE");
         genericState.appendToolCall(genericHostFailure);
@@ -1699,23 +1699,18 @@ class ProjectExecutionToolOperationsTest {
                 io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("test")),
                 Set.of(),
                 Set.of(),
-                true,
-                io.haifa.agent.sandbox.api.NetworkPolicy.ALLOW,
-                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
-                new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, false, false, false));
+                true);
     }
 
-    private static io.haifa.agent.sandbox.api.SandboxProfile deniedExecutionProfile() {
+    /** A frozen normal profile that is distinct from the recovery profile. */
+    private static io.haifa.agent.sandbox.api.SandboxProfile normalExecutionProfile() {
         return new io.haifa.agent.sandbox.api.SandboxProfile(
-                new SandboxProfileRef("shell-denied", "1"),
-                "local-native",
-                io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("denied")),
+                new SandboxProfileRef("shell-normal", "1"),
+                "host-guarded",
+                io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("normal")),
                 Set.of(),
                 Set.of(),
-                true,
-                io.haifa.agent.sandbox.api.NetworkPolicy.DENY,
-                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
-                new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, true, false, false));
+                true);
     }
 
     private static ProcessOutputChunk chunk(String value) {

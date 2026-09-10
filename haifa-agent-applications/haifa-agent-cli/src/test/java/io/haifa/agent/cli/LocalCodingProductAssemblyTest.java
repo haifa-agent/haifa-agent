@@ -568,7 +568,6 @@ class LocalCodingProductAssemblyTest {
                 defaults.skills(),
                 new CliConfiguration.Execution(
                         "host-guarded",
-                        "allow",
                         execution.shell(),
                         execution.shellPath(),
                         execution.defaultTimeout(),
@@ -576,8 +575,7 @@ class LocalCodingProductAssemblyTest {
                         execution.maxOutputBytes(),
                         execution.maxOutputLines(),
                         execution.maxProcesses(),
-                        execution.inheritEnvironment(),
-                        List.of()),
+                        execution.inheritEnvironment()),
                 ApprovalMode.AUTO,
                 Duration.ofSeconds(10),
                 defaults.maxIterations(),

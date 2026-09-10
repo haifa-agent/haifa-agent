@@ -1,5 +1,14 @@
 # Changelog
 
+- 沙箱裁剪为受控宿主执行：删除 `haifa-agent-sandbox-local-native` 模块（bubblewrap / Seatbelt /
+  Windows unsupported 三条路径）与工作区全量副本死代码（`WorkspaceIsolationProvider`、
+  `EphemeralCopyRequest`、`WorkspaceCopyBudget`、`HostWorkspaceIsolationProvider`）。`SandboxProfile`
+  只冻结 Provider、配置摘要、允许的可执行文件与环境名和 Shell 许可；`NetworkPolicy`、
+  `SandboxFilesystemPolicy` 与隔离能力位删除，`SandboxCapabilities` 只保留进程树收割声明。
+  `host-guarded` 成为唯一 Provider，Windows / Linux / macOS 行为完全一致，CLI 不再有
+  `SANDBOX_ADAPTER_UNAVAILABLE` 平台分支；`execution.network` 与 `execution.extraPathPolicies`
+  配置键退休（旧配置中被忽略），`provider: local-native` 在启动期 fail closed。平台如实声明不提供
+  内核、容器或 namespace 级隔离，详见 `docs/34-sandbox-simplification-and-host-execution-design.md`。
 - Coding Terminal 流式 Transcript 增长不再按渲染行数变化触发全屏清除；模型输出新增换行或自动折行时
   继续由 tui4j 正常更新 Viewport，避免每新增一行闪烁一次，同时保留自动跟随和 PageUp 回看语义。
 - Coding Terminal 在 alternate screen 中启用应用拥有的 Transcript 鼠标交互：滚轮回看，左键拖拽按

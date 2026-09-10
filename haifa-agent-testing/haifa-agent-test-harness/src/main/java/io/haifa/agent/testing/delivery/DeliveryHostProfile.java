@@ -5,7 +5,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
 
-/** Explicit host capabilities for Autonomous Delivery; platform fallback is never implicit. */
+/**
+ * Explicit host capabilities for Autonomous Delivery; platform fallback is never implicit.
+ *
+ * <p>Every profile is controlled host execution: {@code isolationAssurance} is always
+ * {@code TRUSTED_HOST_ONLY} and the network is always the ordinary host network. See
+ * {@code docs/34-sandbox-simplification-and-host-execution-design.md}.
+ */
 record DeliveryHostProfile(
         String id,
         String platform,
@@ -39,23 +45,6 @@ record DeliveryHostProfile(
                         "auto",
                         "TRUSTED_HOST_ONLY",
                         windows ? "mvnw.cmd" : "mvnw",
-                        true);
-            }
-            case "posix-local-native-v1" -> {
-                if (!(normalizedOs.contains("mac")
-                        || normalizedOs.contains("linux")
-                        || normalizedOs.contains("unix"))) {
-                    throw new IllegalArgumentException("posix-local-native-v1 requires macOS or Linux");
-                }
-                yield new DeliveryHostProfile(
-                        id,
-                        normalizedOs.contains("mac") ? "macos" : "linux",
-                        "unix-pty",
-                        "local-native",
-                        "deny",
-                        "auto",
-                        "LOCAL_NATIVE",
-                        "mvnw",
                         true);
             }
             case "windows-host-trusted-v1" -> {

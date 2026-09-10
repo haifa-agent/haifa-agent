@@ -14,7 +14,6 @@ import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.WorkspacePermission;
 import io.haifa.agent.project.workspace.WorkspaceStatus;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
 import io.haifa.agent.sandbox.api.SandboxExecution;
@@ -159,7 +158,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
     @Override
     public SandboxCapabilities capabilities() {
-        return new SandboxCapabilities(true, false, false, false, false);
+        return new SandboxCapabilities(true);
     }
 
     @Override
@@ -193,15 +192,12 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         var binding = bindings.find(workspace.root().bindingId())
                 .orElseThrow(() -> failure("BINDING_NOT_FOUND", "workspace binding not found"));
         if (binding.status() != WorkspaceBindingStatus.ACTIVE) throw failure("BINDING_INACTIVE", "binding is inactive");
-        if (mount.readOnly() || binding.mode() == WorkspaceBindingMode.READ_ONLY) {
+        if (binding.mode() == WorkspaceBindingMode.READ_ONLY) {
             throw failure("READ_ONLY_UNENFORCEABLE", "host provider cannot safely execute against a read-only mount");
         }
         if (!binding.permissions().allows(WorkspacePermission.EXECUTE)
                 || !binding.capabilities().allows("execution.run")) {
             throw failure("EXECUTION_DENIED", "workspace execution capability is denied");
-        }
-        if (profile.networkPolicy() == NetworkPolicy.DENY) {
-            throw failure("NETWORK_ISOLATION_UNAVAILABLE", "host provider cannot guarantee network denial");
         }
         try {
             Path root =

@@ -7,16 +7,20 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
+/**
+ * Execution configuration snapshot used for audit and hash verification.
+ *
+ * <p>The profile only carries application-level governance: which executables and environment names are allowed and
+ * whether a shell invocation is permitted. Network denial and filesystem mount isolation are not expressible because
+ * the platform executes on the host; see {@code docs/34-sandbox-simplification-and-host-execution-design.md}.
+ */
 public record SandboxProfile(
         SandboxProfileRef ref,
         String providerId,
         SandboxConfigurationDigest providerConfigurationDigest,
         Set<String> allowedExecutables,
         Set<String> allowedEnvironmentNames,
-        boolean shellAllowed,
-        NetworkPolicy networkPolicy,
-        SandboxFilesystemPolicy filesystemPolicy,
-        SandboxCapabilities requiredCapabilities) {
+        boolean shellAllowed) {
     public SandboxProfile {
         ref = Objects.requireNonNull(ref, "ref must not be null");
         providerId = identifier(providerId, "providerId");
@@ -26,23 +30,11 @@ public record SandboxProfile(
                 Set.copyOf(Objects.requireNonNull(allowedExecutables, "allowedExecutables must not be null"));
         allowedEnvironmentNames =
                 Set.copyOf(Objects.requireNonNull(allowedEnvironmentNames, "allowedEnvironmentNames must not be null"));
-        networkPolicy = Objects.requireNonNull(networkPolicy, "networkPolicy must not be null");
-        filesystemPolicy = Objects.requireNonNull(filesystemPolicy, "filesystemPolicy must not be null");
-        requiredCapabilities = Objects.requireNonNull(requiredCapabilities, "requiredCapabilities must not be null");
         if (allowedExecutables.stream().anyMatch(value -> !validName(value))) {
             throw new IllegalArgumentException("allowedExecutables contains an invalid value");
         }
         if (allowedEnvironmentNames.stream().anyMatch(value -> !validEnvironmentName(value))) {
             throw new IllegalArgumentException("allowedEnvironmentNames contains an invalid value");
-        }
-        if (!requiredCapabilities.processTreeTermination()) {
-            throw new IllegalArgumentException("process-tree termination must be required");
-        }
-        if (networkPolicy == NetworkPolicy.DENY && !requiredCapabilities.networkIsolation()) {
-            throw new IllegalArgumentException("network DENY requires network isolation");
-        }
-        if (filesystemPolicy.requiresIsolation() && !requiredCapabilities.filesystemMountIsolation()) {
-            throw new IllegalArgumentException("filesystem policy requires filesystem isolation");
         }
     }
 
@@ -55,17 +47,6 @@ public record SandboxProfile(
         allowedExecutables.stream().sorted(Comparator.naturalOrder()).forEach(value -> fields.add("exe:" + value));
         allowedEnvironmentNames.stream().sorted(Comparator.naturalOrder()).forEach(value -> fields.add("env:" + value));
         fields.add("shell:" + shellAllowed);
-        fields.add("network:" + networkPolicy.name());
-        fields.add("workspace:" + filesystemPolicy.workspaceAccess().name());
-        fields.add("sensitive:" + filesystemPolicy.sensitivePathsDenied());
-        filesystemPolicy.additionalPathPolicyRefs().stream()
-                .sorted(Comparator.naturalOrder())
-                .forEach(value -> fields.add("path-policy:" + value));
-        fields.add("process-tree:" + requiredCapabilities.processTreeTermination());
-        fields.add("filesystem:" + requiredCapabilities.filesystemMountIsolation());
-        fields.add("network-isolation:" + requiredCapabilities.networkIsolation());
-        fields.add("cpu:" + requiredCapabilities.cpuLimit());
-        fields.add("memory:" + requiredCapabilities.memoryLimit());
         return SandboxConfigurationDigest.sha256Fields(fields);
     }
 
@@ -81,10 +62,7 @@ public record SandboxProfile(
                 providerConfigurationDigest,
                 allowedExecutables,
                 allowedEnvironmentNames,
-                shellAllowed,
-                NetworkPolicy.ALLOW,
-                SandboxFilesystemPolicy.hostCompatible(),
-                new SandboxCapabilities(true, false, false, false, false));
+                shellAllowed);
     }
 
     private static String identifier(String value, String field) {

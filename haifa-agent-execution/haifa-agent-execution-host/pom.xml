@@ -31,7 +31,6 @@
                                     <excludes>
                                         <exclude>io.haifa:haifa-agent-runtime-core</exclude>
                                         <exclude>io.haifa:haifa-agent-sandbox-host</exclude>
-                                        <exclude>io.haifa:haifa-agent-sandbox-local-native</exclude>
                                         <exclude>org.springframework:*</exclude>
                                         <exclude>org.springframework.boot:*</exclude>
                                         <exclude>jakarta.persistence:*</exclude>

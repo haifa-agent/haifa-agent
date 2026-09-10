@@ -190,7 +190,6 @@ fs.writeFileSync(
     "",
     "execution:",
     "  provider: host-guarded",
-    "  network: allow",
     "  shell: powershell",
     "",
     "runtime:",

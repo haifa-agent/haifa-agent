@@ -3,7 +3,6 @@ package io.haifa.agent.application.project.tool;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
@@ -260,15 +259,13 @@ public final class ProjectToolCatalog {
                                 ToolSideEffect.FILE_WRITE,
                                 ToolSideEffect.PROCESS_EXECUTION,
                                 ToolSideEffect.PERMISSION_ELEVATION)
-                        : executionEffects(executionProfile, execution, write);
+                        : executionEffects(execution, write);
         ToolApprovalRequirement approval = attach || worktree
                 ? ToolApprovalRequirement.ALWAYS
                 : execution || write ? ToolApprovalRequirement.POLICY : ToolApprovalRequirement.NEVER;
         ToolResourceRequirements resources = new ToolResourceRequirements(
                 Set.of(REQUIRED_CAPABILITY.get(name)),
-                execution && executionProfile.networkPolicy() == NetworkPolicy.ALLOW
-                        ? Set.of("unrestricted-network")
-                        : Set.of(),
+                execution ? Set.of("unrestricted-network") : Set.of(),
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         String version =
                 switch (name) {
@@ -313,14 +310,10 @@ public final class ProjectToolCatalog {
                 Set.of("project", name.substring(0, name.indexOf('.'))));
     }
 
-    private static Set<ToolSideEffect> executionEffects(
-            SandboxProfile executionProfile, boolean execution, boolean write) {
+    private static Set<ToolSideEffect> executionEffects(boolean execution, boolean write) {
         if (!execution) return write ? Set.of(ToolSideEffect.FILE_WRITE) : Set.of(ToolSideEffect.FILE_READ);
-        var effects = java.util.EnumSet.of(ToolSideEffect.PROCESS_EXECUTION);
-        if (executionProfile.networkPolicy() == NetworkPolicy.ALLOW) {
-            effects.add(ToolSideEffect.NETWORK_ACCESS);
-        }
-        return Set.copyOf(effects);
+        // Host execution always reaches the ordinary host network; the platform cannot deny it.
+        return Set.of(ToolSideEffect.PROCESS_EXECUTION, ToolSideEffect.NETWORK_ACCESS);
     }
 
     private static String title(String name) {

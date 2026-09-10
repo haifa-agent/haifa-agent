@@ -71,37 +71,6 @@ class LocalCodingAgentTest {
     }
 
     @Test
-    void windowsExplicitLocalNativeFailsClosedBeforeModelInvocation() {
-        org.junit.jupiter.api.Assumptions.assumeTrue(isWindows());
-        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
-            throw new AssertionError("unsupported provider must fail before model invocation");
-        };
-        CliConfiguration defaults = CliConfiguration.defaults();
-        CliConfiguration strict = new CliConfiguration(
-                defaults.model(),
-                defaults.availableModels(),
-                defaults.enabledTools(),
-                defaults.mcpServers(),
-                defaults.web(),
-                defaults.skills(),
-                localNativeExecution(defaults.execution()),
-                defaults.approval(),
-                defaults.timeout(),
-                defaults.maxIterations(),
-                defaults.maxToolCalls(),
-                defaults.persistence());
-
-        assertThatThrownBy(() -> LocalCodingAgent.create(
-                        workspace,
-                        strict,
-                        new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
-                        model))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("SANDBOX_ADAPTER_UNAVAILABLE")
-                .hasMessageContaining("host-guarded");
-    }
-
-    @Test
     void denyRemovesExecutionBeforeToolCatalogDisclosure() {
         CliConfiguration defaults = CliConfiguration.defaults();
         var denied = new CliConfiguration(
@@ -113,11 +82,11 @@ class LocalCodingAgentTest {
                 defaults.timeout(),
                 defaults.maxIterations(),
                 defaults.maxToolCalls());
-        var isolated = new CliConfiguration(
+        var asking = new CliConfiguration(
                 defaults.model(),
                 defaults.enabledTools(),
                 defaults.mcpServers(),
-                localNativeExecution(defaults.execution()),
+                hostExecution(defaults.execution()),
                 ApprovalMode.ASK,
                 defaults.timeout(),
                 defaults.maxIterations(),
@@ -128,7 +97,7 @@ class LocalCodingAgentTest {
         assertThat(LocalCodingAgent.effectiveBuiltInTools(defaults))
                 .contains("execution.run")
                 .doesNotContain("execution.request_permissions");
-        assertThat(LocalCodingAgent.effectiveBuiltInTools(isolated))
+        assertThat(LocalCodingAgent.effectiveBuiltInTools(asking))
                 .contains("execution.run")
                 .doesNotContain("execution.request_permissions");
     }
@@ -1572,7 +1541,6 @@ class LocalCodingAgentTest {
     private static CliConfiguration.Execution hostExecution(CliConfiguration.Execution execution) {
         return new CliConfiguration.Execution(
                 "host-guarded",
-                "allow",
                 execution.shell(),
                 execution.shellPath(),
                 execution.defaultTimeout(),
@@ -1580,8 +1548,7 @@ class LocalCodingAgentTest {
                 execution.maxOutputBytes(),
                 execution.maxOutputLines(),
                 execution.maxProcesses(),
-                execution.inheritEnvironment(),
-                List.of());
+                execution.inheritEnvironment());
     }
 
     private static LocalCodingSessionClient sessionClient(LocalCodingAgent agent) {
@@ -1598,21 +1565,6 @@ class LocalCodingAgentTest {
                 agent.shell(),
                 agent.exporter(),
                 agent.outcomes());
-    }
-
-    private static CliConfiguration.Execution localNativeExecution(CliConfiguration.Execution execution) {
-        return new CliConfiguration.Execution(
-                "local-native",
-                "deny",
-                execution.shell(),
-                execution.shellPath(),
-                execution.defaultTimeout(),
-                execution.maximumTimeout(),
-                execution.maxOutputBytes(),
-                execution.maxOutputLines(),
-                execution.maxProcesses(),
-                execution.inheritEnvironment(),
-                List.of());
     }
 
     private static boolean isWindows() {
