@@ -76,9 +76,6 @@ public final class RuntimeClientEventProjector {
                     case "tool.failed", "tool.business-failed" ->
                         tool("tool.call.failed", event, "FAILED", "TOOL_FAILED");
                     case "tool.cancelled" -> tool("tool.call.cancelled", event, "CANCELLED", "TOOL_CANCELLED");
-                    case "execution.completed" -> execution("execution.completed", event);
-                    case "execution.failed" -> execution("execution.failed", event);
-                    case "execution.cancelled" -> execution("execution.cancelled", event);
                     case "workspace.change-set.available" -> resource("workspace.change-set.available", event);
                     case "artifact.available" -> resource("artifact.available", event);
                     case "checkpoint.available" -> resource("checkpoint.available", event);
@@ -86,36 +83,12 @@ public final class RuntimeClientEventProjector {
                         delivery(
                                 "completion.deferred",
                                 event,
-                                text(event.data(), "phase", "RECOVERING"),
+                                text(event.data(), "phase", "COMPLETION"),
                                 "COMPLETION_DEFERRED",
                                 text(event.data(), "reasonCode", "DELIVERY_EVIDENCE_MISSING"),
                                 texts(event.data(), "missingEvidence"),
                                 integer(event.data(), "remainingPercent", 0),
                                 integer(event.data(), "attempt", 0));
-                    case "tool.recovery-strategy-required" ->
-                        delivery(
-                                "recovery.required",
-                                event,
-                                "RECOVERING",
-                                "RECOVERY_REQUIRED",
-                                text(event.data(), "directive", "RECOVERY_REQUIRED"),
-                                List.of(),
-                                0,
-                                integer(event.data(), "attempts", 0));
-                    case "loop.progress-observed" ->
-                        delivery(
-                                "progress.observed",
-                                event,
-                                "EXECUTING",
-                                "PROGRESS_OBSERVED",
-                                text(event.data(), "evidence", "AUTHORITATIVE_FACT"),
-                                List.of(),
-                                0,
-                                0);
-                    case "loop.stall-detected" -> stall(event, "stall.detected", "STALL_DETECTED");
-                    case "loop.recovery-strategy-required" ->
-                        stall(event, "recovery.strategy-required", "STRATEGY_CHANGE_REQUIRED");
-                    case "loop.recovery-exhausted" -> stall(event, "recovery.exhausted", "RECOVERY_EXHAUSTED");
                     case "coding.work-phase" ->
                         delivery(
                                 "coding.work-phase",
@@ -162,19 +135,11 @@ public final class RuntimeClientEventProjector {
                                 "model.attempt.scheduled",
                                 "model.attempt.retry-scheduled",
                                 "model.attempt.exhausted",
-                                "execution.completed",
-                                "execution.failed",
-                                "execution.cancelled",
                                 "workspace.change-set.available",
                                 "artifact.available",
                                 "checkpoint.available")
                         .contains(event.type())
                 || event.type().equals("completion.deferred")
-                || event.type().equals("tool.recovery-strategy-required")
-                || event.type().equals("loop.progress-observed")
-                || event.type().equals("loop.stall-detected")
-                || event.type().equals("loop.recovery-strategy-required")
-                || event.type().equals("loop.recovery-exhausted")
                 || event.type().equals("coding.work-phase")
                 || event.type().equals("loop.budget-snapshot")
                 || event.type().equals("run.created")
@@ -261,22 +226,6 @@ public final class RuntimeClientEventProjector {
                         text(event.data(), "resultRef", "")));
     }
 
-    private static Projection execution(String eventType, RuntimeEvent event) {
-        return new Projection(
-                eventType,
-                new RunEventPayloads.ExecutionLifecycle(
-                        requiredText(event.data(), "executionId"),
-                        requiredText(event.data(), "toolCallId"),
-                        requiredText(event.data(), "status"),
-                        text(event.data(), "commandSummary", "shell command"),
-                        text(event.data(), "logicalWorkdir", "."),
-                        text(event.data(), "streamKind", "MERGED"),
-                        text(event.data(), "chunkOrRef", ""),
-                        integer(event.data(), "exitCode"),
-                        Boolean.TRUE.equals(event.data().get("truncated")),
-                        text(event.data(), "fileChangeSetRef", "")));
-    }
-
     private static Projection resource(String eventType, RuntimeEvent event) {
         return new Projection(
                 eventType,
@@ -303,18 +252,6 @@ public final class RuntimeClientEventProjector {
                         text(event.data(), "limitingResource", "UNKNOWN"),
                         longValue(event.data(), "limitingUsed", 0),
                         longValue(event.data(), "limitingLimit", 0)));
-    }
-
-    private static Projection stall(RuntimeEvent event, String eventType, String status) {
-        return delivery(
-                eventType,
-                event,
-                "RECOVERING",
-                status,
-                text(event.data(), "reason", "NO_OBSERVABLE_PROGRESS"),
-                List.of(),
-                0,
-                integer(event.data(), "recoveryAttempts", 0));
     }
 
     private static Projection delivery(

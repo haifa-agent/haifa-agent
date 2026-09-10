@@ -176,12 +176,10 @@ class TerminalUiReducerTest {
         });
         assertThat(TerminalRecovery.fromCode("RUN_BUDGET_EXCEEDED").action())
                 .contains("smaller request", "larger budget");
-        assertThat(TerminalRecovery.fromCode("AGENT_LOOP_DETECTED").action())
-                .contains("completed workspace changes", "new run", "more specific next step");
     }
 
     @Test
-    void upsertsToolAndExecutionLifecycleByStableIdentityWithoutDuplicateCards() {
+    void upsertsToolLifecycleByStableIdentityWithoutDuplicateCards() {
         TerminalUiState toolRequested = reducer.reduce(
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.RunEventReceived(event(
@@ -196,25 +194,7 @@ class TerminalUiReducerTest {
                         "event-2",
                         new RunEventPayloads.ToolLifecycle(
                                 "tool-1", "workspace.write", "SUCCEEDED", "NONE", "src/App.java", "artifact:tool-1"))));
-        TerminalUiState execution = reducer.reduce(
-                toolSucceeded,
-                new TerminalUiAction.RunEventReceived(event(
-                        3,
-                        "event-3",
-                        new RunEventPayloads.ExecutionLifecycle(
-                                "execution-1",
-                                "tool-1",
-                                "FAILED",
-                                "mvn test",
-                                "workspace",
-                                "STDERR",
-                                "2 tests failed",
-                                1,
-                                false,
-                                "changes:1"))));
-
-        assertThat(execution.transcript()).hasSize(2);
-        assertThat(execution.transcript())
+        assertThat(toolSucceeded.transcript())
                 .filteredOn(item -> item.id().equals("tool-tool-1"))
                 .singleElement()
                 .satisfies(item -> {
@@ -222,48 +202,10 @@ class TerminalUiReducerTest {
                     assertThat(item.title()).isEqualTo("workspace.write · src/App.java");
                     assertThat(item.body()).contains("Target: src/App.java", "Result: artifact:tool-1");
                 });
-        assertThat(execution.transcript())
-                .filteredOn(item -> item.id().equals("execution-execution-1"))
-                .singleElement()
-                .satisfies(item -> assertThat(item.body())
-                        .contains(
-                                "Workdir: workspace",
-                                "Stream: STDERR",
-                                "2 tests failed",
-                                "Exit: 1",
-                                "Changes: changes:1"));
-        assertThat(execution.status()).isEqualTo("THINKING");
     }
 
     @Test
-    void normallyExitedNonZeroCommandRemainsACompletedExecutionInsteadOfAnError() {
-        TerminalUiState exited = reducer.reduce(
-                TerminalUiState.initial(120, 40),
-                new TerminalUiAction.RunEventReceived(event(
-                        1,
-                        "event-1",
-                        new RunEventPayloads.ExecutionLifecycle(
-                                "execution-1",
-                                "tool-1",
-                                "EXITED",
-                                "pytest",
-                                "workspace",
-                                "STDOUT",
-                                "no tests collected",
-                                5,
-                                false,
-                                ""))));
-
-        assertThat(exited.transcript()).singleElement().satisfies(item -> {
-            assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.EXECUTION);
-            assertThat(item.status()).isEqualTo("EXITED");
-            assertThat(item.title()).isEqualTo("pytest · exit 5");
-            assertThat(item.body()).contains("Exit: 5", "no tests collected");
-        });
-    }
-
-    @Test
-    void recordsToolAndExecutionDurationsFromEventTimestamps() {
+    void recordsToolDurationFromEventTimestamps() {
         TerminalUiState requested = reducer.reduce(
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.RunEventReceived(event(
@@ -280,28 +222,10 @@ class TerminalUiReducerTest {
                         new RunEventPayloads.ToolLifecycle(
                                 "tool-1", "execution_run", "SUCCEEDED", "NONE", "rg search", ""),
                         Instant.parse("2026-07-27T00:00:02.500Z"))));
-        TerminalUiState executed = reducer.reduce(
-                succeeded,
-                new TerminalUiAction.RunEventReceived(event(
-                        3,
-                        "event-3",
-                        new RunEventPayloads.ExecutionLifecycle(
-                                "execution-1",
-                                "tool-1",
-                                "SUCCEEDED",
-                                "rg search",
-                                ".",
-                                "MERGED",
-                                "3 hits",
-                                0,
-                                false,
-                                ""),
-                        Instant.parse("2026-07-27T00:00:02.700Z"))));
-
-        assertThat(executed.transcript()).hasSize(2);
-        assertThat(executed.transcript().get(0).durationMillis()).contains(1500L);
-        assertThat(executed.transcript().get(1).durationMillis()).contains(1700L);
-        assertThat(executed.transcript().get(1).title()).isEqualTo("rg search · exit 0");
+        assertThat(succeeded.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.durationMillis()).contains(1500L);
+            assertThat(item.title()).isEqualTo("execution_run · rg search");
+        });
     }
 
     @Test
@@ -354,6 +278,22 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void includesLocalShellExecutionInTheRunSummary() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.ShellCompleted("!pwd", "D:/workspace", "SUCCEEDED"));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"),
+                        Instant.parse("2026-07-27T00:00:01Z"))));
+
+        assertThat(state.transcript().getLast().body()).contains("Tools: 1 succeeded");
+    }
+
+    @Test
     void advancesTheActivityClockAtToolAndModelBoundariesWithoutResettingForOutput() {
         TerminalUiState thinking = reducer.reduce(
                 TerminalUiState.initial(120, 40),
@@ -373,40 +313,23 @@ class TerminalUiReducerTest {
                         "event-3",
                         new RunEventPayloads.ToolLifecycle(
                                 "tool-1", "execution.run", "STARTED", "NONE", "git status", ""))));
-        TerminalUiState executionOutput = reducer.reduce(
+        TerminalUiState resumedThinking = reducer.reduce(
                 working,
                 new TerminalUiAction.RunEventReceived(event(
                         4,
                         "event-4",
-                        new RunEventPayloads.ExecutionLifecycle(
-                                "execution-1",
-                                "tool-1",
-                                "STREAMING",
-                                "git status",
-                                ".",
-                                "STDOUT",
-                                "clean",
-                                null,
-                                false,
-                                ""))));
-        TerminalUiState resumedThinking = reducer.reduce(
-                executionOutput,
-                new TerminalUiAction.RunEventReceived(event(
-                        5,
-                        "event-5",
                         new RunEventPayloads.ToolLifecycle(
                                 "tool-1", "execution.run", "SUCCEEDED", "NONE", "git status", ""))));
         TerminalUiState modelOutput = reducer.reduce(
                 resumedThinking,
                 new TerminalUiAction.RunEventReceived(
-                        event(6, "event-6", new RunEventPayloads.AssistantTextDelta("generation-1", "done"))));
+                        event(5, "event-5", new RunEventPayloads.AssistantTextDelta("generation-1", "done"))));
 
         assertThat(thinking.status()).isEqualTo("THINKING");
         assertThat(requested.activity()).isEqualTo(thinking.activity());
         assertThat(working.status()).isEqualTo("WORKING");
         assertThat(working.activity().revision()).isEqualTo(thinking.activity().revision() + 1);
         assertThat(working.activity().label()).isEqualTo("execution.run");
-        assertThat(executionOutput.activity()).isEqualTo(working.activity());
         assertThat(resumedThinking.status()).isEqualTo("THINKING");
         assertThat(resumedThinking.activity().revision())
                 .isEqualTo(working.activity().revision() + 1);
@@ -581,33 +504,33 @@ class TerminalUiReducerTest {
     }
 
     @Test
-    void deliveryEventsDriveRecoveryBudgetAndCodingWorkPhaseWithoutParsingText() {
-        TerminalUiState recovering = reducer.reduce(
+    void deliveryEventsDriveCompletionBudgetAndCodingWorkPhaseWithoutParsingText() {
+        TerminalUiState firstDeferral = reducer.reduce(
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.RunEventReceived(event(
                         1,
                         "event-1",
                         new RunEventPayloads.DeliveryLifecycle(
-                                "RECOVERING",
-                                "RECOVERY_REQUIRED",
-                                "REPEATED_ENVIRONMENT_FAILURE",
+                                "COMPLETION",
+                                "COMPLETION_DEFERRED",
+                                "WORKSPACE_CHANGE_MISSING",
                                 List.of("WORKSPACE_CHANGE"),
                                 30,
                                 1))));
-        TerminalUiState verifying = reducer.reduce(
-                recovering,
+        TerminalUiState secondDeferral = reducer.reduce(
+                firstDeferral,
                 new TerminalUiAction.RunEventReceived(event(
                         2,
                         "event-2",
                         new RunEventPayloads.DeliveryLifecycle(
-                                "VERIFYING",
+                                "COMPLETION",
                                 "COMPLETION_DEFERRED",
                                 "DIFF_INSPECTION_MISSING",
                                 List.of("DIFF_INSPECTION", "VALIDATION_ATTEMPT"),
                                 24,
                                 2))));
         TerminalUiState budget = reducer.reduce(
-                verifying,
+                secondDeferral,
                 new TerminalUiAction.RunEventReceived(event(
                         3,
                         "event-3",
@@ -634,14 +557,17 @@ class TerminalUiReducerTest {
                                 42,
                                 0))));
 
-        assertThat(recovering.status()).isEqualTo("Recovering");
-        assertThat(verifying.status()).isEqualTo("Verifying");
-        assertThat(verifying.transcript())
+        assertThat(firstDeferral.status()).isEqualTo("Completion deferred");
+        assertThat(secondDeferral.status()).isEqualTo("Completion deferred");
+        assertThat(secondDeferral.transcript())
                 .filteredOn(item -> item.id().equals("delivery-COMPLETION_DEFERRED"))
                 .singleElement()
-                .satisfies(item -> assertThat(item.body())
-                        .contains("DIFF_INSPECTION", "VALIDATION_ATTEMPT", "Remaining: 24%")
-                        .doesNotContain("/Users/", "stderr", "fingerprint"));
+                .satisfies(item -> {
+                    assertThat(item.title()).isEqualTo("Completion deferred");
+                    assertThat(item.body())
+                            .contains("DIFF_INSPECTION", "VALIDATION_ATTEMPT", "Remaining: 24%")
+                            .doesNotContain("/Users/", "stderr", "fingerprint");
+                });
         assertThat(budget.status()).isEqualTo("Budget threshold");
         assertThat(budget.transcript())
                 .filteredOn(item -> item.id().equals("delivery-BUDGET_THRESHOLD_REACHED"))

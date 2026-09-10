@@ -127,7 +127,7 @@ import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.model.ModelAdapterKey;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
-import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
+import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
 import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
@@ -543,9 +543,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     workspaceIdentity.safeDisplayName());
             var executionCanonicalizer =
                     new io.haifa.agent.application.project.tool.CodingExecutionToolRequestCanonicalizer();
-            var recoveryAuthorization =
-                    new io.haifa.agent.application.project.tool.ProjectExecutionRecoveryAuthorization(
-                            persistence.ports().state(), persistence.ports().interactions());
             PublicToolPolicy publicToolPolicy = workspaceAccessPolicy(
                     new DefaultPublicToolPolicy(
                             new io.haifa.agent.application.project.policy.CodingExecutionPolicyRequestAdapter(
@@ -590,8 +587,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             persistence.workspaceAccess(),
                             tenant,
                             principal,
-                            runtimeExecutionVerifier,
-                            recoveryAuthorization)
+                            runtimeExecutionVerifier)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
             var repositoryBaselines = executionPlatform == null
@@ -656,17 +652,11 @@ final class LocalCodingAgent implements AutoCloseable {
                         return new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
                                 workspaceId, currentCapabilities);
                     };
-            var provider = executionPlatform == null
-                    ? new ProjectToolExecutor(workspaceAccessResolver, operations, null, worktreeOperations)
-                    : ProjectToolExecutor.withExecutionRecovery(
-                            workspaceAccessResolver,
-                            operations,
-                            executionPlatform.operations(),
-                            executionPlatform.permissionOperations(),
-                            recoveryAuthorization,
-                            executionPlatform.profile(),
-                            executionPlatform.permissionProfile(),
-                            worktreeOperations);
+            var provider = new ProjectToolExecutor(
+                    workspaceAccessResolver,
+                    operations,
+                    executionPlatform == null ? null : executionPlatform.operations(),
+                    worktreeOperations);
             var skillService = new DefaultSkillActivationService(
                     persistence.ports().runs(), persistence.ports().state(), skillPlatform.contentLoader(), time);
             List<SkillToolCatalogContribution> skillTools =
@@ -728,7 +718,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     .middleware(new CodingRunOutcomeProjectionMiddleware(
                             outcomeProjection, persistence.ports().events(), time))
                     .middleware(new CodingVerificationProfileMiddleware(verificationProfiles))
-                    .repairRetry(new RepairRetryPolicy(2));
+                    .completionRepair(new CompletionRepairPolicy(2));
             modelAdapters.forEach((key, adapter) ->
                     runtimeBuilder.registerChatModel(key.adapterType(), key.adapterVersion(), adapter));
             var runtime = runtimeBuilder

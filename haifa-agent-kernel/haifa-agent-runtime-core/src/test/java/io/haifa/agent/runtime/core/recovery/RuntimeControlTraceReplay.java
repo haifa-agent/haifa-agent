@@ -14,10 +14,8 @@ public final class RuntimeControlTraceReplay {
     public Snapshot replay(List<SafeEvent> events) {
         Objects.requireNonNull(events, "events must not be null");
         String phase = "WORKING";
-        int maximumFailureClusterAttempts = 0;
         int completionRepairAttempts = 0;
         int remainingPercent = 100;
-        int meaningfulProgressEvents = 0;
         int nonReplayableOutcomeUnknown = 0;
         boolean checkpointRestored = false;
         boolean interactionContinued = false;
@@ -27,10 +25,6 @@ public final class RuntimeControlTraceReplay {
         for (SafeEvent event : List.copyOf(events)) {
             Map<String, Object> data = event.data();
             switch (event.type()) {
-                case "tool.failure-cluster-updated" ->
-                    maximumFailureClusterAttempts =
-                            Math.max(maximumFailureClusterAttempts, integer(data, "attempts", 0));
-                case "tool.recovery-strategy-required" -> phase = "RECOVERING";
                 case "completion.deferred" -> {
                     completionRepairAttempts = Math.max(completionRepairAttempts, integer(data, "attempt", 0));
                     phase = safePhase(data.get("phase"), phase);
@@ -40,9 +34,8 @@ public final class RuntimeControlTraceReplay {
                     strings(data.get("evidenceCodes")).forEach(evidenceCodes::add);
                 case "loop.budget-snapshot" ->
                     remainingPercent = Math.max(0, Math.min(100, integer(data, "remainingPercent", remainingPercent)));
-                case "loop.progress-observed" -> meaningfulProgressEvents++;
-                case "execution.failed" -> {
-                    if ("UNKNOWN".equals(String.valueOf(data.get("status")))) {
+                case "tool.failed" -> {
+                    if ("OUTCOME_UNKNOWN".equals(String.valueOf(data.get("status")))) {
                         nonReplayableOutcomeUnknown++;
                     }
                 }
@@ -65,10 +58,8 @@ public final class RuntimeControlTraceReplay {
         }
         return new Snapshot(
                 phase,
-                maximumFailureClusterAttempts,
                 completionRepairAttempts,
                 remainingPercent,
-                meaningfulProgressEvents,
                 Set.copyOf(evidenceCodes),
                 terminationReason,
                 nonReplayableOutcomeUnknown,
@@ -84,7 +75,7 @@ public final class RuntimeControlTraceReplay {
 
     private static String safePhase(Object value, String fallback) {
         String phase = String.valueOf(value);
-        return Set.of("WORKING", "RECOVERING", "VERIFYING", "WAITING").contains(phase) ? phase : fallback;
+        return Set.of("WORKING", "COMPLETION", "WAITING").contains(phase) ? phase : fallback;
     }
 
     private static List<String> strings(Object raw) {
@@ -112,10 +103,8 @@ public final class RuntimeControlTraceReplay {
 
     public record Snapshot(
             String phase,
-            int maximumFailureClusterAttempts,
             int completionRepairAttempts,
             int remainingPercent,
-            int meaningfulProgressEvents,
             Set<String> evidenceCodes,
             String terminationReason,
             int nonReplayableOutcomeUnknown,

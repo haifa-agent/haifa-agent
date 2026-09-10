@@ -35,10 +35,11 @@ JSON/Markdown media allowlist. Artifact payload bytes do not enter SQLite or JSO
 
 ## V8 Tool reconciliation evidence
 
-Runtime migration V8 extends `tool_journal` with nullable bounded dispatch evidence (`execution ID`, host-local PID,
-working-directory digest) and the latest reconciliation status/reason. An outcome-unknown row may retain the bounded
-observed Tool Result payload. Resolved reconciliation returns through `PENDING_RESULT -> COMPLETED`; unresolved
-side-effecting work remains `OUTCOME_UNKNOWN`, so restart recovery does not infer or replay a mutation.
+Runtime migration V8 retains bounded dispatch evidence (execution ID, host-local PID and working-directory digest).
+Automatic reconciliation status/reason storage has been removed. PENDING_RESULT stores an untransferred result;
+COMPLETED only marks that the authoritative ToolCall result has been saved and clears the duplicate Journal payload.
+Unknown outcomes stop automatic continuation. Checkpoint codec 2 stores only intentional continuation counters;
+old development databases must be rebuilt after this clean cutover.
 
 ## V10 Human wait timing
 
@@ -128,9 +129,8 @@ UoW 始终保持 JDBC `autoCommit=true`，在同一 Connection 上显式执行�
 不得嵌套进入只读事务。任何嵌套失败都会把外层标记为 rollback-only。MyBatis 使用 `MANAGED` 且
 `closeConnection=false`，不会提交、回滚或关闭 UoW Connection。
 
-`BEGIN IMMEDIATE` 在事务工作执行前遇到 SQLite `BUSY/LOCKED` 时分类为 `DATABASE_BUSY`。这只是供
-Application 选择安全、有界重试的精确信号；事务工作开始后的 SQL、提交不确定性或其他数据库错误不会被
-归入该类别。
+`BEGIN IMMEDIATE` 在事务工作执行前遇到 SQLite `BUSY/LOCKED` 时由 Store 自身做有界重试；耗尽后分类为
+`DATABASE_BUSY`。事务工作开始后的 SQL、提交不确定性或其他数据库错误不会被重试或归入该类别。
 
 ## Schema 与 Migration
 
@@ -207,7 +207,7 @@ Tool Result Asset 使用 Tool Call ID 形成稳定且逐调用唯一的 Asset ID
 | Atomic composition | `SqliteRuntimeUnitOfWork`、`SqliteStoreFoundation.persistencePorts(...)` |
 
 Project Application/CLI 已实现显式 `MEMORY`、`SQLITE`、`SQLITE_WITH_JSONL` 选择，并在启动时注入
-Runtime Port、唯一 worker ID 与安全 busy retry。持久 payload protection 可显式选择本地明文 `NONE`
+Runtime Port、唯一 worker ID 与 Store 内安全 busy retry。持久 payload protection 可显式选择本地明文 `NONE`
 或 `AES_GCM`；后者当前只解析稳定 `env://` secret reference。仍未接入的边界包括常驻 Outbox 后台
 投递器，以及生产环境 KMS/Vault 密钥解析与轮换。
 

@@ -1,5 +1,24 @@
 # Changelog
 
+- Runtime Core removes the public Runtime/HTTP `ExecutionLifecycle` payload and all `execution.*` client events. `ToolPipeline` no longer recognizes Execution aliases or interprets command, workdir, output, exit-code, scratch, or Execution/Coding failure-detail fields; clients receive only generic Tool lifecycle, result-reference, and resource facts. Coding Terminal and Personal Assistant intentionally do not retain command-specific Runtime presentation. This is source- and wire-incompatible; no compatibility reader or migration is provided.
+
+- Runtime Core removes the unused Memory audit assembly parameter. `RuntimeCoreBuilder.memory(...)` now accepts only `MemoryService` and `MemoryRetriever`; `MemoryPlatformContribution` likewise no longer accepts or exposes an audit sink. This is source-incompatible and reflects that Runtime never consumed the audit sink.
+
+- Runtime Core removes the generic Todo completion gate and the remaining business-phase inference from Completion. An unconverged plan no longer produces a `PENDING_TODO` blocker, no longer forces a repair round, and Runtime never rewrites Todo status on the model's behalf; `TodoReconciliationService` and `TodoConvergenceChecker` are deleted together with their Builder assembly and the `DefaultCompletionGuard` constructor parameter. `completion.deferred` now publishes the neutral phase `COMPLETION` instead of guessing `VERIFYING`/`RECOVERING` from `VALIDATION`/`DIFF` substrings in blocker codes, and the generic repair message is `[COMPLETION_REPAIR]` without a phase line or a hardcoded delivery next action. Coding Terminal shows a neutral "Completion deferred" for that event while the product-owned `coding.work-phase` projection is unchanged. Output contracts, frozen structured-output schemas, product `CompletionPolicy` verdicts, budget limits, uncertain tool execution, pending tool calls/interactions/child runs, repair attempt limits, exhaustion failures and restart recovery all keep their existing semantics. The `DefaultCompletionGuard` constructor change is source-incompatible; events, prompts and persisted data get no migration or compatibility reader.
+
+- Runtime Core and Coding Agent eliminate the specialized `execution-recovery` Interaction and successor tool-call protocol. When explicitly typed, trusted preflight evidence proves that a tool invocation has not dispatched (`ToolDispatchState.NOT_DISPATCHED`), Runtime Core records the terminal `FAILED` status on the tool call, records failure facts (`failureCode`, `NOT_DISPATCHED`) into the tool result part, and returns `CONTINUE`. Credential redaction preserves that typed failure kind, while sandbox binding/configuration invariant failures remain fail closed. The model receives the failure facts in the normal conversation loop and can decide whether to report blockers or issue a brand new ordinary tool call under standard policy. Deleted `ExecutionRecoveryKeys`, `ProjectExecutionRecoveryAuthorization`, `ProjectExecutionRecoverySelector`, and dual recovery profiles from `CodingAgentExecutionPolicy` and `CliExecutionPlatform`.
+
+- Runtime removes task-progress ledgers, failure-cluster strategy escalation and semantic repetition termination. The model selects task strategy within existing resource and authorization limits. Duplicate batch keys and unknown/cancellation safety remain enforced; checkpoint payload 5.0 removes decision fingerprints without legacy readers or migration; obsolete strategy event projections and error codes are removed. Coding prompt is now 1.8.0 and Personal Profile is 1.0.1. Removed Runtime Core Java strategy types and constructor parameters are source-incompatible.
+
+- Runtime Core removes `ResumeCheckpointSelector`; Checkpoint restore receives the persisted Attempt source directly. Explicit missing sources fail closed; unselected restore retains latest fallback. Core constructors and restore method change; persistence schema is unchanged.
+
+- Runtime Core: removed `RequiredArtifactChecker`, its Builder setter and Guard constructor parameter; product artifact checks now implement `CompletionPolicy`. Stable Runtime API and persistence formats are unchanged.
+
+- Runtime Core 删除仅用于字段转换的 `RunFinalizer` / `DefaultRunFinalizer` 及 `DecisionExecutor` 对应构造参数；
+  `RuntimeControlTraceReplay` 移至测试源码，不再进入生产制品。`ResumeCoordinator.prepare` 收口为
+  同一 UoW 内校验后使用的 `prepareValidated`，同步 resume 只执行一次完整前置校验。SDK/Runtime API、
+  最终结果格式、持久化协议与独立恢复/审批重验保持不变。
+
 - 沙箱裁剪为受控宿主执行：删除 `haifa-agent-sandbox-local-native` 模块（bubblewrap / Seatbelt /
   Windows unsupported 三条路径）与工作区全量副本死代码（`WorkspaceIsolationProvider`、
   `EphemeralCopyRequest`、`WorkspaceCopyBudget`、`HostWorkspaceIsolationProvider`）。`SandboxProfile`

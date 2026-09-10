@@ -1,7 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
@@ -15,18 +14,17 @@ public final class ProjectToolExecutor implements ToolProvider {
     private final RunWorkspaceAccessResolver access;
     private final ProjectToolOperations operations;
     private final ProjectExecutionToolOperations executionOperations;
-    private final ProjectExecutionRecoverySelector executionRecovery;
     private final ProjectWorktreeToolOperations worktreeOperations;
 
     public ProjectToolExecutor(RunWorkspaceAccessResolver access, ProjectToolOperations operations) {
-        this(access, operations, null, null, null);
+        this(access, operations, null, null);
     }
 
     public ProjectToolExecutor(
             RunWorkspaceAccessResolver access,
             ProjectToolOperations operations,
             ProjectExecutionToolOperations executionOperations) {
-        this(access, operations, executionOperations, null, null);
+        this(access, operations, executionOperations, null);
     }
 
     public ProjectToolExecutor(
@@ -34,38 +32,10 @@ public final class ProjectToolExecutor implements ToolProvider {
             ProjectToolOperations operations,
             ProjectExecutionToolOperations executionOperations,
             ProjectWorktreeToolOperations worktreeOperations) {
-        this(access, operations, executionOperations, null, worktreeOperations);
-    }
-
-    private ProjectToolExecutor(
-            RunWorkspaceAccessResolver access,
-            ProjectToolOperations operations,
-            ProjectExecutionToolOperations executionOperations,
-            ProjectExecutionRecoverySelector executionRecovery,
-            ProjectWorktreeToolOperations worktreeOperations) {
         this.access = Objects.requireNonNull(access, "access must not be null");
         this.operations = Objects.requireNonNull(operations, "operations must not be null");
         this.executionOperations = executionOperations;
-        this.executionRecovery = executionRecovery;
         this.worktreeOperations = worktreeOperations;
-    }
-
-    public static ProjectToolExecutor withExecutionRecovery(
-            RunWorkspaceAccessResolver access,
-            ProjectToolOperations operations,
-            ProjectExecutionToolOperations normalExecution,
-            ProjectExecutionToolOperations recoveryExecution,
-            ProjectExecutionRecoveryAuthorization recoveryAuthorization,
-            SandboxProfile normalProfile,
-            SandboxProfile recoveryProfile,
-            ProjectWorktreeToolOperations worktreeOperations) {
-        return new ProjectToolExecutor(
-                access,
-                operations,
-                normalExecution,
-                new ProjectExecutionRecoverySelector(
-                        recoveryAuthorization, normalExecution, recoveryExecution, normalProfile, recoveryProfile),
-                worktreeOperations);
     }
 
     @Override
@@ -86,9 +56,7 @@ public final class ProjectToolExecutor implements ToolProvider {
             if (executionOperations == null) {
                 throw new IllegalStateException("execution.run is not configured for this application");
             }
-            ProjectExecutionToolOperations selected =
-                    executionRecovery == null ? executionOperations : executionRecovery.select(request);
-            return selected.execute(request, binding);
+            return executionOperations.execute(request, binding);
         } else if (toolName.equals(ProjectWorktreeToolOperations.TOOL_NAME)) {
             if (worktreeOperations == null) {
                 throw new IllegalStateException("workspace.worktree.create is not configured for this application");

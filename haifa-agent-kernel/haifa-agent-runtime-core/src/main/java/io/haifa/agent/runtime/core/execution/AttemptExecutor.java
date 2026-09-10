@@ -10,15 +10,12 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
-import io.haifa.agent.runtime.core.guard.LoopDetectedException;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
-import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.trace.FailureDiagnosticSink;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceContext;
@@ -43,8 +40,6 @@ public final class AttemptExecutor {
     private final RunTransitionCoordinator transitions;
     private final TimeProvider time;
     private final String owner;
-    private final RetryExecutor persistenceRetries;
-    private final PersistenceRetryPolicy persistenceRetry;
     private final TracePort trace;
     private final TraceIdentifierGenerator traceIds;
     private final IdentifierGenerator ids;
@@ -56,8 +51,6 @@ public final class AttemptExecutor {
             RunTransitionCoordinator transitions,
             TimeProvider time,
             String owner,
-            RetryExecutor persistenceRetries,
-            PersistenceRetryPolicy persistenceRetry,
             TracePort trace,
             TraceIdentifierGenerator traceIds,
             IdentifierGenerator ids,
@@ -67,8 +60,6 @@ public final class AttemptExecutor {
         this.transitions = Objects.requireNonNull(transitions);
         this.time = Objects.requireNonNull(time);
         this.owner = Objects.requireNonNull(owner);
-        this.persistenceRetries = Objects.requireNonNull(persistenceRetries);
-        this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
         this.trace = Objects.requireNonNull(trace);
         this.traceIds = Objects.requireNonNull(traceIds);
         this.ids = Objects.requireNonNull(ids);
@@ -201,12 +192,7 @@ public final class AttemptExecutor {
     }
 
     private void persist(Runnable work) {
-        persistenceRetries.execute(
-                () -> {
-                    work.run();
-                    return null;
-                },
-                persistenceRetry.policy());
+        work.run();
     }
 
     private static ExecutionAttemptStatus statusFor(AgentRunStatus status) {
@@ -223,15 +209,12 @@ public final class AttemptExecutor {
         RuntimeQuotaExceededException quotaExceeded = findFailure(error, RuntimeQuotaExceededException.class);
         RuntimeLimitExceededException budgetExceeded = findFailure(error, RuntimeLimitExceededException.class);
         ContextBuildException contextBuild = findFailure(error, ContextBuildException.class);
-        LoopDetectedException loopDetected = findFailure(error, LoopDetectedException.class);
         ModelContinuationException continuationFailure = findFailure(error, ModelContinuationException.class);
         Map<String, Object> details;
         if (continuationFailure != null) {
             details = Map.of(
                     "continuationFailure", continuationFailure.failure().name(),
                     "continuationMessage", continuationFailure.getMessage());
-        } else if (loopDetected != null) {
-            details = Map.of("loopReason", loopDetected.reason().name());
         } else if (quotaExceeded != null) {
             details = Map.of(
                     "resource", quotaExceeded.resource(),
@@ -248,7 +231,7 @@ public final class AttemptExecutor {
             details = Map.of();
         }
         return new AgentError(
-                classifiedErrorCode(quotaExceeded, budgetExceeded, contextBuild, loopDetected, continuationFailure),
+                classifiedErrorCode(quotaExceeded, budgetExceeded, contextBuild, continuationFailure),
                 details,
                 ids.nextValue(),
                 time.now());
@@ -256,32 +239,15 @@ public final class AttemptExecutor {
 
     static AgentErrorCode classifiedErrorCode(
             RuntimeLimitExceededException budgetExceeded, ContextBuildException contextBuild) {
-        return classifiedErrorCode(null, budgetExceeded, contextBuild, null, null);
-    }
-
-    static AgentErrorCode classifiedErrorCode(
-            RuntimeLimitExceededException budgetExceeded,
-            ContextBuildException contextBuild,
-            LoopDetectedException loopDetected) {
-        return classifiedErrorCode(null, budgetExceeded, contextBuild, loopDetected, null);
+        return classifiedErrorCode(null, budgetExceeded, contextBuild, null);
     }
 
     static AgentErrorCode classifiedErrorCode(
             RuntimeQuotaExceededException quotaExceeded,
             RuntimeLimitExceededException budgetExceeded,
             ContextBuildException contextBuild,
-            LoopDetectedException loopDetected) {
-        return classifiedErrorCode(quotaExceeded, budgetExceeded, contextBuild, loopDetected, null);
-    }
-
-    static AgentErrorCode classifiedErrorCode(
-            RuntimeQuotaExceededException quotaExceeded,
-            RuntimeLimitExceededException budgetExceeded,
-            ContextBuildException contextBuild,
-            LoopDetectedException loopDetected,
             ModelContinuationException continuationFailure) {
         if (continuationFailure != null) return AgentErrorCode.CROSS_MODEL_CONTINUATION_INVALID;
-        if (loopDetected != null) return AgentErrorCode.AGENT_LOOP_DETECTED;
         if (quotaExceeded != null) {
             return switch (quotaExceeded.resource()) {
                 case "inputTokens" -> AgentErrorCode.RUN_INPUT_QUOTA_EXHAUSTED;

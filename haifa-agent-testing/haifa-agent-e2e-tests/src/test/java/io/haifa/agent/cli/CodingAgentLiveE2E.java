@@ -381,7 +381,7 @@ class CodingAgentLiveE2E {
                 }
                 assertThat(events)
                         .extracting(AgentRunEvent::eventType)
-                        .contains("execution.failed", "execution.completed");
+                        .contains("tool.call.failed", "tool.call.succeeded");
             }
             default -> throw new IllegalArgumentException("no oracle for " + caseId);
         }

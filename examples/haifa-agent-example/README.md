@@ -360,4 +360,4 @@ For developers planning enterprise deployments, the following architectural exte
 
 ### 2. Human-In-The-Loop (HITL) & Tool Policy Interruption
 * **Pattern**: Pause execution before performing high-risk tool actions (e.g. database mutations, wire transfers) pending human approval.
-* **Mechanism**: Leverage Haifa's `ToolPolicy` and `ToolPolicyDeniedException` / approval events. The session transitions to a suspended state, and execution is resumed via `agent.conversations().submit(...)` once the approval token is granted.
+* **Mechanism**: Leverage Haifa's `PublicToolPolicy` and `ToolPolicyDeniedException` / approval events. The session transitions to a suspended state, and execution resumes once the exact approval interaction is accepted.

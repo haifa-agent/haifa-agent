@@ -13,7 +13,5 @@ public record ToolJournalRow(
         String dispatchExecutionId,
         Long dispatchProcessId,
         String dispatchWorkdirDigest,
-        String reconcileStatus,
-        String reconcileReason,
         Instant createdAt,
         Instant updatedAt) {}

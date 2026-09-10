@@ -196,6 +196,124 @@ class TrustedScriptExecutionToolProviderTest {
                     assertThat(exception.failureCode()).isEqualTo("POLICY_RESOURCE_MISMATCH");
                     assertThat(exception.dispatchState())
                             .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
+                    assertThat(exception.isPreflight()).isTrue();
+                    assertThat(exception.failureKind()).isEqualTo(io.haifa.agent.tool.api.ToolFailureKind.PREFLIGHT);
+                });
+    }
+
+    @Test
+    void propagatesUnexpectedBrokerRuntimeExceptionWithoutSynthesizingPreflightOrNotDispatched() {
+        ExecutionBroker broker = new ExecutionBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request) {
+                throw new NullPointerException("unexpected broker internal fault");
+            }
+
+            @Override
+            public boolean cancel(ExecutionId id) {
+                return false;
+            }
+
+            @Override
+            public Optional<ExecutionResult> find(ExecutionId id) {
+                return Optional.empty();
+            }
+        };
+        ExecutionToolProvider provider =
+                provider(broker, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+
+        assertThatThrownBy(() -> provider.invokeTrustedScript(
+                        invocation(),
+                        "fixture-runtime",
+                        "safe",
+                        List.of(),
+                        "fixed transform",
+                        ".",
+                        Duration.ofSeconds(5),
+                        Set.of("execution.run"),
+                        List.of()))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("unexpected broker internal fault");
+    }
+
+    @Test
+    void preservesSandboxPreflightExceptionAsPreflightToolInvocationException() {
+        ExecutionBroker broker = new ExecutionBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request) {
+                throw new io.haifa.agent.sandbox.api.SandboxPreflightException(
+                        "NETWORK_POLICY_UNENFORCEABLE", "network isolation is unavailable on host");
+            }
+
+            @Override
+            public boolean cancel(ExecutionId id) {
+                return false;
+            }
+
+            @Override
+            public Optional<ExecutionResult> find(ExecutionId id) {
+                return Optional.empty();
+            }
+        };
+        ExecutionToolProvider provider =
+                provider(broker, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+
+        assertThatThrownBy(() -> provider.invokeTrustedScript(
+                        invocation(),
+                        "fixture-runtime",
+                        "safe",
+                        List.of(),
+                        "fixed transform",
+                        ".",
+                        Duration.ofSeconds(5),
+                        Set.of("execution.run"),
+                        List.of()))
+                .isInstanceOfSatisfying(io.haifa.agent.tool.api.ToolInvocationException.class, exception -> {
+                    assertThat(exception.failureCode()).isEqualTo("NETWORK_POLICY_UNENFORCEABLE");
+                    assertThat(exception.dispatchState())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
+                    assertThat(exception.isPreflight()).isTrue();
+                    assertThat(exception.failureKind()).isEqualTo(io.haifa.agent.tool.api.ToolFailureKind.PREFLIGHT);
+                    assertThat(exception.getMessage()).contains("network isolation is unavailable on host");
+                });
+    }
+
+    @Test
+    void propagatesGenericSandboxExceptionWithoutSynthesizingPreflight() {
+        ExecutionBroker broker = new ExecutionBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request) {
+                throw new io.haifa.agent.sandbox.api.SandboxException(
+                        "CAPABILITY_UNAVAILABLE", "sandbox profile reference does not match");
+            }
+
+            @Override
+            public boolean cancel(ExecutionId id) {
+                return false;
+            }
+
+            @Override
+            public Optional<ExecutionResult> find(ExecutionId id) {
+                return Optional.empty();
+            }
+        };
+        ExecutionToolProvider provider =
+                provider(broker, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+
+        assertThatThrownBy(() -> provider.invokeTrustedScript(
+                        invocation(),
+                        "fixture-runtime",
+                        "safe",
+                        List.of(),
+                        "fixed transform",
+                        ".",
+                        Duration.ofSeconds(5),
+                        Set.of("execution.run"),
+                        List.of()))
+                .isInstanceOfSatisfying(io.haifa.agent.sandbox.api.SandboxException.class, exception -> {
+                    assertThat(exception).isNotInstanceOf(io.haifa.agent.sandbox.api.SandboxPreflightException.class);
+                    assertThat(exception.code()).isEqualTo("CAPABILITY_UNAVAILABLE");
+                    assertThat(exception.getMessage()).isEqualTo("sandbox profile reference does not match");
                 });
     }
 

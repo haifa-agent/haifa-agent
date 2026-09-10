@@ -68,8 +68,6 @@ import io.haifa.agent.runtime.core.interaction.InteractionViewProjector;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
-import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.storage.IdempotencyRepository;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
@@ -104,6 +102,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final RunControlService controls;
     private final InteractionPort interactions;
     private final DelegationPort delegations;
+    private final io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator toolRecovery;
     private final AttemptExecutor attemptExecutor;
     private final ExecutionScheduler scheduler;
     private final IdentifierGenerator ids;
@@ -112,8 +111,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final ResumeCoordinator resumeCoordinator;
     private final RuntimeModelOutputPublisher modelOutput;
     private final ExecutionOwnershipPort ownership;
-    private final RetryExecutor persistenceRetries;
-    private final PersistenceRetryPolicy persistenceRetry;
     private final ApprovalVerificationService approvalVerification;
     private final RunInputPort runInputs;
     private final RuntimeEventFeed eventFeed;
@@ -135,6 +132,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             InteractionPort interactions,
             DelegationPort delegations,
             AttemptExecutor attemptExecutor,
+            io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator toolRecovery,
             ExecutionScheduler scheduler,
             IdentifierGenerator ids,
             TimeProvider time,
@@ -142,8 +140,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             ResumeCoordinator resumeCoordinator,
             RuntimeModelOutputPublisher modelOutput,
             ExecutionOwnershipPort ownership,
-            RetryExecutor persistenceRetries,
-            PersistenceRetryPolicy persistenceRetry,
             ApprovalVerificationService approvalVerification,
             RunInputPort runInputs,
             RuntimeEventFeed eventFeed,
@@ -162,6 +158,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         this.interactions = Objects.requireNonNull(interactions);
         this.delegations = Objects.requireNonNull(delegations);
         this.attemptExecutor = Objects.requireNonNull(attemptExecutor);
+        this.toolRecovery = Objects.requireNonNull(toolRecovery);
         this.scheduler = Objects.requireNonNull(scheduler);
         this.ids = Objects.requireNonNull(ids);
         this.time = Objects.requireNonNull(time);
@@ -169,8 +166,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         this.resumeCoordinator = Objects.requireNonNull(resumeCoordinator);
         this.modelOutput = Objects.requireNonNull(modelOutput);
         this.ownership = Objects.requireNonNull(ownership);
-        this.persistenceRetries = Objects.requireNonNull(persistenceRetries);
-        this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
         this.approvalVerification = Objects.requireNonNull(approvalVerification);
         this.runInputs = Objects.requireNonNull(runInputs);
         this.eventFeed = Objects.requireNonNull(eventFeed);
@@ -183,9 +178,8 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         var caller = callers.current();
         String callerScope = callerScope(caller);
         String requestDigest = CanonicalRequestDigest.agentRun(request);
-        Optional<RunStartIdempotencyBinding> existing = persistenceRetries.execute(
-                () -> idempotency.findRunBinding(callerScope, "start", request.idempotencyKey()),
-                persistenceRetry.policy());
+        Optional<RunStartIdempotencyBinding> existing =
+                idempotency.findRunBinding(callerScope, "start", request.idempotencyKey());
         if (existing.isPresent()) return snapshot(requireMatchingStart(existing.orElseThrow(), requestDigest));
 
         var bootstrap = bootstrapper.bootstrap(request, caller);
@@ -194,42 +188,36 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         AgentRun generated = bootstrap.run();
         AgentRunId generatedId = generated.id();
         AtomicBoolean created = new AtomicBoolean();
-        AgentRun run = persistenceRetries.execute(
-                () -> unitOfWork.execute(() -> {
-                    Optional<RunStartIdempotencyBinding> raced =
-                            idempotency.findRunBinding(callerScope, "start", request.idempotencyKey());
-                    if (raced.isPresent()) return requireRun(requireMatchingStart(raced.orElseThrow(), requestDigest));
-                    state.saveConfiguration(bootstrap.configuration());
-                    runs.insert(generated);
-                    RunStartIdempotencyBinding recorded = idempotency.recordRunBinding(new RunStartIdempotencyBinding(
-                            callerScope, "start", request.idempotencyKey(), Optional.of(requestDigest), generatedId));
-                    AgentRunId recordedRunId = requireMatchingStart(recorded, requestDigest);
-                    if (!recordedRunId.equals(generatedId)) return requireRun(recordedRunId);
-                    created.set(true);
-                    appendInitialMessage(generated, request);
-                    var event = events.append(
-                            generatedId,
-                            "run.created",
-                            Map.of(
-                                    "definitionVersion",
-                                    definition.version().toString(),
-                                    "version",
-                                    generated.version()),
-                            time.now());
-                    outbox.append(new OutboxMessage(
-                            event.eventId(),
-                            event.runId(),
-                            event.sequence(),
-                            event.type(),
-                            OutboxMessage.CURRENT_SCHEMA_VERSION,
-                            Map.of("profileVersion", profile.version()),
-                            event.occurredAt()));
-                    transitions.queued(generated);
-                    attempts.insert(new AgentRunExecutionAttempt(
-                            new ExecutionAttemptId(ids.nextValue()), generatedId, 1, time.now(), Optional.empty()));
-                    return generated;
-                }),
-                persistenceRetry.policy());
+        AgentRun run = unitOfWork.execute(() -> {
+            Optional<RunStartIdempotencyBinding> raced =
+                    idempotency.findRunBinding(callerScope, "start", request.idempotencyKey());
+            if (raced.isPresent()) return requireRun(requireMatchingStart(raced.orElseThrow(), requestDigest));
+            state.saveConfiguration(bootstrap.configuration());
+            runs.insert(generated);
+            RunStartIdempotencyBinding recorded = idempotency.recordRunBinding(new RunStartIdempotencyBinding(
+                    callerScope, "start", request.idempotencyKey(), Optional.of(requestDigest), generatedId));
+            AgentRunId recordedRunId = requireMatchingStart(recorded, requestDigest);
+            if (!recordedRunId.equals(generatedId)) return requireRun(recordedRunId);
+            created.set(true);
+            appendInitialMessage(generated, request);
+            var event = events.append(
+                    generatedId,
+                    "run.created",
+                    Map.of("definitionVersion", definition.version().toString(), "version", generated.version()),
+                    time.now());
+            outbox.append(new OutboxMessage(
+                    event.eventId(),
+                    event.runId(),
+                    event.sequence(),
+                    event.type(),
+                    OutboxMessage.CURRENT_SCHEMA_VERSION,
+                    Map.of("profileVersion", profile.version()),
+                    event.occurredAt()));
+            transitions.queued(generated);
+            attempts.insert(new AgentRunExecutionAttempt(
+                    new ExecutionAttemptId(ids.nextValue()), generatedId, 1, time.now(), Optional.empty()));
+            return generated;
+        });
         AgentRunSnapshot accepted = AgentRunSnapshot.from(run, state.output(run.id()));
         if (created.get()) submitActive(run);
         return accepted;
@@ -273,7 +261,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             }
             resumeCoordinator.validate(resumable, request, caller);
             request.inputs().forEach(input -> appendResumeMessage(resumable, input));
-            var resumedFrom = resumeCoordinator.prepare(resumable, request, caller);
+            var resumedFrom = resumeCoordinator.prepareValidated(resumable, request);
             idempotency.recordRun(callerScope, "resume", request.idempotencyKey(), resumable.id());
             AgentRunExecutionAttempt attempt = new AgentRunExecutionAttempt(
                     new ExecutionAttemptId(ids.nextValue()),
@@ -827,53 +815,76 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         return eventSubscriptions.subscribe(runId, after, listener);
     }
 
-    /** Reclaims a run whose physical executor disappeared after durable checkpointing. */
+    /** Settles an abandoned execution without dispatching work; continuation requires a new user turn. */
     @Override
     public AgentRunSnapshot recover(AgentRunId runId) {
         AgentRun run = requireRun(runId);
         requireCaller(run);
+        if (run.status().isTerminal()) return snapshot(runId);
         if (run.status() != AgentRunStatus.RUNNING && run.status() != AgentRunStatus.SUSPENDING) {
-            throw new IllegalStateException("only an executing run can be recovered");
+            throw new IllegalStateException("only an interrupted executing run can be settled");
         }
         AgentRunExecutionAttempt active = attempts.activeFor(runId)
-                .orElseThrow(() -> new IllegalStateException("run has no active attempt to recover"));
-        if (ownership.stillOwned(active)) {
-            throw new IllegalStateException("active execution attempt is still owned by this runtime");
-        }
-        AgentRunExecutionAttempt replacement = unitOfWork.execute(() -> {
+                .orElseThrow(() -> new IllegalStateException("run has no active execution attempt"));
+        if (ownership.stillOwned(active)) throw new IllegalStateException("execution attempt is still owned");
+        return unitOfWork.execute(() -> {
+            AgentRun current = requireRun(runId);
+            if (current.status().isTerminal()) return snapshot(runId);
+            if (current.status() != AgentRunStatus.RUNNING && current.status() != AgentRunStatus.SUSPENDING) {
+                throw new IllegalStateException("only an interrupted executing run can be settled");
+            }
             long expected = active.version();
             active.finish(ExecutionAttemptStatus.ABANDONED, time.now(), Optional.empty());
             attempts.save(active, expected);
-            reconcileAbandonedModelSteps(run);
-            if (run.status() == AgentRunStatus.RUNNING) transitions.requestPause(run);
-            transitions.suspended(run);
-            transitions.resumed(run);
-            AgentRunExecutionAttempt created = new AgentRunExecutionAttempt(
-                    new ExecutionAttemptId(ids.nextValue()),
-                    run.id(),
-                    attempts.attemptsFor(run.id()).size() + 1,
-                    time.now(),
-                    resumeCoordinator.latestFor(run));
-            attempts.insert(created);
-            return created;
-        });
-        AgentRunSnapshot accepted = snapshot(run.id());
-        scheduler.submit(run.id(), () -> attemptExecutor.execute(run, replacement));
-        return accepted;
-    }
-
-    private void reconcileAbandonedModelSteps(AgentRun run) {
-        var toolStepIds = state.toolCalls(run.id()).stream()
-                .map(call -> call.stepId())
-                .collect(java.util.stream.Collectors.toSet());
-        state.steps(run.id()).stream()
-                .filter(step -> step.status() == io.haifa.agent.core.step.AgentStepStatus.RUNNING
-                        || step.status() == io.haifa.agent.core.step.AgentStepStatus.WAITING)
-                .filter(step -> !toolStepIds.contains(step.id()))
-                .forEach(step -> {
+            var error = new io.haifa.agent.core.error.AgentError(
+                    io.haifa.agent.core.error.AgentErrorCode.RUNTIME_EXECUTION_INTERRUPTED,
+                    Map.of("reason", "EXECUTOR_LOST", "automaticResume", false),
+                    ids.nextValue(),
+                    time.now());
+            try {
+                toolRecovery.reconcile(current);
+            } catch (io.haifa.agent.runtime.core.execution.AgentExecutionFailureException unknown) {
+                error = unknown.error();
+            }
+            for (var call : state.toolCalls(runId)) {
+                if (java.util.EnumSet.of(
+                                io.haifa.agent.core.tool.ToolCallStatus.REQUESTED,
+                                io.haifa.agent.core.tool.ToolCallStatus.VALIDATING,
+                                io.haifa.agent.core.tool.ToolCallStatus.POLICY_CHECK,
+                                io.haifa.agent.core.tool.ToolCallStatus.WAITING_APPROVAL,
+                                io.haifa.agent.core.tool.ToolCallStatus.APPROVED,
+                                io.haifa.agent.core.tool.ToolCallStatus.RUNNING)
+                        .contains(call.status())) {
+                    call.cancel(time.now());
+                    state.appendToolCall(call);
+                    state.appendSessionMessage(new SessionMessageDraft(
+                            new AgentMessageId(ids.nextValue()),
+                            current.sessionId(),
+                            Optional.of(runId),
+                            Optional.empty(),
+                            MessageRole.TOOL,
+                            MessageStatus.COMPLETED,
+                            MessageVisibility.AGENT_VISIBLE,
+                            List.of(
+                                    new io.haifa.agent.core.content.ToolResultPart(
+                                            call.id(),
+                                            call.providerCorrelationId(),
+                                            "Execution interrupted before a confirmed result; do not automatically repeat this operation")),
+                            Map.of("interrupted", true),
+                            time.now()));
+                }
+            }
+            for (var step : state.steps(runId)) {
+                if (step.status() == io.haifa.agent.core.step.AgentStepStatus.PENDING
+                        || step.status() == io.haifa.agent.core.step.AgentStepStatus.RUNNING
+                        || step.status() == io.haifa.agent.core.step.AgentStepStatus.WAITING) {
                     step.cancel(time.now());
                     state.appendStep(step);
-                });
+                }
+            }
+            delegations.terminateChildren(current);
+            return transitions.failed(current, error);
+        });
     }
 
     private void applyCancel(AgentRun run) {

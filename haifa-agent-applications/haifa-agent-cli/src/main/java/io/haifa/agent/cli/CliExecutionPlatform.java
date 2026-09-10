@@ -3,7 +3,6 @@ package io.haifa.agent.cli;
 import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
-import io.haifa.agent.application.project.tool.ProjectExecutionRecoveryAuthorization;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
@@ -46,9 +45,7 @@ import java.util.Set;
 /** Owns the CLI's trusted local execution assembly without exposing provider controls to the model. */
 final class CliExecutionPlatform implements AutoCloseable {
     private final ProjectExecutionToolOperations operations;
-    private final ProjectExecutionToolOperations permissionOperations;
     private final SandboxProfile profile;
-    private final SandboxProfile permissionProfile;
     private final String shellDisplayName;
     private final String securitySummary;
     private final LocalIncrementalWorkspaceChangeObserver workspaceChanges;
@@ -56,17 +53,13 @@ final class CliExecutionPlatform implements AutoCloseable {
 
     private CliExecutionPlatform(
             ProjectExecutionToolOperations operations,
-            ProjectExecutionToolOperations permissionOperations,
             SandboxProfile profile,
-            SandboxProfile permissionProfile,
             String shellDisplayName,
             String securitySummary,
             LocalIncrementalWorkspaceChangeObserver workspaceChanges,
             CliRepositoryBaselineSupport repositoryBaselines) {
         this.operations = operations;
-        this.permissionOperations = permissionOperations;
         this.profile = profile;
-        this.permissionProfile = permissionProfile;
         this.shellDisplayName = shellDisplayName;
         this.securitySummary = securitySummary;
         this.workspaceChanges = workspaceChanges;
@@ -90,8 +83,7 @@ final class CliExecutionPlatform implements AutoCloseable {
             WorkspaceAccessStore workspaceAccess,
             TenantRef tenant,
             PrincipalRef principal,
-            RuntimeToolExecutionVerifier runtimeExecutionVerifier,
-            ProjectExecutionRecoveryAuthorization recoveryAuthorization) {
+            RuntimeToolExecutionVerifier runtimeExecutionVerifier) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
         Objects.requireNonNull(provisioning, "provisioning must not be null");
@@ -99,7 +91,6 @@ final class CliExecutionPlatform implements AutoCloseable {
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
         Objects.requireNonNull(runtimeExecutionVerifier, "runtimeExecutionVerifier must not be null");
-        Objects.requireNonNull(recoveryAuthorization, "recoveryAuthorization must not be null");
         HostShell shell = shell(configuration);
         Path controlRoot = controlRoot();
         Path scratchRoot = controlRoot.resolve("host-scratch");
@@ -138,14 +129,11 @@ final class CliExecutionPlatform implements AutoCloseable {
                 requestedEnvironment -> io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
                 new CodingAgentExecutionPolicy(
                         runtimeExecutionVerifier,
-                        recoveryAuthorization,
                         workspaceAccess,
                         provisioning,
                         tenant,
                         principal,
                         environmentRef,
-                        environmentRef,
-                        profile.ref(),
                         profile.ref(),
                         CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                         configuration.defaultTimeout(),
@@ -180,14 +168,7 @@ final class CliExecutionPlatform implements AutoCloseable {
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(
-                operations,
-                operations,
-                profile,
-                profile,
-                shell.displayName(),
-                securitySummary,
-                workspaceChanges,
-                repositoryBaselines);
+                operations, profile, shell.displayName(), securitySummary, workspaceChanges, repositoryBaselines);
     }
 
     ProjectExecutionToolOperations operations() {
@@ -214,16 +195,8 @@ final class CliExecutionPlatform implements AutoCloseable {
         };
     }
 
-    ProjectExecutionToolOperations permissionOperations() {
-        return permissionOperations;
-    }
-
     SandboxProfile profile() {
         return profile;
-    }
-
-    SandboxProfile permissionProfile() {
-        return permissionProfile;
     }
 
     String shellDisplayName() {

@@ -50,10 +50,6 @@ public record TerminalRecovery(Category category, String code, String action) {
                     Category.USER_ACTION_REQUIRED,
                     "RUN_BUDGET_EXCEEDED",
                     "Start a new run with a smaller request or an explicitly larger budget."),
-            entry(
-                    Category.USER_ACTION_REQUIRED,
-                    "AGENT_LOOP_DETECTED",
-                    "Inspect the completed workspace changes, then start a new run with a more specific next step."),
             entry(Category.RETRYABLE, "MODEL_RATE_LIMITED", "Wait for backoff, then retry the request."),
             entry(Category.USER_ACTION_REQUIRED, "MODEL_PAYMENT_REQUIRED", "请检查 Provider 账户余额、套餐、模型授权或账单状态后重试"),
             entry(Category.RETRYABLE, "MODEL_TIMEOUT", "Retry the request after checking provider availability."),

@@ -5,8 +5,6 @@ import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolIdempotency;
-import io.haifa.agent.tool.api.ToolReconciliationRecord;
-import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -16,17 +14,10 @@ import java.util.Set;
 public final class InMemoryToolExecutionJournal implements ToolExecutionJournal {
     private final Set<String> intents = new HashSet<>();
     private final Set<String> uncertain = new HashSet<>();
-    private final Map<String, ToolResult> completed = new HashMap<>();
     private final Map<String, ToolResult> pendingResults = new HashMap<>();
     private final Map<String, ToolResult> uncertainResults = new HashMap<>();
     private final Map<String, ToolDispatchEvidence> dispatchEvidence = new HashMap<>();
-    private final Map<String, ToolReconciliationRecord> reconciliations = new HashMap<>();
     private final Map<String, ToolJournalState> states = new HashMap<>();
-
-    @Override
-    public synchronized Optional<ToolResult> completed(AgentRunId runId, RuntimeIdempotencyKey key) {
-        return Optional.ofNullable(completed.get(id(runId, key)));
-    }
 
     @Override
     public synchronized Optional<ToolResult> pendingResult(AgentRunId runId, RuntimeIdempotencyKey key) {
@@ -81,9 +72,8 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
     }
 
     @Override
-    public synchronized void recordCompleted(AgentRunId runId, RuntimeIdempotencyKey key, ToolResult result) {
+    public synchronized void recordCompleted(AgentRunId runId, RuntimeIdempotencyKey key) {
         String id = id(runId, key);
-        completed.put(id, result);
         uncertain.remove(id);
         uncertainResults.remove(id);
         pendingResults.remove(id);
@@ -124,24 +114,6 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
         if (previous != null && !previous.equals(observedResult)) {
             throw new IllegalStateException("uncertain tool result changed for the same idempotency key");
         }
-    }
-
-    @Override
-    public synchronized void recordReconciliation(
-            AgentRunId runId, RuntimeIdempotencyKey key, ToolReconciliationStatus status, String reasonCode) {
-        String id = id(runId, key);
-        ToolJournalState state = states.get(id);
-        if (state != ToolJournalState.DISPATCHED
-                && state != ToolJournalState.ACKNOWLEDGED
-                && state != ToolJournalState.OUTCOME_UNKNOWN) {
-            throw new IllegalStateException("tool is not in a reconcilable journal state");
-        }
-        reconciliations.put(id, new ToolReconciliationRecord(status, reasonCode));
-    }
-
-    @Override
-    public synchronized Optional<ToolReconciliationRecord> reconciliation(AgentRunId runId, RuntimeIdempotencyKey key) {
-        return Optional.ofNullable(reconciliations.get(id(runId, key)));
     }
 
     @Override

@@ -70,7 +70,7 @@ public record SqliteSdkProductContributions(
             return new SqliteSdkProductContributions(
                     new SqliteSdkPersistenceContribution(persistenceMetadata, foundation, protector),
                     new SqliteSdkConversationContribution(conversationMetadata, foundation),
-                    new MemoryPlatformContribution(memoryMetadata, service, retriever, store),
+                    new MemoryPlatformContribution(memoryMetadata, service, retriever),
                     new ArtifactPlatformContribution(
                             new SdkContributionMetadata(
                                     new ProductContributionCoordinate("haifa-sqlite-artifact", "1.0.0"),

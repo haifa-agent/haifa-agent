@@ -25,6 +25,7 @@ import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
+import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.sdk.contribution.ApprovalPlatformContribution;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
@@ -45,6 +46,7 @@ import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
 import io.haifa.agent.sdk.internal.ProductAssemblyResolver;
 import io.haifa.agent.sdk.internal.SafeConversationService;
 import io.haifa.agent.sdk.memory.AgentMemories;
+import io.haifa.agent.sdk.policy.TrustedSkillScriptPublicToolPolicy;
 import io.haifa.agent.sdk.product.ProductAssembly;
 import io.haifa.agent.sdk.product.ProductAssemblyDiagnostic;
 import io.haifa.agent.sdk.product.ProductAssemblyException;
@@ -257,7 +259,6 @@ public final class HaifaAgentBuilder {
                     .structuredOutputSchemaValidator(new io.haifa.agent.tool.core.JsonSchema202012Validator())
                     .modelRetry(modelRetry)
                     .toolRetry(toolRetry)
-                    .publicToolPolicyDecorator(publicToolPolicyDecorator)
                     .modelImageResolver(modelImageResolver::resolve)
                     .modelAudioResolver(modelAudioResolver::resolve)
                     .promptDiagnostics(processPromptDiagnostics)
@@ -316,12 +317,25 @@ public final class HaifaAgentBuilder {
             ProductContribution skill = resolution.selected().get(ProductCapabilities.SKILL);
             if (skill instanceof SkillPlatformContribution platform) {
                 runtimeBuilder.skillPlatform(platform.catalog(), platform.contentLoader(), platform.trust());
+                if (!platform.trust().scriptExecutionGrants().isEmpty()) {
+                    runtimeBuilder.publicToolPolicyDecorator(
+                            delegate -> publicToolPolicyDecorator.apply(new TrustedSkillScriptPublicToolPolicy(
+                                    delegate,
+                                    persistence.runtimePersistence().state(),
+                                    new DefaultToolPolicyRequestAdapter(
+                                            effectiveProfile.productId().value(), ApprovalMode.ASK),
+                                    time)));
+                } else {
+                    runtimeBuilder.publicToolPolicyDecorator(publicToolPolicyDecorator);
+                }
+            } else {
+                runtimeBuilder.publicToolPolicyDecorator(publicToolPolicyDecorator);
             }
             if (context != null) {
                 context.sources().forEach(runtimeBuilder::registerContextSource);
             }
             if (memory != null) {
-                runtimeBuilder.memory(memory.service(), memory.retriever(), memory.audit());
+                runtimeBuilder.memory(memory.service(), memory.retriever());
             }
             if (policy != null) {
                 runtimeBuilder.policy(policy.rules(), policy.evaluator());

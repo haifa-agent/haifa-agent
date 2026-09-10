@@ -31,7 +31,6 @@ import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.PlaintextModelContinuationProtector;
-import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
@@ -40,14 +39,11 @@ import io.haifa.agent.store.jsonl.JsonlTranscriptWriter;
 import io.haifa.agent.store.jsonl.SafeTranscriptMapperRegistry;
 import io.haifa.agent.store.jsonl.TranscriptRedactor;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
-import io.haifa.agent.store.sqlite.SqliteStoreException;
-import io.haifa.agent.store.sqlite.SqliteStoreFailure;
 import io.haifa.agent.store.sqlite.SqliteStoreFoundation;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Clock;
-import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -237,7 +233,6 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
     public RuntimeCoreBuilder configure(RuntimeCoreBuilder builder) {
         Objects.requireNonNull(builder, "builder must not be null");
         builder.persistence(ports).workerId(workerId);
-        if (mode != ProjectPersistenceMode.MEMORY) builder.persistenceRetry(sqliteBusyRetry());
         return builder;
     }
 
@@ -378,13 +373,5 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
             throw new IllegalArgumentException("transcript root must be an existing writable controlled directory");
         }
         return root.normalize();
-    }
-
-    private static RetryPolicy sqliteBusyRetry() {
-        return new RetryPolicy(
-                3,
-                error -> error instanceof SqliteStoreException store
-                        && store.failure() == SqliteStoreFailure.DATABASE_BUSY,
-                failedAttempt -> Duration.ofMillis(Math.min(200, 25L << Math.min(failedAttempt - 1, 3))));
     }
 }
