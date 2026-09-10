@@ -181,10 +181,7 @@ class PhaseFiveApplicationTest {
                 io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("provider-1")),
                 java.util.Set.of(),
                 java.util.Set.of(),
-                false,
-                io.haifa.agent.sandbox.api.NetworkPolicy.ALLOW,
-                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
-                new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, false, false, false));
+                false);
         io.haifa.agent.sandbox.api.SandboxProvider sandboxProvider = new io.haifa.agent.sandbox.api.SandboxProvider() {
             @Override
             public String providerId() {
@@ -193,7 +190,7 @@ class PhaseFiveApplicationTest {
 
             @Override
             public io.haifa.agent.sandbox.api.SandboxCapabilities capabilities() {
-                return new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, false, false, false);
+                return new io.haifa.agent.sandbox.api.SandboxCapabilities(true);
             }
 
             @Override
