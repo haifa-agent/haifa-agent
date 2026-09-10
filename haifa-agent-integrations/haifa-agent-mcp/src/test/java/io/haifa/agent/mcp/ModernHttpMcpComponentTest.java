@@ -28,11 +28,11 @@ class ModernHttpMcpComponentTest {
                     McpTestFixtures.httpServer(stub.endpoint(), Set.of("echo"), McpProtocolProfile.FIXED_2026_07_28);
             var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
 
-            var snapshot = client.initialize(List.of());
-            var tools = client.listTools(null, List.of());
+            var snapshot = client.initialize(Map.of());
+            var tools = client.listTools(null, Map.of());
             AtomicInteger dispatched = new AtomicInteger();
             var result =
-                    client.callTool("echo", Map.of("region", "北京", "value", "hello"), List.of(), observer(dispatched));
+                    client.callTool("echo", Map.of("region", "北京", "value", "hello"), Map.of(), observer(dispatched));
             client.close();
 
             assertThat(snapshot.negotiatedProtocolVersion()).isEqualTo("2026-07-28");
@@ -64,8 +64,8 @@ class ModernHttpMcpComponentTest {
                                     stub.endpoint(), Set.of("echo"), McpProtocolProfile.FIXED_2026_07_28),
                             McpTestFixtures.IDENTITY);
 
-            client.initialize(List.of());
-            assertThat(client.listTools(null, List.of()).tools())
+            client.initialize(Map.of());
+            assertThat(client.listTools(null, Map.of()).tools())
                     .extracting(tool -> tool.name())
                     .containsExactly("echo");
             client.close();
@@ -80,10 +80,10 @@ class ModernHttpMcpComponentTest {
                             McpTestFixtures.httpServer(
                                     stub.endpoint(), Set.of("echo"), McpProtocolProfile.FIXED_2026_07_28),
                             McpTestFixtures.IDENTITY);
-            client.initialize(List.of());
+            client.initialize(Map.of());
             AtomicInteger dispatched = new AtomicInteger();
 
-            assertThatThrownBy(() -> client.callTool("echo", Map.of(), List.of(), observer(dispatched)))
+            assertThatThrownBy(() -> client.callTool("echo", Map.of(), Map.of(), observer(dispatched)))
                     .isInstanceOf(ToolInvocationException.class)
                     .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
                             .isEqualTo("MCP_TOOL_SCHEMA_NOT_DISCOVERED"));
@@ -102,8 +102,8 @@ class ModernHttpMcpComponentTest {
                                     stub.endpoint(), Set.of("echo"), McpProtocolProfile.FIXED_2026_07_28),
                             McpTestFixtures.IDENTITY);
 
-            client.initialize(List.of());
-            assertThat(client.listTools(null, List.of()).tools()).isEmpty();
+            client.initialize(Map.of());
+            assertThat(client.listTools(null, Map.of()).tools()).isEmpty();
             client.close();
         }
     }
@@ -117,7 +117,7 @@ class ModernHttpMcpComponentTest {
                                     stub.endpoint(), Set.of("echo"), McpProtocolProfile.FIXED_2026_07_28),
                             McpTestFixtures.IDENTITY);
 
-            assertThatThrownBy(() -> client.initialize(List.of()))
+            assertThatThrownBy(() -> client.initialize(Map.of()))
                     .isInstanceOf(ToolInvocationException.class)
                     .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
                             .isEqualTo("MCP_PROTOCOL_VERSION_MISMATCH"));
@@ -133,7 +133,7 @@ class ModernHttpMcpComponentTest {
                                     stub.endpoint(), Set.of("echo"), McpProtocolProfile.FIXED_2026_07_28),
                             McpTestFixtures.IDENTITY);
 
-            assertThatThrownBy(() -> client.initialize(List.of()))
+            assertThatThrownBy(() -> client.initialize(Map.of()))
                     .isInstanceOf(ToolInvocationException.class)
                     .hasMessage("MCP 协议版本2026-08-01未适配，即将适配")
                     .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
@@ -150,7 +150,7 @@ class ModernHttpMcpComponentTest {
                                     stub.endpoint(), Set.of("echo"), McpProtocolProfile.FIXED_2026_07_28),
                             McpTestFixtures.IDENTITY);
 
-            assertThatThrownBy(() -> client.initialize(List.of()))
+            assertThatThrownBy(() -> client.initialize(Map.of()))
                     .isInstanceOf(ToolInvocationException.class)
                     .hasMessage("MCP 协议版本2026-09-10未适配，即将适配")
                     .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
@@ -164,7 +164,7 @@ class ModernHttpMcpComponentTest {
                 java.net.URI.create("http://127.0.0.1:1/mcp"), Set.of("echo"), new McpProtocolProfile("2027-01-15"));
         var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
 
-        assertThatThrownBy(() -> client.initialize(List.of()))
+        assertThatThrownBy(() -> client.initialize(Map.of()))
                 .isInstanceOf(ToolInvocationException.class)
                 .hasMessage("MCP 协议版本2027-01-15未适配，即将适配")
                 .satisfies(error -> {

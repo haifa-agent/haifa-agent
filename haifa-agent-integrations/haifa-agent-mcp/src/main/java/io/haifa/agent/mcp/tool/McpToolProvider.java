@@ -75,7 +75,7 @@ public final class McpToolProvider implements ToolProvider {
             throw failure("MCP_BINDING_DRIFT", "frozen MCP binding failed integrity validation");
         }
         McpConnection connection =
-                connections.acquire(serverId, request.tenant(), request.principal(), request.credentialLeases());
+                connections.acquire(serverId, request.tenant(), request.principal(), request.credentials());
         rejectCancellationBeforeDispatch(request);
         if (!Instant.ofEpochMilli(clock.millis()).isBefore(request.deadline())) {
             throw failure("MCP_CALL_DEADLINE_EXCEEDED", "MCP tool call deadline elapsed before dispatch");
@@ -102,7 +102,7 @@ public final class McpToolProvider implements ToolProvider {
                             .callTool(
                                     binding.remoteToolName(),
                                     request.arguments().values(),
-                                    request.credentialLeases(),
+                                    request.credentials(),
                                     guardedObserver));
                 } catch (Throwable error) {
                     result.completeExceptionally(error);

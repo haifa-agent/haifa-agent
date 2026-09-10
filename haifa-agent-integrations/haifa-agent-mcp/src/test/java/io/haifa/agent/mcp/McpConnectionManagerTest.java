@@ -3,7 +3,6 @@ package io.haifa.agent.mcp;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.mcp.client.McpClientFacade;
 import io.haifa.agent.mcp.client.McpConnectionManager;
 import io.haifa.agent.mcp.client.McpConnectionState;
@@ -30,14 +29,12 @@ class McpConnectionManagerTest {
             created.incrementAndGet();
             return new FakeClient(definition.serverId().value(), definition.bindingReference());
         });
-        CredentialLease credential = McpTestFixtures.lease("binding-a", "top-secret");
+        Map<String, String> credential = Map.of("key-a", "top-secret");
 
-        var first = manager.acquire(
-                server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, List.of(credential));
-        var reused = manager.acquire(
-                server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, List.of(credential));
-        var otherPrincipal = manager.acquire(
-                server.serverId(), McpTestFixtures.TENANT, new PrincipalRef("bob", "user"), List.of(credential));
+        var first = manager.acquire(server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, credential);
+        var reused = manager.acquire(server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, credential);
+        var otherPrincipal =
+                manager.acquire(server.serverId(), McpTestFixtures.TENANT, new PrincipalRef("bob", "user"), credential);
 
         assertThat(reused).isSameAs(first);
         assertThat(otherPrincipal).isNotSameAs(first);
@@ -54,7 +51,7 @@ class McpConnectionManagerTest {
             int attempt = created.incrementAndGet();
             return new FakeClient(definition.serverId().value(), definition.bindingReference()) {
                 @Override
-                public McpServerSnapshot initialize(List<CredentialLease> credentials) {
+                public McpServerSnapshot initialize(Map<String, String> credentials) {
                     if (attempt == 1) {
                         throw new ToolInvocationException(
                                 "MCP_INITIALIZE_FAILED", ToolDispatchState.OUTCOME_UNKNOWN, "temporary failure");
@@ -65,7 +62,7 @@ class McpConnectionManagerTest {
         });
 
         var connection =
-                manager.acquire(server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, List.of());
+                manager.acquire(server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, Map.of());
 
         assertThat(connection.client().state()).isEqualTo(McpConnectionState.READY);
         assertThat(created).hasValue(2);
@@ -83,7 +80,7 @@ class McpConnectionManagerTest {
         }
 
         @Override
-        public McpServerSnapshot initialize(List<CredentialLease> credentials) {
+        public McpServerSnapshot initialize(Map<String, String> credentials) {
             state = McpConnectionState.READY;
             return new McpServerSnapshot(
                     new io.haifa.agent.mcp.config.McpServerId(serverId),
@@ -100,7 +97,7 @@ class McpConnectionManagerTest {
         }
 
         @Override
-        public McpListToolsPage listTools(String cursor, List<CredentialLease> credentials) {
+        public McpListToolsPage listTools(String cursor, Map<String, String> credentials) {
             return new McpListToolsPage(new ArrayList<>(), Optional.empty());
         }
 
@@ -108,7 +105,7 @@ class McpConnectionManagerTest {
         public McpRemoteToolResult callTool(
                 String name,
                 Map<String, Object> arguments,
-                List<CredentialLease> credentials,
+                Map<String, String> credentials,
                 io.haifa.agent.tool.api.ToolInvocationObserver observer) {
             throw new UnsupportedOperationException();
         }

@@ -5,8 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.haifa.agent.credential.api.CredentialDefinitionId;
-import io.haifa.agent.credential.api.CredentialExposureMode;
 import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionCommand;
@@ -67,7 +65,7 @@ class StdioMcpComponentTest {
                                 new McpManagedProcessLaunch(request(new ExecutionEnvironmentRef(List.of())), () -> {}))
                 .create(server, McpTestFixtures.IDENTITY);
 
-        assertThat(client.initialize(List.of()).negotiatedProtocolVersion()).isEqualTo(version);
+        assertThat(client.initialize(Map.of()).negotiatedProtocolVersion()).isEqualTo(version);
         client.close();
     }
 
@@ -81,10 +79,10 @@ class StdioMcpComponentTest {
                                 new McpManagedProcessLaunch(request(new ExecutionEnvironmentRef(List.of())), () -> {}))
                 .create(server, McpTestFixtures.IDENTITY);
 
-        var snapshot = client.initialize(List.of());
-        var tools = client.listTools(null, List.of());
+        var snapshot = client.initialize(Map.of());
+        var tools = client.listTools(null, Map.of());
         AtomicInteger dispatched = new AtomicInteger();
-        var result = client.callTool("echo", Map.of("value", "hello"), List.of(), observer(dispatched));
+        var result = client.callTool("echo", Map.of("value", "hello"), Map.of(), observer(dispatched));
         client.close();
 
         assertThat(snapshot.negotiatedProtocolVersion()).isEqualTo("2026-07-28");
@@ -111,10 +109,10 @@ class StdioMcpComponentTest {
                         request(new ExecutionEnvironmentRef(List.of())), () -> bindingClosed.set(true)));
         var client = factory.create(server, McpTestFixtures.IDENTITY);
 
-        var snapshot = client.initialize(List.of());
-        var tools = client.listTools(null, List.of());
+        var snapshot = client.initialize(Map.of());
+        var tools = client.listTools(null, Map.of());
         AtomicInteger dispatched = new AtomicInteger();
-        var result = client.callTool("echo", Map.of("value", "hello"), List.of(), observer(dispatched));
+        var result = client.callTool("echo", Map.of("value", "hello"), Map.of(), observer(dispatched));
         client.close();
 
         assertThat(snapshot.negotiatedProtocolVersion()).isEqualTo("2025-11-25");
@@ -141,21 +139,17 @@ class StdioMcpComponentTest {
     @Test
     void materializesOnlyAllowlistedEnvironmentCredentialsAndRevokesBinding() {
         var registry = new McpStdioEnvironmentRegistry(() -> "env-binding");
-        var requirement = new CredentialRequirement(
-                new CredentialDefinitionId("utility-token"),
-                "utility",
-                Set.of("mcp:tools:call"),
-                CredentialExposureMode.ENVIRONMENT_VARIABLE);
+        var requirement = new CredentialRequirement("utility-token");
         var injection = new McpCredentialInjection(requirement, "UTILITY_TOKEN", "Bearer ");
-        var lease = McpTestFixtures.lease("credential-binding", "secret-value");
-        var binding = registry.bind(List.of(injection), List.of(lease), Set.of("UTILITY_TOKEN"));
+        var credentials = Map.of("utility-token", "secret-value");
+        var binding = registry.bind(List.of(injection), credentials, Set.of("UTILITY_TOKEN"));
 
         var resolved = registry.resolve(binding.reference());
         assertThat(resolved.values()).containsEntry("UTILITY_TOKEN", "Bearer secret-value");
         assertThat(resolved.sensitiveNames()).containsExactly("UTILITY_TOKEN");
         binding.close();
         assertThatThrownBy(() -> registry.resolve(binding.reference())).isInstanceOf(SecurityException.class);
-        assertThatThrownBy(() -> registry.bind(List.of(injection), List.of(lease), Set.of("OTHER")))
+        assertThatThrownBy(() -> registry.bind(List.of(injection), credentials, Set.of("OTHER")))
                 .isInstanceOf(SecurityException.class);
     }
 
@@ -169,7 +163,7 @@ class StdioMcpComponentTest {
                                 new McpManagedProcessLaunch(request(new ExecutionEnvironmentRef(List.of())), () -> {}))
                 .create(server, McpTestFixtures.IDENTITY);
 
-        assertThat(stderrClient.initialize(List.of()).negotiatedProtocolVersion())
+        assertThat(stderrClient.initialize(Map.of()).negotiatedProtocolVersion())
                 .isEqualTo("2025-11-25");
         stderrClient.close();
 
@@ -179,7 +173,7 @@ class StdioMcpComponentTest {
                         (definition, identity, credentials) ->
                                 new McpManagedProcessLaunch(request(new ExecutionEnvironmentRef(List.of())), () -> {}))
                 .create(server, McpTestFixtures.IDENTITY);
-        assertThatThrownBy(() -> oversizeClient.initialize(List.of()))
+        assertThatThrownBy(() -> oversizeClient.initialize(Map.of()))
                 .isInstanceOf(ToolInvocationException.class)
                 .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
                         .isEqualTo("MCP_INITIALIZE_FAILED"));

@@ -50,7 +50,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -320,7 +319,7 @@ class ProjectWorktreeToolOperationsTest {
                 NOW.plusSeconds(30),
                 Optional.of("worktree-key"),
                 () -> false,
-                List.of(),
+                Map.of(),
                 observer);
     }
 
