@@ -18,10 +18,11 @@ class ProviderNeutralTestAssetNamingTest {
     void suiteAndSharedFixtureImplementationRemainProviderNeutral() throws Exception {
         Path repository = findRepositoryRoot();
         List<Path> roots = List.of(
-                repository.resolve("haifa-agent-testing/haifa-agent-test-fixtures/src/main"),
-                repository.resolve("haifa-agent-testing/haifa-agent-integration-tests/src/main"),
-                repository.resolve("haifa-agent-testing/haifa-agent-e2e-tests/src/test"),
-                repository.resolve("haifa-agent-testing/haifa-agent-autonomous-delivery/src/test")).stream()
+                        repository.resolve("haifa-agent-testing/haifa-agent-test-fixtures/src/main"),
+                        repository.resolve("haifa-agent-testing/haifa-agent-integration-tests/src/main"),
+                        repository.resolve("haifa-agent-testing/haifa-agent-e2e-tests/src/test"),
+                        repository.resolve("haifa-agent-testing/haifa-agent-autonomous-delivery/src/test"))
+                .stream()
                 .filter(Files::isDirectory)
                 .toList();
         List<String> violations = new ArrayList<>();

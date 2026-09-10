@@ -1,7 +1,7 @@
 # Autonomous Delivery Capability Ladder Specification & Placeholder
 
-> **Status**: Design Approved / Module Placeholder (v2 implementation deferred)  
-> **Architecture Reference**: [`docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md`](../../../../../../../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md)  
+> **Status**: Design Approved / Module Placeholder (v2 implementation deferred)
+> **Architecture Reference**: [`docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md`](../../../../../../../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md)
 > **External Evaluation Repo**: `haifa-agent-evals` (owns industry benchmarks like SWE-bench & polyglot)
 
 ---
@@ -19,17 +19,17 @@ The Autonomous Delivery test suite within `haifa-agent-testing` is being reposit
 
 Instead of monolithic tasks that conflate all cognitive burdens at once, tasks are structured into a 6-level ladder where each level adds exactly one primary difficulty:
 
-1. **L1: Single-point Bugfix (5 cases, ~22%)**  
+1. **L1: Single-point Bugfix (5 cases, ~22%)**
    Explicit bug and failing test, 1 file modification. Assesses error comprehension, minimal edit, and verification loop. High baseline pass rate (>90%).
-2. **L2: Local Multi-file Feature (5 cases, ~22%)**  
+2. **L2: Local Multi-file Feature (5 cases, ~22%)**
    Clear requirement without pre-mapped path, modifies 2~3 local files (e.g., config parameter, DTO field, simple branch). Assesses reading + localized design + regression.
-3. **L3: Diagnostic & Localization (4 cases, ~17%)**  
+3. **L3: Diagnostic & Localization (4 cases, ~17%)**
    No file paths given; only user symptoms or error logs (e.g., "configuration ignored on Windows"). Assesses search and diagnostic discovery.
-4. **L4: Cross-layer Contract Propagation (4 cases, ~17%)**  
+4. **L4: Cross-layer Contract Propagation (4 cases, ~17%)**
    Crosses API / Core / Adapter layers (e.g., tool parameter addition with caller propagation). Assesses architectural understanding and contract consistency.
-5. **L5: Constraint-bounded Delivery (3 cases, ~13%)**  
+5. **L5: Constraint-bounded Delivery (3 cases, ~13%)**
    Straightforward feature with strict engineering boundaries (e.g., "no new public types", "backward compatible", "no runtime modifications"). Assesses adherence to engineering discipline.
-6. **L6: Open-ended Autonomous Delivery (2 cases, ~9%)**  
+6. **L6: Open-ended Autonomous Delivery (2 cases, ~9%)**
    Real GitHub issue without guidance. Agent independently plans, implements, tests, reviews diff, and delivers.
 
 ### Difficulty Distribution

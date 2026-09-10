@@ -679,7 +679,8 @@ class CodingAgentLiveE2E {
     }
 
     private static Path findRepositoryRoot() {
-        Path current = Path.of(System.getProperty("basedir", ".")).toAbsolutePath().normalize();
+        Path current =
+                Path.of(System.getProperty("basedir", ".")).toAbsolutePath().normalize();
         while (current != null) {
             if (Files.isDirectory(current.resolve(".mvn")) && Files.isRegularFile(current.resolve("pom.xml"))) {
                 return current;
