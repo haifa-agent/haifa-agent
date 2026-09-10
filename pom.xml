@@ -56,11 +56,13 @@
         <maven.source.plugin.version>3.3.1</maven.source.plugin.version>
         <jacoco.version>0.8.13</jacoco.version>
         <spotless.version>2.46.1</spotless.version>
-        <spotless.ratchetFrom>origin/dev</spotless.ratchetFrom>
+        <spotless.ratchetFrom></spotless.ratchetFrom>
         <flatten.version>1.7.1</flatten.version>
 
         <skipITs>true</skipITs>
         <skipUnitTests>false</skipUnitTests>
+        <jacoco.skip>false</jacoco.skip>
+        <argLine></argLine>
         <haifa.surefire.groups></haifa.surefire.groups>
         <haifa.surefire.excludedGroups>slow,architecture</haifa.surefire.excludedGroups>
         <haifa.surefire.reportsDirectory>${project.build.directory}/surefire-reports</haifa.surefire.reportsDirectory>
@@ -462,6 +464,9 @@
                     <groupId>org.jacoco</groupId>
                     <artifactId>jacoco-maven-plugin</artifactId>
                     <version>${jacoco.version}</version>
+                    <configuration>
+                        <skip>${jacoco.skip}</skip>
+                    </configuration>
                 </plugin>
                 <plugin>
                     <groupId>com.diffplug.spotless</groupId>
@@ -469,6 +474,10 @@
                     <version>${spotless.version}</version>
                     <configuration>
                         <ratchetFrom>${spotless.ratchetFrom}</ratchetFrom>
+                        <upToDateChecking>
+                            <enabled>true</enabled>
+                            <indexFile>${session.executionRootDirectory}/local-tmp/spotless-cache/${project.artifactId}.index</indexFile>
+                        </upToDateChecking>
                         <formats>
                             <format>
                                 <includes>
@@ -588,6 +597,8 @@
             <properties>
                 <skipITs>true</skipITs>
                 <skipUnitTests>false</skipUnitTests>
+                <jacoco.skip>true</jacoco.skip>
+                <spotless.ratchetFrom></spotless.ratchetFrom>
                 <haifa.surefire.excludedGroups>slow</haifa.surefire.excludedGroups>
                 <haifa.cli.shade.skip>true</haifa.cli.shade.skip>
             </properties>

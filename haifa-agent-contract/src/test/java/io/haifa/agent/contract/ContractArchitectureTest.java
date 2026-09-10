@@ -3,6 +3,7 @@ package io.haifa.agent.contract;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
+import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.lang.ArchRule;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -25,7 +26,8 @@ class ContractArchitectureTest {
 
     @Test
     void contractIsSeparateFromDomainAndFrameworks() {
-        CONTRACT_IS_SEPARATE_FROM_DOMAIN_AND_FRAMEWORKS.check(
-                new ClassFileImporter().importPackages("io.haifa.agent.contract"));
+        CONTRACT_IS_SEPARATE_FROM_DOMAIN_AND_FRAMEWORKS.check(new ClassFileImporter()
+                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("io.haifa.agent.contract"));
     }
 }
