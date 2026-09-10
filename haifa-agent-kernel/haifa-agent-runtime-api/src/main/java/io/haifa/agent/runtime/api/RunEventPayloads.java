@@ -142,30 +142,6 @@ public final class RunEventPayloads {
         }
     }
 
-    public record ExecutionLifecycle(
-            String executionId,
-            String toolCallId,
-            String status,
-            String commandSummary,
-            String logicalWorkdir,
-            String streamKind,
-            String chunkOrRef,
-            Integer exitCode,
-            boolean truncated,
-            String fileChangeSetRef)
-            implements AgentRunEvent.Payload {
-        public ExecutionLifecycle {
-            executionId = text(executionId, "executionId", 256);
-            toolCallId = text(toolCallId, "toolCallId", 256);
-            status = text(status, "status", 64);
-            commandSummary = text(commandSummary, "commandSummary", 256);
-            logicalWorkdir = optionalText(logicalWorkdir, "logicalWorkdir", 512);
-            streamKind = text(streamKind, "streamKind", 32);
-            chunkOrRef = optionalText(chunkOrRef, "chunkOrRef", 4096);
-            fileChangeSetRef = optionalText(fileChangeSetRef, "fileChangeSetRef", 512);
-        }
-    }
-
     public record ResourceAvailable(String reference, String kind, String title, String status, String action)
             implements AgentRunEvent.Payload {
         public ResourceAvailable {

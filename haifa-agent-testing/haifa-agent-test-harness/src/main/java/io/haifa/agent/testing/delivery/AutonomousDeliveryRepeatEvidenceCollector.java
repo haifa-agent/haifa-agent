@@ -40,14 +40,6 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
         authoritative.put("clientContract", input.clientContract().artifact());
         authoritative.put("usage", usageArtifact);
         authoritative.put(
-                "failureClusters",
-                Map.of(
-                        "clusters",
-                        input.runtime().failureClusters(),
-                        "maximumAttempts",
-                        input.runtime().maximumClusterAttempts()));
-        authoritative.put("progress", input.runtime().progress());
-        authoritative.put(
                 "completion",
                 Map.of(
                         "acceptancePassed",
@@ -107,7 +99,6 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
         summary.put("scratchProvisionedCount", input.runtime().scratchProvisionedCount());
         summary.put("scratchCleanupFailures", input.runtime().scratchCleanupFailures());
         summary.put("scratchSatisfied", input.runtime().scratchSatisfied());
-        summary.put("maximumFailureClusterAttempts", input.runtime().maximumClusterAttempts());
         summary.put("modelCalls", input.runtime().modelCalls());
         summary.put("toolCalls", input.runtime().toolCalls());
         summary.put("toolFailures", input.runtime().toolFailures());

@@ -49,10 +49,7 @@ import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
 import io.haifa.agent.runtime.core.model.ModelInvocationResult;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
-import io.haifa.agent.runtime.core.recovery.RecoveryController;
-import io.haifa.agent.runtime.core.recovery.RecoveryDirective;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
-import io.haifa.agent.runtime.core.recovery.TerminalFailureSummary;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.retry.RetryListener;
@@ -188,50 +185,23 @@ public final class DefaultAgentLoop implements AgentLoop {
         decisionExecutor.applyPendingToolApproval(run);
         reconciler.reconcileRecoveryFacts(run, attempt);
         var restored = checkpoints.restore(run, attempt.resumedFromCheckpointId());
-        AgentLoopContext progress = restored.map(value -> new AgentLoopContext(
-                        value.nextIteration(),
-                        value.decisionFingerprints(),
-                        value.forcedContextRebuildAttempts(),
-                        traceContext))
-                .orElseGet(() -> new AgentLoopContext(1, List.of(), 0, traceContext));
-        if (restored.isPresent()) progress.markWorkspaceBaselineCheckpointCaptured();
+        AgentLoopContext progress = restored.map(value ->
+                        new AgentLoopContext(value.nextIteration(), value.forcedContextRebuildAttempts(), traceContext))
+                .orElseGet(() -> new AgentLoopContext(1, 0, traceContext));
         progress.restoreRepairAttempts((int) state.messages(run.id()).stream()
                 .filter(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
                 .count());
-        progress.restoreStallRecoveryAttempts(
-                state.messages(run.id()).stream().anyMatch(message -> "STALL_RECOVERY"
-                                .equals(message.metadata().get("runtimeControlType")))
-                        ? 1
-                        : 0);
-        RunBudgetSnapshot initialBudget =
-                RunBudgetSnapshot.from(run, progress.iteration(), 0, progress.repairAttempts(), time.now());
-        progress.rebuildControlState(
-                state.toolCalls(run.id()),
-                state.plan(run.id()),
-                run.usage().childRuns(),
-                restored.isPresent(),
-                initialBudget);
+        if (restored.isPresent()) {
+            progress.restoreBudgetThresholds(
+                    RunBudgetSnapshot.from(run, progress.iteration(), progress.repairAttempts(), time.now()));
+        }
         middleware.apply(RuntimePhase.BEFORE_RUN, new RuntimeMiddlewareContext(run, state));
         while (run.status() == AgentRunStatus.RUNNING || run.status() == AgentRunStatus.SUSPENDING) {
             AgentLoopIteration iteration = new AgentLoopIteration(progress.iteration(), time.now());
             if (applyControl(run, progress, SafePoint.BEFORE_ITERATION, progress.iteration() - 1)) {
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
             }
-            var appliedInputs = runInputs.applyPending(run, attempt, progress.iteration());
-            progress.observeInteractions(appliedInputs.stream()
-                            .map(input -> input.submission().inputId().value())
-                            .toList())
-                    .ifPresent(progressDigest -> events.append(
-                            run.id(),
-                            "loop.progress-observed",
-                            Map.of(
-                                    "iteration",
-                                    progress.iteration(),
-                                    "progressDigest",
-                                    progressDigest,
-                                    "evidence",
-                                    "INTERACTION_SUPPLIED"),
-                            time.now()));
+            runInputs.applyPending(run, attempt, progress.iteration());
             if (run.activeElapsedMillis(time.now()) > run.limits().maxWallTimeMillis()) {
                 transitions.timedOut(
                         run, new RunTerminationReason("WALL_TIME_EXCEEDED", "Run wall-time limit exceeded"));
@@ -247,79 +217,15 @@ public final class DefaultAgentLoop implements AgentLoop {
             if (beforeModelLimit != null) {
                 if (beforeModelLimit instanceof RuntimeLimitExceededException limitExceeded
                         && decisionExecutor.supportsBudgetLimitedCompletion(run)) {
-                    checkpoints.capture(
-                            run,
-                            Math.max(0, progress.iteration() - 1),
-                            progress.fingerprints(),
-                            progress.forcedContextRebuildAttempts(),
-                            CheckpointType.AUTOMATIC);
+
                     decisionExecutor.completeBudgetLimited(run, limitExceeded, Optional.empty());
                     return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
                 }
                 throw beforeModelLimit;
             }
-            try {
-                guards.forEach(guard -> guard.check(run, progress));
-            } catch (io.haifa.agent.runtime.core.guard.LoopDetectedException exhausted) {
-                events.append(
-                        run.id(),
-                        "loop.recovery-exhausted",
-                        Map.of(
-                                "schemaVersion",
-                                "stall-recovery/1",
-                                "iteration",
-                                progress.iteration(),
-                                "reason",
-                                exhausted.reason().name(),
-                                "recoveryAttempts",
-                                progress.stallRecoveryAttempts()),
-                        time.now());
-                throw exhausted;
-            }
-            progress.takeStallRecoveryAnnouncement().ifPresent(signal -> {
-                Map<String, Object> eventData = Map.of(
-                        "schemaVersion",
-                        "stall-recovery/1",
-                        "iteration",
-                        progress.iteration(),
-                        "reason",
-                        signal.reason().name(),
-                        "progressDigest",
-                        signal.progressDigest(),
-                        "recoveryAttempts",
-                        signal.attempt());
-                events.append(run.id(), "loop.stall-detected", eventData, time.now());
-                events.append(run.id(), "loop.recovery-strategy-required", eventData, time.now());
-                appendRuntimeControlMessage(
-                        run,
-                        String.join(
-                                "\n",
-                                "[RUNTIME_CONTROL_UPDATE]",
-                                "type=STALL_RECOVERY",
-                                "reason=" + signal.reason().name(),
-                                "progressDigest=" + signal.progressDigest(),
-                                "recoveryAttempts=" + signal.attempt(),
-                                "nextAction=choose one different semantic action without changing provider, permissions, or policy"),
-                        Map.of(
-                                "runtimeControl",
-                                true,
-                                "runtimeControlType",
-                                "STALL_RECOVERY",
-                                "stallReason",
-                                signal.reason().name(),
-                                "progressDigest",
-                                signal.progressDigest(),
-                                "recoveryAttempts",
-                                signal.attempt(),
-                                "schemaVersion",
-                                "stall-recovery/1"));
-            });
-            RunBudgetSnapshot budget = RunBudgetSnapshot.from(
-                    run,
-                    progress.iteration(),
-                    progress.failureClusterAttempts(),
-                    progress.repairAttempts(),
-                    time.now());
+            guards.forEach(guard -> guard.check(run, progress));
+            RunBudgetSnapshot budget =
+                    RunBudgetSnapshot.from(run, progress.iteration(), progress.repairAttempts(), time.now());
             Set<Integer> thresholds = progress.updateBudgetSnapshot(budget);
             events.append(
                     run.id(),
@@ -331,7 +237,6 @@ public final class DefaultAgentLoop implements AgentLoop {
                             Map.entry("remainingWallTimeMillis", budget.remainingWallTimeMillis()),
                             Map.entry("remainingInputTokens", budget.remainingInputTokens()),
                             Map.entry("remainingOutputTokens", budget.remainingOutputTokens()),
-                            Map.entry("failureClusterAttempts", budget.failureClusterAttempts()),
                             Map.entry("completionRepairAttempts", budget.completionRepairAttempts()),
                             Map.entry("limitingResource", budget.limitingResource()),
                             Map.entry("limitingUsed", budget.limitingUsed()),
@@ -365,8 +270,10 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 orderedThresholds));
             }
             Optional<AgentLoopDirective> pendingTools = decisionExecutor.resumePendingTools(run, progress);
-            if (pendingTools.filter(value -> value == AgentLoopDirective.WAIT).isPresent()) {
-                return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.WAIT);
+            if (pendingTools
+                    .filter(value -> value != AgentLoopDirective.CONTINUE)
+                    .isPresent()) {
+                return new AgentLoopResult(run.status(), iteration, pendingTools.orElseThrow());
             }
             reconciler.reconcile(run, attempt);
             recordTrace(new RuntimeTraceEvent(
@@ -537,12 +444,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         time.now()));
                                 failModelStep(modelStepRef[0], contextTooLong);
                                 progress.recordForcedContextRebuild();
-                                checkpoints.capture(
-                                        run,
-                                        Math.max(0, progress.iteration() - 1),
-                                        progress.fingerprints(),
-                                        progress.forcedContextRebuildAttempts(),
-                                        CheckpointType.AUTOMATIC);
+
                                 if (compactionCoordinator != null) {
                                     compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
                                 }
@@ -680,10 +582,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                 middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
                 throw classified == null ? terminal : new AgentExecutionFailureException(classified, terminal);
             }
-            String fingerprint = DecisionFingerprint.of(decision);
-            progress.record(fingerprint);
             Map<String, Object> stepMetadata = new LinkedHashMap<>(modelTraceAttributes(run, response));
-            stepMetadata.put("fingerprint", fingerprint);
             modelStepRef[0].complete(
                     new AgentStepResult(
                             "Model decision: " + decision.getClass().getSimpleName(), stepMetadata, List.of()),
@@ -698,12 +597,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             if (budgetLimitRef[0] != null) {
                 if (budgetLimitRef[0] instanceof RuntimeLimitExceededException limitExceeded) {
                     middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContextRef[0]);
-                    checkpoints.capture(
-                            run,
-                            progress.iteration(),
-                            progress.fingerprints(),
-                            progress.forcedContextRebuildAttempts(),
-                            CheckpointType.AUTOMATIC);
+
                     Optional<FinalAnswerDecision> finalDecision = budgetLimitedFinalDecision(
                             run, progress, model, builtRef[0].context().context(), decision, limitExceeded);
                     decisionExecutor.completeBudgetLimited(run, limitExceeded, finalDecision);
@@ -721,35 +615,6 @@ public final class DefaultAgentLoop implements AgentLoop {
 
             if (decision instanceof FinalAnswerDecision) {
                 middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContextRef[0]);
-                checkpoints.capture(
-                        run,
-                        progress.iteration(),
-                        progress.fingerprints(),
-                        progress.forcedContextRebuildAttempts(),
-                        CheckpointType.AUTOMATIC);
-            }
-            if (decisionExecutor.mayModifyWorkspace(run, decision) && !progress.workspaceBaselineCheckpointCaptured()) {
-                var baseline = checkpoints.capture(
-                        run,
-                        Math.max(0, progress.iteration() - 1),
-                        progress.fingerprints(),
-                        progress.forcedContextRebuildAttempts(),
-                        CheckpointType.WORKSPACE_SNAPSHOT);
-                if (baseline.isEmpty()) {
-                    throw new IllegalStateException("workspace baseline checkpoint was required but not captured");
-                }
-                progress.markWorkspaceBaselineCheckpointCaptured();
-                events.append(
-                        run.id(),
-                        "workspace.baseline-checkpoint-captured",
-                        Map.of(
-                                "schemaVersion",
-                                "workspace-checkpoint/1",
-                                "checkpointRef",
-                                baseline.orElseThrow().id().value(),
-                                "iteration",
-                                progress.iteration()),
-                        time.now());
             }
             middleware.apply(RuntimePhase.BEFORE_DECISION_EXECUTION, middlewareContextRef[0]);
             AgentLoopDirective directive;
@@ -770,96 +635,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                     "loop.iteration-persisted",
                     Map.of("iteration", progress.iteration(), "directive", directive.name()),
                     time.now());
-            AgentLoopContext.ControlObservation control = progress.observeAuthoritativeState(
-                    state.toolCalls(run.id()), state.plan(run.id()), run.usage().childRuns());
-            if (control.progressObserved()) {
-                events.append(
-                        run.id(),
-                        "loop.progress-observed",
-                        Map.of(
-                                "iteration",
-                                progress.iteration(),
-                                "progressDigest",
-                                control.progressDigest(),
-                                "evidence",
-                                "MEANINGFUL"),
-                        time.now());
-            }
-            for (RecoveryController.Update update : control.recoveryUpdates()) {
-                events.append(
-                        run.id(),
-                        "tool.failure-cluster-updated",
-                        Map.of(
-                                "iteration",
-                                progress.iteration(),
-                                "fingerprintDigest",
-                                update.observation().fingerprint().digest(),
-                                "failureCategory",
-                                update.observation().category().name(),
-                                "attempts",
-                                update.attempts(),
-                                "directive",
-                                update.directive().name()),
-                        time.now());
-                if (update.attempts() >= 2) {
-                    events.append(
-                            run.id(),
-                            "loop.stall-detected",
-                            Map.of(
-                                    "iteration",
-                                    progress.iteration(),
-                                    "fingerprintDigest",
-                                    update.observation().fingerprint().digest(),
-                                    "attempts",
-                                    update.attempts()),
-                            time.now());
-                }
-                if (update.directive() != RecoveryDirective.CONTINUE_WITH_DIAGNOSTIC) {
-                    events.append(
-                            run.id(),
-                            "tool.recovery-strategy-required",
-                            Map.of(
-                                    "iteration",
-                                    progress.iteration(),
-                                    "fingerprintDigest",
-                                    update.observation().fingerprint().digest(),
-                                    "attempts",
-                                    update.attempts(),
-                                    "directive",
-                                    update.directive().name()),
-                            time.now());
-                }
-                if (!update.directive().terminal()) {
-                    appendRuntimeControlMessage(
-                            run,
-                            String.join(
-                                    "\n",
-                                    "[RUNTIME_CONTROL_UPDATE]",
-                                    "type=RECOVERY_STRATEGY",
-                                    "failureCategory="
-                                            + update.observation().category().name(),
-                                    "attempts=" + update.attempts(),
-                                    "directive=" + update.directive().name(),
-                                    "nextAction=" + update.directive().guidance()),
-                            Map.of(
-                                    "runtimeControl", true,
-                                    "runtimeControlType", "RECOVERY_STRATEGY",
-                                    "failureCategory",
-                                            update.observation().category().name(),
-                                    "recoveryAttempts", update.attempts(),
-                                    "recoveryDirective", update.directive().name()));
-                }
-                if (update.directive().terminal()) {
-                    return structuredTermination(run, iteration, update);
-                }
-            }
-            progress.recordProgress(control.progressDigest());
-            checkpoints.capture(
-                    run,
-                    progress.iteration(),
-                    progress.fingerprints(),
-                    progress.forcedContextRebuildAttempts(),
-                    directive == AgentLoopDirective.WAIT ? CheckpointType.INTERACTION : CheckpointType.AUTOMATIC);
+
             if (directive != AgentLoopDirective.CONTINUE)
                 return new AgentLoopResult(run.status(), iteration, directive);
             if (applyControl(run, progress, SafePoint.AFTER_DECISION_PERSISTED, progress.iteration())) {
@@ -902,7 +678,6 @@ public final class DefaultAgentLoop implements AgentLoop {
             checkpoints.capture(
                     run,
                     Math.max(0, completedIteration),
-                    progress.fingerprints(),
                     progress.forcedContextRebuildAttempts(),
                     CheckpointType.MANUAL);
             transitions.suspended(run);
@@ -1314,45 +1089,5 @@ public final class DefaultAgentLoop implements AgentLoop {
             attributes.put("modelConfigDigest", model.configurationDigest());
         });
         return attributes;
-    }
-
-    private AgentLoopResult structuredTermination(
-            AgentRun run, AgentLoopIteration iteration, RecoveryController.Update update) {
-        RecoveryDirective directive = update.directive();
-        events.append(
-                run.id(),
-                "run.structured-termination",
-                Map.of(
-                        "reason",
-                        directive.name(),
-                        "fingerprintDigest",
-                        update.observation().fingerprint().digest(),
-                        "failureCategory",
-                        update.observation().category().name(),
-                        "attempts",
-                        update.attempts()),
-                time.now());
-        if (directive == RecoveryDirective.TERMINATE_CANCELLED) {
-            transitions.cancelled(
-                    run, new RunTerminationReason("TOOL_CANCELLED", "Tool cancellation ended the current run"));
-        } else {
-            AgentErrorCode code = directive == RecoveryDirective.TERMINATE_OUTCOME_UNKNOWN
-                    ? AgentErrorCode.TOOL_OUTCOME_UNKNOWN
-                    : AgentErrorCode.REPEATED_TOOL_FAILURE;
-            AgentError error = new AgentError(
-                    code,
-                    Map.of(
-                            "failureCategory",
-                            update.observation().category().name(),
-                            "fingerprintDigest",
-                            update.observation().fingerprint().digest(),
-                            "attempts",
-                            update.attempts()),
-                    ids.nextValue(),
-                    time.now());
-            String summary = TerminalFailureSummary.create(error, state.toolCalls(run.id()), state.steps(run.id()));
-            decisionExecutor.failWithSummary(run, error, summary);
-        }
-        return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
     }
 }

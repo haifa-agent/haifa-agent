@@ -237,7 +237,7 @@ class ProjectApplicationTest {
     }
 
     @Test
-    void keepsExecutionRecoveryInsideRuntimeInsteadOfPublishingAPermissionRequestTool() {
+    void doesNotPublishAPermissionRequestTool() {
         var catalog = new ProjectToolCatalog();
         var frozen = catalog.freeze(
                 catalog.names(),

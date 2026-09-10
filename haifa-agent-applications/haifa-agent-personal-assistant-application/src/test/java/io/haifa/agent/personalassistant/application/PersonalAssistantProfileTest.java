@@ -120,7 +120,9 @@ class PersonalAssistantProfileTest {
         assertThat(profile.instructions())
                 .contains(
                         "Treat the latest user message as the current objective",
-                        "Do not resume or retry a previous failed or abandoned tool call");
+                        "Do not resume or retry a failed or abandoned tool call from a previous task",
+                        "judge progress from actual results",
+                        "Never bypass authorization");
         assertThat(profile.budget().maxInputTokens()).isEqualTo(512_000);
         assertThat(profile.budget().maxOutputTokens()).isEqualTo(128_000);
         assertThat(profile.budget().maxCachedInputTokens()).isEqualTo(512_000);

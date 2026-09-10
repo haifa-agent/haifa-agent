@@ -543,9 +543,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     workspaceIdentity.safeDisplayName());
             var executionCanonicalizer =
                     new io.haifa.agent.application.project.tool.CodingExecutionToolRequestCanonicalizer();
-            var recoveryAuthorization =
-                    new io.haifa.agent.application.project.tool.ProjectExecutionRecoveryAuthorization(
-                            persistence.ports().state(), persistence.ports().interactions());
             PublicToolPolicy publicToolPolicy = workspaceAccessPolicy(
                     new DefaultPublicToolPolicy(
                             new io.haifa.agent.application.project.policy.CodingExecutionPolicyRequestAdapter(
@@ -590,8 +587,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             persistence.workspaceAccess(),
                             tenant,
                             principal,
-                            runtimeExecutionVerifier,
-                            recoveryAuthorization)
+                            runtimeExecutionVerifier)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
             var repositoryBaselines = executionPlatform == null
@@ -661,17 +657,11 @@ final class LocalCodingAgent implements AutoCloseable {
                         return new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
                                 workspaceId, currentCapabilities);
                     };
-            var provider = executionPlatform == null
-                    ? new ProjectToolExecutor(workspaceAccessResolver, operations, null, worktreeOperations)
-                    : ProjectToolExecutor.withExecutionRecovery(
-                            workspaceAccessResolver,
-                            operations,
-                            executionPlatform.operations(),
-                            executionPlatform.permissionOperations(),
-                            recoveryAuthorization,
-                            executionPlatform.profile(),
-                            executionPlatform.permissionProfile(),
-                            worktreeOperations);
+            var provider = new ProjectToolExecutor(
+                    workspaceAccessResolver,
+                    operations,
+                    executionPlatform == null ? null : executionPlatform.operations(),
+                    worktreeOperations);
             var skillService = new DefaultSkillActivationService(
                     persistence.ports().runs(), persistence.ports().state(), skillPlatform.contentLoader(), time);
             List<SkillToolCatalogContribution> skillTools =

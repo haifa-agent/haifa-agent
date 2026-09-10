@@ -52,22 +52,7 @@ class AutonomousDeliveryRepeatEvidenceCollectorTest {
     private static AutonomousDeliveryRepeatEvidenceCollector.Input input(
             boolean preliminaryGatePassed, CodingClientExecutionContract clientContract) {
         AutonomousDeliveryRuntimeEvidenceReader.Evidence runtime = new AutonomousDeliveryRuntimeEvidenceReader.Evidence(
-                "COMPLETED",
-                100,
-                20,
-                2,
-                4,
-                0,
-                0,
-                2,
-                true,
-                true,
-                2,
-                0,
-                2,
-                List.of(),
-                List.of(Map.of("iteration", 1)),
-                true);
+                "COMPLETED", 100, 20, 2, 4, 0, 0, 2, true, true, 2, 0, true);
         return new AutonomousDeliveryRepeatEvidenceCollector.Input(
                 new AutonomousDeliveryRepeatEvidenceCollector.CaseMetadata(
                         "01", "2.0.0", "JAVA", "BUG_FIX", List.of("EDIT", "VERIFY"), List.of("FAILURE_ATOMICITY")),

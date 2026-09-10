@@ -11,7 +11,6 @@ public sealed interface RunEventPayload
                 RunEventPayload.RunInputLifecycle,
                 RunEventPayload.CommandResult,
                 RunEventPayload.ToolLifecycle,
-                RunEventPayload.ExecutionLifecycle,
                 RunEventPayload.ResourceAvailable {
 
     record RunLifecycle(
@@ -97,30 +96,6 @@ public sealed interface RunEventPayload
             reasonCode = require(reasonCode, "reasonCode", 128);
             targetSummary = optional(targetSummary, "targetSummary", 512);
             resultRef = optional(resultRef, "resultRef", 512);
-        }
-    }
-
-    record ExecutionLifecycle(
-            String executionId,
-            String toolCallId,
-            String status,
-            String commandSummary,
-            String logicalWorkdir,
-            String streamKind,
-            String chunkOrRef,
-            Integer exitCode,
-            boolean truncated,
-            String fileChangeSetRef)
-            implements RunEventPayload {
-        public ExecutionLifecycle {
-            executionId = require(executionId, "executionId", 256);
-            toolCallId = require(toolCallId, "toolCallId", 256);
-            status = require(status, "status", 64);
-            commandSummary = require(commandSummary, "commandSummary", 256);
-            logicalWorkdir = optional(logicalWorkdir, "logicalWorkdir", 512);
-            streamKind = require(streamKind, "streamKind", 32);
-            chunkOrRef = optional(chunkOrRef, "chunkOrRef", 4_096);
-            fileChangeSetRef = optional(fileChangeSetRef, "fileChangeSetRef", 512);
         }
     }
 

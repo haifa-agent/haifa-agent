@@ -10,18 +10,10 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 /** Reads only bounded, safe evidence fields from the authoritative per-repeat SQLite store. */
 final class AutonomousDeliveryRuntimeEvidenceReader {
-    private static final List<String> SAFE_EVENT_FIELDS =
-            List.of("iteration", "fingerprintDigest", "failureCategory", "attempts", "directive", "progressDigest");
 
     private final ObjectMapper json;
 
@@ -46,14 +38,11 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                     run.toolCalls(),
                     run.costMinorUnits(),
                     tools.toolFailures(),
-                    events.executionCalls(),
+                    tools.executionCalls(),
                     tools.validationAttempted(),
                     tools.diffInspected(),
-                    events.scratchProvisionedCount(),
-                    events.scratchCleanupFailures(),
-                    events.maximumClusterAttempts(),
-                    events.failureClusters(),
-                    events.progress(),
+                    tools.scratchProvisionedCount(),
+                    tools.scratchCleanupFailures(),
                     events.terminalStateObserved() || terminal(run.status()));
         } catch (SQLException exception) {
             throw new IOException("authoritative runtime evidence could not be read", exception);
@@ -98,10 +87,13 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
 
     private ToolFacts readTools(Connection connection) throws SQLException, IOException {
         int failures = 0;
+        int executionCalls = 0;
+        int scratchProvisioned = 0;
+        int scratchCleanupFailures = 0;
         boolean validationAttempted = false;
         boolean diffInspected = false;
-        try (PreparedStatement statement =
-                        connection.prepareStatement("SELECT tool_name, status, arguments_payload FROM tool_call");
+        try (PreparedStatement statement = connection.prepareStatement(
+                        "SELECT tool_name, status, arguments_payload, result_payload FROM tool_call");
                 ResultSet rows = statement.executeQuery()) {
             while (rows.next()) {
                 String toolName = rows.getString(1);
@@ -109,49 +101,36 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                 if (!"COMPLETED".equals(status)) failures++;
                 if (!"execution_run".equals(toolName)) continue;
                 JsonNode arguments = decodeValues(rows.getBytes(3));
+                JsonNode result = decodeValues(rows.getBytes(4)).path("structuredData");
                 String family = arguments.path("operationFamily").asText("UNKNOWN");
                 validationAttempted |= family.equals("TEST") || family.equals("BUILD");
                 diffInspected |= "COMPLETED".equals(status) && family.equals("DIFF");
+                boolean enteredSandbox = result.path("status").isTextual()
+                        && (result.path("scratchProvisioned").asBoolean(false)
+                                || result.has("exitCode")
+                                || !result.path("executionId").asText().isBlank());
+                if (enteredSandbox) executionCalls++;
+                if (result.path("scratchProvisioned").asBoolean(false)) scratchProvisioned++;
+                if (result.path("scratchCleanupFailed").asBoolean(false)) scratchCleanupFailures++;
             }
         }
-        return new ToolFacts(failures, validationAttempted, diffInspected);
+        return new ToolFacts(
+                failures,
+                executionCalls,
+                validationAttempted,
+                diffInspected,
+                scratchProvisioned,
+                scratchCleanupFailures);
     }
 
     private EventFacts readEvents(Connection connection) throws SQLException, IOException {
-        List<Map<String, Object>> clusters = new ArrayList<>();
-        List<Map<String, Object>> progress = new ArrayList<>();
-        int scratchProvisioned = 0;
-        int scratchCleanupFailures = 0;
-        int executionCalls = 0;
-        int maximumAttempts = 0;
         boolean terminal = false;
-        Set<String> scratchToolCallIds = new HashSet<>();
         try (PreparedStatement statement =
-                        connection.prepareStatement("SELECT type, data_payload FROM runtime_event ORDER BY sequence");
+                        connection.prepareStatement("SELECT type FROM runtime_event ORDER BY sequence");
                 ResultSet rows = statement.executeQuery()) {
             while (rows.next()) {
                 String type = rows.getString(1);
-                JsonNode payload = decodeValues(rows.getBytes(2));
                 switch (type) {
-                    case "tool.failure-cluster-updated" -> {
-                        int attempts = payload.path("attempts").asInt();
-                        maximumAttempts = Math.max(maximumAttempts, attempts);
-                        clusters.add(safeEvent(type, payload));
-                    }
-                    case "loop.progress-observed" -> progress.add(safeEvent(type, payload));
-                    case "execution.scratch-provisioned" -> {
-                        scratchProvisioned++;
-                        scratchToolCallIds.add(payload.path("toolCallId").asText());
-                    }
-                    case "execution.scratch-cleanup-failed" -> scratchCleanupFailures++;
-                    case "execution.completed", "execution.failed" -> {
-                        String toolCallId = payload.path("toolCallId").asText();
-                        String executionId = payload.path("executionId").asText();
-                        boolean enteredSandbox = scratchToolCallIds.contains(toolCallId)
-                                || payload.has("exitCode")
-                                || (!executionId.isBlank() && !executionId.equals(toolCallId));
-                        if (enteredSandbox) executionCalls++;
-                    }
                     case "run.completed", "run.failed", "run.cancelled", "run.timed-out" -> terminal = true;
                     default -> {
                         // Other authoritative events are intentionally excluded from the safe Gate projection.
@@ -159,14 +138,7 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                 }
             }
         }
-        return new EventFacts(
-                scratchProvisioned,
-                scratchCleanupFailures,
-                executionCalls,
-                maximumAttempts,
-                List.copyOf(clusters),
-                List.copyOf(progress),
-                terminal);
+        return new EventFacts(terminal);
     }
 
     private JsonNode decodeValues(byte[] payload) throws IOException {
@@ -174,17 +146,6 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
         JsonNode decoded = json.readTree(payload);
         JsonNode values = decoded.path("values");
         return values.isObject() ? values : decoded;
-    }
-
-    private static Map<String, Object> safeEvent(String type, JsonNode payload) {
-        LinkedHashMap<String, Object> event = new LinkedHashMap<>();
-        event.put("eventType", type);
-        for (String key : SAFE_EVENT_FIELDS) {
-            if (!payload.has(key)) continue;
-            JsonNode value = payload.get(key);
-            event.put(key, value.isNumber() ? value.numberValue() : value.asText());
-        }
-        return Map.copyOf(event);
     }
 
     private static boolean terminal(String status) {
@@ -207,12 +168,9 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
             boolean diffInspected,
             int scratchProvisionedCount,
             int scratchCleanupFailures,
-            int maximumClusterAttempts,
-            List<Map<String, Object>> failureClusters,
-            List<Map<String, Object>> progress,
             boolean terminalStateObserved) {
         static Evidence unavailable() {
-            return new Evidence("NOT_STARTED", 0, 0, 0, 0, 0, 0, 0, false, false, 0, 0, 0, List.of(), List.of(), false);
+            return new Evidence("NOT_STARTED", 0, 0, 0, 0, 0, 0, 0, false, false, 0, 0, false);
         }
 
         boolean scratchSatisfied() {
@@ -223,14 +181,13 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
     private record RunFacts(
             String status, long inputTokens, long outputTokens, long modelCalls, long toolCalls, long costMinorUnits) {}
 
-    private record ToolFacts(int toolFailures, boolean validationAttempted, boolean diffInspected) {}
-
-    private record EventFacts(
-            int scratchProvisionedCount,
-            int scratchCleanupFailures,
+    private record ToolFacts(
+            int toolFailures,
             int executionCalls,
-            int maximumClusterAttempts,
-            List<Map<String, Object>> failureClusters,
-            List<Map<String, Object>> progress,
-            boolean terminalStateObserved) {}
+            boolean validationAttempted,
+            boolean diffInspected,
+            int scratchProvisionedCount,
+            int scratchCleanupFailures) {}
+
+    private record EventFacts(boolean terminalStateObserved) {}
 }

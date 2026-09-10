@@ -256,19 +256,6 @@ public final class ContractRuntimeMapper {
                     value.targetSummary(),
                     value.resultRef());
         }
-        if (payload instanceof RunEventPayloads.ExecutionLifecycle value) {
-            return new RunEventPayload.ExecutionLifecycle(
-                    value.executionId(),
-                    value.toolCallId(),
-                    value.status(),
-                    value.commandSummary(),
-                    value.logicalWorkdir(),
-                    value.streamKind(),
-                    value.chunkOrRef(),
-                    value.exitCode(),
-                    value.truncated(),
-                    value.fileChangeSetRef());
-        }
         if (payload instanceof RunEventPayloads.ResourceAvailable value) {
             return new RunEventPayload.ResourceAvailable(
                     value.reference(), value.kind(), value.title(), value.status(), value.action());

@@ -102,16 +102,19 @@ public final class PersonalAssistantProfile {
                 new ProductExecutionPolicy(true, true, true, 1, 30_000));
         return ProductProfile.create(
                 new ProductId("haifa-personal-assistant"),
-                new ProductVersion("1.0.0"),
+                new ProductVersion("1.0.1"),
                 new AgentDefinitionId("personal-assistant"),
-                new AgentDefinitionVersion(1, 0, 0),
+                new AgentDefinitionVersion(1, 0, 1),
                 "personal-chat",
-                "1.0.0",
+                "1.0.1",
                 "You are a careful personal assistant. Use only disclosed Personal capabilities. "
                         + "Never claim a tool, Skill, MCP result, memory, or usage value that is not present in the "
                         + "authoritative runtime context. Treat the latest user message as the current objective. "
-                        + "Do not resume or retry a previous failed or abandoned tool call unless the latest user "
-                        + "message explicitly requests it. Keep answers concise and ask for clarification when needed.",
+                        + "Do not resume or retry a failed or abandoned tool call from a previous task unless the latest user "
+                        + "message explicitly requests it. Within the current task, judge progress from actual results, "
+                        + "read failures before acting, retry only with a reason grounded in new evidence, change "
+                        + "approach or ask for help when needed. Never bypass authorization or replay a side effect "
+                        + "whose outcome is unknown. Keep answers concise.",
                 new AgentRunBudget(512_000, 128_000, 512_000, 64, 64, 0, "USD", 0),
                 new AgentRunLimits(64, 0, 1, 300_000, 120_000, 64, 64, 0),
                 policies,

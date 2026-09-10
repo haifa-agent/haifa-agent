@@ -386,12 +386,12 @@ public final class JavaToolAssembly {
 
         private SourceBinding validate(FrozenToolBinding binding) {
             FrozenToolBinding merged = catalog.findByCoordinate(binding.coordinate())
-                    .orElseThrow(() -> new ToolInvocationException("tool coordinate is not in the merged catalog"));
+                    .orElseThrow(() -> new IllegalStateException("tool coordinate is not in the merged catalog"));
             if (!merged.equals(binding)) {
-                throw new ToolInvocationException("tool binding differs from the merged catalog");
+                throw new IllegalStateException("tool binding differs from the merged catalog");
             }
             return Optional.ofNullable(sources.get(binding.coordinate()))
-                    .orElseThrow(() -> new ToolInvocationException("tool source is not available"));
+                    .orElseThrow(() -> new IllegalStateException("tool source is not available"));
         }
     }
 }

@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.core.agent.AgentCapabilityRequirement;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
-import io.haifa.agent.core.checkpoint.CheckpointType;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.ProjectRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -26,8 +25,6 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RunBootstrapper;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
-import io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder;
-import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.skill.api.SkillActivationRequest;
@@ -293,18 +290,6 @@ class BootstrapCapabilityTest {
         assertThat(first).isEqualTo(second);
         assertThat(service.content(activationRequest).instructions()).contains("# Task planning");
         assertThat(store.skillActivations(bootstrap.run().id())).containsExactly(first);
-        var checkpoint = new CheckpointSnapshotBuilder(
-                        () -> "skill-checkpoint",
-                        () -> Instant.parse("2026-07-21T00:00:02Z"),
-                        store,
-                        store,
-                        new InMemoryInteractionPort())
-                .build(bootstrap.run(), 1, List.of(), 0, CheckpointType.AUTOMATIC, 1);
-        assertThat(checkpoint.state().skillActivations()).singleElement().satisfies(reference -> {
-            assertThat(reference.alias()).isEqualTo(first.binding().alias());
-            assertThat(reference.coordinate()).isEqualTo(first.binding().coordinate());
-            assertThat(reference.registrationDigest()).isEqualTo(first.binding().registrationDigest());
-        });
         assertThatThrownBy(() -> service.activate(new SkillActivationRequest(
                         bootstrap.run().id(),
                         CALLER.tenant(),

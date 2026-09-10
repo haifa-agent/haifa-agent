@@ -15,14 +15,12 @@ public record RunBudgetSnapshot(
         long remainingWallTimeMillis,
         long remainingInputTokens,
         long remainingOutputTokens,
-        int failureClusterAttempts,
         int completionRepairAttempts,
         String limitingResource,
         long limitingUsed,
         long limitingLimit,
         int remainingPercent) {
-    public static RunBudgetSnapshot from(
-            AgentRun run, int iteration, int failureClusterAttempts, int completionRepairAttempts, Instant now) {
+    public static RunBudgetSnapshot from(AgentRun run, int iteration, int completionRepairAttempts, Instant now) {
         long model = remaining(run.limits().maxModelCalls(), run.usage().modelCalls());
         long tools = remaining(run.limits().maxToolCalls(), run.usage().toolCalls());
         long iterations = Math.max(0, (long) run.limits().maxIterations() - iteration + 1L);
@@ -104,7 +102,6 @@ public record RunBudgetSnapshot(
                 wall,
                 input,
                 output,
-                Math.max(0, failureClusterAttempts),
                 Math.max(0, completionRepairAttempts),
                 limiting.resource(),
                 limiting.used(),
@@ -132,7 +129,6 @@ public record RunBudgetSnapshot(
         if (remainingOutputTokens >= 0) {
             builder.append(", outputTokens=").append(remainingOutputTokens);
         }
-        builder.append(", failureClusterAttempts=").append(failureClusterAttempts);
         builder.append(", completionRepairAttempts=").append(completionRepairAttempts);
         builder.append(".");
         return builder.toString();
