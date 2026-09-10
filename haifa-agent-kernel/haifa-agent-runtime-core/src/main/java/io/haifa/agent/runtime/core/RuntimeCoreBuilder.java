@@ -10,7 +10,6 @@ import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.DeterministicContextCompressor;
 import io.haifa.agent.context.core.DefaultAgentContextBuilder;
 import io.haifa.agent.context.selection.ContextSelectionPolicy;
-import io.haifa.agent.context.source.ContextSource;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -199,7 +198,6 @@ public final class RuntimeCoreBuilder {
                     && !decision.outputSchemaVersion().isBlank();
     private CompletionPolicy completionPolicy = (run, decision) -> CompletionPolicyResult.accepted();
     private final List<AgentRuntimeMiddleware> additionalMiddleware = new ArrayList<>();
-    private final List<ContextSource> additionalContextSources = new ArrayList<>();
     private String workerId = "local-runtime-" + ids.nextValue();
     private ExecutionOwnershipPort ownership;
     private MemoryRetriever memoryRetriever;
@@ -223,15 +221,6 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder modelAudioResolver(ModelAudioResolver value) {
         modelAudioResolver = Objects.requireNonNull(value, "value must not be null");
-        return this;
-    }
-
-    public RuntimeCoreBuilder registerContextSource(ContextSource source) {
-        Objects.requireNonNull(source, "source must not be null");
-        if (additionalContextSources.stream().anyMatch(existing -> existing.id().equals(source.id()))) {
-            throw new IllegalArgumentException("duplicate context source: " + source.id());
-        }
-        additionalContextSources.add(source);
         return this;
     }
 
@@ -615,8 +604,7 @@ public final class RuntimeCoreBuilder {
                 new DefaultRuntimeContextBuilder(
                         state,
                         middleware,
-                        new DefaultAgentContextBuilder(
-                                new HeuristicTokenEstimator(), new ContextSelectionPolicy(), additionalContextSources),
+                        new DefaultAgentContextBuilder(new HeuristicTokenEstimator(), new ContextSelectionPolicy()),
                         sessionMessageSource,
                         memoryContextSource,
                         skillContentLoader),

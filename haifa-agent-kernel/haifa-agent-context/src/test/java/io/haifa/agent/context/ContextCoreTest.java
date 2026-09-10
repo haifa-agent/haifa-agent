@@ -10,7 +10,6 @@ import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.budget.TokenEstimator;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.core.DefaultAgentContextBuilder;
-import io.haifa.agent.context.item.AssetDerivedTextContent;
 import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.item.ContextItemId;
 import io.haifa.agent.context.item.ContextItemType;
@@ -19,15 +18,12 @@ import io.haifa.agent.context.item.ContextProvenance;
 import io.haifa.agent.context.item.ContextRetention;
 import io.haifa.agent.context.item.ContextRole;
 import io.haifa.agent.context.item.ContextSecurity;
-import io.haifa.agent.context.item.DerivedTextKind;
 import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.context.prompt.PromptComponent;
 import io.haifa.agent.context.prompt.PromptComponentId;
 import io.haifa.agent.context.prompt.PromptLayer;
 import io.haifa.agent.context.prompt.PromptRole;
 import io.haifa.agent.context.selection.ContextSelectionPolicy;
-import io.haifa.agent.context.trace.ContextSelectionDecision;
-import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
@@ -45,8 +41,6 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ContextCoreTest {
-    private static final String SECRET_BODY = "secret-body-must-not-enter-trace";
-
     @Test
     void heuristicEstimatorAccountsForWireWrappersStructuredValuesAndMixedScripts() {
         HeuristicTokenEstimator estimator = new HeuristicTokenEstimator();
@@ -69,65 +63,34 @@ class ContextCoreTest {
     }
 
     @Test
-    void deterministicallySelectsDerivedTextAndTracesDropsWithoutBodies() {
+    void deterministicallySelectsContextAndTracesDropsWithoutBodies() {
         ContextItem required =
-                item("required", "required-hash", 25, ContextPriority.CRITICAL, ContextRetention.MUST_KEEP, true);
+                item("required", "required-hash", 25, ContextPriority.CRITICAL, ContextRetention.MUST_KEEP);
         ContextItem duplicate =
-                item("duplicate", "required-hash", 25, ContextPriority.HIGH, ContextRetention.KEEP_IF_RELEVANT, true);
-        ContextItem blocked = new ContextItem(
-                new ContextItemId("blocked"),
-                ContextItemType.RUNTIME_STATE,
-                new TextContextContent(ContextRole.SYSTEM, SECRET_BODY),
-                5,
-                ContextPriority.HIGH,
-                ContextRetention.KEEP_IF_RELEVANT,
-                new ContextSecurity(Set.of("secret"), false),
-                new ContextProvenance("runtime", "blocked", "1", "blocked-hash"),
-                Map.of());
-        ContextItem asset = new ContextItem(
-                new ContextItemId("asset-ocr"),
-                ContextItemType.ASSET_DERIVED_TEXT,
-                new AssetDerivedTextContent(
-                        new AssetRef("asset-1", "image/png", "scan.png"), DerivedTextKind.OCR, "invoice total 42"),
-                15,
-                ContextPriority.NORMAL,
-                ContextRetention.KEEP_IF_RELEVANT,
-                ContextSecurity.INTERNAL,
-                new ContextProvenance("asset", "asset-1", "ocr-v1", "asset-hash"),
-                Map.of("derivation", "ocr-v1"));
-        ContextItem overflow =
-                item("overflow", "overflow-hash", 40, ContextPriority.LOW, ContextRetention.DROP_FIRST, true);
+                item("duplicate", "required-hash", 25, ContextPriority.HIGH, ContextRetention.KEEP_IF_RELEVANT);
 
-        var result = builder().build(request(List.of(required, duplicate, blocked, asset, overflow), 20, 10));
+        var result = builder().build(request(List.of(required, duplicate), 20, 10));
 
         assertThat(result.context().items())
                 .extracting(value -> value.id().value())
-                .containsExactly("required", "asset-ocr");
-        assertThat(result.context().items().get(1).content()).isInstanceOf(AssetDerivedTextContent.class);
+                .containsExactly("required");
         assertThat(result.context().budget().modelContextWindow()).isEqualTo(100);
         assertThat(result.context().budget().outputReserve()).isEqualTo(20);
         assertThat(result.context().budget().availableInputTokens()).isEqualTo(70);
-        assertThat(result.context().estimatedInputTokens()).isEqualTo(50);
-        assertThat(result.trace().items())
-                .extracting(value -> value.decision())
-                .containsExactly(
-                        ContextSelectionDecision.SELECTED,
-                        ContextSelectionDecision.DROPPED_SECURITY,
-                        ContextSelectionDecision.DROPPED_DUPLICATE,
-                        ContextSelectionDecision.SELECTED,
-                        ContextSelectionDecision.DROPPED_BUDGET);
-        assertThat(result.trace().prompts()).singleElement().satisfies(prompt -> {
-            assertThat(prompt.componentId().value()).isEqualTo("safety");
-            assertThat(prompt.contentHash()).startsWith("sha256:");
-            assertThat(prompt.securityLabels()).containsExactly("internal");
+        assertThat(result.context().estimatedInputTokens()).isEqualTo(35);
+        assertThat(result.report().components()).hasSize(2);
+        assertThat(result.report().components().getFirst()).satisfies(component -> {
+            assertThat(component.id()).isEqualTo("safety");
+            assertThat(component.contentHash()).startsWith("sha256:");
+            assertThat(component.securityLabels()).containsExactly("internal");
         });
-        assertThat(result.trace().toString()).doesNotContain(SECRET_BODY).doesNotContain("invoice total 42");
+        assertThat(result.report().toString()).doesNotContain("required content");
     }
 
     @Test
     void requiredOverflowAndModelWindowTooSmallFailWithTypedReasons() {
         ContextItem tooLarge =
-                item("too-large", "large-hash", 61, ContextPriority.CRITICAL, ContextRetention.MUST_KEEP, true);
+                item("too-large", "large-hash", 61, ContextPriority.CRITICAL, ContextRetention.MUST_KEEP);
         assertThatThrownBy(() -> builder().build(request(List.of(tooLarge), 20, 10)))
                 .isInstanceOf(ContextBuildException.class)
                 .extracting(error -> ((ContextBuildException) error).failure())
@@ -149,7 +112,7 @@ class ContextCoreTest {
     }
 
     private static DefaultAgentContextBuilder builder() {
-        return new DefaultAgentContextBuilder(new FixedEstimator(), new ContextSelectionPolicy(), List.of());
+        return new DefaultAgentContextBuilder(new FixedEstimator(), new ContextSelectionPolicy());
     }
 
     private static ContextBuildRequest request(List<ContextItem> items, int output, int safety) {
@@ -182,12 +145,7 @@ class ContextCoreTest {
     }
 
     private static ContextItem item(
-            String id,
-            String hash,
-            int tokens,
-            ContextPriority priority,
-            ContextRetention retention,
-            boolean providerAllowed) {
+            String id, String hash, int tokens, ContextPriority priority, ContextRetention retention) {
         return new ContextItem(
                 new ContextItemId(id),
                 ContextItemType.RUNTIME_STATE,
@@ -195,9 +153,8 @@ class ContextCoreTest {
                 tokens,
                 priority,
                 retention,
-                new ContextSecurity(Set.of("internal"), providerAllowed),
-                new ContextProvenance("runtime", id, "1", hash),
-                Map.of());
+                new ContextSecurity(Set.of("internal")),
+                new ContextProvenance("runtime", id, "1", hash));
     }
 
     private static ResolvedModelSnapshot snapshot() {

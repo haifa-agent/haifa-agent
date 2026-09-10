@@ -400,15 +400,12 @@ public final class SessionMessageSource {
                 summary.estimatedTokens(),
                 ContextPriority.HIGH,
                 ContextRetention.COMPRESSIBLE,
-                new ContextSecurity(summary.securityLabels(), true),
+                new ContextSecurity(summary.securityLabels()),
                 new ContextProvenance(
                         "conversation-summary",
                         summary.id().value(),
                         Long.toString(summary.version().value()),
-                        summary.sourceHash()),
-                Map.of(
-                        "coveredFrom", summary.coveredFrom().serialize(),
-                        "coveredThrough", summary.coveredThrough().serialize()));
+                        summary.sourceHash()));
     }
 
     private ContextItem groupItem(
@@ -426,16 +423,12 @@ public final class SessionMessageSource {
                 estimate(group, toolCallsByRun),
                 current ? ContextPriority.CRITICAL : ContextPriority.NORMAL,
                 current ? ContextRetention.MUST_KEEP : ContextRetention.COMPRESSIBLE,
-                new ContextSecurity(Set.of("session-visible"), true),
+                new ContextSecurity(Set.of("session-visible")),
                 new ContextProvenance(
                         "session-message-group",
                         first.id().value(),
                         first.cursor().serialize() + ".." + last.cursor().serialize(),
-                        groupHash),
-                Map.of(
-                        "fromCursor", first.cursor().serialize(),
-                        "throughCursor", last.cursor().serialize(),
-                        "messageCount", Integer.toString(group.size())));
+                        groupHash));
     }
 
     private List<List<AgentMessage>> atomicGroups(List<AgentMessage> source) {
