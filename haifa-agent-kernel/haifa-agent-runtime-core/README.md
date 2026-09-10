@@ -46,8 +46,8 @@ Runtime Core 不依赖 Coding 产品类型，也不读取 Coding 表。Final 缺
 默认产品装配最多两次。纠偏计数保存在权威 Session Message metadata，Checkpoint/进程恢复时重建，
 耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 失败，不能伪装为成功。
 
-Client Event 投影只把结构化字段映射为 `DeliveryLifecycle`，用于 Recovering、Verifying 和 Budget
-Threshold 展示；Prompt、Host Path、stderr、Fingerprint 和 Tool 原始参数不进入公共投影。
+Client Event 投影只把结构化字段映射为 `DeliveryLifecycle`，用于中性的 Completion 延迟、产品自有的
+Coding Work Phase 和 Budget Threshold 展示；Prompt、Host Path、stderr、Fingerprint 和 Tool 原始参数不进入公共投影。
 
 测试源码中的 `RuntimeControlTraceReplay` 只验证当前 Completion、预算、交互及执行事件的安全控制字段；不包含旧进展/策略事件的兼容读取。
 
