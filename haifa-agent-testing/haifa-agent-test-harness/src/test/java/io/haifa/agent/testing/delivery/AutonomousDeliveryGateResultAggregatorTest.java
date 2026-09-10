@@ -94,11 +94,11 @@ class AutonomousDeliveryGateResultAggregatorTest {
                 "linux-primary",
                 "linux",
                 "unix-pty",
-                "local-native",
-                "deny",
+                "host-guarded",
+                "allow",
                 "auto",
-                "LOCAL_NATIVE",
-                "posix-local-native-v1",
+                "TRUSTED_HOST_ONLY",
+                "trusted-host-default-v1",
                 1);
     }
 

@@ -18,11 +18,10 @@ class DeliveryHostProfileTest {
     Path temporary;
 
     @Test
-    void trustedHostDefaultsAlignExecutionSemanticsWhileStrictProfilesRemainExplicit() {
+    void trustedHostDefaultsAlignExecutionSemanticsAcrossEveryPlatform() {
         DeliveryHostProfile mac = DeliveryHostProfile.require("trusted-host-default-v1", "Mac OS X");
         DeliveryHostProfile linux = DeliveryHostProfile.require("trusted-host-default-v1", "Linux");
         DeliveryHostProfile windows = DeliveryHostProfile.require("trusted-host-default-v1", "Windows 11");
-        DeliveryHostProfile strict = DeliveryHostProfile.require("posix-local-native-v1", "Linux");
         DeliveryHostProfile windowsConpty = DeliveryHostProfile.require("windows-host-trusted-v1", "Windows 11");
 
         assertEquals("macos", mac.platform());
@@ -40,14 +39,15 @@ class DeliveryHostProfileTest {
         assertEquals("auto", windows.shell());
         assertEquals("TRUSTED_HOST_ONLY", windows.isolationAssurance());
         assertEquals("mvnw.cmd", windows.mavenWrapperName());
-        assertEquals("local-native", strict.executionProvider());
-        assertEquals("deny", strict.networkPolicy());
-        assertEquals("LOCAL_NATIVE", strict.isolationAssurance());
+        assertEquals("host-guarded", windowsConpty.executionProvider());
+        assertEquals("TRUSTED_HOST_ONLY", windowsConpty.isolationAssurance());
         assertEquals("powershell", windowsConpty.shell());
         assertTrue(linux.terminalDriverSupported());
         assertTrue(windows.terminalDriverSupported());
         assertThrows(
                 IllegalArgumentException.class, () -> DeliveryHostProfile.require("windows-host-trusted-v1", "Linux"));
+        assertThrows(
+                IllegalArgumentException.class, () -> DeliveryHostProfile.require("posix-local-native-v1", "Linux"));
     }
 
     @Test

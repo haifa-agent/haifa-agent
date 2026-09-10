@@ -8,88 +8,60 @@ import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.sandbox.host.HostShell;
-import io.haifa.agent.sandbox.localnative.LocalNativeSandboxProvider;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.List;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 class CliExecutionPlatformTest {
     @Test
-    void defaultsFreezeTrustedHostAllowIndependentOfHostOperatingSystem() {
+    void defaultsFreezeTrustedHostExecutionIndependentOfHostOperatingSystem() {
         CliConfiguration.Execution configuration = CliConfiguration.defaults().execution();
-        HostGuardedSandboxProvider provider = hostProvider(configuration);
+        HostGuardedSandboxProvider provider = hostProvider();
 
         var profile = CliExecutionPlatform.profile(configuration, provider);
         var preflight = provider.preflight(profile);
 
         assertThat(configuration.provider()).isEqualTo("host-guarded");
-        assertThat(configuration.network()).isEqualTo("allow");
         assertThat(profile.providerId()).isEqualTo("host-guarded");
-        assertThat(profile.networkPolicy()).isEqualTo(NetworkPolicy.ALLOW);
-        assertThat(profile.requiredCapabilities().networkIsolation()).isFalse();
+        assertThat(preflight.capabilities().processTreeTermination()).isTrue();
         assertThat(preflight.managedProcessSupported()).isTrue();
         assertThat(profile.allowedExecutables()).containsExactly("git");
         assertThat(configuration.inheritEnvironment()).containsExactly("*");
         assertThat(profile.allowedEnvironmentNames()).anyMatch(name -> name.equalsIgnoreCase("PATH"));
         assertThat(CliExecutionPlatform.securitySummary(profile, preflight))
                 .contains(
-                        "provider=host-guarded (trusted local development)",
-                        "network=ALLOW",
+                        "provider=host-guarded (controlled host execution, trusted local development)",
+                        "network=host",
                         "host loopback/LAN/internet may be reachable",
                         "current OS user",
-                        "workspace/outside files/network/CPU/memory/kernel are not strongly isolated",
+                        "workspace/outside files/network/CPU/memory/kernel are not isolated",
                         "approval is not isolation",
                         "profile=")
                 .doesNotContain("fallback", "explicit trusted compatibility");
     }
 
     @Test
-    void windowsLocalNativeDiagnosticRequiresExplicitTrustedHostChoiceWithoutFallback() {
-        Assumptions.assumeTrue(isWindows());
-        CliConfiguration.Execution configuration = localNativeStrictConfiguration();
-        LocalNativeSandboxProvider provider = localProvider(configuration);
-        var profile = CliExecutionPlatform.profile(configuration, provider);
-
-        assertThatThrownBy(() -> {
-                    try {
-                        provider.preflight(profile);
-                    } catch (SandboxException exception) {
-                        throw CliExecutionPlatform.diagnostic(configuration, exception);
-                    }
-                })
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("SANDBOX_ADAPTER_UNAVAILABLE")
-                .hasMessageContaining("explicitly trusted workspace")
-                .hasMessageContaining("host-guarded");
-        assertThat(profile.providerId()).isEqualTo("local-native");
-    }
-
-    @Test
-    void explicitLocalNativeStrictProfileDiffersFromDefaultHostWithoutFallback() {
+    void rejectsAnyProviderOtherThanTheSingleHostImplementation() {
         CliConfiguration.Execution defaults = CliConfiguration.defaults().execution();
-        CliConfiguration.Execution localConfiguration = localNativeStrictConfiguration();
-        HostGuardedSandboxProvider host = hostProvider(defaults);
 
-        var hostProfile = CliExecutionPlatform.profile(defaults, host);
-        var localProfile = CliExecutionPlatform.profile(localConfiguration, localProvider(localConfiguration));
-
-        assertThat(hostProfile.providerId()).isEqualTo("host-guarded");
-        assertThat(hostProfile.networkPolicy()).isEqualTo(NetworkPolicy.ALLOW);
-        assertThat(host.preflight(hostProfile).managedProcessSupported()).isTrue();
-        assertThat(localProfile.providerId()).isEqualTo("local-native");
-        assertThat(localProfile.networkPolicy()).isEqualTo(NetworkPolicy.DENY);
-        assertThat(localProfile.requiredCapabilities().networkIsolation()).isTrue();
-        assertThat(localProfile.allowedExecutables()).containsExactly("git");
-        assertThat(hostProfile.contentDigest()).isNotEqualTo(localProfile.contentDigest());
+        assertThatThrownBy(() -> new CliConfiguration.Execution(
+                        "local-native",
+                        defaults.shell(),
+                        defaults.shellPath(),
+                        defaults.defaultTimeout(),
+                        defaults.maximumTimeout(),
+                        defaults.maxOutputBytes(),
+                        defaults.maxOutputLines(),
+                        defaults.maxProcesses(),
+                        defaults.inheritEnvironment()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("execution.provider is unsupported");
     }
 
     @Test
@@ -117,7 +89,7 @@ class CliExecutionPlatformTest {
                 .doesNotContain("<workspace>", "\u001B", "\u0000");
     }
 
-    private static HostGuardedSandboxProvider hostProvider(CliConfiguration.Execution configuration) {
+    private static HostGuardedSandboxProvider hostProvider() {
         return new HostGuardedSandboxProvider(
                 new InMemoryWorkspaceStore(),
                 new InMemoryWorkspaceBindingStore(),
@@ -125,38 +97,5 @@ class CliExecutionPlatformTest {
                 () -> "session",
                 () -> Instant.parse("2026-07-26T00:00:00Z"),
                 HostShell.auto());
-    }
-
-    private static CliConfiguration.Execution localNativeStrictConfiguration() {
-        CliConfiguration.Execution defaults = CliConfiguration.defaults().execution();
-        return new CliConfiguration.Execution(
-                "local-native",
-                "deny",
-                defaults.shell(),
-                defaults.shellPath(),
-                defaults.defaultTimeout(),
-                defaults.maximumTimeout(),
-                defaults.maxOutputBytes(),
-                defaults.maxOutputLines(),
-                defaults.maxProcesses(),
-                defaults.inheritEnvironment(),
-                List.of());
-    }
-
-    private static LocalNativeSandboxProvider localProvider(CliConfiguration.Execution configuration) {
-        HostShell shell = HostShell.auto();
-        return new LocalNativeSandboxProvider(
-                new InMemoryWorkspaceStore(),
-                new InMemoryWorkspaceBindingStore(),
-                new HostWorkspaceLocationStore(),
-                () -> "session",
-                () -> Instant.parse("2026-07-26T00:00:00Z"),
-                CliExecutionPlatform.localConfiguration(configuration, shell));
-    }
-
-    private static boolean isWindows() {
-        return System.getProperty("os.name", "")
-                .toLowerCase(java.util.Locale.ROOT)
-                .contains("win");
     }
 }

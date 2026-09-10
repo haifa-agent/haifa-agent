@@ -45,7 +45,7 @@ class ExecutionArchitectureTest {
                 .importPackages("io.haifa.agent");
         noClasses()
                 .that()
-                .resideOutsideOfPackages("io.haifa.agent.sandbox.host..", "io.haifa.agent.sandbox.localnative..")
+                .resideOutsideOfPackages("io.haifa.agent.sandbox.host..")
                 .should()
                 .dependOnClassesThat()
                 .haveFullyQualifiedName("java.lang.ProcessBuilder")
@@ -64,7 +64,7 @@ class ExecutionArchitectureTest {
                 .check(classes);
         noClasses()
                 .that()
-                .resideOutsideOfPackages("io.haifa.agent.sandbox.host..", "io.haifa.agent.sandbox.localnative..")
+                .resideOutsideOfPackages("io.haifa.agent.sandbox.host..")
                 .should()
                 .dependOnClassesThat()
                 .haveFullyQualifiedName("java.lang.Runtime")

@@ -21,7 +21,6 @@ class ExecutionHostArchitectureTest {
                         "io.haifa.agent.application..",
                         "io.haifa.agent.personalassistant..",
                         "io.haifa.agent.sandbox.host..",
-                        "io.haifa.agent.sandbox.localnative..",
                         "org.springframework..",
                         "jakarta.persistence..")
                 .check(classes);

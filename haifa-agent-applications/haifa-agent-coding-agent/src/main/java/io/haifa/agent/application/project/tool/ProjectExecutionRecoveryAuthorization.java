@@ -12,7 +12,6 @@ import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import java.util.List;
 import java.util.Map;
@@ -62,9 +61,7 @@ public final class ProjectExecutionRecoveryAuthorization {
     public static boolean isRecoveryProfileConfigured(SandboxProfile normal, SandboxProfile recovery) {
         Objects.requireNonNull(normal, "normalProfile must not be null");
         Objects.requireNonNull(recovery, "recoveryProfile must not be null");
-        return !normal.equals(recovery)
-                && recovery.networkPolicy() == NetworkPolicy.ALLOW
-                && "host-guarded".equals(recovery.providerId());
+        return !normal.equals(recovery) && "host-guarded".equals(recovery.providerId());
     }
 
     private boolean eligibleSource(

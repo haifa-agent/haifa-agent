@@ -47,11 +47,9 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.sandbox.api.SandboxExecution;
-import io.haifa.agent.sandbox.api.SandboxFilesystemPolicy;
 import io.haifa.agent.sandbox.api.SandboxManagedProcess;
 import io.haifa.agent.sandbox.api.SandboxProcessResult;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
@@ -59,7 +57,6 @@ import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxProvider;
 import io.haifa.agent.sandbox.api.SandboxSession;
 import io.haifa.agent.sandbox.api.SandboxSessionId;
-import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -193,7 +190,7 @@ class ExecutionCoreTest {
 
             @Override
             public SandboxCapabilities capabilities() {
-                return new SandboxCapabilities(true, true, true, true, true);
+                return new SandboxCapabilities(true);
             }
 
             @Override
@@ -491,7 +488,7 @@ class ExecutionCoreTest {
     }
 
     @Test
-    void rejectsMissingProviderGuaranteesBeforeOpeningTheSandbox() {
+    void rejectsStaleProviderConfigurationBeforeOpeningTheSandbox() {
         Fixture fixture = fixture();
         AtomicInteger opens = new AtomicInteger();
         SandboxProvider provider = new SandboxProvider() {
@@ -502,7 +499,7 @@ class ExecutionCoreTest {
 
             @Override
             public SandboxCapabilities capabilities() {
-                return new SandboxCapabilities(true, false, false, false, false);
+                return new SandboxCapabilities(true);
             }
 
             @Override
@@ -514,13 +511,10 @@ class ExecutionCoreTest {
         SandboxProfile profile = new SandboxProfile(
                 new SandboxProfileRef("test", "1"),
                 provider.providerId(),
-                provider.configurationDigest(),
+                io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("stale-configuration")),
                 Set.of("fake"),
                 Set.of("SECRET"),
-                false,
-                NetworkPolicy.ALLOW,
-                new SandboxFilesystemPolicy(SandboxWorkspaceAccess.READ_WRITE, true, Set.of()),
-                new SandboxCapabilities(true, true, false, false, false));
+                false);
         DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {}, profile);
 
         assertThatThrownBy(() -> broker.execute(fixture.request(
@@ -600,7 +594,7 @@ class ExecutionCoreTest {
 
             @Override
             public SandboxCapabilities capabilities() {
-                return new SandboxCapabilities(true, true, true, true, true);
+                return new SandboxCapabilities(true);
             }
 
             @Override
@@ -713,7 +707,7 @@ class ExecutionCoreTest {
 
             @Override
             public SandboxCapabilities capabilities() {
-                return new SandboxCapabilities(true, true, true, true, true);
+                return new SandboxCapabilities(true);
             }
 
             @Override
@@ -772,10 +766,7 @@ class ExecutionCoreTest {
                     provider.configurationDigest(),
                     Set.of("fake"),
                     Set.of("SECRET"),
-                    false,
-                    NetworkPolicy.ALLOW,
-                    io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
-                    new SandboxCapabilities(true, false, false, false, false));
+                    false);
         }
 
         DefaultExecutionBroker broker(SandboxProvider provider, ExecutionPolicy policy, SandboxProfile profile) {
