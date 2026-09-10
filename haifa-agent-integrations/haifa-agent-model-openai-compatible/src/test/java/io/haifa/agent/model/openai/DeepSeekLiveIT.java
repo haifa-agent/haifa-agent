@@ -85,9 +85,7 @@ class DeepSeekLiveIT {
     }
 
     private static String requireLiveExecution() {
-        boolean enabled = "true".equalsIgnoreCase(System.getenv("HAIFA_DEEPSEEK_LIVE_TEST"))
-                || "true".equalsIgnoreCase(System.getenv("HAIFA_SUITE_EXECUTION"));
-        Assumptions.assumeTrue(enabled);
+        Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("HAIFA_DEEPSEEK_LIVE_TEST")));
         String apiKey = System.getenv("DEEPSEEK_API_KEY");
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("DEEPSEEK_API_KEY is required for explicit live execution");

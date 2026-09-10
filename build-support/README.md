@@ -28,7 +28,7 @@
 当前慢测集合包含：
 `PersonalAssistantRestartTest`、`PersonalAssistantWebFluxTest`、`SqliteRuntimeRecoveryTest`、
 `LocalCodingAgentTest`、`LocalCodingProductAssemblyTest`、`ProjectPersistenceAssemblyTest`、
-`CriticalPathSuiteApplicationTest`、`RepositoryRevisionTest` 和 `ProcessTreeCleanupTest`；
+`RepositoryRevisionTest` 和 `ProcessTreeCleanupTest`；
 它们不会进入 L1/L2 的普通测试、L3 `ci-fast` 或调用 `ci-fast` 的 Fast CI。
 全仓 40 个 `*ArchitectureTest` 统一标记为 `@Tag("architecture")`，由 L3 `ci-fast` 门禁与 CI 自动放行全量校验，也可通过 `-Parchitecture-tests` 独立执行。
 测试源码和断言全部保留，慢测使用 `slow-tests` Profile 显式运行：
