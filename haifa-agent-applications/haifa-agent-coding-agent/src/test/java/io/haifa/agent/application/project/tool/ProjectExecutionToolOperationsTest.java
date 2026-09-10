@@ -12,12 +12,21 @@ import io.haifa.agent.application.project.product.coding.verification.CodingVeri
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationSource;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationTrigger;
+import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.step.AgentStep;
+import io.haifa.agent.core.step.AgentStepId;
+import io.haifa.agent.core.step.AgentStepType;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
@@ -38,6 +47,16 @@ import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.runtime.api.InteractionRequestId;
+import io.haifa.agent.runtime.api.InteractionResponse;
+import io.haifa.agent.runtime.api.InteractionResponseId;
+import io.haifa.agent.runtime.api.InteractionResponseType;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
+import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
+import io.haifa.agent.runtime.core.interaction.InteractionRequest;
+import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
+import io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys;
+import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
@@ -1337,6 +1356,108 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void selectsRecoveryProfileOnlyForAppliedExactDeterministicSuccessor() {
+        InMemoryRuntimeStore state = new InMemoryRuntimeStore();
+        InMemoryInteractionPort interactions = new InMemoryInteractionPort();
+        ProjectExecutionToolOperations normal = operations(new StubBroker() {}, 1024, 100);
+        ProjectExecutionToolOperations recovery = operations(new StubBroker() {}, 2048, 200);
+        var selector = new ProjectExecutionRecoverySelector(
+                new ProjectExecutionRecoveryAuthorization(state, interactions),
+                normal,
+                recovery,
+                normalExecutionProfile(),
+                executionProfile());
+        ToolInvocationRequest originalInvocation =
+                invocation(Map.of("command", "git ls-remote origin", "timeoutMillis", 30_000L), () -> false);
+        ToolCall source = failedRecoverySource(originalInvocation, "NETWORK_PERMISSION_REQUIRED");
+        state.appendToolCall(source);
+        ToolApprovalTarget target = recoveryTarget(source);
+        applyRecoveryInteraction(interactions, source, target);
+        var keys = ExecutionRecoveryKeys.successor(source.runId(), source.id(), target.argumentsDigest());
+        ToolInvocationRequest successor =
+                invocationWithIdentity(originalInvocation, keys, originalInvocation.arguments());
+
+        assertThatThrownBy(() -> selector.select(successor)).isInstanceOf(SecurityException.class);
+        persistRecoverySuccessor(state, source, keys);
+        assertThat(selector.select(successor)).isSameAs(recovery);
+        assertThat(selector.select(originalInvocation)).isSameAs(normal);
+
+        ToolArguments changed = new ToolArguments(
+                originalInvocation.arguments().schemaId(),
+                originalInvocation.arguments().schemaVersion(),
+                executionArguments(Map.of("command", "git fetch origin", "timeoutMillis", 30_000L)));
+        assertThatThrownBy(() -> selector.select(invocationWithIdentity(originalInvocation, keys, changed)))
+                .isInstanceOf(SecurityException.class);
+    }
+
+    @Test
+    void rejectsForgedOrIneligibleRecoveryCorrelation() {
+        InMemoryRuntimeStore state = new InMemoryRuntimeStore();
+        InMemoryInteractionPort interactions = new InMemoryInteractionPort();
+        ProjectExecutionToolOperations normal = operations(new StubBroker() {}, 1024, 100);
+        ProjectExecutionToolOperations recovery = operations(new StubBroker() {}, 2048, 200);
+        var selector = new ProjectExecutionRecoverySelector(
+                new ProjectExecutionRecoveryAuthorization(state, interactions),
+                normal,
+                recovery,
+                normalExecutionProfile(),
+                executionProfile());
+        ToolInvocationRequest base = invocation(Map.of("command", "git clean -fd"), () -> false);
+        ToolCall source = failedRecoverySource(base, "NETWORK_PERMISSION_REQUIRED");
+        state.appendToolCall(source);
+        ToolApprovalTarget target = recoveryTarget(source);
+        applyRecoveryInteraction(interactions, source, target);
+        var keys = ExecutionRecoveryKeys.successor(source.runId(), source.id(), target.argumentsDigest());
+
+        assertThatThrownBy(() -> selector.select(invocationWithIdentity(base, keys, base.arguments())))
+                .isInstanceOf(SecurityException.class);
+
+        var forged = new ExecutionRecoveryKeys.Successor(
+                new ToolCallId("execution-recovery-tool:v1:" + "0".repeat(64)),
+                keys.stepId(),
+                keys.providerCorrelationId(),
+                keys.idempotencyKey());
+        assertThatThrownBy(() -> selector.select(invocationWithIdentity(base, forged, base.arguments())))
+                .isInstanceOf(SecurityException.class);
+
+        InMemoryRuntimeStore genericState = new InMemoryRuntimeStore();
+        InMemoryInteractionPort genericInteractions = new InMemoryInteractionPort();
+        var genericSelector = new ProjectExecutionRecoverySelector(
+                new ProjectExecutionRecoveryAuthorization(genericState, genericInteractions),
+                normal,
+                recovery,
+                normalExecutionProfile(),
+                executionProfile());
+        ToolCall genericHostFailure = failedRecoverySource(base, "HOST_AUTHENTICATION_UNAVAILABLE");
+        genericState.appendToolCall(genericHostFailure);
+        ToolApprovalTarget genericTarget = recoveryTarget(genericHostFailure);
+        applyRecoveryInteraction(genericInteractions, genericHostFailure, genericTarget);
+        var genericKeys = ExecutionRecoveryKeys.successor(
+                genericHostFailure.runId(), genericHostFailure.id(), genericTarget.argumentsDigest());
+        assertThatThrownBy(() -> genericSelector.select(invocationWithIdentity(base, genericKeys, base.arguments())))
+                .isInstanceOf(SecurityException.class);
+    }
+
+    @Test
+    void rejectedRecoveryInteractionNeverAuthorizesAPersistedSuccessor() {
+        InMemoryRuntimeStore state = new InMemoryRuntimeStore();
+        InMemoryInteractionPort interactions = new InMemoryInteractionPort();
+        var authorization = new ProjectExecutionRecoveryAuthorization(state, interactions);
+        ToolInvocationRequest base =
+                invocation(Map.of("command", "git ls-remote origin", "timeoutMillis", 30_000L), () -> false);
+        ToolCall source = failedRecoverySource(base, "NETWORK_PERMISSION_REQUIRED");
+        state.appendToolCall(source);
+        ToolApprovalTarget target = recoveryTarget(source);
+        applyRecoveryInteraction(interactions, source, target, InteractionResponseType.REJECT);
+        var keys = ExecutionRecoveryKeys.successor(source.runId(), source.id(), target.argumentsDigest());
+        persistRecoverySuccessor(state, source, keys);
+
+        assertThat(authorization.isVerifiedSuccessor(
+                        source.runId(), keys.toolCallId(), keys.idempotencyKey().value(), source.arguments()))
+                .isFalse();
+    }
+
+    @Test
     void preservesStableSandboxFailureCodeAsFailedToolResult() {
         ExecutionBroker broker = new StubBroker() {
             @Override
@@ -1454,8 +1575,110 @@ class ProjectExecutionToolOperationsTest {
                 NOW.plusSeconds(30),
                 Optional.of("execution-key"),
                 cancellation,
-                List.of(),
+                Map.of(),
                 observer);
+    }
+
+    private static ToolCall failedRecoverySource(ToolInvocationRequest invocation, String failureCode) {
+        ToolCall call = new ToolCall(
+                new ToolCallId("source-tool-call"),
+                invocation.runId(),
+                new AgentStepId("source-step"),
+                new ProviderToolCallCorrelationId("source-correlation"),
+                new RuntimeIdempotencyKey("source-idempotency"),
+                "execution_run",
+                invocation.binding().definition().version().value(),
+                invocation.arguments(),
+                NOW.minusSeconds(2));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(NOW.minusSeconds(1));
+        call.fail(
+                new ToolExecutionError(new AgentError(
+                        AgentErrorCode.TOOL_INVOCATION_FAILED,
+                        Map.of("failureCode", failureCode, "dispatchState", "NOT_DISPATCHED"),
+                        "recovery-source-error",
+                        NOW)),
+                NOW);
+        return call;
+    }
+
+    private static ToolApprovalTarget recoveryTarget(ToolCall source) {
+        return new ToolApprovalTarget(
+                source.id(),
+                "haifa-project:execution.run:2.0.0:test",
+                "sha256:" + "1".repeat(64),
+                "sha256:" + "2".repeat(64),
+                "tenant-1:user:operator",
+                "sha256:" + "3".repeat(64));
+    }
+
+    private static void applyRecoveryInteraction(
+            InMemoryInteractionPort interactions, ToolCall source, ToolApprovalTarget target) {
+        applyRecoveryInteraction(interactions, source, target, InteractionResponseType.APPROVE);
+    }
+
+    private static void applyRecoveryInteraction(
+            InMemoryInteractionPort interactions,
+            ToolCall source,
+            ToolApprovalTarget target,
+            InteractionResponseType responseType) {
+        InteractionRequestId requestId = ExecutionRecoveryKeys.requestId(source.runId(), source.id());
+        interactions.create(new InteractionRequest(
+                requestId,
+                source.runId(),
+                new TenantRef("tenant-1"),
+                new PrincipalRef("operator", "user"),
+                "execution-recovery",
+                "Approve one exact retry.",
+                true,
+                target,
+                NOW,
+                Optional.empty()));
+        interactions.respond(
+                new InteractionResponse(
+                        new InteractionResponseId("response-1"),
+                        requestId,
+                        source.runId(),
+                        responseType,
+                        List.of(),
+                        "response-key",
+                        NOW),
+                new RuntimeCallerContext(new TenantRef("tenant-1"), new PrincipalRef("operator", "user")),
+                NOW);
+        interactions.markResolutionApplied(requestId);
+    }
+
+    private static void persistRecoverySuccessor(
+            InMemoryRuntimeStore state, ToolCall source, ExecutionRecoveryKeys.Successor keys) {
+        state.appendStep(new AgentStep(
+                keys.stepId(), source.runId(), source.stepId(), null, AgentStepType.TOOL_EXECUTION, 1, NOW));
+        state.appendToolCall(new ToolCall(
+                keys.toolCallId(),
+                source.runId(),
+                keys.stepId(),
+                keys.providerCorrelationId(),
+                keys.idempotencyKey(),
+                source.toolName(),
+                source.toolVersion(),
+                source.arguments(),
+                NOW));
+    }
+
+    private static ToolInvocationRequest invocationWithIdentity(
+            ToolInvocationRequest base, ExecutionRecoveryKeys.Successor keys, ToolArguments arguments) {
+        return new ToolInvocationRequest(
+                base.binding(),
+                keys.toolCallId(),
+                base.runId(),
+                base.tenant(),
+                base.principal(),
+                arguments,
+                base.deadline(),
+                Optional.of(keys.idempotencyKey().value()),
+                base.cancellation(),
+                base.credentials(),
+                base.observer());
     }
 
     private static RunWorkspaceAccess access() {
@@ -1476,23 +1699,18 @@ class ProjectExecutionToolOperationsTest {
                 io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("test")),
                 Set.of(),
                 Set.of(),
-                true,
-                io.haifa.agent.sandbox.api.NetworkPolicy.ALLOW,
-                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
-                new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, false, false, false));
+                true);
     }
 
-    private static io.haifa.agent.sandbox.api.SandboxProfile deniedExecutionProfile() {
+    /** A frozen normal profile that is distinct from the recovery profile. */
+    private static io.haifa.agent.sandbox.api.SandboxProfile normalExecutionProfile() {
         return new io.haifa.agent.sandbox.api.SandboxProfile(
-                new SandboxProfileRef("shell-denied", "1"),
-                "local-native",
-                io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("denied")),
+                new SandboxProfileRef("shell-normal", "1"),
+                "host-guarded",
+                io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("normal")),
                 Set.of(),
                 Set.of(),
-                true,
-                io.haifa.agent.sandbox.api.NetworkPolicy.DENY,
-                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
-                new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, true, false, false));
+                true);
     }
 
     private static ProcessOutputChunk chunk(String value) {
