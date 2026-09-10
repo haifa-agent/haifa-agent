@@ -29,7 +29,6 @@ import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
-import io.haifa.agent.runtime.core.checkpoint.MemoryCheckpointValidator;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
@@ -129,27 +128,18 @@ class MemoryRuntimeIntegrationTest {
         assertThat(modelRequest.get().messages()).anySatisfy(message -> assertThat(message.content())
                 .contains("[memory " + memory.id().value() + "@1]")
                 .contains("remembered build preference is Maven"));
-        var checkpoint = runtimeStore
-                .state(runtimeStore.latest(accepted.runId()).orElseThrow().id().value())
-                .orElseThrow();
-        assertThat(checkpoint.selectedMemories()).singleElement().satisfies(reference -> {
-            assertThat(reference.id()).isEqualTo(memory.id());
-            assertThat(reference.version()).isEqualTo(memory.version());
-            assertThat(reference.scope()).isEqualTo(scope);
-        });
-        assertThat(checkpoint.memoryRetrievalPolicyVersion()).isEqualTo("memory-governance-v1");
-        assertThat(checkpoint.memoryQueryDigest()).startsWith("sha256:");
-        assertThat(checkpoint.toString()).doesNotContain("remembered build preference is Maven");
+        assertThat(runtimeStore.latest(accepted.runId())).isEmpty();
+        assertThat(runtimeStore.memorySelection(accepted.runId()).orElseThrow().memories())
+                .singleElement()
+                .satisfies(reference -> assertThat(reference.id()).isEqualTo(memory.id()));
         assertThat(traces).allSatisfy(trace -> assertThat(trace.safeAttributes().toString())
                 .doesNotContain("remembered build preference is Maven"));
 
         runtimeStore.redactMessage(sourceMessage.id());
         assertThat(memories.find(memory.id(), memory.version()).orElseThrow().status())
                 .isEqualTo(MemoryStatus.INVALIDATED);
-        new MemoryCheckpointValidator(retriever, memories, () -> NOW)
-                .validate(runtimeStore.find(accepted.runId()).orElseThrow(), checkpoint);
-        assertThat(memories.auditEvents())
-                .anySatisfy(event -> assertThat(event.operation()).isEqualTo("checkpoint.memory-selection-changed"));
+        assertThat(retriever.findAuthorized(memory.id(), memory.version(), tenant, owner, NOW))
+                .isEmpty();
         assertThat(memories.auditEvents()).allSatisfy(event -> assertThat(event.toString())
                 .doesNotContain("remembered build preference is Maven"));
     }

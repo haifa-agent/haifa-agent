@@ -358,7 +358,7 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void completionRepairAttemptsSurviveProcessRecovery() {
+    void interruptedCompletionRepairDoesNotAutomaticallyConsumeMoreBudget() {
         AtomicBoolean firstAttemptOwned = new AtomicBoolean(true);
         AtomicInteger calls = new AtomicInteger();
         AgentChatModel interrupted = request -> {
@@ -380,7 +380,9 @@ class RuntimeCoreHardeningTest {
         assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
         firstAttemptOwned.set(false);
         fixture.runtime.recover(accepted.runId());
+        assertThat(fixture.scheduler.pending()).isZero();
         fixture.scheduler.runAll();
+        assertThat(calls).hasValue(2);
 
         assertThat(fixture.store
                         .find(accepted.runId())
@@ -388,12 +390,12 @@ class RuntimeCoreHardeningTest {
                         .error()
                         .orElseThrow()
                         .code())
-                .isEqualTo(AgentErrorCode.COMPLETION_REPAIR_EXHAUSTED);
+                .isEqualTo(AgentErrorCode.RUNTIME_EXECUTION_INTERRUPTED);
         assertThat(fixture.store.messages(accepted.runId()))
                 .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
                 .extracting(message -> message.metadata().get("completionRepairAttempt"))
-                .containsExactly(1, 2);
-        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
+                .containsExactly(1);
+        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(1);
     }
 
     @Test
@@ -478,19 +480,9 @@ class RuntimeCoreHardeningTest {
         var selected = fixture.store.latest(accepted.runId()).orElseThrow();
         int expectedIteration =
                 fixture.store.state(selected.id().value()).orElseThrow().nextIteration();
-        var snapshotBuilder = new io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder(
-                () -> "later-checkpoint",
-                () -> NOW,
-                fixture.store,
-                fixture.store,
-                new io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort());
-        var later = snapshotBuilder.build(
-                suspended, expectedIteration + 3, 0, CheckpointType.AUTOMATIC, selected.sequence() + 1);
-        fixture.store.append(later.checkpoint(), later.state());
         var resume = new ResumeAgentRunRequest(
                 "resume",
                 accepted.runId(),
-                Optional.of(selected.id()),
                 java.util.OptionalLong.empty(),
                 List.of(new TextPart("continue with the frozen configuration", "plain")));
         denyResume.set(true);
@@ -504,21 +496,6 @@ class RuntimeCoreHardeningTest {
                 .isEmpty();
 
         denyResume.set(false);
-        var invalidCheckpoint = new ResumeAgentRunRequest(
-                "invalid-checkpoint",
-                accepted.runId(),
-                Optional.of(new io.haifa.agent.core.checkpoint.CheckpointId("missing-checkpoint")),
-                java.util.OptionalLong.empty(),
-                resume.inputs());
-        assertThatThrownBy(() -> fixture.runtime.resume(invalidCheckpoint))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThat(fixture.store.messages(accepted.runId())).isEqualTo(messagesBefore);
-        assertThat(suspended.version()).isEqualTo(suspendedVersion);
-        assertThat(suspended.status()).isEqualTo(AgentRunStatus.SUSPENDED);
-        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(1);
-        assertThat(fixture.scheduler.pending()).isZero();
-        assertThat(fixture.store.findRun("local|user|local-user", "resume", "invalid-checkpoint"))
-                .isEmpty();
         validations.set(0);
         fixture.runtime.resume(resume);
         assertThat(validations).hasValue(1);
@@ -770,7 +747,7 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void firstPotentialWorkspaceMutationCapturesBaselineBeforeToolJournalDispatch() {
+    void workspaceToolsDoNotTriggerRuntimeBaselineSnapshots() {
         ToolRequest write = toolRequest(
                 "workspace-write",
                 "workspace-write",
@@ -798,17 +775,9 @@ class RuntimeCoreHardeningTest {
         var baseline = mutating.store.checkpointsFor(accepted.runId()).stream()
                 .filter(checkpoint -> checkpoint.type() == CheckpointType.WORKSPACE_SNAPSHOT)
                 .toList();
-        assertThat(baseline).singleElement().satisfies(checkpoint -> assertThat(mutating.store
-                        .state(checkpoint.id().value())
-                        .orElseThrow()
-                        .toolCalls())
-                .isEmpty());
+        assertThat(baseline).isEmpty();
         assertThat(mutating.store.eventsFor(accepted.runId()))
-                .filteredOn(event -> event.type().equals("workspace.baseline-checkpoint-captured"))
-                .singleElement()
-                .satisfies(event -> assertThat(event.data())
-                        .containsEntry("schemaVersion", "workspace-checkpoint/1")
-                        .containsEntry("checkpointRef", baseline.getFirst().id().value()));
+                .noneMatch(event -> event.type().equals("workspace.baseline-checkpoint-captured"));
 
         ToolRequest read = toolRequest(
                 "workspace-read",
@@ -913,7 +882,7 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void processRecoveryContinuesWithoutRebuildingTaskStrategy() {
+    void processInterruptionStopsWithoutRebuildingTaskStrategy() {
         AtomicBoolean firstAttemptOwned = new AtomicBoolean(true);
         AtomicInteger modelCalls = new AtomicInteger();
         Queue<ToolCallDecision> decisions = new ArrayDeque<>(List.of(
@@ -954,9 +923,9 @@ class RuntimeCoreHardeningTest {
         fixture.runtime.recover(accepted.runId());
         fixture.scheduler.runAll();
 
-        assertThat(modelCalls).hasValue(11);
+        assertThat(modelCalls).hasValue(6);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.COMPLETED);
+                .isEqualTo(AgentRunStatus.FAILED);
         assertThat(fixture.store.messages(accepted.runId()))
                 .noneMatch(message -> "STALL_RECOVERY".equals(message.metadata().get("runtimeControlType")));
         assertThat(fixture.store.eventsFor(accepted.runId()))
@@ -991,7 +960,7 @@ class RuntimeCoreHardeningTest {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicReference<AgentChatRequest> finalizationRequest = new AtomicReference<>();
         ToolRequest tool = toolRequest(
-                "budgeted-tool", "read", "1.0.0", new ToolArguments("read.input", "1", Map.of("purpose", "读取剩余文件")));
+                "budgeted-tool", "read", "1.0.0", new ToolArguments("read.input", "1", Map.of("purpose", "璇诲彇鍓╀綑鏂囦欢")));
         Fixture fixture = fixture(
                 request -> {
                     if (modelCalls.incrementAndGet() == 2) finalizationRequest.set(request);
@@ -1194,8 +1163,7 @@ class RuntimeCoreHardeningTest {
         assertThat(calls).hasValue(1);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.FAILED);
-        assertThat(fixture.store.attemptsFor(accepted.runId()).getLast().error())
-                .isPresent();
+        assertThat(fixture.store.find(accepted.runId()).orElseThrow().error()).isPresent();
     }
 
     @Test

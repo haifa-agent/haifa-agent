@@ -242,7 +242,7 @@ Git/GH 只保留基础分级：`status/diff/log/show/grep/ls-files/rev-parse` �
 `fetch/pull`、GH 远端读取为 MEDIUM；Push、远端写入、破坏性操作、`gh api`、未知子命令和任意复合/
 Wrapper 形式为 HIGH。HIGH 继续进入用户阈值，不是分类失败；产品不维护完整 Git/GH 参数 DSL。
 
-模型目录不包含权限申请 Tool。当受信 preflight 产生稳定错误码且 Tool 异常与 Journal 同时证明 `NOT_DISPATCHED` 时，Runtime 将原 ToolCall 和 Step 标记为 `FAILED`，记录不可变的失败事实（包含 `failureCode` 与 `dispatchState = NOT_DISPATCHED`），捕获检查点并返回 `CONTINUE` 允许模型在下一个 turn 获知失败原因后自主决策（如调整参数、更换能力或向用户报告阻塞）；系统不创建 `execution-recovery` Interaction，不生成 successor 调用，也不维护双重 recovery profile。若工具已派发或结果不确定，或者属于内部协议/配置错误，则一律 Fail Closed（终止 Run 为 `FAILED`），严禁自动重放具有副作用的工具调用。
+模型目录不包含权限申请 Tool。当受信 preflight 产生稳定错误码且 Tool 异常与 Journal 同时证明 `NOT_DISPATCHED` 时，Runtime 将原 ToolCall 和 Step 标记为 `FAILED`，记录不可变的失败事实（包含 `failureCode` 与 `dispatchState = NOT_DISPATCHED`），返回 `CONTINUE` 允许模型在下一个 turn 获知失败原因后自主决策（如调整参数、更换能力或向用户报告阻塞）；系统不创建 `execution-recovery` Interaction，不生成 successor 调用，也不维护双重 recovery profile。若工具已派发或结果不确定，或者属于内部协议/配置错误，则一律 Fail Closed（终止 Run 为 `FAILED`），严禁自动重放具有副作用的工具调用。
 
 `ProjectSkillPlatform` 从受信 Discovery/Visibility Context 组装 Skill Catalog 与精确内容 Loader。它提供
 `task-planning`、`result-verification`、共享 `git`/`github` 与 Coding `git-delivery` Classpath Skill，

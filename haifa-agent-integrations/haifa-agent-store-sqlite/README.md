@@ -35,10 +35,11 @@ JSON/Markdown media allowlist. Artifact payload bytes do not enter SQLite or JSO
 
 ## V8 Tool reconciliation evidence
 
-Runtime migration V8 extends `tool_journal` with nullable bounded dispatch evidence (`execution ID`, host-local PID,
-working-directory digest) and the latest reconciliation status/reason. An outcome-unknown row may retain the bounded
-observed Tool Result payload. Resolved reconciliation returns through `PENDING_RESULT -> COMPLETED`; unresolved
-side-effecting work remains `OUTCOME_UNKNOWN`, so restart recovery does not infer or replay a mutation.
+Runtime migration V8 retains bounded dispatch evidence (execution ID, host-local PID and working-directory digest).
+Automatic reconciliation status/reason storage has been removed. PENDING_RESULT stores an untransferred result;
+COMPLETED only marks that the authoritative ToolCall result has been saved and clears the duplicate Journal payload.
+Unknown outcomes stop automatic continuation. Checkpoint codec 2 stores only intentional continuation counters;
+old development databases must be rebuilt after this clean cutover.
 
 ## V10 Human wait timing
 

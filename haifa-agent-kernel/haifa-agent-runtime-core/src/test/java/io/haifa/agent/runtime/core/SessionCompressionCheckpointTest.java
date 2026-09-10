@@ -43,7 +43,6 @@ import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
-import io.haifa.agent.runtime.core.checkpoint.RuntimeCheckpointState;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.model.ModelMessageAssembler;
@@ -538,14 +537,9 @@ class SessionCompressionCheckpointTest {
         assertThat(store.steps(accepted.runId()))
                 .filteredOn(step -> step.type() == io.haifa.agent.core.step.AgentStepType.MODEL_CALL)
                 .hasSize(3);
-        RuntimeCheckpointState checkpoint = store.state(
-                        store.latest(accepted.runId()).orElseThrow().id().value())
-                .orElseThrow();
-        assertThat(checkpoint.forcedContextRebuildAttempts()).isEqualTo(1);
-        assertThat(checkpoint.modelConfigurationDigest()).startsWith("sha256:");
-        assertThat(checkpoint.toolCalls()).singleElement().satisfies(tool -> {
-            assertThat(tool.toolCallId().value())
-                    .isNotEqualTo(tool.idempotencyKey().value());
+        assertThat(store.latest(accepted.runId())).isEmpty();
+        assertThat(store.toolCalls(accepted.runId())).singleElement().satisfies(tool -> {
+            assertThat(tool.id().value()).isNotEqualTo(tool.idempotencyKey().value());
             assertThat(tool.providerCorrelationId().value())
                     .isNotEqualTo(tool.idempotencyKey().value());
         });
@@ -610,10 +604,7 @@ class SessionCompressionCheckpointTest {
         assertThat(result.assets()).singleElement().satisfies(asset -> assertThat(
                         store.load(asset).orElseThrow().summary())
                 .hasSize(20_000));
-        RuntimeCheckpointState checkpoint = store.state(
-                        store.latest(accepted.runId()).orElseThrow().id().value())
-                .orElseThrow();
-        assertThat(checkpoint.derivedContentReferences()).containsAll(result.assets());
+        assertThat(store.latest(accepted.runId())).isEmpty();
     }
 
     @Test

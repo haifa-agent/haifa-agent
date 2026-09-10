@@ -13,8 +13,6 @@ import io.haifa.agent.store.sqlite.payload.SqliteRuntimePayloadTypes;
 import io.haifa.agent.store.sqlite.payload.ToolResultPayload;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolIdempotency;
-import io.haifa.agent.tool.api.ToolReconciliationRecord;
-import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.EnumSet;
@@ -32,11 +30,6 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
         this.unitOfWork = Objects.requireNonNull(unitOfWork, "unitOfWork must not be null");
         this.codecs = Objects.requireNonNull(codecs, "codecs must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
-    }
-
-    @Override
-    public Optional<ToolResult> completed(AgentRunId runId, RuntimeIdempotencyKey key) {
-        return result(runId, key, ToolJournalState.COMPLETED);
     }
 
     @Override
@@ -70,8 +63,6 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
                     key.value(),
                     ToolJournalState.INTENT_RECORDED.name(),
                     toolIdempotency.name(),
-                    null,
-                    null,
                     null,
                     null,
                     null,
@@ -116,7 +107,7 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
             String nextState = currentState == ToolJournalState.ACKNOWLEDGED
                     ? ToolJournalState.ACKNOWLEDGED.name()
                     : ToolJournalState.DISPATCHED.name();
-            ToolJournalRow updated = copy(current, nextState, currentResult(current), evidence, null);
+            ToolJournalRow updated = copy(current, nextState, currentResult(current), evidence);
             if (mapper.updateToolJournal(updated, current.state()) != 1) {
                 throw new IllegalStateException("concurrent tool journal dispatch conflict");
             }
@@ -138,8 +129,8 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
     }
 
     @Override
-    public void recordCompleted(AgentRunId runId, RuntimeIdempotencyKey key, ToolResult result) {
-        transition(runId, key, ToolJournalState.COMPLETED, result, EnumSet.of(ToolJournalState.PENDING_RESULT));
+    public void recordCompleted(AgentRunId runId, RuntimeIdempotencyKey key) {
+        transition(runId, key, ToolJournalState.COMPLETED, null, EnumSet.of(ToolJournalState.PENDING_RESULT));
     }
 
     @Override
@@ -163,7 +154,8 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
                 key,
                 ToolJournalState.OUTCOME_UNKNOWN,
                 null,
-                EnumSet.of(ToolJournalState.DISPATCHED, ToolJournalState.ACKNOWLEDGED));
+                EnumSet.of(
+                        ToolJournalState.INTENT_RECORDED, ToolJournalState.DISPATCHED, ToolJournalState.ACKNOWLEDGED));
     }
 
     @Override
@@ -174,37 +166,6 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
                 ToolJournalState.OUTCOME_UNKNOWN,
                 Objects.requireNonNull(observedResult, "observedResult must not be null"),
                 EnumSet.of(ToolJournalState.DISPATCHED, ToolJournalState.ACKNOWLEDGED));
-    }
-
-    @Override
-    public void recordReconciliation(
-            AgentRunId runId, RuntimeIdempotencyKey key, ToolReconciliationStatus status, String reasonCode) {
-        ToolReconciliationRecord reconciliation = new ToolReconciliationRecord(status, reasonCode);
-        execute(() -> {
-            RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
-            ToolJournalRow current = mapper.findToolJournal(runId.value(), key.value());
-            if (current == null) throw new IllegalStateException("tool journal intent does not exist");
-            ToolJournalState state = ToolJournalState.valueOf(current.state());
-            if (state != ToolJournalState.DISPATCHED
-                    && state != ToolJournalState.ACKNOWLEDGED
-                    && state != ToolJournalState.OUTCOME_UNKNOWN) {
-                throw new IllegalStateException("tool is not in a reconcilable journal state");
-            }
-            ToolJournalRow updated = copy(current, current.state(), currentResult(current), null, reconciliation);
-            if (mapper.updateToolJournal(updated, current.state()) != 1) {
-                throw new IllegalStateException("concurrent tool journal reconciliation conflict");
-            }
-            return null;
-        });
-    }
-
-    @Override
-    public Optional<ToolReconciliationRecord> reconciliation(AgentRunId runId, RuntimeIdempotencyKey key) {
-        return execute(() -> Optional.ofNullable(
-                        unitOfWork.mapper(RuntimeStoreMapper.class).findToolJournal(runId.value(), key.value()))
-                .filter(row -> row.reconcileStatus() != null)
-                .map(row -> new ToolReconciliationRecord(
-                        ToolReconciliationStatus.valueOf(row.reconcileStatus()), row.reconcileReason())));
     }
 
     @Override
@@ -266,7 +227,7 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
         Objects.requireNonNull(runId, "runId must not be null");
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(target, "target must not be null");
-        if ((target == ToolJournalState.PENDING_RESULT || target == ToolJournalState.COMPLETED) && result == null) {
+        if ((target == ToolJournalState.PENDING_RESULT) && result == null) {
             throw new IllegalArgumentException("result-bearing journal state requires a result");
         }
         execute(() -> {
@@ -283,7 +244,7 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
             if (!allowedSources.contains(currentState)) {
                 throw new IllegalStateException("illegal tool journal transition: " + currentState + " -> " + target);
             }
-            ToolJournalRow updated = copy(current, target.name(), result, null, null);
+            ToolJournalRow updated = copy(current, target.name(), result, null);
             if (mapper.updateToolJournal(updated, current.state()) != 1) {
                 throw new IllegalStateException("concurrent tool journal transition conflict");
             }
@@ -307,22 +268,12 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
     }
 
     private ToolJournalRow copy(
-            ToolJournalRow current,
-            String state,
-            ToolResult result,
-            ToolDispatchEvidence dispatchEvidence,
-            ToolReconciliationRecord reconciliation) {
+            ToolJournalRow current, String state, ToolResult result, ToolDispatchEvidence dispatchEvidence) {
         EncodedPayload payload = result == null
                 ? null
                 : codecs.encode(SqliteRuntimePayloadTypes.TOOL_RESULT, ToolResultPayload.from(result));
         ToolDispatchEvidence effectiveDispatch =
                 dispatchEvidence != null ? dispatchEvidence : dispatchEvidence(current);
-        ToolReconciliationRecord effectiveReconciliation = reconciliation != null
-                ? reconciliation
-                : current.reconcileStatus() == null
-                        ? null
-                        : new ToolReconciliationRecord(
-                                ToolReconciliationStatus.valueOf(current.reconcileStatus()), current.reconcileReason());
         return new ToolJournalRow(
                 current.runId(),
                 current.idempotencyKey(),
@@ -336,10 +287,6 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
                         ? null
                         : effectiveDispatch.processId().getAsLong(),
                 effectiveDispatch == null ? null : effectiveDispatch.workingDirectoryDigest(),
-                effectiveReconciliation == null
-                        ? null
-                        : effectiveReconciliation.status().name(),
-                effectiveReconciliation == null ? null : effectiveReconciliation.reasonCode(),
                 current.createdAt(),
                 Instant.ofEpochMilli(clock.millis()));
     }

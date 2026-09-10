@@ -154,7 +154,6 @@ public final class HaifaHttpTransportAdapter {
                 () -> runtime.resume(new ResumeAgentRunRequest(
                         body.idempotencyKey().value(),
                         new AgentRunId(pathRunId),
-                        Optional.empty(),
                         body.expectedRunVersion(),
                         List.of())));
         return response(
