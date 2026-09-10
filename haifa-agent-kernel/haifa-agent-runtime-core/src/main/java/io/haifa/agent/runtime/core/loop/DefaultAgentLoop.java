@@ -188,7 +188,6 @@ public final class DefaultAgentLoop implements AgentLoop {
         AgentLoopContext progress = restored.map(value ->
                         new AgentLoopContext(value.nextIteration(), value.forcedContextRebuildAttempts(), traceContext))
                 .orElseGet(() -> new AgentLoopContext(1, 0, traceContext));
-        if (restored.isPresent()) progress.markWorkspaceBaselineCheckpointCaptured();
         progress.restoreRepairAttempts((int) state.messages(run.id()).stream()
                 .filter(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
                 .count());
@@ -218,11 +217,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             if (beforeModelLimit != null) {
                 if (beforeModelLimit instanceof RuntimeLimitExceededException limitExceeded
                         && decisionExecutor.supportsBudgetLimitedCompletion(run)) {
-                    checkpoints.capture(
-                            run,
-                            Math.max(0, progress.iteration() - 1),
-                            progress.forcedContextRebuildAttempts(),
-                            CheckpointType.AUTOMATIC);
+
                     decisionExecutor.completeBudgetLimited(run, limitExceeded, Optional.empty());
                     return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
                 }
@@ -449,11 +444,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         time.now()));
                                 failModelStep(modelStepRef[0], contextTooLong);
                                 progress.recordForcedContextRebuild();
-                                checkpoints.capture(
-                                        run,
-                                        Math.max(0, progress.iteration() - 1),
-                                        progress.forcedContextRebuildAttempts(),
-                                        CheckpointType.AUTOMATIC);
+
                                 if (compactionCoordinator != null) {
                                     compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
                                 }
@@ -606,11 +597,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             if (budgetLimitRef[0] != null) {
                 if (budgetLimitRef[0] instanceof RuntimeLimitExceededException limitExceeded) {
                     middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContextRef[0]);
-                    checkpoints.capture(
-                            run,
-                            progress.iteration(),
-                            progress.forcedContextRebuildAttempts(),
-                            CheckpointType.AUTOMATIC);
+
                     Optional<FinalAnswerDecision> finalDecision = budgetLimitedFinalDecision(
                             run, progress, model, builtRef[0].context().context(), decision, limitExceeded);
                     decisionExecutor.completeBudgetLimited(run, limitExceeded, finalDecision);
@@ -628,30 +615,6 @@ public final class DefaultAgentLoop implements AgentLoop {
 
             if (decision instanceof FinalAnswerDecision) {
                 middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContextRef[0]);
-                checkpoints.capture(
-                        run, progress.iteration(), progress.forcedContextRebuildAttempts(), CheckpointType.AUTOMATIC);
-            }
-            if (decisionExecutor.mayModifyWorkspace(run, decision) && !progress.workspaceBaselineCheckpointCaptured()) {
-                var baseline = checkpoints.capture(
-                        run,
-                        Math.max(0, progress.iteration() - 1),
-                        progress.forcedContextRebuildAttempts(),
-                        CheckpointType.WORKSPACE_SNAPSHOT);
-                if (baseline.isEmpty()) {
-                    throw new IllegalStateException("workspace baseline checkpoint was required but not captured");
-                }
-                progress.markWorkspaceBaselineCheckpointCaptured();
-                events.append(
-                        run.id(),
-                        "workspace.baseline-checkpoint-captured",
-                        Map.of(
-                                "schemaVersion",
-                                "workspace-checkpoint/1",
-                                "checkpointRef",
-                                baseline.orElseThrow().id().value(),
-                                "iteration",
-                                progress.iteration()),
-                        time.now());
             }
             middleware.apply(RuntimePhase.BEFORE_DECISION_EXECUTION, middlewareContextRef[0]);
             AgentLoopDirective directive;
@@ -672,11 +635,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                     "loop.iteration-persisted",
                     Map.of("iteration", progress.iteration(), "directive", directive.name()),
                     time.now());
-            checkpoints.capture(
-                    run,
-                    progress.iteration(),
-                    progress.forcedContextRebuildAttempts(),
-                    directive == AgentLoopDirective.WAIT ? CheckpointType.INTERACTION : CheckpointType.AUTOMATIC);
+
             if (directive != AgentLoopDirective.CONTINUE)
                 return new AgentLoopResult(run.status(), iteration, directive);
             if (applyControl(run, progress, SafePoint.AFTER_DECISION_PERSISTED, progress.iteration())) {

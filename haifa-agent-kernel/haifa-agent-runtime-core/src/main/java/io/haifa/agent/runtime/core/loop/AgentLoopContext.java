@@ -12,7 +12,6 @@ public final class AgentLoopContext {
     private int forcedContextRebuildAttempts;
     private final Set<Integer> issuedBudgetThresholds = new LinkedHashSet<>();
     private RunBudgetSnapshot budgetSnapshot;
-    private boolean workspaceBaselineCheckpointCaptured;
     private final Optional<RuntimeTraceContext> traceContext;
 
     public AgentLoopContext(int iteration) {
@@ -56,14 +55,6 @@ public final class AgentLoopContext {
 
     public Optional<RunBudgetSnapshot> budgetSnapshot() {
         return Optional.ofNullable(budgetSnapshot);
-    }
-
-    public boolean workspaceBaselineCheckpointCaptured() {
-        return workspaceBaselineCheckpointCaptured;
-    }
-
-    public void markWorkspaceBaselineCheckpointCaptured() {
-        workspaceBaselineCheckpointCaptured = true;
     }
 
     public int recordRepairAttempt() {

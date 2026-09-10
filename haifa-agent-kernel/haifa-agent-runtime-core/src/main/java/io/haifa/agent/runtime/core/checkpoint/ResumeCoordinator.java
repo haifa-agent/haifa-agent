@@ -23,7 +23,6 @@ public final class ResumeCoordinator {
     private final RunTransitionCoordinator transitions;
     private final RuntimeStateRepository state;
     private final RunAccessValidator access;
-    private final CheckpointManager checkpointManager;
     private final ToolInvoker tools;
     private final SkillContentLoader skills;
 
@@ -33,17 +32,8 @@ public final class ResumeCoordinator {
             RunTransitionCoordinator transitions,
             RuntimeStateRepository state,
             RunAccessValidator access,
-            CheckpointManager checkpointManager,
             ToolInvoker tools) {
-        this(
-                interactions,
-                checkpoints,
-                transitions,
-                state,
-                access,
-                checkpointManager,
-                tools,
-                SkillContentLoader.empty());
+        this(interactions, checkpoints, transitions, state, access, tools, SkillContentLoader.empty());
     }
 
     public ResumeCoordinator(
@@ -52,7 +42,6 @@ public final class ResumeCoordinator {
             RunTransitionCoordinator transitions,
             RuntimeStateRepository state,
             RunAccessValidator access,
-            CheckpointManager checkpointManager,
             ToolInvoker tools,
             SkillContentLoader skills) {
         this.interactions = Objects.requireNonNull(interactions);
@@ -60,14 +49,16 @@ public final class ResumeCoordinator {
         this.transitions = Objects.requireNonNull(transitions);
         this.state = Objects.requireNonNull(state);
         this.access = Objects.requireNonNull(access);
-        this.checkpointManager = Objects.requireNonNull(checkpointManager);
         this.tools = Objects.requireNonNull(tools);
         this.skills = Objects.requireNonNull(skills);
     }
 
     /** Applies a resume only after validate has succeeded in the same resume Unit of Work. */
     public Optional<CheckpointId> prepareValidated(AgentRun run, ResumeAgentRunRequest request) {
-        Optional<CheckpointId> checkpoint = request.checkpointId().or(() -> latestFor(run));
+        Optional<CheckpointId> checkpoint = Optional.of(checkpoints
+                .latest(run.id())
+                .orElseThrow(() -> new IllegalStateException("intentional pause boundary is unavailable"))
+                .id());
         transitions.resumed(run);
         return checkpoint;
     }
@@ -100,18 +91,5 @@ public final class ResumeCoordinator {
         if (interactions.pending(run.id()).isPresent()) {
             throw new IllegalStateException("pending interaction must be resolved through InteractionResponse");
         }
-        request.checkpointId().ifPresent(checkpointId -> {
-            boolean belongsToRun = checkpoints.checkpointsFor(run.id()).stream()
-                    .anyMatch(checkpoint -> checkpoint.id().equals(checkpointId));
-            if (!belongsToRun || checkpoints.state(checkpointId.value()).isEmpty()) {
-                throw new IllegalArgumentException("selected checkpoint is not a valid checkpoint of the run");
-            }
-            checkpointManager.validateState(
-                    run, checkpoints.state(checkpointId.value()).orElseThrow());
-        });
-    }
-
-    public Optional<CheckpointId> latestFor(AgentRun run) {
-        return checkpoints.latest(run.id()).map(checkpoint -> checkpoint.id());
     }
 }

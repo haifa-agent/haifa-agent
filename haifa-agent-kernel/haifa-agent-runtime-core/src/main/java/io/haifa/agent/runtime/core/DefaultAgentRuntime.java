@@ -104,6 +104,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final RunControlService controls;
     private final InteractionPort interactions;
     private final DelegationPort delegations;
+    private final io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator toolRecovery;
     private final AttemptExecutor attemptExecutor;
     private final ExecutionScheduler scheduler;
     private final IdentifierGenerator ids;
@@ -135,6 +136,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             InteractionPort interactions,
             DelegationPort delegations,
             AttemptExecutor attemptExecutor,
+            io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator toolRecovery,
             ExecutionScheduler scheduler,
             IdentifierGenerator ids,
             TimeProvider time,
@@ -162,6 +164,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         this.interactions = Objects.requireNonNull(interactions);
         this.delegations = Objects.requireNonNull(delegations);
         this.attemptExecutor = Objects.requireNonNull(attemptExecutor);
+        this.toolRecovery = Objects.requireNonNull(toolRecovery);
         this.scheduler = Objects.requireNonNull(scheduler);
         this.ids = Objects.requireNonNull(ids);
         this.time = Objects.requireNonNull(time);
@@ -827,53 +830,76 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         return eventSubscriptions.subscribe(runId, after, listener);
     }
 
-    /** Reclaims a run whose physical executor disappeared after durable checkpointing. */
+    /** Settles an abandoned execution without dispatching work; continuation requires a new user turn. */
     @Override
     public AgentRunSnapshot recover(AgentRunId runId) {
         AgentRun run = requireRun(runId);
         requireCaller(run);
+        if (run.status().isTerminal()) return snapshot(runId);
         if (run.status() != AgentRunStatus.RUNNING && run.status() != AgentRunStatus.SUSPENDING) {
-            throw new IllegalStateException("only an executing run can be recovered");
+            throw new IllegalStateException("only an interrupted executing run can be settled");
         }
         AgentRunExecutionAttempt active = attempts.activeFor(runId)
-                .orElseThrow(() -> new IllegalStateException("run has no active attempt to recover"));
-        if (ownership.stillOwned(active)) {
-            throw new IllegalStateException("active execution attempt is still owned by this runtime");
-        }
-        AgentRunExecutionAttempt replacement = unitOfWork.execute(() -> {
+                .orElseThrow(() -> new IllegalStateException("run has no active execution attempt"));
+        if (ownership.stillOwned(active)) throw new IllegalStateException("execution attempt is still owned");
+        return unitOfWork.execute(() -> {
+            AgentRun current = requireRun(runId);
+            if (current.status().isTerminal()) return snapshot(runId);
+            if (current.status() != AgentRunStatus.RUNNING && current.status() != AgentRunStatus.SUSPENDING) {
+                throw new IllegalStateException("only an interrupted executing run can be settled");
+            }
             long expected = active.version();
             active.finish(ExecutionAttemptStatus.ABANDONED, time.now(), Optional.empty());
             attempts.save(active, expected);
-            reconcileAbandonedModelSteps(run);
-            if (run.status() == AgentRunStatus.RUNNING) transitions.requestPause(run);
-            transitions.suspended(run);
-            transitions.resumed(run);
-            AgentRunExecutionAttempt created = new AgentRunExecutionAttempt(
-                    new ExecutionAttemptId(ids.nextValue()),
-                    run.id(),
-                    attempts.attemptsFor(run.id()).size() + 1,
-                    time.now(),
-                    resumeCoordinator.latestFor(run));
-            attempts.insert(created);
-            return created;
-        });
-        AgentRunSnapshot accepted = snapshot(run.id());
-        scheduler.submit(run.id(), () -> attemptExecutor.execute(run, replacement));
-        return accepted;
-    }
-
-    private void reconcileAbandonedModelSteps(AgentRun run) {
-        var toolStepIds = state.toolCalls(run.id()).stream()
-                .map(call -> call.stepId())
-                .collect(java.util.stream.Collectors.toSet());
-        state.steps(run.id()).stream()
-                .filter(step -> step.status() == io.haifa.agent.core.step.AgentStepStatus.RUNNING
-                        || step.status() == io.haifa.agent.core.step.AgentStepStatus.WAITING)
-                .filter(step -> !toolStepIds.contains(step.id()))
-                .forEach(step -> {
+            var error = new io.haifa.agent.core.error.AgentError(
+                    io.haifa.agent.core.error.AgentErrorCode.RUNTIME_EXECUTION_INTERRUPTED,
+                    Map.of("reason", "EXECUTOR_LOST", "automaticResume", false),
+                    ids.nextValue(),
+                    time.now());
+            try {
+                toolRecovery.reconcile(current);
+            } catch (io.haifa.agent.runtime.core.execution.AgentExecutionFailureException unknown) {
+                error = unknown.error();
+            }
+            for (var call : state.toolCalls(runId)) {
+                if (java.util.EnumSet.of(
+                                io.haifa.agent.core.tool.ToolCallStatus.REQUESTED,
+                                io.haifa.agent.core.tool.ToolCallStatus.VALIDATING,
+                                io.haifa.agent.core.tool.ToolCallStatus.POLICY_CHECK,
+                                io.haifa.agent.core.tool.ToolCallStatus.WAITING_APPROVAL,
+                                io.haifa.agent.core.tool.ToolCallStatus.APPROVED,
+                                io.haifa.agent.core.tool.ToolCallStatus.RUNNING)
+                        .contains(call.status())) {
+                    call.cancel(time.now());
+                    state.appendToolCall(call);
+                    state.appendSessionMessage(new SessionMessageDraft(
+                            new AgentMessageId(ids.nextValue()),
+                            current.sessionId(),
+                            Optional.of(runId),
+                            Optional.empty(),
+                            MessageRole.TOOL,
+                            MessageStatus.COMPLETED,
+                            MessageVisibility.AGENT_VISIBLE,
+                            List.of(
+                                    new io.haifa.agent.core.content.ToolResultPart(
+                                            call.id(),
+                                            call.providerCorrelationId(),
+                                            "Execution interrupted before a confirmed result; do not automatically repeat this operation")),
+                            Map.of("interrupted", true),
+                            time.now()));
+                }
+            }
+            for (var step : state.steps(runId)) {
+                if (step.status() == io.haifa.agent.core.step.AgentStepStatus.PENDING
+                        || step.status() == io.haifa.agent.core.step.AgentStepStatus.RUNNING
+                        || step.status() == io.haifa.agent.core.step.AgentStepStatus.WAITING) {
                     step.cancel(time.now());
                     state.appendStep(step);
-                });
+                }
+            }
+            delegations.terminateChildren(current);
+            return transitions.failed(current, error);
+        });
     }
 
     private void applyCancel(AgentRun run) {

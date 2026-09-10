@@ -10,15 +10,24 @@ Run 会持久化累计人工等待和当前等待起点；AgentLoop、模型重�
 
 ## Tool outcome convergence
 
-At the irreversible dispatch boundary, Tool Journal records an optional bounded execution identity, host-local PID,
-and safe working-directory digest. A returned `runtimeOutcome=OUTCOME_UNKNOWN`, an exception after dispatch, or an
-abandoned Tool Call enters the same read-only reconciliation path. Runtime invokes the frozen provider once, persists
-the reconciliation status/reason, and either commits the resolved result through the existing pending-result boundary
-or closes ToolCall and Step with `TOOL_OUTCOME_UNKNOWN`. Unresolved side-effecting calls use
-`SIDE_EFFECTING_REPLAY_FORBIDDEN`; they are never invoked a second time. Recovery appends exactly one correlated Tool
-Result message before the next model request, so ToolCall, Tool Journal, Step, event, and model protocol facts converge.
-The normalized result reaches durable Journal `COMPLETED` before the ToolCall terminal projection; after a crash,
-recovery uses `PENDING_RESULT`/`COMPLETED` facts to idempotently finish ToolCall, Step, and the correlated message.
+Journal retains dispatch evidence and a bounded pending result until the authoritative ToolCall result is saved.
+COMPLETED is only a marker and clears the pending payload. Recovery reads ToolCall first; missing ToolCall/Step/message
+facts can be repaired from an already saved result without dispatching a tool. Unknown outcomes terminate with
+TOOL_OUTCOME_UNKNOWN. Runtime does not invoke a reconciliation provider or schedule a retry for them.
+
+## Intentional continuation and interrupted execution
+
+Checkpoint stores only Run ID, next iteration and forced-context-rebuild count at intentional pause/interaction
+boundaries. Tool, Summary, Memory, Skill, model continuation, configuration and external capability state are no longer
+copied. These facts remain in their authoritative stores and are read through current access and integrity boundaries.
+Historical checkpoint selection, per-iteration capture and generic capability snapshot/restore participants are removed.
+Runtime payload is 6.0; SQLite checkpoint codec is 2. Rebuild development databases after the cutover.
+
+recover(runId) settles abandoned executing Runs as FAILED with RUNTIME_EXECUTION_INTERRUPTED (or TOOL_OUTCOME_UNKNOWN)
+and marks the Attempt ABANDONED. It schedules no replacement. Currently owned execution is rejected. The next user turn
+can use saved conversation facts and observe current conditions. Intentional pauses and approvals continue through
+resume/respond across restart, retaining caller, frozen binding, exact target and budget checks. Missing or non-latest
+pause state fails closed; normal continuation cannot select an earlier budget.
 
 ## Model-call client events
 
@@ -43,7 +52,7 @@ exhaustion terminates through the existing stable model failure path.
 `CompletionBlocker(code, safeMessage, recoverable, evidenceRequirement)` 与安全 Evidence Code。
 Runtime Core 不依赖 Coding 产品类型，也不读取 Coding 表。Final 缺少证据时，AgentLoop 追加
 `completion.deferred` 安全事件和固定顺序、Agent-visible 且用户不可见的纠偏 Session Message；次数由 `RepairRetryPolicy` 限制，
-默认产品装配最多两次。纠偏计数保存在权威 Session Message metadata，Checkpoint/进程恢复时重建，
+默认产品装配最多两次。纠偏计数保存在权威 Session Message metadata，正常暂停／交互继续时重建，
 耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 失败，不能伪装为成功。
 
 Client Event 投影只把结构化字段映射为 `DeliveryLifecycle`，用于中性的 Completion 延迟、产品自有的
@@ -63,15 +72,13 @@ Tool 失败时自动终止或要求模型换策略。主模型从工具结果决
 终止并取消未派发的同批工具，保留关联 Tool Result；unknown 的安全部分结果不会被伪装成成功。
 普通工具失败不再生成 REPEATED_TOOL_FAILURE，资源耗尽继续使用明确资源原因及既有 partial/failed 规则。
 
-Checkpoint 删除 decisionFingerprints 字段，载荷版本为 5.0，不提供旧策略数据的兼容或迁移，
+Checkpoint 删除 decisionFingerprints 字段，当前最小载荷版本为 6.0，不提供旧策略数据的兼容或迁移，
 恢复不重建策略计数。旧进展/策略事件投影、错误码及 Harness 读取均已删除。
 50%、25%、10% 预算阈值仍按现有机制追加安全提示，恢复后不重复已跨越的阈值。Completion 与参数修复
 共享的 RepairRetryPolicy 本批未调整，不将普通工具失败与无效请求协议混为一类。
 
-冻结 Tool Definition 含 `FILE_WRITE` 或 `PROCESS_EXECUTION` 时，Runtime 在首次实际 dispatch 前捕获
-`WORKSPACE_SNAPSHOT` checkpoint；纯读 Tool 不触发该基线。已注册 Capability Participant 的 Host 会在同一
-checkpoint 捕获 Workspace snapshot reference。未注册 Participant 的本地 DIRECT Host 只具备 Runtime
-checkpoint 与 current-state reconcile，不承诺文件回滚；DIRECT 恢复从不自动 reset、checkout 或覆盖文件。
+Runtime 不再为 Workspace 修改强制创建基线 Checkpoint，也不恢复外部工作区。工具执行继续通过
+当前 Workspace 访问与精确授权边界；产品 Snapshot/Artifact 能力保留，不经通用 Runtime Participant 装配。
 
 ## Safe Tool argument repair
 
@@ -134,7 +141,7 @@ Responder，经 `ApprovalVerificationService` 验证后应用该 Interaction。�
 Provider 链路。Runtime Core 只依赖 Policy API，不持久化 Decision、Evidence 或 Grant。
 
 产品可通过 `toolRequestCanonicalizer(...)` 在 ToolCall 首次持久化前生成唯一的 canonical request；
-该请求随后统一用于 Schema、Policy resource digest、Approval target、Journal reconcile 与 Provider invocation。
+该请求随后统一用于 Schema、Policy resource digest、Approval target、Journal 记录与 Provider invocation。
 规范化器只能修改 arguments，必须确定且幂等；默认实现保持原请求不变。
 
 `ToolPolicy`、`ToolPolicyDecision` 与 `DefaultToolPolicy` 是待删除的单向源码兼容层；Pipeline
@@ -147,7 +154,7 @@ continuation reference with the assistant Tool Call message and stores the reaso
 protector. `AES_GCM` provides confidentiality; explicit `NONE` is readable at rest and is intended only for trusted
 local profiles.
 The next model request resolves it only after provider, model, configuration digest, message, and tool correlation
-validation. Checkpoints contain refs/digests/versions only and validate payload integrity before resume.
+validation. Checkpoints no longer duplicate continuation references; the continuation store remains authoritative.
 
 ## Model stream
 
@@ -181,14 +188,14 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - Runtime 只调用 Core `AgentRun` 的受控行为，不复制生命周期合法性表。
 - `start` 在 Run 持久化并提交执行后返回 `PENDING/QUEUED` 快照；等待完成由 `AgentRunHandle` 显式提供。
 - 本地执行调度器按 Run 跟踪活动任务；取消 `RUNNING/SUSPENDING` Run 时会同时写入控制信号并尽力中断阻塞中的执行线程。模型边界把由该信号触发的中断收敛为 `CANCELLED`，不会误记为模型失败或 Run 失败。
-- 每次 Start、Resume 或崩溃恢复都创建新的 `AgentRunExecutionAttempt`；它记录 Worker、Heartbeat、错误和恢复 Checkpoint，同一逻辑 Run 同时最多一个活动 Attempt。`ExecutionOwnershipPort` 为未来分布式 Lease 保留真实校验边界。
+- 每次 Start 或正常 Resume 创建新的 `AgentRunExecutionAttempt`；它记录 Worker、Heartbeat、错误和恢复 Checkpoint，同一逻辑 Run 同时最多一个活动 Attempt。异常中断只将旧 Attempt 标记 ABANDONED；`ExecutionOwnershipPort` 校验当前执行所有权，防止误收敛仍在执行的 Run。
 - AgentLoop 固定执行控制检查、状态协调、预算/迭代 Guard、Context IR 构建、冻结模型调用、响应归一化、Decision 校验/执行、持久化和 Checkpoint；全部 Middleware 阶段及失败策略显式可测。模型、工具、交互、委派、Trace 和持久化均通过最小 Port 注入。
 - Runtime 只接受带 `adapterType + adapterVersion` 的 `AgentChatModel` 注册。`FrozenModelInvoker` 按 Run 快照精确绑定 Adapter；缺失版本时确定性失败，不回退到当前版本，也不重新读取模型目录。
 - `ModelMessageAssembler` 是 `AgentContext(PromptComponent/ContextItem)` 到供应商无关 `ModelMessage` 的唯一转换边界；Middleware 产生结构化 Context IR，不拼接共享 Prompt 字符串。跨 Run 的 Session 历史按每条消息所属 Run 解析权威 ToolCall，批准或拒绝工具后的下一轮仍可重建完整 Provider Tool 协议。跨模型历史继续投影为结构化 Tool Call/Result，同时剥离旧 continuation，并仅在模型请求内确定性重映射 Provider correlation；持久化事实不变。`SessionMessageSource` 正常丢弃未闭合历史组，Assembler 对绕过该筛选的跨模型历史防御性补充“结果未记录”的结构化 Tool Result；当前模型组不完整仍 fail closed。
 - 大型 Tool Result 先归一化为有界内联事实，再尽力写入外部 Asset；Asset 写入失败不会覆盖已知 Tool Outcome，也不会阻断下一轮模型诊断。只有权威内联结果本身无法持久化时才以 `TOOL_RESULT_PERSISTENCE_FAILED` 终止。
 - Run 配置按 alias 冻结精确 `FrozenSkillBinding`、Catalog digest 和 Resolution Policy reference；普通未启用 Skill 的 Profile 冻结空集合。
 - 模型初始上下文只披露冻结 Skill 的有界元数据。`skill.load` 与 `skill.resource.read` 作为普通 Tool 经统一冻结、Policy、Schema、Journal 和调用管线执行；激活后的指令进入最弱 `PromptLayer.SKILL`，资源只可从当前 Run 已冻结、已激活且索引为可读文本的包中按需读取。未允许、未激活、未索引或非文本资源会返回结构化 Tool 失败供模型修正请求；调用者越权、内容摘要漂移等完整性故障仍 fail closed。
-- Skill 激活是 Run-scope、幂等且可检查点的状态。Checkpoint 保存精确 coordinate、registration digest 与激活时间；Resume 重新校验调用者和冻结内容摘要，缺失或漂移时 fail closed。
+- Skill 激活是 Run-scope 的幂等事实，保存在 Skill 状态仓。继续执行时检查冻结 Binding 与内容访问，不复制到 Checkpoint。
 - `ToolCall` 是工具调用的权威记录。`ToolCallPart`/`ToolResultPart` 只保存领域 `ToolCallId`、Provider correlation 等协议引用和有界摘要；组装下一轮模型请求时，从权威 `ToolCall.result()` 重建已归一化的 `structuredData` 与 `truncated`，Runtime idempotency key 不发送给模型。
 - Session Context 的 Token 估算同样从权威 `ToolCall` 读取完整 arguments 与 structured result；Tool 执行和持久化 Trace 记录实际 AgentLoop iteration，不使用占位值。
 - Provider 在 Tool dispatch 后抛出异常时，Runtime 会先把权威 `ToolCall` 和 Step 收敛为失败并追加
@@ -196,7 +203,7 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
   完整的 Assistant Tool Call / Tool Result 协议；`OUTCOME_UNKNOWN` 只用于告知状态，不允许自动重放。
 - 本阶段只允许 Asset 的派生文本、OCR、Transcript 进入 Context；原始 Asset Part 会被拒绝。
 - ToolCall 默认顺序执行，并通过 Run 的 `FrozenToolBinding` 完成 alias、精确 SemVer、Schema identity、Capability、Policy、Approval、执行环境、结果归一化、Journal 和持久化；不从全局可变规格表重新解析。
-- Tool 审批是可恢复协议：Policy 产生 typed Interaction 与 interaction Checkpoint，Attempt 进入 paused 并释放 Worker；批准或拒绝后新 Attempt 先恢复并校验 Checkpoint，再幂等应用响应。批准继续原 ToolCall 且不重复模型调用，拒绝向模型写入有界结果而不默认取消整个 Run。同一模型响应包含多个待处理 ToolCall 时，恢复始终按持久化 Step sequence 顺序推进；任一调用失败会把同批次尚未启动的兄弟 ToolCall 和 Step 收敛为 `CANCELLED`，不残留 `REQUESTED`。
+- Tool 审批是可恢复协议：Policy 产生 typed Interaction 与 interaction Checkpoint，Attempt 进入 paused 并释放 Worker；批准或拒绝后新 Attempt 幂等应用精确响应并校验最小暂停记录。批准继续原 ToolCall 且不重复模型调用，拒绝向模型写入有界结果而不默认取消整个 Run。同一模型响应包含多个待处理 ToolCall 时，恢复始终按持久化 Step sequence 顺序推进；任一调用失败会把同批次尚未启动的兄弟 ToolCall 和 Step 收敛为 `CANCELLED`，不残留 `REQUESTED`。
 - 产品可通过 `ToolApprovalPromptFormatter` 定制审批展示内容；审批安全目标仍由 Runtime 冻结的 run、toolCall、definition hash、完整 arguments digest 和 principal scope 绑定，展示文案不参与授权判断。
 - Runtime 对公共 `InteractionView.safePrompt` 执行 2048 字符的防御性有界投影；这使升级前已经持久化的超长 Interaction 仍可查询和响应，而不会改变内部审批目标或授权摘要。
 - Resume 会重新校验当前调用者授权，并通过 `ToolInvoker.validateBinding` 确认冻结 provider/definition 仍可用；缺失或 hash/provider 漂移时 fail closed，不自动换 Provider。
@@ -221,8 +228,8 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - `OutboxMessage` 保存与对应 `RuntimeEvent` 相同的 Run 内 `sequence` 和稳定 `schemaVersion`。本地
   `ExecutionOwnershipPort` 以当前进程实例 ID 精确匹配 Attempt `workerId`，进程重启后的旧 Attempt
   不再被误判为仍由本地持有。
-- Runtime 使用可信 Run 身份检索 RUN/SESSION/USER Scope 的 ACTIVE Memory；授权和状态过滤先于排序，结果仍通过 `ContextItem` IR 和统一 Token 预算。Checkpoint 只保存 Memory ID/Version、Scope、策略版本和查询摘要，Resume 会重新授权且不会恢复已失效或清除的正文。
-- Checkpoint 创建通过 SLF4J 输出 `checkpoint.snapshot` 与 `checkpoint.capture` 结构化耗时日志，分别覆盖状态读取/组装/Hash，以及 latest 查询、Snapshot、持久化和 Event 发布阶段。日志只包含 Run/Checkpoint 标识、计数和毫秒耗时，不输出正文、Payload 或凭据。
+- Runtime 使用可信 Run 身份检索 RUN/SESSION/USER Scope 的 ACTIVE Memory；授权和状态过滤先于排序，结果仍通过 `ContextItem` IR 和统一 Token 预算。Memory selection 不再复制到 Checkpoint；继续时重新检索授权且有效的 Memory。
+- Checkpoint 仅保存正常暂停／交互的最小续跑计数；SQLite 适配器保留有界持久化耗时指标。
 - 模块不依赖 Spring、模型 Provider SDK、MCP、Docker、JPA、产品模块或管理端。
 
 ## Trusted Skill script policy
@@ -238,4 +245,4 @@ Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与�
 `PublishedArtifactRequiredChecker` 实现该接口；Runtime 不再提供单独的 `RequiredArtifactChecker` 配置入口。
 
 恢复来源直接读取持久 Attempt 的 `resumedFromCheckpointId`，不再经过进程内 Selector。已记录来源必须精确存在，
-缺失记录或状态会拒绝恢复；没有来源时保留 latest fallback。Checkpoint 完整性与能力重验保持不变。
+缺失、非最新的来源或缺失状态会拒绝继续；新 Run 无来源时从初始计数开始，不回退历史快照。

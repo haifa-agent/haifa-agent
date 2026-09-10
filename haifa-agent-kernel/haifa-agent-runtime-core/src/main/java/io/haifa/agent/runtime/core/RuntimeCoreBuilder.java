@@ -35,7 +35,6 @@ import io.haifa.agent.policy.api.ApprovalVerification;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
 import io.haifa.agent.policy.api.PolicyDecisionService;
 import io.haifa.agent.policy.api.PolicyRuleSet;
-import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointParticipant;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
 import io.haifa.agent.runtime.core.bootstrap.ConfigurationSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
@@ -46,11 +45,8 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RunAccessValidator;
 import io.haifa.agent.runtime.core.bootstrap.RunBootstrapper;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
-import io.haifa.agent.runtime.core.checkpoint.CapabilityCheckpointRegistry;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
-import io.haifa.agent.runtime.core.checkpoint.CheckpointPolicy;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder;
-import io.haifa.agent.runtime.core.checkpoint.MemoryCheckpointValidator;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCoordinator;
 import io.haifa.agent.runtime.core.compaction.CompactionTriggerEvaluator;
 import io.haifa.agent.runtime.core.compaction.SemanticCompactionCoordinator;
@@ -208,7 +204,6 @@ public final class RuntimeCoreBuilder {
     private CompletionPolicy completionPolicy = (run, decision) -> CompletionPolicyResult.accepted();
     private final List<AgentRuntimeMiddleware> additionalMiddleware = new ArrayList<>();
     private final List<ContextSource> additionalContextSources = new ArrayList<>();
-    private final List<CapabilityCheckpointParticipant> capabilityCheckpointParticipants = new ArrayList<>();
     private String workerId = "local-runtime-" + ids.nextValue();
     private ExecutionOwnershipPort ownership;
     private MemoryRetriever memoryRetriever;
@@ -242,17 +237,6 @@ public final class RuntimeCoreBuilder {
             throw new IllegalArgumentException("duplicate context source: " + source.id());
         }
         additionalContextSources.add(source);
-        return this;
-    }
-
-    public RuntimeCoreBuilder registerCapabilityCheckpointParticipant(CapabilityCheckpointParticipant participant) {
-        Objects.requireNonNull(participant, "participant must not be null");
-        if (capabilityCheckpointParticipants.stream()
-                .anyMatch(existing -> existing.id().equals(participant.id()))) {
-            throw new IllegalArgumentException("duplicate capability checkpoint participant: "
-                    + participant.id().value());
-        }
-        capabilityCheckpointParticipants.add(participant);
         return this;
     }
 
@@ -610,18 +594,8 @@ public final class RuntimeCoreBuilder {
                 configuredOutputContract.isValid(run, decision) && productOutputContract.isValid(run, decision);
         DefaultCompletionGuard completion = new DefaultCompletionGuard(
                 state, pipeline, interactions, delegations, combinedOutputContract, completionPolicy);
-        CapabilityCheckpointRegistry capabilityCheckpointRegistry =
-                new CapabilityCheckpointRegistry(capabilityCheckpointParticipants);
-        CheckpointManager checkpoints = new CheckpointManager(
-                checkpointsRepository,
-                CheckpointPolicy.everyIteration(),
-                new CheckpointSnapshotBuilder(ids, time, state, summaries, interactions, capabilityCheckpointRegistry),
-                state,
-                summaries,
-                new MemoryCheckpointValidator(configuredMemoryRetriever, configuredMemoryAudit, time),
-                capabilityCheckpointRegistry,
-                time,
-                events);
+        CheckpointManager checkpoints =
+                new CheckpointManager(checkpointsRepository, new CheckpointSnapshotBuilder(ids, time), time, events);
         DecisionExecutor decisionExecutor = new DecisionExecutor(
                 pipeline,
                 completion,
@@ -639,14 +613,7 @@ public final class RuntimeCoreBuilder {
                 events,
                 outbox);
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
-                interactions,
-                checkpointsRepository,
-                transitions,
-                state,
-                access,
-                checkpoints,
-                toolInvoker,
-                skillContentLoader);
+                interactions, checkpointsRepository, transitions, state, access, toolInvoker, skillContentLoader);
         var compressor = new DeterministicContextCompressor();
         var effectiveCompressionPolicy = compressionPolicy != null ? compressionPolicy : CompressionPolicy.defaults();
         var sessionMessageSource =
@@ -666,6 +633,7 @@ public final class RuntimeCoreBuilder {
                 ids,
                 time,
                 events);
+        var toolRecovery = new io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator(state, pipeline, ids, time);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard()),
@@ -691,13 +659,7 @@ public final class RuntimeCoreBuilder {
                 trace,
                 promptDiagnostics,
                 new RuntimeStateReconciler(
-                        state,
-                        attempts,
-                        interactions,
-                        pipeline,
-                        time,
-                        configuredOwnership,
-                        new io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator(state, pipeline, ids, time)),
+                        state, attempts, interactions, pipeline, time, configuredOwnership, toolRecovery),
                 middleware,
                 runInputApplier,
                 compactionCoordinator);
@@ -733,6 +695,7 @@ public final class RuntimeCoreBuilder {
                 interactions,
                 delegations,
                 attemptExecutor,
+                toolRecovery,
                 scheduler,
                 ids,
                 time,

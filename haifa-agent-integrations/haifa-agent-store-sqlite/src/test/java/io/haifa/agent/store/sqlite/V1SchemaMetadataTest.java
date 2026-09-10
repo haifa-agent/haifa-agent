@@ -482,8 +482,6 @@ class V1SchemaMetadataTest {
                             "dispatch_execution_id",
                             "dispatch_process_id",
                             "dispatch_workdir_digest",
-                            "reconcile_status",
-                            "reconcile_reason",
                             "created_at",
                             "updated_at")),
             entry(

@@ -143,11 +143,6 @@ public final class DecisionExecutor {
         return execute(run, decision, loopContext);
     }
 
-    public boolean mayModifyWorkspace(AgentRun run, AgentDecision decision) {
-        return decision instanceof ToolCallDecision toolsDecision
-                && toolsDecision.requests().stream().anyMatch(request -> tools.mayModifyWorkspace(run, request));
-    }
-
     public void failWithSummary(AgentRun run, AgentError error, String summary) {
         transitions.failedWithOutput(
                 run,
@@ -439,11 +434,7 @@ public final class DecisionExecutor {
             } catch (RuntimeException failure) {
                 AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
                 if (tools.isTrustedNotDispatched(run, call, failure)) {
-                    checkpoints.capture(
-                            run,
-                            loopContext.iteration(),
-                            loopContext.forcedContextRebuildAttempts(),
-                            CheckpointType.AUTOMATIC);
+
                     if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
                         throw new CancellationObservedException();
                     }
@@ -464,8 +455,7 @@ public final class DecisionExecutor {
             state.appendStep(step);
             appendToolResult(run, call, result.summary());
             if (stopForTerminalToolOutcome(run, call)) return AgentLoopDirective.STOP;
-            checkpoints.capture(
-                    run, loopContext.iteration(), loopContext.forcedContextRebuildAttempts(), CheckpointType.AUTOMATIC);
+
             if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
                 throw new CancellationObservedException();
             }
@@ -661,11 +651,7 @@ public final class DecisionExecutor {
             } catch (RuntimeException failure) {
                 AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
                 if (tools.isTrustedNotDispatched(run, call, failure)) {
-                    checkpoints.capture(
-                            run,
-                            loopContext.iteration(),
-                            loopContext.forcedContextRebuildAttempts(),
-                            CheckpointType.AUTOMATIC);
+
                     if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
                         throw new CancellationObservedException();
                     }
@@ -686,8 +672,6 @@ public final class DecisionExecutor {
             state.appendStep(step);
             appendToolResult(run, call, result.summary());
             if (stopForTerminalToolOutcome(run, call)) return Optional.of(AgentLoopDirective.STOP);
-            checkpoints.capture(
-                    run, loopContext.iteration(), loopContext.forcedContextRebuildAttempts(), CheckpointType.AUTOMATIC);
         }
         return Optional.of(AgentLoopDirective.CONTINUE);
     }
@@ -849,8 +833,7 @@ public final class DecisionExecutor {
                         "artifacts", result.artifacts(),
                         "warnings", result.warnings()));
         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 0, 1, 0, 0));
-        checkpoints.capture(
-                run, loopContext.iteration(), loopContext.forcedContextRebuildAttempts(), CheckpointType.AUTOMATIC);
+
         if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
         return AgentLoopDirective.CONTINUE;
     }

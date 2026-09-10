@@ -150,6 +150,11 @@ public enum AgentErrorCode {
             "Workspace changes could not be fully observed",
             AgentErrorCategory.INTERNAL,
             Retryability.RETRYABLE_AFTER_INTERACTION),
+    RUNTIME_EXECUTION_INTERRUPTED(
+            "RUNTIME_EXECUTION_INTERRUPTED",
+            "Execution interrupted; continue from saved facts",
+            AgentErrorCategory.CANCELLED,
+            Retryability.NOT_RETRYABLE),
     RUNTIME_EXECUTION_FAILED(
             "RUNTIME_EXECUTION_FAILED", "Agent execution failed", AgentErrorCategory.INTERNAL, Retryability.UNKNOWN),
     UNKNOWN("UNKNOWN", "Unknown agent error", AgentErrorCategory.INTERNAL, Retryability.UNKNOWN);

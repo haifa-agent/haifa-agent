@@ -172,7 +172,7 @@ class RuntimeCoreTest {
         assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(completed.output()).contains("done");
         assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(1);
-        assertThat(fixture.store.checkpointsFor(accepted.runId())).isNotEmpty();
+        assertThat(fixture.store.checkpointsFor(accepted.runId())).isEmpty();
         assertThat(fixture.store.eventsFor(accepted.runId()).stream().map(event -> event.sequence()))
                 .containsExactlyElementsOf(java.util.stream.LongStream.rangeClosed(
                                 1, fixture.store.eventsFor(accepted.runId()).size())
@@ -548,8 +548,7 @@ class RuntimeCoreTest {
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .anyMatch(event -> event.type().equals("run.safe-point"));
 
-        var staleResume = new ResumeAgentRunRequest(
-                "resume-stale", accepted.runId(), Optional.empty(), OptionalLong.of(999), List.of());
+        var staleResume = new ResumeAgentRunRequest("resume-stale", accepted.runId(), OptionalLong.of(999), List.of());
         assertThatThrownBy(() -> fixture.runtime.resume(staleResume))
                 .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
                         .isEqualTo(RuntimeApiErrorCode.RUN_VERSION_CONFLICT));
@@ -972,7 +971,7 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void reconcilesAnAbandonedLocalToolFromDurableEvidenceWithoutReplayingIt() {
+    void doesNotAutomaticallyCallEvenAnAvailableReconciliationProvider() {
         AtomicBoolean owned = new AtomicBoolean(true);
         AtomicInteger invocations = new AtomicInteger();
         AtomicInteger reconciliations = new AtomicInteger();
@@ -1023,19 +1022,18 @@ class RuntimeCoreTest {
         fixture.scheduler.runAll();
 
         assertThat(invocations).hasValue(1);
-        assertThat(reconciliations).hasValue(1);
-        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.COMPLETED);
-        assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> {
-            assertThat(call.status().name()).isEqualTo("COMPLETED");
-            assertThat(fixture.journal.state(accepted.runId(), call.idempotencyKey()))
-                    .contains(ToolJournalState.COMPLETED);
-        });
-        assertThat(recoveredRequest.get().messages())
-                .anyMatch(message -> message.role() == ModelMessageRole.TOOL
-                        && message.content().contains("write observed after recovery"));
+        assertThat(reconciliations).hasValue(0);
+        assertThat(modelCalls).hasValue(1);
+        assertThat(recoveredRequest.get()).isNull();
+        assertThat(fixture.runtime
+                        .find(accepted.runId())
+                        .orElseThrow()
+                        .error()
+                        .orElseThrow()
+                        .code())
+                .isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
         assertThat(fixture.store.eventsFor(accepted.runId()))
-                .anySatisfy(event -> assertThat(event.type()).isEqualTo("tool.reconciled"));
+                .noneMatch(event -> event.type().equals("tool.reconciled"));
     }
 
     @Test
@@ -1072,7 +1070,7 @@ class RuntimeCoreTest {
         fixture.scheduler.runAll();
 
         assertThat(invocations).hasValue(1);
-        assertThat(reconciliations).hasValue(1);
+        assertThat(reconciliations).hasValue(0);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
             assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
             assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
@@ -1080,9 +1078,7 @@ class RuntimeCoreTest {
         assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> {
             assertThat(call.status().name()).isEqualTo("FAILED");
             assertThat(call.error().orElseThrow().error().details())
-                    .containsEntry("reconcileStatus", "STILL_UNKNOWN")
-                    .containsEntry("reconcileReason", "LOCAL_EVIDENCE_MISSING")
-                    .containsEntry("stopReason", "SIDE_EFFECTING_REPLAY_FORBIDDEN");
+                    .containsEntry("stopReason", "AUTOMATIC_REPLAY_FORBIDDEN");
             assertThat(fixture.journal.state(accepted.runId(), call.idempotencyKey()))
                     .contains(ToolJournalState.OUTCOME_UNKNOWN);
         });
@@ -1586,7 +1582,7 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void recoversFromAnAbandonedAttemptAtTheLatestCheckpoint() {
+    void settlesAbandonedAttemptWithoutAutomaticResume() {
         AtomicInteger calls = new AtomicInteger();
         AtomicBoolean owned = new AtomicBoolean(true);
         List<RuntimeTraceEvent> traces = new ArrayList<>();
@@ -1611,14 +1607,16 @@ class RuntimeCoreTest {
 
         assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
         assertThat(fixture.store.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
-        assertThat(fixture.store.checkpointsFor(accepted.runId())).isNotEmpty();
+        assertThat(fixture.store.checkpointsFor(accepted.runId())).isEmpty();
 
         owned.set(false);
         fixture.runtime.recover(accepted.runId());
+        assertThat(fixture.scheduler.pending()).isZero();
         fixture.scheduler.runAll();
+        assertThat(calls).hasValue(2);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.COMPLETED);
-        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
+                .isEqualTo(AgentRunStatus.FAILED);
+        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(1);
         assertThat(fixture.store
                         .attemptsFor(accepted.runId())
                         .getFirst()
@@ -1626,14 +1624,14 @@ class RuntimeCoreTest {
                         .name())
                 .isEqualTo("ABANDONED");
         assertThat(traces).allSatisfy(trace -> assertThat(trace.runId()).isEqualTo(accepted.runId()));
-        assertThat(traces.stream().map(RuntimeTraceEvent::traceId).distinct()).hasSize(2);
+        assertThat(traces.stream().map(RuntimeTraceEvent::traceId).distinct()).hasSize(1);
         assertThat(traces.stream()
                         .collect(java.util.stream.Collectors.groupingBy(
                                 trace -> trace.attemptId().orElseThrow(),
                                 java.util.stream.Collectors.mapping(
                                         RuntimeTraceEvent::traceId, java.util.stream.Collectors.toSet())))
                         .values())
-                .hasSize(2)
+                .hasSize(1)
                 .allSatisfy(traceIds -> assertThat(traceIds).hasSize(1));
     }
 
