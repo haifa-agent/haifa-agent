@@ -19,7 +19,6 @@ class CredentialValueObjectTest {
         var definition = new CredentialDefinition(
                 new CredentialDefinitionId("source-token"), scopes, Set.of(CredentialExposureMode.HTTP_HEADER));
         var binding = new CredentialBinding(
-                "binding-1",
                 new TenantRef("tenant"),
                 Optional.of(new PrincipalRef("user", "human")),
                 definition.id(),

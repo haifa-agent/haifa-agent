@@ -8,7 +8,6 @@ import java.util.Optional;
 import java.util.Set;
 
 public record CredentialBinding(
-        String bindingId,
         TenantRef tenant,
         Optional<PrincipalRef> principal,
         CredentialDefinitionId definitionId,
@@ -21,7 +20,6 @@ public record CredentialBinding(
         CredentialStatus status,
         Optional<Instant> expiresAt) {
     public CredentialBinding {
-        bindingId = CredentialValues.text(bindingId, "bindingId");
         Objects.requireNonNull(tenant, "tenant");
         principal = Objects.requireNonNull(principal, "principal");
         Objects.requireNonNull(definitionId, "definitionId");

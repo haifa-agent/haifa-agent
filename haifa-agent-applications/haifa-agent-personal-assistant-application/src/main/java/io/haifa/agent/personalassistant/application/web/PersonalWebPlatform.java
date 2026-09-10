@@ -271,7 +271,6 @@ public record PersonalWebPlatform(
                     contribution.definition().providerId(),
                     new ToolDefinitionCanonicalizer().hash(contribution.definition()));
             bindings.add(new CredentialBinding(
-                    "personal-web-" + suffix,
                     tenant,
                     Optional.of(principal),
                     requirement.definitionId(),

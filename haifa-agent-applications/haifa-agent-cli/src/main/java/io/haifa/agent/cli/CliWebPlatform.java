@@ -117,7 +117,6 @@ final class CliWebPlatform {
                     contribution.definition().providerId(),
                     new ToolDefinitionCanonicalizer().hash(contribution.definition()));
             bindings.add(new CredentialBinding(
-                    "cli-web-" + suffix,
                     LOCAL_TENANT,
                     Optional.of(principal),
                     requirement.definitionId(),
