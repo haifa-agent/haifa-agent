@@ -27,7 +27,7 @@ public interface SandboxProvider {
                             && !capabilities().networkIsolation()
                     ? "NETWORK_POLICY_UNENFORCEABLE"
                     : "CAPABILITY_UNAVAILABLE";
-            throw new SandboxException(code, "sandbox provider cannot satisfy the required capabilities");
+            throw new SandboxPreflightException(code, "sandbox provider cannot satisfy the required capabilities");
         }
         return new SandboxPreflight(
                 providerId(), providerId(), configurationDigest(), capabilities(), supportsManagedProcess());

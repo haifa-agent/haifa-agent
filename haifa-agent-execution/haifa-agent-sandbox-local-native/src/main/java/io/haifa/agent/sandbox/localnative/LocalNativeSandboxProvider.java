@@ -21,6 +21,7 @@ import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
 import io.haifa.agent.sandbox.api.SandboxExecution;
 import io.haifa.agent.sandbox.api.SandboxManagedProcess;
 import io.haifa.agent.sandbox.api.SandboxPreflight;
+import io.haifa.agent.sandbox.api.SandboxPreflightException;
 import io.haifa.agent.sandbox.api.SandboxProcessResult;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
 import io.haifa.agent.sandbox.api.SandboxProfile;
@@ -147,7 +148,7 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
             String code = profile.networkPolicy() == NetworkPolicy.DENY && !effective.networkIsolation()
                     ? "NETWORK_POLICY_UNENFORCEABLE"
                     : "CAPABILITY_UNAVAILABLE";
-            throw failure(code, "local-native cannot satisfy the required capabilities");
+            throw new SandboxPreflightException(code, "local-native cannot satisfy the required capabilities");
         }
         return new SandboxPreflight(providerId(), adapter.adapterId(), configurationDigest(), effective, false);
     }

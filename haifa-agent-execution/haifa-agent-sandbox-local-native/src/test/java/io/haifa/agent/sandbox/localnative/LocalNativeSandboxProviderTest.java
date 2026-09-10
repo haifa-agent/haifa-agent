@@ -30,6 +30,7 @@ import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxExecution;
 import io.haifa.agent.sandbox.api.SandboxFilesystemPolicy;
+import io.haifa.agent.sandbox.api.SandboxPreflightException;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import io.haifa.agent.sandbox.api.WorkspaceMount;
@@ -75,6 +76,20 @@ class LocalNativeSandboxProviderTest {
                 .isInstanceOf(LocalNativeSandboxException.class)
                 .extracting(exception -> ((LocalNativeSandboxException) exception).code())
                 .isEqualTo("CAPABILITY_UNAVAILABLE");
+
+        SandboxProfile unsupportedCapability = new SandboxProfile(
+                new SandboxProfileRef("local-native-test", "1"),
+                LocalNativeSandboxProvider.PROVIDER_ID,
+                configuration.digest(),
+                Set.of("tool"),
+                Set.of(),
+                false,
+                NetworkPolicy.DENY,
+                new SandboxFilesystemPolicy(SandboxWorkspaceAccess.READ_WRITE, true, Set.of()),
+                new SandboxCapabilities(true, true, true, true, false));
+        assertThatThrownBy(() -> provider.preflight(unsupportedCapability))
+                .isInstanceOfSatisfying(SandboxPreflightException.class, failure -> assertThat(failure.code())
+                        .isEqualTo("CAPABILITY_UNAVAILABLE"));
     }
 
     @Test
