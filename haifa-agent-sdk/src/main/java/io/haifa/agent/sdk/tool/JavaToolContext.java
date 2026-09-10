@@ -3,10 +3,9 @@ package io.haifa.agent.sdk.tool;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.tool.api.ToolCancellation;
 import java.time.Instant;
-import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -18,7 +17,7 @@ public record JavaToolContext(
         Instant deadline,
         Optional<String> idempotencyKey,
         ToolCancellation cancellation,
-        List<CredentialLease> credentialLeases) {
+        Map<String, String> credentials) {
     public JavaToolContext {
         runId = Objects.requireNonNull(runId, "runId must not be null");
         tenant = Objects.requireNonNull(tenant, "tenant must not be null");
@@ -26,6 +25,6 @@ public record JavaToolContext(
         deadline = Objects.requireNonNull(deadline, "deadline must not be null");
         idempotencyKey = Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
         cancellation = Objects.requireNonNull(cancellation, "cancellation must not be null");
-        credentialLeases = List.copyOf(Objects.requireNonNull(credentialLeases, "credentialLeases must not be null"));
+        credentials = Map.copyOf(Objects.requireNonNull(credentials, "credentials must not be null"));
     }
 }

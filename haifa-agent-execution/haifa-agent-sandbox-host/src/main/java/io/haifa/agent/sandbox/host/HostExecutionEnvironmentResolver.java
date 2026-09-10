@@ -12,29 +12,12 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/** Resolves bounded, secret-free host inputs for Host Guarded and Provider-isolated execution. */
+/** Resolves bounded, secret-free host inputs for controlled host execution. */
 public final class HostExecutionEnvironmentResolver {
     public static final String POLICY_VERSION = "host-execution-environment-v1";
     public static final String HOST_USER_RESOLVED = "HOST_USER_ENVIRONMENT_RESOLVED";
-    public static final String PROVIDER_ISOLATED_RESOLVED = "PROVIDER_ISOLATED_ENVIRONMENT_RESOLVED";
     private static final int MAX_VARIABLES = 256;
     private static final int MAX_VALUE_LENGTH = 32_768;
-    private static final Set<String> PROVIDER_MANAGED = Set.of(
-            "HOME",
-            "USERPROFILE",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "HOMEDRIVE",
-            "HOMEPATH",
-            "XDG_CONFIG_HOME",
-            "XDG_DATA_HOME",
-            "XDG_CACHE_HOME",
-            "XDG_STATE_HOME",
-            "TMPDIR",
-            "TMP",
-            "TEMP",
-            "GOTMPDIR",
-            "GOCACHE");
     private static final Set<String> INTERPRETER_BOUNDARY = Set.of(
             "VIRTUAL_ENV",
             "CONDA_PREFIX",
@@ -79,9 +62,9 @@ public final class HostExecutionEnvironmentResolver {
         Objects.requireNonNull(approvedInheritedNames, "approvedInheritedNames must not be null");
         Os os = Os.parse(operatingSystem);
         List<Path> forbidden = normalizedRoots(applicationDataRoot, workspaceRoot, scratchRoot);
-        LinkedHashMap<String, String> resolved = selected(hostEnvironment, approvedInheritedNames, os.windows(), false);
+        LinkedHashMap<String, String> resolved = selected(hostEnvironment, approvedInheritedNames, os.windows());
         Set<String> baseline = os.windows() ? WINDOWS_BASELINE : POSIX_BASELINE;
-        baseline.stream().sorted().forEach(name -> inherit(resolved, hostEnvironment, name, os.windows(), false));
+        baseline.stream().sorted().forEach(name -> inherit(resolved, hostEnvironment, name, os.windows()));
         if (os.windows()) {
             List.of("USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SYSTEMROOT", "WINDIR")
                     .forEach(name -> normalizeSafePath(resolved, name, true, forbidden));
@@ -99,7 +82,7 @@ public final class HostExecutionEnvironmentResolver {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "HOST_USER_HOME_UNAVAILABLE: no safe host user home is available"));
         putCanonical(resolved, "HOME", home.toString(), os.windows());
-        inherit(resolved, hostEnvironment, "SSH_AUTH_SOCK", os.windows(), false);
+        inherit(resolved, hostEnvironment, "SSH_AUTH_SOCK", os.windows());
         putCanonical(resolved, "GIT_TERMINAL_PROMPT", "0", os.windows());
         putCanonical(resolved, "GCM_INTERACTIVE", "Never", os.windows());
         putCanonical(resolved, "GH_PROMPT_DISABLED", "1", os.windows());
@@ -135,47 +118,17 @@ public final class HostExecutionEnvironmentResolver {
         return new ResolvedHostEnvironment(resolved, resolved.keySet(), HOST_USER_RESOLVED);
     }
 
-    public static ResolvedHostEnvironment resolveProviderIsolated(
-            Map<String, String> hostEnvironment, String operatingSystem, Set<String> approvedInheritedNames) {
-        Objects.requireNonNull(hostEnvironment, "hostEnvironment must not be null");
-        Objects.requireNonNull(approvedInheritedNames, "approvedInheritedNames must not be null");
-        Os os = Os.parse(operatingSystem);
-        LinkedHashMap<String, String> resolved = selected(hostEnvironment, approvedInheritedNames, os.windows(), true);
-        inherit(resolved, hostEnvironment, "PATH", os.windows(), true);
-        if (os.windows()) {
-            inherit(resolved, hostEnvironment, "PATHEXT", true, true);
-            inherit(resolved, hostEnvironment, "SystemRoot", true, true);
-            inherit(resolved, hostEnvironment, "ComSpec", true, true);
-            putIfMissing(resolved, "PATHEXT", ".COM;.EXE;.BAT;.CMD", true);
-        } else {
-            inherit(resolved, hostEnvironment, "SHELL", false, true);
-            inherit(resolved, hostEnvironment, "LANG", false, true);
-            inherit(resolved, hostEnvironment, "LC_ALL", false, true);
-            inherit(resolved, hostEnvironment, "LC_CTYPE", false, true);
-            putIfMissing(
-                    resolved,
-                    "PATH",
-                    os.mac()
-                            ? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-                            : "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                    false);
-            putIfMissing(resolved, "SHELL", os.mac() ? "/bin/zsh" : "/bin/sh", false);
-        }
-        validateBudget(resolved);
-        return new ResolvedHostEnvironment(resolved, resolved.keySet(), PROVIDER_ISOLATED_RESOLVED);
-    }
-
     private static LinkedHashMap<String, String> selected(
-            Map<String, String> source, Set<String> approved, boolean ignoreCase, boolean providerIsolated) {
+            Map<String, String> source, Set<String> approved, boolean ignoreCase) {
         LinkedHashMap<String, String> result = new LinkedHashMap<>();
         if (approved.contains("*")) {
             source.entrySet().stream()
                     .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
-                    .filter(entry -> allowed(entry.getKey(), providerIsolated))
+                    .filter(entry -> allowed(entry.getKey()))
                     .forEach(entry -> put(result, entry.getKey(), entry.getValue(), ignoreCase));
         } else {
             approved.stream().sorted().forEach(name -> find(source, name, ignoreCase)
-                    .filter(entry -> allowed(entry.getKey(), providerIsolated))
+                    .filter(entry -> allowed(entry.getKey()))
                     .ifPresent(entry -> put(result, entry.getKey(), entry.getValue(), ignoreCase)));
         }
         return result;
@@ -250,12 +203,10 @@ public final class HostExecutionEnvironmentResolver {
         return List.copyOf(values);
     }
 
-    private static boolean allowed(String name, boolean providerIsolated) {
+    private static boolean allowed(String name) {
         if (name == null || !name.matches("[A-Za-z_][A-Za-z0-9_]{0,127}")) return false;
         String upper = name.toUpperCase(Locale.ROOT);
-        return !looksSensitive(upper)
-                && !INTERPRETER_BOUNDARY.contains(upper)
-                && (!providerIsolated || !PROVIDER_MANAGED.contains(upper));
+        return !looksSensitive(upper) && !INTERPRETER_BOUNDARY.contains(upper);
     }
 
     private static boolean looksSensitive(String name) {
@@ -274,14 +225,10 @@ public final class HostExecutionEnvironmentResolver {
     }
 
     private static void inherit(
-            Map<String, String> target,
-            Map<String, String> source,
-            String name,
-            boolean ignoreCase,
-            boolean providerIsolated) {
+            Map<String, String> target, Map<String, String> source, String name, boolean ignoreCase) {
         if (value(target, name, ignoreCase).isPresent()) return;
         find(source, name, ignoreCase)
-                .filter(entry -> allowed(entry.getKey(), providerIsolated))
+                .filter(entry -> allowed(entry.getKey()))
                 .ifPresent(entry -> put(target, entry.getKey(), entry.getValue(), ignoreCase));
     }
 
@@ -312,7 +259,7 @@ public final class HostExecutionEnvironmentResolver {
     }
 
     private static void put(Map<String, String> values, String name, String value, boolean ignoreCase) {
-        if (!allowed(name, false) || !validValue(value)) return;
+        if (!allowed(name) || !validValue(value)) return;
         find(values, name, ignoreCase)
                 .ifPresentOrElse(entry -> values.put(entry.getKey(), value), () -> values.put(name, value));
     }

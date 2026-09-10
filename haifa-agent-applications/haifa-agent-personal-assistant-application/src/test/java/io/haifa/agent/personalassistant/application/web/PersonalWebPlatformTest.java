@@ -6,19 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.credential.api.CredentialBindingScope;
-import io.haifa.agent.credential.api.CredentialRequest;
-import io.haifa.agent.credential.api.CredentialScopeKind;
-import io.haifa.agent.tool.api.ToolCoordinate;
-import io.haifa.agent.tool.core.ToolDefinitionCanonicalizer;
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
-import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class PersonalWebPlatformTest {
@@ -51,37 +41,15 @@ class PersonalWebPlatformTest {
                 .extracting(item -> item.definition().providerId().value())
                 .containsExactly("web-search.aliyun", "web-fetch.browserless");
         assertThat(platform.contributions())
-                .extracting(item -> item.definition()
-                        .credentialRequirements()
-                        .getFirst()
-                        .definitionId()
-                        .value())
+                .extracting(item ->
+                        item.definition().credentialRequirements().getFirst().credentialId())
                 .containsExactly("web-search-aliyun", "web-fetch-browserless");
         for (var contribution : platform.contributions()) {
             var definition = contribution.definition();
             var requirement = definition.credentialRequirements().getFirst();
-            var coordinate = new ToolCoordinate(
-                    definition.name(),
-                    definition.version(),
-                    definition.providerId(),
-                    new ToolDefinitionCanonicalizer().hash(definition));
-            Instant now = Instant.ofEpochMilli(System.currentTimeMillis());
-            var lease = platform.credential()
-                    .broker()
-                    .issue(new CredentialRequest(
-                            TENANT,
-                            PRINCIPAL,
-                            new AgentRunId("run-1"),
-                            coordinate.externalForm(),
-                            requirement,
-                            List.of(new CredentialBindingScope(CredentialScopeKind.SYSTEM, "system")),
-                            Optional.empty(),
-                            now,
-                            now.plusSeconds(30)));
-            String actual = lease.use(secret -> new String(secret, StandardCharsets.UTF_8));
+            String actual = platform.credential().broker().requireSecret(requirement.credentialId());
             String expected = definition.name().value().equals("web.search") ? "aliyun-secret" : "browserless-secret";
             assertThat(actual).isEqualTo(expected);
-            lease.close();
         }
         var search = platform.contributions().stream()
                 .filter(item -> item.definition().name().value().equals("web.search"))

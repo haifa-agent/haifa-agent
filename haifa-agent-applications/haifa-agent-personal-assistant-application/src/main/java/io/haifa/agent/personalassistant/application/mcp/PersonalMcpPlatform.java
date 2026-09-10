@@ -3,9 +3,7 @@ package io.haifa.agent.personalassistant.application.mcp;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.credential.api.CredentialBroker;
-import io.haifa.agent.credential.api.CredentialLease;
-import io.haifa.agent.credential.api.CredentialOperationRequest;
-import io.haifa.agent.credential.api.CredentialRequest;
+import io.haifa.agent.credential.core.DefaultCredentialBroker;
 import io.haifa.agent.credential.core.DefaultSecretRedactor;
 import io.haifa.agent.mcp.client.McpConnectionManager;
 import io.haifa.agent.mcp.client.McpServerSnapshot;
@@ -134,7 +132,7 @@ public final class PersonalMcpPlatform implements AutoCloseable {
                     .sorted(Comparator.comparing(McpToolImportCandidate::remoteName))
                     .toList();
             McpServerSnapshot serverSnapshot = connections
-                    .acquire(server.serverId(), tenant, principal, List.of())
+                    .acquire(server.serverId(), tenant, principal, Map.of())
                     .serverSnapshot();
             return new PersonalMcpPlatform(connections, server, serverSnapshot, importedCandidates, contributions);
         } catch (RuntimeException exception) {
@@ -185,21 +183,6 @@ public final class PersonalMcpPlatform implements AutoCloseable {
     }
 
     private static CredentialBroker noCredentials(DefaultSecretRedactor redactor) {
-        return new CredentialBroker() {
-            @Override
-            public CredentialLease issue(CredentialRequest request) {
-                throw new IllegalStateException("Personal local MCP does not accept credentials");
-            }
-
-            @Override
-            public CredentialLease issue(CredentialOperationRequest request) {
-                throw new IllegalStateException("Personal local MCP does not accept credentials");
-            }
-
-            @Override
-            public io.haifa.agent.credential.api.SecretRedactor redactor() {
-                return redactor;
-            }
-        };
+        return new DefaultCredentialBroker(Map.of(), redactor);
     }
 }

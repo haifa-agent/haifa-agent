@@ -4,22 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.credential.api.CredentialBindingScope;
-import io.haifa.agent.credential.api.CredentialRequest;
-import io.haifa.agent.credential.api.CredentialScopeKind;
-import io.haifa.agent.tool.api.ToolCoordinate;
-import io.haifa.agent.tool.core.ToolDefinitionCanonicalizer;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class CliWebPlatformTest {
     @Test
-    void assemblesExactProvidersAndIssuesInvocationScopedCredentialLeases() {
+    void assemblesExactProvidersAndConfiguresCredentialSecrets() {
         PrincipalRef principal = new PrincipalRef("local-user", "user");
         CliConfiguration.Web configuration = enabledWeb();
         var platform = CliWebPlatform.create(configuration, principal, name -> switch (name) {
@@ -39,27 +28,8 @@ class CliWebPlatformTest {
         for (var contribution : platform.contributions()) {
             var definition = contribution.definition();
             var requirement = definition.credentialRequirements().getFirst();
-            var coordinate = new ToolCoordinate(
-                    definition.name(),
-                    definition.version(),
-                    definition.providerId(),
-                    new ToolDefinitionCanonicalizer().hash(definition));
-            Instant now = Instant.ofEpochMilli(System.currentTimeMillis());
-            var lease = platform.credentialBroker()
-                    .issue(new CredentialRequest(
-                            new TenantRef("local"),
-                            principal,
-                            new AgentRunId("run-1"),
-                            coordinate.externalForm(),
-                            requirement,
-                            List.of(new CredentialBindingScope(CredentialScopeKind.SYSTEM, "system")),
-                            Optional.empty(),
-                            now,
-                            now.plusSeconds(30)));
-            String value = lease.use(secret -> new String(secret, StandardCharsets.UTF_8));
+            String value = platform.credentialBroker().requireSecret(requirement.credentialId());
             assertThat(value).endsWith("-secret");
-            assertThat(lease.reference().value()).doesNotContain(value);
-            lease.close();
         }
     }
 

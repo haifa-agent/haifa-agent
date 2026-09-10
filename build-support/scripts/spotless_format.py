@@ -200,39 +200,50 @@ def main() -> int:
     else:
         goal = "spotless:apply"
 
-    maven_args = [str(maven_cmd), "-o", "--batch-mode", "--no-transfer-progress"]
+    chunk_size = 15
+    chunks = [target_files[i : i + chunk_size] for i in range(0, len(target_files), chunk_size)]
 
-    if has_root_files:
-        affected_modules.add("haifa-agent-parent")
+    for chunk_idx, chunk_files in enumerate(chunks):
+        chunk_modules: set[str] = set()
+        chunk_has_root = False
+        for file_path in chunk_files:
+            artifact = module_for_path(file_path, modules)
+            if artifact and artifact != "haifa-agent-parent":
+                chunk_modules.add(artifact)
+            else:
+                chunk_has_root = True
+        if chunk_has_root:
+            chunk_modules.add("haifa-agent-parent")
 
-    if not affected_modules:
-        print("[spotless] No affected code files to format/check.")
-        return 0
+        selectors = ",".join(f":{mod}" for mod in sorted(chunk_modules))
+        maven_args = [str(maven_cmd), "-o", "--batch-mode", "--no-transfer-progress"]
+        maven_args.extend(["-pl", selectors, goal])
+        maven_args.append(f"-DspotlessFiles={','.join(chunk_files)}")
+        if (root / ".git").is_file():
+            maven_args.append("-Dspotless.ratchetFrom=")
 
-    selectors = ",".join(f":{mod}" for mod in sorted(affected_modules))
-    maven_args.extend(["-pl", selectors, goal])
-    maven_args.append(f"-DspotlessFiles={','.join(target_files)}")
-    if (root / ".git").is_file():
-        maven_args.append("-Dspotless.ratchetFrom=")
-    print(f"[spotless] Executing {goal} on {len(affected_modules)} affected module(s) ({len(target_files)} target file(s)): {selectors}")
+        if len(chunks) > 1:
+            print(f"[spotless] [{chunk_idx + 1}/{len(chunks)}] Executing {goal} on {len(chunk_modules)} affected module(s) ({len(chunk_files)} target file(s)): {selectors}")
+        else:
+            print(f"[spotless] Executing {goal} on {len(chunk_modules)} affected module(s) ({len(chunk_files)} target file(s)): {selectors}")
 
-    try:
-        completed = subprocess.run(maven_args, cwd=root, check=False)
-        if completed.returncode != 0:
-            if goal == "spotless:check":
-                print(
-                    "\n[spotless] ERROR: Unformatted code detected before push!\n"
-                    "  To automatically format affected files and amend your commit, run:\n"
-                    "    ./build-support/scripts/spotless-format.sh --push --apply --amend  (or .ps1 on Windows)\n"
-                    "  Or run:\n"
-                    "    ./build-support/scripts/spotless-format.sh --push --apply\n"
-                    "    git commit -a --amend --no-edit\n",
-                    file=sys.stderr,
-                )
-            return completed.returncode
-    except OSError as e:
-        print(f"[spotless] Failed to invoke Maven wrapper: {e}", file=sys.stderr)
-        return 1
+        try:
+            completed = subprocess.run(maven_args, cwd=root, check=False)
+            if completed.returncode != 0:
+                if goal == "spotless:check":
+                    print(
+                        "\n[spotless] ERROR: Unformatted code detected before push!\n"
+                        "  To automatically format affected files and amend your commit, run:\n"
+                        "    ./build-support/scripts/spotless-format.sh --push --apply --amend  (or .ps1 on Windows)\n"
+                        "  Or run:\n"
+                        "    ./build-support/scripts/spotless-format.sh --push --apply\n"
+                        "    git commit -a --amend --no-edit\n",
+                        file=sys.stderr,
+                    )
+                return completed.returncode
+        except OSError as e:
+            print(f"[spotless] Failed to invoke Maven wrapper: {e}", file=sys.stderr)
+            return 1
 
     if args.amend and goal == "spotless:apply":
         print("[spotless] Amending formatting changes into previous git commit...")

@@ -5,7 +5,7 @@
 SDK 使用者应先阅读 `haifa-agent-sdk-example`；这里的类属于不发布的底层参考代码，不是 SDK API。
 
 该 Demo 会访问真实外部 Provider 并可能计费，但执行结果不能替代 Adapter 相邻的 Live Probe 或
-产品 E2E。真实测试仍由 Suite Runner、Case 和对应自动化 Oracle 管理。
+产品 E2E。真实测试由各测试模块的显式 opt-in Live 测试和对应的自动化 Oracle 管理。
 
 ## 目录与场景
 

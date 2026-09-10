@@ -141,11 +141,6 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
-                <artifactId>haifa-agent-sandbox-local-native</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-git</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -331,17 +326,7 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
-                <artifactId>haifa-agent-test-harness</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-test-fixtures</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>io.haifa</groupId>
-                <artifactId>haifa-agent-transport-tck</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -352,6 +337,11 @@
             <dependency>
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-e2e-tests</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-autonomous-delivery</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

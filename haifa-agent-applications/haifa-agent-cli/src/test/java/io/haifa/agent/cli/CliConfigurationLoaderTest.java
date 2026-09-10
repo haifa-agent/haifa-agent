@@ -312,7 +312,6 @@ class CliConfigurationLoaderTest {
         assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
         assertThat(result.approvalThreshold()).isEqualTo(CodingApprovalThreshold.LOW);
         assertThat(result.execution().provider()).isEqualTo("host-guarded");
-        assertThat(result.execution().network()).isEqualTo("allow");
         assertThat(result.persistence().mode()).isEqualTo(ProjectPersistenceMode.SQLITE_WITH_JSONL);
         assertThat(result.persistence().protection()).isEqualTo(ProjectPersistenceProtection.NONE);
         assertThat(result.persistence().databasePath()).contains(database);
@@ -731,7 +730,6 @@ class CliConfigurationLoaderTest {
         assertThat(result.maxModelCalls()).isEqualTo(5);
         assertThat(result.execution().defaultTimeout()).isEqualTo(java.time.Duration.ofMillis(45000));
         assertThat(result.execution().provider()).isEqualTo("host-guarded");
-        assertThat(result.execution().network()).isEqualTo("allow");
         assertThat(result.execution().maximumTimeout()).isEqualTo(java.time.Duration.ofMillis(600000));
         assertThat(result.execution().maxOutputBytes()).isEqualTo(32768);
         assertThat(result.execution().maxOutputLines()).isEqualTo(900);
@@ -936,7 +934,6 @@ class CliConfigurationLoaderTest {
 
         assertThatThrownBy(() -> new CliConfiguration.Execution(
                         defaults.provider(),
-                        defaults.network(),
                         defaults.shell(),
                         defaults.shellPath(),
                         defaults.defaultTimeout(),
@@ -944,13 +941,11 @@ class CliConfigurationLoaderTest {
                         defaults.maxOutputBytes(),
                         defaults.maxOutputLines(),
                         defaults.maxProcesses(),
-                        java.util.Set.of("DEEPSEEK_API_KEY"),
-                        java.util.List.of()))
+                        java.util.Set.of("DEEPSEEK_API_KEY")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("secret-like");
         assertThatThrownBy(() -> new CliConfiguration.Execution(
                         defaults.provider(),
-                        defaults.network(),
                         "cmd",
                         null,
                         defaults.defaultTimeout(),
@@ -958,43 +953,35 @@ class CliConfigurationLoaderTest {
                         defaults.maxOutputBytes(),
                         defaults.maxOutputLines(),
                         defaults.maxProcesses(),
-                        java.util.Set.of(),
-                        java.util.List.of()))
+                        java.util.Set.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("unsupported");
     }
 
     @Test
-    void validatesProviderNetworkAndTrustedExtraPathConfiguration() throws Exception {
+    void ignoresRetiredIsolationKeysAndKeepsTheSingleHostProvider() throws Exception {
         Path cache = Files.createTempDirectory("haifa-cli-cache").toAbsolutePath();
         Path configuration = Files.createTempFile("haifa-cli-execution", ".yaml");
         Files.writeString(
                 configuration,
                 """
                 execution:
-                  provider: local-native
+                  provider: host-guarded
                   network: allow
-                  extraPathPolicies:
-                    - id: build-cache
-                      path: "%s"
-                      readOnly: false
-                """
-                        .formatted(cache.toString().replace("\\", "\\\\")));
+                  maxProcesses: 4
+                """);
 
         CliConfiguration result = new CliConfigurationLoader()
                 .load(
                         CliArguments.parse(new String[] {"-m", "execution", "--config", configuration.toString()}),
                         cache);
 
-        assertThat(result.execution().provider()).isEqualTo("local-native");
-        assertThat(result.execution().network()).isEqualTo("allow");
-        assertThat(result.execution().extraPathPolicies())
-                .containsExactly(new CliConfiguration.ExtraPathPolicy("build-cache", cache, false));
+        assertThat(result.execution().provider()).isEqualTo("host-guarded");
+        assertThat(result.execution().maxProcesses()).isEqualTo(4);
 
         CliConfiguration.Execution defaults = CliConfiguration.defaults().execution();
         assertThatThrownBy(() -> new CliConfiguration.Execution(
-                        "host-guarded",
-                        "deny",
+                        "local-native",
                         defaults.shell(),
                         defaults.shellPath(),
                         defaults.defaultTimeout(),
@@ -1002,10 +989,9 @@ class CliConfigurationLoaderTest {
                         defaults.maxOutputBytes(),
                         defaults.maxOutputLines(),
                         defaults.maxProcesses(),
-                        defaults.inheritEnvironment(),
-                        java.util.List.of()))
+                        defaults.inheritEnvironment()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("unavailable");
+                .hasMessageContaining("unsupported");
     }
 
     @Test

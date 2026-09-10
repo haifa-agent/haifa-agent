@@ -229,25 +229,6 @@ class HostExecutionEnvironmentResolverTest {
     }
 
     @Test
-    void providerIsolatedNeverPassesHostHomeOrUserDirectoryVariables() {
-        var result = HostExecutionEnvironmentResolver.resolveProviderIsolated(
-                Map.of(
-                        "PATH", "/custom/bin",
-                        "HOME", home.toString(),
-                        "USERPROFILE", home.toString(),
-                        "APPDATA", root.resolve("appdata").toString(),
-                        "XDG_DATA_HOME", root.resolve("xdg").toString(),
-                        "TMPDIR", root.resolve("tmp").toString()),
-                "Linux",
-                Set.of("*"));
-
-        assertThat(result.environment())
-                .containsEntry("PATH", "/custom/bin")
-                .doesNotContainKeys("HOME", "USERPROFILE", "APPDATA", "XDG_DATA_HOME", "TMPDIR");
-        assertThat(result.diagnosticCode()).isEqualTo(HostExecutionEnvironmentResolver.PROVIDER_ISOLATED_RESOLVED);
-    }
-
-    @Test
     void hostUserFailsClosedWhenEveryHomeCandidateIsUnsafeOrUnavailable() {
         assertThatThrownBy(() -> HostExecutionEnvironmentResolver.resolveHostUser(
                         Map.of("HOME", workspace.toString(), "USERPROFILE", applicationData.toString()),

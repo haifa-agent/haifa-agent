@@ -20,6 +20,11 @@
     <dependencies>
         <dependency>
             <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-test-fixtures</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-cli</artifactId>
             <version>${project.version}</version>
         </dependency>
@@ -39,4 +44,20 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*ContractTest.java</include>
+                        <include>**/*E2E.java</include>
+                    </includes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>
