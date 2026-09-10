@@ -252,14 +252,6 @@ final class TestToolPlatform {
                 "Test policy requires approval");
     }
 
-    static PolicyDecision reauthenticationRequired() {
-        return decision(
-                PolicyEffect.ASK,
-                Optional.of(PolicyChallenge.REAUTHENTICATE),
-                "TEST_REAUTHENTICATION_REQUIRED",
-                "Test policy requires reauthentication");
-    }
-
     static PolicyDecision deny() {
         return decision(PolicyEffect.DENY, Optional.empty(), "TEST_DENY", "Test policy denied the tool");
     }

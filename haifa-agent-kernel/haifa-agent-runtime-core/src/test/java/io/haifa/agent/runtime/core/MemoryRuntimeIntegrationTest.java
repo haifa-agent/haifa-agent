@@ -88,7 +88,7 @@ class MemoryRuntimeIntegrationTest {
                 .identifierGenerator(() -> "runtime-memory-" + runtimeIds.incrementAndGet())
                 .timeProvider(() -> NOW)
                 .trace(traces::add)
-                .memory(memoryService, retriever, memories)
+                .memory(memoryService, retriever)
                 .build();
 
         var accepted = runtime.start(new AgentRunRequest(

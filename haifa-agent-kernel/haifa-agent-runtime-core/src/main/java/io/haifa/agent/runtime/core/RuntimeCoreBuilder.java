@@ -21,7 +21,6 @@ import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.credential.api.CredentialBroker;
 import io.haifa.agent.memory.api.MemoryActor;
-import io.haifa.agent.memory.api.MemoryAuditSink;
 import io.haifa.agent.memory.api.MemoryRetriever;
 import io.haifa.agent.memory.api.MemoryService;
 import io.haifa.agent.memory.api.MemorySourceRef;
@@ -207,7 +206,6 @@ public final class RuntimeCoreBuilder {
     private String workerId = "local-runtime-" + ids.nextValue();
     private ExecutionOwnershipPort ownership;
     private MemoryRetriever memoryRetriever;
-    private MemoryAuditSink memoryAudit;
     private MemoryService memoryService;
     private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
     private ModelAudioResolver modelAudioResolver = ModelAudioResolver.unsupported();
@@ -454,25 +452,14 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder memory(MemoryRetriever retriever, MemoryAuditSink audit) {
-        return memoryRetriever(retriever).memoryAudit(audit);
-    }
-
-    /** Configures the Memory retriever while retaining the default audit sink when one is needed. */
-    public RuntimeCoreBuilder memoryRetriever(MemoryRetriever value) {
-        memoryRetriever = Objects.requireNonNull(value, "memoryRetriever must not be null");
+    public RuntimeCoreBuilder memory(MemoryRetriever retriever) {
+        memoryRetriever = Objects.requireNonNull(retriever, "memoryRetriever must not be null");
         return this;
     }
 
-    /** Configures the Memory audit sink while retaining the default retriever when one is needed. */
-    public RuntimeCoreBuilder memoryAudit(MemoryAuditSink value) {
-        memoryAudit = Objects.requireNonNull(value, "memoryAudit must not be null");
-        return this;
-    }
-
-    public RuntimeCoreBuilder memory(MemoryService service, MemoryRetriever retriever, MemoryAuditSink audit) {
+    public RuntimeCoreBuilder memory(MemoryService service, MemoryRetriever retriever) {
         memoryService = Objects.requireNonNull(service);
-        return memory(retriever, audit);
+        return memory(retriever);
     }
 
     public DefaultAgentRuntime build() {
