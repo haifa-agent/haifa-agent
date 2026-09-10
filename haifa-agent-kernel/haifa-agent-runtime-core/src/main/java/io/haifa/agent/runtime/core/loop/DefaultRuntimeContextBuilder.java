@@ -1,11 +1,9 @@
 package io.haifa.agent.runtime.core.loop;
 
-import io.haifa.agent.context.api.AgentContextBuilder;
+import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
-import io.haifa.agent.context.api.ContextBuildRequest;
-import io.haifa.agent.context.budget.ContextWindowBudget;
-import io.haifa.agent.context.budget.HeuristicTokenEstimator;
+import io.haifa.agent.context.api.ContextBuildResult;
 import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.context.prompt.PromptComponent;
@@ -44,7 +42,6 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
 
     private final RuntimeStateRepository state;
     private final AgentRuntimeMiddlewareChain middleware;
-    private final AgentContextBuilder contexts;
     private final SessionMessageSource sessionMessages;
     private final MemoryContextSource memorySource;
     private final SkillContentLoader skillContentLoader;
@@ -52,22 +49,19 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
     public DefaultRuntimeContextBuilder(
             RuntimeStateRepository state,
             AgentRuntimeMiddlewareChain middleware,
-            AgentContextBuilder contexts,
             SessionMessageSource sessionMessages,
             MemoryContextSource memorySource) {
-        this(state, middleware, contexts, sessionMessages, memorySource, SkillContentLoader.empty());
+        this(state, middleware, sessionMessages, memorySource, SkillContentLoader.empty());
     }
 
     public DefaultRuntimeContextBuilder(
             RuntimeStateRepository state,
             AgentRuntimeMiddlewareChain middleware,
-            AgentContextBuilder contexts,
             SessionMessageSource sessionMessages,
             MemoryContextSource memorySource,
             SkillContentLoader skillContentLoader) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.middleware = Objects.requireNonNull(middleware, "middleware must not be null");
-        this.contexts = Objects.requireNonNull(contexts, "contexts must not be null");
         this.sessionMessages = Objects.requireNonNull(sessionMessages, "sessionMessages must not be null");
         this.memorySource = Objects.requireNonNull(memorySource, "memorySource must not be null");
         this.skillContentLoader = Objects.requireNonNull(skillContentLoader, "skillContentLoader must not be null");
@@ -96,24 +90,22 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                     java.util.Set.of("runtime-control", "finalize-only")));
         }
 
-        List<ContextItem> memoryItems = memorySource.select(run, model);
         int divisor = loopContext.forcedContextRebuildAttempts() > 0 ? 10 : 20;
         int safetyMargin =
                 Math.min(16_384, Math.max(256, model.configuration().model().contextWindow() / divisor));
-        ContextWindowBudget budget = ContextWindowBudget.calculate(
+        TokenBudget budget = TokenBudget.forModel(
                 model.configuration().model(), model.configuration().model().maxOutputTokens(), safetyMargin);
-        HeuristicTokenEstimator estimator = new HeuristicTokenEstimator();
-        long nonSessionTokens = middlewareContext.prompts().stream()
-                        .mapToLong(estimator::estimate)
-                        .sum()
-                + effectiveTools.stream().mapToLong(estimator::estimate).sum()
-                + middlewareContext.contextItems().stream()
-                        .mapToLong(estimator::estimate)
-                        .sum()
-                + memoryItems.stream().mapToLong(estimator::estimate).sum();
-        long sessionTokenBudget = Math.max(1L, budget.availableInputTokens() - nonSessionTokens);
-        SessionMessageSource.Selection selection =
-                sessionMessages.select(run, loopContext.forcedContextRebuildAttempts(), sessionTokenBudget);
+        long fixedTokens =
+                middlewareContext.prompts().stream().mapToLong(budget::estimate).sum()
+                        + effectiveTools.stream().mapToLong(budget::estimate).sum();
+        requireFits(fixedTokens, budget, "required prompts and tool definitions exceed the model input budget");
+
+        List<ContextItem> memoryItems = memoryThatFits(
+                memorySource.select(run, model, loopContext), budget.availableInputTokens() - fixedTokens);
+        long memoryTokens = memoryItems.stream().mapToLong(budget::estimate).sum();
+        long sessionTokenBudget = budget.availableInputTokens() - fixedTokens - memoryTokens;
+        sessionMessages.compactIfNeeded(run, loopContext.forcedContextRebuildAttempts(), sessionTokenBudget);
+        SessionMessageSource.Selection selection = sessionMessages.select(run, sessionTokenBudget);
         List<ContextItem> items = new ArrayList<>(selection.items());
         selection.items().stream()
                 .filter(item -> item.content() instanceof MessageGroupContextContent)
@@ -124,25 +116,86 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         // explicit window-boundary inputs when a Plan or governed Memory selection changes.
         items.addAll(middlewareContext.contextItems());
         items.addAll(memoryItems);
-        var request = new ContextBuildRequest(
-                run.id(),
-                run.sessionId(),
-                run.tenant(),
-                run.principal(),
-                loopContext.iteration(),
-                model.configuration().model(),
-                middlewareContext.prompts(),
-                items,
-                effectiveTools,
-                model.configuration().model().maxOutputTokens(),
-                safetyMargin,
-                selection.policyVersion(),
-                selection.compressorVersion(),
-                loopContext.forcedContextRebuildAttempts());
-        var built = contexts.build(request);
+        long itemTokens = items.stream().mapToLong(budget::estimate).sum();
+        long totalTokens = Math.addExact(fixedTokens, itemTokens);
+        requireFits(totalTokens, budget, "session history and optional context exceed the model input budget");
+        var context =
+                new AgentContext(middlewareContext.prompts(), items, effectiveTools, budget.window(), totalTokens);
+        var built = new ContextBuildResult(
+                context,
+                contextReport(run, loopContext, model, middlewareContext, items, selection, budget, totalTokens));
         String windowIdentity =
                 windowIdentity(built.report(), middlewareContext, memoryItems, selection, model, effectiveTools);
         return new RuntimeContextBuildResult(built, middlewareContext, selection, windowIdentity);
+    }
+
+    private List<ContextItem> memoryThatFits(List<ContextItem> candidates, long remainingInputTokens) {
+        long memoryAllowance = Math.max(0L, remainingInputTokens / 8L);
+        long used = 0L;
+        List<ContextItem> fitting = new ArrayList<>();
+        for (ContextItem candidate : candidates) {
+            long tokens = candidate.estimatedTokens();
+            if (used + tokens > memoryAllowance) {
+                break;
+            }
+            fitting.add(candidate);
+            used += tokens;
+        }
+        return List.copyOf(fitting);
+    }
+
+    private static void requireFits(long tokens, TokenBudget budget, String message) {
+        if (tokens > budget.availableInputTokens()) {
+            throw new ContextBuildException(ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE, message);
+        }
+    }
+
+    private ContextReport contextReport(
+            AgentRun run,
+            AgentLoopContext loopContext,
+            FrozenModelBinding model,
+            RuntimeMiddlewareContext middlewareContext,
+            List<ContextItem> items,
+            SessionMessageSource.Selection selection,
+            TokenBudget budget,
+            long totalTokens) {
+        List<ContextReportComponent> components = new ArrayList<>();
+        middlewareContext
+                .prompts()
+                .forEach(prompt -> components.add(new ContextReportComponent(
+                        prompt.id().value(),
+                        ContextReportComponent.ComponentKind.PROMPT,
+                        "prompt",
+                        "prompt",
+                        prompt.layer(),
+                        prompt.role(),
+                        prompt.version(),
+                        budget.estimate(prompt),
+                        sha256(prompt.text()),
+                        prompt.securityLabels())));
+        items.forEach(item -> components.add(new ContextReportComponent(
+                item.id().value(),
+                ContextReportComponent.ComponentKind.CONTEXT,
+                item.provenance().sourceType(),
+                item.provenance().sourceId(),
+                null,
+                null,
+                item.provenance().sourceVersion(),
+                budget.estimate(item),
+                item.provenance().contentHash(),
+                item.security().labels())));
+        return new ContextReport(
+                run.id(),
+                run.sessionId(),
+                loopContext.iteration(),
+                model.configuration().model().configurationDigest(),
+                budget.estimatorVersion(),
+                "runtime-fit-only-v1",
+                selection.policyVersion(),
+                selection.compressorVersion(),
+                loopContext.forcedContextRebuildAttempts(),
+                totalTokens,
+                components);
     }
 
     private String windowIdentity(

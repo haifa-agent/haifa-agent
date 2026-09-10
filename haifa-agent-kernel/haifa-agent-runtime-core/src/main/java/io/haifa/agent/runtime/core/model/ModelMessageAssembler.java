@@ -75,9 +75,7 @@ public final class ModelMessageAssembler {
     public List<ModelMessage> assemble(AgentRunId runId, AgentContext context, ResolvedModelSnapshot model) {
         List<ModelMessage> messages = new ArrayList<>();
         Set<ModelMessage> priorModelAssistants = Collections.newSetFromMap(new IdentityHashMap<>());
-        context.prompts()
-                .forEach(prompt -> messages.add(ModelMessage.text(
-                        ModelMessageRole.SYSTEM, "[" + prompt.layer() + "/" + prompt.role() + "] " + prompt.text())));
+        context.prompts().forEach(prompt -> messages.add(ModelMessage.text(ModelMessageRole.SYSTEM, prompt.text())));
         Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
         for (ContextItem item : context.items()) {
             if (item.content() instanceof MessageGroupContextContent group) {
