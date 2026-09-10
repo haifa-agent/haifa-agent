@@ -60,8 +60,6 @@ import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.completion.DefaultCompletionGuard;
 import io.haifa.agent.runtime.core.completion.FrozenStructuredOutputValidator;
 import io.haifa.agent.runtime.core.completion.OutputContractValidator;
-import io.haifa.agent.runtime.core.completion.TodoConvergenceChecker;
-import io.haifa.agent.runtime.core.completion.TodoReconciliationService;
 import io.haifa.agent.runtime.core.control.DefaultRunControlService;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlService;
@@ -605,21 +603,13 @@ public final class RuntimeCoreBuilder {
                 new TraceMiddleware()));
         configuredMiddleware.addAll(additionalMiddleware);
         AgentRuntimeMiddlewareChain middleware = new AgentRuntimeMiddlewareChain(configuredMiddleware);
-        TodoReconciliationService todoReconciliation =
-                new TodoReconciliationService(state, new TodoConvergenceChecker());
         OutputContractValidator configuredOutputContract =
                 new FrozenStructuredOutputValidator(state, structuredOutputSchemaValidator);
         OutputContractValidator productOutputContract = outputContract;
         OutputContractValidator combinedOutputContract = (run, decision) ->
                 configuredOutputContract.isValid(run, decision) && productOutputContract.isValid(run, decision);
         DefaultCompletionGuard completion = new DefaultCompletionGuard(
-                state,
-                pipeline,
-                interactions,
-                delegations,
-                todoReconciliation,
-                combinedOutputContract,
-                completionPolicy);
+                state, pipeline, interactions, delegations, combinedOutputContract, completionPolicy);
         CapabilityCheckpointRegistry capabilityCheckpointRegistry =
                 new CapabilityCheckpointRegistry(capabilityCheckpointParticipants);
         CheckpointManager checkpoints = new CheckpointManager(

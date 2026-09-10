@@ -202,7 +202,8 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - Resume 会重新校验当前调用者授权，并通过 `ToolInvoker.validateBinding` 确认冻结 provider/definition 仍可用；缺失或 hash/provider 漂移时 fail closed，不自动换 Provider。
 - Tool Journal 区分 intent、dispatched、acknowledged、pending-result、completed、failed 与 outcome-unknown；非幂等或未知副作用在 dispatch 后失联不会自动重放。
 - 模型调用与工具调用使用独立 Retry Policy；仅非副作用 Tool 允许有界自动重试，副作用 Tool 失败后进入不确定性处置而不自动重放。
-- Completion Guard 校验输出契约、Artifact、Todo、Pending Tool/Child/Interaction、Policy 和 Budget，并强制 `RUNNING -> COMPLETING -> COMPLETED`。
+- Completion Guard 校验输出契约、产品 `CompletionPolicy`、Pending Tool/Child/Interaction、不确定工具执行和 Budget，并强制 `RUNNING -> COMPLETING -> COMPLETED`。计划 Todo 是模型的计划辅助，不构成通用完成门槛；产品需要的确定性验收在自己的 `CompletionPolicy` 内表达。
+- `completion.deferred` 只表达“此次 Final 未满足完成要求”，`phase` 固定为中性 `COMPLETION`；Runtime 不按 blocker code 子串推断 `VERIFYING`／`RECOVERING` 等业务阶段。产品需要细分展示时，由产品自己的证据与投影决定。通用 repair 提示 `[COMPLETION_REPAIR]` 只携带 attempt、blocker code、evidence、missing 和剩余预算等事实以及产品 Policy 返回的有界 guidance，不写入任何产品交付策略。
 - Runtime 在普通文本 Run 的模型、工具、子 Run、迭代或累计 Token/Cost 预算阻止继续工作时，不再把
   预期的资源停止伪装成软件故障：新的动作不会 dispatch，已完成结果和有界安全总结通过既有原子完成
   路径保存，Run 以 `COMPLETED + PARTIAL_SUCCESS` 收敛，并在 Result warning 与最终消息 metadata 中记录

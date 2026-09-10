@@ -336,7 +336,7 @@ class RuntimeEventFeedTest {
                         "completion.deferred",
                         "1",
                         Map.of(
-                                "phase", "VERIFYING",
+                                "phase", "COMPLETION",
                                 "status", "COMPLETION_DEFERRED",
                                 "reasonCode", "DIFF_INSPECTION_MISSING",
                                 "missingEvidence", List.of("DIFF_INSPECTION"),
@@ -352,7 +352,7 @@ class RuntimeEventFeedTest {
         var payload = (RunEventPayloads.DeliveryLifecycle) deferred.payload();
 
         assertThat(deferred.eventType()).isEqualTo("completion.deferred");
-        assertThat(payload.phase()).isEqualTo("VERIFYING");
+        assertThat(payload.phase()).isEqualTo("COMPLETION");
         assertThat(payload.missingEvidence()).containsExactly("DIFF_INSPECTION");
         assertThat(payload.toString()).doesNotContain("must-not-project", "/private/workspace");
 

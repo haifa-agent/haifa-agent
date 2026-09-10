@@ -18,11 +18,11 @@ class RuntimeControlTraceReplayTest {
     }
 
     @Test
-    void replaysPrematureFinalBackToVerification() {
+    void replaysPrematureFinalAsNeutralCompletion() {
         var result = replay.replay(List.of(new SafeEvent(
                 "completion.deferred",
-                Map.of("attempt", 1, "phase", "VERIFYING", "evidenceCodes", List.of("WORKSPACE_CHANGE")))));
-        assertThat(result.phase()).isEqualTo("VERIFYING");
+                Map.of("attempt", 1, "phase", "COMPLETION", "evidenceCodes", List.of("WORKSPACE_CHANGE")))));
+        assertThat(result.phase()).isEqualTo("COMPLETION");
         assertThat(result.completionRepairAttempts()).isEqualTo(1);
         assertThat(result.evidenceCodes()).containsExactly("WORKSPACE_CHANGE");
     }

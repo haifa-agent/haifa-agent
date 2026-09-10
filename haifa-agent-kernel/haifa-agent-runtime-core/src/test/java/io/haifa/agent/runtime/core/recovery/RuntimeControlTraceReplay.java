@@ -75,7 +75,7 @@ public final class RuntimeControlTraceReplay {
 
     private static String safePhase(Object value, String fallback) {
         String phase = String.valueOf(value);
-        return Set.of("WORKING", "RECOVERING", "VERIFYING", "WAITING").contains(phase) ? phase : fallback;
+        return Set.of("WORKING", "COMPLETION", "WAITING").contains(phase) ? phase : fallback;
     }
 
     private static List<String> strings(Object raw) {

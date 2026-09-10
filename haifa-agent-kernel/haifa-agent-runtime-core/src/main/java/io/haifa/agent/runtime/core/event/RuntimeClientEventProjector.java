@@ -86,7 +86,7 @@ public final class RuntimeClientEventProjector {
                         delivery(
                                 "completion.deferred",
                                 event,
-                                text(event.data(), "phase", "RECOVERING"),
+                                text(event.data(), "phase", "COMPLETION"),
                                 "COMPLETION_DEFERRED",
                                 text(event.data(), "reasonCode", "DELIVERY_EVIDENCE_MISSING"),
                                 texts(event.data(), "missingEvidence"),
