@@ -110,7 +110,8 @@ final class CliExecutionPlatform implements AutoCloseable {
                 scratchRoot);
         Map<String, String> environment = resolvedEnvironment.environment();
         var ignorePolicy = CliWorkspaceChangeIgnorePolicy.load(workspaceRoot);
-        SandboxProfile profile = profile(configuration, host, resolvedEnvironment.allowedEnvironmentNames(), ignorePolicy.version());
+        SandboxProfile profile =
+                profile(configuration, host, resolvedEnvironment.allowedEnvironmentNames(), ignorePolicy.version());
         var profileRegistry = new ImmutableSandboxProfileRegistry(List.of(profile));
         var providerRegistry = new ImmutableSandboxProviderRegistry(List.of(host));
         SandboxPreflight preflight;

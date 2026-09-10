@@ -189,39 +189,35 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         AgentRunId generatedId = generated.id();
         AtomicBoolean created = new AtomicBoolean();
         AgentRun run = unitOfWork.execute(() -> {
-                    Optional<RunStartIdempotencyBinding> raced =
-                            idempotency.findRunBinding(callerScope, "start", request.idempotencyKey());
-                    if (raced.isPresent()) return requireRun(requireMatchingStart(raced.orElseThrow(), requestDigest));
-                    state.saveConfiguration(bootstrap.configuration());
-                    runs.insert(generated);
-                    RunStartIdempotencyBinding recorded = idempotency.recordRunBinding(new RunStartIdempotencyBinding(
-                            callerScope, "start", request.idempotencyKey(), Optional.of(requestDigest), generatedId));
-                    AgentRunId recordedRunId = requireMatchingStart(recorded, requestDigest);
-                    if (!recordedRunId.equals(generatedId)) return requireRun(recordedRunId);
-                    created.set(true);
-                    appendInitialMessage(generated, request);
-                    var event = events.append(
-                            generatedId,
-                            "run.created",
-                            Map.of(
-                                    "definitionVersion",
-                                    definition.version().toString(),
-                                    "version",
-                                    generated.version()),
-                            time.now());
-                    outbox.append(new OutboxMessage(
-                            event.eventId(),
-                            event.runId(),
-                            event.sequence(),
-                            event.type(),
-                            OutboxMessage.CURRENT_SCHEMA_VERSION,
-                            Map.of("profileVersion", profile.version()),
-                            event.occurredAt()));
-                    transitions.queued(generated);
-                    attempts.insert(new AgentRunExecutionAttempt(
-                            new ExecutionAttemptId(ids.nextValue()), generatedId, 1, time.now(), Optional.empty()));
-                    return generated;
-                });
+            Optional<RunStartIdempotencyBinding> raced =
+                    idempotency.findRunBinding(callerScope, "start", request.idempotencyKey());
+            if (raced.isPresent()) return requireRun(requireMatchingStart(raced.orElseThrow(), requestDigest));
+            state.saveConfiguration(bootstrap.configuration());
+            runs.insert(generated);
+            RunStartIdempotencyBinding recorded = idempotency.recordRunBinding(new RunStartIdempotencyBinding(
+                    callerScope, "start", request.idempotencyKey(), Optional.of(requestDigest), generatedId));
+            AgentRunId recordedRunId = requireMatchingStart(recorded, requestDigest);
+            if (!recordedRunId.equals(generatedId)) return requireRun(recordedRunId);
+            created.set(true);
+            appendInitialMessage(generated, request);
+            var event = events.append(
+                    generatedId,
+                    "run.created",
+                    Map.of("definitionVersion", definition.version().toString(), "version", generated.version()),
+                    time.now());
+            outbox.append(new OutboxMessage(
+                    event.eventId(),
+                    event.runId(),
+                    event.sequence(),
+                    event.type(),
+                    OutboxMessage.CURRENT_SCHEMA_VERSION,
+                    Map.of("profileVersion", profile.version()),
+                    event.occurredAt()));
+            transitions.queued(generated);
+            attempts.insert(new AgentRunExecutionAttempt(
+                    new ExecutionAttemptId(ids.nextValue()), generatedId, 1, time.now(), Optional.empty()));
+            return generated;
+        });
         AgentRunSnapshot accepted = AgentRunSnapshot.from(run, state.output(run.id()));
         if (created.get()) submitActive(run);
         return accepted;

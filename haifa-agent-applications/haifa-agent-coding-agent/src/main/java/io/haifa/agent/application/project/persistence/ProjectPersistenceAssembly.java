@@ -374,5 +374,4 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         }
         return root.normalize();
     }
-
 }
