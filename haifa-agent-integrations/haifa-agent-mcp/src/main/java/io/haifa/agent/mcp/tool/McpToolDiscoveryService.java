@@ -1,9 +1,6 @@
 package io.haifa.agent.mcp.tool;
 
 import io.haifa.agent.credential.api.CredentialBroker;
-import io.haifa.agent.credential.api.CredentialLease;
-import io.haifa.agent.credential.api.CredentialOperation;
-import io.haifa.agent.credential.api.CredentialOperationRequest;
 import io.haifa.agent.mcp.client.McpConnection;
 import io.haifa.agent.mcp.client.McpConnectionManager;
 import io.haifa.agent.mcp.config.McpServerId;
@@ -16,7 +13,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -61,20 +60,12 @@ public final class McpToolDiscoveryService {
         var server = connections.definition(serverId);
         Instant started = Instant.ofEpochMilli(clock.millis());
         Instant expires = started.plus(deadline);
-        List<CredentialLease> initializeLeases =
-                issue(serverId, context, CredentialOperation.MCP_CONNECTION_INITIALIZE, started, expires);
-        McpConnection connection;
-        try {
-            connection = connections.acquire(serverId, context.tenant(), context.principal(), initializeLeases);
-            if (server.transport() instanceof StdioDefinition) connections.invalidate(connection);
-        } finally {
-            closeReverse(initializeLeases);
-        }
-        List<CredentialLease> discoveryLeases =
-                issue(serverId, context, CredentialOperation.MCP_DISCOVERY, started, expires);
+        Map<String, String> creds = resolveCredentials(serverId);
+        McpConnection connection = connections.acquire(serverId, context.tenant(), context.principal(), creds);
+        if (server.transport() instanceof StdioDefinition) connections.invalidate(connection);
         try {
             if (server.transport() instanceof StdioDefinition) {
-                connection = connections.acquire(serverId, context.tenant(), context.principal(), discoveryLeases);
+                connection = connections.acquire(serverId, context.tenant(), context.principal(), creds);
             }
             McpConnection activeConnection = connection;
             boolean sessionRecovered = false;
@@ -89,14 +80,14 @@ public final class McpToolDiscoveryService {
                 }
                 io.haifa.agent.mcp.protocol.McpListToolsPage page;
                 try {
-                    page = activeConnection.client().listTools(cursor, discoveryLeases);
+                    page = activeConnection.client().listTools(cursor, creds);
                 } catch (ToolInvocationException exception) {
                     if (sessionRecovered || !"MCP_SESSION_INVALID".equals(exception.failureCode())) throw exception;
                     connections.invalidate(activeConnection);
                     activeConnection =
-                            connections.acquire(serverId, context.tenant(), context.principal(), discoveryLeases);
+                            connections.acquire(serverId, context.tenant(), context.principal(), creds);
                     sessionRecovered = true;
-                    page = activeConnection.client().listTools(cursor, discoveryLeases);
+                    page = activeConnection.client().listTools(cursor, creds);
                 }
                 for (McpRemoteTool tool : page.tools()) {
                     if (!names.add(tool.name())) throw new IllegalStateException("duplicate MCP remote tool name");
@@ -123,39 +114,16 @@ public final class McpToolDiscoveryService {
                     .toList();
         } finally {
             if (server.transport() instanceof StdioDefinition) connections.invalidate(connection);
-            closeReverse(discoveryLeases);
         }
     }
 
-    private List<CredentialLease> issue(
-            McpServerId serverId,
-            McpDiscoveryContext context,
-            CredentialOperation operation,
-            Instant requestedAt,
-            Instant expiresAt) {
+    private Map<String, String> resolveCredentials(McpServerId serverId) {
         var server = connections.definition(serverId);
-        List<CredentialLease> leases = new ArrayList<>();
-        try {
-            for (var injection : server.discoveryCredentials()) {
-                leases.add(credentials.issue(new CredentialOperationRequest(
-                        operation,
-                        context.tenant(),
-                        context.principal(),
-                        server.bindingReference(),
-                        injection.requirement(),
-                        context.credentialScopeChain(),
-                        requestedAt,
-                        expiresAt)));
-            }
-            return leases;
-        } catch (RuntimeException exception) {
-            closeReverse(leases);
-            throw exception;
+        Map<String, String> result = new LinkedHashMap<>();
+        for (var injection : server.discoveryCredentials()) {
+            String secret = credentials.requireSecret(injection.requirement().credentialId());
+            result.put(injection.requirement().credentialId(), secret);
         }
-    }
-
-    private static void closeReverse(List<CredentialLease> leases) {
-        for (int index = leases.size() - 1; index >= 0; index--)
-            leases.get(index).close();
+        return Map.copyOf(result);
     }
 }

@@ -2,7 +2,6 @@ package io.haifa.agent.mcp.client;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ManagedProcessSession;
 import io.haifa.agent.execution.api.ProcessInputChunk;
@@ -64,7 +63,7 @@ final class ModernStdioMcpTransport implements ModernMcpTransport {
             String method,
             Map<String, Object> parameters,
             Map<String, String> envelopeHeaders,
-            List<CredentialLease> credentials,
+            Map<String, String> credentials,
             ToolInvocationObserver observer) {
         ensureOpen(credentials);
         long id = requestIds.incrementAndGet();
@@ -196,10 +195,9 @@ final class ModernStdioMcpTransport implements ModernMcpTransport {
         }
     }
 
-    private void ensureOpen(List<CredentialLease> credentials) {
+    private void ensureOpen(Map<String, String> credentials) {
         if (closed) throw new IllegalStateException("MCP stdio transport is closed");
-        List<String> references = credentials.stream()
-                .map(lease -> lease.reference().value())
+        List<String> references = credentials.keySet().stream()
                 .sorted()
                 .toList();
         if (session != null && !session.isClosed()) {

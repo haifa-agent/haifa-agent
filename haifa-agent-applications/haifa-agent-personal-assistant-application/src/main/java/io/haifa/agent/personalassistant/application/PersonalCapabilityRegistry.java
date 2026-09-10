@@ -271,11 +271,7 @@ public record PersonalCapabilityRegistry(
     }
 
     private static Map<String, Object> credential(CredentialRequirement value) {
-        return map(
-                "definitionId", value.definitionId().value(),
-                "purpose", value.purpose(),
-                "scopes", sorted(value.scopes()),
-                "exposureMode", value.exposureMode().name());
+        return map("credentialId", value.credentialId());
     }
 
     private static Map<String, Object> resource(SkillResourceRef value) {

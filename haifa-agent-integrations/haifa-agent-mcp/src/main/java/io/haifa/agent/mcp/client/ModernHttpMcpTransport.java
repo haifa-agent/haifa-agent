@@ -2,7 +2,6 @@ package io.haifa.agent.mcp.client;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.mcp.config.McpProtocolProfile;
 import io.haifa.agent.mcp.config.McpServerDefinition;
 import io.haifa.agent.mcp.config.StreamableHttpDefinition;
@@ -55,7 +54,7 @@ final class ModernHttpMcpTransport implements ModernMcpTransport {
             String method,
             Map<String, Object> parameters,
             Map<String, String> envelopeHeaders,
-            List<CredentialLease> credentials,
+            Map<String, String> credentials,
             ToolInvocationObserver observer) {
         return credentialContext.withInvocation(
                 credentials, observer, () -> send(method, parameters, envelopeHeaders, credentialContext.snapshot()));

@@ -7,9 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import io.haifa.agent.credential.api.CredentialLease;
-import io.haifa.agent.credential.api.CredentialReference;
-import io.haifa.agent.credential.api.SecretFunction;
+
 import io.haifa.agent.web.WebContentFormat;
 import io.haifa.agent.web.WebDispatchState;
 import io.haifa.agent.web.WebFetchRequest;
@@ -28,6 +26,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -402,7 +401,7 @@ class WebHttpProvidersTest {
         var missingContext = new WebProviderInvocationContext(
                 Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
                 () -> false,
-                List.of(),
+                Map.of(),
                 missingObserver);
         var provider = new BraveWebSearchProvider(
                 client(), mapper, baseUri.resolve("/brave"), Duration.ofSeconds(5), 64 * 1024);
@@ -425,7 +424,7 @@ class WebHttpProvidersTest {
                 64 * 1024,
                 Clock.fixed(now, ZoneOffset.UTC));
         var elapsedContext = new WebProviderInvocationContext(
-                now.minusSeconds(1), () -> false, List.of(new TestLease("test-key")), deadlineObserver);
+                now.minusSeconds(1), () -> false, Map.of("test", "test-key"), deadlineObserver);
         assertThatThrownBy(() -> deadlineProvider.search(searchRequest(), elapsedContext))
                 .isInstanceOfSatisfying(WebProviderException.class, exception -> {
                     assertThat(exception.failureCode()).isEqualTo(io.haifa.agent.web.WebFailureCode.WEB_TIMEOUT);
@@ -454,7 +453,7 @@ class WebHttpProvidersTest {
         return new WebProviderInvocationContext(
                 Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
                 () -> false,
-                List.of(new TestLease("test-key")),
+                Map.of("test", "test-key"),
                 observer);
     }
 
@@ -498,41 +497,6 @@ class WebHttpProvidersTest {
         @Override
         public void acknowledged() {
             acknowledged.incrementAndGet();
-        }
-    }
-
-    private static final class TestLease implements CredentialLease {
-        private final byte[] secret;
-        private boolean closed;
-
-        private TestLease(String secret) {
-            this.secret = secret.getBytes(StandardCharsets.UTF_8);
-        }
-
-        @Override
-        public CredentialReference reference() {
-            return new CredentialReference("test");
-        }
-
-        @Override
-        public Instant expiresAt() {
-            return Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(60);
-        }
-
-        @Override
-        public boolean isClosed() {
-            return closed;
-        }
-
-        @Override
-        public <T> T use(SecretFunction<T> action) {
-            if (closed) throw new IllegalStateException("closed");
-            return action.apply(secret.clone());
-        }
-
-        @Override
-        public void close() {
-            closed = true;
         }
     }
 }

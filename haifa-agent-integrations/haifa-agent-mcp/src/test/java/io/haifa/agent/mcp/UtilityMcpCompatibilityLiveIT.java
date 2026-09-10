@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.haifa.agent.credential.api.CredentialDefinitionId;
-import io.haifa.agent.credential.api.CredentialExposureMode;
 import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.mcp.client.McpCompatibilityReport;
 import io.haifa.agent.mcp.client.SdkMcpClientFactory;
@@ -39,11 +37,7 @@ class UtilityMcpCompatibilityLiveIT {
         List<McpCredentialInjection> injections = token == null || token.isBlank()
                 ? List.of()
                 : List.of(new McpCredentialInjection(
-                        new CredentialRequirement(
-                                new CredentialDefinitionId("utility-live-token"),
-                                "utility compatibility",
-                                Set.of("mcp:tools:list", "mcp:tools:call"),
-                                CredentialExposureMode.HTTP_HEADER),
+                        new CredentialRequirement("utility-live-token"),
                         "Authorization",
                         "Bearer "));
         Set<String> expected = expectedTools();
@@ -70,23 +64,23 @@ class UtilityMcpCompatibilityLiveIT {
                         1),
                 injections,
                 "1.0.0");
-        var leases = token == null || token.isBlank()
-                ? List.<io.haifa.agent.credential.api.CredentialLease>of()
-                : List.of(McpTestFixtures.lease("utility-live-binding", token));
+        Map<String, String> credentials = token == null || token.isBlank()
+                ? Map.of()
+                : Map.of("utility-live-token", token);
         var client = new SdkMcpClientFactory().create(server, McpTestFixtures.IDENTITY);
         try {
-            var snapshot = client.initialize(leases);
+            var snapshot = client.initialize(credentials);
             List<String> names = new ArrayList<>();
             String cursor = null;
             do {
-                var page = client.listTools(cursor, leases);
+                var page = client.listTools(cursor, credentials);
                 names.addAll(page.tools().stream().map(tool -> tool.name()).toList());
                 cursor = page.nextCursor().orElse(null);
             } while (cursor != null);
             var observer = io.haifa.agent.tool.api.ToolInvocationObserver.noop();
-            var time = client.callTool("time_now", Map.of("timezone", "UTC"), leases, observer);
-            var calculate = client.callTool("calculate", Map.of("expression", "1 + 2 * 3"), leases, observer);
-            var invalid = client.callTool("time_now", Map.of("timezone", "Invalid/Timezone"), leases, observer);
+            var time = client.callTool("time_now", Map.of("timezone", "UTC"), credentials, observer);
+            var calculate = client.callTool("calculate", Map.of("expression", "1 + 2 * 3"), credentials, observer);
+            var invalid = client.callTool("time_now", Map.of("timezone", "Invalid/Timezone"), credentials, observer);
             var report = new McpCompatibilityReport(
                     server.serverId(),
                     server.protocol().targetVersion(),
@@ -117,7 +111,6 @@ class UtilityMcpCompatibilityLiveIT {
                     .doesNotContain("credential", "secret", "rawResponse", "responseBody");
         } finally {
             client.close();
-            leases.forEach(io.haifa.agent.credential.api.CredentialLease::close);
         }
     }
 

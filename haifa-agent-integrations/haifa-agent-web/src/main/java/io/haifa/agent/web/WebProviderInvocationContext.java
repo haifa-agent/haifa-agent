@@ -1,19 +1,18 @@
 package io.haifa.agent.web;
 
-import io.haifa.agent.credential.api.CredentialLease;
 import java.time.Instant;
-import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 public record WebProviderInvocationContext(
         Instant deadline,
         WebCancellation cancellation,
-        List<CredentialLease> credentialLeases,
+        Map<String, String> credentials,
         WebInvocationObserver observer) {
     public WebProviderInvocationContext {
         Objects.requireNonNull(deadline, "deadline");
         Objects.requireNonNull(cancellation, "cancellation");
-        credentialLeases = List.copyOf(Objects.requireNonNull(credentialLeases, "credentialLeases"));
+        credentials = Map.copyOf(Objects.requireNonNull(credentials, "credentials"));
         Objects.requireNonNull(observer, "observer");
     }
 }

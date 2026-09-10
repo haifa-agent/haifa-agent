@@ -2,9 +2,6 @@ package io.haifa.agent.web.provider;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.haifa.agent.credential.api.CredentialDefinitionId;
-import io.haifa.agent.credential.api.CredentialExposureMode;
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.web.WebDispatchState;
 import io.haifa.agent.web.WebFailureCode;
@@ -35,26 +32,23 @@ import java.util.function.Function;
 final class WebHttpSupport {
     private WebHttpSupport() {}
 
+    static CredentialRequirement credential(String credentialId) {
+        return new CredentialRequirement(credentialId);
+    }
+
     static CredentialRequirement credential(String definitionId, String purpose, String scope) {
-        return new CredentialRequirement(
-                new CredentialDefinitionId(definitionId), purpose, Set.of(scope), CredentialExposureMode.HTTP_HEADER);
+        return new CredentialRequirement(definitionId);
     }
 
     static <T> T withCredential(WebProviderInvocationContext context, Clock clock, Function<String, T> action) {
-        if (context.credentialLeases().size() != 1) {
+        if (context.credentials().isEmpty()) {
             throw failure(
                     WebFailureCode.WEB_CREDENTIAL_MISSING,
                     WebDispatchState.NOT_DISPATCHED,
                     "web provider credential is unavailable");
         }
-        CredentialLease lease = context.credentialLeases().getFirst();
-        if (lease.isClosed() || !lease.expiresAt().isAfter(Instant.ofEpochMilli(clock.millis()))) {
-            throw failure(
-                    WebFailureCode.WEB_CREDENTIAL_MISSING,
-                    WebDispatchState.NOT_DISPATCHED,
-                    "web provider credential is unavailable");
-        }
-        return lease.use(secret -> action.apply(new String(secret, StandardCharsets.UTF_8)));
+        String secret = context.credentials().values().iterator().next();
+        return action.apply(secret);
     }
 
     static JsonNode postJson(

@@ -1,15 +1,13 @@
 package io.haifa.agent.mcp.transport.stdio;
 
-import io.haifa.agent.credential.api.CredentialExposureMode;
-import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.execution.api.EnvironmentLeaseResolver;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ResolvedExecutionEnvironment;
 import io.haifa.agent.mcp.config.McpCredentialInjection;
-import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -25,24 +23,22 @@ public final class McpStdioEnvironmentRegistry implements EnvironmentLeaseResolv
 
     public Binding bind(
             List<McpCredentialInjection> injections,
-            List<CredentialLease> credentials,
+            Map<String, String> credentials,
             java.util.Set<String> environmentAllowlist) {
         Objects.requireNonNull(injections, "injections");
         Objects.requireNonNull(credentials, "credentials");
         Objects.requireNonNull(environmentAllowlist, "environmentAllowlist");
-        if (injections.size() != credentials.size()) {
-            throw new SecurityException("MCP stdio credential lease set is incomplete");
-        }
         var entries = new java.util.ArrayList<Entry>();
-        for (int index = 0; index < injections.size(); index++) {
-            McpCredentialInjection injection = injections.get(index);
-            if (injection.requirement().exposureMode() != CredentialExposureMode.ENVIRONMENT_VARIABLE) {
-                throw new SecurityException("non-environment credential cannot be injected into MCP stdio");
+        for (McpCredentialInjection injection : injections) {
+            String secret = credentials.get(injection.requirement().credentialId());
+            if (secret == null || secret.isBlank()) {
+                throw new SecurityException(
+                        "MCP stdio credential is missing: " + injection.requirement().credentialId());
             }
             if (!environmentAllowlist.contains(injection.targetName())) {
                 throw new SecurityException("MCP stdio credential target is not allowlisted");
             }
-            entries.add(new Entry(injection, credentials.get(index)));
+            entries.add(new Entry(injection, secret));
         }
         String reference = Objects.requireNonNull(referenceGenerator.get(), "generated reference")
                 .trim();
@@ -61,8 +57,7 @@ public final class McpStdioEnvironmentRegistry implements EnvironmentLeaseResolv
             List<Entry> entries = bindings.get(leaseReference);
             if (entries == null) throw new SecurityException("MCP stdio environment binding is unavailable");
             for (Entry entry : entries) {
-                String value = entry.lease()
-                        .use(secret -> entry.injection().valuePrefix() + new String(secret, StandardCharsets.UTF_8));
+                String value = entry.injection().valuePrefix() + entry.secret();
                 String targetName = entry.injection().targetName();
                 if (resolved.putIfAbsent(targetName, value) != null) {
                     throw new SecurityException("duplicate MCP stdio environment target");
@@ -91,5 +86,5 @@ public final class McpStdioEnvironmentRegistry implements EnvironmentLeaseResolv
         }
     }
 
-    private record Entry(McpCredentialInjection injection, CredentialLease lease) {}
+    private record Entry(McpCredentialInjection injection, String secret) {}
 }

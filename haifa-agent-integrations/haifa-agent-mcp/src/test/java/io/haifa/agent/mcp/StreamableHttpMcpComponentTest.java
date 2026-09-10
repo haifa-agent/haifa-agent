@@ -7,8 +7,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import io.haifa.agent.credential.api.CredentialDefinitionId;
-import io.haifa.agent.credential.api.CredentialExposureMode;
 import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.mcp.client.McpConnectionManager;
 import io.haifa.agent.mcp.client.McpConnectionState;
@@ -43,11 +41,11 @@ class StreamableHttpMcpComponentTest {
             var definition = McpTestFixtures.httpServer(stub.endpoint(), Set.of("time_now", "calculate"));
             var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
 
-            var snapshot = client.initialize(List.of());
-            var first = client.listTools(null, List.of());
-            var second = client.listTools(first.nextCursor().orElseThrow(), List.of());
+            var snapshot = client.initialize(Map.of());
+            var first = client.listTools(null, Map.of());
+            var second = client.listTools(first.nextCursor().orElseThrow(), Map.of());
             AtomicInteger dispatched = new AtomicInteger();
-            var result = client.callTool("time_now", Map.of("zone", "UTC"), List.of(), observer(dispatched));
+            var result = client.callTool("time_now", Map.of("zone", "UTC"), Map.of(), observer(dispatched));
             client.close();
             client.close();
 
@@ -97,8 +95,8 @@ class StreamableHttpMcpComponentTest {
                     stub.endpoint(), Set.of("time_now"), new io.haifa.agent.mcp.config.McpProtocolProfile(version));
             var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
 
-            assertThat(client.initialize(List.of()).negotiatedProtocolVersion()).isEqualTo(version);
-            assertThat(client.listTools(null, List.of()).tools())
+            assertThat(client.initialize(Map.of()).negotiatedProtocolVersion()).isEqualTo(version);
+            assertThat(client.listTools(null, Map.of()).tools())
                     .extracting(tool -> tool.name())
                     .contains("time_now");
             client.close();
@@ -114,7 +112,7 @@ class StreamableHttpMcpComponentTest {
             var client = new SdkMcpClientFactory(serverId -> {}, telemetry(telemetry))
                     .create(definition, McpTestFixtures.IDENTITY);
 
-            assertThatThrownBy(() -> client.initialize(List.of()))
+            assertThatThrownBy(() -> client.initialize(Map.of()))
                     .isInstanceOf(ToolInvocationException.class)
                     .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
                             .isEqualTo("MCP_PROTOCOL_VERSION_MISMATCH"));
@@ -130,12 +128,12 @@ class StreamableHttpMcpComponentTest {
             var definition = McpTestFixtures.httpServer(stub.endpoint(), Set.of("time_now"));
             var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
 
-            client.initialize(List.of());
-            var tools = client.listTools(null, List.of());
+            client.initialize(Map.of());
+            var tools = client.listTools(null, Map.of());
             var result = client.callTool(
                     "time_now",
                     Map.of("zone", "UTC"),
-                    List.of(),
+                    Map.of(),
                     io.haifa.agent.tool.api.ToolInvocationObserver.noop());
 
             assertThat(tools.tools()).extracting(tool -> tool.name()).containsExactly("time_now");
@@ -151,7 +149,7 @@ class StreamableHttpMcpComponentTest {
                     stub.endpoint(), Set.of("time_now"), java.time.Duration.ofSeconds(2), 1024, 16 * 1024);
             var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
 
-            assertThatThrownBy(() -> client.initialize(List.of()))
+            assertThatThrownBy(() -> client.initialize(Map.of()))
                     .isInstanceOf(ToolInvocationException.class)
                     .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
                             .isEqualTo("MCP_HTTP_RESPONSE_BODY_TOO_LARGE"));
@@ -161,7 +159,7 @@ class StreamableHttpMcpComponentTest {
                     stub.endpoint(), Set.of("time_now"), java.time.Duration.ofSeconds(2), 1024 * 1024, 1024);
             var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
 
-            assertThatThrownBy(() -> client.initialize(List.of()))
+            assertThatThrownBy(() -> client.initialize(Map.of()))
                     .isInstanceOf(ToolInvocationException.class)
                     .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
                             .isEqualTo("MCP_HTTP_RESPONSE_HEADERS_TOO_LARGE"));
@@ -175,7 +173,7 @@ class StreamableHttpMcpComponentTest {
                     .create(
                             McpTestFixtures.httpServer(malformed.endpoint(), Set.of("time_now")),
                             McpTestFixtures.IDENTITY);
-            assertThatThrownBy(() -> client.initialize(List.of()))
+            assertThatThrownBy(() -> client.initialize(Map.of()))
                     .isInstanceOf(ToolInvocationException.class)
                     .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
                             .isEqualTo("MCP_INITIALIZE_FAILED"));
@@ -184,7 +182,7 @@ class StreamableHttpMcpComponentTest {
             var definition = McpTestFixtures.httpServer(
                     slow.endpoint(), Set.of("time_now"), java.time.Duration.ofMillis(50), 1024 * 1024, 16 * 1024);
             var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
-            assertThatThrownBy(() -> client.initialize(List.of()))
+            assertThatThrownBy(() -> client.initialize(Map.of()))
                     .isInstanceOf(ToolInvocationException.class)
                     .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
                             .isEqualTo("MCP_INITIALIZE_FAILED"));
@@ -197,7 +195,7 @@ class StreamableHttpMcpComponentTest {
             var client = new SdkMcpClientFactory()
                     .create(McpTestFixtures.httpServer(stub.endpoint(), Set.of("time_now")), McpTestFixtures.IDENTITY);
 
-            assertThatThrownBy(() -> client.initialize(List.of()))
+            assertThatThrownBy(() -> client.initialize(Map.of()))
                     .isInstanceOf(ToolInvocationException.class)
                     .satisfies(error -> {
                         var invocation = (ToolInvocationException) error;
@@ -206,18 +204,13 @@ class StreamableHttpMcpComponentTest {
                     });
         }
         try (FaultStubServer stub = new FaultStubServer(Fault.CREDENTIAL_REJECTED)) {
-            var requirement = new CredentialRequirement(
-                    new CredentialDefinitionId("utility-token"),
-                    "utility authentication",
-                    Set.of("mcp:tools:list", "mcp:tools:call"),
-                    CredentialExposureMode.HTTP_HEADER);
+            var requirement = new CredentialRequirement("utility-token");
             var injection = new McpCredentialInjection(requirement, "Authorization", "Bearer ");
             var definition = McpTestFixtures.withDiscoveryCredentials(
                     McpTestFixtures.httpServer(stub.endpoint(), Set.of("time_now")), List.of(injection));
-            var lease = McpTestFixtures.lease("utility-token-binding", "never-log-this-secret");
             var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
 
-            assertThatThrownBy(() -> client.initialize(List.of(lease)))
+            assertThatThrownBy(() -> client.initialize(Map.of("utility-token", "never-log-this-secret")))
                     .isInstanceOf(ToolInvocationException.class)
                     .satisfies(error -> {
                         var invocation = (ToolInvocationException) error;
@@ -236,10 +229,10 @@ class StreamableHttpMcpComponentTest {
             var definition = McpTestFixtures.httpServer(stub.endpoint(), Set.of("time_now"));
             try (var connections = new McpConnectionManager(List.of(definition), new SdkMcpClientFactory())) {
                 var first = connections.acquire(
-                        definition.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, List.of());
+                        definition.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, Map.of());
                 AtomicInteger dispatched = new AtomicInteger();
 
-                assertThatThrownBy(() -> first.client().callTool("time_now", Map.of(), List.of(), observer(dispatched)))
+                assertThatThrownBy(() -> first.client().callTool("time_now", Map.of(), Map.of(), observer(dispatched)))
                         .isInstanceOf(ToolInvocationException.class)
                         .satisfies(error -> {
                             var invocation = (ToolInvocationException) error;
@@ -247,7 +240,7 @@ class StreamableHttpMcpComponentTest {
                             assertThat(invocation.dispatchState()).isEqualTo(ToolDispatchState.OUTCOME_UNKNOWN);
                         });
                 var second = connections.acquire(
-                        definition.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, List.of());
+                        definition.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, Map.of());
 
                 assertThat(second).isNotSameAs(first);
                 assertThat(stub.initializeCount()).isGreaterThanOrEqualTo(2);
@@ -269,7 +262,7 @@ class StreamableHttpMcpComponentTest {
                     })
                     .create(definition, McpTestFixtures.IDENTITY);
 
-            client.initialize(List.of());
+            client.initialize(Map.of());
             assertThat(notified.await(2, TimeUnit.SECONDS)).isTrue();
             assertThat(stub.awaitResumedGet()).isTrue();
             client.close();

@@ -3,8 +3,6 @@ package io.haifa.agent.web;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.credential.api.CredentialDefinitionId;
-import io.haifa.agent.credential.api.CredentialExposureMode;
 import io.haifa.agent.credential.api.CredentialRequirement;
 import java.net.URI;
 import java.time.Instant;
@@ -82,11 +80,7 @@ class WebContractValueTest {
                 "1.0.0",
                 URI.create("https://api.tavily.com/search"),
                 Set.of("api.tavily.com"),
-                Optional.of(new CredentialRequirement(
-                        new CredentialDefinitionId("web-search-tavily"),
-                        "search",
-                        Set.of("web.search"),
-                        CredentialExposureMode.HTTP_HEADER)),
+                Optional.of(new CredentialRequirement("web-search-tavily")),
                 configuration);
         configuration.put("mode", "advanced");
 

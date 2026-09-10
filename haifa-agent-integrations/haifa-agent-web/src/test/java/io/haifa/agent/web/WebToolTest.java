@@ -180,7 +180,7 @@ class WebToolTest {
                         Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
                         Optional.empty(),
                         (ToolCancellation) () -> false,
-                        List.of()));
+                        Map.of()));
 
         assertThat(result.successful()).isTrue();
         assertThat(result.structuredData())
@@ -239,7 +239,7 @@ class WebToolTest {
                         Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
                         Optional.empty(),
                         (ToolCancellation) () -> false,
-                        List.of()));
+                        Map.of()));
 
         assertThat(observedMaximum[0]).isEqualTo(WebFetchToolProvider.DEFAULT_MAX_CHARACTERS);
         assertThat(((Map<?, ?>) inputProperties(contribution).get("maxCharacters")).get("default"))
@@ -461,7 +461,7 @@ class WebToolTest {
                                 Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
                                 Optional.empty(),
                                 (ToolCancellation) () -> false,
-                                List.of())))
+                                Map.of())))
                 .isInstanceOfSatisfying(ToolInvocationException.class, exception -> {
                     assertThat(exception.failureCode()).isEqualTo("WEB_UNSUPPORTED_OPTION");
                     assertThat(exception.dispatchState())
@@ -552,7 +552,7 @@ class WebToolTest {
                         Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
                         Optional.empty(),
                         (ToolCancellation) () -> false,
-                        List.of()));
+                        Map.of()));
     }
 
     private static SearchInvocation searchInvocation(WebToolCatalogContribution contribution, String query) {
@@ -579,7 +579,7 @@ class WebToolTest {
                         Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
                         Optional.empty(),
                         (ToolCancellation) () -> false,
-                        List.of()));
+                        Map.of()));
     }
 
     private record FetchInvocation(WebToolCatalogContribution contribution, ToolInvocationRequest request) {}
