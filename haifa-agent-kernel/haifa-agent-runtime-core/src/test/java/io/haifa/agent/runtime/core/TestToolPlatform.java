@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core;
 
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.policy.api.PolicyChallenge;
 import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.policy.api.PolicyEffect;
@@ -131,6 +132,40 @@ final class TestToolPlatform {
             ToolReconcileHandler reconciler) {
         ToolDefinition definition = definition(name, version, inputSchemaId, sideEffecting);
         return install(builder, definition, ToolPolicyDecision.ALLOW, handler, reconciler);
+    }
+
+    static RuntimeCoreBuilder installWithCredentials(
+            RuntimeCoreBuilder builder,
+            String name,
+            String version,
+            String inputSchemaId,
+            boolean sideEffecting,
+            List<CredentialRequirement> credentialRequirements,
+            ToolHandler handler) {
+        Map<String, Object> objectSchema =
+                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+        ToolDefinition definition = new ToolDefinition(
+                new ToolName(name),
+                new SemanticVersion(version),
+                PROVIDER_ID,
+                name,
+                "Runtime test tool " + name,
+                new ToolSchema(inputSchemaId, "1.0", objectSchema),
+                new ToolSchema(name + ".output", "1.0", objectSchema),
+                ToolExecutionMode.IN_PROCESS,
+                true,
+                Duration.ofSeconds(10),
+                "test",
+                sideEffecting ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.IDEMPOTENT,
+                sideEffecting ? ToolRisk.HIGH : ToolRisk.LOW,
+                sideEffecting ? Set.of(ToolSideEffect.FILE_WRITE) : Set.of(ToolSideEffect.FILE_READ),
+                ToolResourceRequirements.none(),
+                credentialRequirements,
+                ToolApprovalRequirement.NEVER,
+                "test",
+                false,
+                Set.of("test"));
+        return install(builder, definition, ToolPolicyDecision.ALLOW, handler);
     }
 
     static FrozenToolBinding binding(String name, String version, String inputSchemaId, boolean sideEffecting) {

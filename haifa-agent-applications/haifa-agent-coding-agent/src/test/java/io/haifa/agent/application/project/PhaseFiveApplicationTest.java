@@ -245,6 +245,182 @@ class PhaseFiveApplicationTest {
         assertThat(participant.validate(reference, restore).code()).isEqualTo("PERMISSION_REVOKED");
     }
 
+    @Test
+    void executionToolBrokerConfigurationMismatchFailsClosedSpanningPipelineAndDecisionExecutor() {
+        var workspaceId = new WorkspaceId("workspace-e2e");
+        var bindingId = new WorkspaceBindingId("binding-e2e");
+        var workspaces = new InMemoryWorkspaceStore();
+        var bindings = new InMemoryWorkspaceBindingStore();
+        var owner = new PrincipalRef("test-user", "user");
+        var binding = WorkspaceBinding.provision(
+                        bindingId,
+                        new WorkspaceLocationRef("location-1"),
+                        WorkspaceBindingMode.DIRECT,
+                        owner,
+                        WorkspaceCapabilitySet.executionFiles(),
+                        WorkspacePermissionSet.readWriteExecute(),
+                        "root-1",
+                        NOW)
+                .activate(NOW);
+        bindings.create(binding);
+        var workspace = Workspace.provision(
+                        workspaceId,
+                        new ProjectId("project-1"),
+                        WorkspacePurpose.PRIMARY,
+                        new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
+                        WorkspaceRevision.initial("rev-1"),
+                        NOW)
+                .activate(NOW);
+        workspaces.create(workspace);
+
+        var requestedProfileRef = new io.haifa.agent.execution.api.SandboxProfileRef("profile-req", "1");
+        var actualProfileRef = new io.haifa.agent.execution.api.SandboxProfileRef("profile-actual", "1");
+        var actualProfile = new io.haifa.agent.sandbox.api.SandboxProfile(
+                actualProfileRef,
+                "provider-1",
+                io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("provider-1")),
+                java.util.Set.of(),
+                java.util.Set.of(),
+                false,
+                io.haifa.agent.sandbox.api.NetworkPolicy.ALLOW,
+                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
+                new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, false, false, false));
+        io.haifa.agent.sandbox.api.SandboxProvider sandboxProvider = new io.haifa.agent.sandbox.api.SandboxProvider() {
+            @Override
+            public String providerId() {
+                return "provider-1";
+            }
+
+            @Override
+            public io.haifa.agent.sandbox.api.SandboxCapabilities capabilities() {
+                return new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, false, false, false);
+            }
+
+            @Override
+            public io.haifa.agent.sandbox.api.SandboxSession open(
+                    io.haifa.agent.sandbox.api.SandboxProfile profile,
+                    io.haifa.agent.sandbox.api.WorkspaceMount mount) {
+                throw new UnsupportedOperationException();
+            }
+        };
+
+        var broker = new io.haifa.agent.execution.core.DefaultExecutionBroker(
+                new io.haifa.agent.execution.core.store.InMemoryExecutionStore(),
+                new io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore(),
+                ignored -> io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(Map.of()),
+                (req, entry) -> {},
+                ref -> actualProfile,
+                prof -> sandboxProvider,
+                workspaces,
+                bindings,
+                ignored -> List::of);
+
+        var config = new io.haifa.agent.execution.core.tool.ExecutionToolConfiguration(
+                io.haifa.agent.execution.api.ExecutionEnvironmentRef.empty(),
+                requestedProfileRef,
+                java.time.Duration.ofSeconds(5),
+                java.time.Duration.ofSeconds(10),
+                4096,
+                100,
+                1,
+                false,
+                new io.haifa.agent.execution.core.tool.ScriptRuntimeResolver(
+                        io.haifa.agent.execution.core.tool.ExecutionOperatingSystem.WINDOWS, List.of()),
+                ignored -> {},
+                value -> value);
+
+        var executionToolProvider = new io.haifa.agent.execution.core.tool.ExecutionToolProvider(
+                broker,
+                () -> "exec-1",
+                () -> NOW,
+                ignored ->
+                        new io.haifa.agent.execution.core.tool.ExecutionInvocationScopeResolver
+                                .ExecutionInvocationScope(workspaceId, java.util.Set.of("execution.run")),
+                config,
+                io.haifa.agent.execution.core.tool.TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+
+        var definition = io.haifa.agent.execution.core.tool.ExecutionToolDefinitionFactory.create(
+                executionToolProvider.sandboxProfileIdentity(),
+                executionToolProvider.configurationIdentity(),
+                executionToolProvider.scratchSpecDigest(),
+                false,
+                false,
+                java.util.Set.of());
+
+        var catalog = new io.haifa.agent.tool.core.ToolCatalogBuilder()
+                .register(
+                        new io.haifa.agent.tool.api.ToolAlias("execution_run"),
+                        definition,
+                        "execution",
+                        executionToolProvider)
+                .freeze();
+
+        io.haifa.agent.model.api.AgentChatModel model = req -> new io.haifa.agent.model.api.AgentChatResponse(
+                "resp-1",
+                "test-model",
+                "",
+                List.of(new io.haifa.agent.model.api.ModelToolCall(
+                        new io.haifa.agent.core.tool.ProviderToolCallCorrelationId("provider-call-1"),
+                        "execution_run",
+                        Map.of("mode", "COMMAND", "content", "echo test", "purpose", "test fail-closed path"))),
+                io.haifa.agent.model.api.ModelFinishReason.TOOL_CALLS,
+                io.haifa.agent.model.api.ModelUsage.unpriced(1, 1),
+                "",
+                Map.of());
+
+        var scheduler = new io.haifa.agent.runtime.core.execution.ManualExecutionScheduler();
+        var store = new io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore();
+        var interactions = new io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort();
+        var runInputs = new io.haifa.agent.runtime.core.input.InMemoryRunInputPort();
+        var journal = new io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal();
+        var identifiers = new AtomicInteger();
+
+        var runtime = new io.haifa.agent.runtime.core.RuntimeCoreBuilder()
+                .registerChatModel("openai-compatible", "1.0.0", model)
+                .scheduler(scheduler)
+                .persistence(io.haifa.agent.runtime.core.storage.RuntimePersistencePorts.inMemory(
+                        store, journal, interactions))
+                .runInputs(runInputs)
+                .identifierGenerator(() -> "phase-five-e2e-" + identifiers.incrementAndGet())
+                .timeProvider(() -> NOW)
+                .publicToolPolicy((run, bind, req) -> new io.haifa.agent.policy.api.PolicyDecision(
+                        io.haifa.agent.policy.api.PolicyEffect.ALLOW,
+                        java.util.Optional.empty(),
+                        "ALLOW",
+                        "Allowed",
+                        "sha256:test-allow"))
+                .toolPlatform(
+                        catalog,
+                        new io.haifa.agent.tool.core.DefaultToolInvoker(catalog),
+                        new io.haifa.agent.tool.core.JsonSchema202012Validator())
+                .build();
+
+        var runRequest = new io.haifa.agent.runtime.api.AgentRunRequest(
+                "run-e2e-key",
+                new io.haifa.agent.core.agent.AgentDefinitionId("coding-agent"),
+                java.util.Optional.empty(),
+                "coding-profile",
+                new io.haifa.agent.core.session.AgentSessionId("session-e2e"),
+                java.util.Optional.empty(),
+                "execute command",
+                List.of(),
+                io.haifa.agent.runtime.api.RuntimeOverrides.NONE);
+
+        var handle = runtime.start(runRequest);
+        scheduler.runAll();
+
+        var finalRun = runtime.find(handle.runId()).orElseThrow();
+        assertThat(finalRun.status()).isEqualTo(io.haifa.agent.core.run.AgentRunStatus.FAILED);
+        var toolCalls = store.toolCalls(handle.runId());
+        assertThat(toolCalls).hasSize(1);
+        var failedCall = toolCalls.getFirst();
+        assertThat(failedCall.status()).isEqualTo(io.haifa.agent.core.tool.ToolCallStatus.FAILED);
+        assertThat(failedCall.error().orElseThrow().error().code())
+                .isEqualTo(io.haifa.agent.core.error.AgentErrorCode.TOOL_INVOCATION_FAILED);
+        assertThat(failedCall.error().orElseThrow().error().details())
+                .doesNotContainKeys("preflight", "failureKind", "failureCode", "dispatchState");
+    }
+
     private static FinalAnswerDecision decision(List<ArtifactRef> artifacts) {
         return new FinalAnswerDecision(AgentRunOutcome.SUCCESS, "done", "result", "1", Map.of(), artifacts, List.of());
     }

@@ -54,7 +54,8 @@ Environment、Limits 或 Sandbox Profile 漂移会返回 `IDEMPOTENCY_CONFLICT`�
 
 `ExecutionToolProvider` records `DISPATCHED` only from the Broker's actual process-start callback. Safe preflight
 failures preserve their stable provider failure code and remain `NOT_DISPATCHED`; failures after launch retain
-the existing unknown-outcome protection.
+the existing unknown-outcome protection. Only explicitly typed sandbox capability preflight rejections are promoted
+to that path; generic sandbox binding, configuration, or protocol failures remain fail closed.
 
 The model-visible input schema exposes two mutually exclusive branches on every operating system:
 

@@ -20,7 +20,7 @@ import io.haifa.agent.execution.core.manifest.ManifestBudgetException;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.sandbox.api.SandboxException;
+import io.haifa.agent.sandbox.api.SandboxPreflightException;
 import io.haifa.agent.tool.api.ToolCancellation;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolDispatchState;
@@ -372,9 +372,9 @@ public final class ExecutionToolProvider implements ToolProvider {
         if (exception instanceof ExecutionRejectedException rejected) {
             code = rejected.code();
             message = rejected.getMessage();
-        } else if (exception instanceof SandboxException sandbox) {
-            code = sandbox.code();
-            message = sandbox.getMessage();
+        } else if (exception instanceof SandboxPreflightException preflight) {
+            code = preflight.code();
+            message = preflight.getMessage();
         } else if (exception instanceof ManifestBudgetException) {
             code = "MANIFEST_BUDGET_EXCEEDED";
             message = "workspace manifest exceeded the configured execution budget";

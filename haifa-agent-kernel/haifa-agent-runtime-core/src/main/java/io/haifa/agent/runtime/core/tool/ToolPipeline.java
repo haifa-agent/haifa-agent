@@ -658,6 +658,7 @@ public final class ToolPipeline {
                     throw new io.haifa.agent.tool.api.ToolInvocationException(
                             invocationFailure.failureCode(),
                             invocationFailure.dispatchState(),
+                            invocationFailure.failureKind(),
                             detail == null || detail.isBlank() ? "tool provider invocation failed" : detail);
                 }
                 StackTraceElement location =

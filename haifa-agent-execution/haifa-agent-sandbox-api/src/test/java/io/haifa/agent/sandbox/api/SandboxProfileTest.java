@@ -62,6 +62,68 @@ class SandboxProfileTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void providerPreflightDistinguishesCapabilityRejectionFromBindingInvariants() {
+        SandboxProvider provider = new SandboxProvider() {
+            @Override
+            public String providerId() {
+                return "test-provider";
+            }
+
+            @Override
+            public SandboxCapabilities capabilities() {
+                return new SandboxCapabilities(true, false, false, false, false);
+            }
+
+            @Override
+            public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        SandboxProfile capabilityMismatch = new SandboxProfile(
+                new SandboxProfileRef("capability-mismatch", "1"),
+                provider.providerId(),
+                provider.configurationDigest(),
+                Set.of(),
+                Set.of(),
+                false,
+                NetworkPolicy.ALLOW,
+                SandboxFilesystemPolicy.hostCompatible(),
+                new SandboxCapabilities(true, true, false, false, false));
+
+        assertThatThrownBy(() -> provider.preflight(capabilityMismatch))
+                .isInstanceOfSatisfying(SandboxPreflightException.class, failure -> assertThat(failure.code())
+                        .isEqualTo("CAPABILITY_UNAVAILABLE"));
+
+        SandboxProfile bindingMismatch = new SandboxProfile(
+                new SandboxProfileRef("binding-mismatch", "1"),
+                "other-provider",
+                provider.configurationDigest(),
+                Set.of(),
+                Set.of(),
+                false,
+                NetworkPolicy.ALLOW,
+                SandboxFilesystemPolicy.hostCompatible(),
+                provider.capabilities());
+        assertThatThrownBy(() -> provider.preflight(bindingMismatch))
+                .isExactlyInstanceOf(SandboxException.class)
+                .isNotInstanceOf(SandboxPreflightException.class);
+
+        SandboxProfile configurationMismatch = new SandboxProfile(
+                new SandboxProfileRef("configuration-mismatch", "1"),
+                provider.providerId(),
+                SandboxConfigurationDigest.sha256Fields(List.of("different")),
+                Set.of(),
+                Set.of(),
+                false,
+                NetworkPolicy.ALLOW,
+                SandboxFilesystemPolicy.hostCompatible(),
+                provider.capabilities());
+        assertThatThrownBy(() -> provider.preflight(configurationMismatch))
+                .isExactlyInstanceOf(SandboxException.class)
+                .isNotInstanceOf(SandboxPreflightException.class);
+    }
+
     private static SandboxProfile profile(
             Set<String> executables, Set<String> environmentNames, Set<String> pathPolicies) {
         return new SandboxProfile(
