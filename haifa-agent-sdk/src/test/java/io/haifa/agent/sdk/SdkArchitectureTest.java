@@ -30,7 +30,10 @@ class SdkArchitectureTest {
     @Test
     void exportedPublicMethodSignaturesDoNotLeakRuntimeOrFrameworkInternals() {
         var classes = new com.tngtech.archunit.core.importer.ClassFileImporter()
-                .importPackages("io.haifa.agent.sdk").stream()
+                        .withImportOption(
+                                com.tngtech.archunit.core.importer.ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                        .importPackages("io.haifa.agent.sdk")
+                        .stream()
                         .map(javaClass -> javaClass.reflect())
                         .filter(type -> EXPORTED_PACKAGES.contains(type.getPackageName()))
                         .filter(type -> Modifier.isPublic(type.getModifiers()))

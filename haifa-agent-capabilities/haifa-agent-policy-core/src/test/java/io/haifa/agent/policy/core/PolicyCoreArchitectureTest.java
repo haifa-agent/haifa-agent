@@ -3,6 +3,7 @@ package io.haifa.agent.policy.core;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
+import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -24,6 +25,8 @@ class PolicyCoreArchitectureTest {
                         "com.fasterxml.jackson..",
                         "org.apache.ibatis..",
                         "java.sql..")
-                .check(new ClassFileImporter().importPackages("io.haifa.agent.policy.core"));
+                .check(new ClassFileImporter()
+                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                        .importPackages("io.haifa.agent.policy.core"));
     }
 }

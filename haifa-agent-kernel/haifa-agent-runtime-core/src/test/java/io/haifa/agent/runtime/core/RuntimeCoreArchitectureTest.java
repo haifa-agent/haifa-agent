@@ -2,6 +2,7 @@ package io.haifa.agent.runtime.core;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
+import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Tag;
@@ -9,6 +10,10 @@ import org.junit.jupiter.api.Test;
 
 @Tag("architecture")
 class RuntimeCoreArchitectureTest {
+    private static final JavaClasses classes = new ClassFileImporter()
+            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+            .importPackages("io.haifa.agent.runtime.core");
+
     @Test
     void runtimeCoreIsFrameworkProviderPersistenceAndProductIndependent() {
         noClasses()
@@ -35,16 +40,12 @@ class RuntimeCoreArchitectureTest {
                         "org.testcontainers..",
                         "io.haifa.agent.admin..",
                         "io.haifa.agent.personalassistant..")
-                .check(new ClassFileImporter()
-                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                        .importPackages("io.haifa.agent.runtime.core"));
+                .check(classes);
         noClasses()
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage("io.haifa.agent.policy.core..")
-                .check(new ClassFileImporter()
-                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                        .importPackages("io.haifa.agent.runtime.core"));
+                .check(classes);
     }
 
     @Test
@@ -53,8 +54,6 @@ class RuntimeCoreArchitectureTest {
                 .should()
                 .dependOnClassesThat()
                 .haveFullyQualifiedName("java.lang.ProcessBuilder")
-                .check(new ClassFileImporter()
-                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                        .importPackages("io.haifa.agent.runtime.core"));
+                .check(classes);
     }
 }

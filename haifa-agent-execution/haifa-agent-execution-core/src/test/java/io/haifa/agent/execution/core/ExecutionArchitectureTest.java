@@ -2,6 +2,7 @@ package io.haifa.agent.execution.core;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
+import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import java.io.IOException;
@@ -14,6 +15,10 @@ import org.junit.jupiter.api.Test;
 
 @Tag("architecture")
 class ExecutionArchitectureTest {
+    private static final JavaClasses classes = new ClassFileImporter()
+            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+            .importPackages("io.haifa.agent");
+
     @Test
     void executionCoreDoesNotUseHostFilesystemOrDiscoveryApis() throws IOException {
         noClasses()
@@ -22,9 +27,7 @@ class ExecutionArchitectureTest {
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage("java.nio.file..")
-                .check(new ClassFileImporter()
-                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                        .importPackages("io.haifa.agent.execution.core"));
+                .check(classes);
 
         Path sourceRoot = repositoryRoot().resolve("haifa-agent-execution/haifa-agent-execution-core/src/main/java");
         try (var files = Files.walk(sourceRoot)) {
@@ -40,9 +43,6 @@ class ExecutionArchitectureTest {
 
     @Test
     void onlyConcreteLocalSandboxProvidersCreateProcesses() {
-        var classes = new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("io.haifa.agent");
         noClasses()
                 .that()
                 .resideOutsideOfPackages("io.haifa.agent.sandbox.host..")
