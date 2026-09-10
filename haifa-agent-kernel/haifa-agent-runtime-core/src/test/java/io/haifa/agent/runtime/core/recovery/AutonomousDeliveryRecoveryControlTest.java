@@ -83,30 +83,28 @@ class AutonomousDeliveryRecoveryControlTest {
     @Test
     void budgetThresholdsRemainBoundedAndAreNotRepeatedAfterRestore() {
         var context = new AgentLoopContext(1);
-        var half = new RunBudgetSnapshot(5, 5, 5, 5_000, -1, -1, 0, "MODEL_CALLS", 5, 10, 50);
+        var half = new RunBudgetSnapshot(5, 5, 5, 5_000, -1, -1, "MODEL_CALLS", 5, 10, 50);
         assertThat(context.updateBudgetSnapshot(half)).containsExactly(50);
         assertThat(context.updateBudgetSnapshot(half)).isEmpty();
         var restored = new AgentLoopContext(2);
         restored.restoreBudgetThresholds(half);
         assertThat(restored.updateBudgetSnapshot(half)).isEmpty();
-        var low = new RunBudgetSnapshot(1, 1, 1, 1_000, -1, -1, 0, "MODEL_CALLS", 9, 10, 10);
+        var low = new RunBudgetSnapshot(1, 1, 1, 1_000, -1, -1, "MODEL_CALLS", 9, 10, 10);
         assertThat(restored.updateBudgetSnapshot(low)).containsExactlyInAnyOrder(25, 10);
         assertThat(restored.budgetSnapshot()).contains(low);
     }
 
     @Test
     void promptTextOmitsUnconfiguredTokenQuotas() {
-        var withTokens = new RunBudgetSnapshot(10, 5, 20, 30_000, 100_000, 20_000, 2, "MODEL_CALLS", 5, 10, 50);
+        var withTokens = new RunBudgetSnapshot(10, 5, 20, 30_000, 100_000, 20_000, "MODEL_CALLS", 5, 10, 50);
         assertThat(withTokens.promptText())
                 .isEqualTo(
                         "Remaining resource budget: modelCalls=10, toolCalls=5, iterations=20, wallTimeMillis=30000, "
-                                + "inputTokens=100000, outputTokens=20000, completionRepairAttempts=2.");
+                                + "inputTokens=100000, outputTokens=20000.");
 
-        var withoutTokens = new RunBudgetSnapshot(10, 5, 20, 30_000, -1L, -1L, 2, "MODEL_CALLS", 5, 10, 50);
+        var withoutTokens = new RunBudgetSnapshot(10, 5, 20, 30_000, -1L, -1L, "MODEL_CALLS", 5, 10, 50);
         assertThat(withoutTokens.promptText())
-                .isEqualTo(
-                        "Remaining resource budget: modelCalls=10, toolCalls=5, iterations=20, wallTimeMillis=30000, "
-                                + "completionRepairAttempts=2.");
+                .isEqualTo("Remaining resource budget: modelCalls=10, toolCalls=5, iterations=20, wallTimeMillis=30000.");
     }
 
     private static ToolCall requested(String id, Map<String, Object> arguments) {

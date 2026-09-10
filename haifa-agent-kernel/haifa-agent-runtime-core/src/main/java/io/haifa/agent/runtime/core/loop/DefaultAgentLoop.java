@@ -188,12 +188,9 @@ public final class DefaultAgentLoop implements AgentLoop {
         AgentLoopContext progress = restored.map(value ->
                         new AgentLoopContext(value.nextIteration(), value.forcedContextRebuildAttempts(), traceContext))
                 .orElseGet(() -> new AgentLoopContext(1, 0, traceContext));
-        progress.restoreRepairAttempts((int) state.messages(run.id()).stream()
-                .filter(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
-                .count());
         if (restored.isPresent()) {
             progress.restoreBudgetThresholds(
-                    RunBudgetSnapshot.from(run, progress.iteration(), progress.repairAttempts(), time.now()));
+                    RunBudgetSnapshot.from(run, progress.iteration(), time.now()));
         }
         middleware.apply(RuntimePhase.BEFORE_RUN, new RuntimeMiddlewareContext(run, state));
         while (run.status() == AgentRunStatus.RUNNING || run.status() == AgentRunStatus.SUSPENDING) {
@@ -225,7 +222,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             }
             guards.forEach(guard -> guard.check(run, progress));
             RunBudgetSnapshot budget =
-                    RunBudgetSnapshot.from(run, progress.iteration(), progress.repairAttempts(), time.now());
+                    RunBudgetSnapshot.from(run, progress.iteration(), time.now());
             Set<Integer> thresholds = progress.updateBudgetSnapshot(budget);
             events.append(
                     run.id(),
@@ -237,7 +234,6 @@ public final class DefaultAgentLoop implements AgentLoop {
                             Map.entry("remainingWallTimeMillis", budget.remainingWallTimeMillis()),
                             Map.entry("remainingInputTokens", budget.remainingInputTokens()),
                             Map.entry("remainingOutputTokens", budget.remainingOutputTokens()),
-                            Map.entry("completionRepairAttempts", budget.completionRepairAttempts()),
                             Map.entry("limitingResource", budget.limitingResource()),
                             Map.entry("limitingUsed", budget.limitingUsed()),
                             Map.entry("limitingLimit", budget.limitingLimit()),

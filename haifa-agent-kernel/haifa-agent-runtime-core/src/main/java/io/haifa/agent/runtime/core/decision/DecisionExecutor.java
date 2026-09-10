@@ -47,7 +47,7 @@ import io.haifa.agent.runtime.core.model.ModelInvocationResult;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
 import io.haifa.agent.runtime.core.recovery.BudgetLimitedSummary;
-import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
+import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
@@ -84,7 +84,7 @@ public final class DecisionExecutor {
     private final TimeProvider time;
     private final CheckpointManager checkpoints;
     private final RunControlRegistry controls;
-    private final RepairRetryPolicy repairRetry;
+    private final CompletionRepairPolicy completionRepair;
     private final ToolApprovalPromptFormatter approvalPrompts;
     private final RuntimeUnitOfWork unitOfWork;
     private final RuntimeEventAppender events;
@@ -101,7 +101,7 @@ public final class DecisionExecutor {
             TimeProvider time,
             CheckpointManager checkpoints,
             RunControlRegistry controls,
-            RepairRetryPolicy repairRetry,
+            CompletionRepairPolicy completionRepair,
             ToolApprovalPromptFormatter approvalPrompts,
             RuntimeUnitOfWork unitOfWork,
             RuntimeEventAppender events,
@@ -116,7 +116,7 @@ public final class DecisionExecutor {
         this.time = Objects.requireNonNull(time);
         this.checkpoints = Objects.requireNonNull(checkpoints);
         this.controls = Objects.requireNonNull(controls);
-        this.repairRetry = Objects.requireNonNull(repairRetry);
+        this.completionRepair = Objects.requireNonNull(completionRepair);
         this.approvalPrompts = Objects.requireNonNull(approvalPrompts);
         this.unitOfWork = Objects.requireNonNull(unitOfWork);
         this.events = Objects.requireNonNull(events);
@@ -264,12 +264,12 @@ public final class DecisionExecutor {
                                 time.now()));
                 return AgentLoopDirective.STOP;
             }
-            int attempt = loopContext.recordRepairAttempt();
+            int attempt = completionRepairAttempts(run) + 1;
             int remainingPercent = loopContext
                     .budgetSnapshot()
                     .map(value -> value.remainingPercent())
                     .orElse(0);
-            if (attempt > repairRetry.maxAttempts()) {
+            if (attempt > completionRepair.maxAttempts()) {
                 events.append(
                         run.id(),
                         "run.structured-termination",
@@ -316,7 +316,7 @@ public final class DecisionExecutor {
                             "attempt",
                             attempt,
                             "maximumAttempts",
-                            repairRetry.maxAttempts(),
+                            completionRepair.maxAttempts(),
                             "remainingPercent",
                             remainingPercent),
                     time.now());
@@ -325,7 +325,7 @@ public final class DecisionExecutor {
                     MessageRole.RUNTIME,
                     structuredCorrection(
                             attempt,
-                            repairRetry.maxAttempts(),
+                            completionRepair.maxAttempts(),
                             blockerCodes,
                             readiness.evidenceCodes(),
                             missingEvidence,
@@ -416,18 +416,17 @@ public final class DecisionExecutor {
                 rejectPolicyDeniedToolRequest(run, call, step, denial);
                 continue;
             } catch (ToolAuthorizationProtocolException protocol) {
-                rejectAuthorizationProtocolToolRequest(run, call, step, loopContext, protocol);
+                rejectAuthorizationProtocolToolRequest(run, call, step, protocol);
                 continue;
             } catch (ToolInputValidationException validation) {
                 rejectToolRequest(
-                        run, call, step, loopContext, validation, "Tool request rejected. " + validation.repairHint());
+                        run, call, step, validation, "Tool request rejected. " + validation.repairHint());
                 continue;
             } catch (IllegalArgumentException | SecurityException repairable) {
                 rejectToolRequest(
                         run,
                         call,
                         step,
-                        loopContext,
                         repairable,
                         "Tool request rejected; repair the arguments or choose another capability.");
                 continue;
@@ -503,10 +502,8 @@ public final class DecisionExecutor {
             AgentRun run,
             ToolCall call,
             AgentStep step,
-            AgentLoopContext loopContext,
             RuntimeException failure,
             String modelSummary) {
-        repairRetry.check(loopContext.recordRepairAttempt());
         cancelRejectedCall(call);
         state.appendToolCall(call);
         Map<String, Object> attributes = failure instanceof ToolInputValidationException validation
@@ -538,9 +535,7 @@ public final class DecisionExecutor {
             AgentRun run,
             ToolCall call,
             AgentStep step,
-            AgentLoopContext loopContext,
             ToolAuthorizationProtocolException protocol) {
-        repairRetry.check(loopContext.recordRepairAttempt());
         cancelRejectedCall(call);
         state.appendToolCall(call);
         step.fail(
@@ -561,6 +556,12 @@ public final class DecisionExecutor {
             }
             default -> call.cancel(time.now());
         }
+    }
+
+    private int completionRepairAttempts(AgentRun run) {
+        return Math.toIntExact(state.messages(run.id()).stream()
+                .filter(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
+                .count());
     }
 
     private void createToolApproval(

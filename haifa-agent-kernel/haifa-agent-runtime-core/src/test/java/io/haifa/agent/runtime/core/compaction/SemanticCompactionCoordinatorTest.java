@@ -48,9 +48,6 @@ import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.model.ModelMessageAssembler;
-import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RetryExecutor;
-import io.haifa.agent.runtime.core.retry.Sleeper;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
@@ -130,9 +127,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -212,9 +207,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -335,9 +328,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -396,9 +387,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -472,9 +461,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -537,9 +524,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -603,9 +588,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -694,9 +677,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -775,9 +756,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -857,9 +836,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -919,9 +896,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -980,9 +955,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -1282,9 +1255,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         AgentRun run = createAndSaveRun(store);
 
@@ -1336,9 +1307,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -1548,9 +1517,7 @@ class SemanticCompactionCoordinatorTest {
                 ids,
                 time,
                 new RunAwaiter(),
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+                store);
         return new SemanticCompactionCoordinator(
                 store,
                 store,

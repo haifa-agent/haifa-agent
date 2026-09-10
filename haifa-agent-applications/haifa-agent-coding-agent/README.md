@@ -147,9 +147,9 @@ SQLite 模式要求数据库文件绝对路径，并显式选择 `NONE` 或 `AES
 `env://` 形式的稳定 continuation protector 引用。JSONL 模式还要求已存在、可写、非符号链接的受控
 绝对目录。Application 使用共享 SQLite 边界唯一的 `HaifaAgentStoreMigrations`；V1000～V1007 已由该
 统一 registry 拥有，WorkspaceAccess 建表已折入 V1007，CA 不再维护产品侧 migration 追加链。
-每次进程启动生成新的 worker ID，
-并把完整 `RuntimePersistencePorts`、worker ID 和仅针对安全 `SQLITE_BUSY/LOCKED` 获取失败的有界重试策略
-注入 `RuntimeCoreBuilder`。
+每次进程启动生成新的 worker ID，并把完整 `RuntimePersistencePorts` 与 worker ID 注入 `RuntimeCoreBuilder`。
+`SQLITE_BUSY/LOCKED` 的有界重试只在 SQLite `BEGIN IMMEDIATE` 尚未开始事务工作时由 Store 执行；Runtime 不重放
+整个 Unit of Work，事务工作开始后、提交不确定或其他数据库错误均 fail closed。
 
 Core `AgentSession` 与 `ProjectProductSession` 使用同一个 `AgentSessionId`。产品映射显式保存
 tenant、principal、project、workspace、配置 ID/版本/digest 和 product profile；每次读取都与 Core

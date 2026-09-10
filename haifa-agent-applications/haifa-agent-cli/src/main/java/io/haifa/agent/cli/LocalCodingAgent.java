@@ -127,7 +127,7 @@ import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.model.ModelAdapterKey;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
-import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
+import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
 import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
@@ -723,7 +723,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     .middleware(new CodingRunOutcomeProjectionMiddleware(
                             outcomeProjection, persistence.ports().events(), time))
                     .middleware(new CodingVerificationProfileMiddleware(verificationProfiles))
-                    .repairRetry(new RepairRetryPolicy(2));
+                    .completionRepair(new CompletionRepairPolicy(2));
             modelAdapters.forEach((key, adapter) ->
                     runtimeBuilder.registerChatModel(key.adapterType(), key.adapterVersion(), adapter));
             var runtime = runtimeBuilder

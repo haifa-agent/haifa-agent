@@ -99,8 +99,7 @@ import io.haifa.agent.runtime.core.model.ModelAudioResolver;
 import io.haifa.agent.runtime.core.model.ModelImageResolver;
 import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
-import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
+import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.Sleeper;
@@ -117,7 +116,6 @@ import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.ToolRequestCanonicalizer;
 import io.haifa.agent.runtime.core.tool.ToolResultNormalizer;
-import io.haifa.agent.runtime.core.tool.TrustedSkillScriptPublicToolPolicy;
 import io.haifa.agent.runtime.core.trace.FailureDiagnosticSink;
 import io.haifa.agent.runtime.core.trace.PromptDiagnosticsSink;
 import io.haifa.agent.runtime.core.trace.TraceIdentifierGenerator;
@@ -187,8 +185,7 @@ public final class RuntimeCoreBuilder {
     private CredentialBroker credentialBroker;
     private ModelRetryPolicy modelRetry = ModelRetryPolicy.defaults();
     private ToolRetryPolicy toolRetry = ToolRetryPolicy.none();
-    private PersistenceRetryPolicy persistenceRetry = PersistenceRetryPolicy.none();
-    private RepairRetryPolicy repairRetry = new RepairRetryPolicy(3);
+    private CompletionRepairPolicy completionRepair = new CompletionRepairPolicy(3);
     private TracePort trace = TracePort.noop();
     private final TraceIdentifierGenerator traceIds = new TraceIdentifierGenerator();
     private PromptDiagnosticsSink promptDiagnostics = PromptDiagnosticsSink.noop();
@@ -389,13 +386,8 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder persistenceRetry(RetryPolicy value) {
-        persistenceRetry = new PersistenceRetryPolicy(value);
-        return this;
-    }
-
-    public RuntimeCoreBuilder repairRetry(RepairRetryPolicy value) {
-        repairRetry = Objects.requireNonNull(value);
+    public RuntimeCoreBuilder completionRepair(CompletionRepairPolicy value) {
+        completionRepair = Objects.requireNonNull(value);
         return this;
     }
 
@@ -524,9 +516,7 @@ public final class RuntimeCoreBuilder {
                 ids,
                 time,
                 awaiter,
-                unitOfWork,
-                new RetryExecutor(Sleeper.threadSleep()),
-                persistenceRetry);
+                unitOfWork);
         transitions.addListener(snapshot -> {
             if (snapshot.status().isTerminal()) modelOutput.markRunTerminal(snapshot.runId());
         });
@@ -546,10 +536,6 @@ public final class RuntimeCoreBuilder {
             };
         } else {
             throw new IllegalStateException("non-empty tool catalog requires an explicit product policy");
-        }
-        if (!skillTrust.scriptExecutionGrants().isEmpty()) {
-            configuredToolPolicy =
-                    new TrustedSkillScriptPublicToolPolicy(configuredToolPolicy, state, policyRequests, time);
         }
         configuredToolPolicy = Objects.requireNonNull(
                 publicToolPolicyDecorator.apply(configuredToolPolicy), "public tool policy decorator returned null");
@@ -603,7 +589,7 @@ public final class RuntimeCoreBuilder {
                 time,
                 checkpoints,
                 controls,
-                repairRetry,
+                completionRepair,
                 toolApprovalPrompts,
                 unitOfWork,
                 events,
@@ -665,8 +651,6 @@ public final class RuntimeCoreBuilder {
                 transitions,
                 time,
                 workerId,
-                new RetryExecutor(Sleeper.threadSleep()),
-                persistenceRetry,
                 trace,
                 traceIds,
                 ids,
@@ -699,8 +683,6 @@ public final class RuntimeCoreBuilder {
                 resumeCoordinator,
                 modelOutput,
                 configuredOwnership,
-                new RetryExecutor(Sleeper.threadSleep()),
-                persistenceRetry,
                 approvalVerification,
                 configuredRunInputs,
                 eventFeed,
