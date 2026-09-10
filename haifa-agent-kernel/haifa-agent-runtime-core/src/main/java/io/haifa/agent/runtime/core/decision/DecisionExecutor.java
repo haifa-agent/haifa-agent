@@ -68,6 +68,12 @@ import java.util.Optional;
 
 /** Executes validated decisions without deciding Core lifecycle legality. */
 public final class DecisionExecutor {
+    /**
+     * Neutral phase carried by {@code completion.deferred}. The Runtime only reports that a final answer did not
+     * satisfy the completion requirements; interpreting that into a product work phase belongs to the product.
+     */
+    private static final String COMPLETION_PHASE = "COMPLETION";
+
     private final ToolPipeline tools;
     private final CompletionGuard completionGuard;
     private final InteractionPort interactions;
@@ -296,15 +302,12 @@ public final class DecisionExecutor {
                                 time.now()));
                 return AgentLoopDirective.STOP;
             }
-            String phase = blockerCodes.stream().anyMatch(code -> code.contains("VALIDATION") || code.contains("DIFF"))
-                    ? "VERIFYING"
-                    : "RECOVERING";
             events.append(
                     run.id(),
                     "completion.deferred",
                     Map.of(
                             "phase",
-                            phase,
+                            COMPLETION_PHASE,
                             "status",
                             "COMPLETION_DEFERRED",
                             "reasonCode",
@@ -326,7 +329,6 @@ public final class DecisionExecutor {
                     run,
                     MessageRole.RUNTIME,
                     structuredCorrection(
-                            phase,
                             attempt,
                             repairRetry.maxAttempts(),
                             blockerCodes,
@@ -367,7 +369,6 @@ public final class DecisionExecutor {
     }
 
     private static String structuredCorrection(
-            String phase,
             int attempt,
             int maximumAttempts,
             List<String> blockerCodes,
@@ -377,15 +378,14 @@ public final class DecisionExecutor {
             int remainingPercent) {
         return String.join(
                 "\n",
-                "[DELIVERY_COMPLETION_REPAIR]",
-                "phase=" + phase,
+                "[COMPLETION_REPAIR]",
                 "attempt=" + attempt + "/" + maximumAttempts,
                 "blockers=" + String.join("|", blockerCodes),
                 "evidence=" + (evidenceCodes.isEmpty() ? "NONE" : String.join("|", evidenceCodes)),
                 "missing=" + String.join("|", missingEvidence),
                 "guidance=" + String.join(" || ", repairGuidance),
                 "remainingPercent=" + remainingPercent,
-                "nextAction=collect the smallest authoritative missing evidence, then submit final output");
+                "nextAction=satisfy the unmet requirements above, then submit final output");
     }
 
     private AgentLoopDirective executeTools(AgentRun run, ToolCallDecision decision, AgentLoopContext loopContext) {

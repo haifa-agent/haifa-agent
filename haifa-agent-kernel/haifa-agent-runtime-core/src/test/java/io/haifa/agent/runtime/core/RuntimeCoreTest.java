@@ -1638,23 +1638,14 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void completionWaitsForTodoConvergenceAndKeepsPartialSuccessStructured() {
+    void unconvergedPlanDoesNotBlockCompletionAndIsLeftUntouched() {
         AtomicInteger calls = new AtomicInteger();
-        AtomicReference<InMemoryRuntimeStore> state = new AtomicReference<>();
-        AtomicReference<io.haifa.agent.core.run.AgentRunId> runId = new AtomicReference<>();
         AgentChatModel model = request -> {
-            if (calls.incrementAndGet() == 2) {
-                TodoItem todo =
-                        state.get().plan(runId.get()).orElseThrow().items().getFirst();
-                todo.start(java.util.Set.of(), Instant.parse("2026-07-21T00:00:00Z"));
-                todo.complete("verified", Instant.parse("2026-07-21T00:00:00Z"));
-            }
+            calls.incrementAndGet();
             return response(finalDecision("complete"));
         };
         Fixture fixture = fixture(model);
-        state.set(fixture.store);
         var accepted = fixture.runtime.start(request("todo"));
-        runId.set(accepted.runId());
         fixture.store.savePlan(new AgentPlan(
                 new AgentPlanId("plan-1"),
                 accepted.runId(),
@@ -1674,8 +1665,54 @@ class RuntimeCoreTest {
         fixture.scheduler.runAll();
 
         var run = fixture.store.find(accepted.runId()).orElseThrow();
-        assertThat(calls).hasValue(2);
+        assertThat(calls).hasValue(1);
         assertThat(run.result().orElseThrow().outcome()).isEqualTo(AgentRunOutcome.SUCCESS);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .noneMatch(event -> event.type().equals("completion.deferred"));
+        assertThat(fixture.store.messages(accepted.runId()))
+                .noneMatch(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")));
+        assertThat(fixture.runtime.plan(accepted.runId()).orElseThrow().items())
+                .singleElement()
+                .satisfies(item -> assertThat(item.status()).isEqualTo("PENDING"));
+    }
+
+    @Test
+    void unconvergedPlanDoesNotBypassProductCompletionPolicy() {
+        AtomicInteger calls = new AtomicInteger();
+        AgentChatModel model = request -> {
+            calls.incrementAndGet();
+            return response(finalDecision("complete"));
+        };
+        Fixture fixture = fixture(model, builder -> builder.completionPolicy(
+                        (run, decision) -> io.haifa.agent.runtime.core.completion.CompletionPolicyResult.blocked(
+                                List.of(io.haifa.agent.runtime.core.completion.CompletionBlocker.recoverable(
+                                        "REQUIRED_ARTIFACT_MISSING",
+                                        "A required artifact is missing.",
+                                        "REQUIRED_ARTIFACT")),
+                                List.of()))
+                .repairRetry(new RepairRetryPolicy(1)));
+        var accepted = fixture.runtime.start(request("todo-and-policy"));
+        fixture.store.savePlan(new AgentPlan(
+                new AgentPlanId("plan-1"),
+                accepted.runId(),
+                "finish",
+                List.of(new TodoItem(
+                        new TodoItemId("todo-1"), "verify", "verify output", TodoPriority.HIGH, List.of())),
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        var run = fixture.store.find(accepted.runId()).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.COMPLETION_REPAIR_EXHAUSTED);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("completion.deferred"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("phase", "COMPLETION")
+                        .containsEntry("reasonCode", "REQUIRED_ARTIFACT_MISSING"));
+        assertThat(fixture.runtime.plan(accepted.runId()).orElseThrow().items())
+                .singleElement()
+                .satisfies(item -> assertThat(item.status()).isEqualTo("PENDING"));
     }
 
     @Test

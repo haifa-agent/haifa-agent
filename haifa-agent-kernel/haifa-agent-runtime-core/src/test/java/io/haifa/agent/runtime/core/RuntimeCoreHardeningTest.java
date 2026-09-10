@@ -9,6 +9,11 @@ import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.checkpoint.CheckpointType;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.error.AgentErrorCode;
+import io.haifa.agent.core.plan.AgentPlan;
+import io.haifa.agent.core.plan.AgentPlanId;
+import io.haifa.agent.core.plan.TodoItem;
+import io.haifa.agent.core.plan.TodoItemId;
+import io.haifa.agent.core.plan.TodoPriority;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
@@ -316,14 +321,40 @@ class RuntimeCoreHardeningTest {
         assertThat(blocked.store.eventsFor(blockedRun.runId()))
                 .filteredOn(event -> event.type().equals("completion.deferred"))
                 .singleElement()
-                .satisfies(event ->
-                        assertThat(event.data()).containsEntry("attempt", 1).containsEntry("maximumAttempts", 1));
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("attempt", 1)
+                        .containsEntry("maximumAttempts", 1)
+                        .containsEntry("phase", "COMPLETION"));
         assertThat(repairRequest.get().messages().getLast()).satisfies(message -> {
             assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
             assertThat(message.content())
-                    .contains("[DELIVERY_COMPLETION_REPAIR]")
-                    .contains("guidance=REQUIRED_ARTIFACT_MISSING: A required artifact is missing.");
+                    .contains("[COMPLETION_REPAIR]")
+                    .contains("guidance=REQUIRED_ARTIFACT_MISSING: A required artifact is missing.")
+                    .doesNotContain("phase=");
         });
+    }
+
+    @Test
+    void completionDeferralStaysNeutralForProductBlockerCodes() {
+        Queue<io.haifa.agent.runtime.core.decision.AgentDecision> decisions =
+                new ArrayDeque<>(List.of(finalDecision("first"), finalDecision("second")));
+        Fixture blocked = fixture(request -> response(decisions.remove()), builder -> builder.completionPolicy(
+                        (run, decision) -> io.haifa.agent.runtime.core.completion.CompletionPolicyResult.blocked(
+                                List.of(io.haifa.agent.runtime.core.completion.CompletionBlocker.recoverable(
+                                        "VALIDATION_ATTEMPT_MISSING",
+                                        "No authoritative validation attempt exists.",
+                                        "VALIDATION_ATTEMPT")),
+                                List.of()))
+                .repairRetry(new RepairRetryPolicy(1)));
+        var blockedRun = blocked.runtime.start(request("validation-blocked"));
+        blocked.scheduler.runAll();
+
+        assertThat(blocked.store.eventsFor(blockedRun.runId()))
+                .filteredOn(event -> event.type().equals("completion.deferred"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("phase", "COMPLETION")
+                        .containsEntry("reasonCode", "VALIDATION_ATTEMPT_MISSING"));
     }
 
     @Test
@@ -1087,6 +1118,57 @@ class RuntimeCoreHardeningTest {
                 .isEqualTo(AgentErrorCode.RUN_EXECUTION_LIMIT_EXCEEDED));
         assertThat(failed.result()).isEmpty();
         assertThat(modelCalls).hasValue(0);
+    }
+
+    @Test
+    void unconvergedPlanDoesNotWeakenTheFrozenStructuredOutputContract() {
+        Fixture fixture = fixture(
+                request -> new AgentChatResponse(
+                        "structured-response",
+                        "deepseek-v4-pro",
+                        "Structured result",
+                        List.of(),
+                        ModelFinishReason.STOP,
+                        ModelUsage.unpriced(1, 1),
+                        "",
+                        Map.of(),
+                        Optional.empty(),
+                        Optional.of(Map.of("answer", "complete"))),
+                builder -> builder.structuredOutputSchemaValidator(
+                        (schema, instance) -> new io.haifa.agent.tool.api.ToolSchemaValidationResult(
+                                List.of(new io.haifa.agent.tool.api.ToolSchemaValidationError(
+                                        "/answer", "type", "answer must be a number")))));
+        AgentRunRequest structured = new AgentRunRequest(
+                "structured-with-open-plan",
+                new AgentDefinitionId("test-agent"),
+                Optional.empty(),
+                "test-profile",
+                new AgentSessionId("session-1"),
+                Optional.empty(),
+                "objective",
+                List.of(),
+                RuntimeOverrides.NONE,
+                Optional.of(new StructuredOutputRequirement(
+                        "test.structured", "1", "TestStructured", Map.of("type", "object"))));
+
+        var accepted = fixture.runtime.start(structured);
+        fixture.store.savePlan(new AgentPlan(
+                new AgentPlanId("plan-1"),
+                accepted.runId(),
+                "finish",
+                List.of(new TodoItem(
+                        new TodoItemId("todo-1"), "verify", "verify output", TodoPriority.HIGH, List.of())),
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        var failed = fixture.store.find(accepted.runId()).orElseThrow();
+        assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(failed.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_STRUCTURED_OUTPUT_INVALID);
+        assertThat(failed.result()).isEmpty();
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("run.structured-termination"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data()).containsEntry("reason", "STRUCTURED_OUTPUT_INVALID"));
     }
 
     @Test

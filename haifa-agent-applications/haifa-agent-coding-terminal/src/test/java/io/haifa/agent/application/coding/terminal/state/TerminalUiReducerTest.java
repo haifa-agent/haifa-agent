@@ -579,33 +579,33 @@ class TerminalUiReducerTest {
     }
 
     @Test
-    void deliveryEventsDriveRecoveryBudgetAndCodingWorkPhaseWithoutParsingText() {
-        TerminalUiState recovering = reducer.reduce(
+    void deliveryEventsDriveCompletionBudgetAndCodingWorkPhaseWithoutParsingText() {
+        TerminalUiState firstDeferral = reducer.reduce(
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.RunEventReceived(event(
                         1,
                         "event-1",
                         new RunEventPayloads.DeliveryLifecycle(
-                                "RECOVERING",
+                                "COMPLETION",
                                 "COMPLETION_DEFERRED",
                                 "WORKSPACE_CHANGE_MISSING",
                                 List.of("WORKSPACE_CHANGE"),
                                 30,
                                 1))));
-        TerminalUiState verifying = reducer.reduce(
-                recovering,
+        TerminalUiState secondDeferral = reducer.reduce(
+                firstDeferral,
                 new TerminalUiAction.RunEventReceived(event(
                         2,
                         "event-2",
                         new RunEventPayloads.DeliveryLifecycle(
-                                "VERIFYING",
+                                "COMPLETION",
                                 "COMPLETION_DEFERRED",
                                 "DIFF_INSPECTION_MISSING",
                                 List.of("DIFF_INSPECTION", "VALIDATION_ATTEMPT"),
                                 24,
                                 2))));
         TerminalUiState budget = reducer.reduce(
-                verifying,
+                secondDeferral,
                 new TerminalUiAction.RunEventReceived(event(
                         3,
                         "event-3",
@@ -632,14 +632,17 @@ class TerminalUiReducerTest {
                                 42,
                                 0))));
 
-        assertThat(recovering.status()).isEqualTo("Recovering");
-        assertThat(verifying.status()).isEqualTo("Verifying");
-        assertThat(verifying.transcript())
+        assertThat(firstDeferral.status()).isEqualTo("Completion deferred");
+        assertThat(secondDeferral.status()).isEqualTo("Completion deferred");
+        assertThat(secondDeferral.transcript())
                 .filteredOn(item -> item.id().equals("delivery-COMPLETION_DEFERRED"))
                 .singleElement()
-                .satisfies(item -> assertThat(item.body())
-                        .contains("DIFF_INSPECTION", "VALIDATION_ATTEMPT", "Remaining: 24%")
-                        .doesNotContain("/Users/", "stderr", "fingerprint"));
+                .satisfies(item -> {
+                    assertThat(item.title()).isEqualTo("Completion deferred");
+                    assertThat(item.body())
+                            .contains("DIFF_INSPECTION", "VALIDATION_ATTEMPT", "Remaining: 24%")
+                            .doesNotContain("/Users/", "stderr", "fingerprint");
+                });
         assertThat(budget.status()).isEqualTo("Budget threshold");
         assertThat(budget.transcript())
                 .filteredOn(item -> item.id().equals("delivery-BUDGET_THRESHOLD_REACHED"))

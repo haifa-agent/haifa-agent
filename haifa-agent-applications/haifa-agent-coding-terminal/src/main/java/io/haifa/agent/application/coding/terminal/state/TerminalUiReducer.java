@@ -710,8 +710,6 @@ public final class TerminalUiReducer {
         }
         if (event.payload() instanceof RunEventPayloads.DeliveryLifecycle lifecycle) {
             return switch (lifecycle.phase()) {
-                case "RECOVERING" -> "Recovering";
-                case "VERIFYING" -> "Verifying";
                 case "BUDGET" -> "Budget threshold";
                 case "ORIENT", "PLAN", "CHANGE", "VERIFY", "REVIEW", "DELIVER", "BLOCKED" ->
                     "Work phase: " + lifecycle.phase();
@@ -1031,8 +1029,6 @@ public final class TerminalUiReducer {
 
     private static String deliveryTitle(RunEventPayloads.DeliveryLifecycle payload) {
         return switch (payload.phase()) {
-            case "RECOVERING" -> "Recovering";
-            case "VERIFYING" -> "Verifying";
             case "BUDGET" -> "Budget threshold";
             case "ORIENT", "PLAN", "CHANGE", "VERIFY", "REVIEW", "DELIVER", "BLOCKED" ->
                 "Work phase · " + payload.phase();
