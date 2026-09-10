@@ -29,14 +29,10 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
-import io.haifa.agent.sandbox.api.EphemeralCopyRequest;
 import io.haifa.agent.sandbox.api.GitWorktreeRequest;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
-import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxExecution;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
 import io.haifa.agent.sandbox.api.SandboxProfile;
-import io.haifa.agent.sandbox.api.WorkspaceCopyBudget;
 import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.io.IOException;
 import java.io.InputStream;
@@ -73,15 +69,14 @@ class HostSandboxIT {
                 fixture.locations,
                 () -> "session-" + ids.incrementAndGet(),
                 () -> Instant.ofEpochMilli(System.currentTimeMillis()));
-        assertThat(provider.capabilities().networkIsolation()).isFalse();
-        assertThat(provider.capabilities().filesystemMountIsolation()).isFalse();
+        assertThat(provider.capabilities().processTreeTermination()).isTrue();
         SandboxProfile profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("host-test", "1"),
                 provider.configurationDigest(),
                 Set.of("java"),
                 Set.of(),
                 false);
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             AtomicInteger dispatches = new AtomicInteger();
             java.util.concurrent.atomic.AtomicReference<io.haifa.agent.execution.api.ExecutionProcessIdentity>
                     processIdentity = new java.util.concurrent.atomic.AtomicReference<>();
@@ -189,21 +184,6 @@ class HostSandboxIT {
             assertThat(cancelledResult.processTreeTerminated()).isTrue();
             assertThat(ProcessHandle.of(cancelledChild)).isEmpty();
         }
-
-        assertThatThrownBy(() -> provider.open(
-                        new SandboxProfile(
-                                new SandboxProfileRef("deny", "1"),
-                                provider.providerId(),
-                                provider.configurationDigest(),
-                                Set.of("java"),
-                                Set.of(),
-                                false,
-                                NetworkPolicy.DENY,
-                                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
-                                new SandboxCapabilities(true, false, true, false, false)),
-                        new WorkspaceMount(fixture.workspaceId, false)))
-                .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
-                        .isEqualTo("NETWORK_POLICY_UNENFORCEABLE"));
     }
 
     private static String waitForText(Path path) throws Exception {
@@ -235,7 +215,7 @@ class HostSandboxIT {
                 : "printf 'shell-ok\\n' | tr a-z A-Z > result.txt; cat result.txt";
         var streamed = new java.io.ByteArrayOutputStream();
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             var result = session.execute(
                     new SandboxExecution(
                             ExecutionCommand.shell(command),
@@ -259,7 +239,7 @@ class HostSandboxIT {
                 Set.of(),
                 Set.of("DEEPSEEK_API_KEY"),
                 true);
-        try (var session = provider.open(secretProfile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(secretProfile, new WorkspaceMount(fixture.workspaceId))) {
             assertThatThrownBy(() -> session.execute(new SandboxExecution(
                             ExecutionCommand.shell(command),
                             WorkspacePath.root(fixture.workspaceId),
@@ -271,7 +251,7 @@ class HostSandboxIT {
 
         SandboxProfile shellDenied = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("shell-denied", "1"), provider.configurationDigest(), Set.of(), Set.of(), false);
-        try (var session = provider.open(shellDenied, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(shellDenied, new WorkspaceMount(fixture.workspaceId))) {
             assertThatThrownBy(() -> session.execute(new SandboxExecution(
                             ExecutionCommand.shell(command),
                             WorkspacePath.root(fixture.workspaceId),
@@ -281,7 +261,7 @@ class HostSandboxIT {
                             .isEqualTo("SHELL_DENIED"));
         }
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             assertThat(session.cancel()).isTrue();
             var cancelledBeforeStart = session.execute(new SandboxExecution(
                     ExecutionCommand.shell(command),
@@ -291,7 +271,7 @@ class HostSandboxIT {
             assertThat(cancelledBeforeStart.status()).isEqualTo(SandboxProcessStatus.CANCELLED);
         }
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             assertThatThrownBy(() -> session.openManagedProcess(new SandboxExecution(
                             ExecutionCommand.shell(command),
                             WorkspacePath.root(fixture.workspaceId),
@@ -316,7 +296,7 @@ class HostSandboxIT {
                 Set.of(javaExecutable),
                 Set.of(),
                 false);
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.direct(List.of(javaExecutable, "-cp", ".", StdinEchoProcess.class.getName())),
                     WorkspacePath.root(fixture.workspaceId),
@@ -351,7 +331,7 @@ class HostSandboxIT {
                 Set.of(),
                 false);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.direct(List.of(javaExecutable, "-cp", ".", LargeOutputProcess.class.getName())),
                     WorkspacePath.root(fixture.workspaceId),
@@ -387,7 +367,7 @@ class HostSandboxIT {
                 Set.of(),
                 false);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.direct(
                             List.of(javaExecutable, "-cp", ".", LoopbackRoundTripProcess.class.getName())),
@@ -423,7 +403,7 @@ class HostSandboxIT {
                 Set.of(),
                 false);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             var compilation = session.execute(new SandboxExecution(
                     ExecutionCommand.direct(List.of(javacExecutable, "Baseline.java")),
                     WorkspacePath.root(fixture.workspaceId),
@@ -460,7 +440,7 @@ class HostSandboxIT {
         String command =
                 isWindows() ? "(Get-Location).Path; Set-Location ..; (Get-Location).Path" : "pwd -P; cd ..; pwd -P";
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.shell(command),
                     WorkspacePath.root(fixture.workspaceId),
@@ -503,7 +483,7 @@ class HostSandboxIT {
                 Set.of("TMPDIR", "TMP", "TEMP", "GOTMPDIR"),
                 List.of(new ExecutionScratchBinding("GOCACHE", "go-build")));
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.shell(scratchProbeCommand()),
                     WorkspacePath.root(fixture.workspaceId),
@@ -520,7 +500,6 @@ class HostSandboxIT {
                     .isEqualTo("scratch-ok");
         }
         assertThat(scratchRoot).isDirectory().isEmptyDirectory();
-        assertThat(provider.capabilities().filesystemMountIsolation()).isFalse();
     }
 
     @Test
@@ -561,7 +540,7 @@ class HostSandboxIT {
                                 Set.of("/bin/sh"),
                                 Set.of(),
                                 false),
-                        new WorkspaceMount(fixture.workspaceId, false)))
+                        new WorkspaceMount(fixture.workspaceId)))
                 .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
                         .isEqualTo("SCRATCH_ROOT_UNSAFE"));
     }
@@ -587,7 +566,7 @@ class HostSandboxIT {
                 Set.of(),
                 false);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             AtomicInteger dispatches = new AtomicInteger();
             assertThatThrownBy(() -> session.execute(
                             new SandboxExecution(
@@ -633,7 +612,7 @@ class HostSandboxIT {
                 Set.of(),
                 false);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.direct(List.of("/bin/sh", "-c", "printf cleanup-probe")),
                     WorkspacePath.root(fixture.workspaceId),
@@ -658,42 +637,6 @@ class HostSandboxIT {
             }
         }
         assertThat(scratchRoot).isDirectory().isEmptyDirectory();
-    }
-
-    @Test
-    void createsBudgetedEphemeralCopyWithNarrowedAuthorityAndSafeRelease() throws Exception {
-        Files.writeString(root.resolve("visible.txt"), "visible");
-        Files.writeString(root.resolve(".env"), "secret");
-        Fixture fixture = fixture(root, "workspace-copy-parent", "binding-copy-parent", "location-copy-parent");
-        var provider = new HostWorkspaceIsolationProvider(
-                fixture.workspaces,
-                fixture.bindings,
-                fixture.locations,
-                SensitivePathPolicy.defaults(),
-                isolatedBase,
-                () -> NOW);
-        var isolated = provider.createEphemeralCopy(new EphemeralCopyRequest(
-                fixture.workspaceId,
-                new WorkspaceId("workspace-copy-child"),
-                new WorkspaceBindingId("binding-copy-child"),
-                new WorkspaceLocationRef("location-copy-child"),
-                new PrincipalRef("child", "agent"),
-                WorkspaceCapabilitySet.readWriteFiles(),
-                WorkspacePermissionSet.readWrite(),
-                new WorkspaceCopyBudget(100, 1024, 4096, Duration.ofSeconds(5))));
-        Path child = fixture.locations.resolveForTrustedProvider(isolated.locationRef());
-        assertThat(Files.readString(child.resolve("visible.txt"))).isEqualTo("visible");
-        assertThat(Files.exists(child.resolve(".env"))).isFalse();
-        Files.writeString(child.resolve("child-only.txt"), "child");
-        assertThat(Files.exists(root.resolve("child-only.txt"))).isFalse();
-
-        provider.release(isolated.childWorkspaceId());
-        assertThat(Files.exists(child)).isFalse();
-        assertThat(fixture.workspaces
-                        .find(isolated.childWorkspaceId())
-                        .orElseThrow()
-                        .status())
-                .isEqualTo(io.haifa.agent.project.workspace.WorkspaceStatus.RELEASED);
     }
 
     @Test

@@ -28,20 +28,13 @@ import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
-import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxException;
-import io.haifa.agent.sandbox.api.SandboxFilesystemPolicy;
 import io.haifa.agent.sandbox.api.SandboxPreflight;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxProvider;
-import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import io.haifa.agent.sandbox.host.HostExecutionEnvironmentResolver;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.sandbox.host.HostShell;
-import io.haifa.agent.sandbox.localnative.LocalNativePathGrant;
-import io.haifa.agent.sandbox.localnative.LocalNativeSandboxConfiguration;
-import io.haifa.agent.sandbox.localnative.LocalNativeSandboxProvider;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -108,73 +101,41 @@ final class CliExecutionPlatform implements AutoCloseable {
         Objects.requireNonNull(runtimeExecutionVerifier, "runtimeExecutionVerifier must not be null");
         Objects.requireNonNull(recoveryAuthorization, "recoveryAuthorization must not be null");
         HostShell shell = shell(configuration);
-        LocalNativeSandboxConfiguration localConfiguration = localConfiguration(configuration, shell);
+        Path controlRoot = controlRoot();
+        Path scratchRoot = controlRoot.resolve("host-scratch");
         var host = new HostGuardedSandboxProvider(
-                workspaces,
-                bindings,
-                locations,
-                identifiers,
-                time,
-                shell,
-                localConfiguration.controlRoot().resolve("host-scratch"));
-        var local =
-                new LocalNativeSandboxProvider(workspaces, bindings, locations, identifiers, time, localConfiguration);
-        Map<String, SandboxProvider> configuredProviders = Map.of(host.providerId(), host, local.providerId(), local);
-        SandboxProvider selected = configuredProviders.get(configuration.provider());
-        if (selected == null) {
+                workspaces, bindings, locations, identifiers, time, shell, scratchRoot);
+        if (!configuration.provider().equals(host.providerId())) {
             throw new IllegalArgumentException(
                     "SANDBOX_ADAPTER_UNAVAILABLE: configured execution provider is unavailable");
         }
         var resolvedEnvironment = CliExecutionEnvironment.resolve(
                 configuration,
-                selected.providerId(),
                 hostEnvironment,
                 System.getProperty("os.name", ""),
                 Path.of(System.getProperty("user.home", ".")),
-                localConfiguration.controlRoot(),
+                controlRoot,
                 workspaceRoot,
-                localConfiguration.controlRoot().resolve("host-scratch"));
+                scratchRoot);
         Map<String, String> environment = resolvedEnvironment.environment();
-        var permissionResolvedEnvironment = selected.providerId().equals(host.providerId())
-                ? resolvedEnvironment
-                : CliExecutionEnvironment.resolve(
-                        configuration,
-                        host.providerId(),
-                        hostEnvironment,
-                        System.getProperty("os.name", ""),
-                        Path.of(System.getProperty("user.home", ".")),
-                        localConfiguration.controlRoot(),
-                        workspaceRoot,
-                        localConfiguration.controlRoot().resolve("host-scratch"));
-        Map<String, String> permissionEnvironment = permissionResolvedEnvironment.environment();
         var ignorePolicy = CliWorkspaceChangeIgnorePolicy.load(workspaceRoot);
         SandboxProfile profile =
-                profile(configuration, selected, resolvedEnvironment.allowedEnvironmentNames(), ignorePolicy.version());
-        SandboxProfile permissionProfile = profile(
-                configuration, host, permissionResolvedEnvironment.allowedEnvironmentNames(), ignorePolicy.version());
-        var profileRegistry = new ImmutableSandboxProfileRegistry(
-                profile.equals(permissionProfile) ? List.of(profile) : List.of(profile, permissionProfile));
-        var providerRegistry = new ImmutableSandboxProviderRegistry(configuredProviders.values());
+                profile(configuration, host, resolvedEnvironment.allowedEnvironmentNames(), ignorePolicy.version());
+        var profileRegistry = new ImmutableSandboxProfileRegistry(List.of(profile));
+        var providerRegistry = new ImmutableSandboxProviderRegistry(List.of(host));
         SandboxPreflight preflight;
         try {
             preflight = providerRegistry.resolve(profile).preflight(profile);
-            if (!profile.equals(permissionProfile)) {
-                providerRegistry.resolve(permissionProfile).preflight(permissionProfile);
-            }
         } catch (SandboxException exception) {
-            throw diagnostic(configuration, exception);
+            throw new IllegalArgumentException(exception.code() + ": " + exception.getMessage());
         }
         ExecutionEnvironmentRef environmentRef = new ExecutionEnvironmentRef(
                 List.of("cli-execution-" + profile.contentDigest().value()));
-        ExecutionEnvironmentRef permissionEnvironmentRef = new ExecutionEnvironmentRef(
-                List.of("cli-execution-" + permissionProfile.contentDigest().value()));
         var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(workspaceId, workspaceRoot, ignorePolicy);
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
-                requestedEnvironment -> requestedEnvironment.equals(permissionEnvironmentRef)
-                        ? io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(permissionEnvironment)
-                        : io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
+                requestedEnvironment -> io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
                 new CodingAgentExecutionPolicy(
                         runtimeExecutionVerifier,
                         recoveryAuthorization,
@@ -183,9 +144,9 @@ final class CliExecutionPlatform implements AutoCloseable {
                         tenant,
                         principal,
                         environmentRef,
-                        permissionEnvironmentRef,
+                        environmentRef,
                         profile.ref(),
-                        permissionProfile.ref(),
+                        profile.ref(),
                         CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                         configuration.defaultTimeout(),
                         configuration.maximumTimeout(),
@@ -216,30 +177,13 @@ final class CliExecutionPlatform implements AutoCloseable {
                 workspaceTargetResolver(provisioning, workspaceAccess, tenant, principal),
                 verificationProfiles,
                 repositoryBaselines.observer());
-        var permissionOperations = new ProjectExecutionToolOperations(
-                broker,
-                identifiers,
-                time,
-                permissionEnvironmentRef,
-                permissionProfile.ref(),
-                configuration.defaultTimeout(),
-                configuration.maximumTimeout(),
-                configuration.maxOutputBytes(),
-                configuration.maxOutputLines(),
-                configuration.maxProcesses(),
-                observer,
-                java.util.function.UnaryOperator.identity(),
-                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                workspaceTargetResolver(provisioning, workspaceAccess, tenant, principal),
-                verificationProfiles,
-                repositoryBaselines.observer());
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(
                 operations,
-                permissionOperations,
+                operations,
                 profile,
-                permissionProfile,
+                profile,
                 shell.displayName(),
                 securitySummary,
                 workspaceChanges,
@@ -333,20 +277,11 @@ final class CliExecutionPlatform implements AutoCloseable {
                 java.util.List.of("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"));
     }
 
-    static LocalNativeSandboxConfiguration localConfiguration(
-            CliConfiguration.Execution configuration, HostShell shell) {
-        LocalNativeSandboxConfiguration defaults = LocalNativeSandboxConfiguration.defaults();
-        Map<String, LocalNativePathGrant> extraPaths = configuration.extraPathPolicies().stream()
-                .collect(java.util.stream.Collectors.toUnmodifiableMap(
-                        CliConfiguration.ExtraPathPolicy::id,
-                        value -> new LocalNativePathGrant(value.path(), value.readOnly())));
-        return new LocalNativeSandboxConfiguration(
-                shell.invocationPrefix(),
-                defaults.controlRoot(),
-                defaults.seatbeltExecutable(),
-                defaults.bubblewrapExecutable(),
-                extraPaths,
-                defaults.sensitivePaths());
+    /** Private CLI-owned root for host scratch space and environment boundary checks. */
+    static Path controlRoot() {
+        return Path.of(System.getProperty("java.io.tmpdir"), "haifa-agent-host")
+                .toAbsolutePath()
+                .normalize();
     }
 
     static SandboxProfile profile(CliConfiguration.Execution configuration, SandboxProvider provider) {
@@ -354,11 +289,7 @@ final class CliExecutionPlatform implements AutoCloseable {
                 .toAbsolutePath()
                 .normalize();
         var environment = CliExecutionEnvironment.resolve(
-                configuration,
-                provider.providerId(),
-                boundary,
-                boundary.resolve("workspace"),
-                boundary.resolve("scratch"));
+                configuration, boundary, boundary.resolve("workspace"), boundary.resolve("scratch"));
         return profile(
                 configuration, provider, environment.allowedEnvironmentNames(), "cli-workspace-change-unbound-v1");
     }
@@ -368,25 +299,19 @@ final class CliExecutionPlatform implements AutoCloseable {
             SandboxProvider provider,
             Set<String> inheritedEnvironment,
             String workspaceChangePolicyVersion) {
-        NetworkPolicy network = NetworkPolicy.valueOf(configuration.network().toUpperCase(java.util.Locale.ROOT));
         List<String> identityFields = new java.util.ArrayList<>();
-        identityFields.add("cli-execution-v2");
+        identityFields.add("cli-execution-v3");
         identityFields.add(HostExecutionEnvironmentResolver.POLICY_VERSION);
         identityFields.add(workspaceChangePolicyVersion);
         identityFields.add(provider.providerId());
         identityFields.add(provider.configurationDigest().value());
-        identityFields.add(network.name());
         configuration.inheritEnvironment().stream()
                 .sorted()
                 .forEach(value -> identityFields.add("environment:" + value));
         CodingToolchainEnvironmentProfile.defaultScratchSpace().environmentNames().stream()
                 .sorted()
                 .forEach(value -> identityFields.add("scratch-environment:" + value));
-        configuration.extraPathPolicies().stream()
-                .map(CliConfiguration.ExtraPathPolicy::id)
-                .sorted()
-                .forEach(value -> identityFields.add("path-policy:" + value));
-        String version = "2-"
+        String version = "3-"
                 + io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(identityFields)
                         .value()
                         .substring("sha256:".length());
@@ -395,55 +320,18 @@ final class CliExecutionPlatform implements AutoCloseable {
                         inheritedEnvironment.stream(),
                         CodingToolchainEnvironmentProfile.defaultScratchSpace().environmentNames().stream())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        if (provider.providerId().equals(HostGuardedSandboxProvider.PROVIDER_ID)) {
-            return SandboxProfile.hostGuarded(
-                    reference, provider.configurationDigest(), Set.of("git"), allowedEnvironment, true);
-        }
-        return new SandboxProfile(
-                reference,
-                provider.providerId(),
-                provider.configurationDigest(),
-                Set.of("git"),
-                allowedEnvironment,
-                true,
-                network,
-                new SandboxFilesystemPolicy(
-                        SandboxWorkspaceAccess.READ_WRITE,
-                        true,
-                        configuration.extraPathPolicies().stream()
-                                .map(CliConfiguration.ExtraPathPolicy::id)
-                                .collect(java.util.stream.Collectors.toUnmodifiableSet())),
-                new SandboxCapabilities(true, true, network == NetworkPolicy.DENY, false, false));
-    }
-
-    static IllegalArgumentException diagnostic(CliConfiguration.Execution configuration, SandboxException exception) {
-        if (exception.code().equals("SANDBOX_ADAPTER_UNAVAILABLE")
-                && configuration.provider().equals(LocalNativeSandboxProvider.PROVIDER_ID)) {
-            return new IllegalArgumentException(
-                    "SANDBOX_ADAPTER_UNAVAILABLE: local-native is not implemented or its OS adapter "
-                            + "failed preflight on this platform; for an explicitly trusted workspace only, "
-                            + "configure execution.provider: host-guarded and execution.network: allow");
-        }
-        return new IllegalArgumentException(exception.code() + ": " + exception.getMessage());
+        return SandboxProfile.hostGuarded(
+                reference, provider.configurationDigest(), Set.of("git"), allowedEnvironment, true);
     }
 
     static String securitySummary(SandboxProfile profile, SandboxPreflight preflight) {
         String digest = profile.contentDigest().value().substring(0, 12);
-        if (profile.providerId().equals(HostGuardedSandboxProvider.PROVIDER_ID)) {
-            return "provider=host-guarded (trusted local development), adapter="
-                    + preflight.adapterId()
-                    + ", network=ALLOW (ordinary local network: host loopback/LAN/internet may be reachable), "
-                    + "current OS user, workspace/outside files/network/CPU/memory/kernel are not strongly isolated, "
-                    + "approval is not isolation, profile="
-                    + digest;
-        }
-        return "provider=local-native, adapter="
+        return "provider=" + profile.providerId()
+                + " (controlled host execution, trusted local development), adapter="
                 + preflight.adapterId()
-                + ", workspace="
-                + profile.filesystemPolicy().workspaceAccess()
-                + ", network="
-                + profile.networkPolicy()
-                + ", credentials=none, CPU/memory/kernel not strongly isolated, profile="
+                + ", network=host (ordinary local network: host loopback/LAN/internet may be reachable), "
+                + "current OS user, workspace/outside files/network/CPU/memory/kernel are not isolated, "
+                + "approval is not isolation, profile="
                 + digest;
     }
 

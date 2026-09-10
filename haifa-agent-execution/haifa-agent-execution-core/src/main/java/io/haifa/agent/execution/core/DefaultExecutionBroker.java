@@ -29,7 +29,6 @@ import io.haifa.agent.sandbox.api.SandboxProvider;
 import io.haifa.agent.sandbox.api.SandboxProviderResolver;
 import io.haifa.agent.sandbox.api.SandboxResolver;
 import io.haifa.agent.sandbox.api.SandboxSession;
-import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.io.ByteArrayOutputStream;
 import java.time.Duration;
@@ -243,15 +242,13 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         }
         SandboxPreflight preflight = provider.preflight(profile);
         if (!preflight.providerId().equals(profile.providerId())
-                || !preflight.configurationDigest().equals(profile.providerConfigurationDigest())
-                || !preflight.capabilities().satisfies(profile.requiredCapabilities())) {
+                || !preflight.configurationDigest().equals(profile.providerConfigurationDigest())) {
             throw new SandboxException("CAPABILITY_UNAVAILABLE", "sandbox preflight does not match the profile");
         }
         if (managedProcess && !preflight.managedProcessSupported()) {
             throw new SandboxException("CAPABILITY_UNAVAILABLE", "sandbox provider does not support managed processes");
         }
-        boolean readOnly = profile.filesystemPolicy().workspaceAccess() == SandboxWorkspaceAccess.READ_ONLY;
-        return new ResolvedSandbox(profile, provider, new WorkspaceMount(request.workspaceId(), readOnly));
+        return new ResolvedSandbox(profile, provider, new WorkspaceMount(request.workspaceId()));
     }
 
     private final class BrokerManagedSession implements io.haifa.agent.execution.api.ManagedProcessSession {

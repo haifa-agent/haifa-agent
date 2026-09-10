@@ -31,7 +31,6 @@ class ProjectApplicationArchitectureTest {
                 .dependOnClassesThat()
                 .resideInAnyPackage(
                         "io.haifa.agent.sandbox.host..",
-                        "io.haifa.agent.sandbox.localnative..",
                         "io.haifa.agent.model.openai..",
                         "org.springframework..")
                 .check(classes);
@@ -50,8 +49,7 @@ class ProjectApplicationArchitectureTest {
                         "io.haifa.agent.application.coding.terminal..",
                         "io.haifa.agent.cli..",
                         "io.haifa.agent.model.openai..",
-                        "io.haifa.agent.sandbox.host..",
-                        "io.haifa.agent.sandbox.localnative..")
+                        "io.haifa.agent.sandbox.host..")
                 .check(classes);
     }
 

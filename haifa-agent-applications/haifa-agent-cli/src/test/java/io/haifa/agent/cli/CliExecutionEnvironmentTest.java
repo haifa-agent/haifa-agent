@@ -21,7 +21,6 @@ class CliExecutionEnvironmentTest {
 
         var resolved = CliExecutionEnvironment.resolve(
                 CliConfiguration.defaults().execution(),
-                "host-guarded",
                 Map.of(
                         "HOME",
                         home.toString(),
@@ -41,27 +40,5 @@ class CliExecutionEnvironmentTest {
                 .containsEntry("HOME", home.toRealPath().toString())
                 .containsEntry("PATH", "/custom/bin")
                 .doesNotContainKeys("DEEPSEEK_API_KEY", "PYTHONUSERBASE");
-    }
-
-    @Test
-    void localNativeUsesProviderIsolatedPolicyAndLeavesHomeAndTempToProvider() throws Exception {
-        Path home = Files.createDirectory(root.resolve("home"));
-        Path app = Files.createDirectory(root.resolve("app"));
-        Path workspace = Files.createDirectory(root.resolve("workspace"));
-        Path scratch = Files.createDirectory(root.resolve("scratch"));
-
-        var resolved = CliExecutionEnvironment.resolve(
-                CliConfiguration.defaults().execution(),
-                "local-native",
-                Map.of("PATH", "/custom/bin", "HOME", home.toString(), "TMPDIR", scratch.toString()),
-                "Linux",
-                home,
-                app,
-                workspace,
-                scratch);
-
-        assertThat(resolved.environment())
-                .containsEntry("PATH", "/custom/bin")
-                .doesNotContainKeys("HOME", "TMPDIR", "USERPROFILE", "APPDATA");
     }
 }

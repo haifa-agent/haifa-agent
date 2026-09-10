@@ -11,68 +11,41 @@ import org.junit.jupiter.api.Test;
 
 class SandboxProfileTest {
     private static final SandboxConfigurationDigest CONFIGURATION =
-            SandboxConfigurationDigest.sha256Fields(List.of("local-native", "test-adapter", "1"));
+            SandboxConfigurationDigest.sha256Fields(List.of("host-guarded", "test-adapter", "1"));
 
     @Test
     void contentDigestIsStableAcrossSetIterationOrder() {
-        SandboxProfile first = profile(
-                Set.of("java", "git"), new LinkedHashSet<>(List.of("PATH", "JAVA_HOME")), Set.of("cache", "tools"));
-        SandboxProfile second = profile(
-                new LinkedHashSet<>(List.of("git", "java")),
-                new LinkedHashSet<>(List.of("JAVA_HOME", "PATH")),
-                new LinkedHashSet<>(List.of("tools", "cache")));
+        SandboxProfile first = profile(Set.of("java", "git"), new LinkedHashSet<>(List.of("PATH", "JAVA_HOME")));
+        SandboxProfile second =
+                profile(new LinkedHashSet<>(List.of("git", "java")), new LinkedHashSet<>(List.of("JAVA_HOME", "PATH")));
 
         assertThat(first).isEqualTo(second);
         assertThat(first.contentDigest()).isEqualTo(second.contentDigest());
     }
 
     @Test
-    void rejectsRequirementsThatCannotExpressTheRequestedPolicy() {
-        assertThatThrownBy(() -> new SandboxProfile(
-                        new SandboxProfileRef("network-deny", "1"),
-                        "local-native",
-                        CONFIGURATION,
-                        Set.of(),
-                        Set.of(),
-                        true,
-                        NetworkPolicy.DENY,
-                        SandboxFilesystemPolicy.hostCompatible(),
-                        new SandboxCapabilities(true, false, false, false, false)))
+    void rejectsInvalidEnvironmentNames() {
+        assertThatThrownBy(() -> profile(Set.of("git"), Set.of("not a name")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("network isolation");
-
-        assertThatThrownBy(() -> new SandboxProfile(
-                        new SandboxProfileRef("sensitive", "1"),
-                        "local-native",
-                        CONFIGURATION,
-                        Set.of(),
-                        Set.of(),
-                        true,
-                        NetworkPolicy.ALLOW,
-                        new SandboxFilesystemPolicy(SandboxWorkspaceAccess.READ_WRITE, true, Set.of()),
-                        new SandboxCapabilities(true, false, false, false, false)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("filesystem isolation");
+                .hasMessageContaining("allowedEnvironmentNames");
     }
 
     @Test
-    void rejectsHostPathsAsAdditionalPolicyReferences() {
-        assertThatThrownBy(() -> new SandboxFilesystemPolicy(
-                        SandboxWorkspaceAccess.READ_WRITE, true, Set.of("C:\\Users\\owner\\.m2")))
-                .isInstanceOf(IllegalArgumentException.class);
+    void hostGuardedFactoryBindsTheHostProvider() {
+        SandboxProfile hostProfile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("cli-host-guarded", "1"), CONFIGURATION, Set.of("git"), Set.of("PATH"), true);
+
+        assertThat(hostProfile.providerId()).isEqualTo("host-guarded");
+        assertThat(hostProfile.shellAllowed()).isTrue();
     }
 
-    private static SandboxProfile profile(
-            Set<String> executables, Set<String> environmentNames, Set<String> pathPolicies) {
+    private static SandboxProfile profile(Set<String> executables, Set<String> environmentNames) {
         return new SandboxProfile(
-                new SandboxProfileRef("local-native-default", "1"),
-                "local-native",
+                new SandboxProfileRef("host-guarded-default", "1"),
+                "host-guarded",
                 CONFIGURATION,
                 executables,
                 environmentNames,
-                true,
-                NetworkPolicy.DENY,
-                new SandboxFilesystemPolicy(SandboxWorkspaceAccess.READ_WRITE, true, pathPolicies),
-                new SandboxCapabilities(true, true, true, false, false));
+                true);
     }
 }

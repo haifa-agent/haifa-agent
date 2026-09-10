@@ -18,10 +18,10 @@ class CliExecutionArchitectureTest {
         noClasses()
                 .that()
                 .resideOutsideOfPackages(
-                        "io.haifa.agent.cli..", "io.haifa.agent.sandbox.host..", "io.haifa.agent.sandbox.localnative..")
+                        "io.haifa.agent.cli..", "io.haifa.agent.sandbox.host..")
                 .should()
                 .dependOnClassesThat()
-                .resideInAnyPackage("io.haifa.agent.sandbox.host..", "io.haifa.agent.sandbox.localnative..")
+                .resideInAnyPackage("io.haifa.agent.sandbox.host..")
                 .check(classes);
     }
 }
