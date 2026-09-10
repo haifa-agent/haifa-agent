@@ -189,8 +189,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                         new AgentLoopContext(value.nextIteration(), value.forcedContextRebuildAttempts(), traceContext))
                 .orElseGet(() -> new AgentLoopContext(1, 0, traceContext));
         if (restored.isPresent()) {
-            progress.restoreBudgetThresholds(
-                    RunBudgetSnapshot.from(run, progress.iteration(), time.now()));
+            progress.restoreBudgetThresholds(RunBudgetSnapshot.from(run, progress.iteration(), time.now()));
         }
         middleware.apply(RuntimePhase.BEFORE_RUN, new RuntimeMiddlewareContext(run, state));
         while (run.status() == AgentRunStatus.RUNNING || run.status() == AgentRunStatus.SUSPENDING) {
@@ -221,8 +220,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                 throw beforeModelLimit;
             }
             guards.forEach(guard -> guard.check(run, progress));
-            RunBudgetSnapshot budget =
-                    RunBudgetSnapshot.from(run, progress.iteration(), time.now());
+            RunBudgetSnapshot budget = RunBudgetSnapshot.from(run, progress.iteration(), time.now());
             Set<Integer> thresholds = progress.updateBudgetSnapshot(budget);
             events.append(
                     run.id(),

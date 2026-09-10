@@ -100,35 +100,35 @@ public final class RunTransitionCoordinator {
             AgentRun run, AgentRunResult result, String output, SessionMessageDraft finalMessage) {
         synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
             AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
-                        long expectedVersion = run.version();
-                        AgentRunStatus previous = run.status();
-                        run.beginCompleting(time.now());
-                        state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
-                        run.complete(result, time.now());
-                        runs.save(run, expectedVersion);
-                        RuntimeEvent event = events.append(
-                                run.id(),
-                                "run.completed",
-                                Map.of(
-                                        "previousStatus",
-                                        previous.name(),
-                                        "status",
-                                        run.status().name(),
-                                        "version",
-                                        run.version()),
-                                time.now());
-                        outbox.append(new OutboxMessage(
-                                event.eventId(),
-                                event.runId(),
-                                event.sequence(),
-                                event.type(),
-                                OutboxMessage.CURRENT_SCHEMA_VERSION,
-                                Map.of("status", run.status().name(), "version", run.version()),
-                                event.occurredAt()));
-                        AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
-                        unitOfWork.afterCommit(() -> notifyCommitted(committed));
-                        return committed;
-                    });
+                long expectedVersion = run.version();
+                AgentRunStatus previous = run.status();
+                run.beginCompleting(time.now());
+                state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
+                run.complete(result, time.now());
+                runs.save(run, expectedVersion);
+                RuntimeEvent event = events.append(
+                        run.id(),
+                        "run.completed",
+                        Map.of(
+                                "previousStatus",
+                                previous.name(),
+                                "status",
+                                run.status().name(),
+                                "version",
+                                run.version()),
+                        time.now());
+                outbox.append(new OutboxMessage(
+                        event.eventId(),
+                        event.runId(),
+                        event.sequence(),
+                        event.type(),
+                        OutboxMessage.CURRENT_SCHEMA_VERSION,
+                        Map.of("status", run.status().name(), "version", run.version()),
+                        event.occurredAt()));
+                AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
+                unitOfWork.afterCommit(() -> notifyCommitted(committed));
+                return committed;
+            });
             return snapshot;
         }
     }
@@ -142,25 +142,25 @@ public final class RunTransitionCoordinator {
             AgentRun run, AgentError error, String output, SessionMessageDraft finalMessage) {
         synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
             AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
-                        long expectedVersion = run.version();
-                        AgentRunStatus previous = run.status();
-                        state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
-                        run.fail(error, time.now());
-                        runs.save(run, expectedVersion);
-                        Map<String, Object> eventData = terminalEventData(run, previous);
-                        RuntimeEvent event = events.append(run.id(), "run.failed", eventData, time.now());
-                        outbox.append(new OutboxMessage(
-                                event.eventId(),
-                                event.runId(),
-                                event.sequence(),
-                                event.type(),
-                                OutboxMessage.CURRENT_SCHEMA_VERSION,
-                                eventData,
-                                event.occurredAt()));
-                        AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
-                        unitOfWork.afterCommit(() -> notifyCommitted(committed));
-                        return committed;
-                    });
+                long expectedVersion = run.version();
+                AgentRunStatus previous = run.status();
+                state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
+                run.fail(error, time.now());
+                runs.save(run, expectedVersion);
+                Map<String, Object> eventData = terminalEventData(run, previous);
+                RuntimeEvent event = events.append(run.id(), "run.failed", eventData, time.now());
+                outbox.append(new OutboxMessage(
+                        event.eventId(),
+                        event.runId(),
+                        event.sequence(),
+                        event.type(),
+                        OutboxMessage.CURRENT_SCHEMA_VERSION,
+                        eventData,
+                        event.occurredAt()));
+                AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
+                unitOfWork.afterCommit(() -> notifyCommitted(committed));
+                return committed;
+            });
             return snapshot;
         }
     }
@@ -184,24 +184,24 @@ public final class RunTransitionCoordinator {
     private AgentRunSnapshot mutate(AgentRun run, String eventType, Consumer<AgentRun> mutation) {
         synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
             AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
-                        long expectedVersion = run.version();
-                        AgentRunStatus previous = run.status();
-                        mutation.accept(run);
-                        runs.save(run, expectedVersion);
-                        Map<String, Object> safeEventData = terminalEventData(run, previous);
-                        RuntimeEvent event = events.append(run.id(), eventType, safeEventData, time.now());
-                        outbox.append(new OutboxMessage(
-                                event.eventId(),
-                                event.runId(),
-                                event.sequence(),
-                                event.type(),
-                                OutboxMessage.CURRENT_SCHEMA_VERSION,
-                                safeEventData,
-                                event.occurredAt()));
-                        AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
-                        unitOfWork.afterCommit(() -> notifyCommitted(committed));
-                        return committed;
-                    });
+                long expectedVersion = run.version();
+                AgentRunStatus previous = run.status();
+                mutation.accept(run);
+                runs.save(run, expectedVersion);
+                Map<String, Object> safeEventData = terminalEventData(run, previous);
+                RuntimeEvent event = events.append(run.id(), eventType, safeEventData, time.now());
+                outbox.append(new OutboxMessage(
+                        event.eventId(),
+                        event.runId(),
+                        event.sequence(),
+                        event.type(),
+                        OutboxMessage.CURRENT_SCHEMA_VERSION,
+                        safeEventData,
+                        event.occurredAt()));
+                AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
+                unitOfWork.afterCommit(() -> notifyCommitted(committed));
+                return committed;
+            });
             return snapshot;
         }
     }

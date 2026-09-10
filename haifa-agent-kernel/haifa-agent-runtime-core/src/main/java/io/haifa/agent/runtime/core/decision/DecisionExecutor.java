@@ -419,8 +419,7 @@ public final class DecisionExecutor {
                 rejectAuthorizationProtocolToolRequest(run, call, step, protocol);
                 continue;
             } catch (ToolInputValidationException validation) {
-                rejectToolRequest(
-                        run, call, step, validation, "Tool request rejected. " + validation.repairHint());
+                rejectToolRequest(run, call, step, validation, "Tool request rejected. " + validation.repairHint());
                 continue;
             } catch (IllegalArgumentException | SecurityException repairable) {
                 rejectToolRequest(
@@ -499,11 +498,7 @@ public final class DecisionExecutor {
     }
 
     private void rejectToolRequest(
-            AgentRun run,
-            ToolCall call,
-            AgentStep step,
-            RuntimeException failure,
-            String modelSummary) {
+            AgentRun run, ToolCall call, AgentStep step, RuntimeException failure, String modelSummary) {
         cancelRejectedCall(call);
         state.appendToolCall(call);
         Map<String, Object> attributes = failure instanceof ToolInputValidationException validation
@@ -532,10 +527,7 @@ public final class DecisionExecutor {
     }
 
     private void rejectAuthorizationProtocolToolRequest(
-            AgentRun run,
-            ToolCall call,
-            AgentStep step,
-            ToolAuthorizationProtocolException protocol) {
+            AgentRun run, ToolCall call, AgentStep step, ToolAuthorizationProtocolException protocol) {
         cancelRejectedCall(call);
         state.appendToolCall(call);
         step.fail(

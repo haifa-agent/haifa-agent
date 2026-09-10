@@ -74,8 +74,8 @@ import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.retry.BackoffStrategy;
-import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
+import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
@@ -509,8 +509,8 @@ class RuntimeCoreTest {
                     "echo.input",
                     inputSchema,
                     request -> new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false));
-            builder.completionRepair(new CompletionRepairPolicy(1)).completionPolicy((run, decision) ->
-                    completionChecks.getAndIncrement() == 0
+            builder.completionRepair(new CompletionRepairPolicy(1))
+                    .completionPolicy((run, decision) -> completionChecks.getAndIncrement() == 0
                             ? io.haifa.agent.runtime.core.completion.CompletionPolicyResult.blocked(
                                     List.of(io.haifa.agent.runtime.core.completion.CompletionBlocker.recoverable(
                                             "REQUIRED_ARTIFACT_MISSING",

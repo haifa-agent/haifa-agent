@@ -98,8 +98,8 @@ import io.haifa.agent.runtime.core.model.ModelAdapterKey;
 import io.haifa.agent.runtime.core.model.ModelAudioResolver;
 import io.haifa.agent.runtime.core.model.ModelImageResolver;
 import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
-import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
+import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.Sleeper;
@@ -508,15 +508,8 @@ public final class RuntimeCoreBuilder {
                         "Complete the objective using disclosed capabilities.");
         ProfileResolver profileResolver = profiles != null ? profiles : RuntimeCoreBuilder::defaultProfile;
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                runs,
-                state,
-                events,
-                outbox,
-                ids,
-                time,
-                awaiter,
-                unitOfWork);
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(runs, state, events, outbox, ids, time, awaiter, unitOfWork);
         transitions.addListener(snapshot -> {
             if (snapshot.status().isTerminal()) modelOutput.markRunTerminal(snapshot.runId());
         });
@@ -646,15 +639,7 @@ public final class RuntimeCoreBuilder {
                 runInputApplier,
                 compactionCoordinator);
         AttemptExecutor attemptExecutor = new AttemptExecutor(
-                attempts,
-                loop,
-                transitions,
-                time,
-                workerId,
-                trace,
-                traceIds,
-                ids,
-                failureDiagnostics);
+                attempts, loop, transitions, time, workerId, trace, traceIds, ids, failureDiagnostics);
         ConfigurationSnapshotFactory configuredSnapshots = snapshots != null
                 ? snapshots
                 : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot(), skillTrust);

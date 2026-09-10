@@ -104,7 +104,8 @@ class AutonomousDeliveryRecoveryControlTest {
 
         var withoutTokens = new RunBudgetSnapshot(10, 5, 20, 30_000, -1L, -1L, "MODEL_CALLS", 5, 10, 50);
         assertThat(withoutTokens.promptText())
-                .isEqualTo("Remaining resource budget: modelCalls=10, toolCalls=5, iterations=20, wallTimeMillis=30000.");
+                .isEqualTo(
+                        "Remaining resource budget: modelCalls=10, toolCalls=5, iterations=20, wallTimeMillis=30000.");
     }
 
     private static ToolCall requested(String id, Map<String, Object> arguments) {

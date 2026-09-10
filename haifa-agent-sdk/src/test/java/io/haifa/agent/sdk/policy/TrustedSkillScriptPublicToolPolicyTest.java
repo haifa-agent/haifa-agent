@@ -127,9 +127,12 @@ class TrustedSkillScriptPublicToolPolicyTest {
         Fixture missing = fixture(SANDBOX_DIGEST, "trusted.transform", NOW, subject(), false, false);
         Fixture ambiguous = fixture(SANDBOX_DIGEST, "trusted.transform", NOW, subject(), true, true);
 
-        assertThat(missing.policy().evaluate(missing.run(), missing.tool(), request("trusted_transform")).effect())
+        assertThat(missing.policy()
+                        .evaluate(missing.run(), missing.tool(), request("trusted_transform"))
+                        .effect())
                 .isEqualTo(PolicyEffect.ASK);
-        assertThat(ambiguous.policy()
+        assertThat(ambiguous
+                        .policy()
                         .evaluate(ambiguous.run(), ambiguous.tool(), request("trusted_transform"))
                         .effect())
                 .isEqualTo(PolicyEffect.ASK);
@@ -148,9 +151,12 @@ class TrustedSkillScriptPublicToolPolicyTest {
                 false,
                 true);
 
-        assertThat(expired.policy().evaluate(expired.run(), expired.tool(), request("trusted_transform")).effect())
+        assertThat(expired.policy()
+                        .evaluate(expired.run(), expired.tool(), request("trusted_transform"))
+                        .effect())
                 .isEqualTo(PolicyEffect.ASK);
-        assertThat(subjectDrift.policy()
+        assertThat(subjectDrift
+                        .policy()
                         .evaluate(subjectDrift.run(), subjectDrift.tool(), request("trusted_transform"))
                         .effect())
                 .isEqualTo(PolicyEffect.ASK);

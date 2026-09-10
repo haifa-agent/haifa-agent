@@ -46,6 +46,7 @@ import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
 import io.haifa.agent.sdk.internal.ProductAssemblyResolver;
 import io.haifa.agent.sdk.internal.SafeConversationService;
 import io.haifa.agent.sdk.memory.AgentMemories;
+import io.haifa.agent.sdk.policy.TrustedSkillScriptPublicToolPolicy;
 import io.haifa.agent.sdk.product.ProductAssembly;
 import io.haifa.agent.sdk.product.ProductAssemblyDiagnostic;
 import io.haifa.agent.sdk.product.ProductAssemblyException;
@@ -54,7 +55,6 @@ import io.haifa.agent.sdk.product.ProductCapabilityId;
 import io.haifa.agent.sdk.product.ProductContribution;
 import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ProductRunProfile;
-import io.haifa.agent.sdk.policy.TrustedSkillScriptPublicToolPolicy;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import io.haifa.agent.sdk.tool.JavaTool;
@@ -318,8 +318,8 @@ public final class HaifaAgentBuilder {
             if (skill instanceof SkillPlatformContribution platform) {
                 runtimeBuilder.skillPlatform(platform.catalog(), platform.contentLoader(), platform.trust());
                 if (!platform.trust().scriptExecutionGrants().isEmpty()) {
-                    runtimeBuilder.publicToolPolicyDecorator(delegate -> publicToolPolicyDecorator.apply(
-                            new TrustedSkillScriptPublicToolPolicy(
+                    runtimeBuilder.publicToolPolicyDecorator(
+                            delegate -> publicToolPolicyDecorator.apply(new TrustedSkillScriptPublicToolPolicy(
                                     delegate,
                                     persistence.runtimePersistence().state(),
                                     new DefaultToolPolicyRequestAdapter(

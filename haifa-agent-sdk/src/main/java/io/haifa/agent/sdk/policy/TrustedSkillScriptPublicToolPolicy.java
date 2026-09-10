@@ -27,7 +27,17 @@ import java.util.Set;
 public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolicy {
     public static final String REASON_CODE = "TRUSTED_SKILL_SCRIPT_AUTO_APPROVED";
     private static final Set<String> FORBIDDEN_ARGUMENT_NAMES = Set.of(
-            "executable", "content", "env", "args", "argv", "command", "script", "scriptpath", "language", "endpoint", "proxy");
+            "executable",
+            "content",
+            "env",
+            "args",
+            "argv",
+            "command",
+            "script",
+            "scriptpath",
+            "language",
+            "endpoint",
+            "proxy");
 
     private final PublicToolPolicy delegate;
     private final RuntimeStateRepository state;
@@ -62,7 +72,8 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
     private Optional<GrantPair> evidence(AgentRun run, FrozenToolBinding tool, PolicyRequest policyRequest) {
         if (!eligibleFixedTool(tool)) return Optional.empty();
         var configuration = state.configuration(run.configurationSnapshot()).orElse(null);
-        if (configuration == null || configuration.skillTrust().scriptExecutionGrants().isEmpty()) return Optional.empty();
+        if (configuration == null
+                || configuration.skillTrust().scriptExecutionGrants().isEmpty()) return Optional.empty();
         var subject = new SkillTrustSubject(
                 policyRequest.subject().tenant(),
                 policyRequest.subject().principal(),
@@ -88,7 +99,8 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
                 .orElse(null);
         FrozenSkillBinding skill = configuration.skillBindings().stream()
                 .filter(candidate -> candidate.coordinate().equals(scriptGrant.coordinate()))
-                .filter(candidate -> candidate.packageReviewGrantId()
+                .filter(candidate -> candidate
+                        .packageReviewGrantId()
                         .filter(scriptGrant.packageReviewGrantId()::equals)
                         .isPresent())
                 .findFirst()
@@ -100,13 +112,16 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
                 .anyMatch(resource -> resource.kind() == SkillResourceKind.SCRIPT
                         && resource.relativePath().equals(scriptGrant.scriptRelativePath())
                         && resource.digest().equals(scriptGrant.scriptDigest()));
-        if (!exactScript || !scriptGrant.argumentPolicyDigest().equals(SkillTrustDigests.argumentPolicy(tool.coordinate()))) {
+        if (!exactScript
+                || !scriptGrant.argumentPolicyDigest().equals(SkillTrustDigests.argumentPolicy(tool.coordinate()))) {
             return Optional.empty();
         }
-        if (!Set.copyOf(scriptGrant.capabilities()).equals(tool.definition().resources().filesystemCapabilities())) {
+        if (!Set.copyOf(scriptGrant.capabilities())
+                .equals(tool.definition().resources().filesystemCapabilities())) {
             return Optional.empty();
         }
-        if (!Set.copyOf(scriptGrant.networkHosts()).equals(tool.definition().resources().networkHosts())) {
+        if (!Set.copyOf(scriptGrant.networkHosts())
+                .equals(tool.definition().resources().networkHosts())) {
             return Optional.empty();
         }
         if (!tool.definition().resources().executionProfiles().contains("sandbox@" + scriptGrant.sandboxDigest())) {
@@ -114,7 +129,9 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
         }
         String expectedProfile = SkillTrustDigests.executionProfile(
                 scriptGrant.scriptRuntimeRef(),
-                tool.definition().resources().executionProfiles().stream().sorted().toList());
+                tool.definition().resources().executionProfiles().stream()
+                        .sorted()
+                        .toList());
         return scriptGrant.executionProfileDigest().equals(expectedProfile)
                 ? Optional.of(new GrantPair(packageGrant, scriptGrant))
                 : Optional.empty();
