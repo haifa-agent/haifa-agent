@@ -20,6 +20,11 @@
     <dependencies>
         <dependency>
             <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-test-fixtures</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-cli</artifactId>
             <version>${project.version}</version>
         </dependency>

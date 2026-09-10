@@ -71,10 +71,10 @@ class TestingModuleArchitectureTest {
     }
 
     private static boolean isTestingArtifact(String artifactId) {
-        return artifactId.equals("haifa-agent-test-harness")
-                || artifactId.equals("haifa-agent-test-fixtures")
+        return artifactId.equals("haifa-agent-test-fixtures")
                 || artifactId.equals("haifa-agent-integration-tests")
-                || artifactId.equals("haifa-agent-e2e-tests");
+                || artifactId.equals("haifa-agent-e2e-tests")
+                || artifactId.equals("haifa-agent-autonomous-delivery");
     }
 
     private static boolean isBuildOutput(Path root, Path path) {
