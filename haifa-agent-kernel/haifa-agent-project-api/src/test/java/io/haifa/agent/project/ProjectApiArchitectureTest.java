@@ -76,24 +76,26 @@ class ProjectApiArchitectureTest {
                         || name.equals("AuthorizedDirectoryProvisioning"));
     }
 
+    private static final com.tngtech.archunit.core.domain.JavaClasses PRODUCTION_CLASSES = new ClassFileImporter()
+            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+            .importPackages(
+                    "io.haifa.agent.project.binding",
+                    "io.haifa.agent.project.changeset",
+                    "io.haifa.agent.project.configuration",
+                    "io.haifa.agent.project.diff",
+                    "io.haifa.agent.project.domain",
+                    "io.haifa.agent.project.filesystem",
+                    "io.haifa.agent.project.index",
+                    "io.haifa.agent.project.ledger",
+                    "io.haifa.agent.project.mutation",
+                    "io.haifa.agent.project.patch",
+                    "io.haifa.agent.project.path",
+                    "io.haifa.agent.project.snapshot",
+                    "io.haifa.agent.project.spi",
+                    "io.haifa.agent.project.store",
+                    "io.haifa.agent.project.workspace");
+
     private static com.tngtech.archunit.core.domain.JavaClasses productionClasses() {
-        return new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages(
-                        "io.haifa.agent.project.binding",
-                        "io.haifa.agent.project.changeset",
-                        "io.haifa.agent.project.configuration",
-                        "io.haifa.agent.project.diff",
-                        "io.haifa.agent.project.domain",
-                        "io.haifa.agent.project.filesystem",
-                        "io.haifa.agent.project.index",
-                        "io.haifa.agent.project.ledger",
-                        "io.haifa.agent.project.mutation",
-                        "io.haifa.agent.project.patch",
-                        "io.haifa.agent.project.path",
-                        "io.haifa.agent.project.snapshot",
-                        "io.haifa.agent.project.spi",
-                        "io.haifa.agent.project.store",
-                        "io.haifa.agent.project.workspace");
+        return PRODUCTION_CLASSES;
     }
 }

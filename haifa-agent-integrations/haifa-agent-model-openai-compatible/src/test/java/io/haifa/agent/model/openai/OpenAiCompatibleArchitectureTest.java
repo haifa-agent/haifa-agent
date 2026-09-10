@@ -3,12 +3,21 @@ package io.haifa.agent.model.openai;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
+import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
+import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 @Tag("architecture")
 class OpenAiCompatibleArchitectureTest {
+    private static final JavaClasses PACKAGE_CLASSES = new ClassFileImporter()
+            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+            .importPackages("io.haifa.agent.model.openai");
+    private static final JavaClasses RESPONSES_CLASSES = new ClassFileImporter()
+            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+            .importPackages("io.haifa.agent.model.openai.responses");
+
     @Test
     void integrationDoesNotDependOnProductsOrOtherProviderAdapters() {
         noClasses()
@@ -20,7 +29,7 @@ class OpenAiCompatibleArchitectureTest {
                         "io.haifa.agent.cli..",
                         "io.haifa.agent.model.anthropic..",
                         "io.haifa.agent.model.gemini..")
-                .check(new ClassFileImporter().importPackages("io.haifa.agent.model.openai"));
+                .check(PACKAGE_CLASSES);
     }
 
     @Test
@@ -38,6 +47,6 @@ class OpenAiCompatibleArchitectureTest {
                 .haveSimpleName("DialectAuthenticationException")
                 .should()
                 .bePackagePrivate()
-                .check(new ClassFileImporter().importPackages("io.haifa.agent.model.openai.responses"));
+                .check(RESPONSES_CLASSES);
     }
 }

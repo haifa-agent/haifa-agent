@@ -3,6 +3,7 @@ package io.haifa.agent.model.core;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
+import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -20,6 +21,8 @@ class ModelCoreArchitectureTest {
                         "com.deepseek..",
                         "io.haifa.agent.personalassistant..",
                         "io.haifa.agent.coding..")
-                .check(new ClassFileImporter().importPackages("io.haifa.agent.model.core"));
+                .check(new ClassFileImporter()
+                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                        .importPackages("io.haifa.agent.model.core"));
     }
 }
