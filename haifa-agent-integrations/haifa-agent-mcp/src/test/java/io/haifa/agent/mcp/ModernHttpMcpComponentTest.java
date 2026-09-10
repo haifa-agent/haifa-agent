@@ -61,7 +61,7 @@ class ModernHttpMcpComponentTest {
             var client = new SdkMcpClientFactory()
                     .create(
                             McpTestFixtures.httpServer(
-                                     stub.endpoint(), Set.of("echo"), McpProtocolProfile.FIXED_2026_07_28),
+                                    stub.endpoint(), Set.of("echo"), McpProtocolProfile.FIXED_2026_07_28),
                             McpTestFixtures.IDENTITY);
 
             client.initialize(Map.of());

@@ -10,8 +10,8 @@ import java.util.stream.Collectors;
 
 public final class DefaultSecretRedactor implements SecretRedactor {
     private static final String REDACTED = "[REDACTED]";
-    private static final Pattern AUTHORIZATION = Pattern.compile(
-            "(?i)(bearer\\s+|basic\\s+|token\\s+)[A-Za-z0-9._~+/-]+=*", Pattern.MULTILINE);
+    private static final Pattern AUTHORIZATION =
+            Pattern.compile("(?i)(bearer\\s+|basic\\s+|token\\s+)[A-Za-z0-9._~+/-]+=*", Pattern.MULTILINE);
     private static final Pattern KEY_VALUE = Pattern.compile(
             "(?i)((?:api[-_]?key|access[-_]?token|client[-_]?secret|password)\\s*[:=]\\s*)[^\\s,;]+",
             Pattern.MULTILINE);

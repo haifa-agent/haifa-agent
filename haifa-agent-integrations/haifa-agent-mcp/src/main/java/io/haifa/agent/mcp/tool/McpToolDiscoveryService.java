@@ -84,8 +84,7 @@ public final class McpToolDiscoveryService {
                 } catch (ToolInvocationException exception) {
                     if (sessionRecovered || !"MCP_SESSION_INVALID".equals(exception.failureCode())) throw exception;
                     connections.invalidate(activeConnection);
-                    activeConnection =
-                            connections.acquire(serverId, context.tenant(), context.principal(), creds);
+                    activeConnection = connections.acquire(serverId, context.tenant(), context.principal(), creds);
                     sessionRecovered = true;
                     page = activeConnection.client().listTools(cursor, creds);
                 }

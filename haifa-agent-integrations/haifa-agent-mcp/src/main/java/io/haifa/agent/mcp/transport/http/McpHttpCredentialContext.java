@@ -28,8 +28,7 @@ public final class McpHttpCredentialContext implements McpRequestContext {
     }
 
     @Override
-    public <T> T withInvocation(
-            Map<String, String> credentials, ToolInvocationObserver observer, Supplier<T> action) {
+    public <T> T withInvocation(Map<String, String> credentials, ToolInvocationObserver observer, Supplier<T> action) {
         if (current.get() != null) throw new IllegalStateException("nested MCP credential context is forbidden");
         current.set(new RequestScope(Map.copyOf(credentials), observer));
         try {
@@ -58,8 +57,8 @@ public final class McpHttpCredentialContext implements McpRequestContext {
         for (McpCredentialInjection injection : injections) {
             String secret = credentials.get(injection.requirement().credentialId());
             if (secret == null || secret.isBlank()) {
-                throw new SecurityException(
-                        "MCP HTTP credential is missing: " + injection.requirement().credentialId());
+                throw new SecurityException("MCP HTTP credential is missing: "
+                        + injection.requirement().credentialId());
             }
             request.header(injection.targetName(), injection.valuePrefix() + secret);
         }

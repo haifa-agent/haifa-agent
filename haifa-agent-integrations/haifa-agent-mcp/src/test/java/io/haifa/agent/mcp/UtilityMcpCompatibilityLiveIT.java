@@ -37,9 +37,7 @@ class UtilityMcpCompatibilityLiveIT {
         List<McpCredentialInjection> injections = token == null || token.isBlank()
                 ? List.of()
                 : List.of(new McpCredentialInjection(
-                        new CredentialRequirement("utility-live-token"),
-                        "Authorization",
-                        "Bearer "));
+                        new CredentialRequirement("utility-live-token"), "Authorization", "Bearer "));
         Set<String> expected = expectedTools();
         McpServerDefinition server = McpServerDefinition.create(
                 new McpServerId("utility-live"),
@@ -64,9 +62,8 @@ class UtilityMcpCompatibilityLiveIT {
                         1),
                 injections,
                 "1.0.0");
-        Map<String, String> credentials = token == null || token.isBlank()
-                ? Map.of()
-                : Map.of("utility-live-token", token);
+        Map<String, String> credentials =
+                token == null || token.isBlank() ? Map.of() : Map.of("utility-live-token", token);
         var client = new SdkMcpClientFactory().create(server, McpTestFixtures.IDENTITY);
         try {
             var snapshot = client.initialize(credentials);

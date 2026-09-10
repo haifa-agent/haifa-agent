@@ -31,12 +31,10 @@ class McpConnectionManagerTest {
         });
         Map<String, String> credential = Map.of("key-a", "top-secret");
 
-        var first = manager.acquire(
-                server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, credential);
-        var reused = manager.acquire(
-                server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, credential);
-        var otherPrincipal = manager.acquire(
-                server.serverId(), McpTestFixtures.TENANT, new PrincipalRef("bob", "user"), credential);
+        var first = manager.acquire(server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, credential);
+        var reused = manager.acquire(server.serverId(), McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL, credential);
+        var otherPrincipal =
+                manager.acquire(server.serverId(), McpTestFixtures.TENANT, new PrincipalRef("bob", "user"), credential);
 
         assertThat(reused).isSameAs(first);
         assertThat(otherPrincipal).isNotSameAs(first);

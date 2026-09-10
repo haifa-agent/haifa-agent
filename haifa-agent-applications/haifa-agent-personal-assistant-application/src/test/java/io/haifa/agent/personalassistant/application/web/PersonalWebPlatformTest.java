@@ -41,10 +41,8 @@ class PersonalWebPlatformTest {
                 .extracting(item -> item.definition().providerId().value())
                 .containsExactly("web-search.aliyun", "web-fetch.browserless");
         assertThat(platform.contributions())
-                .extracting(item -> item.definition()
-                        .credentialRequirements()
-                        .getFirst()
-                        .credentialId())
+                .extracting(item ->
+                        item.definition().credentialRequirements().getFirst().credentialId())
                 .containsExactly("web-search-aliyun", "web-fetch-browserless");
         for (var contribution : platform.contributions()) {
             var definition = contribution.definition();

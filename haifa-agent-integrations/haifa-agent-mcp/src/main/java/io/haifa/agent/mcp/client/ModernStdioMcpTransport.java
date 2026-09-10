@@ -197,9 +197,7 @@ final class ModernStdioMcpTransport implements ModernMcpTransport {
 
     private void ensureOpen(Map<String, String> credentials) {
         if (closed) throw new IllegalStateException("MCP stdio transport is closed");
-        List<String> references = credentials.keySet().stream()
-                .sorted()
-                .toList();
+        List<String> references = credentials.keySet().stream().sorted().toList();
         if (session != null && !session.isClosed()) {
             if (!references.equals(credentialReferences)) {
                 throw new SecurityException("MCP stdio credential binding changed within a connection");

@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-
 import io.haifa.agent.web.WebContentFormat;
 import io.haifa.agent.web.WebDispatchState;
 import io.haifa.agent.web.WebFetchRequest;

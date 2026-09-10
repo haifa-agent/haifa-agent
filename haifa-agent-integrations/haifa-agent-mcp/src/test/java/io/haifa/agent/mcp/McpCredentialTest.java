@@ -81,7 +81,8 @@ class McpCredentialTest {
         var broker = new CredentialBroker() {
             @Override
             public java.util.Optional<String> getSecret(String credentialId) {
-                return java.util.Optional.ofNullable(Map.of("utility-token", "secret").get(credentialId));
+                return java.util.Optional.ofNullable(
+                        Map.of("utility-token", "secret").get(credentialId));
             }
 
             @Override
@@ -102,8 +103,7 @@ class McpCredentialTest {
                 Duration.ofSeconds(10));
 
         var candidates = discovery.discover(
-                server.serverId(),
-                new McpDiscoveryContext(McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL));
+                server.serverId(), new McpDiscoveryContext(McpTestFixtures.TENANT, McpTestFixtures.PRINCIPAL));
 
         assertThat(candidates).hasSize(1);
         assertThat(client.initializedCredentials).containsEntry("utility-token", "secret");
