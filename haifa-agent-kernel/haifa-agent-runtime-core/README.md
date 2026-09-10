@@ -144,8 +144,14 @@ Provider 链路。Runtime Core 只依赖 Policy API，不持久化 Decision、Ev
 该请求随后统一用于 Schema、Policy resource digest、Approval target、Journal 记录与 Provider invocation。
 规范化器只能修改 arguments，必须确定且幂等；默认实现保持原请求不变。
 
-`ToolPolicy`、`ToolPolicyDecision` 与 `DefaultToolPolicy` 是待删除的单向源码兼容层；Pipeline
-不会并行执行旧、新两套判断。新产品装配应使用 `publicToolPolicy(...)`。
+Tool Pipeline 只接受 `PublicToolPolicy` 产生的瞬态 `PolicyDecision`；产品装配通过
+`publicToolPolicy(...)` 或显式 `PolicyRuleSet`／`PolicyDecisionService` 提供授权判定。
+
+## Memory default assembly
+
+Runtime 只在未配置 `MemoryRetriever` 时创建默认的内存 Store、Policy 和 Retriever。单独配置
+Retriever 或 Audit Sink 不会改变另一侧仍需要的默认行为；两者都由产品配置时不会创建未被消费的默认
+Memory 对象。配置 `MemoryService` 时，消息 redaction 仍会使其来源的 Memory 失效。
 
 ## Provider continuation
 

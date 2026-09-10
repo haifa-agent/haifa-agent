@@ -83,7 +83,6 @@ import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
-import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolReconciliation;
@@ -1734,7 +1733,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> {
                             toolCalls.incrementAndGet();
                             dispatchedToolCallId.set(request.toolCallId());
@@ -1813,7 +1812,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> new ToolResult(true, "not called", Map.of(), List.of(), List.of(), false))
                 .publicToolPolicy((run, binding, request) -> {
                     throw new io.haifa.agent.runtime.core.tool.ToolAuthorizationProtocolException(
@@ -1856,7 +1855,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> new ToolResult(true, "written", Map.of(), List.of(), List.of(), false)),
                 now::get);
 
@@ -1906,7 +1905,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> {
                             executed.add((Integer) request.arguments().values().get("v"));
                             return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
@@ -1987,7 +1986,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> {
                             invoked.add(request.toolCallId().value() + "|"
                                     + request.arguments().values().get("workdir") + "|"
@@ -2078,7 +2077,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         invocation -> {
                             invocations.incrementAndGet();
                             invocation.observer().dispatched();
@@ -2125,7 +2124,7 @@ class RuntimeCoreTest {
                         toolRequest("denied", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of())))),
                 finalDecision("continued after policy denial"));
         Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
-                        builder, "write", "1.0.0", "write.input", true, ToolPolicyDecision.DENY, request -> {
+                        builder, "write", "1.0.0", "write.input", true, TestToolPlatform.deny(), request -> {
                             toolCalls.incrementAndGet();
                             return new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false);
                         })
@@ -2167,7 +2166,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> {
                             toolCalls.incrementAndGet();
                             return new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false);
@@ -2231,7 +2230,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> new ToolResult(true, "written", Map.of(), List.of(), List.of(), false))
                 .toolApprovalPrompts((binding, call, reauthentication) -> oversizedPrompt));
 
