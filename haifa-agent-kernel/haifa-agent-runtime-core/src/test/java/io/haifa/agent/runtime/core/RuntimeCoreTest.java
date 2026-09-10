@@ -28,12 +28,6 @@ import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.credential.api.CredentialBroker;
-import io.haifa.agent.credential.api.CredentialDefinitionId;
-import io.haifa.agent.credential.api.CredentialExposureMode;
-import io.haifa.agent.credential.api.CredentialLease;
-import io.haifa.agent.credential.api.CredentialOperationRequest;
-import io.haifa.agent.credential.api.CredentialReference;
-import io.haifa.agent.credential.api.CredentialRequest;
 import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.credential.api.SecretRedactor;
 import io.haifa.agent.model.api.AgentChatModel;
@@ -1412,50 +1406,13 @@ class RuntimeCoreTest {
         SecretRedactor redactor = value -> value == null ? null : value.replace(secretToken, "[REDACTED]");
         CredentialBroker broker = new CredentialBroker() {
             @Override
-            public CredentialLease issue(CredentialRequest request) {
-                return lease();
-            }
-
-            @Override
-            public CredentialLease issue(CredentialOperationRequest request) {
-                return lease();
+            public Optional<String> getSecret(String credentialId) {
+                return Optional.of(secretToken);
             }
 
             @Override
             public SecretRedactor redactor() {
                 return redactor;
-            }
-
-            private CredentialLease lease() {
-                return new CredentialLease() {
-                    private boolean closed;
-
-                    @Override
-                    public CredentialReference reference() {
-                        return new CredentialReference("test-secret-ref");
-                    }
-
-                    @Override
-                    public Instant expiresAt() {
-                        return Instant.parse("2026-07-21T00:01:00Z");
-                    }
-
-                    @Override
-                    public boolean isClosed() {
-                        return closed;
-                    }
-
-                    @Override
-                    public <T> T use(io.haifa.agent.credential.api.SecretFunction<T> action) {
-                        if (closed) throw new IllegalStateException("lease is closed");
-                        return action.apply(secretToken.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    }
-
-                    @Override
-                    public void close() {
-                        closed = true;
-                    }
-                };
             }
         };
 
@@ -1478,11 +1435,7 @@ class RuntimeCoreTest {
                             "1.0.0",
                             "secure.input",
                             false,
-                            List.of(new CredentialRequirement(
-                                    new CredentialDefinitionId("test.token"),
-                                    "api-access",
-                                    Set.of("read"),
-                                    CredentialExposureMode.HTTP_HEADER)),
+                            List.of(new CredentialRequirement("test.token")),
                             invocation -> {
                                 throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
                                         "AUTH_DENIED", "token " + secretToken + " expired or invalid");
