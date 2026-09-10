@@ -3,12 +3,10 @@ package io.haifa.agent.runtime.core.model;
 import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
-import io.haifa.agent.context.item.AssetDerivedTextContent;
 import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.item.ContextRole;
 import io.haifa.agent.context.item.ConversationSummaryContent;
 import io.haifa.agent.context.item.MemoryReferenceContent;
-import io.haifa.agent.context.item.MessageContextContent;
 import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.core.content.AssetRefPart;
@@ -82,18 +80,12 @@ public final class ModelMessageAssembler {
                         ModelMessageRole.SYSTEM, "[" + prompt.layer() + "/" + prompt.role() + "] " + prompt.text())));
         Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
         for (ContextItem item : context.items()) {
-            if (item.content() instanceof MessageContextContent message) {
-                messages.addAll(mapMessage(runId, message.message(), toolCallsByRun, model, priorModelAssistants));
-            } else if (item.content() instanceof MessageGroupContextContent group) {
+            if (item.content() instanceof MessageGroupContextContent group) {
                 group.messages()
                         .forEach(message -> messages.addAll(
                                 mapMessage(runId, message, toolCallsByRun, model, priorModelAssistants)));
             } else if (item.content() instanceof TextContextContent text) {
                 messages.add(ModelMessage.text(mapRole(text.role()), text.text()));
-            } else if (item.content() instanceof AssetDerivedTextContent asset) {
-                messages.add(ModelMessage.text(
-                        ModelMessageRole.USER,
-                        "[derived " + asset.kind() + " asset=" + asset.asset().assetId() + "]\n" + asset.text()));
             } else if (item.content() instanceof MemoryReferenceContent memory) {
                 messages.add(ModelMessage.text(
                         ModelMessageRole.SYSTEM,

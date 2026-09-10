@@ -163,7 +163,7 @@ Run。当前 API 提供：
 
 ## 进程内 Prompt Diagnostics
 
-`agent.runs().promptDiagnostics(runId)` 从 Runtime 实际 `ContextTrace` 读取脱敏事实：最终顺序、component
+`agent.runs().promptDiagnostics(runId)` 从 Runtime 实际 `ContextReport` 读取脱敏事实：最终顺序、component
 ID、layer/role、version、SHA-256 digest、token estimate 和来源类别。它不返回 Prompt、用户消息、
 Memory 或 Tool 正文。查询先沿用当前 Caller 的 Run 授权；未授权、尚未构建 Context、或进程重启后
 统一返回 `PROMPT_DIAGNOSTICS_UNAVAILABLE`。该能力没有数据库 Migration、Checkpoint 字段或跨重启

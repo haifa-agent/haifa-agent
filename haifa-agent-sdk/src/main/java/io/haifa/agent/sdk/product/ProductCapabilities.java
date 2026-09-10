@@ -7,7 +7,6 @@ public final class ProductCapabilities {
     public static final ProductCapabilityId TOOL = new ProductCapabilityId("tool");
     public static final ProductCapabilityId SKILL = new ProductCapabilityId("skill");
     public static final ProductCapabilityId MCP = new ProductCapabilityId("mcp");
-    public static final ProductCapabilityId CONTEXT = new ProductCapabilityId("context");
     public static final ProductCapabilityId MEMORY = new ProductCapabilityId("memory");
     public static final ProductCapabilityId ARTIFACT = new ProductCapabilityId("artifact");
     public static final ProductCapabilityId POLICY = new ProductCapabilityId("policy");

@@ -491,7 +491,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     "cli-coding",
                     "1.0.0",
                     effectiveCapabilities,
-                    Set.of("project-index"),
                     Set.copyOf(configuredTools),
                     "coding-agent-policy-v1");
             configurationService.publish(projectConfiguration);

@@ -7,7 +7,6 @@ import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.context.budget.ContextWindowBudget;
-import io.haifa.agent.context.item.AssetDerivedTextContent;
 import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.item.ContextItemId;
 import io.haifa.agent.context.item.ContextItemType;
@@ -16,8 +15,7 @@ import io.haifa.agent.context.item.ContextProvenance;
 import io.haifa.agent.context.item.ContextRetention;
 import io.haifa.agent.context.item.ContextRole;
 import io.haifa.agent.context.item.ContextSecurity;
-import io.haifa.agent.context.item.DerivedTextKind;
-import io.haifa.agent.context.item.MessageContextContent;
+import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.context.prompt.PromptComponent;
 import io.haifa.agent.context.prompt.PromptComponentId;
@@ -74,7 +72,7 @@ class ModelMessageAssemblerTest {
     private static final AgentRunId RUN_ID = new AgentRunId("run-1");
 
     @Test
-    void preservesPromptAndContextOrderAndMapsDerivedAssetText() {
+    void preservesPromptAndContextOrder() {
         AgentContext context = new AgentContext(
                 List.of(prompt()),
                 List.of(
@@ -83,12 +81,9 @@ class ModelMessageAssemblerTest {
                                 ContextItemType.RUNTIME_STATE,
                                 new TextContextContent(ContextRole.USER, "question")),
                         item(
-                                "asset-ocr",
-                                ContextItemType.ASSET_DERIVED_TEXT,
-                                new AssetDerivedTextContent(
-                                        new AssetRef("asset-1", "image/png", "scan.png"),
-                                        DerivedTextKind.OCR,
-                                        "invoice total 42"))),
+                                "runtime-control",
+                                ContextItemType.RUNTIME_STATE,
+                                new TextContextContent(ContextRole.SYSTEM, "continue"))),
                 List.of(),
                 budget(),
                 30);
@@ -97,10 +92,10 @@ class ModelMessageAssemblerTest {
 
         assertThat(messages)
                 .extracting(message -> message.role())
-                .containsExactly(ModelMessageRole.SYSTEM, ModelMessageRole.USER, ModelMessageRole.USER);
+                .containsExactly(ModelMessageRole.SYSTEM, ModelMessageRole.USER, ModelMessageRole.SYSTEM);
         assertThat(messages.get(0).content()).isEqualTo("[SYSTEM_SAFETY/SYSTEM] follow safety policy");
         assertThat(messages.get(1).content()).isEqualTo("question");
-        assertThat(messages.get(2).content()).isEqualTo("[derived OCR asset=asset-1]\ninvoice total 42");
+        assertThat(messages.get(2).content()).isEqualTo("continue");
     }
 
     @Test
@@ -114,7 +109,10 @@ class ModelMessageAssemblerTest {
                 List.of(new TextPart("collect the missing evidence", "plain")));
         AgentContext context = new AgentContext(
                 List.of(prompt()),
-                List.of(item("runtime-notification", ContextItemType.MESSAGE, new MessageContextContent(notification))),
+                List.of(item(
+                        "runtime-notification",
+                        ContextItemType.MESSAGE,
+                        new MessageGroupContextContent(List.of(notification)))),
                 List.of(),
                 budget(),
                 20);
@@ -143,7 +141,7 @@ class ModelMessageAssemblerTest {
                 Instant.parse("2026-07-21T00:00:00Z"));
         AgentContext context = new AgentContext(
                 List.of(prompt()),
-                List.of(item("raw-asset", ContextItemType.MESSAGE, new MessageContextContent(message))),
+                List.of(item("raw-asset", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(message)))),
                 List.of(),
                 budget(),
                 20);
@@ -170,7 +168,8 @@ class ModelMessageAssemblerTest {
                         stored));
         AgentContext context = new AgentContext(
                 List.of(prompt()),
-                List.of(item("image-message", ContextItemType.MESSAGE, new MessageContextContent(message))),
+                List.of(item(
+                        "image-message", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(message)))),
                 List.of(),
                 budget(),
                 20);
@@ -200,7 +199,8 @@ class ModelMessageAssemblerTest {
                 List.of(new TextPart("transcribe", "plain"), stored));
         AgentContext context = new AgentContext(
                 List.of(prompt()),
-                List.of(item("audio-message", ContextItemType.MESSAGE, new MessageContextContent(message))),
+                List.of(item(
+                        "audio-message", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(message)))),
                 List.of(),
                 budget(),
                 20);
@@ -259,9 +259,18 @@ class ModelMessageAssemblerTest {
         AgentContext context = new AgentContext(
                 List.of(prompt()),
                 List.of(
-                        item("assistant-tool-call", ContextItemType.MESSAGE, new MessageContextContent(toolCall)),
-                        item("rejected-tool-result", ContextItemType.MESSAGE, new MessageContextContent(toolResult)),
-                        item("next-user", ContextItemType.MESSAGE, new MessageContextContent(nextUserMessage))),
+                        item(
+                                "assistant-tool-call",
+                                ContextItemType.MESSAGE,
+                                new MessageGroupContextContent(List.of(toolCall))),
+                        item(
+                                "rejected-tool-result",
+                                ContextItemType.MESSAGE,
+                                new MessageGroupContextContent(List.of(toolResult))),
+                        item(
+                                "next-user",
+                                ContextItemType.MESSAGE,
+                                new MessageGroupContextContent(List.of(nextUserMessage)))),
                 List.of(),
                 budget(),
                 30);
@@ -334,7 +343,10 @@ class ModelMessageAssemblerTest {
                 List.of(new ToolResultPart(toolCallId, correlationId, canonicalResult.summary())));
         AgentContext context = new AgentContext(
                 List.of(prompt()),
-                List.of(item("tool-result-failed", ContextItemType.MESSAGE, new MessageContextContent(toolResult))),
+                List.of(item(
+                        "tool-result-failed",
+                        ContextItemType.MESSAGE,
+                        new MessageGroupContextContent(List.of(toolResult)))),
                 List.of(),
                 budget(),
                 30);
@@ -407,9 +419,12 @@ class ModelMessageAssemblerTest {
         AgentContext context = new AgentContext(
                 List.of(prompt()),
                 List.of(
-                        item("assistant", ContextItemType.MESSAGE, new MessageContextContent(assistant)),
-                        item("tool-result", ContextItemType.MESSAGE, new MessageContextContent(toolResult)),
-                        item("user", ContextItemType.MESSAGE, new MessageContextContent(user))),
+                        item("assistant", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant))),
+                        item(
+                                "tool-result",
+                                ContextItemType.MESSAGE,
+                                new MessageGroupContextContent(List.of(toolResult))),
+                        item("user", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(user)))),
                 List.of(),
                 budget(),
                 40);
@@ -516,9 +531,12 @@ class ModelMessageAssemblerTest {
         AgentContext context = new AgentContext(
                 List.of(prompt()),
                 List.of(
-                        item("assistant", ContextItemType.MESSAGE, new MessageContextContent(assistant)),
-                        item("tool-result", ContextItemType.MESSAGE, new MessageContextContent(toolResult)),
-                        item("user", ContextItemType.MESSAGE, new MessageContextContent(user))),
+                        item("assistant", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant))),
+                        item(
+                                "tool-result",
+                                ContextItemType.MESSAGE,
+                                new MessageGroupContextContent(List.of(toolResult))),
+                        item("user", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(user)))),
                 List.of(),
                 budget(),
                 40);
@@ -642,8 +660,8 @@ class ModelMessageAssemblerTest {
         AgentContext context = new AgentContext(
                 List.of(prompt()),
                 List.of(
-                        item("assistant", ContextItemType.MESSAGE, new MessageContextContent(assistant)),
-                        item("user", ContextItemType.MESSAGE, new MessageContextContent(user))),
+                        item("assistant", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant))),
+                        item("user", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(user)))),
                 List.of(),
                 budget(),
                 40);
@@ -737,10 +755,10 @@ class ModelMessageAssemblerTest {
         AgentContext context = new AgentContext(
                 List.of(prompt()),
                 List.of(
-                        item("assistant", ContextItemType.MESSAGE, new MessageContextContent(assistant)),
-                        item("runtime", ContextItemType.MESSAGE, new MessageContextContent(runtime)),
-                        item("result", ContextItemType.MESSAGE, new MessageContextContent(result)),
-                        item("user", ContextItemType.MESSAGE, new MessageContextContent(user))),
+                        item("assistant", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant))),
+                        item("runtime", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(runtime))),
+                        item("result", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(result))),
+                        item("user", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(user)))),
                 List.of(),
                 budget(),
                 40);
@@ -843,11 +861,11 @@ class ModelMessageAssemblerTest {
                 List.of(prompt()),
                 List.of(
                         item("summary", ContextItemType.CONVERSATION_SUMMARY, summaryContent),
-                        item("user", ContextItemType.MESSAGE, new MessageContextContent(user)),
-                        item("asst-1", ContextItemType.MESSAGE, new MessageContextContent(assistant1)),
-                        item("tool-1", ContextItemType.MESSAGE, new MessageContextContent(tool1)),
-                        item("asst-2", ContextItemType.MESSAGE, new MessageContextContent(assistant2)),
-                        item("tool-2", ContextItemType.MESSAGE, new MessageContextContent(tool2))),
+                        item("user", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(user))),
+                        item("asst-1", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant1))),
+                        item("tool-1", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(tool1))),
+                        item("asst-2", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(assistant2))),
+                        item("tool-2", ContextItemType.MESSAGE, new MessageGroupContextContent(List.of(tool2)))),
                 List.of(),
                 budget(),
                 50);
@@ -910,8 +928,7 @@ class ModelMessageAssemblerTest {
                 ContextPriority.NORMAL,
                 ContextRetention.KEEP_IF_RELEVANT,
                 ContextSecurity.INTERNAL,
-                new ContextProvenance("test", id, "1", "hash-" + id),
-                Map.of());
+                new ContextProvenance("test", id, "1", "hash-" + id));
     }
 
     private static ContextWindowBudget budget() {

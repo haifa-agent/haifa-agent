@@ -12,6 +12,8 @@ import io.haifa.agent.context.prompt.PromptComponent;
 import io.haifa.agent.context.prompt.PromptComponentId;
 import io.haifa.agent.context.prompt.PromptLayer;
 import io.haifa.agent.context.prompt.PromptRole;
+import io.haifa.agent.context.trace.ContextReport;
+import io.haifa.agent.context.trace.ContextReportComponent;
 import io.haifa.agent.core.content.ArtifactRefPart;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
@@ -137,11 +139,14 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 selection.policyVersion(),
                 selection.compressorVersion(),
                 loopContext.forcedContextRebuildAttempts());
-        String windowIdentity = windowIdentity(middlewareContext, memoryItems, selection, model, effectiveTools);
-        return new RuntimeContextBuildResult(contexts.build(request), middlewareContext, selection, windowIdentity);
+        var built = contexts.build(request);
+        String windowIdentity =
+                windowIdentity(built.report(), middlewareContext, memoryItems, selection, model, effectiveTools);
+        return new RuntimeContextBuildResult(built, middlewareContext, selection, windowIdentity);
     }
 
     private String windowIdentity(
+            ContextReport report,
             RuntimeMiddlewareContext middlewareContext,
             List<ContextItem> memoryItems,
             SessionMessageSource.Selection selection,
@@ -149,10 +154,10 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
             List<ModelToolSpecification> effectiveTools) {
         List<String> components = new ArrayList<>();
         components.add("configuration:" + model.configuration().reference().contentHash());
-        middlewareContext
-                .prompts()
-                .forEach(prompt -> components.add(
-                        "prompt:" + prompt.id().value() + ":" + prompt.version() + ":" + sha256(prompt.text())));
+        report.components().stream()
+                .filter(component -> component.kind() == ContextReportComponent.ComponentKind.PROMPT)
+                .forEach(component -> components.add(
+                        "prompt:" + component.id() + ":" + component.version() + ":" + component.contentHash()));
         effectiveTools.forEach(tool -> components.add("tool:" + tool.name() + ":" + tool.version() + ":"
                 + tool.inputSchemaId() + ":" + tool.inputSchemaVersion()));
         middlewareContext
@@ -162,8 +167,10 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                         + item.provenance().sourceId() + ":"
                         + item.provenance().sourceVersion() + ":"
                         + item.provenance().contentHash()));
-        memoryItems.forEach(item -> components.add("memory:" + item.provenance().sourceId() + ":"
-                + item.provenance().sourceVersion() + ":" + item.provenance().contentHash()));
+        memoryItems.forEach(item -> components.add("memory:"
+                + item.provenance().sourceId() + ":"
+                + item.provenance().sourceVersion() + ":"
+                + item.provenance().contentHash()));
         components.add("compression:" + selection.policyVersion() + ":" + selection.compressorVersion());
         components.add("summary:"
                 + selection
