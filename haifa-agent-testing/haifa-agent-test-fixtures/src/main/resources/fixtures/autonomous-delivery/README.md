@@ -24,3 +24,13 @@ The following are deliberately excluded:
 `catalog-v1.json` freezes the case versions and SHA-256 digests. Cases 03 and
 04 use version `2.0.0` because their acceptance programs contain the reviewed
 corrections described in the catalog.
+
+## Capability Ladder Evolution & Placeholder
+
+The Autonomous Delivery suite is transitioning to a 6-level capability ladder
+focused on internal capability regression probing (see [`AUTONOMOUS_DELIVERY_LADDER_SPEC.md`](AUTONOMOUS_DELIVERY_LADDER_SPEC.md)
+and documentation [`docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md`](../../../../../../../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md)).
+Full industry benchmark evaluations remain exclusively under `haifa-agent-evals`.
+The existing 26 cases are preserved for historical curation; ladder case implementation
+is deferred.
+

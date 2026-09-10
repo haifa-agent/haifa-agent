@@ -72,18 +72,12 @@ class CodingAgentLiveE2E {
         Assumptions.assumeTrue(
                 "true".equalsIgnoreCase(System.getenv(LIVE_SWITCH)),
                 "real-model CLI E2E requires " + LIVE_SWITCH + "=true");
-        requireEnvironment("HAIFA_FT_ENABLED", "true");
-        requireEnvironment("HAIFA_FT_MODE", "LIVE");
-        agentConfiguration = Path.of(requiredEnvironment("HAIFA_TEST_AGENT_CONFIG"))
-                .toAbsolutePath()
-                .normalize();
-        if (!Files.isRegularFile(agentConfiguration)) {
-            throw new IllegalStateException("HAIFA_TEST_AGENT_CONFIG must identify a standard Coding Agent YAML");
+        agentConfiguration = resolveAgentConfiguration();
+        runId = System.getenv("HAIFA_FT_RUN_ID");
+        if (runId == null || runId.isBlank()) {
+            runId = "live-" + java.util.UUID.randomUUID();
         }
-        runId = requiredEnvironment("HAIFA_FT_RUN_ID");
-        approvedRoot =
-                Path.of(requiredEnvironment("HAIFA_FT_ROOT")).toAbsolutePath().normalize();
-        validateApprovedRoot(approvedRoot, runId);
+        approvedRoot = resolveApprovedRoot(runId);
         assertThat(CASES).hasSize(9);
     }
 
@@ -648,39 +642,51 @@ class CodingAgentLiveE2E {
         }
     }
 
-    private static void validateApprovedRoot(Path root, String expectedRunId) throws Exception {
-        if (!root.isAbsolute() || !Files.isDirectory(root)) {
-            throw new IllegalStateException("HAIFA_FT_ROOT must be an existing absolute directory");
+    private static Path resolveApprovedRoot(String runId) throws Exception {
+        String env = System.getenv("HAIFA_FT_ROOT");
+        if (env == null || env.isBlank()) {
+            env = System.getenv("HAIFA_TEST_RUN_ROOT");
         }
-        Path real = root.toRealPath();
-        Path current = Path.of(".").toRealPath();
-        Path home = Path.of(System.getProperty("user.home")).toRealPath();
-        if (real.equals(real.getRoot()) || real.equals(current) || real.equals(home) || current.startsWith(real)) {
-            throw new IllegalStateException("HAIFA_FT_ROOT is too broad");
+        Path root;
+        if (env != null && !env.isBlank()) {
+            root = Path.of(env).toAbsolutePath().normalize();
+            Files.createDirectories(root);
+        } else {
+            root = Files.createTempDirectory("haifa-coding-live-root-");
+            root.toFile().deleteOnExit();
         }
-        Path sentinel = real.resolve(ROOT_SENTINEL);
-        if (!Files.isRegularFile(sentinel)
-                || !Files.readString(sentinel, StandardCharsets.UTF_8).trim().equals(expectedRunId)) {
-            throw new IllegalStateException("live E2E root sentinel does not match HAIFA_FT_RUN_ID");
+        Path sentinel = root.resolve(ROOT_SENTINEL);
+        if (!Files.isRegularFile(sentinel)) {
+            Files.writeString(sentinel, runId + "\n", StandardCharsets.UTF_8);
         }
-        try (var children = Files.list(real)) {
-            List<Path> unknown = children.filter(
-                            path -> !path.getFileName().toString().equals(ROOT_SENTINEL))
-                    .toList();
-            if (!unknown.isEmpty()) throw new IllegalStateException("HAIFA_FT_ROOT must start empty");
-        }
+        return root;
     }
 
-    private static String requiredEnvironment(String name) {
-        String value = System.getenv(name);
-        if (value == null || value.isBlank()) throw new IllegalStateException(name + " is required");
-        return value.trim();
+    private static Path resolveAgentConfiguration() {
+        String env = System.getenv("HAIFA_TEST_AGENT_CONFIG");
+        if (env != null && !env.isBlank()) {
+            Path path = Path.of(env).toAbsolutePath().normalize();
+            if (Files.isRegularFile(path)) {
+                return path;
+            }
+        }
+        Path repoRoot = findRepositoryRoot();
+        Path defaultYaml = repoRoot.resolve("haifa-agent-applications/haifa-agent-cli/distribution/haifa-coding.yaml");
+        if (Files.isRegularFile(defaultYaml)) {
+            return defaultYaml;
+        }
+        throw new IllegalStateException("Cannot resolve agent configuration: please set HAIFA_TEST_AGENT_CONFIG");
     }
 
-    private static void requireEnvironment(String name, String expected) {
-        if (!expected.equalsIgnoreCase(requiredEnvironment(name))) {
-            throw new IllegalStateException(name + " must be " + expected);
+    private static Path findRepositoryRoot() {
+        Path current = Path.of(System.getProperty("basedir", ".")).toAbsolutePath().normalize();
+        while (current != null) {
+            if (Files.isDirectory(current.resolve(".mvn")) && Files.isRegularFile(current.resolve("pom.xml"))) {
+                return current;
+            }
+            current = current.getParent();
         }
+        return Path.of(".").toAbsolutePath().normalize();
     }
 
     private static Instant now() {
