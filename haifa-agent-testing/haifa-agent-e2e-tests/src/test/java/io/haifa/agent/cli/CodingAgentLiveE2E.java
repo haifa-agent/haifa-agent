@@ -650,6 +650,7 @@ class CodingAgentLiveE2E {
         Path root;
         if (env != null && !env.isBlank()) {
             root = Path.of(env).toAbsolutePath().normalize();
+            rejectTooBroadRoot(root);
             Files.createDirectories(root);
         } else {
             root = Files.createTempDirectory("haifa-coding-live-root-");
@@ -660,6 +661,15 @@ class CodingAgentLiveE2E {
             Files.writeString(sentinel, runId + "\n", StandardCharsets.UTF_8);
         }
         return root;
+    }
+
+    private static void rejectTooBroadRoot(Path root) throws Exception {
+        Path real = root.toRealPath();
+        Path current = Path.of(".").toRealPath();
+        Path home = Path.of(System.getProperty("user.home")).toRealPath();
+        if (real.equals(real.getRoot()) || real.equals(current) || real.equals(home) || current.startsWith(real)) {
+            throw new IllegalStateException("HAIFA_FT_ROOT is too broad for live E2E execution");
+        }
     }
 
     private static Path resolveAgentConfiguration() {
