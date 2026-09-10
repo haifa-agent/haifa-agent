@@ -455,8 +455,18 @@ public final class RuntimeCoreBuilder {
     }
 
     public RuntimeCoreBuilder memory(MemoryRetriever retriever, MemoryAuditSink audit) {
-        memoryRetriever = Objects.requireNonNull(retriever);
-        memoryAudit = Objects.requireNonNull(audit);
+        return memoryRetriever(retriever).memoryAudit(audit);
+    }
+
+    /** Configures the Memory retriever while retaining the default audit sink when one is needed. */
+    public RuntimeCoreBuilder memoryRetriever(MemoryRetriever value) {
+        memoryRetriever = Objects.requireNonNull(value, "memoryRetriever must not be null");
+        return this;
+    }
+
+    /** Configures the Memory audit sink while retaining the default retriever when one is needed. */
+    public RuntimeCoreBuilder memoryAudit(MemoryAuditSink value) {
+        memoryAudit = Objects.requireNonNull(value, "memoryAudit must not be null");
         return this;
     }
 
@@ -492,12 +502,11 @@ public final class RuntimeCoreBuilder {
         RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(time);
         FrozenModelInvoker models = new FrozenModelInvoker(
                 state, chatModels, ids, modelOutput, controls, events, time, modelImageResolver, modelAudioResolver);
-        InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
-        var defaultMemoryPolicy = new DefaultMemoryPolicy();
-        MemoryRetriever configuredMemoryRetriever = memoryRetriever != null
-                ? memoryRetriever
-                : new DefaultMemoryRetriever(defaultMemoryStore, defaultMemoryPolicy);
-        MemoryAuditSink configuredMemoryAudit = memoryAudit != null ? memoryAudit : defaultMemoryStore;
+        MemoryRetriever configuredMemoryRetriever = memoryRetriever;
+        if (configuredMemoryRetriever == null) {
+            InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
+            configuredMemoryRetriever = new DefaultMemoryRetriever(defaultMemoryStore, new DefaultMemoryPolicy());
+        }
         if (memoryService != null) {
             messageRedactions.register(message -> message.runId()
                     .flatMap(runs::find)

@@ -64,7 +64,6 @@ import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
-import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
@@ -399,7 +398,7 @@ class SqliteRuntimeRecoveryTest {
                     "reasoning-process-a",
                     new TestIds("reasoning-a"),
                     providerCalls,
-                    ToolPolicyDecision.REQUIRE_APPROVAL);
+                    approvalRequired());
             runId = processA.runtime().start(request("reasoning-checkpoint")).runId();
             processA.scheduler().runAll();
 
@@ -422,7 +421,7 @@ class SqliteRuntimeRecoveryTest {
                     "reasoning-process-b",
                     new TestIds("reasoning-b"),
                     providerCalls,
-                    ToolPolicyDecision.REQUIRE_APPROVAL);
+                    approvalRequired());
             var interaction = processB.ports().interactions().pending(runId).orElseThrow();
             processB.runtime().respond(approvalResponse(runId, interaction.id(), "reasoning-approval"));
             processB.scheduler().runAll();
@@ -468,7 +467,7 @@ class SqliteRuntimeRecoveryTest {
                     "digest-process-a",
                     new TestIds("digest-a"),
                     providerCalls,
-                    ToolPolicyDecision.REQUIRE_APPROVAL);
+                    approvalRequired());
             runId = processA.runtime().start(request("digest-restart")).runId();
             processA.scheduler().runAll();
             interactionId =
@@ -509,7 +508,7 @@ class SqliteRuntimeRecoveryTest {
                     "long-wait-process-a",
                     new TestIds("long-wait-a"),
                     providerCalls,
-                    ToolPolicyDecision.REQUIRE_APPROVAL);
+                    approvalRequired());
             runId = processA.runtime().start(request("long-wait-restart")).runId();
             processA.scheduler().runAll();
 
@@ -525,7 +524,7 @@ class SqliteRuntimeRecoveryTest {
                     "long-wait-process-b",
                     new TestIds("long-wait-b"),
                     providerCalls,
-                    ToolPolicyDecision.REQUIRE_APPROVAL,
+                    approvalRequired(),
                     () -> resumedAt);
             InteractionRequest interaction =
                     processB.ports().interactions().pending(runId).orElseThrow();
@@ -683,7 +682,7 @@ class SqliteRuntimeRecoveryTest {
                     "process-a",
                     new TestIds("pending-a"),
                     providerCalls,
-                    ToolPolicyDecision.REQUIRE_APPROVAL);
+                    approvalRequired());
             runId = processA.runtime().start(request("pending-result")).runId();
             processA.scheduler().runAll();
             var interaction = processA.ports().interactions().pending(runId).orElseThrow();
@@ -714,7 +713,7 @@ class SqliteRuntimeRecoveryTest {
                     "process-b",
                     new TestIds("pending-b"),
                     providerCalls,
-                    ToolPolicyDecision.REQUIRE_APPROVAL);
+                    approvalRequired());
             processB.runtime().recover(runId);
             assertThat(processB.scheduler().pending()).isZero();
             processB.scheduler().runAll();
@@ -756,7 +755,7 @@ class SqliteRuntimeRecoveryTest {
                     "process-a",
                     new TestIds("sequential-approval"),
                     providerCalls,
-                    ToolPolicyDecision.REQUIRE_APPROVAL);
+                    approvalRequired());
             AgentRunId runId =
                     instance.runtime().start(request("sequential-approval")).runId();
             instance.scheduler().runAll();
@@ -813,7 +812,7 @@ class SqliteRuntimeRecoveryTest {
                     "process-a",
                     new TestIds("cross-run-rejection"),
                     providerCalls,
-                    ToolPolicyDecision.REQUIRE_APPROVAL);
+                    approvalRequired());
             AgentRunId rejectedRunId =
                     instance.runtime().start(request("rejected-tool-run")).runId();
             instance.scheduler().runAll();
@@ -880,7 +879,7 @@ class SqliteRuntimeRecoveryTest {
                     "process-a",
                     new TestIds("unknown-a"),
                     providerCalls,
-                    ToolPolicyDecision.REQUIRE_APPROVAL);
+                    approvalRequired());
             runId = processA.runtime().start(request("outcome-unknown")).runId();
             processA.scheduler().runAll();
             var interaction = processA.ports().interactions().pending(runId).orElseThrow();
@@ -904,7 +903,7 @@ class SqliteRuntimeRecoveryTest {
                     "process-b",
                     new TestIds("unknown-b"),
                     providerCalls,
-                    ToolPolicyDecision.REQUIRE_APPROVAL);
+                    approvalRequired());
             processB.runtime().recover(runId);
             processB.scheduler().runAll();
 
@@ -1021,7 +1020,7 @@ class SqliteRuntimeRecoveryTest {
             String workerId,
             IdentifierGenerator ids,
             AtomicInteger providerCalls,
-            ToolPolicyDecision decision) {
+            PolicyDecision decision) {
         return toolRuntime(foundation, model, workerId, ids, providerCalls, decision, TIME);
     }
 
@@ -1031,26 +1030,10 @@ class SqliteRuntimeRecoveryTest {
             String workerId,
             IdentifierGenerator ids,
             AtomicInteger providerCalls,
-            ToolPolicyDecision decision,
+            PolicyDecision decision,
             TimeProvider time) {
         return runtime(
                 foundation, model, workerId, ids, builder -> installTool(builder, providerCalls, decision), time);
-    }
-
-    private RuntimeInstance toolRuntime(
-            SqliteStoreFoundation foundation,
-            AgentChatModel model,
-            String workerId,
-            IdentifierGenerator ids,
-            AtomicInteger providerCalls,
-            PolicyDecision decision) {
-        return runtime(
-                foundation, model, workerId, ids, builder -> installTool(builder, providerCalls, decision), TIME);
-    }
-
-    private static RuntimeCoreBuilder installTool(
-            RuntimeCoreBuilder builder, AtomicInteger providerCalls, ToolPolicyDecision decision) {
-        return installTool(builder, providerCalls, policyDecision(decision));
     }
 
     private static RuntimeCoreBuilder installTool(
@@ -1098,37 +1081,22 @@ class SqliteRuntimeRecoveryTest {
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
     }
 
-    private static PolicyDecision policyDecision(ToolPolicyDecision decision) {
-        return switch (decision) {
-            case ALLOW ->
-                new PolicyDecision(
-                        PolicyEffect.ALLOW,
-                        Optional.empty(),
-                        "TEST_ALLOW",
-                        "Test policy allowed the tool",
-                        "sha256:sqlite-test-allow");
-            case REQUIRE_APPROVAL ->
-                new PolicyDecision(
-                        PolicyEffect.ASK,
-                        Optional.of(PolicyChallenge.APPROVAL),
-                        "TEST_APPROVAL_REQUIRED",
-                        "Test policy requires approval",
-                        "sha256:sqlite-test-approval");
-            case REQUIRE_REAUTHENTICATION ->
-                new PolicyDecision(
-                        PolicyEffect.ASK,
-                        Optional.of(PolicyChallenge.REAUTHENTICATE),
-                        "TEST_REAUTHENTICATION_REQUIRED",
-                        "Test policy requires reauthentication",
-                        "sha256:sqlite-test-reauthentication");
-            case DENY ->
-                new PolicyDecision(
-                        PolicyEffect.DENY,
-                        Optional.empty(),
-                        "TEST_DENY",
-                        "Test policy denied the tool",
-                        "sha256:sqlite-test-deny");
-        };
+    private static PolicyDecision allow() {
+        return new PolicyDecision(
+                PolicyEffect.ALLOW,
+                Optional.empty(),
+                "TEST_ALLOW",
+                "Test policy allowed the tool",
+                "sha256:sqlite-test-allow");
+    }
+
+    private static PolicyDecision approvalRequired() {
+        return new PolicyDecision(
+                PolicyEffect.ASK,
+                Optional.of(PolicyChallenge.APPROVAL),
+                "TEST_APPROVAL_REQUIRED",
+                "Test policy requires approval",
+                "sha256:sqlite-test-approval");
     }
 
     private static RuntimeCoreBuilder installCredentialTool(RuntimeCoreBuilder builder, String secret) {
@@ -1200,7 +1168,7 @@ class SqliteRuntimeRecoveryTest {
             }
         };
         return builder.credentialBroker(broker)
-                .publicToolPolicy((run, binding, request) -> policyDecision(ToolPolicyDecision.ALLOW))
+                .publicToolPolicy((run, binding, request) -> allow())
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
     }
 
@@ -1275,6 +1243,7 @@ class SqliteRuntimeRecoveryTest {
                 base.unitOfWork(),
                 base.toolJournal(),
                 base.interactions(),
+                base.runInputs(),
                 base.conversationSummaries(),
                 base.toolResultAssets(),
                 base.messageRedactions());
@@ -1314,6 +1283,7 @@ class SqliteRuntimeRecoveryTest {
                 base.unitOfWork(),
                 base.toolJournal(),
                 base.interactions(),
+                base.runInputs(),
                 base.conversationSummaries(),
                 base.toolResultAssets(),
                 base.messageRedactions());
