@@ -3,6 +3,7 @@ package io.haifa.agent.application.project;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import io.haifa.agent.application.project.product.ProjectProductService;
@@ -16,31 +17,33 @@ import org.junit.jupiter.api.Test;
 
 @Tag("architecture")
 class ProjectApplicationArchitectureTest {
+    private static final JavaClasses PROJECT_CLASSES = new ClassFileImporter()
+            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+            .importPackages("io.haifa.agent.application.project");
+    private static final JavaClasses MODEL_CLASSES = new ClassFileImporter()
+            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+            .importPackages("io.haifa.agent.model.api", "io.haifa.agent.model.core");
+
     @Test
     void applicationDoesNotExecuteProcessesOrDependOnConcreteProviders() {
-        var classes = new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("io.haifa.agent.application.project");
         noClasses()
                 .should()
                 .dependOnClassesThat()
                 .haveFullyQualifiedName("java.lang.ProcessBuilder")
-                .check(classes);
+                .check(PROJECT_CLASSES);
         noClasses()
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage(
                         "io.haifa.agent.sandbox.host..", "io.haifa.agent.model.openai..", "org.springframework..")
-                .check(classes);
+                .check(PROJECT_CLASSES);
     }
 
     @Test
     void codingClientIsAProductBoundaryIndependentOfTerminalAndCli() {
-        var classes = new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("io.haifa.agent.application.project.product.coding.client");
-
         noClasses()
+                .that()
+                .resideInAPackage("..product.coding.client..")
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage(
@@ -48,19 +51,18 @@ class ProjectApplicationArchitectureTest {
                         "io.haifa.agent.cli..",
                         "io.haifa.agent.model.openai..",
                         "io.haifa.agent.sandbox.host..")
-                .check(classes);
+                .check(PROJECT_CLASSES);
     }
 
     @Test
     void applicationPersistenceUsesTheStoreMyBatisBoundaryInsteadOfJdbc() {
-        var classes = new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("io.haifa.agent.application.project.persistence");
         noClasses()
+                .that()
+                .resideInAPackage("..persistence..")
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage("java.sql..")
-                .check(classes);
+                .check(PROJECT_CLASSES);
     }
 
     @Test
@@ -75,14 +77,11 @@ class ProjectApplicationArchitectureTest {
         org.assertj.core.api.Assertions.assertThat(DefaultModelParameterResolver.class)
                 .isPublic();
 
-        var classes = new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("io.haifa.agent.model.api", "io.haifa.agent.model.core");
         noClasses()
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage("io.haifa.agent.personalassistant..")
-                .check(classes);
+                .check(MODEL_CLASSES);
     }
 
     @Test
@@ -96,10 +95,9 @@ class ProjectApplicationArchitectureTest {
                         .toList())
                 .containsExactly("TenantRef", "PrincipalRef", "WorkspaceId", "WorkspaceAccessMode");
 
-        var classes = new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("io.haifa.agent.application.project.workspace");
         noClasses()
+                .that()
+                .resideInAPackage("..workspace..")
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage(
@@ -108,7 +106,7 @@ class ProjectApplicationArchitectureTest {
                         "io.haifa.agent.execution..",
                         "io.haifa.agent.sandbox..",
                         "io.haifa.agent.personalassistant..")
-                .check(classes);
+                .check(PROJECT_CLASSES);
     }
 
     private static void assertThatNoWorkspaceParameter(String name) {
