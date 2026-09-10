@@ -13,7 +13,6 @@ import io.haifa.agent.credential.api.CredentialExposureMode;
 import io.haifa.agent.credential.api.CredentialLease;
 import io.haifa.agent.credential.api.CredentialOperation;
 import io.haifa.agent.credential.api.CredentialOperationRequest;
-import io.haifa.agent.credential.api.CredentialOperationUsageAudit;
 import io.haifa.agent.credential.api.CredentialReference;
 import io.haifa.agent.credential.api.CredentialRequest;
 import io.haifa.agent.credential.api.CredentialRequirement;
@@ -21,12 +20,9 @@ import io.haifa.agent.credential.api.CredentialScopeKind;
 import io.haifa.agent.credential.api.CredentialStatus;
 import io.haifa.agent.credential.api.CredentialStore;
 import io.haifa.agent.credential.api.CredentialType;
-import io.haifa.agent.credential.api.CredentialUsageAudit;
-import io.haifa.agent.credential.api.CredentialUsagePhase;
-import java.time.Clock;
+import java.lang.reflect.RecordComponent;
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -37,7 +33,7 @@ class DefaultCredentialBrokerTest {
     private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
 
     @Test
-    void capsLeaseAtBindingExpiryAndAuditsOnlySecretFreeMetadata() {
+    void capsLeaseAtBindingExpiryAndRedactsOnlyWhileTheLeaseIsOpen() {
         TenantRef tenant = new TenantRef("tenant");
         PrincipalRef principal = new PrincipalRef("user", "human");
         CredentialDefinitionId definitionId = new CredentialDefinitionId("source-token");
@@ -75,30 +71,21 @@ class DefaultCredentialBrokerTest {
                 Optional.empty(),
                 NOW,
                 NOW.plusSeconds(30));
-        List<CredentialUsageAudit> events = new ArrayList<>();
         var broker = new DefaultCredentialBroker(
-                List.of(definition),
-                List.of(binding),
-                new DefaultCredentialResolver(),
-                new RecordingStore(reference),
-                events::add,
-                Clock.fixed(NOW.plusSeconds(5), ZoneOffset.UTC));
+                List.of(definition), List.of(binding), new DefaultCredentialResolver(), new RecordingStore(reference));
 
         CredentialLease lease = broker.issue(request);
+        assertThat(lease.expiresAt()).isEqualTo(bindingExpiry);
         assertThat(broker.redactor().redact("plaintext-secret")).isEqualTo("[REDACTED]");
         lease.close();
         lease.close();
 
-        assertThat(lease.expiresAt()).isEqualTo(bindingExpiry);
-        assertThat(events)
-                .extracting(CredentialUsageAudit::phase)
-                .containsExactly(CredentialUsagePhase.ISSUED, CredentialUsagePhase.CLOSED);
-        assertThat(events).allSatisfy(event -> assertThat(event.toString()).doesNotContain("plaintext-secret"));
+        assertThat(lease.isClosed()).isTrue();
         assertThat(broker.redactor().redact("plaintext-secret")).isEqualTo("plaintext-secret");
     }
 
     @Test
-    void issuesAndAuditsControlPlaneCredentialWithoutFabricatingRunOrToolIdentity() {
+    void issuesControlPlaneCredentialWithoutFabricatingRunOrToolIdentity() {
         TenantRef tenant = new TenantRef("tenant");
         PrincipalRef principal = new PrincipalRef("user", "human");
         CredentialDefinitionId definitionId = new CredentialDefinitionId("mcp-token");
@@ -135,28 +122,22 @@ class DefaultCredentialBrokerTest {
                 Optional.empty(),
                 NOW,
                 NOW.plusSeconds(30));
-        List<CredentialOperationUsageAudit> operationEvents = new ArrayList<>();
         var broker = new DefaultCredentialBroker(
-                List.of(definition),
-                List.of(binding),
-                new DefaultCredentialResolver(),
-                new RecordingStore(reference),
-                event -> {},
-                operationEvents::add,
-                Clock.fixed(NOW.plusSeconds(5), ZoneOffset.UTC),
-                new DefaultSecretRedactor());
+                List.of(definition), List.of(binding), new DefaultCredentialResolver(), new RecordingStore(reference));
 
         CredentialLease lease = broker.issue(request);
-        lease.close();
+        try {
+            assertThat(lease.reference()).isEqualTo(reference);
+            assertThat(lease.isClosed()).isFalse();
+        } finally {
+            lease.close();
+        }
 
-        assertThat(operationEvents)
-                .extracting(CredentialOperationUsageAudit::operation)
-                .containsExactly(CredentialOperation.MCP_DISCOVERY, CredentialOperation.MCP_DISCOVERY);
-        assertThat(operationEvents)
-                .extracting(CredentialOperationUsageAudit::targetBindingReference)
-                .containsOnly("mcp-server:utility:1:digest");
-        assertThat(operationEvents).allSatisfy(event -> assertThat(event.toString())
-                .doesNotContain("plaintext-secret", "AgentRunId", "toolCoordinate"));
+        List<String> components = Arrays.stream(CredentialOperationRequest.class.getRecordComponents())
+                .map(RecordComponent::getName)
+                .toList();
+        assertThat(components).doesNotContain("runId", "toolCoordinate");
+        assertThat(components).contains("operation", "targetBindingReference");
     }
 
     private static final class RecordingStore implements CredentialStore {
