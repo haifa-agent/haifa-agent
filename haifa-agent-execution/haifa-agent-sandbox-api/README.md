@@ -10,6 +10,8 @@
 策略和必需 `SandboxCapabilities`。额外路径只以可信配置引用出现，公共 Profile 不接受宿主绝对路径。
 `SandboxProvider.preflight` 在 Dispatch 前返回本配置下的实际能力与 Managed Process 支持状态；绑定、
 摘要或能力不匹配时必须使用稳定安全错误拒绝。
+其中，宿主或环境无法满足已冻结能力要求的预期拒绝使用 `SandboxPreflightException`；Provider 绑定、
+配置摘要等内部不变量不匹配继续使用普通 `SandboxException`，上层不得将其当作可继续的 preflight 结果。
 
 当前文件策略只区分 Workspace `READ_ONLY/READ_WRITE`、敏感路径拒读要求和有界额外路径策略引用。
 CPU、内存、磁盘、PID、Kernel、Container 与多租户保证没有进入该最小模型。

@@ -1,6 +1,7 @@
 package io.haifa.agent.application.project.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceAssembly;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
@@ -18,6 +19,7 @@ import io.haifa.agent.core.session.AgentSession;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.SessionScope;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionId;
@@ -60,9 +62,6 @@ import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.runtime.api.AgentRunRequest;
-import io.haifa.agent.runtime.api.InteractionResponse;
-import io.haifa.agent.runtime.api.InteractionResponseId;
-import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.DefaultAgentRuntime;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
@@ -95,6 +94,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Tag;
@@ -112,14 +112,47 @@ class ProjectExecutionRecoveryIT {
     private static final byte[] PROTECTOR_KEY = new byte[32];
 
     @Test
-    void resumesOneExactSuccessorAfterFreshSqliteReopen(@TempDir Path directory) throws Exception {
+    void notDispatchedPreflightFailureMarksToolFailedAndModelContinuesWithoutRecoveryInteraction(
+            @TempDir Path directory) throws Exception {
         AtomicInteger brokerCalls = new AtomicInteger();
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger ids = new AtomicInteger();
+        AtomicBoolean simulateInterruption = new AtomicBoolean(true);
         List<SandboxProfileRef> observedProfiles = new ArrayList<>();
         IdentifierGenerator identifiers = () -> "m4-id-" + ids.incrementAndGet();
         ExecutionBroker broker = broker(brokerCalls, observedProfiles);
-        AgentChatModel model = model(modelCalls);
+        Queue<AgentChatResponse> responses = new ArrayDeque<>(List.of(
+                new AgentChatResponse(
+                        "m4-model-tool",
+                        "test-model",
+                        "",
+                        List.of(new ModelToolCall(
+                                new ProviderToolCallCorrelationId("m4-provider-call-1"),
+                                "execution_run",
+                                Map.of(
+                                        "command", "git fetch origin",
+                                        "workspaceRef", WORKSPACE.value(),
+                                        "relativeWorkdir", "."))),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unpriced(1, 1),
+                        "",
+                        Map.of()),
+                new AgentChatResponse(
+                        "m4-model-final",
+                        "test-model",
+                        "network unavailable, reported blocker",
+                        List.of(),
+                        ModelFinishReason.STOP,
+                        ModelUsage.unpriced(1, 1),
+                        "",
+                        Map.of())));
+        AgentChatModel model = request -> {
+            int call = modelCalls.incrementAndGet();
+            if (call == 2 && simulateInterruption.get()) {
+                throw new AssertionError("simulated node interruption after NOT_DISPATCHED failure checkpoint");
+            }
+            return responses.remove();
+        };
         AgentRunId runId;
         Path database = directory.resolve("runtime.db").toAbsolutePath();
 
@@ -128,139 +161,137 @@ class ProjectExecutionRecoveryIT {
                     .createIfAbsent(new WorkspaceAccess(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP));
             RuntimeInstance instance = runtime(first, model, broker, identifiers, "m4-worker-a");
             runId = instance.runtime().start(request()).runId();
-            instance.scheduler().runAll();
+            assertThatThrownBy(instance.scheduler()::runAll)
+                    .isInstanceOf(AssertionError.class)
+                    .hasMessageContaining("simulated node interruption");
 
-            assertThat(instance.runtime().find(runId).orElseThrow().status())
-                    .isEqualTo(AgentRunStatus.WAITING_INTERACTION);
-            assertThat(instance.ports()
-                            .interactions()
-                            .pending(runId)
-                            .orElseThrow()
-                            .type())
-                    .isEqualTo("execution-recovery");
-            assertThat(instance.ports().state().toolCalls(runId)).hasSize(1);
-            assertThat(modelCalls).hasValue(1);
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
+            assertThat(instance.ports().interactions().pending(runId)).isEmpty();
+
+            var toolCalls = instance.ports().state().toolCalls(runId);
+            assertThat(toolCalls).hasSize(1);
+            var failedCall = toolCalls.getFirst();
+            assertThat(failedCall.status()).isEqualTo(ToolCallStatus.FAILED);
+            assertThat(failedCall.error()).isPresent();
+            assertThat(failedCall.error().get().error().details())
+                    .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
+                    .containsEntry("dispatchState", "NOT_DISPATCHED");
+
             assertThat(brokerCalls).hasValue(1);
             assertLegacyTablesAbsent(database);
         }
 
+        simulateInterruption.set(false);
         try (ProjectPersistenceAssembly reopened = persistence(database)) {
             RuntimeInstance instance = runtime(reopened, model, broker, identifiers, "m4-worker-b");
-            var recovery = instance.ports().interactions().pending(runId).orElseThrow();
-            instance.runtime()
-                    .respond(new InteractionResponse(
-                            new InteractionResponseId("execution-recovery-response"),
-                            recovery.id(),
-                            runId,
-                            InteractionResponseType.APPROVE,
-                            List.of(),
-                            "execution-recovery-response-key",
-                            NOW));
+            var loadedRun = instance.runtime().find(runId).orElseThrow();
+            assertThat(loadedRun.status()).isEqualTo(AgentRunStatus.RUNNING);
+            assertThat(instance.ports().interactions().pending(runId)).isEmpty();
 
-            assertThat(instance.ports()
-                            .interactions()
-                            .record(recovery.id())
-                            .orElseThrow()
-                            .state()
-                            .name())
-                    .isEqualTo("RESPONDED");
-            assertThat(instance.ports().state().toolCalls(runId)).hasSize(1);
-            assertThat(modelCalls).hasValue(1);
-            assertThat(brokerCalls).hasValue(1);
-            assertLegacyTablesAbsent(database);
-        }
-
-        try (ProjectPersistenceAssembly recovered = persistence(database)) {
-            RuntimeInstance instance = runtime(recovered, model, broker, identifiers, "m4-worker-c");
-            var recovery = instance.ports()
-                    .interactions()
-                    .record(io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys.requestId(
-                            runId,
-                            instance.ports().state().toolCalls(runId).getFirst().id()))
-                    .orElseThrow();
             instance.runtime().recover(runId);
             instance.scheduler().runAll();
 
-            assertThat(instance.runtime().find(runId).orElseThrow().status())
-                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
-            assertThat(instance.ports().state().toolCalls(runId)).hasSize(2);
-            assertThat(instance.ports()
-                            .interactions()
-                            .record(recovery.request().id())
-                            .orElseThrow()
-                            .state()
-                            .name())
-                    .isEqualTo("APPLIED");
-            var ordinaryApproval =
-                    instance.ports().interactions().pending(runId).orElseThrow();
-            assertThat(ordinaryApproval.type()).isEqualTo("tool-approval");
-            assertThat(modelCalls).hasValue(1);
+            var finishedRun = instance.runtime().find(runId).orElseThrow();
+            assertThat(finishedRun.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(instance.ports().interactions().pending(runId)).isEmpty();
+
+            var toolCalls = instance.ports().state().toolCalls(runId);
+            assertThat(toolCalls).hasSize(1);
+            var failedCall = toolCalls.getFirst();
+            assertThat(failedCall.status()).isEqualTo(ToolCallStatus.FAILED);
+            assertThat(failedCall.error().get().error().details())
+                    .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
+                    .containsEntry("dispatchState", "NOT_DISPATCHED");
+
+            assertThat(modelCalls).hasValue(3);
             assertThat(brokerCalls).hasValue(1);
-
-            instance.runtime()
-                    .respond(new InteractionResponse(
-                            new InteractionResponseId("ordinary-execution-approval-response"),
-                            ordinaryApproval.id(),
-                            runId,
-                            InteractionResponseType.APPROVE,
-                            List.of(),
-                            "ordinary-execution-approval-key",
-                            NOW));
-            instance.scheduler().runAll();
-
-            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
-            assertThat(modelCalls).hasValue(2);
-            assertThat(brokerCalls).hasValue(2);
-            assertThat(observedProfiles)
-                    .containsExactly(new SandboxProfileRef("normal", "1"), new SandboxProfileRef("recovery", "1"));
             assertLegacyTablesAbsent(database);
         }
     }
 
     @Test
-    void workspaceAccessDowngradeBeforeApplicationFailsClosedWithoutSuccessor(@TempDir Path directory)
+    void notDispatchedFailureAllowsModelToIssueOrdinaryNewToolCallUnderStandardPolicy(@TempDir Path directory)
             throws Exception {
         AtomicInteger brokerCalls = new AtomicInteger();
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger ids = new AtomicInteger();
-        IdentifierGenerator identifiers = () -> "m4-downgrade-id-" + ids.incrementAndGet();
+        List<SandboxProfileRef> observedProfiles = new ArrayList<>();
+        IdentifierGenerator identifiers = () -> String.format("m4-retry-id-%04d", ids.incrementAndGet());
+        ExecutionBroker broker = broker(brokerCalls, observedProfiles);
+        Queue<AgentChatResponse> responses = new ArrayDeque<>(List.of(
+                new AgentChatResponse(
+                        "m4-model-tool-1",
+                        "test-model",
+                        "",
+                        List.of(new ModelToolCall(
+                                new ProviderToolCallCorrelationId("m4-provider-call-1"),
+                                "execution_run",
+                                Map.of(
+                                        "command", "git fetch origin",
+                                        "workspaceRef", WORKSPACE.value(),
+                                        "relativeWorkdir", "."))),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unpriced(1, 1),
+                        "",
+                        Map.of()),
+                new AgentChatResponse(
+                        "m4-model-tool-2",
+                        "test-model",
+                        "",
+                        List.of(new ModelToolCall(
+                                new ProviderToolCallCorrelationId("m4-provider-call-2"),
+                                "execution_run",
+                                Map.of(
+                                        "command", "git status",
+                                        "workspaceRef", WORKSPACE.value(),
+                                        "relativeWorkdir", "."))),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unpriced(1, 1),
+                        "",
+                        Map.of()),
+                new AgentChatResponse(
+                        "m4-model-final",
+                        "test-model",
+                        "finished after ordinary status check",
+                        List.of(),
+                        ModelFinishReason.STOP,
+                        ModelUsage.unpriced(1, 1),
+                        "",
+                        Map.of())));
+        AgentChatModel model = request -> {
+            modelCalls.incrementAndGet();
+            return responses.remove();
+        };
         Path database = directory.resolve("runtime.db").toAbsolutePath();
 
         try (ProjectPersistenceAssembly persistence = persistence(database)) {
             persistence
                     .workspaceAccess()
                     .createIfAbsent(new WorkspaceAccess(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP));
-            RuntimeInstance instance = runtime(
-                    persistence, model(modelCalls), broker(brokerCalls, new ArrayList<>()), identifiers, "m4-worker");
+            RuntimeInstance instance = runtime(persistence, model, broker, identifiers, "m4-worker");
             AgentRunId runId = instance.runtime().start(request()).runId();
             instance.scheduler().runAll();
-            var recovery = instance.ports().interactions().pending(runId).orElseThrow();
 
-            persistence
-                    .workspaceAccess()
-                    .replace(new WorkspaceAccess(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.READ));
-            instance.runtime()
-                    .respond(new InteractionResponse(
-                            new InteractionResponseId("execution-recovery-downgrade-response"),
-                            recovery.id(),
-                            runId,
-                            InteractionResponseType.APPROVE,
-                            List.of(),
-                            "execution-recovery-downgrade-key",
-                            NOW));
-            instance.scheduler().runAll();
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(instance.ports().interactions().pending(runId)).isEmpty();
 
-            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(instance.ports().state().toolCalls(runId)).hasSize(1);
-            assertThat(instance.ports()
-                            .interactions()
-                            .record(recovery.id())
-                            .orElseThrow()
-                            .state()
-                            .name())
-                    .isEqualTo("INVALIDATED");
-            assertThat(modelCalls).hasValue(1);
-            assertThat(brokerCalls).hasValue(1);
+            var toolCalls = instance.ports().state().toolCalls(runId);
+            assertThat(toolCalls).hasSize(2);
+            var failedCall = toolCalls.stream()
+                    .filter(tc -> tc.status() == ToolCallStatus.FAILED)
+                    .findFirst()
+                    .orElseThrow();
+            var completedCall = toolCalls.stream()
+                    .filter(tc -> tc.status() == ToolCallStatus.COMPLETED)
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(failedCall.error().orElseThrow().error().details())
+                    .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
+                    .containsEntry("dispatchState", "NOT_DISPATCHED");
+            assertThat(completedCall.status()).isEqualTo(ToolCallStatus.COMPLETED);
+
+            assertThat(modelCalls).hasValue(3);
+            assertThat(brokerCalls).hasValue(2);
             assertLegacyTablesAbsent(database);
         }
     }
@@ -275,17 +306,13 @@ class ProjectExecutionRecoveryIT {
         ensureSession(ports);
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
         InteractionPort interactions = ports.interactions();
-        var recoveryAuthorization = new ProjectExecutionRecoveryAuthorization(ports.state(), interactions);
         PublicToolPolicy publicPolicy = (run, binding, request) -> {
             persistence.workspaceAccess().require(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP);
-            boolean successor = request.toolCallId().value().startsWith("execution-recovery-tool:v1:");
             return new PolicyDecision(
-                    successor ? PolicyEffect.ASK : PolicyEffect.ALLOW,
-                    successor ? Optional.of(io.haifa.agent.policy.api.PolicyChallenge.APPROVAL) : Optional.empty(),
-                    successor ? "M6_RECOVERY_TEST_ASK" : "M4_TEST_ALLOW",
-                    successor
-                            ? "M6 recovery integration requires ordinary approval"
-                            : "M4 integration policy allowed the tool",
+                    PolicyEffect.ALLOW,
+                    Optional.empty(),
+                    "M4_TEST_ALLOW",
+                    "M4 integration policy allowed the tool",
                     "sha256:m4-integration-allow");
         };
         var canonicalizer = new CodingExecutionToolRequestCanonicalizer();
@@ -293,27 +320,24 @@ class ProjectExecutionRecoveryIT {
                 ports.runs(), ports.state(), interactions, canonicalizer, publicPolicy);
         var executionPolicy = new CodingAgentExecutionPolicy(
                 runtimeVerifier,
-                recoveryAuthorization,
                 persistence.workspaceAccess(),
                 provisioning(),
                 TENANT,
                 PRINCIPAL,
                 new ExecutionEnvironmentRef(List.of("test-environment")),
-                new ExecutionEnvironmentRef(List.of("test-environment")),
                 normalProfile().ref(),
-                recoveryProfile().ref(),
                 ExecutionScratchSpaceSpec.genericRequired(),
                 Duration.ofMinutes(1),
                 Duration.ofMinutes(2),
                 8_192,
                 4);
         ExecutionBroker guardedBroker = authorizeBeforeDispatch(broker, executionPolicy);
-        ProjectExecutionToolOperations normal = operations(guardedBroker, new SandboxProfileRef("normal", "1"));
-        ProjectExecutionToolOperations recovery = operations(guardedBroker, new SandboxProfileRef("recovery", "1"));
+        ProjectExecutionToolOperations normal =
+                operations(guardedBroker, normalProfile().ref());
         ProjectToolOperations unreachable = (toolName, workspaceId, actor, runRef, arguments) -> {
             throw new AssertionError("unexpected non-execution tool");
         };
-        ProjectToolExecutor provider = ProjectToolExecutor.withExecutionRecovery(
+        ProjectToolExecutor provider = new ProjectToolExecutor(
                 (runId, principal) -> {
                     WorkspaceAccess current = persistence
                             .workspaceAccess()
@@ -326,10 +350,6 @@ class ProjectExecutionRecoveryIT {
                 },
                 unreachable,
                 normal,
-                recovery,
-                recoveryAuthorization,
-                normalProfile(),
-                recoveryProfile(),
                 null);
         var catalog = new ProjectToolCatalog()
                 .freeze(Set.of("execution.run"), Set.of("execution.run"), true, provider, normalProfile());
@@ -464,38 +484,6 @@ class ProjectExecutionRecoveryIT {
         }
     }
 
-    private static AgentChatModel model(AtomicInteger calls) {
-        Queue<AgentChatResponse> responses = new ArrayDeque<>(List.of(
-                new AgentChatResponse(
-                        "m4-model-tool",
-                        "test-model",
-                        "",
-                        List.of(new ModelToolCall(
-                                new ProviderToolCallCorrelationId("m4-provider-call"),
-                                "execution_run",
-                                Map.of(
-                                        "command", "git fetch origin",
-                                        "workspaceRef", WORKSPACE.value(),
-                                        "relativeWorkdir", "."))),
-                        ModelFinishReason.TOOL_CALLS,
-                        ModelUsage.unpriced(1, 1),
-                        "",
-                        Map.of()),
-                new AgentChatResponse(
-                        "m4-model-final",
-                        "test-model",
-                        "recovered",
-                        List.of(),
-                        ModelFinishReason.STOP,
-                        ModelUsage.unpriced(1, 1),
-                        "",
-                        Map.of())));
-        return request -> {
-            calls.incrementAndGet();
-            return responses.remove();
-        };
-    }
-
     private static ExecutionResult completed(ExecutionId id) {
         ExecutionOutput empty = new ExecutionOutput("", null, 0, "0".repeat(64), false, false);
         return new ExecutionResult(
@@ -514,10 +502,6 @@ class ProjectExecutionRecoveryIT {
 
     private static SandboxProfile normalProfile() {
         return profile("normal", NetworkPolicy.DENY);
-    }
-
-    private static SandboxProfile recoveryProfile() {
-        return profile("recovery", NetworkPolicy.ALLOW);
     }
 
     private static SandboxProfile profile(String id, NetworkPolicy network) {

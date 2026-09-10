@@ -256,28 +256,16 @@ class RuntimeEventFeedTest {
                         Optional.empty(),
                         Optional.empty()))
                 .orElseThrow();
-        var execution = projector
-                .project(new RuntimeEvent(
-                        "execution",
-                        runId,
-                        2,
-                        "execution.completed",
-                        "1",
-                        Map.of(
-                                "executionId", "execution-1",
-                                "toolCallId", "call-1",
-                                "status", "SUCCEEDED",
-                                "commandSummary", "shell command",
-                                "logicalWorkdir", ".",
-                                "streamKind", "MERGED",
-                                "chunkOrRef", "output:1",
-                                "exitCode", 0,
-                                "truncated", false,
-                                "fileChangeSetRef", "changes:1"),
-                        NOW,
-                        Optional.empty(),
-                        Optional.empty()))
-                .orElseThrow();
+        var execution = projector.project(new RuntimeEvent(
+                "execution",
+                runId,
+                2,
+                "execution.completed",
+                "1",
+                Map.of("executionId", "execution-1", "toolCallId", "call-1", "status", "SUCCEEDED"),
+                NOW,
+                Optional.empty(),
+                Optional.empty()));
         var resource = projector
                 .project(new RuntimeEvent(
                         "resource",
@@ -316,8 +304,7 @@ class RuntimeEventFeedTest {
                 });
         assertThat(tool.eventType()).isEqualTo("tool.call.succeeded");
         assertThat(tool.payload()).isInstanceOf(RunEventPayloads.ToolLifecycle.class);
-        assertThat(execution.eventType()).isEqualTo("execution.completed");
-        assertThat(execution.payload()).isInstanceOf(RunEventPayloads.ExecutionLifecycle.class);
+        assertThat(execution).isEmpty();
         assertThat(resource.eventType()).isEqualTo("checkpoint.available");
         assertThat(resource.payload()).isInstanceOf(RunEventPayloads.ResourceAvailable.class);
     }
@@ -336,7 +323,7 @@ class RuntimeEventFeedTest {
                         "completion.deferred",
                         "1",
                         Map.of(
-                                "phase", "VERIFYING",
+                                "phase", "COMPLETION",
                                 "status", "COMPLETION_DEFERRED",
                                 "reasonCode", "DIFF_INSPECTION_MISSING",
                                 "missingEvidence", List.of("DIFF_INSPECTION"),
@@ -352,7 +339,7 @@ class RuntimeEventFeedTest {
         var payload = (RunEventPayloads.DeliveryLifecycle) deferred.payload();
 
         assertThat(deferred.eventType()).isEqualTo("completion.deferred");
-        assertThat(payload.phase()).isEqualTo("VERIFYING");
+        assertThat(payload.phase()).isEqualTo("COMPLETION");
         assertThat(payload.missingEvidence()).containsExactly("DIFF_INSPECTION");
         assertThat(payload.toString()).doesNotContain("must-not-project", "/private/workspace");
 
@@ -367,45 +354,6 @@ class RuntimeEventFeedTest {
                         Optional.empty(),
                         Optional.empty())))
                 .isEmpty();
-    }
-
-    @Test
-    void projectsProgressAndStallLifecycleWithoutLeakingInternalEvidence() {
-        InMemoryRuntimeStore store = storeWithRun("run-stall-events");
-        AgentRunId runId = new AgentRunId("run-stall-events");
-        RuntimeClientEventProjector projector = new RuntimeClientEventProjector(store);
-
-        List<io.haifa.agent.runtime.api.AgentRunEvent> events = List.of(
-                projected(projector, runId, 1, "loop.progress-observed", Map.of("evidence", "MEANINGFUL")),
-                projected(
-                        projector,
-                        runId,
-                        2,
-                        "loop.stall-detected",
-                        Map.of("reason", "ALTERNATING_DECISION", "recoveryAttempts", 1)),
-                projected(
-                        projector,
-                        runId,
-                        3,
-                        "loop.recovery-strategy-required",
-                        Map.of("reason", "ALTERNATING_DECISION", "recoveryAttempts", 1)),
-                projected(
-                        projector,
-                        runId,
-                        4,
-                        "loop.recovery-exhausted",
-                        Map.of("reason", "ALTERNATING_DECISION", "recoveryAttempts", 1)));
-
-        assertThat(events)
-                .extracting(io.haifa.agent.runtime.api.AgentRunEvent::eventType)
-                .containsExactly(
-                        "progress.observed", "stall.detected", "recovery.strategy-required", "recovery.exhausted");
-        assertThat(events)
-                .extracting(event -> ((RunEventPayloads.DeliveryLifecycle) event.payload()).status())
-                .containsExactly(
-                        "PROGRESS_OBSERVED", "STALL_DETECTED", "STRATEGY_CHANGE_REQUIRED", "RECOVERY_EXHAUSTED");
-        assertThat(events).allSatisfy(event -> assertThat(event.payload().toString())
-                .doesNotContain("progressDigest", "rawPath", "CANARY_PRIVATE_ACTION"));
     }
 
     private static io.haifa.agent.runtime.api.AgentRunEvent projected(

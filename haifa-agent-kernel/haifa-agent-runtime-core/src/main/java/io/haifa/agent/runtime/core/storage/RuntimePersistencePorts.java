@@ -46,40 +46,6 @@ public record RuntimePersistencePorts(
         messageRedactions = Objects.requireNonNull(messageRedactions, "messageRedactions must not be null");
     }
 
-    /** Compatibility constructor for Task 01 assemblies that have not selected a durable Run Input adapter. */
-    public RuntimePersistencePorts(
-            AgentSessionRepository sessions,
-            RunStateRepository runs,
-            ExecutionAttemptRepository attempts,
-            CheckpointRepository checkpoints,
-            RuntimeStateRepository state,
-            RuntimeEventAppender events,
-            RuntimeOutboxPublisher outbox,
-            IdempotencyRepository idempotency,
-            RuntimeUnitOfWork unitOfWork,
-            ToolExecutionJournal toolJournal,
-            InteractionPort interactions,
-            ConversationSummaryRepository conversationSummaries,
-            ToolResultAssetStore toolResultAssets,
-            MessageRedactionListenerRegistry messageRedactions) {
-        this(
-                sessions,
-                runs,
-                attempts,
-                checkpoints,
-                state,
-                events,
-                outbox,
-                idempotency,
-                unitOfWork,
-                toolJournal,
-                interactions,
-                new InMemoryRunInputPort(),
-                conversationSummaries,
-                toolResultAssets,
-                messageRedactions);
-    }
-
     public static RuntimePersistencePorts inMemory() {
         return inMemory(new InMemoryRuntimeStore());
     }

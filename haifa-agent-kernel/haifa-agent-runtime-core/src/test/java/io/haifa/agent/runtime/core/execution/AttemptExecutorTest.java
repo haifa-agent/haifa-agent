@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.core.error.AgentErrorCode;
-import io.haifa.agent.runtime.core.guard.LoopDetectedException;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
 import org.junit.jupiter.api.Test;
@@ -38,19 +37,11 @@ class AttemptExecutorTest {
     }
 
     @Test
-    void classifiesLoopDetectionAsAStableRuntimeFailure() {
-        var failure = new LoopDetectedException(LoopDetectedException.Reason.NO_OBSERVABLE_PROGRESS);
-
-        assertThat(AttemptExecutor.classifiedErrorCode(null, null, null, failure))
-                .isEqualTo(AgentErrorCode.AGENT_LOOP_DETECTED);
-    }
-
-    @Test
     void classifiesModelContinuationFailureAsCrossModelContinuationInvalid() {
         var failure = new io.haifa.agent.runtime.core.model.continuation.ModelContinuationException(
                 io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure.BINDING_MISMATCH, "test");
 
-        assertThat(AttemptExecutor.classifiedErrorCode(null, null, null, null, failure))
+        assertThat(AttemptExecutor.classifiedErrorCode(null, null, null, failure))
                 .isEqualTo(AgentErrorCode.CROSS_MODEL_CONTINUATION_INVALID);
     }
 

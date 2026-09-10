@@ -28,7 +28,7 @@ public final class SqliteRuntimePayloadTypes {
     public static final PayloadType<RuntimeConfigurationSnapshot> CONFIGURATION =
             new PayloadType<>("runtime-configuration", "1", RuntimeConfigurationSnapshot.class);
     public static final PayloadType<RuntimeCheckpointState> CHECKPOINT_STATE =
-            new PayloadType<>("runtime-checkpoint-state", "1", RuntimeCheckpointState.class);
+            new PayloadType<>("runtime-checkpoint-state", "2", RuntimeCheckpointState.class);
     public static final PayloadType<EventDataPayload> EVENT_DATA =
             new PayloadType<>("runtime-event-data", "1", EventDataPayload.class);
     public static final PayloadType<OutboxPayload> OUTBOX =

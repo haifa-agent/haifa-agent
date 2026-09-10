@@ -41,7 +41,6 @@ import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.tool.api.ToolCancellation;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
-import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
@@ -823,10 +822,8 @@ public final class ProjectExecutionToolOperations {
                 && stableCode instanceof String code
                 && RECOVERABLE_PREFLIGHT_CODES.contains(code);
         if (eligible) {
-            throw new ToolInvocationException(
-                    (String) stableCode,
-                    ToolDispatchState.NOT_DISPATCHED,
-                    "Execution was not dispatched because required host access is unavailable.");
+            throw ToolInvocationException.preflight(
+                    (String) stableCode, "Execution was not dispatched because required host access is unavailable.");
         }
         return failure;
     }

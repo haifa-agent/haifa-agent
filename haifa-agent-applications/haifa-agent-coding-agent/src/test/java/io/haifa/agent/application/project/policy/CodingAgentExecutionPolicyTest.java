@@ -205,15 +205,11 @@ class CodingAgentExecutionPolicyTest {
         return new Fixture(
                 new CodingAgentExecutionPolicy(
                         runtime,
-                        new io.haifa.agent.application.project.tool.ProjectExecutionRecoveryAuthorization(
-                                ports.state(), ports.interactions()),
                         access,
                         provisioning,
                         TENANT,
                         PRINCIPAL,
                         ExecutionEnvironmentRef.empty(),
-                        ExecutionEnvironmentRef.empty(),
-                        PROFILE,
                         PROFILE,
                         ExecutionScratchSpaceSpec.genericRequired(),
                         Duration.ofSeconds(10),

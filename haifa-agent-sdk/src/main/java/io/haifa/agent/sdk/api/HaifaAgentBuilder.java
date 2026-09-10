@@ -321,7 +321,7 @@ public final class HaifaAgentBuilder {
                 context.sources().forEach(runtimeBuilder::registerContextSource);
             }
             if (memory != null) {
-                runtimeBuilder.memory(memory.service(), memory.retriever(), memory.audit());
+                runtimeBuilder.memory(memory.service(), memory.retriever());
             }
             if (policy != null) {
                 runtimeBuilder.policy(policy.rules(), policy.evaluator());

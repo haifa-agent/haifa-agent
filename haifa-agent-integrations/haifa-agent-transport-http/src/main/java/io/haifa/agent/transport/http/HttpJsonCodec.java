@@ -337,17 +337,6 @@ final class HttpJsonCodec {
             node.put("reasonCode", value.reasonCode());
             node.put("targetSummary", value.targetSummary());
             node.put("resultRef", value.resultRef());
-        } else if (payload instanceof RunEventPayload.ExecutionLifecycle value) {
-            node.put("executionId", value.executionId());
-            node.put("toolCallId", value.toolCallId());
-            node.put("status", value.status());
-            node.put("commandSummary", value.commandSummary());
-            node.put("logicalWorkdir", value.logicalWorkdir());
-            node.put("streamKind", value.streamKind());
-            node.put("chunkOrRef", value.chunkOrRef());
-            if (value.exitCode() != null) node.put("exitCode", value.exitCode());
-            node.put("truncated", value.truncated());
-            node.put("fileChangeSetRef", value.fileChangeSetRef());
         } else if (payload instanceof RunEventPayload.ResourceAvailable value) {
             node.put("reference", value.reference());
             node.put("kind", value.kind());

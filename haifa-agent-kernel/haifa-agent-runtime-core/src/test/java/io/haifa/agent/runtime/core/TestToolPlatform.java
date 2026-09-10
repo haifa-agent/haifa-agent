@@ -1,10 +1,10 @@
 package io.haifa.agent.runtime.core;
 
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.policy.api.PolicyChallenge;
 import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.policy.api.PolicyEffect;
-import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
@@ -43,14 +43,7 @@ final class TestToolPlatform {
             String inputSchemaId,
             boolean sideEffecting,
             ToolHandler handler) {
-        return install(
-                builder,
-                name,
-                version,
-                inputSchemaId,
-                sideEffecting,
-                io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW,
-                handler);
+        return install(builder, name, version, inputSchemaId, sideEffecting, allow(), handler);
     }
 
     static RuntimeCoreBuilder installWithOutputSchema(
@@ -61,7 +54,7 @@ final class TestToolPlatform {
             Map<String, Object> outputSchema,
             ToolHandler handler) {
         ToolDefinition definition = definition(name, version, inputSchemaId, false, outputSchema);
-        return install(builder, definition, ToolPolicyDecision.ALLOW, handler);
+        return install(builder, definition, allow(), handler);
     }
 
     static RuntimeCoreBuilder installWithInputSchema(
@@ -72,18 +65,18 @@ final class TestToolPlatform {
             Map<String, Object> inputSchema,
             ToolHandler handler) {
         ToolDefinition definition = definition(name, version, inputSchemaId, false, inputSchema, objectSchema());
-        return install(builder, definition, ToolPolicyDecision.ALLOW, handler);
+        return install(builder, definition, allow(), handler);
     }
 
     private static RuntimeCoreBuilder install(
-            RuntimeCoreBuilder builder, ToolDefinition definition, ToolPolicyDecision decision, ToolHandler handler) {
+            RuntimeCoreBuilder builder, ToolDefinition definition, PolicyDecision decision, ToolHandler handler) {
         return install(builder, definition, decision, handler, ignored -> ToolReconciliation.unsupported());
     }
 
     private static RuntimeCoreBuilder install(
             RuntimeCoreBuilder builder,
             ToolDefinition definition,
-            ToolPolicyDecision decision,
+            PolicyDecision decision,
             ToolHandler handler,
             ToolReconcileHandler reconciler) {
         ToolProvider provider = new ToolProvider() {
@@ -105,7 +98,7 @@ final class TestToolPlatform {
         var catalog = new ToolCatalogBuilder()
                 .register(alias(definition.name().value()), definition, "runtime-test", provider)
                 .freeze();
-        return builder.publicToolPolicy((run, binding, request) -> policyDecision(decision))
+        return builder.publicToolPolicy((run, binding, request) -> decision)
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
     }
 
@@ -115,7 +108,7 @@ final class TestToolPlatform {
             String version,
             String inputSchemaId,
             boolean sideEffecting,
-            io.haifa.agent.runtime.core.tool.ToolPolicyDecision decision,
+            PolicyDecision decision,
             ToolHandler handler) {
         ToolDefinition definition = definition(name, version, inputSchemaId, sideEffecting);
         return install(builder, definition, decision, handler);
@@ -130,7 +123,41 @@ final class TestToolPlatform {
             ToolHandler handler,
             ToolReconcileHandler reconciler) {
         ToolDefinition definition = definition(name, version, inputSchemaId, sideEffecting);
-        return install(builder, definition, ToolPolicyDecision.ALLOW, handler, reconciler);
+        return install(builder, definition, allow(), handler, reconciler);
+    }
+
+    static RuntimeCoreBuilder installWithCredentials(
+            RuntimeCoreBuilder builder,
+            String name,
+            String version,
+            String inputSchemaId,
+            boolean sideEffecting,
+            List<CredentialRequirement> credentialRequirements,
+            ToolHandler handler) {
+        Map<String, Object> objectSchema =
+                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+        ToolDefinition definition = new ToolDefinition(
+                new ToolName(name),
+                new SemanticVersion(version),
+                PROVIDER_ID,
+                name,
+                "Runtime test tool " + name,
+                new ToolSchema(inputSchemaId, "1.0", objectSchema),
+                new ToolSchema(name + ".output", "1.0", objectSchema),
+                ToolExecutionMode.IN_PROCESS,
+                true,
+                Duration.ofSeconds(10),
+                "test",
+                sideEffecting ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.IDEMPOTENT,
+                sideEffecting ? ToolRisk.HIGH : ToolRisk.LOW,
+                sideEffecting ? Set.of(ToolSideEffect.FILE_WRITE) : Set.of(ToolSideEffect.FILE_READ),
+                ToolResourceRequirements.none(),
+                credentialRequirements,
+                ToolApprovalRequirement.NEVER,
+                "test",
+                false,
+                Set.of("test"));
+        return install(builder, definition, allow(), handler);
     }
 
     static FrozenToolBinding binding(String name, String version, String inputSchemaId, boolean sideEffecting) {
@@ -206,37 +233,25 @@ final class TestToolPlatform {
         return new ToolAlias(name.replace('.', '_'));
     }
 
-    private static PolicyDecision policyDecision(ToolPolicyDecision decision) {
-        return switch (decision) {
-            case ALLOW ->
-                new PolicyDecision(
-                        PolicyEffect.ALLOW,
-                        Optional.empty(),
-                        "TEST_ALLOW",
-                        "Test policy allowed the tool",
-                        "sha256:test-allow");
-            case REQUIRE_APPROVAL ->
-                new PolicyDecision(
-                        PolicyEffect.ASK,
-                        Optional.of(PolicyChallenge.APPROVAL),
-                        "TEST_APPROVAL_REQUIRED",
-                        "Test policy requires approval",
-                        "sha256:test-approval");
-            case REQUIRE_REAUTHENTICATION ->
-                new PolicyDecision(
-                        PolicyEffect.ASK,
-                        Optional.of(PolicyChallenge.REAUTHENTICATE),
-                        "TEST_REAUTHENTICATION_REQUIRED",
-                        "Test policy requires reauthentication",
-                        "sha256:test-reauthentication");
-            case DENY ->
-                new PolicyDecision(
-                        PolicyEffect.DENY,
-                        Optional.empty(),
-                        "TEST_DENY",
-                        "Test policy denied the tool",
-                        "sha256:test-deny");
-        };
+    static PolicyDecision allow() {
+        return decision(PolicyEffect.ALLOW, Optional.empty(), "TEST_ALLOW", "Test policy allowed the tool");
+    }
+
+    static PolicyDecision approvalRequired() {
+        return decision(
+                PolicyEffect.ASK,
+                Optional.of(PolicyChallenge.APPROVAL),
+                "TEST_APPROVAL_REQUIRED",
+                "Test policy requires approval");
+    }
+
+    static PolicyDecision deny() {
+        return decision(PolicyEffect.DENY, Optional.empty(), "TEST_DENY", "Test policy denied the tool");
+    }
+
+    private static PolicyDecision decision(
+            PolicyEffect effect, Optional<PolicyChallenge> challenge, String reasonCode, String explanation) {
+        return new PolicyDecision(effect, challenge, reasonCode, explanation, "sha256:" + reasonCode.toLowerCase());
     }
 
     @FunctionalInterface

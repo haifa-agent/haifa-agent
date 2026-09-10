@@ -28,7 +28,6 @@ import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
-import io.haifa.agent.runtime.core.recovery.ExecutionRecoveryKeys;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.retry.ToolRetryPolicy;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -42,15 +41,10 @@ import io.haifa.agent.runtime.core.trace.TracePort;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.ToolCancellation;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
-import io.haifa.agent.tool.api.ToolEffectClass;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolInvoker;
-import io.haifa.agent.tool.api.ToolReconciliation;
-import io.haifa.agent.tool.api.ToolReconciliationRequest;
-import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import io.haifa.agent.tool.api.ToolSchemaValidationResult;
 import io.haifa.agent.tool.api.ToolSchemaValidator;
-import io.haifa.agent.tool.api.ToolSideEffect;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -180,13 +174,7 @@ public final class ToolPipeline {
         Objects.requireNonNull(traceContext, "traceContext must not be null");
         if (iteration < 1) throw new IllegalArgumentException("iteration must be positive");
         request = canonicalize(run, request);
-        if (call.result().isPresent())
-            return new ToolPipelineOutcome.Completed(call.result().orElseThrow());
-        var completed = journal.completed(run.id(), request.idempotencyKey());
-        if (completed.isPresent()) {
-            return new ToolPipelineOutcome.Completed(
-                    persistResult(run, call, request, completed.orElseThrow(), iteration, traceContext));
-        }
+        if (call.result().isPresent()) return savedResult(run, call);
         var pending = journal.pendingResult(run.id(), request.idempotencyKey());
         if (pending.isPresent()) {
             return new ToolPipelineOutcome.Completed(
@@ -196,47 +184,45 @@ public final class ToolPipeline {
         if (journalState
                 .filter(value -> value == ToolJournalState.DISPATCHED || value == ToolJournalState.ACKNOWLEDGED)
                 .isPresent()) {
-            return reconcileUnknown(run, call, request, iteration, journalState.orElseThrow(), traceContext);
+            return stopUnknown(run, call, journalState.orElseThrow(), "", "");
         }
         if (journalState
                 .filter(value -> value == ToolJournalState.OUTCOME_UNKNOWN)
                 .isPresent()) {
-            return reconcileUnknown(run, call, request, iteration, ToolJournalState.OUTCOME_UNKNOWN, traceContext);
+            return stopUnknown(run, call, ToolJournalState.OUTCOME_UNKNOWN, "", "");
         }
         return executeNew(run, call, request, iteration, traceContext);
     }
 
+    /** Rebuilds saved results only; never dispatches a tool or calls a reconciliation provider. */
     public ToolPipelineOutcome recover(AgentRun run, ToolCall call, int iteration) {
-        Objects.requireNonNull(run, "run must not be null");
-        Objects.requireNonNull(call, "call must not be null");
-        if (iteration < 1) throw new IllegalArgumentException("iteration must be positive");
-        if (!terminal(call.status())) return execute(run, call, request(call), iteration);
+        if (call.result().isPresent()) return savedResult(run, call);
+        var pending = journal.pendingResult(run.id(), call.idempotencyKey());
+        if (pending.isPresent() && !terminal(call.status())) {
+            return new ToolPipelineOutcome.Completed(persistResult(
+                    run,
+                    call,
+                    request(call),
+                    pending.orElseThrow(),
+                    iteration,
+                    RuntimeTraceContext.detached(traceIds.nextTraceId())));
+        }
+        var current = journal.state(run.id(), call.idempotencyKey()).orElse(ToolJournalState.OUTCOME_UNKNOWN);
+        journal.recordUncertain(run.id(), call.idempotencyKey());
+        throw outcomeUnknown(run, call, current, "AUTOMATIC_REPLAY_FORBIDDEN", "", "");
+    }
 
-        ToolResult completed =
-                journal.completed(run.id(), call.idempotencyKey()).orElse(null);
-        if (completed != null) {
-            requireCompatibleTerminal(call, completed);
-            return new ToolPipelineOutcome.Completed(completed);
+    private ToolPipelineOutcome.Completed savedResult(AgentRun run, ToolCall call) {
+        if (journal.state(run.id(), call.idempotencyKey())
+                .filter(value -> value == ToolJournalState.PENDING_RESULT)
+                .isPresent()) {
+            journal.recordCompleted(run.id(), call.idempotencyKey());
         }
-        ToolResult pending =
-                journal.pendingResult(run.id(), call.idempotencyKey()).orElse(null);
-        if (pending != null) {
-            ToolResult durable = call.result().orElse(pending);
-            requireCompatibleTerminal(call, durable);
-            journal.recordCompleted(run.id(), call.idempotencyKey(), durable);
-            return new ToolPipelineOutcome.Completed(durable);
-        }
-        ToolJournalState journalState = journal.state(run.id(), call.idempotencyKey())
-                .orElseThrow(() -> new IllegalStateException("terminal tool call has no journal facts"));
-        if (journalState == ToolJournalState.OUTCOME_UNKNOWN && call.error().isPresent()) {
-            throw new AgentExecutionFailureException(
-                    call.error().orElseThrow().error(),
-                    new IllegalStateException("tool outcome remained unknown across recovery"));
-        }
-        throw new IllegalStateException("terminal tool call conflicts with journal state " + journalState);
+        return new ToolPipelineOutcome.Completed(call.result().orElseThrow());
     }
 
     public boolean hasRecoveryFacts(AgentRun run, ToolCall call) {
+        if (call.result().isPresent() || call.status() == ToolCallStatus.RUNNING) return true;
         return journal.state(run.id(), call.idempotencyKey())
                 .filter(state -> state == ToolJournalState.DISPATCHED
                         || state == ToolJournalState.ACKNOWLEDGED
@@ -246,85 +232,21 @@ public final class ToolPipeline {
                 .isPresent();
     }
 
-    private ToolPipelineOutcome reconcileUnknown(
+    private ToolPipelineOutcome stopUnknown(
             AgentRun run,
             ToolCall call,
-            ToolRequest request,
-            int iteration,
-            ToolJournalState journalState,
-            RuntimeTraceContext traceContext) {
-        return reconcileUnknown(run, call, request, iteration, journalState, "", "", traceContext);
-    }
-
-    private ToolPipelineOutcome reconcileUnknown(
-            AgentRun run,
-            ToolCall call,
-            ToolRequest request,
-            int iteration,
             ToolJournalState journalState,
             String sourceFailureCode,
-            String sourceDispatchState,
-            RuntimeTraceContext traceContext) {
-        FrozenToolBinding binding = binding(run, request);
-        appendToolEvent(run, call, "tool.reconcile-started", "RECONCILING", "READ_ONLY_RECONCILE", "");
-        ToolReconciliation reconciliation;
-        try {
-            reconciliation = Objects.requireNonNull(
-                    invoker.reconcile(new ToolReconciliationRequest(
-                            binding,
-                            call.id(),
-                            run.id(),
-                            run.tenant(),
-                            run.principal(),
-                            request.arguments(),
-                            call.idempotencyKey().value(),
-                            journal.dispatchEvidence(run.id(), call.idempotencyKey()),
-                            journal.uncertainResult(run.id(), call.idempotencyKey()))),
-                    "tool reconciliation must not return null");
-        } catch (RuntimeException failure) {
-            reconciliation = ToolReconciliation.stillUnknown("RECONCILIATION_FAILED");
-        }
-        if (reconciliation.status() == ToolReconciliationStatus.RESOLVED) {
-            ToolResult result = reconciliation.result().orElseThrow();
-            try {
-                if (result.successful()) {
-                    ToolSchemaValidationResult outputValidation =
-                            schemaValidator.validate(binding.definition().outputSchema(), result.structuredData());
-                    if (!outputValidation.valid()) {
-                        throw new IllegalStateException("reconciled tool output failed schema validation");
-                    }
-                } else {
-                    validateFailureEnvelope(result);
-                }
-            } catch (RuntimeException invalidResult) {
-                reconciliation = ToolReconciliation.stillUnknown("RECONCILIATION_RESULT_INVALID");
-            }
-        }
-        journal.recordReconciliation(
-                run.id(), call.idempotencyKey(), reconciliation.status(), reconciliation.reasonCode());
-        if (reconciliation.status() == ToolReconciliationStatus.RESOLVED) {
-            ToolResult result = reconciliation.result().orElseThrow();
-            journal.recordPendingResult(run.id(), call.idempotencyKey(), result);
-            appendToolEvent(run, call, "tool.reconciled", "RESOLVED", reconciliation.reasonCode(), "");
-            return new ToolPipelineOutcome.Completed(
-                    persistResult(run, call, request, result, iteration, traceContext));
-        }
-        if (journalState != ToolJournalState.OUTCOME_UNKNOWN) {
-            journal.recordUncertain(run.id(), call.idempotencyKey());
-        }
-        String stopReason = binding.definition().effectClass() == ToolEffectClass.SIDE_EFFECTING
-                ? "SIDE_EFFECTING_REPLAY_FORBIDDEN"
-                : "SAFE_REPLAY_NOT_SCHEDULED";
-        appendToolEvent(run, call, "tool.reconcile-unknown", "OUTCOME_UNKNOWN", reconciliation.reasonCode(), "");
+            String sourceDispatchState) {
+        if (journalState != ToolJournalState.OUTCOME_UNKNOWN) journal.recordUncertain(run.id(), call.idempotencyKey());
         throw outcomeUnknown(
-                run, call, journalState, reconciliation, stopReason, sourceFailureCode, sourceDispatchState);
+                run, call, journalState, "AUTOMATIC_REPLAY_FORBIDDEN", sourceFailureCode, sourceDispatchState);
     }
 
     private AgentExecutionFailureException outcomeUnknown(
             AgentRun run,
             ToolCall call,
             ToolJournalState journalState,
-            ToolReconciliation reconciliation,
             String stopReason,
             String sourceFailureCode,
             String sourceDispatchState) {
@@ -332,8 +254,6 @@ public final class ToolPipeline {
         details.put("toolCallId", call.id().value());
         details.put("tool", call.toolName());
         details.put("journalState", journalState.name());
-        details.put("reconcileStatus", reconciliation.status().name());
-        details.put("reconcileReason", reconciliation.reasonCode());
         details.put("stopReason", stopReason);
         details.put("outcomeKnown", false);
         if (!sourceFailureCode.isBlank()) details.put("failureCode", sourceFailureCode);
@@ -452,7 +372,7 @@ public final class ToolPipeline {
             }
             if ("OUTCOME_UNKNOWN".equals(rawResult.structuredData().get("runtimeOutcome"))) {
                 journal.recordUncertain(run.id(), request.idempotencyKey(), rawResult);
-                return reconcileUnknown(run, call, request, iteration, ToolJournalState.OUTCOME_UNKNOWN, traceContext);
+                return stopUnknown(run, call, ToolJournalState.OUTCOME_UNKNOWN, "", "");
             }
             try {
                 journal.recordPendingResult(run.id(), request.idempotencyKey(), rawResult);
@@ -502,15 +422,12 @@ public final class ToolPipeline {
                 String dispatchState = exception instanceof io.haifa.agent.tool.api.ToolInvocationException failure
                         ? failure.dispatchState().name()
                         : journalState.name();
-                return reconcileUnknown(
+                return stopUnknown(
                         run,
                         call,
-                        request,
-                        iteration,
                         ToolJournalState.OUTCOME_UNKNOWN,
                         invocationFailureCode == null ? "" : invocationFailureCode,
-                        dispatchState,
-                        traceContext);
+                        dispatchState);
             }
             AgentErrorCode failureCode;
             if (resultPersistenceFailed) {
@@ -557,7 +474,9 @@ public final class ToolPipeline {
                         "sideEffecting", !definition.sideEffects().isEmpty(),
                         "outcomeKnown", !uncertain,
                         "failureCode", invocationFailure.failureCode(),
-                        "dispatchState", invocationFailure.dispatchState().name());
+                        "dispatchState", invocationFailure.dispatchState().name(),
+                        "preflight", invocationFailure.isPreflight(),
+                        "failureKind", invocationFailure.failureKind().name());
             } else {
                 errorDetails = Map.of(
                         "tool", definition.name().value(),
@@ -657,6 +576,7 @@ public final class ToolPipeline {
                     throw new io.haifa.agent.tool.api.ToolInvocationException(
                             invocationFailure.failureCode(),
                             invocationFailure.dispatchState(),
+                            invocationFailure.failureKind(),
                             detail == null || detail.isBlank() ? "tool provider invocation failed" : detail);
                 }
                 StackTraceElement location =
@@ -758,67 +678,52 @@ public final class ToolPipeline {
         }
     }
 
-    public boolean isExecutionRecoverySource(AgentRun run, ToolCall call) {
-        Objects.requireNonNull(run, "run must not be null");
-        Objects.requireNonNull(call, "call must not be null");
-        if (call.status() != ToolCallStatus.FAILED) return false;
-        ToolRequest request = canonicalize(run, request(call));
-        FrozenToolBinding binding = binding(run, request);
-        return "execution.run".equals(binding.definition().name().value())
-                && journal.state(run.id(), call.idempotencyKey())
-                        .filter(value -> value == ToolJournalState.FAILED)
-                        .isPresent();
+    public boolean isTrustedNotDispatched(AgentRun run, ToolCall call, Throwable failure) {
+        if (run == null || call == null || failure == null) {
+            return false;
+        }
+        if (call.status() != ToolCallStatus.FAILED) {
+            return false;
+        }
+        io.haifa.agent.tool.api.ToolInvocationException invocation = findToolInvocationException(failure);
+        if (invocation == null
+                || !invocation.isPreflight()
+                || invocation.failureKind() != io.haifa.agent.tool.api.ToolFailureKind.PREFLIGHT
+                || invocation.dispatchState() != io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED
+                || "TOOL_INVOCATION_FAILED".equals(invocation.failureCode())
+                || !isStableFailureCode(invocation.failureCode())) {
+            return false;
+        }
+        var journalState = journal.state(run.id(), call.idempotencyKey());
+        if (journalState.filter(value -> value == ToolJournalState.FAILED).isEmpty()) {
+            return false;
+        }
+        if (journal.dispatchEvidence(run.id(), call.idempotencyKey()).isPresent()) {
+            return false;
+        }
+        if (journal.uncertainResult(run.id(), call.idempotencyKey()).isPresent()) {
+            return false;
+        }
+        return call.error()
+                .map(ToolExecutionError::error)
+                .map(error -> Boolean.TRUE.equals(error.details().get("outcomeKnown"))
+                        && Boolean.TRUE.equals(error.details().get("preflight"))
+                        && "PREFLIGHT".equals(error.details().get("failureKind"))
+                        && "NOT_DISPATCHED".equals(error.details().get("dispatchState"))
+                        && !"TOOL_INVOCATION_FAILED".equals(error.details().get("failureCode"))
+                        && isStableFailureCode(String.valueOf(error.details().get("failureCode"))))
+                .orElse(false);
     }
 
-    public ToolApprovalTarget executionRecoveryTarget(AgentRun run, ToolCall call, String failureCode) {
-        ToolRequest request = canonicalize(run, request(call));
-        FrozenToolBinding binding = binding(run, request);
-        String argumentsDigest = argumentsDigest(request);
-        String principalScope = principalScope(run);
-        return new ToolApprovalTarget(
-                call.id(),
-                binding.coordinate().externalForm(),
-                binding.coordinate().definitionHash().value(),
-                argumentsDigest,
-                principalScope,
-                ExecutionRecoveryKeys.requirementDigest(
-                        run.id(),
-                        call.id(),
-                        binding.coordinate().externalForm(),
-                        binding.coordinate().definitionHash().value(),
-                        argumentsDigest,
-                        run.configurationSnapshot().contentHash(),
-                        failureCode,
-                        principalScope));
-    }
-
-    public void validateExecutionRecoveryTarget(
-            AgentRun run, ToolCall call, String failureCode, ToolApprovalTarget target) {
-        if (!isExecutionRecoverySource(run, call)) {
-            throw new SecurityException("execution recovery source is no longer eligible");
+    private static io.haifa.agent.tool.api.ToolInvocationException findToolInvocationException(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof io.haifa.agent.tool.api.ToolInvocationException invocation) {
+                return invocation;
+            }
+            current = current.getCause();
         }
-        ToolApprovalTarget current = executionRecoveryTarget(run, call, failureCode);
-        if (!current.equals(target)) {
-            throw new SecurityException("execution recovery target drifted from the frozen invocation");
-        }
-        ToolRequest request = canonicalize(run, request(call));
-        FrozenToolBinding binding = binding(run, request);
-        if (!capabilityAuthorizer.isAllowed(run, binding)) {
-            throw new SecurityException("execution recovery capability is no longer allowed");
-        }
-        ToolSchemaValidationResult inputValidation = schemaValidator.validate(
-                binding.definition().inputSchema(), request.arguments().values());
-        if (!inputValidation.valid()) {
-            throw new SecurityException("execution recovery input no longer matches the frozen schema");
-        }
-        if (policy.evaluate(run, binding, request).effect() == PolicyEffect.DENY) {
-            throw new SecurityException("execution recovery is denied by current policy");
-        }
-    }
-
-    private static String principalScope(AgentRun run) {
-        return run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
-                + run.principal().principalId();
+        return null;
     }
 
     private ToolResult persistResult(
@@ -844,7 +749,6 @@ public final class ToolPipeline {
                     result.successful(), result.summary(), result.structuredData(), assets, result.artifacts(), true);
         }
         try {
-            journal.recordCompleted(run.id(), request.idempotencyKey(), result);
             if (call.status() == ToolCallStatus.POLICY_CHECK || call.status() == ToolCallStatus.APPROVED) {
                 call.start(time.now());
             }
@@ -861,6 +765,7 @@ public final class ToolPipeline {
                         time.now());
             }
             state.appendToolCall(call);
+            journal.recordCompleted(run.id(), request.idempotencyKey());
             appendToolEvent(
                     run,
                     call,
@@ -868,7 +773,9 @@ public final class ToolPipeline {
                     result.successful() ? "SUCCEEDED" : "FAILED",
                     result.successful() ? "NONE" : stableResultFailureCode(result),
                     result.assets().isEmpty() ? "" : result.assets().getFirst().assetId());
-            appendExecutionAndResourceEvents(run, call, result);
+            result.artifacts()
+                    .forEach(reference ->
+                            appendResource(run, reference.artifactId(), "artifact", "Published artifact", "AVAILABLE"));
         } catch (RuntimeException persistenceFailure) {
             throw new ToolResultPersistenceException(persistenceFailure);
         }
@@ -916,97 +823,10 @@ public final class ToolPipeline {
                         "reasonCode",
                         reasonCode,
                         "targetSummary",
-                        targetSummary(call),
+                        call.toolName(),
                         "resultRef",
                         resultRef),
                 time.now());
-    }
-
-    static String targetSummary(ToolCall call) {
-        if (!isExecutionTool(call)) return call.toolName();
-        Map<String, Object> arguments = call.arguments().values();
-        String mode = safeText(arguments.get("mode"), "COMMAND");
-        String language = safeText(arguments.get("language"), "default-shell");
-        String purpose = safeText(arguments.get("purpose"), "Approved execution");
-        return boundedText(mode + " · " + language + " · " + purpose, 512);
-    }
-
-    private void appendExecutionAndResourceEvents(AgentRun run, ToolCall call, ToolResult result) {
-        if (isExecutionTool(call)) {
-            Map<String, Object> data = result.structuredData();
-            if (Boolean.TRUE.equals(data.get("scratchProvisioned"))) {
-                events.append(
-                        run.id(),
-                        "execution.scratch-provisioned",
-                        Map.of(
-                                "toolCallId",
-                                call.id().value(),
-                                "specDigest",
-                                safeText(data.get("scratchSpecDigest"), "unknown"),
-                                "capability",
-                                "WRITABLE_PRIVATE_SCRATCH"),
-                        time.now());
-            }
-            if (Boolean.TRUE.equals(data.get("scratchCleanupFailed"))) {
-                events.append(
-                        run.id(),
-                        "execution.scratch-cleanup-failed",
-                        Map.of(
-                                "toolCallId",
-                                call.id().value(),
-                                "specDigest",
-                                safeText(data.get("scratchSpecDigest"), "unknown"),
-                                "status",
-                                "OUTCOME_UNKNOWN"),
-                        time.now());
-            }
-            Object status = data.get("status");
-            if (status instanceof String lifecycle) {
-                var event = new java.util.LinkedHashMap<String, Object>();
-                event.put(
-                        "executionId",
-                        data.get("executionId") instanceof String id
-                                ? id
-                                : call.id().value());
-                event.put("toolCallId", call.id().value());
-                event.put("rawStatus", lifecycle);
-                event.put(
-                        "status",
-                        result.successful() ? (lifecycle.equals("EXITED") ? "COMPLETED" : "SUCCEEDED") : lifecycle);
-                if (data.get("semanticOutcome") instanceof String semanticOutcome) {
-                    event.put("semanticOutcome", semanticOutcome);
-                }
-                if (data.get("commandOutcomeCode") instanceof String commandOutcomeCode) {
-                    event.put("commandOutcomeCode", commandOutcomeCode);
-                }
-                event.put(
-                        "commandSummary",
-                        safeText(call.arguments().values().get("purpose"), "approved command or script"));
-                Object workspaceRef = call.arguments().values().get("workspaceRef");
-                if (workspaceRef != null) event.put("workspaceRef", safeText(workspaceRef, "unknown"));
-                Object logicalWorkdir = call.arguments().values().containsKey("relativeWorkdir")
-                        ? call.arguments().values().get("relativeWorkdir")
-                        : call.arguments().values().get("workdir");
-                event.put("logicalWorkdir", safeText(logicalWorkdir, "."));
-                event.put("streamKind", "MERGED");
-                event.put("chunkOrRef", executionOutput(data));
-                event.put("truncated", Boolean.TRUE.equals(data.get("truncated")));
-                if (data.get("exitCode") instanceof Number exitCode) event.put("exitCode", exitCode.intValue());
-                events.append(
-                        run.id(),
-                        result.successful()
-                                ? "execution.completed"
-                                : switch (lifecycle) {
-                                    case "CANCELLED" -> "execution.cancelled";
-                                    default -> "execution.failed";
-                                },
-                        Map.copyOf(event),
-                        time.now());
-            }
-        }
-        result.artifacts()
-                .forEach(reference ->
-                        appendResource(run, reference.artifactId(), "artifact", "Published artifact", "AVAILABLE"));
     }
 
     private static Map<String, Object> failureAttributes(String toolName, ToolResult result) {
@@ -1016,12 +836,6 @@ public final class ToolPipeline {
                 "failureCategory",
                 "stableFailureCode",
                 "resourceClass",
-                "operationFamily",
-                "effectiveOperationFamily",
-                "commandOperation",
-                "commandTarget",
-                "sandboxProfileDigest",
-                "deliveryRepositoryScopeDigest",
                 "failureActionCode",
                 "failureCode",
                 "status")) {
@@ -1058,16 +872,6 @@ public final class ToolPipeline {
         }
     }
 
-    private static String executionOutput(Map<String, Object> data) {
-        Object legacy = data.get("outputRef") != null ? data.get("outputRef") : data.get("output");
-        if (legacy != null) return boundedText(legacy, 4096);
-        String stdout = boundedText(data.get("stdoutSummary"), 3072);
-        String stderr = boundedText(data.get("stderrSummary"), 1024);
-        if (stdout.isBlank()) return stderr;
-        if (stderr.isBlank()) return stdout;
-        return stdout + "\n" + stderr;
-    }
-
     private void appendResource(AgentRun run, String reference, String kind, String title, String status) {
         events.append(
                 run.id(),
@@ -1081,41 +885,14 @@ public final class ToolPipeline {
                 time.now());
     }
 
-    private static String safeText(Object value, String fallback) {
-        return value instanceof String text && !text.isBlank() ? boundedText(text, 512) : fallback;
-    }
-
-    private static String boundedText(Object value, int maximum) {
-        if (!(value instanceof String text)) return "";
-        StringBuilder safe = new StringBuilder(Math.min(text.length(), maximum));
-        text.codePoints().forEach(codePoint -> {
-            if ((codePoint == '\n' || codePoint == '\r' || codePoint == '\t' || !Character.isISOControl(codePoint))
-                    && safe.length() + Character.charCount(codePoint) <= maximum) {
-                safe.appendCodePoint(codePoint);
-            }
-        });
-        return safe.toString();
-    }
-
     private java.util.Optional<io.haifa.agent.core.reference.AssetRef> putResultAssetWithOnePersistenceRetry(
             ToolCall call, ToolResult rawResult) {
         var firstAttempt = resultAssets.tryPut(call.id(), rawResult);
         return firstAttempt.isPresent() ? firstAttempt : resultAssets.tryPut(call.id(), rawResult);
     }
 
-    private static boolean isExecutionTool(ToolCall call) {
-        return "execution.run".equals(call.toolName()) || "execution_run".equals(call.toolName());
-    }
-
     public boolean hasUncertainExecution(AgentRun run) {
         return journal.hasUncertain(run.id());
-    }
-
-    public boolean mayModifyWorkspace(AgentRun run, ToolRequest request) {
-        request = canonicalize(run, request);
-        var sideEffects = binding(run, request).definition().sideEffects();
-        return sideEffects.contains(ToolSideEffect.FILE_WRITE)
-                || sideEffects.contains(ToolSideEffect.PROCESS_EXECUTION);
     }
 
     private FrozenToolBinding binding(AgentRun run, ToolRequest request) {
@@ -1160,13 +937,6 @@ public final class ToolPipeline {
             case COMPLETED, FAILED, DENIED, CANCELLED, TIMEOUT -> true;
             default -> false;
         };
-    }
-
-    private static void requireCompatibleTerminal(ToolCall call, ToolResult result) {
-        if ((result.successful() && call.status() != ToolCallStatus.COMPLETED)
-                || (!result.successful() && call.status() != ToolCallStatus.FAILED)) {
-            throw new IllegalStateException("terminal tool call conflicts with its durable result");
-        }
     }
 
     private void checkCancellation(AgentRun run) {

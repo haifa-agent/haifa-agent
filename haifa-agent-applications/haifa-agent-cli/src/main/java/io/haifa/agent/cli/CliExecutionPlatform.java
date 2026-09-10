@@ -3,7 +3,6 @@ package io.haifa.agent.cli;
 import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
-import io.haifa.agent.application.project.tool.ProjectExecutionRecoveryAuthorization;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
@@ -53,9 +52,7 @@ import java.util.Set;
 /** Owns the CLI's trusted local execution assembly without exposing provider controls to the model. */
 final class CliExecutionPlatform implements AutoCloseable {
     private final ProjectExecutionToolOperations operations;
-    private final ProjectExecutionToolOperations permissionOperations;
     private final SandboxProfile profile;
-    private final SandboxProfile permissionProfile;
     private final String shellDisplayName;
     private final String securitySummary;
     private final LocalIncrementalWorkspaceChangeObserver workspaceChanges;
@@ -63,17 +60,13 @@ final class CliExecutionPlatform implements AutoCloseable {
 
     private CliExecutionPlatform(
             ProjectExecutionToolOperations operations,
-            ProjectExecutionToolOperations permissionOperations,
             SandboxProfile profile,
-            SandboxProfile permissionProfile,
             String shellDisplayName,
             String securitySummary,
             LocalIncrementalWorkspaceChangeObserver workspaceChanges,
             CliRepositoryBaselineSupport repositoryBaselines) {
         this.operations = operations;
-        this.permissionOperations = permissionOperations;
         this.profile = profile;
-        this.permissionProfile = permissionProfile;
         this.shellDisplayName = shellDisplayName;
         this.securitySummary = securitySummary;
         this.workspaceChanges = workspaceChanges;
@@ -97,8 +90,7 @@ final class CliExecutionPlatform implements AutoCloseable {
             WorkspaceAccessStore workspaceAccess,
             TenantRef tenant,
             PrincipalRef principal,
-            RuntimeToolExecutionVerifier runtimeExecutionVerifier,
-            ProjectExecutionRecoveryAuthorization recoveryAuthorization) {
+            RuntimeToolExecutionVerifier runtimeExecutionVerifier) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
         Objects.requireNonNull(provisioning, "provisioning must not be null");
@@ -106,7 +98,6 @@ final class CliExecutionPlatform implements AutoCloseable {
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
         Objects.requireNonNull(runtimeExecutionVerifier, "runtimeExecutionVerifier must not be null");
-        Objects.requireNonNull(recoveryAuthorization, "recoveryAuthorization must not be null");
         HostShell shell = shell(configuration);
         LocalNativeSandboxConfiguration localConfiguration = localConfiguration(configuration, shell);
         var host = new HostGuardedSandboxProvider(
@@ -135,57 +126,32 @@ final class CliExecutionPlatform implements AutoCloseable {
                 workspaceRoot,
                 localConfiguration.controlRoot().resolve("host-scratch"));
         Map<String, String> environment = resolvedEnvironment.environment();
-        var permissionResolvedEnvironment = selected.providerId().equals(host.providerId())
-                ? resolvedEnvironment
-                : CliExecutionEnvironment.resolve(
-                        configuration,
-                        host.providerId(),
-                        hostEnvironment,
-                        System.getProperty("os.name", ""),
-                        Path.of(System.getProperty("user.home", ".")),
-                        localConfiguration.controlRoot(),
-                        workspaceRoot,
-                        localConfiguration.controlRoot().resolve("host-scratch"));
-        Map<String, String> permissionEnvironment = permissionResolvedEnvironment.environment();
         var ignorePolicy = CliWorkspaceChangeIgnorePolicy.load(workspaceRoot);
         SandboxProfile profile =
                 profile(configuration, selected, resolvedEnvironment.allowedEnvironmentNames(), ignorePolicy.version());
-        SandboxProfile permissionProfile = profile(
-                configuration, host, permissionResolvedEnvironment.allowedEnvironmentNames(), ignorePolicy.version());
-        var profileRegistry = new ImmutableSandboxProfileRegistry(
-                profile.equals(permissionProfile) ? List.of(profile) : List.of(profile, permissionProfile));
+        var profileRegistry = new ImmutableSandboxProfileRegistry(List.of(profile));
         var providerRegistry = new ImmutableSandboxProviderRegistry(configuredProviders.values());
         SandboxPreflight preflight;
         try {
             preflight = providerRegistry.resolve(profile).preflight(profile);
-            if (!profile.equals(permissionProfile)) {
-                providerRegistry.resolve(permissionProfile).preflight(permissionProfile);
-            }
         } catch (SandboxException exception) {
             throw diagnostic(configuration, exception);
         }
         ExecutionEnvironmentRef environmentRef = new ExecutionEnvironmentRef(
                 List.of("cli-execution-" + profile.contentDigest().value()));
-        ExecutionEnvironmentRef permissionEnvironmentRef = new ExecutionEnvironmentRef(
-                List.of("cli-execution-" + permissionProfile.contentDigest().value()));
         var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(workspaceId, workspaceRoot, ignorePolicy);
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
-                requestedEnvironment -> requestedEnvironment.equals(permissionEnvironmentRef)
-                        ? io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(permissionEnvironment)
-                        : io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
+                requestedEnvironment -> io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
                 new CodingAgentExecutionPolicy(
                         runtimeExecutionVerifier,
-                        recoveryAuthorization,
                         workspaceAccess,
                         provisioning,
                         tenant,
                         principal,
                         environmentRef,
-                        permissionEnvironmentRef,
                         profile.ref(),
-                        permissionProfile.ref(),
                         CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                         configuration.defaultTimeout(),
                         configuration.maximumTimeout(),
@@ -216,34 +182,10 @@ final class CliExecutionPlatform implements AutoCloseable {
                 workspaceTargetResolver(provisioning, workspaceAccess, tenant, principal),
                 verificationProfiles,
                 repositoryBaselines.observer());
-        var permissionOperations = new ProjectExecutionToolOperations(
-                broker,
-                identifiers,
-                time,
-                permissionEnvironmentRef,
-                permissionProfile.ref(),
-                configuration.defaultTimeout(),
-                configuration.maximumTimeout(),
-                configuration.maxOutputBytes(),
-                configuration.maxOutputLines(),
-                configuration.maxProcesses(),
-                observer,
-                java.util.function.UnaryOperator.identity(),
-                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                workspaceTargetResolver(provisioning, workspaceAccess, tenant, principal),
-                verificationProfiles,
-                repositoryBaselines.observer());
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(
-                operations,
-                permissionOperations,
-                profile,
-                permissionProfile,
-                shell.displayName(),
-                securitySummary,
-                workspaceChanges,
-                repositoryBaselines);
+                operations, profile, shell.displayName(), securitySummary, workspaceChanges, repositoryBaselines);
     }
 
     ProjectExecutionToolOperations operations() {
@@ -270,16 +212,8 @@ final class CliExecutionPlatform implements AutoCloseable {
         };
     }
 
-    ProjectExecutionToolOperations permissionOperations() {
-        return permissionOperations;
-    }
-
     SandboxProfile profile() {
         return profile;
-    }
-
-    SandboxProfile permissionProfile() {
-        return permissionProfile;
     }
 
     String shellDisplayName() {

@@ -65,3 +65,5 @@ Critical Path 或 Autonomous Delivery 的产品能力通过率。
 - 超时后必须主动收敛 Maven、CLI、Tool 和子进程树；
 - 确定性摘要和 Terminal Driver 由本模块直接拥有；只有出现至少两个独立消费者时才重新建立 Testkit；
 - 本模块不作为生产发布制品部署。
+
+自主交付证据只读取当前运行、工具和执行事实；不保留 Runtime 旧失败簇/进展事件的读取、产物字段或按失败簇次数验收的条件。确定性 Replay 保留 8 个当前 Completion、预算、交互与执行场景。

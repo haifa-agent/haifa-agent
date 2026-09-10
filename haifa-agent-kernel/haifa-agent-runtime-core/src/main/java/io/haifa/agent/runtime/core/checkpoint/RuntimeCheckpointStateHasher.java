@@ -9,31 +9,8 @@ public final class RuntimeCheckpointStateHasher {
     private RuntimeCheckpointStateHasher() {}
 
     public static String digest(RuntimeCheckpointState state) {
-        String canonical = state.runId().value()
-                + "|"
-                + state.nextIteration()
-                + "|"
-                + state.sessionMessageCursor().serialize()
-                + "|"
-                + state.modelConfigurationDigest()
-                + "|"
-                + state.activeSummary()
-                + "|"
-                + state.toolCalls()
-                + "|"
-                + state.forcedContextRebuildAttempts()
-                + "|"
-                + state.selectedMemories()
-                + "|"
-                + state.memoryRetrievalPolicyVersion()
-                + "|"
-                + state.memoryQueryDigest()
-                + "|"
-                + state.modelContinuations()
-                + "|"
-                + state.skillActivations()
-                + "|"
-                + state.capabilityCheckpoints();
+        String canonical =
+                state.runId().value() + "|" + state.nextIteration() + "|" + state.forcedContextRebuildAttempts();
         try {
             return "sha256:"
                     + HexFormat.of()
