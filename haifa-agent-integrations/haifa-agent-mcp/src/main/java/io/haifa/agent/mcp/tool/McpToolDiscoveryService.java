@@ -144,7 +144,6 @@ public final class McpToolDiscoveryService {
                         server.bindingReference(),
                         injection.requirement(),
                         context.credentialScopeChain(),
-                        Optional.empty(),
                         requestedAt,
                         expiresAt)));
             }

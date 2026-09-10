@@ -611,7 +611,6 @@ public final class ToolPipeline {
                         binding.coordinate().externalForm(),
                         requirement,
                         scopes,
-                        java.util.Optional.empty(),
                         now,
                         deadline)));
             }
