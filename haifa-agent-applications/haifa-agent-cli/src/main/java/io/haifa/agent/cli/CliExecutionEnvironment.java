@@ -10,10 +10,7 @@ final class CliExecutionEnvironment {
     private CliExecutionEnvironment() {}
 
     static ResolvedHostEnvironment resolve(
-            CliConfiguration.Execution configuration,
-            Path applicationDataRoot,
-            Path workspaceRoot,
-            Path scratchRoot) {
+            CliConfiguration.Execution configuration, Path applicationDataRoot, Path workspaceRoot, Path scratchRoot) {
         return resolve(
                 configuration,
                 System.getenv(),

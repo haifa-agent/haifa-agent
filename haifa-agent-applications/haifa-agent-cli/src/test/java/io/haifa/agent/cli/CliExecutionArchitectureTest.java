@@ -17,8 +17,7 @@ class CliExecutionArchitectureTest {
 
         noClasses()
                 .that()
-                .resideOutsideOfPackages(
-                        "io.haifa.agent.cli..", "io.haifa.agent.sandbox.host..")
+                .resideOutsideOfPackages("io.haifa.agent.cli..", "io.haifa.agent.sandbox.host..")
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage("io.haifa.agent.sandbox.host..")
