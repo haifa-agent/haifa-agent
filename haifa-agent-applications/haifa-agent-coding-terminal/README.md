@@ -67,7 +67,7 @@ Terminal 默认启用 bracketed paste；完整 `PasteMessage` 中的 CRLF 会归
 生产 Model 初始化时主动请求一次真实 Window Size，避免在用户没有手工 Resize 时一直停留在
 `80x24` 启动尺寸。tui4j `0.3.3` 不全局启用 Kitty keyboard protocol；该版本只为修饰 Enter
 提供显式映射，全局启用会让部分 CSI-u 控制键残留字符进入编辑器。`Ctrl+O` 因此保持传统 `SI`
-输入并稳定切换最近 Tool/Execution 卡片的展开状态。
+输入并稳定切换最近 Tool 卡片的展开状态。
 
 非 TTY 自定义流会被 tui4j 内部终端后端报告为 `1x1`，导致多帧 Renderer 输出被截断。该自动化路径
 连续三轮调整仍未通过，已按规则跳过；输入语义由 Model/Reducer 测试覆盖，真实显示与退出恢复留给
@@ -101,14 +101,13 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 - User 使用低对比消息块，便于定位用户意图；
 - Assistant 正文直接进入对话流，不使用厚卡片；高频 Markdown 子集只在 View 层转换为终端样式，
   `TranscriptItem`、Session 与持久化继续保留原始 Markdown；
-- Tool/Execution 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项只占一行：
+- Tool 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。折叠项只占一行：
   以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标` 与完成耗时（如 `✓ file_read · README.md · 0.3s`），
   并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。失败项在折叠状态额外保留
   最多两行安全原因，展开后才显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
-  Execution 标题在拿到退出码后追加 ` · exit N`；
 - Run 进入终态（completed/failed/cancelled/timeout）时追加一张可折叠的 Run Summary 卡片，
-  标题聚合耗时、工具数、命令数与 Workspace Change Set 数（如
-  `Run completed · 24s · 8 tools · 3 commands · 2 change sets`），展开后给出分类计数；
+  标题聚合耗时、工具数与 Workspace Change Set 数（如
+  `Run completed · 24s · 8 tools · 2 change sets`），展开后给出分类计数；
 - Approval 使用 Pending 语义，Error 使用 Error 语义；Recovery/Work-phase 等 `delivery-*` 与
   `resource-*` Resource 项默认可折叠为一行，认证、历史等关键 Resource 项保持展开可见；
 - Editor/Selector 的当前操作提示使用 Focus 语义。
@@ -146,8 +145,9 @@ WezTerm、Alacritty、Apple Terminal 和常见受限终端：存在修饰 Enter 
 
 Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
 
-- Tool 与 Execution 按稳定 ID 原位更新，不为同一调用重复创建卡片；显示明确 lifecycle、Target、
-  Workdir、Stream、Exit、Result Ref 和 FileChangeSet Ref，缺失的 Duration 不伪造；
+- Tool 按稳定 Tool Call ID 原位更新，不为同一调用重复创建卡片；显示明确 lifecycle、通用 Target 和
+  Result Ref，缺失的 Duration 不伪造。Terminal 不从 Runtime Event 解释 Execution 命令、Workdir、
+  Stream、Exit 或输出；这些仅可由拥有 Execution 结果的产品集成另行展示；
 - Runtime Checkpoint 继续持久化并推进事件 Cursor，但作为内部恢复事实不投影到 Transcript；
 - Approval 从 `InteractionView` 显示 Action、Target、Risk、Scope、Network、Reason 与允许动作；
   `InteractionLifecycle.actionOrReason` 等自由文本不参与 UI 解析。Selector 接管输入期间以及响应回执后，
@@ -157,7 +157,7 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
 - 活动状态区分 `THINKING`（模型交互与处理工具结果）、`WORKING`（工具执行）和
   `WAITING FOR APPROVAL`（等待用户审批）。计时是当前活动阶段耗时，不是整轮 Run 总耗时：新 Run、
   工具开始、工具完成后返回模型、进入/离开审批、应用 Steer、恢复、验证和取消阶段时从 `1s` 重新开始；
-  Assistant Delta、Execution 输出块、轮询、重复事件和 viewport 操作不重置。`WORKING` 只追加短 Tool
+  Assistant Delta、轮询、重复事件和 viewport 操作不重置。`WORKING` 只追加短 Tool
   名称，例如 `WORKING (12s) · execution.run`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
   ToolCallId；
 - `coding.work-phase` 只投影派生的 `ORIENT/PLAN/CHANGE/VERIFY/REVIEW/DELIVER/BLOCKED`，终端显示
@@ -296,7 +296,7 @@ key，并在所有重启间保持不变。
 9. 输入 `/` 和 `@` 后分别按 Tab，确认候选可见、可选择并正确回填；输入 `/command` 确认命令面板可见。
 10. Terminal 模式使用 `--trace detail` 但不提供 `--trace-file`，确认 Trace 不写入 TUI；提供
     `--trace-file` 后确认诊断仅进入文件。
-11. 用 Stub/Fake Tool 走通 requested → started → succeeded/failed/cancelled，确认同一 Tool/Execution
+11. 用 Stub/Fake Tool 走通 requested → started → succeeded/failed/cancelled，确认同一 Tool
     只更新一张卡片，折叠行带 `✓`/`✗`/`●` 状态符号与耗时，Ctrl+O 可折叠/展开最近项（含 Run Summary
     与可折叠 Resource 项）；Run 终态确认追加 Run Summary 卡片。
 12. 用 Stub/Fake Approval 检查结构化字段、approve/reject 回执与 editor 草稿恢复；审批期间输入只由

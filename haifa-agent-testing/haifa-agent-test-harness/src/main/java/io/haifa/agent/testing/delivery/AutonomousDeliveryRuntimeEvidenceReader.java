@@ -10,9 +10,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.HashSet;
 import java.util.Objects;
-import java.util.Set;
 
 /** Reads only bounded, safe evidence fields from the authoritative per-repeat SQLite store. */
 final class AutonomousDeliveryRuntimeEvidenceReader {
@@ -40,11 +38,11 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                     run.toolCalls(),
                     run.costMinorUnits(),
                     tools.toolFailures(),
-                    events.executionCalls(),
+                    tools.executionCalls(),
                     tools.validationAttempted(),
                     tools.diffInspected(),
-                    events.scratchProvisionedCount(),
-                    events.scratchCleanupFailures(),
+                    tools.scratchProvisionedCount(),
+                    tools.scratchCleanupFailures(),
                     events.terminalStateObserved() || terminal(run.status()));
         } catch (SQLException exception) {
             throw new IOException("authoritative runtime evidence could not be read", exception);
@@ -89,10 +87,13 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
 
     private ToolFacts readTools(Connection connection) throws SQLException, IOException {
         int failures = 0;
+        int executionCalls = 0;
+        int scratchProvisioned = 0;
+        int scratchCleanupFailures = 0;
         boolean validationAttempted = false;
         boolean diffInspected = false;
-        try (PreparedStatement statement =
-                        connection.prepareStatement("SELECT tool_name, status, arguments_payload FROM tool_call");
+        try (PreparedStatement statement = connection.prepareStatement(
+                        "SELECT tool_name, status, arguments_payload, result_payload FROM tool_call");
                 ResultSet rows = statement.executeQuery()) {
             while (rows.next()) {
                 String toolName = rows.getString(1);
@@ -100,40 +101,36 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                 if (!"COMPLETED".equals(status)) failures++;
                 if (!"execution_run".equals(toolName)) continue;
                 JsonNode arguments = decodeValues(rows.getBytes(3));
+                JsonNode result = decodeValues(rows.getBytes(4)).path("structuredData");
                 String family = arguments.path("operationFamily").asText("UNKNOWN");
                 validationAttempted |= family.equals("TEST") || family.equals("BUILD");
                 diffInspected |= "COMPLETED".equals(status) && family.equals("DIFF");
+                boolean enteredSandbox = result.path("status").isTextual()
+                        && (result.path("scratchProvisioned").asBoolean(false)
+                                || result.has("exitCode")
+                                || !result.path("executionId").asText().isBlank());
+                if (enteredSandbox) executionCalls++;
+                if (result.path("scratchProvisioned").asBoolean(false)) scratchProvisioned++;
+                if (result.path("scratchCleanupFailed").asBoolean(false)) scratchCleanupFailures++;
             }
         }
-        return new ToolFacts(failures, validationAttempted, diffInspected);
+        return new ToolFacts(
+                failures,
+                executionCalls,
+                validationAttempted,
+                diffInspected,
+                scratchProvisioned,
+                scratchCleanupFailures);
     }
 
     private EventFacts readEvents(Connection connection) throws SQLException, IOException {
-        int scratchProvisioned = 0;
-        int scratchCleanupFailures = 0;
-        int executionCalls = 0;
         boolean terminal = false;
-        Set<String> scratchToolCallIds = new HashSet<>();
         try (PreparedStatement statement =
-                        connection.prepareStatement("SELECT type, data_payload FROM runtime_event ORDER BY sequence");
+                        connection.prepareStatement("SELECT type FROM runtime_event ORDER BY sequence");
                 ResultSet rows = statement.executeQuery()) {
             while (rows.next()) {
                 String type = rows.getString(1);
-                JsonNode payload = decodeValues(rows.getBytes(2));
                 switch (type) {
-                    case "execution.scratch-provisioned" -> {
-                        scratchProvisioned++;
-                        scratchToolCallIds.add(payload.path("toolCallId").asText());
-                    }
-                    case "execution.scratch-cleanup-failed" -> scratchCleanupFailures++;
-                    case "execution.completed", "execution.failed" -> {
-                        String toolCallId = payload.path("toolCallId").asText();
-                        String executionId = payload.path("executionId").asText();
-                        boolean enteredSandbox = scratchToolCallIds.contains(toolCallId)
-                                || payload.has("exitCode")
-                                || (!executionId.isBlank() && !executionId.equals(toolCallId));
-                        if (enteredSandbox) executionCalls++;
-                    }
                     case "run.completed", "run.failed", "run.cancelled", "run.timed-out" -> terminal = true;
                     default -> {
                         // Other authoritative events are intentionally excluded from the safe Gate projection.
@@ -141,7 +138,7 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                 }
             }
         }
-        return new EventFacts(scratchProvisioned, scratchCleanupFailures, executionCalls, terminal);
+        return new EventFacts(terminal);
     }
 
     private JsonNode decodeValues(byte[] payload) throws IOException {
@@ -184,11 +181,13 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
     private record RunFacts(
             String status, long inputTokens, long outputTokens, long modelCalls, long toolCalls, long costMinorUnits) {}
 
-    private record ToolFacts(int toolFailures, boolean validationAttempted, boolean diffInspected) {}
-
-    private record EventFacts(
-            int scratchProvisionedCount,
-            int scratchCleanupFailures,
+    private record ToolFacts(
+            int toolFailures,
             int executionCalls,
-            boolean terminalStateObserved) {}
+            boolean validationAttempted,
+            boolean diffInspected,
+            int scratchProvisionedCount,
+            int scratchCleanupFailures) {}
+
+    private record EventFacts(boolean terminalStateObserved) {}
 }

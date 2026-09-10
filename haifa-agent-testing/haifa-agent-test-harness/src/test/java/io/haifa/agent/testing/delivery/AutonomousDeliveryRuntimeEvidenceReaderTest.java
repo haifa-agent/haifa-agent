@@ -24,27 +24,20 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
         Path database = temporary.resolve("runtime.db");
         try (Connection connection = createDatabase(database)) {
             insertRun(connection, "COMPLETED", 1200, 80, 4, 4, 0);
-            insertTool(connection, "execution_run", "COMPLETED", "TEST");
-            insertTool(connection, "execution_run", "COMPLETED", "DIFF");
-            insertTool(connection, "execution_run", "FAILED", "INSPECT");
+            insertTool(
+                    connection,
+                    "execution_run",
+                    "COMPLETED",
+                    "TEST",
+                    Map.of("status", "EXITED", "scratchProvisioned", true, "exitCode", 0));
+            insertTool(
+                    connection,
+                    "execution_run",
+                    "COMPLETED",
+                    "DIFF",
+                    Map.of("status", "EXITED", "scratchProvisioned", true, "exitCode", 0));
+            insertTool(connection, "execution_run", "FAILED", "INSPECT", Map.of("status", "FAILED"));
             insertTool(connection, "execution_run", "DENIED", "UNKNOWN");
-            insertEvent(connection, 1, "execution.scratch-provisioned", Map.of("toolCallId", "call-1"));
-            insertEvent(connection, 2, "execution.scratch-provisioned", Map.of("toolCallId", "call-2"));
-            insertEvent(
-                    connection,
-                    3,
-                    "execution.completed",
-                    Map.of("toolCallId", "call-1", "executionId", "execution-1", "exitCode", 0));
-            insertEvent(
-                    connection,
-                    4,
-                    "execution.failed",
-                    Map.of("toolCallId", "call-2", "executionId", "execution-2", "exitCode", 1));
-            insertEvent(
-                    connection,
-                    5,
-                    "execution.failed",
-                    Map.of("toolCallId", "call-rejected", "executionId", "call-rejected"));
             insertEvent(
                     connection, 8, "run.completed", Map.of("status", "COMPLETED", "unsafePrompt", "do not project"));
         }
@@ -85,13 +78,12 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
         Path database = temporary.resolve("runtime.db");
         try (Connection connection = createDatabase(database)) {
             insertRun(connection, "FAILED", 10, 5, 1, 1, 0);
-            insertTool(connection, "execution_run", "FAILED", "TEST");
-            insertEvent(
+            insertTool(
                     connection,
-                    1,
-                    "execution.failed",
-                    Map.of("toolCallId", "call-1", "executionId", "execution-1", "exitCode", 1));
-            insertEvent(connection, 2, "execution.scratch-cleanup-failed", Map.of("toolCallId", "call-1"));
+                    "execution_run",
+                    "FAILED",
+                    "TEST",
+                    Map.of("status", "FAILED", "exitCode", 1, "scratchCleanupFailed", true));
             insertEvent(connection, 3, "run.failed", Map.of("status", "FAILED"));
         }
 
@@ -137,7 +129,8 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
                     CREATE TABLE tool_call (
                         tool_name TEXT NOT NULL,
                         status TEXT NOT NULL,
-                        arguments_payload BLOB NOT NULL
+                        arguments_payload BLOB NOT NULL,
+                        result_payload BLOB
                     )
                     """);
             statement.execute(
@@ -174,7 +167,17 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
 
     private void insertTool(Connection connection, String name, String status, String operationFamily)
             throws Exception {
-        try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tool_call VALUES (?, ?, ?)")) {
+        insertTool(connection, name, status, operationFamily, Map.of());
+    }
+
+    private void insertTool(
+            Connection connection,
+            String name,
+            String status,
+            String operationFamily,
+            Map<String, Object> structuredData)
+            throws Exception {
+        try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tool_call VALUES (?, ?, ?, ?)")) {
             statement.setString(1, name);
             statement.setString(2, status);
             statement.setBytes(
@@ -183,6 +186,9 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
                             "schemaId", "execution.input",
                             "schemaVersion", "1",
                             "values", Map.of("operationFamily", operationFamily))));
+            statement.setBytes(
+                    4,
+                    structuredData.isEmpty() ? null : json.writeValueAsBytes(Map.of("structuredData", structuredData)));
             statement.executeUpdate();
         }
     }

@@ -44,8 +44,7 @@ class DefaultToolPolicyRequestAdapterTest {
         var request = request(
                 "execution_run",
                 "2.0.0",
-                Map.of(
-                        "command", "git status --short", "workspaceRef", "workspace-docs", "relativeWorkdir", "docs"));
+                Map.of("command", "git status --short", "workspaceRef", "workspace-docs", "relativeWorkdir", "docs"));
 
         assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution.run", request))
                 .isEqualTo(PolicyDigest.sha256Fields(List.of("git status --short", "workspace-docs", "docs", "[0]")));
