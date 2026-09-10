@@ -51,7 +51,7 @@ exhaustion terminates through the existing stable model failure path.
 `CompletionPolicy` 返回 Provider-neutral 的 `CompletionPolicyResult`：包括稳定
 `CompletionBlocker(code, safeMessage, recoverable, evidenceRequirement)` 与安全 Evidence Code。
 Runtime Core 不依赖 Coding 产品类型，也不读取 Coding 表。Final 缺少证据时，AgentLoop 追加
-`completion.deferred` 安全事件和固定顺序、Agent-visible 且用户不可见的纠偏 Session Message；次数由 `RepairRetryPolicy` 限制，
+`completion.deferred` 安全事件和固定顺序、Agent-visible 且用户不可见的纠偏 Session Message；次数只由 `CompletionRepairPolicy` 限制，
 默认产品装配最多两次。纠偏计数保存在权威 Session Message metadata，正常暂停／交互继续时重建，
 耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 失败，不能伪装为成功。
 
@@ -74,8 +74,8 @@ Tool 失败时自动终止或要求模型换策略。主模型从工具结果决
 
 Checkpoint 删除 decisionFingerprints 字段，当前最小载荷版本为 6.0，不提供旧策略数据的兼容或迁移，
 恢复不重建策略计数。旧进展/策略事件投影、错误码及 Harness 读取均已删除。
-50%、25%、10% 预算阈值仍按现有机制追加安全提示，恢复后不重复已跨越的阈值。Completion 与参数修复
-共享的 RepairRetryPolicy 本批未调整，不将普通工具失败与无效请求协议混为一类。
+50%、25%、10% 预算阈值仍按现有机制追加安全提示，恢复后不重复已跨越的阈值。Completion
+纠偏次数不属于 `RunBudgetSnapshot`，工具参数／安全协议拒绝不消耗此次数，仍由输入校验和既有硬预算约束。
 
 Runtime 不再为 Workspace 修改强制创建基线 Checkpoint，也不恢复外部工作区。工具执行继续通过
 当前 Workspace 访问与精确授权边界；产品 Snapshot/Artifact 能力保留，不经通用 Runtime Participant 装配。
@@ -228,25 +228,15 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - `RuntimePersistencePorts` 显式组合 Session、Run、Attempt、Checkpoint、Runtime State、Event、Outbox、
   Idempotency、Unit of Work、Tool Journal、Interaction、Run Input、Summary、Tool Result Asset 与消息脱敏监听注册边界；
   `RuntimeCoreBuilder` 只接受该组合并提供默认内存组合，不依赖 SQLite、JDBC、Jackson 或 JSONL。
-- Application 可通过 `RuntimeCoreBuilder.persistence(...)`、`workerId(...)` 与
-  `persistenceRetry(...)` 注入完整适配器装配。Runtime 的持久化重试每次重新加载聚合并重新执行事务；
-  具体 Application 只能把“事务工作开始前未取得数据库写锁”这类安全失败列入有限重试，不能对未知提交
-  结果或已经变更的内存聚合盲目重放。
+- Application 通过 `RuntimeCoreBuilder.persistence(...)` 与 `workerId(...)` 注入完整适配器装配。
+  Runtime 不重放 Unit of Work；具体持久化适配器只能在用户事务工作开始前、尚未取得数据库写锁时做有限重试，
+  对未知提交结果或已经变更的内存聚合必须 fail closed。
 - `OutboxMessage` 保存与对应 `RuntimeEvent` 相同的 Run 内 `sequence` 和稳定 `schemaVersion`。本地
   `ExecutionOwnershipPort` 以当前进程实例 ID 精确匹配 Attempt `workerId`，进程重启后的旧 Attempt
   不再被误判为仍由本地持有。
 - Runtime 使用可信 Run 身份检索 RUN/SESSION/USER Scope 的 ACTIVE Memory；授权和状态过滤先于排序，结果仍通过 `ContextItem` IR 和统一 Token 预算。Memory selection 不再复制到 Checkpoint；继续时重新检索授权且有效的 Memory。
 - Checkpoint 仅保存正常暂停／交互的最小续跑计数；SQLite 适配器保留有界持久化耗时指标。
 - 模块不依赖 Spring、模型 Provider SDK、MCP、Docker、JPA、产品模块或管理端。
-
-## Trusted Skill script policy
-
-`TrustedSkillScriptPublicToolPolicy` runs before the ordinary `ALWAYS + ASK` branch. It produces an audited
-`ALLOW` with reason `TRUSTED_SKILL_SCRIPT_AUTO_APPROVED` only when the current Run configuration contains one
-unambiguous, active package/script grant pair and every frozen Skill, script, Tool, argument-policy,
-runtime/profile/sandbox, capability, network, and caller-scope fact matches exactly. It never trusts model
-arguments as provenance, never applies to generic `execution.run`, and never fabricates an Approval response.
-Missing or drifted evidence delegates to the existing approval policy.
 
 Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与证据。Artifact 检查由产品的
 `PublishedArtifactRequiredChecker` 实现该接口；Runtime 不再提供单独的 `RequiredArtifactChecker` 配置入口。

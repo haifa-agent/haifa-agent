@@ -68,8 +68,6 @@ import io.haifa.agent.runtime.core.interaction.InteractionViewProjector;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
-import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.storage.IdempotencyRepository;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
@@ -113,8 +111,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final ResumeCoordinator resumeCoordinator;
     private final RuntimeModelOutputPublisher modelOutput;
     private final ExecutionOwnershipPort ownership;
-    private final RetryExecutor persistenceRetries;
-    private final PersistenceRetryPolicy persistenceRetry;
     private final ApprovalVerificationService approvalVerification;
     private final RunInputPort runInputs;
     private final RuntimeEventFeed eventFeed;
@@ -144,8 +140,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             ResumeCoordinator resumeCoordinator,
             RuntimeModelOutputPublisher modelOutput,
             ExecutionOwnershipPort ownership,
-            RetryExecutor persistenceRetries,
-            PersistenceRetryPolicy persistenceRetry,
             ApprovalVerificationService approvalVerification,
             RunInputPort runInputs,
             RuntimeEventFeed eventFeed,
@@ -172,8 +166,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         this.resumeCoordinator = Objects.requireNonNull(resumeCoordinator);
         this.modelOutput = Objects.requireNonNull(modelOutput);
         this.ownership = Objects.requireNonNull(ownership);
-        this.persistenceRetries = Objects.requireNonNull(persistenceRetries);
-        this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
         this.approvalVerification = Objects.requireNonNull(approvalVerification);
         this.runInputs = Objects.requireNonNull(runInputs);
         this.eventFeed = Objects.requireNonNull(eventFeed);
@@ -186,9 +178,8 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         var caller = callers.current();
         String callerScope = callerScope(caller);
         String requestDigest = CanonicalRequestDigest.agentRun(request);
-        Optional<RunStartIdempotencyBinding> existing = persistenceRetries.execute(
-                () -> idempotency.findRunBinding(callerScope, "start", request.idempotencyKey()),
-                persistenceRetry.policy());
+        Optional<RunStartIdempotencyBinding> existing =
+                idempotency.findRunBinding(callerScope, "start", request.idempotencyKey());
         if (existing.isPresent()) return snapshot(requireMatchingStart(existing.orElseThrow(), requestDigest));
 
         var bootstrap = bootstrapper.bootstrap(request, caller);
@@ -197,8 +188,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         AgentRun generated = bootstrap.run();
         AgentRunId generatedId = generated.id();
         AtomicBoolean created = new AtomicBoolean();
-        AgentRun run = persistenceRetries.execute(
-                () -> unitOfWork.execute(() -> {
+        AgentRun run = unitOfWork.execute(() -> {
                     Optional<RunStartIdempotencyBinding> raced =
                             idempotency.findRunBinding(callerScope, "start", request.idempotencyKey());
                     if (raced.isPresent()) return requireRun(requireMatchingStart(raced.orElseThrow(), requestDigest));
@@ -231,8 +221,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                     attempts.insert(new AgentRunExecutionAttempt(
                             new ExecutionAttemptId(ids.nextValue()), generatedId, 1, time.now(), Optional.empty()));
                     return generated;
-                }),
-                persistenceRetry.policy());
+                });
         AgentRunSnapshot accepted = AgentRunSnapshot.from(run, state.output(run.id()));
         if (created.get()) submitActive(run);
         return accepted;

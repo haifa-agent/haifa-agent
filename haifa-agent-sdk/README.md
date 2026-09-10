@@ -171,6 +171,9 @@ Memory 或 Tool 正文。查询先沿用当前 Caller 的 Run 授权；未授权
 
 ## 边界
 
+- SDK 产品装配可在普通 Public Tool Policy 之前显式组合 `TrustedSkillScriptPublicToolPolicy`。它只对冻结配置中唯一、
+  未失效且全部 Skill／script／Tool／参数策略／profile／sandbox／能力／网络和调用者绑定精确匹配的受信脚本产生
+  `TRUSTED_SKILL_SCRIPT_AUTO_APPROVED`；缺失、歧义或漂移一律回退既有审批策略。Runtime Core 不自动安装该产品策略。
 - 公共 API 不暴露 `RuntimeCoreBuilder`、Runtime Core 内部 bootstrap 类型、SQLite/MyBatis、
   Spring、Provider Client、`Path`、Connection 或 Credential 明文。
 - Caller 的 Tenant/Principal 来自可信 `SdkCallerProvider`，不从 Conversation 命令正文接收。

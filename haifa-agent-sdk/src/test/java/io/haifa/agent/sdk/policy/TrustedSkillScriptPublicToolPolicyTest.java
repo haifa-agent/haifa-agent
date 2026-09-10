@@ -1,4 +1,4 @@
-package io.haifa.agent.runtime.core.tool;
+package io.haifa.agent.sdk.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -40,6 +40,8 @@ import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
+import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
 import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.skill.api.SkillContentDigest;
@@ -121,6 +123,42 @@ class TrustedSkillScriptPublicToolPolicyTest {
     }
 
     @Test
+    void missingOrAmbiguousGrantEvidenceFallsBackToOrdinaryApproval() {
+        Fixture missing = fixture(SANDBOX_DIGEST, "trusted.transform", NOW, subject(), false, false);
+        Fixture ambiguous = fixture(SANDBOX_DIGEST, "trusted.transform", NOW, subject(), true, true);
+
+        assertThat(missing.policy().evaluate(missing.run(), missing.tool(), request("trusted_transform")).effect())
+                .isEqualTo(PolicyEffect.ASK);
+        assertThat(ambiguous.policy()
+                        .evaluate(ambiguous.run(), ambiguous.tool(), request("trusted_transform"))
+                        .effect())
+                .isEqualTo(PolicyEffect.ASK);
+        assertThat(missing.delegateCalls()).hasValue(1);
+        assertThat(ambiguous.delegateCalls()).hasValue(1);
+    }
+
+    @Test
+    void expiredOrSubjectDriftedGrantFallsBackToOrdinaryApproval() {
+        Fixture expired = fixture(SANDBOX_DIGEST, "trusted.transform", NOW.plusSeconds(601), subject(), false, true);
+        Fixture subjectDrift = fixture(
+                SANDBOX_DIGEST,
+                "trusted.transform",
+                NOW,
+                new PolicySubject(TENANT, new PrincipalRef("different-principal", "human"), PRODUCT),
+                false,
+                true);
+
+        assertThat(expired.policy().evaluate(expired.run(), expired.tool(), request("trusted_transform")).effect())
+                .isEqualTo(PolicyEffect.ASK);
+        assertThat(subjectDrift.policy()
+                        .evaluate(subjectDrift.run(), subjectDrift.tool(), request("trusted_transform"))
+                        .effect())
+                .isEqualTo(PolicyEffect.ASK);
+        assertThat(expired.delegateCalls()).hasValue(1);
+        assertThat(subjectDrift.delegateCalls()).hasValue(1);
+    }
+
+    @Test
     void forgedToolNameAndArgumentsCannotReuseAnotherFixedToolGrant() {
         Fixture fixture = fixture(SANDBOX_DIGEST, "trusted.transform");
         FrozenToolBinding forged = tool(
@@ -148,6 +186,16 @@ class TrustedSkillScriptPublicToolPolicyTest {
     }
 
     private static Fixture fixture(String grantSandboxDigest, String toolName) {
+        return fixture(grantSandboxDigest, toolName, NOW, subject(), false, true);
+    }
+
+    private static Fixture fixture(
+            String grantSandboxDigest,
+            String toolName,
+            Instant evaluationTime,
+            PolicySubject policySubject,
+            boolean duplicateScriptGrant,
+            boolean includeGrants) {
         FrozenSkillBinding skill = skill();
         FrozenToolBinding tool = tool(toolName, Map.of("value", Map.of("type", "string")));
         SkillPackageReviewGrant packageGrant = new SkillPackageReviewGrant(
@@ -204,7 +252,11 @@ class TrustedSkillScriptPublicToolPolicyTest {
                 "reviewer",
                 "fixture",
                 "TRUSTED_SKILL_SCRIPT_REVIEWED");
-        var trust = new SkillTrustSnapshot(digest('9'), List.of(packageGrant), List.of(scriptGrant));
+        List<SkillPackageReviewGrant> packageGrants = includeGrants ? List.of(packageGrant) : List.of();
+        List<SkillScriptExecutionGrant> scriptGrants = includeGrants
+                ? (duplicateScriptGrant ? List.of(scriptGrant, duplicate(scriptGrant)) : List.of(scriptGrant))
+                : List.of();
+        var trust = new SkillTrustSnapshot(digest('9'), packageGrants, scriptGrants);
         RunConfigurationSnapshotRef reference = new RunConfigurationSnapshotRef("configuration", digest('8'));
         var configuration = new RuntimeConfigurationSnapshot(
                 reference,
@@ -255,7 +307,7 @@ class TrustedSkillScriptPublicToolPolicyTest {
                     "sha256:ordinary-requirement");
         };
         ToolPolicyRequestAdapter adapter = (ignoredRun, binding, ignoredRequest) -> new PolicyRequest(
-                new PolicySubject(TENANT, PRINCIPAL, PRODUCT),
+                policySubject,
                 PolicyContext.run(run.id().value(), ApprovalMode.ASK),
                 new PolicyAction("tool", "invoke"),
                 new PolicyResource(
@@ -265,8 +317,46 @@ class TrustedSkillScriptPublicToolPolicyTest {
                         "Fixed test tool"),
                 new PolicyRisk(
                         PolicyRiskLevel.HIGH, Set.of(PolicySideEffect.PROCESS_EXECUTION), false, Optional.empty()));
-        var policy = new TrustedSkillScriptPublicToolPolicy(delegate, state, adapter, () -> NOW);
+        var policy = new TrustedSkillScriptPublicToolPolicy(delegate, state, adapter, () -> evaluationTime);
         return new Fixture(policy, run, tool, delegateCalls);
+    }
+
+    private static PolicySubject subject() {
+        return new PolicySubject(TENANT, PRINCIPAL, PRODUCT);
+    }
+
+    private static SkillScriptExecutionGrant duplicate(SkillScriptExecutionGrant grant) {
+        return new SkillScriptExecutionGrant(
+                "script-grant-duplicate",
+                grant.schemaVersion(),
+                grant.version(),
+                grant.packageReviewGrantId(),
+                grant.tenant(),
+                grant.principal(),
+                grant.productId(),
+                grant.scope(),
+                grant.projectRef(),
+                grant.coordinate(),
+                grant.registrationDigest(),
+                grant.packageDigest(),
+                grant.scriptRelativePath(),
+                grant.scriptDigest(),
+                grant.toolCoordinate(),
+                grant.providerBindingReference(),
+                grant.toolCatalogDigest(),
+                grant.argumentPolicyDigest(),
+                grant.scriptRuntimeRef(),
+                grant.executionProfileDigest(),
+                grant.sandboxDigest(),
+                grant.capabilities(),
+                grant.networkHosts(),
+                grant.issuedAt(),
+                grant.expiresAt(),
+                grant.revokedAt(),
+                grant.state(),
+                grant.reviewerRef(),
+                grant.reviewSourceRef(),
+                grant.reasonCode());
     }
 
     private static FrozenSkillBinding skill() {

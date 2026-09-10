@@ -565,14 +565,14 @@ class ProjectPersistenceAssemblyTest {
     }
 
     @Test
-    void boundedBusyRetrySucceedsAfterLockReleaseAndFailsClearlyWhenExhausted() throws Exception {
+    void sqliteBeginRetrySucceedsAfterLockReleaseAndFailsClearlyWhenExhausted() throws Exception {
         Path recoverableDatabase = directory.resolve("busy-recoverable.db");
         var recoverableConfiguration = new ProjectPersistenceConfiguration(
                 ProjectPersistenceMode.SQLITE,
                 Optional.of(recoverableDatabase),
                 Optional.empty(),
                 Optional.of("env://TEST_KEY"),
-                20,
+                100,
                 ProjectPersistenceConfiguration.DEFAULT_MAXIMUM_PAYLOAD_BYTES);
         try (ProjectPersistenceAssembly assembly = ProjectPersistenceAssembly.open(
                         recoverableConfiguration, CLOCK, new TestIds("busy-worker"), protector());

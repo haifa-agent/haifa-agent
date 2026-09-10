@@ -62,7 +62,7 @@ import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddleware;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareOrder;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
-import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
+import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
@@ -298,7 +298,7 @@ class RuntimeCoreHardeningTest {
                                                 "A required artifact is missing.",
                                                 "REQUIRED_ARTIFACT")),
                                         List.of()))
-                        .repairRetry(new RepairRetryPolicy(1)));
+                        .completionRepair(new CompletionRepairPolicy(1)));
         var blockedRun = blocked.runtime.start(request("artifact-blocked"));
         blocked.scheduler.runAll();
         var failed = blocked.store.find(blockedRun.runId()).orElseThrow();
@@ -345,7 +345,7 @@ class RuntimeCoreHardeningTest {
                                         "No authoritative validation attempt exists.",
                                         "VALIDATION_ATTEMPT")),
                                 List.of()))
-                .repairRetry(new RepairRetryPolicy(1)));
+                .completionRepair(new CompletionRepairPolicy(1)));
         var blockedRun = blocked.runtime.start(request("validation-blocked"));
         blocked.scheduler.runAll();
 
@@ -373,7 +373,7 @@ class RuntimeCoreHardeningTest {
                                         "A required artifact is missing.",
                                         "REQUIRED_ARTIFACT")),
                                 List.of()))
-                .repairRetry(new RepairRetryPolicy(2))
+                .completionRepair(new CompletionRepairPolicy(2))
                 .executionOwnership(attempt -> firstAttemptOwned.get() || attempt.attemptNumber() > 1));
         var accepted = fixture.runtime.start(request("repair-recovery"));
 

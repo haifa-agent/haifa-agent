@@ -75,7 +75,7 @@ import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.retry.BackoffStrategy;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
+import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
@@ -476,6 +476,7 @@ class RuntimeCoreTest {
     @Test
     void schemaRejectionReturnsAValueFreeRepairHintToTheModel() {
         AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger completionChecks = new AtomicInteger();
         AtomicReference<AgentChatRequest> repairRequest = new AtomicReference<>();
         ToolRequest invalid = toolRequest(
                 "invalid-mode", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of("mode", "COMMAND")));
@@ -483,7 +484,10 @@ class RuntimeCoreTest {
             if (modelCalls.getAndIncrement() == 0) {
                 return response(new ToolCallDecision(List.of(invalid)));
             }
-            repairRequest.set(request);
+            if (modelCalls.get() == 2) {
+                repairRequest.set(request);
+                return response(finalDecision("premature completion"));
+            }
             return response(finalDecision("repaired"));
         };
         Map<String, Object> inputSchema = Map.of(
@@ -497,15 +501,25 @@ class RuntimeCoreTest {
                 List.of("mode"),
                 "additionalProperties",
                 false);
-        Fixture fixture = fixture(
-                model,
-                builder -> TestToolPlatform.installWithInputSchema(
-                        builder,
-                        "echo",
-                        "1.0.0",
-                        "echo.input",
-                        inputSchema,
-                        request -> new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false)));
+        Fixture fixture = fixture(model, builder -> {
+            TestToolPlatform.installWithInputSchema(
+                    builder,
+                    "echo",
+                    "1.0.0",
+                    "echo.input",
+                    inputSchema,
+                    request -> new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false));
+            builder.completionRepair(new CompletionRepairPolicy(1)).completionPolicy((run, decision) ->
+                    completionChecks.getAndIncrement() == 0
+                            ? io.haifa.agent.runtime.core.completion.CompletionPolicyResult.blocked(
+                                    List.of(io.haifa.agent.runtime.core.completion.CompletionBlocker.recoverable(
+                                            "REQUIRED_ARTIFACT_MISSING",
+                                            "A required artifact is missing.",
+                                            "REQUIRED_ARTIFACT")),
+                                    List.of())
+                            : io.haifa.agent.runtime.core.completion.CompletionPolicyResult.accepted());
+            return builder;
+        });
 
         var accepted = fixture.runtime.start(request("safe-schema-repair"));
         fixture.scheduler.runAll();
@@ -522,6 +536,10 @@ class RuntimeCoreTest {
                 .asString()
                 .contains("Repair the tool arguments", "$/mode", "allowed by the selected mode")
                 .doesNotContain("COMMAND");
+        assertThat(fixture.store.messages(accepted.runId()))
+                .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
+                .singleElement()
+                .satisfies(message -> assertThat(message.metadata()).containsEntry("completionRepairAttempt", 1));
     }
 
     @Test
@@ -1720,7 +1738,7 @@ class RuntimeCoreTest {
                                         "A required artifact is missing.",
                                         "REQUIRED_ARTIFACT")),
                                 List.of()))
-                .repairRetry(new RepairRetryPolicy(1)));
+                .completionRepair(new CompletionRepairPolicy(1)));
         var accepted = fixture.runtime.start(request("todo-and-policy"));
         fixture.store.savePlan(new AgentPlan(
                 new AgentPlanId("plan-1"),
@@ -1900,7 +1918,7 @@ class RuntimeCoreTest {
 
         now.set(now.get().plus(Duration.ofDays(365)));
         var waitingRun = fixture.store.find(accepted.runId()).orElseThrow();
-        assertThat(RunBudgetSnapshot.from(waitingRun, 1, 0, now.get()).remainingWallTimeMillis())
+        assertThat(RunBudgetSnapshot.from(waitingRun, 1, now.get()).remainingWallTimeMillis())
                 .isEqualTo(waitingRun.limits().maxWallTimeMillis());
         fixture.runtime.respond(new InteractionResponse(
                 new InteractionResponseId("long-wait-response"),
@@ -2161,7 +2179,7 @@ class RuntimeCoreTest {
                             toolCalls.incrementAndGet();
                             return new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false);
                         })
-                .repairRetry(new RepairRetryPolicy(0)));
+                .completionRepair(new CompletionRepairPolicy(0)));
 
         var accepted = fixture.runtime.start(request("policy-denial"));
         fixture.scheduler.runAll();

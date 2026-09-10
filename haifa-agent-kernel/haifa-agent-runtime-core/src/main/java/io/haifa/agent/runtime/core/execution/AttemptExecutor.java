@@ -16,8 +16,6 @@ import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
-import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.trace.FailureDiagnosticSink;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceContext;
@@ -42,8 +40,6 @@ public final class AttemptExecutor {
     private final RunTransitionCoordinator transitions;
     private final TimeProvider time;
     private final String owner;
-    private final RetryExecutor persistenceRetries;
-    private final PersistenceRetryPolicy persistenceRetry;
     private final TracePort trace;
     private final TraceIdentifierGenerator traceIds;
     private final IdentifierGenerator ids;
@@ -55,8 +51,6 @@ public final class AttemptExecutor {
             RunTransitionCoordinator transitions,
             TimeProvider time,
             String owner,
-            RetryExecutor persistenceRetries,
-            PersistenceRetryPolicy persistenceRetry,
             TracePort trace,
             TraceIdentifierGenerator traceIds,
             IdentifierGenerator ids,
@@ -66,8 +60,6 @@ public final class AttemptExecutor {
         this.transitions = Objects.requireNonNull(transitions);
         this.time = Objects.requireNonNull(time);
         this.owner = Objects.requireNonNull(owner);
-        this.persistenceRetries = Objects.requireNonNull(persistenceRetries);
-        this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
         this.trace = Objects.requireNonNull(trace);
         this.traceIds = Objects.requireNonNull(traceIds);
         this.ids = Objects.requireNonNull(ids);
@@ -200,12 +192,7 @@ public final class AttemptExecutor {
     }
 
     private void persist(Runnable work) {
-        persistenceRetries.execute(
-                () -> {
-                    work.run();
-                    return null;
-                },
-                persistenceRetry.policy());
+        work.run();
     }
 
     private static ExecutionAttemptStatus statusFor(AgentRunStatus status) {

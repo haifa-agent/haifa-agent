@@ -129,9 +129,8 @@ UoW 始终保持 JDBC `autoCommit=true`，在同一 Connection 上显式执行�
 不得嵌套进入只读事务。任何嵌套失败都会把外层标记为 rollback-only。MyBatis 使用 `MANAGED` 且
 `closeConnection=false`，不会提交、回滚或关闭 UoW Connection。
 
-`BEGIN IMMEDIATE` 在事务工作执行前遇到 SQLite `BUSY/LOCKED` 时分类为 `DATABASE_BUSY`。这只是供
-Application 选择安全、有界重试的精确信号；事务工作开始后的 SQL、提交不确定性或其他数据库错误不会被
-归入该类别。
+`BEGIN IMMEDIATE` 在事务工作执行前遇到 SQLite `BUSY/LOCKED` 时由 Store 自身做有界重试；耗尽后分类为
+`DATABASE_BUSY`。事务工作开始后的 SQL、提交不确定性或其他数据库错误不会被重试或归入该类别。
 
 ## Schema 与 Migration
 
@@ -208,7 +207,7 @@ Tool Result Asset 使用 Tool Call ID 形成稳定且逐调用唯一的 Asset ID
 | Atomic composition | `SqliteRuntimeUnitOfWork`、`SqliteStoreFoundation.persistencePorts(...)` |
 
 Project Application/CLI 已实现显式 `MEMORY`、`SQLITE`、`SQLITE_WITH_JSONL` 选择，并在启动时注入
-Runtime Port、唯一 worker ID 与安全 busy retry。持久 payload protection 可显式选择本地明文 `NONE`
+Runtime Port、唯一 worker ID 与 Store 内安全 busy retry。持久 payload protection 可显式选择本地明文 `NONE`
 或 `AES_GCM`；后者当前只解析稳定 `env://` secret reference。仍未接入的边界包括常驻 Outbox 后台
 投递器，以及生产环境 KMS/Vault 密钥解析与轮换。
 

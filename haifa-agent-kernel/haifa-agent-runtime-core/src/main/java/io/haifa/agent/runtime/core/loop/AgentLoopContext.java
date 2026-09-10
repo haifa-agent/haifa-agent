@@ -8,7 +8,6 @@ import java.util.Set;
 
 public final class AgentLoopContext {
     private int iteration;
-    private int repairAttempts;
     private int forcedContextRebuildAttempts;
     private final Set<Integer> issuedBudgetThresholds = new LinkedHashSet<>();
     private RunBudgetSnapshot budgetSnapshot;
@@ -55,21 +54,6 @@ public final class AgentLoopContext {
 
     public Optional<RunBudgetSnapshot> budgetSnapshot() {
         return Optional.ofNullable(budgetSnapshot);
-    }
-
-    public int recordRepairAttempt() {
-        return ++repairAttempts;
-    }
-
-    public int repairAttempts() {
-        return repairAttempts;
-    }
-
-    public void restoreRepairAttempts(int attempts) {
-        if (attempts < repairAttempts) {
-            throw new IllegalArgumentException("repair attempts must not move backwards");
-        }
-        repairAttempts = attempts;
     }
 
     public int recordForcedContextRebuild() {

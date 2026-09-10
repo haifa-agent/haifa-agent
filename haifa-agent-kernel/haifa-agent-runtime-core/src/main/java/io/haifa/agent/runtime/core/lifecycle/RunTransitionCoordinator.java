@@ -12,8 +12,6 @@ import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.run.RunTerminationReason;
 import io.haifa.agent.runtime.api.AgentRunListener;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
-import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeEvent;
@@ -40,8 +38,6 @@ public final class RunTransitionCoordinator {
     private final TimeProvider time;
     private final RunAwaiter awaiter;
     private final RuntimeUnitOfWork unitOfWork;
-    private final RetryExecutor retries;
-    private final PersistenceRetryPolicy persistenceRetry;
     private final Map<AgentRunId, Object> locks = new ConcurrentHashMap<>();
     private final List<AgentRunListener> listeners = new CopyOnWriteArrayList<>();
 
@@ -53,9 +49,7 @@ public final class RunTransitionCoordinator {
             IdentifierGenerator ids,
             TimeProvider time,
             RunAwaiter awaiter,
-            RuntimeUnitOfWork unitOfWork,
-            RetryExecutor retries,
-            PersistenceRetryPolicy persistenceRetry) {
+            RuntimeUnitOfWork unitOfWork) {
         this.runs = Objects.requireNonNull(runs);
         this.state = Objects.requireNonNull(state);
         this.events = Objects.requireNonNull(events);
@@ -64,8 +58,6 @@ public final class RunTransitionCoordinator {
         this.time = Objects.requireNonNull(time);
         this.awaiter = Objects.requireNonNull(awaiter);
         this.unitOfWork = Objects.requireNonNull(unitOfWork);
-        this.retries = Objects.requireNonNull(retries);
-        this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
     }
 
     public AgentRunSnapshot queued(AgentRun run) {
@@ -107,8 +99,7 @@ public final class RunTransitionCoordinator {
     public AgentRunSnapshot completedWithOutput(
             AgentRun run, AgentRunResult result, String output, SessionMessageDraft finalMessage) {
         synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
-            AgentRunSnapshot snapshot = retries.execute(
-                    () -> unitOfWork.execute(() -> {
+            AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
                         long expectedVersion = run.version();
                         AgentRunStatus previous = run.status();
                         run.beginCompleting(time.now());
@@ -137,8 +128,7 @@ public final class RunTransitionCoordinator {
                         AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
                         unitOfWork.afterCommit(() -> notifyCommitted(committed));
                         return committed;
-                    }),
-                    persistenceRetry.policy());
+                    });
             return snapshot;
         }
     }
@@ -151,8 +141,7 @@ public final class RunTransitionCoordinator {
     public AgentRunSnapshot failedWithOutput(
             AgentRun run, AgentError error, String output, SessionMessageDraft finalMessage) {
         synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
-            AgentRunSnapshot snapshot = retries.execute(
-                    () -> unitOfWork.execute(() -> {
+            AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
                         long expectedVersion = run.version();
                         AgentRunStatus previous = run.status();
                         state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
@@ -171,8 +160,7 @@ public final class RunTransitionCoordinator {
                         AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
                         unitOfWork.afterCommit(() -> notifyCommitted(committed));
                         return committed;
-                    }),
-                    persistenceRetry.policy());
+                    });
             return snapshot;
         }
     }
@@ -195,8 +183,7 @@ public final class RunTransitionCoordinator {
 
     private AgentRunSnapshot mutate(AgentRun run, String eventType, Consumer<AgentRun> mutation) {
         synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
-            AgentRunSnapshot snapshot = retries.execute(
-                    () -> unitOfWork.execute(() -> {
+            AgentRunSnapshot snapshot = unitOfWork.execute(() -> {
                         long expectedVersion = run.version();
                         AgentRunStatus previous = run.status();
                         mutation.accept(run);
@@ -214,8 +201,7 @@ public final class RunTransitionCoordinator {
                         AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
                         unitOfWork.afterCommit(() -> notifyCommitted(committed));
                         return committed;
-                    }),
-                    persistenceRetry.policy());
+                    });
             return snapshot;
         }
     }
