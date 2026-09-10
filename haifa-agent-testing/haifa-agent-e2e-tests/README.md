@@ -31,4 +31,4 @@ Case 009 验证审批拒绝后的零副作用，不包含验证脚本。隐藏 O
 
 `CP-11` 的 Approval 驱动只根据 `CodingSessionClient.pendingInteraction` 返回的权威 Target 响应；
 任何 Target 错位、缺失或额外 Approval 都会 fail closed。HTTP/SSE、Cursor
-重连和跨产品 Interaction Fixture 继续由 `haifa-agent-transport-tck` 确定性验证。
+重连和跨产品 Interaction Fixture 继续由 `haifa-agent-integration-tests` 确定性验证。
