@@ -42,9 +42,8 @@ public final class WebFetchToolProvider implements ToolProvider {
         try {
             var decision = urlPolicy.evaluate(WebToolProviderSupport.uri(arguments, "url"));
             if (!decision.allowed()) {
-                throw new ToolInvocationException(
+                throw ToolInvocationException.preflight(
                         WebFailureCode.WEB_URL_DENIED.name(),
-                        ToolDispatchState.NOT_DISPATCHED,
                         "web URL was denied by policy: " + decision.denialCode().orElse("URL_DENIED"));
             }
             WebContentFormat preferred = WebToolProviderSupport.enumValue(

@@ -1107,9 +1107,8 @@ class RuntimeCoreTest {
                         builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
                             int callIndex = toolCalls.incrementAndGet();
                             if (callIndex == 1) {
-                                throw new io.haifa.agent.tool.api.ToolInvocationException(
+                                throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
                                         "NETWORK_PERMISSION_REQUIRED",
-                                        io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
                                         "host network access requires operator approval before execution");
                             }
                             return new ToolResult(
@@ -1157,9 +1156,8 @@ class RuntimeCoreTest {
                 builder -> TestToolPlatform.install(
                         builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
                             toolCalls.incrementAndGet();
-                            throw new io.haifa.agent.tool.api.ToolInvocationException(
+                            throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
                                     "NETWORK_PERMISSION_REQUIRED",
-                                    io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
                                     "host network access requires operator approval before execution");
                         }));
 
@@ -1224,10 +1222,8 @@ class RuntimeCoreTest {
                 builder -> TestToolPlatform.install(
                         builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
                             toolCalls.incrementAndGet();
-                            throw new io.haifa.agent.tool.api.ToolInvocationException(
-                                    "NETWORK_PERMISSION_REQUIRED",
-                                    io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
-                                    "host network access requires operator approval");
+                            throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
+                                    "NETWORK_PERMISSION_REQUIRED", "host network access requires operator approval");
                         }));
 
         var accepted = fixture.runtime.start(request("batch-failure"));
@@ -1333,10 +1329,8 @@ class RuntimeCoreTest {
         Fixture fixture = fixture(
                 model(new ToolCallDecision(List.of(request)), finalDecision("done")),
                 builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
-                    throw new io.haifa.agent.tool.api.ToolInvocationException(
-                            "SANDBOX_PROVISION_FAILED",
-                            io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
-                            "sandbox provisioning failed before execution");
+                    throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
+                            "SANDBOX_PROVISION_FAILED", "sandbox provisioning failed before execution");
                 }));
 
         var run = fixture.runtime.start(request("sandbox-provision"));
@@ -1347,11 +1341,66 @@ class RuntimeCoreTest {
         assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
         assertThat(toolCall.error().orElseThrow().error().details())
                 .containsEntry("failureCode", "SANDBOX_PROVISION_FAILED")
-                .containsEntry("dispatchState", "NOT_DISPATCHED");
+                .containsEntry("dispatchState", "NOT_DISPATCHED")
+                .containsEntry("preflight", true);
         assertThat(fixture.store.eventsFor(run.runId()))
                 .filteredOn(event -> event.type().equals("tool.failed"))
                 .singleElement()
                 .satisfies(event -> assertThat(event.data()).containsEntry("reasonCode", "SANDBOX_PROVISION_FAILED"));
+    }
+
+    @Test
+    void nonPreflightStableFailureCodeFailsTheRunFailClosed() {
+        ToolRequest request =
+                toolRequest("sandbox-internal", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
+                    throw new io.haifa.agent.tool.api.ToolInvocationException(
+                            "SANDBOX_PROVISION_FAILED",
+                            io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
+                            "internal sandbox error");
+                }));
+
+        var run = fixture.runtime.start(request("sandbox-internal"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(run.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        var toolCall = fixture.store.toolCalls(run.runId()).getFirst();
+        assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
+        assertThat(toolCall.error().orElseThrow().error().details())
+                .containsEntry("failureCode", "SANDBOX_PROVISION_FAILED")
+                .containsEntry("dispatchState", "NOT_DISPATCHED")
+                .containsEntry("preflight", false);
+        assertThat(fixture.store.eventsFor(run.runId()))
+                .filteredOn(event -> event.type().equals("tool.failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data()).containsEntry("reasonCode", "SANDBOX_PROVISION_FAILED"));
+    }
+
+    @Test
+    void unhandledBrokerOrMcpSchemaFailureCodeFailsTheRunFailClosed() {
+        ToolRequest request =
+                toolRequest("mcp-schema-fault", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
+                    throw new io.haifa.agent.tool.api.ToolInvocationException(
+                            "MCP_TOOL_SCHEMA_NOT_DISCOVERED",
+                            io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
+                            "MCP tool must be discovered before it can be called");
+                }));
+
+        var run = fixture.runtime.start(request("mcp-schema-fault"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(run.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        var toolCall = fixture.store.toolCalls(run.runId()).getFirst();
+        assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
+        assertThat(toolCall.error().orElseThrow().error().details())
+                .containsEntry("failureCode", "MCP_TOOL_SCHEMA_NOT_DISCOVERED")
+                .containsEntry("dispatchState", "NOT_DISPATCHED")
+                .containsEntry("preflight", false);
     }
 
     @Test
