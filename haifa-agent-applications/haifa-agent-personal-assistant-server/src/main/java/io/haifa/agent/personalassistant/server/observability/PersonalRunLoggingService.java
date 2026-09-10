@@ -82,9 +82,9 @@ public final class PersonalRunLoggingService {
                 PersonalAssistantApplication.RunView run = current.orElseThrow();
                 if (RECOVERABLE_RUN_STATUSES.contains(run.status())) {
                     application.recover(runId);
-                    trigger = "application-recovered";
+                    trigger = "application-interrupted";
                     LOGGER.info(
-                            "event=run.recovery.submitted conversationId={} runId={} previousStatus={}",
+                            "event=run.interruption.settled conversationId={} runId={} previousStatus={}",
                             conversation.id(),
                             runId,
                             run.status());

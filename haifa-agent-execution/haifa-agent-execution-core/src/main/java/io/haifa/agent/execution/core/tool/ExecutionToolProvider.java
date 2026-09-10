@@ -20,10 +20,11 @@ import io.haifa.agent.execution.core.manifest.ManifestBudgetException;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.sandbox.api.SandboxException;
+import io.haifa.agent.sandbox.api.SandboxPreflightException;
 import io.haifa.agent.tool.api.ToolCancellation;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolDispatchState;
+import io.haifa.agent.tool.api.ToolFailureKind;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
@@ -365,15 +366,15 @@ public final class ExecutionToolProvider implements ToolProvider {
         }
     }
 
-    private static ToolInvocationException invocationFailure(RuntimeException exception, boolean dispatched) {
+    private static RuntimeException invocationFailure(RuntimeException exception, boolean dispatched) {
         String code;
         String message;
         if (exception instanceof ExecutionRejectedException rejected) {
             code = rejected.code();
             message = rejected.getMessage();
-        } else if (exception instanceof SandboxException sandbox) {
-            code = sandbox.code();
-            message = sandbox.getMessage();
+        } else if (exception instanceof SandboxPreflightException preflight) {
+            code = preflight.code();
+            message = preflight.getMessage();
         } else if (exception instanceof ManifestBudgetException) {
             code = "MANIFEST_BUDGET_EXCEEDED";
             message = "workspace manifest exceeded the configured execution budget";
@@ -381,14 +382,12 @@ public final class ExecutionToolProvider implements ToolProvider {
             code = preflight.code();
             message = preflight.getMessage();
         } else {
-            code = "EXECUTION_PROVIDER_FAILED";
-            message = "execution provider failed";
+            return exception;
         }
-        return new ToolInvocationException(
-                code,
-                dispatched ? ToolDispatchState.OUTCOME_UNKNOWN : ToolDispatchState.NOT_DISPATCHED,
-                message,
-                exception);
+        return dispatched
+                ? new ToolInvocationException(
+                        code, ToolDispatchState.OUTCOME_UNKNOWN, ToolFailureKind.EXECUTION, message, exception)
+                : ToolInvocationException.preflight(code, message, exception);
     }
 
     private ToolResult toToolResult(ExecutionResult result, MergedTailObserver merged, ParsedInvocation parsed) {

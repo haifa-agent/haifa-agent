@@ -27,6 +27,9 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.credential.api.CredentialBroker;
+import io.haifa.agent.credential.api.CredentialRequirement;
+import io.haifa.agent.credential.api.SecretRedactor;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
@@ -65,8 +68,8 @@ import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.retry.BackoffStrategy;
+import io.haifa.agent.runtime.core.retry.CompletionRepairPolicy;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
@@ -74,7 +77,6 @@ import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
-import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolReconciliation;
@@ -162,7 +164,7 @@ class RuntimeCoreTest {
         assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(completed.output()).contains("done");
         assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(1);
-        assertThat(fixture.store.checkpointsFor(accepted.runId())).isNotEmpty();
+        assertThat(fixture.store.checkpointsFor(accepted.runId())).isEmpty();
         assertThat(fixture.store.eventsFor(accepted.runId()).stream().map(event -> event.sequence()))
                 .containsExactlyElementsOf(java.util.stream.LongStream.rangeClosed(
                                 1, fixture.store.eventsFor(accepted.runId()).size())
@@ -467,6 +469,7 @@ class RuntimeCoreTest {
     @Test
     void schemaRejectionReturnsAValueFreeRepairHintToTheModel() {
         AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger completionChecks = new AtomicInteger();
         AtomicReference<AgentChatRequest> repairRequest = new AtomicReference<>();
         ToolRequest invalid = toolRequest(
                 "invalid-mode", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of("mode", "COMMAND")));
@@ -474,7 +477,10 @@ class RuntimeCoreTest {
             if (modelCalls.getAndIncrement() == 0) {
                 return response(new ToolCallDecision(List.of(invalid)));
             }
-            repairRequest.set(request);
+            if (modelCalls.get() == 2) {
+                repairRequest.set(request);
+                return response(finalDecision("premature completion"));
+            }
             return response(finalDecision("repaired"));
         };
         Map<String, Object> inputSchema = Map.of(
@@ -488,15 +494,25 @@ class RuntimeCoreTest {
                 List.of("mode"),
                 "additionalProperties",
                 false);
-        Fixture fixture = fixture(
-                model,
-                builder -> TestToolPlatform.installWithInputSchema(
-                        builder,
-                        "echo",
-                        "1.0.0",
-                        "echo.input",
-                        inputSchema,
-                        request -> new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false)));
+        Fixture fixture = fixture(model, builder -> {
+            TestToolPlatform.installWithInputSchema(
+                    builder,
+                    "echo",
+                    "1.0.0",
+                    "echo.input",
+                    inputSchema,
+                    request -> new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false));
+            builder.completionRepair(new CompletionRepairPolicy(1))
+                    .completionPolicy((run, decision) -> completionChecks.getAndIncrement() == 0
+                            ? io.haifa.agent.runtime.core.completion.CompletionPolicyResult.blocked(
+                                    List.of(io.haifa.agent.runtime.core.completion.CompletionBlocker.recoverable(
+                                            "REQUIRED_ARTIFACT_MISSING",
+                                            "A required artifact is missing.",
+                                            "REQUIRED_ARTIFACT")),
+                                    List.of())
+                            : io.haifa.agent.runtime.core.completion.CompletionPolicyResult.accepted());
+            return builder;
+        });
 
         var accepted = fixture.runtime.start(request("safe-schema-repair"));
         fixture.scheduler.runAll();
@@ -513,6 +529,10 @@ class RuntimeCoreTest {
                 .asString()
                 .contains("Repair the tool arguments", "$/mode", "allowed by the selected mode")
                 .doesNotContain("COMMAND");
+        assertThat(fixture.store.messages(accepted.runId()))
+                .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
+                .singleElement()
+                .satisfies(message -> assertThat(message.metadata()).containsEntry("completionRepairAttempt", 1));
     }
 
     @Test
@@ -538,8 +558,7 @@ class RuntimeCoreTest {
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .anyMatch(event -> event.type().equals("run.safe-point"));
 
-        var staleResume = new ResumeAgentRunRequest(
-                "resume-stale", accepted.runId(), Optional.empty(), OptionalLong.of(999), List.of());
+        var staleResume = new ResumeAgentRunRequest("resume-stale", accepted.runId(), OptionalLong.of(999), List.of());
         assertThatThrownBy(() -> fixture.runtime.resume(staleResume))
                 .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
                         .isEqualTo(RuntimeApiErrorCode.RUN_VERSION_CONFLICT));
@@ -962,7 +981,7 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void reconcilesAnAbandonedLocalToolFromDurableEvidenceWithoutReplayingIt() {
+    void doesNotAutomaticallyCallEvenAnAvailableReconciliationProvider() {
         AtomicBoolean owned = new AtomicBoolean(true);
         AtomicInteger invocations = new AtomicInteger();
         AtomicInteger reconciliations = new AtomicInteger();
@@ -1013,19 +1032,18 @@ class RuntimeCoreTest {
         fixture.scheduler.runAll();
 
         assertThat(invocations).hasValue(1);
-        assertThat(reconciliations).hasValue(1);
-        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.COMPLETED);
-        assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> {
-            assertThat(call.status().name()).isEqualTo("COMPLETED");
-            assertThat(fixture.journal.state(accepted.runId(), call.idempotencyKey()))
-                    .contains(ToolJournalState.COMPLETED);
-        });
-        assertThat(recoveredRequest.get().messages())
-                .anyMatch(message -> message.role() == ModelMessageRole.TOOL
-                        && message.content().contains("write observed after recovery"));
+        assertThat(reconciliations).hasValue(0);
+        assertThat(modelCalls).hasValue(1);
+        assertThat(recoveredRequest.get()).isNull();
+        assertThat(fixture.runtime
+                        .find(accepted.runId())
+                        .orElseThrow()
+                        .error()
+                        .orElseThrow()
+                        .code())
+                .isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
         assertThat(fixture.store.eventsFor(accepted.runId()))
-                .anySatisfy(event -> assertThat(event.type()).isEqualTo("tool.reconciled"));
+                .noneMatch(event -> event.type().equals("tool.reconciled"));
     }
 
     @Test
@@ -1062,7 +1080,7 @@ class RuntimeCoreTest {
         fixture.scheduler.runAll();
 
         assertThat(invocations).hasValue(1);
-        assertThat(reconciliations).hasValue(1);
+        assertThat(reconciliations).hasValue(0);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
             assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
             assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
@@ -1070,48 +1088,62 @@ class RuntimeCoreTest {
         assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> {
             assertThat(call.status().name()).isEqualTo("FAILED");
             assertThat(call.error().orElseThrow().error().details())
-                    .containsEntry("reconcileStatus", "STILL_UNKNOWN")
-                    .containsEntry("reconcileReason", "LOCAL_EVIDENCE_MISSING")
-                    .containsEntry("stopReason", "SIDE_EFFECTING_REPLAY_FORBIDDEN");
+                    .containsEntry("stopReason", "AUTOMATIC_REPLAY_FORBIDDEN");
             assertThat(fixture.journal.state(accepted.runId(), call.idempotencyKey()))
                     .contains(ToolJournalState.OUTCOME_UNKNOWN);
         });
     }
 
     @Test
-    void eligibleKnownNotDispatchedFailureCreatesOneDeterministicSuccessorWithoutModelReplay() {
+    void notDispatchedFailureClosesToolCallAndLetsModelContinueWithOrdinaryNewToolCall() {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger toolCalls = new AtomicInteger();
-        ToolRequest request = toolRequest(
+        ToolRequest firstRequest = toolRequest(
                 "network-permission",
                 "execution_run",
                 "1.0.0",
                 new ToolArguments("execution.run.input", "1.0", Map.of()));
+        ToolRequest secondRequest = toolRequest(
+                "new-ordinary-call",
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.run.input", "1.0", Map.of("retry", true)));
         Fixture fixture = fixture(
-                ignored -> response(
-                        modelCalls.incrementAndGet() == 1
-                                ? new ToolCallDecision(List.of(request))
-                                : finalDecision("recovered")),
+                ignored -> {
+                    int turn = modelCalls.incrementAndGet();
+                    if (turn == 1) {
+                        return response(new ToolCallDecision(List.of(firstRequest)));
+                    } else if (turn == 2) {
+                        return response(new ToolCallDecision(List.of(secondRequest)));
+                    } else {
+                        return response(finalDecision("recovered"));
+                    }
+                },
                 builder -> TestToolPlatform.install(
                         builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
-                            if (toolCalls.incrementAndGet() == 1) {
-                                throw new io.haifa.agent.tool.api.ToolInvocationException(
+                            int callIndex = toolCalls.incrementAndGet();
+                            if (callIndex == 1) {
+                                throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
                                         "NETWORK_PERMISSION_REQUIRED",
-                                        io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
                                         "host network access requires operator approval before execution");
                             }
                             return new ToolResult(
-                                    true, "written after recovery", Map.of(), List.of(), List.of(), false);
+                                    true, "written after normal retry", Map.of(), List.of(), List.of(), false);
                         }));
 
         var accepted = fixture.runtime.start(request("network-permission"));
         fixture.scheduler.runAll();
 
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.WAITING_INTERACTION);
-        assertThat(modelCalls).hasValue(1);
-        assertThat(toolCalls).hasValue(1);
-        var original = fixture.store.toolCalls(accepted.runId()).getFirst();
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.interactions.pending(accepted.runId())).isEmpty();
+        assertThat(modelCalls).hasValue(3);
+        assertThat(toolCalls).hasValue(2);
+
+        var toolCallsInStore = fixture.store.toolCalls(accepted.runId());
+        assertThat(toolCallsInStore).hasSize(2);
+
+        var original = toolCallsInStore.getFirst();
         assertThat(original.status().name()).isEqualTo("FAILED");
         assertThat(original.error().orElseThrow().error().code()).isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
         assertThat(original.error().orElseThrow().error().details())
@@ -1119,42 +1151,47 @@ class RuntimeCoreTest {
                 .containsEntry("dispatchState", "NOT_DISPATCHED");
         assertThat(fixture.journal.state(accepted.runId(), original.idempotencyKey()))
                 .contains(ToolJournalState.FAILED);
-        var recovery = fixture.interactions.pending(accepted.runId()).orElseThrow();
-        assertThat(recovery.id().value()).startsWith("execution-recovery:v1:");
-        assertThat(recovery.type()).isEqualTo("execution-recovery");
-        assertThat(recovery.target()).isInstanceOf(ToolApprovalTarget.class);
-        assertThat(((ToolApprovalTarget) recovery.target()).toolCallId()).isEqualTo(original.id());
 
-        fixture.runtime.respond(new InteractionResponse(
-                new InteractionResponseId("recovery-response"),
-                recovery.id(),
-                accepted.runId(),
-                InteractionResponseType.APPROVE,
-                List.of(),
-                "recovery-key",
-                Instant.parse("2026-07-21T00:00:00Z")));
+        var successorCall = toolCallsInStore.get(1);
+        assertThat(successorCall.id()).isNotEqualTo(original.id());
+        assertThat(successorCall.id().value()).doesNotStartWith("execution-recovery-tool:v1:");
+        assertThat(successorCall.status().name()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void notDispatchedFailureAllowsModelToReportBlockerWithoutRetry() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        ToolRequest request = toolRequest(
+                "network-blocker", "execution_run", "1.0.0", new ToolArguments("execution.run.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                ignored -> response(
+                        modelCalls.incrementAndGet() == 1
+                                ? new ToolCallDecision(List.of(request))
+                                : finalDecision("Network permission is required to proceed")),
+                builder -> TestToolPlatform.install(
+                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
+                            toolCalls.incrementAndGet();
+                            throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
+                                    "NETWORK_PERMISSION_REQUIRED",
+                                    "host network access requires operator approval before execution");
+                        }));
+
+        var accepted = fixture.runtime.start(request("network-blocker"));
         fixture.scheduler.runAll();
 
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.interactions.pending(accepted.runId())).isEmpty();
+        assertThat(fixture.store.toolCalls(accepted.runId())).hasSize(1);
+        assertThat(fixture.store.toolCalls(accepted.runId()).getFirst().status())
+                .isEqualTo(ToolCallStatus.FAILED);
         assertThat(modelCalls).hasValue(2);
-        assertThat(toolCalls).hasValue(2);
-        assertThat(fixture.store.toolCalls(accepted.runId()))
-                .hasSize(2)
-                .satisfiesExactly(
-                        first -> {
-                            assertThat(first.id()).isEqualTo(original.id());
-                            assertThat(first.status().name()).isEqualTo("FAILED");
-                        },
-                        successor -> {
-                            assertThat(successor.id()).isNotEqualTo(original.id());
-                            assertThat(successor.status().name()).isEqualTo("COMPLETED");
-                            assertThat(successor.arguments()).isEqualTo(original.arguments());
-                        });
+        assertThat(toolCalls).hasValue(1);
     }
 
     @Test
-    void workspaceObserverFailureRemainsIneligibleForExecutionRecovery() {
+    void workspaceObserverFailureWithoutNotDispatchedFailsClosed() {
         AtomicInteger toolCalls = new AtomicInteger();
         ToolRequest request = toolRequest(
                 "observer-unavailable",
@@ -1166,10 +1203,7 @@ class RuntimeCoreTest {
                 builder -> TestToolPlatform.install(
                         builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
                             toolCalls.incrementAndGet();
-                            throw new io.haifa.agent.tool.api.ToolInvocationException(
-                                    "WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE",
-                                    io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
-                                    "workspace change observation could not be established before execution");
+                            throw new IllegalStateException("workspace change observation could not be established");
                         }));
 
         var accepted = fixture.runtime.start(request("observer-unavailable"));
@@ -1183,87 +1217,44 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void rejectingExecutionRecoveryCreatesNoSuccessor() {
-        AtomicInteger toolCalls = new AtomicInteger();
-        ToolRequest request = toolRequest(
-                "recovery-rejected",
-                "execution_run",
-                "1.0.0",
-                new ToolArguments("execution.run.input", "1.0", Map.of()));
-        Fixture fixture = fixture(
-                model(new ToolCallDecision(List.of(request))),
-                builder -> TestToolPlatform.install(
-                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
-                            toolCalls.incrementAndGet();
-                            throw new io.haifa.agent.tool.api.ToolInvocationException(
-                                    "NETWORK_PERMISSION_REQUIRED",
-                                    io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
-                                    "host network access requires operator approval before execution");
-                        }));
-
-        var accepted = fixture.runtime.start(request("recovery-rejected"));
-        fixture.scheduler.runAll();
-        var recovery = fixture.interactions.pending(accepted.runId()).orElseThrow();
-
-        fixture.runtime.respond(new InteractionResponse(
-                new InteractionResponseId("recovery-rejected-response"),
-                recovery.id(),
-                accepted.runId(),
-                InteractionResponseType.REJECT,
-                List.of(),
-                "recovery-rejected-key",
-                Instant.parse("2026-07-21T00:00:00Z")));
-        fixture.scheduler.runAll();
-
-        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.CANCELLED);
-        assertThat(fixture.store.toolCalls(accepted.runId())).hasSize(1);
-        assertThat(toolCalls).hasValue(1);
-    }
-
-    @Test
-    void failedRecoverySuccessorCannotCreateASecondRecoveryInteraction() {
+    void notDispatchedFailureCancelsPendingSiblingToolsInSameBatch() {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger toolCalls = new AtomicInteger();
-        ToolRequest request = toolRequest(
-                "one-hop-recovery",
+        ToolRequest firstRequest = toolRequest(
+                "batch-call-1",
                 "execution_run",
                 "1.0.0",
-                new ToolArguments("execution.run.input", "1.0", Map.of()));
+                new ToolArguments("execution.run.input", "1.0", Map.of("step", 1)));
+        ToolRequest secondRequest = toolRequest(
+                "batch-call-2",
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.run.input", "1.0", Map.of("step", 2)));
         Fixture fixture = fixture(
                 ignored -> response(
                         modelCalls.incrementAndGet() == 1
-                                ? new ToolCallDecision(List.of(request))
-                                : finalDecision("must-not-be-reached")),
+                                ? new ToolCallDecision(List.of(firstRequest, secondRequest))
+                                : finalDecision("handled sibling failure")),
                 builder -> TestToolPlatform.install(
                         builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
                             toolCalls.incrementAndGet();
-                            throw new io.haifa.agent.tool.api.ToolInvocationException(
-                                    "NETWORK_PERMISSION_REQUIRED",
-                                    io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
-                                    "host network access requires operator approval before execution");
+                            throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
+                                    "NETWORK_PERMISSION_REQUIRED", "host network access requires operator approval");
                         }));
 
-        var accepted = fixture.runtime.start(request("one-hop-recovery"));
-        fixture.scheduler.runAll();
-        var recovery = fixture.interactions.pending(accepted.runId()).orElseThrow();
-        fixture.runtime.respond(new InteractionResponse(
-                new InteractionResponseId("one-hop-recovery-response"),
-                recovery.id(),
-                accepted.runId(),
-                InteractionResponseType.APPROVE,
-                List.of(),
-                "one-hop-recovery-key",
-                Instant.parse("2026-07-21T00:00:00Z")));
+        var accepted = fixture.runtime.start(request("batch-failure"));
         fixture.scheduler.runAll();
 
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.FAILED);
+                .isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(fixture.interactions.pending(accepted.runId())).isEmpty();
-        assertThat(fixture.store.toolCalls(accepted.runId())).hasSize(2).allSatisfy(call -> assertThat(call.status())
-                .isEqualTo(ToolCallStatus.FAILED));
-        assertThat(modelCalls).hasValue(1);
-        assertThat(toolCalls).hasValue(2);
+        assertThat(toolCalls).hasValue(1);
+        assertThat(modelCalls).hasValue(2);
+
+        var calls = fixture.store.toolCalls(accepted.runId());
+        assertThat(calls).hasSize(2);
+        assertThat(calls.getFirst().status()).isEqualTo(ToolCallStatus.FAILED);
+        assertThat(calls.get(1).status()).isEqualTo(ToolCallStatus.CANCELLED);
     }
 
     @Test
@@ -1306,6 +1297,47 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void executionSpecificFailureAttributesDoNotEnterTheRunError() {
+        ToolRequest request = toolRequest(
+                "execution-failure-attributes",
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.run.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("handled failure")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "execution.run",
+                        "1.0.0",
+                        "execution.run.input",
+                        true,
+                        invocation -> new ToolResult(
+                                false,
+                                "execution failed",
+                                Map.of(
+                                        "stableFailureCode", "NON_ZERO_EXIT",
+                                        "operationFamily", "TEST",
+                                        "commandTarget", "mvn test",
+                                        "sandboxProfileDigest", "sha256:sandbox"),
+                                List.of(),
+                                List.of(),
+                                false)));
+
+        var accepted = fixture.runtime.start(request("execution-failure-attributes"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.store
+                        .toolCalls(accepted.runId())
+                        .getFirst()
+                        .error()
+                        .orElseThrow()
+                        .error()
+                        .details())
+                .containsEntry("stableFailureCode", "NON_ZERO_EXIT")
+                .doesNotContainKeys("operationFamily", "commandTarget", "sandboxProfileDigest");
+    }
+
+    @Test
     void normallyExitedNonZeroExecutionCompletesTheToolAndPublishesOnlyCompletionEvents() {
         ToolRequest request = toolRequest(
                 "non-zero-exit", "execution_run", "1.0.0", new ToolArguments("execution.run.input", "1.0", Map.of()));
@@ -1335,16 +1367,8 @@ class RuntimeCoreTest {
         assertThat(persistedCall.status()).isEqualTo(ToolCallStatus.COMPLETED);
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
-                .contains("tool.succeeded", "execution.completed")
-                .doesNotContain("tool.failed", "execution.failed");
-        assertThat(fixture.store.eventsFor(accepted.runId()))
-                .filteredOn(event -> event.type().equals("execution.completed"))
-                .singleElement()
-                .satisfies(event -> assertThat(event.data())
-                        .containsEntry("toolCallId", persistedCall.id().value())
-                        .containsEntry("rawStatus", "EXITED")
-                        .containsEntry("status", "COMPLETED")
-                        .containsEntry("exitCode", 1));
+                .contains("tool.succeeded")
+                .doesNotContain("tool.failed", "execution.completed", "execution.failed", "execution.cancelled");
     }
 
     @Test
@@ -1352,28 +1376,178 @@ class RuntimeCoreTest {
         ToolRequest request =
                 toolRequest("sandbox-provision", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
         Fixture fixture = fixture(
-                model(new ToolCallDecision(List.of(request))),
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
+                    throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
+                            "SANDBOX_PROVISION_FAILED", "sandbox provisioning failed before execution");
+                }));
+
+        var run = fixture.runtime.start(request("sandbox-provision"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(run.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        var toolCall = fixture.store.toolCalls(run.runId()).getFirst();
+        assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
+        assertThat(toolCall.error().orElseThrow().error().details())
+                .containsEntry("failureCode", "SANDBOX_PROVISION_FAILED")
+                .containsEntry("dispatchState", "NOT_DISPATCHED")
+                .containsEntry("preflight", true);
+        assertThat(fixture.store.eventsFor(run.runId()))
+                .filteredOn(event -> event.type().equals("tool.failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data()).containsEntry("reasonCode", "SANDBOX_PROVISION_FAILED"));
+    }
+
+    @Test
+    void credentialBoundToolPreservesPreflightFailureKindAndContinues() {
+        String secretToken = "super-secret-credential-value";
+        AtomicReference<RuntimeException> redactedFailure = new AtomicReference<>();
+        SecretRedactor redactor = value -> value == null ? null : value.replace(secretToken, "[REDACTED]");
+        CredentialBroker broker = new CredentialBroker() {
+            @Override
+            public Optional<String> getSecret(String credentialId) {
+                return Optional.of(secretToken);
+            }
+
+            @Override
+            public SecretRedactor redactor() {
+                return redactor;
+            }
+        };
+
+        ToolRequest toolCallRequest =
+                toolRequest("secure-call", "secure_op", "1.0.0", new ToolArguments("secure.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(toolCallRequest)), finalDecision("recovered after auth failure")),
+                builder -> {
+                    builder.credentialBroker(broker);
+                    builder.toolRetry(new RetryPolicy(
+                            1,
+                            failure -> {
+                                redactedFailure.set(failure);
+                                return false;
+                            },
+                            BackoffStrategy.none()));
+                    return TestToolPlatform.installWithCredentials(
+                            builder,
+                            "secure_op",
+                            "1.0.0",
+                            "secure.input",
+                            false,
+                            List.of(new CredentialRequirement("test.token")),
+                            invocation -> {
+                                throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
+                                        "AUTH_DENIED", "token " + secretToken + " expired or invalid");
+                            });
+                });
+
+        var run = fixture.runtime.start(request("credential-preflight"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(run.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        var toolCall = fixture.store.toolCalls(run.runId()).getFirst();
+        assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
+        assertThat(toolCall.error().orElseThrow().error().details())
+                .containsEntry("failureCode", "AUTH_DENIED")
+                .containsEntry("dispatchState", "NOT_DISPATCHED")
+                .containsEntry("preflight", true)
+                .containsEntry("failureKind", "PREFLIGHT");
+        assertThat(redactedFailure).hasValueSatisfying(failure -> {
+            assertThat(failure).isInstanceOf(io.haifa.agent.tool.api.ToolInvocationException.class);
+            var invocation = (io.haifa.agent.tool.api.ToolInvocationException) failure;
+            assertThat(invocation.failureKind()).isEqualTo(io.haifa.agent.tool.api.ToolFailureKind.PREFLIGHT);
+            assertThat(invocation.getMessage()).contains("[REDACTED]").doesNotContain(secretToken);
+        });
+    }
+
+    @Test
+    void nonPreflightStableFailureCodeFailsTheRunFailClosed() {
+        ToolRequest request =
+                toolRequest("sandbox-internal", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
                 builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
                     throw new io.haifa.agent.tool.api.ToolInvocationException(
                             "SANDBOX_PROVISION_FAILED",
                             io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
-                            "sandbox provisioning failed before execution");
+                            "internal sandbox error");
                 }));
 
-        var failed = fixture.runtime.start(request("sandbox-provision"));
+        var run = fixture.runtime.start(request("sandbox-internal"));
         fixture.scheduler.runAll();
 
-        assertThat(fixture.runtime
-                        .find(failed.runId())
-                        .orElseThrow()
-                        .error()
-                        .orElseThrow()
-                        .code())
-                .isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
-        assertThat(fixture.store.eventsFor(failed.runId()))
+        assertThat(fixture.runtime.find(run.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        var toolCall = fixture.store.toolCalls(run.runId()).getFirst();
+        assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
+        assertThat(toolCall.error().orElseThrow().error().details())
+                .containsEntry("failureCode", "SANDBOX_PROVISION_FAILED")
+                .containsEntry("dispatchState", "NOT_DISPATCHED")
+                .containsEntry("preflight", false);
+        assertThat(fixture.store.eventsFor(run.runId()))
                 .filteredOn(event -> event.type().equals("tool.failed"))
                 .singleElement()
                 .satisfies(event -> assertThat(event.data()).containsEntry("reasonCode", "SANDBOX_PROVISION_FAILED"));
+    }
+
+    @Test
+    void unhandledBrokerOrMcpSchemaFailureCodeFailsTheRunFailClosed() {
+        ToolRequest request =
+                toolRequest("mcp-schema-fault", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
+                    throw new io.haifa.agent.tool.api.ToolInvocationException(
+                            "MCP_TOOL_SCHEMA_NOT_DISCOVERED",
+                            io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
+                            "MCP tool must be discovered before it can be called");
+                }));
+
+        var run = fixture.runtime.start(request("mcp-schema-fault"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(run.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        var toolCall = fixture.store.toolCalls(run.runId()).getFirst();
+        assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
+        assertThat(toolCall.error().orElseThrow().error().details())
+                .containsEntry("failureCode", "MCP_TOOL_SCHEMA_NOT_DISCOVERED")
+                .containsEntry("dispatchState", "NOT_DISPATCHED")
+                .containsEntry("preflight", false);
+    }
+
+    @Test
+    void internalCatalogBindingFaultFailsTheRunFailClosed() {
+        ToolRequest request =
+                toolRequest("internal-fault", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
+                    throw new IllegalStateException("tool coordinate is not in the frozen catalog");
+                }));
+
+        var run = fixture.runtime.start(request("internal-fault"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(run.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        var toolCall = fixture.store.toolCalls(run.runId()).getFirst();
+        assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
+    }
+
+    @Test
+    void genericToolInvocationFailureFailsTheRunFailClosed() {
+        ToolRequest request =
+                toolRequest("generic-fault", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("done")),
+                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
+                    throw new io.haifa.agent.tool.api.ToolInvocationException("generic unclassified failure");
+                }));
+
+        var run = fixture.runtime.start(request("generic-fault"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(run.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        var toolCall = fixture.store.toolCalls(run.runId()).getFirst();
+        assertThat(toolCall.status()).isEqualTo(ToolCallStatus.FAILED);
     }
 
     @Test
@@ -1410,7 +1584,7 @@ class RuntimeCoreTest {
     }
 
     @Test
-    void recoversFromAnAbandonedAttemptAtTheLatestCheckpoint() {
+    void settlesAbandonedAttemptWithoutAutomaticResume() {
         AtomicInteger calls = new AtomicInteger();
         AtomicBoolean owned = new AtomicBoolean(true);
         List<RuntimeTraceEvent> traces = new ArrayList<>();
@@ -1435,14 +1609,16 @@ class RuntimeCoreTest {
 
         assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
         assertThat(fixture.store.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
-        assertThat(fixture.store.checkpointsFor(accepted.runId())).isNotEmpty();
+        assertThat(fixture.store.checkpointsFor(accepted.runId())).isEmpty();
 
         owned.set(false);
         fixture.runtime.recover(accepted.runId());
+        assertThat(fixture.scheduler.pending()).isZero();
         fixture.scheduler.runAll();
+        assertThat(calls).hasValue(2);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.COMPLETED);
-        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
+                .isEqualTo(AgentRunStatus.FAILED);
+        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(1);
         assertThat(fixture.store
                         .attemptsFor(accepted.runId())
                         .getFirst()
@@ -1450,35 +1626,26 @@ class RuntimeCoreTest {
                         .name())
                 .isEqualTo("ABANDONED");
         assertThat(traces).allSatisfy(trace -> assertThat(trace.runId()).isEqualTo(accepted.runId()));
-        assertThat(traces.stream().map(RuntimeTraceEvent::traceId).distinct()).hasSize(2);
+        assertThat(traces.stream().map(RuntimeTraceEvent::traceId).distinct()).hasSize(1);
         assertThat(traces.stream()
                         .collect(java.util.stream.Collectors.groupingBy(
                                 trace -> trace.attemptId().orElseThrow(),
                                 java.util.stream.Collectors.mapping(
                                         RuntimeTraceEvent::traceId, java.util.stream.Collectors.toSet())))
                         .values())
-                .hasSize(2)
+                .hasSize(1)
                 .allSatisfy(traceIds -> assertThat(traceIds).hasSize(1));
     }
 
     @Test
-    void completionWaitsForTodoConvergenceAndKeepsPartialSuccessStructured() {
+    void unconvergedPlanDoesNotBlockCompletionAndIsLeftUntouched() {
         AtomicInteger calls = new AtomicInteger();
-        AtomicReference<InMemoryRuntimeStore> state = new AtomicReference<>();
-        AtomicReference<io.haifa.agent.core.run.AgentRunId> runId = new AtomicReference<>();
         AgentChatModel model = request -> {
-            if (calls.incrementAndGet() == 2) {
-                TodoItem todo =
-                        state.get().plan(runId.get()).orElseThrow().items().getFirst();
-                todo.start(java.util.Set.of(), Instant.parse("2026-07-21T00:00:00Z"));
-                todo.complete("verified", Instant.parse("2026-07-21T00:00:00Z"));
-            }
+            calls.incrementAndGet();
             return response(finalDecision("complete"));
         };
         Fixture fixture = fixture(model);
-        state.set(fixture.store);
         var accepted = fixture.runtime.start(request("todo"));
-        runId.set(accepted.runId());
         fixture.store.savePlan(new AgentPlan(
                 new AgentPlanId("plan-1"),
                 accepted.runId(),
@@ -1498,8 +1665,54 @@ class RuntimeCoreTest {
         fixture.scheduler.runAll();
 
         var run = fixture.store.find(accepted.runId()).orElseThrow();
-        assertThat(calls).hasValue(2);
+        assertThat(calls).hasValue(1);
         assertThat(run.result().orElseThrow().outcome()).isEqualTo(AgentRunOutcome.SUCCESS);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .noneMatch(event -> event.type().equals("completion.deferred"));
+        assertThat(fixture.store.messages(accepted.runId()))
+                .noneMatch(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")));
+        assertThat(fixture.runtime.plan(accepted.runId()).orElseThrow().items())
+                .singleElement()
+                .satisfies(item -> assertThat(item.status()).isEqualTo("PENDING"));
+    }
+
+    @Test
+    void unconvergedPlanDoesNotBypassProductCompletionPolicy() {
+        AtomicInteger calls = new AtomicInteger();
+        AgentChatModel model = request -> {
+            calls.incrementAndGet();
+            return response(finalDecision("complete"));
+        };
+        Fixture fixture = fixture(model, builder -> builder.completionPolicy(
+                        (run, decision) -> io.haifa.agent.runtime.core.completion.CompletionPolicyResult.blocked(
+                                List.of(io.haifa.agent.runtime.core.completion.CompletionBlocker.recoverable(
+                                        "REQUIRED_ARTIFACT_MISSING",
+                                        "A required artifact is missing.",
+                                        "REQUIRED_ARTIFACT")),
+                                List.of()))
+                .completionRepair(new CompletionRepairPolicy(1)));
+        var accepted = fixture.runtime.start(request("todo-and-policy"));
+        fixture.store.savePlan(new AgentPlan(
+                new AgentPlanId("plan-1"),
+                accepted.runId(),
+                "finish",
+                List.of(new TodoItem(
+                        new TodoItemId("todo-1"), "verify", "verify output", TodoPriority.HIGH, List.of())),
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        var run = fixture.store.find(accepted.runId()).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.COMPLETION_REPAIR_EXHAUSTED);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("completion.deferred"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("phase", "COMPLETION")
+                        .containsEntry("reasonCode", "REQUIRED_ARTIFACT_MISSING"));
+        assertThat(fixture.runtime.plan(accepted.runId()).orElseThrow().items())
+                .singleElement()
+                .satisfies(item -> assertThat(item.status()).isEqualTo("PENDING"));
     }
 
     @Test
@@ -1523,7 +1736,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> {
                             toolCalls.incrementAndGet();
                             dispatchedToolCallId.set(request.toolCallId());
@@ -1602,7 +1815,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> new ToolResult(true, "not called", Map.of(), List.of(), List.of(), false))
                 .publicToolPolicy((run, binding, request) -> {
                     throw new io.haifa.agent.runtime.core.tool.ToolAuthorizationProtocolException(
@@ -1645,7 +1858,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> new ToolResult(true, "written", Map.of(), List.of(), List.of(), false)),
                 now::get);
 
@@ -1657,7 +1870,7 @@ class RuntimeCoreTest {
 
         now.set(now.get().plus(Duration.ofDays(365)));
         var waitingRun = fixture.store.find(accepted.runId()).orElseThrow();
-        assertThat(RunBudgetSnapshot.from(waitingRun, 1, 0, 0, now.get()).remainingWallTimeMillis())
+        assertThat(RunBudgetSnapshot.from(waitingRun, 1, now.get()).remainingWallTimeMillis())
                 .isEqualTo(waitingRun.limits().maxWallTimeMillis());
         fixture.runtime.respond(new InteractionResponse(
                 new InteractionResponseId("long-wait-response"),
@@ -1695,7 +1908,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> {
                             executed.add((Integer) request.arguments().values().get("v"));
                             return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
@@ -1776,7 +1989,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> {
                             invoked.add(request.toolCallId().value() + "|"
                                     + request.arguments().values().get("workdir") + "|"
@@ -1867,7 +2080,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         invocation -> {
                             invocations.incrementAndGet();
                             invocation.observer().dispatched();
@@ -1914,11 +2127,11 @@ class RuntimeCoreTest {
                         toolRequest("denied", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of())))),
                 finalDecision("continued after policy denial"));
         Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
-                        builder, "write", "1.0.0", "write.input", true, ToolPolicyDecision.DENY, request -> {
+                        builder, "write", "1.0.0", "write.input", true, TestToolPlatform.deny(), request -> {
                             toolCalls.incrementAndGet();
                             return new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false);
                         })
-                .repairRetry(new RepairRetryPolicy(0)));
+                .completionRepair(new CompletionRepairPolicy(0)));
 
         var accepted = fixture.runtime.start(request("policy-denial"));
         fixture.scheduler.runAll();
@@ -1956,7 +2169,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> {
                             toolCalls.incrementAndGet();
                             return new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false);
@@ -2020,7 +2233,7 @@ class RuntimeCoreTest {
                         "1.0.0",
                         "write.input",
                         true,
-                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        TestToolPlatform.approvalRequired(),
                         request -> new ToolResult(true, "written", Map.of(), List.of(), List.of(), false))
                 .toolApprovalPrompts((binding, call, reauthentication) -> oversizedPrompt));
 

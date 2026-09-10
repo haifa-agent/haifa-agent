@@ -48,9 +48,6 @@ import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.model.ModelMessageAssembler;
-import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
-import io.haifa.agent.runtime.core.retry.RetryExecutor;
-import io.haifa.agent.runtime.core.retry.Sleeper;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
@@ -122,17 +119,8 @@ class SemanticCompactionCoordinatorTest {
                 CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -204,17 +192,8 @@ class SemanticCompactionCoordinatorTest {
                 CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -327,17 +306,8 @@ class SemanticCompactionCoordinatorTest {
                 .withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -388,17 +358,8 @@ class SemanticCompactionCoordinatorTest {
                 CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -464,17 +425,8 @@ class SemanticCompactionCoordinatorTest {
                 CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -529,17 +481,8 @@ class SemanticCompactionCoordinatorTest {
         CompressionPolicy policy = CompressionPolicy.defaults().withSemanticCompactionEnabled(false);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -595,17 +538,8 @@ class SemanticCompactionCoordinatorTest {
                 CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -686,17 +620,8 @@ class SemanticCompactionCoordinatorTest {
                 CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -767,17 +692,8 @@ class SemanticCompactionCoordinatorTest {
                 CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -849,17 +765,8 @@ class SemanticCompactionCoordinatorTest {
                 CompressionPolicy.defaults().withSemanticCompactionEnabled(true).withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -911,17 +818,8 @@ class SemanticCompactionCoordinatorTest {
                 .withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -972,17 +870,8 @@ class SemanticCompactionCoordinatorTest {
                 .withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -1274,17 +1163,8 @@ class SemanticCompactionCoordinatorTest {
         TimeProvider time = () -> NOW;
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         AgentRun run = createAndSaveRun(store);
 
@@ -1328,17 +1208,8 @@ class SemanticCompactionCoordinatorTest {
                 .withTailTokenBounds(5, 50);
 
         RunAwaiter awaiter = new RunAwaiter();
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                awaiter,
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, awaiter, store);
 
         SummaryModelInvoker invoker = new SummaryModelInvoker(transitions, controls, ids, time, policy);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
@@ -1540,17 +1411,8 @@ class SemanticCompactionCoordinatorTest {
     private static SemanticCompactionCoordinator coordinator(
             InMemoryRuntimeStore store, IdentifierGenerator ids, CompressionPolicy policy) {
         TimeProvider time = () -> NOW;
-        RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
-                ids,
-                time,
-                new RunAwaiter(),
-                store,
-                new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
+        RunTransitionCoordinator transitions =
+                new RunTransitionCoordinator(store, store, store, store, ids, time, new RunAwaiter(), store);
         return new SemanticCompactionCoordinator(
                 store,
                 store,

@@ -891,8 +891,6 @@ CREATE INDEX ix_artifact_project_created ON artifact(project_id, created_at_ms, 
 ALTER TABLE tool_journal ADD COLUMN dispatch_execution_id TEXT;
 ALTER TABLE tool_journal ADD COLUMN dispatch_process_id INTEGER;
 ALTER TABLE tool_journal ADD COLUMN dispatch_workdir_digest TEXT;
-ALTER TABLE tool_journal ADD COLUMN reconcile_status TEXT;
-ALTER TABLE tool_journal ADD COLUMN reconcile_reason TEXT;
 
 CREATE INDEX idx_tool_journal_dispatch_execution
 ON tool_journal(dispatch_execution_id)
@@ -1160,7 +1158,7 @@ INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (4, 'in
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (5, 'sdk_conversation', 'sha256:06850f037485f4e7f31f7b5cd9d2b1e05586e00f02cc2cc0d1148811989234bb', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (6, 'memory_foundation', 'sha256:e414529b92bb6adf84d9fdb00ae2921b01caa70d8bd0c1ff2fdd50c2d7735d2b', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (7, 'artifact_foundation', 'sha256:c806063b8379d2fd28ef80715738c8f614a1d475637a80fa79126cb8d0157354', 0);
-INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (8, 'tool_reconciliation_evidence', 'sha256:9d6eedef3e025900bf300f6a791d23a3ea1744e06b839689b875d01728f2cba5', 0);
+INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (8, 'tool_reconciliation_evidence', 'sha256:cfc930be6c9810d29e1a883024cecbeb628ad3cab293ffcf994eea050887548e', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (9, 'optional_interaction_expiry', 'sha256:ddfb9b697b8e7744beeff4905b6639fc7949308c958059f162d9f87ee258033b', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (10, 'human_wait_timing', 'sha256:2a556ed9bc06d467975ba34b146dc3afe90fa63cd6b1e1577ea53311bc54f9b2', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (11, 'separate_run_limits', 'sha256:ace3fa99a7b762fd58cc6bc9274660effd851d31007b9eea1f24dce9818cf4e2', 0);

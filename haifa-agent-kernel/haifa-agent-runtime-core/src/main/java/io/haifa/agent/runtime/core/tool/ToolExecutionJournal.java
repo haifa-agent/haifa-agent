@@ -5,13 +5,9 @@ import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolIdempotency;
-import io.haifa.agent.tool.api.ToolReconciliationRecord;
-import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import java.util.Optional;
 
 public interface ToolExecutionJournal {
-    Optional<ToolResult> completed(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey);
-
     Optional<ToolResult> pendingResult(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey);
 
     default Optional<ToolResult> uncertainResult(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey) {
@@ -37,7 +33,7 @@ public interface ToolExecutionJournal {
 
     void recordAcknowledged(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey);
 
-    void recordCompleted(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey, ToolResult result);
+    void recordCompleted(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey);
 
     void recordPendingResult(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey, ToolResult result);
 
@@ -45,16 +41,6 @@ public interface ToolExecutionJournal {
 
     default void recordUncertain(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey, ToolResult observedResult) {
         recordUncertain(runId, idempotencyKey);
-    }
-
-    default void recordReconciliation(
-            AgentRunId runId,
-            RuntimeIdempotencyKey idempotencyKey,
-            ToolReconciliationStatus status,
-            String reasonCode) {}
-
-    default Optional<ToolReconciliationRecord> reconciliation(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey) {
-        return Optional.empty();
     }
 
     void recordFailed(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey);

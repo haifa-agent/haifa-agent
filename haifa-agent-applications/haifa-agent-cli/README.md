@@ -11,7 +11,7 @@ CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVE
 `approval.threshold` 为 `low`、`medium`、`high` 或 `never`；同时配置 mode 和 threshold 时必须使用兼容组合。
 达到阈值的普通执行风险创建一次 Interaction 审批，批准后 Runtime 重验并继续同一 ToolCall，不产生第二个
 控制台审批。`NEVER` 会自动执行包括 HIGH 在内的普通命令，但不覆盖可信分类器的硬拒绝、
-Broker/Workspace/Sandbox 边界或 Credential 重认证。只有可信 CA preflight 明确证明直接 Git/GH 调用尚未 dispatch 时，Runtime 才可创建一次 `execution-recovery` Interaction；模型没有权限申请 Tool，也不能改变或批准恢复请求。
+Broker/Workspace/Sandbox 边界或 Credential 重认证。当 preflight 证明调用未分派（`NOT_DISPATCHED`）时，Runtime 将该 ToolCall 标记为终态 FAILED 并回传失败事实（`failureCode` 与 `NOT_DISPATCHED`）继续循环，不再创建专用 `execution-recovery` Interaction；模型没有权限申请 Tool，也不能绕过标准策略。
 
 `haifa-agent-cli` 是 Coding Agent 的最高层生产装配与唯一可执行发行入口。它把同一个 Runtime、
 Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSessionService` 交给 tui4j
@@ -684,7 +684,7 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
 
-风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以允许的网络/认证错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会创建确定性的 `execution-recovery` Interaction；批准后从原 FAILED ToolCall 创建至多一个同参数 successor，重新检查当前 DEVELOP WorkspaceAccess、Policy、路径、Sandbox 与 Credential，再由内部 correlation 选择冻结的 recovery profile。模型不接收恢复 Tool，successor 也不能再次触发恢复。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution.run` 与 `workspace.worktree.create`，模型不可见，底层授权仍 fail closed。
+风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会将原 ToolCall 标记为终态 FAILED，将失败事实（`failureCode` 与 `NOT_DISPATCHED`）回传给模型并继续标准对话循环；模型可据此向用户报告阻塞或在标准策略下发起全新的普通工具调用，Runtime 不再维护双 Profile、专用 `execution-recovery` Interaction 或后继工具调用协议。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution.run` 与 `workspace.worktree.create`，模型不可见，底层授权仍 fail closed。
 
 `workspace.worktree.create` 只接受具有当前 `DEVELOP` Access 的 source `workspaceRef`、不可变 base commit、新分支名、受控 target name 和交付意图；模型不能传入目标主机路径或权限。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验、Registry 登记和新 workspace 的 `DEVELOP` Access 写入全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
 

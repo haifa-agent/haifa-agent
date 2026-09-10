@@ -38,6 +38,7 @@ public final class ToolRecoveryCoordinator {
     }
 
     public void reconcile(AgentRun run) {
+        AgentExecutionFailureException unknown = null;
         for (ToolCall call : state.toolCalls(run.id())) {
             if (!needsProjectionRecovery(run, call) || !tools.hasRecoveryFacts(run, call)) continue;
             try {
@@ -67,9 +68,10 @@ public final class ToolRecoveryCoordinator {
                             state.appendStep(step);
                         });
                 appendToolResultOnce(run, call, "Tool outcome could not be determined", "OUTCOME_UNKNOWN");
-                throw failure;
+                if (unknown == null) unknown = failure;
             }
         }
+        if (unknown != null) throw unknown;
     }
 
     private void appendToolResultOnce(AgentRun run, ToolCall call, String summary, String recoveryStatus) {

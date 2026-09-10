@@ -36,7 +36,6 @@ import io.haifa.agent.runtime.core.storage.RunStartIdempotencyBinding;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolIdempotency;
-import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import java.sql.DriverManager;
 import java.time.Instant;
 import java.util.List;
@@ -141,9 +140,21 @@ class SqliteOperationalAdaptersIT {
         journal.recordPendingResult(run.id(), key, result);
         journal.recordPendingResult(run.id(), key, result);
         assertThat(journal.pendingResult(run.id(), key)).contains(result);
-        journal.recordCompleted(run.id(), key, result);
-        assertThat(journal.completed(run.id(), key)).contains(result);
+        journal.recordCompleted(run.id(), key);
+        assertThat(journal.pendingResult(run.id(), key)).isEmpty();
         assertThat(journal.state(run.id(), key)).contains(ToolJournalState.COMPLETED);
+        try (var connection = foundation.connections().openConnection();
+                var statement = connection.prepareStatement(
+                        "SELECT result_payload, result_hash FROM tool_journal WHERE run_id = ? AND idempotency_key = ?")) {
+            statement.setString(1, run.id().value());
+            statement.setString(2, key.value());
+            try (var rows = statement.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getBytes(1)).isNull();
+                assertThat(rows.getString(2)).isNull();
+            }
+        }
+
         assertThatThrownBy(() -> journal.recordFailed(run.id(), key)).isInstanceOf(IllegalStateException.class);
 
         var uncertainKey = new RuntimeIdempotencyKey("uncertain-key");
@@ -151,15 +162,9 @@ class SqliteOperationalAdaptersIT {
         var dispatchEvidence = new ToolDispatchEvidence("execution-uncertain", OptionalLong.of(771), "c".repeat(64));
         journal.recordDispatched(run.id(), uncertainKey, dispatchEvidence);
         journal.recordUncertain(run.id(), uncertainKey);
-        journal.recordReconciliation(
-                run.id(), uncertainKey, ToolReconciliationStatus.STILL_UNKNOWN, "LOCAL_EVIDENCE_MISSING");
         assertThat(journal.hasUncertain(run.id())).isTrue();
         assertThat(journal.uncertainResult(run.id(), uncertainKey)).isEmpty();
         assertThat(journal.dispatchEvidence(run.id(), uncertainKey)).contains(dispatchEvidence);
-        assertThat(journal.reconciliation(run.id(), uncertainKey)).hasValueSatisfying(reconciliation -> {
-            assertThat(reconciliation.status()).isEqualTo(ToolReconciliationStatus.STILL_UNKNOWN);
-            assertThat(reconciliation.reasonCode()).isEqualTo("LOCAL_EVIDENCE_MISSING");
-        });
 
         var enrichedKey = new RuntimeIdempotencyKey("dispatch-evidence-enriched-key");
         var enrichedEvidence = new ToolDispatchEvidence("execution-enriched", OptionalLong.of(772), "d".repeat(64));
@@ -181,24 +186,16 @@ class SqliteOperationalAdaptersIT {
         journal.recordDispatched(run.id(), resolvedKey);
         journal.recordUncertain(run.id(), resolvedKey, result);
         assertThat(journal.uncertainResult(run.id(), resolvedKey)).contains(result);
-        journal.recordReconciliation(
-                run.id(), resolvedKey, ToolReconciliationStatus.RESOLVED, "PROCESS_TERMINAL_RESULT_CONFIRMED");
         journal.recordPendingResult(run.id(), resolvedKey, result);
-        journal.recordCompleted(run.id(), resolvedKey, result);
-        assertThat(journal.completed(run.id(), resolvedKey)).contains(result);
+        journal.recordCompleted(run.id(), resolvedKey);
+        assertThat(journal.pendingResult(run.id(), resolvedKey)).isEmpty();
 
         SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory);
         assertThat(reopened.toolJournal().dispatchEvidence(run.id(), uncertainKey))
                 .contains(dispatchEvidence);
-        assertThat(reopened.toolJournal().reconciliation(run.id(), uncertainKey))
-                .hasValueSatisfying(reconciliation ->
-                        assertThat(reconciliation.reasonCode()).isEqualTo("LOCAL_EVIDENCE_MISSING"));
         assertThat(reopened.toolJournal().dispatchEvidence(run.id(), enrichedKey))
                 .contains(enrichedEvidence);
-        assertThat(reopened.toolJournal().completed(run.id(), resolvedKey)).contains(result);
-        assertThat(reopened.toolJournal().reconciliation(run.id(), resolvedKey))
-                .hasValueSatisfying(reconciliation ->
-                        assertThat(reconciliation.status()).isEqualTo(ToolReconciliationStatus.RESOLVED));
+        assertThat(reopened.toolJournal().pendingResult(run.id(), resolvedKey)).isEmpty();
 
         var rejectedKey = new RuntimeIdempotencyKey("pre-dispatch-rejection-key");
         var rejected = new ToolResult(
@@ -213,8 +210,8 @@ class SqliteOperationalAdaptersIT {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("INTENT_RECORDED -> ACKNOWLEDGED");
         journal.recordPendingResult(run.id(), rejectedKey, rejected);
-        journal.recordCompleted(run.id(), rejectedKey, rejected);
-        assertThat(journal.completed(run.id(), rejectedKey)).contains(rejected);
+        journal.recordCompleted(run.id(), rejectedKey);
+        assertThat(journal.pendingResult(run.id(), rejectedKey)).isEmpty();
     }
 
     @Test

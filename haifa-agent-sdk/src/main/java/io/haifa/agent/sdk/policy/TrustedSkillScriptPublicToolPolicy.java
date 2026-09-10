@@ -1,4 +1,4 @@
-package io.haifa.agent.runtime.core.tool;
+package io.haifa.agent.sdk.policy;
 
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.run.AgentRun;
@@ -7,6 +7,8 @@ import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.policy.api.PolicyRequest;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
+import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
 import io.haifa.agent.skill.api.SkillPackageReviewGrant;
 import io.haifa.agent.skill.api.SkillResourceKind;
@@ -21,15 +23,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * Exact trusted-script rule placed before the ordinary Tool approval branch.
- *
- * <p>Missing, ambiguous or drifted evidence delegates to the normal policy; it never creates an
- * approval response or changes the generic execution Tool.
- */
+/** Product assembly policy for exact reviewed Skill scripts before ordinary public Tool policy. */
 public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolicy {
-    private static final org.slf4j.Logger LOGGER =
-            org.slf4j.LoggerFactory.getLogger(TrustedSkillScriptPublicToolPolicy.class);
     public static final String REASON_CODE = "TRUSTED_SKILL_SCRIPT_AUTO_APPROVED";
     private static final Set<String> FORBIDDEN_ARGUMENT_NAMES = Set.of(
             "executable",
@@ -63,51 +58,33 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
     @Override
     public PolicyDecision evaluate(AgentRun run, FrozenToolBinding tool, ToolRequest request) {
         PolicyRequest policyRequest = requests.adapt(run, tool, request);
-        Optional<TrustedEvidence> evidence = evidence(run, tool, policyRequest);
-        if (evidence.isEmpty()) return delegate.evaluate(run, tool, request);
+        if (evidence(run, tool, policyRequest).isEmpty()) return delegate.evaluate(run, tool, request);
 
-        TrustedEvidence trusted = evidence.orElseThrow();
         PolicyDecision evaluated = delegate.evaluate(run, tool, request);
-        PolicyDecision decision = new PolicyDecision(
+        return new PolicyDecision(
                 PolicyEffect.ALLOW,
                 Optional.empty(),
                 REASON_CODE,
                 "Exact reviewed Skill package and script execution grants matched",
                 evaluated.requirementDigest());
-        LOGGER.info(
-                "Trusted Skill script auto-approved runId={} toolCallId={} tool={} packageGrant={} scriptGrant={}",
-                run.id().value(),
-                request.toolCallId().value(),
-                tool.alias().value(),
-                trusted.packageGrant().id(),
-                trusted.scriptGrant().id());
-        return decision;
     }
 
-    private Optional<TrustedEvidence> evidence(AgentRun run, FrozenToolBinding tool, PolicyRequest policyRequest) {
+    private Optional<GrantPair> evidence(AgentRun run, FrozenToolBinding tool, PolicyRequest policyRequest) {
         if (!eligibleFixedTool(tool)) return Optional.empty();
         var configuration = state.configuration(run.configurationSnapshot()).orElse(null);
         if (configuration == null
-                || configuration.skillTrust().scriptExecutionGrants().isEmpty()) {
-            return Optional.empty();
-        }
+                || configuration.skillTrust().scriptExecutionGrants().isEmpty()) return Optional.empty();
         var subject = new SkillTrustSubject(
                 policyRequest.subject().tenant(),
                 policyRequest.subject().principal(),
                 policyRequest.subject().productId(),
                 policyRequest.context().projectRef());
-        var now = time.now();
         var matches = configuration.skillTrust().scriptExecutionGrants().stream()
                 .filter(grant -> grant.toolCoordinate().equals(tool.coordinate()))
-                .map(grant -> match(configuration, tool, subject, now, grant))
+                .map(grant -> match(configuration, tool, subject, time.now(), grant))
                 .flatMap(Optional::stream)
                 .toList();
-        return matches.size() == 1
-                ? Optional.of(new TrustedEvidence(
-                        configuration.skillTrust().manifestDigest(),
-                        matches.getFirst().packageGrant(),
-                        matches.getFirst().scriptGrant()))
-                : Optional.empty();
+        return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
     }
 
     private static Optional<GrantPair> match(
@@ -135,8 +112,8 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
                 .anyMatch(resource -> resource.kind() == SkillResourceKind.SCRIPT
                         && resource.relativePath().equals(scriptGrant.scriptRelativePath())
                         && resource.digest().equals(scriptGrant.scriptDigest()));
-        if (!exactScript) return Optional.empty();
-        if (!scriptGrant.argumentPolicyDigest().equals(SkillTrustDigests.argumentPolicy(tool.coordinate()))) {
+        if (!exactScript
+                || !scriptGrant.argumentPolicyDigest().equals(SkillTrustDigests.argumentPolicy(tool.coordinate()))) {
             return Optional.empty();
         }
         if (!Set.copyOf(scriptGrant.capabilities())
@@ -155,8 +132,9 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
                 tool.definition().resources().executionProfiles().stream()
                         .sorted()
                         .toList());
-        if (!scriptGrant.executionProfileDigest().equals(expectedProfile)) return Optional.empty();
-        return Optional.of(new GrantPair(packageGrant, scriptGrant));
+        return scriptGrant.executionProfileDigest().equals(expectedProfile)
+                ? Optional.of(new GrantPair(packageGrant, scriptGrant))
+                : Optional.empty();
     }
 
     private static boolean eligibleFixedTool(FrozenToolBinding tool) {
@@ -164,9 +142,7 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
         if (definition.approvalRequirement() != ToolApprovalRequirement.ALWAYS) return false;
         if ("execution.run".equals(definition.name().value())) return false;
         if (definition.sideEffects().contains(ToolSideEffect.NETWORK_ACCESS)
-                && definition.resources().networkHosts().isEmpty()) {
-            return false;
-        }
+                && definition.resources().networkHosts().isEmpty()) return false;
         Object properties = definition.inputSchema().document().get("properties");
         if (!(properties instanceof java.util.Map<?, ?> map)) return false;
         return map.keySet().stream()
@@ -176,7 +152,4 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
     }
 
     private record GrantPair(SkillPackageReviewGrant packageGrant, SkillScriptExecutionGrant scriptGrant) {}
-
-    private record TrustedEvidence(
-            String manifestDigest, SkillPackageReviewGrant packageGrant, SkillScriptExecutionGrant scriptGrant) {}
 }

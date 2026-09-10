@@ -50,16 +50,15 @@ final class Tui4jTerminalView {
     private static final Set<String> TIMED_RUN_STATUSES = Set.of(
             "APPLYING STEER",
             "CANCELLING",
+            "COMPLETION DEFERRED",
             "PENDING",
             "QUEUED",
-            "RECOVERING",
             "REQUESTED",
             "RUNNING",
             "STARTED",
             "STREAMING",
             "SUBMITTING",
             "THINKING",
-            "VERIFYING",
             "WAITING",
             "WAITING FOR APPROVAL",
             "WORKING");

@@ -46,7 +46,7 @@ Tool、MCP、Skill、Memory、Workspace、Policy、Credential、持久化与恢�
 | `HaifaAgent` | 已完成装配、由宿主持有并负责资源生命周期的 Runtime 实例，不是某一次 Run。 |
 | Conversation / Session | 面向用户的多轮容器；可以包含多个 Run，但同一会话最多只有一个活动 Run。 |
 | `AgentRun` | 一次权威执行及其状态机；`AgentRunSnapshot` 是运行视图，`AgentRunResult` 是最终结果。 |
-| Attempt / Checkpoint | Run 的物理执行尝试与可恢复状态。恢复会重新校验冻结 Binding 和外部能力。 |
+| Attempt / Checkpoint | Run 的物理执行尝试与正常暂停续跑计数。批准／暂停可跨重启继续；异常中断不会透明接管执行。 |
 | Tool / MCP / Skill | Tool 是统一执行单元；MCP Tool 先经本地审查再导入；Skill 通过渐进披露按需激活。 |
 | Artifact | 显式导出的、内容寻址且带 provenance 的结果，不等同于 Workspace 文件。 |
 
