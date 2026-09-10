@@ -280,7 +280,8 @@ class TerminalUiReducerTest {
     @Test
     void includesLocalShellExecutionInTheRunSummary() {
         TerminalUiState state = reducer.reduce(
-                TerminalUiState.initial(120, 40), new TerminalUiAction.ShellCompleted("!pwd", "D:/workspace", "SUCCEEDED"));
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.ShellCompleted("!pwd", "D:/workspace", "SUCCEEDED"));
         state = reducer.reduce(
                 state,
                 new TerminalUiAction.RunEventReceived(event(
