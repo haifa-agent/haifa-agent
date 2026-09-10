@@ -1,12 +1,10 @@
 package io.haifa.agent.application.project.policy;
 
-import io.haifa.agent.application.project.tool.ProjectExecutionRecoveryAuthorization;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionInput;
@@ -43,15 +41,12 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             List.of("diff", "--numstat", "HEAD", "--"));
 
     private final RuntimeToolExecutionVerifier runtime;
-    private final ProjectExecutionRecoveryAuthorization recoveryAuthorization;
     private final WorkspaceAccessStore workspaceAccess;
     private final AuthorizedWorkspaceProvisioning provisioning;
     private final TenantRef tenant;
     private final PrincipalRef principal;
-    private final ExecutionEnvironmentRef normalEnvironment;
-    private final ExecutionEnvironmentRef recoveryEnvironment;
-    private final SandboxProfileRef normalProfile;
-    private final SandboxProfileRef recoveryProfile;
+    private final ExecutionEnvironmentRef environmentRef;
+    private final SandboxProfileRef profileRef;
     private final ExecutionScratchSpaceSpec scratchSpace;
     private final Duration defaultTimeout;
     private final Duration maximumTimeout;
@@ -60,31 +55,24 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
 
     public CodingAgentExecutionPolicy(
             RuntimeToolExecutionVerifier runtime,
-            ProjectExecutionRecoveryAuthorization recoveryAuthorization,
             WorkspaceAccessStore workspaceAccess,
             AuthorizedWorkspaceProvisioning provisioning,
             TenantRef tenant,
             PrincipalRef principal,
-            ExecutionEnvironmentRef normalEnvironment,
-            ExecutionEnvironmentRef recoveryEnvironment,
-            SandboxProfileRef normalProfile,
-            SandboxProfileRef recoveryProfile,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef profileRef,
             ExecutionScratchSpaceSpec scratchSpace,
             Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             int maximumProcesses) {
         this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
-        this.recoveryAuthorization =
-                Objects.requireNonNull(recoveryAuthorization, "recoveryAuthorization must not be null");
         this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
         this.provisioning = Objects.requireNonNull(provisioning, "provisioning must not be null");
         this.tenant = Objects.requireNonNull(tenant, "tenant must not be null");
         this.principal = Objects.requireNonNull(principal, "principal must not be null");
-        this.normalEnvironment = Objects.requireNonNull(normalEnvironment, "normalEnvironment must not be null");
-        this.recoveryEnvironment = Objects.requireNonNull(recoveryEnvironment, "recoveryEnvironment must not be null");
-        this.normalProfile = Objects.requireNonNull(normalProfile, "normalProfile must not be null");
-        this.recoveryProfile = Objects.requireNonNull(recoveryProfile, "recoveryProfile must not be null");
+        this.environmentRef = Objects.requireNonNull(environmentRef, "environmentRef must not be null");
+        this.profileRef = Objects.requireNonNull(profileRef, "profileRef must not be null");
         this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
         this.defaultTimeout = Objects.requireNonNull(defaultTimeout, "defaultTimeout must not be null");
         this.maximumTimeout = Objects.requireNonNull(maximumTimeout, "maximumTimeout must not be null");
@@ -138,7 +126,7 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             throw denied("CODING_USER_EXECUTION_DENIED", "CLI user execution origin is malformed");
         }
         requireWorkspace(request, WorkspaceAccessMode.DEVELOP);
-        requireFixedCommon(request, normalEnvironment, normalProfile, scratchSpace);
+        requireFixedCommon(request, environmentRef, profileRef, scratchSpace);
         if (SystemGitCliCommandClassifier.classify(request.command().shellCommand())
                         .risk()
                 == SystemGitCliCommandClassifier.Risk.DENIED) {
@@ -167,7 +155,7 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
         }
         requireWorkspace(request, WorkspaceAccessMode.READ);
         requireFixedCommon(
-                request, ExecutionEnvironmentRef.empty(), normalProfile, ExecutionScratchSpaceSpec.genericRequired());
+                request, ExecutionEnvironmentRef.empty(), profileRef, ExecutionScratchSpaceSpec.genericRequired());
         List<String> argv = request.command().argv();
         if (argv.size() < 5
                 || !argv.subList(0, 3).equals(List.of("git", "-c", "credential.interactive=never"))
@@ -208,41 +196,21 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
                 || !execution.command().shellCommand().equals(command)) {
             throw new SecurityException("execution target or command drifted from canonical Tool arguments");
         }
-        boolean normal = execution.sandboxProfileRef().equals(normalProfile)
-                && execution.environmentRef().equals(normalEnvironment);
-        boolean recovery = !normalProfile.equals(recoveryProfile)
-                && execution.sandboxProfileRef().equals(recoveryProfile)
-                && execution.environmentRef().equals(recoveryEnvironment);
-        if (!normal && !recovery) {
+        if (!execution.sandboxProfileRef().equals(profileRef)
+                || !execution.environmentRef().equals(environmentRef)) {
             throw new SecurityException("execution profile or environment is not product-owned");
         }
-        requireFixedCommon(
-                execution,
-                recovery ? recoveryEnvironment : normalEnvironment,
-                recovery ? recoveryProfile : normalProfile,
-                scratchSpace);
+        requireFixedCommon(execution, environmentRef, profileRef, scratchSpace);
         ProjectExecutionToolOperations.validateFrozenInvocation(
                 toolRequest.arguments(),
                 execution,
-                recovery ? recoveryEnvironment : normalEnvironment,
-                recovery ? recoveryProfile : normalProfile,
+                environmentRef,
+                profileRef,
                 scratchSpace,
                 defaultTimeout,
                 maximumTimeout,
                 maximumModelOutputBytes,
                 maximumProcesses);
-        if (recovery
-                && SystemGitCliCommandClassifier.classify(command).target()
-                        == SystemGitCliCommandClassifier.Target.OTHER) {
-            throw new SecurityException("recovery profile is limited to classified Git or GitHub execution");
-        }
-        if (recovery) {
-            recoveryAuthorization.requireVerifiedSuccessor(
-                    new AgentRunId(execution.context().runRef()),
-                    toolRequest.toolCallId(),
-                    toolRequest.idempotencyKey().value(),
-                    toolRequest.arguments());
-        }
         if (!configuration.toolBindings().contains(binding)) {
             throw new SecurityException("execution binding is not part of the frozen configuration");
         }
