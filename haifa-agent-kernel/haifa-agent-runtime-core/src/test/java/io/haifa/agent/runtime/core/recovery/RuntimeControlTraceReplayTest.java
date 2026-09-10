@@ -51,7 +51,7 @@ class RuntimeControlTraceReplayTest {
 
     @Test
     void outcomeUnknownIsRecordedAsNonReplayable() {
-        var result = replay.replay(List.of(event("execution.failed", "status", "UNKNOWN")));
+        var result = replay.replay(List.of(event("tool.failed", "status", "UNKNOWN")));
         assertThat(result.nonReplayableOutcomeUnknown()).isEqualTo(1);
     }
 

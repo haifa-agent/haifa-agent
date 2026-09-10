@@ -16,23 +16,12 @@ import org.junit.jupiter.api.Test;
 
 class RichRunEventTransportTest {
     @Test
-    void mapsAndSerializesEveryPhaseOneRichPayload() {
+    void mapsAndSerializesTheRetainedPublicPayloads() {
         ContractRuntimeMapper mapper = new ContractRuntimeMapper(new PlainCursorCodec());
         HttpJsonCodec json = new HttpJsonCodec(new ObjectMapper().findAndRegisterModules());
         List<AgentRunEvent.Payload> payloads = List.of(
                 new RunEventPayloads.ToolLifecycle(
                         "call-1", "execution.run", "SUCCEEDED", "NONE", "workspace command", "result:1"),
-                new RunEventPayloads.ExecutionLifecycle(
-                        "execution-1",
-                        "call-1",
-                        "SUCCEEDED",
-                        "shell command",
-                        ".",
-                        "MERGED",
-                        "output:1",
-                        0,
-                        true,
-                        "changes:1"),
                 new RunEventPayloads.ResourceAvailable(
                         "checkpoint:1", "checkpoint", "Checkpoint 1", "AVAILABLE", "resume"));
 
@@ -45,9 +34,6 @@ class RichRunEventTransportTest {
                 .contains("\"occurredAt\":\"2026-07-27T00:00:00.123Z\"")
                 .doesNotContain("456789");
         assertThat(encoded.get(1))
-                .contains("\"executionId\":\"execution-1\"", "\"truncated\":true")
-                .doesNotContain("apiKey", "reasoning");
-        assertThat(encoded.get(2))
                 .contains("\"reference\":\"checkpoint:1\"", "\"action\":\"resume\"")
                 .doesNotContain("apiKey", "reasoning");
     }

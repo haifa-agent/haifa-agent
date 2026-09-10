@@ -43,14 +43,7 @@ final class TestToolPlatform {
             String inputSchemaId,
             boolean sideEffecting,
             ToolHandler handler) {
-        return install(
-                builder,
-                name,
-                version,
-                inputSchemaId,
-                sideEffecting,
-                allow(),
-                handler);
+        return install(builder, name, version, inputSchemaId, sideEffecting, allow(), handler);
     }
 
     static RuntimeCoreBuilder installWithOutputSchema(

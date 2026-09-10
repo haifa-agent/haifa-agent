@@ -692,7 +692,7 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void executionScratchLifecyclePublishesOnlySafeCapabilityEvents() {
+    void executionScratchFieldsDoNotCreateRuntimeEvents() {
         ToolRequest execution = toolRequest(
                 "scratch-cleanup",
                 "execution_run",
@@ -736,14 +736,8 @@ class RuntimeCoreHardeningTest {
         var accepted = fixture.runtime.start(request("scratch-lifecycle-events"));
         fixture.scheduler.runAll();
 
-        var scratchEvents = fixture.store.eventsFor(accepted.runId()).stream()
-                .filter(event -> event.type().startsWith("execution.scratch-"))
-                .toList();
-        assertThat(scratchEvents)
-                .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
-                .containsExactly("execution.scratch-provisioned", "execution.scratch-cleanup-failed");
-        assertThat(scratchEvents).allSatisfy(event -> assertThat(event.data().toString())
-                .doesNotContain("/private", "TMPDIR", "command", "stderr"));
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .noneMatch(event -> event.type().startsWith("execution.scratch-"));
     }
 
     @Test

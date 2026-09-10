@@ -558,30 +558,6 @@ public final class TerminalUiReducer {
                             Optional.empty(),
                             startedAt,
                             duration));
-        } else if (event.payload() instanceof RunEventPayloads.ExecutionLifecycle payload) {
-            String id = "execution-" + payload.executionId();
-            int existing = index(items, id);
-            Optional<Long> startedAt = existing >= 0 ? items.get(existing).startedAtEpochMillis() : Optional.empty();
-            if (startedAt.isEmpty()) {
-                int toolIndex = index(items, "tool-" + payload.toolCallId());
-                startedAt = toolIndex >= 0
-                        ? items.get(toolIndex).startedAtEpochMillis()
-                        : Optional.of(event.occurredAt().toEpochMilli());
-            }
-            Optional<Long> duration =
-                    startedAt.map(start -> Math.max(0, event.occurredAt().toEpochMilli() - start));
-            upsert(
-                    items,
-                    new TranscriptItem(
-                            id,
-                            TranscriptItem.Kind.EXECUTION,
-                            executionTitle(payload),
-                            executionBody(payload),
-                            payload.status(),
-                            false,
-                            Optional.empty(),
-                            startedAt,
-                            duration));
         } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload
                 && !isInternalCheckpoint(payload)) {
             upsert(
@@ -690,9 +666,6 @@ public final class TerminalUiReducer {
         if (event.payload() instanceof RunEventPayloads.ToolLifecycle lifecycle) {
             return toolActivityStatus(lifecycle.status(), fallback);
         }
-        if (event.payload() instanceof RunEventPayloads.ExecutionLifecycle lifecycle) {
-            return executionActivityStatus(lifecycle.status(), fallback);
-        }
         if (event.payload() instanceof RunEventPayloads.InteractionLifecycle lifecycle) {
             return switch (lifecycle.state()) {
                 case "PENDING", "REQUESTED" -> "WAITING FOR APPROVAL";
@@ -723,13 +696,6 @@ public final class TerminalUiReducer {
         return switch (status) {
             case "STARTED", "RUNNING", "WAITING", "APPROVED" -> "WORKING";
             case "SUCCEEDED", "COMPLETED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT" -> "THINKING";
-            default -> fallback;
-        };
-    }
-
-    private static String executionActivityStatus(String status, String fallback) {
-        return switch (status) {
-            case "STARTED", "RUNNING", "STREAMING", "WAITING" -> "WORKING";
             default -> fallback;
         };
     }
@@ -927,16 +893,6 @@ public final class TerminalUiReducer {
         return prefix + target.substring(0, end) + "…";
     }
 
-    private static String executionTitle(RunEventPayloads.ExecutionLifecycle payload) {
-        String summary = payload.commandSummary();
-        if (payload.exitCode() == null) return summary;
-        String suffix = " · exit " + payload.exitCode();
-        int available = MAX_TRANSCRIPT_TITLE_LENGTH - suffix.length();
-        String clipped =
-                summary.length() <= available ? summary : summary.substring(0, Math.max(0, available - 1)) + "…";
-        return clipped + suffix;
-    }
-
     private static final Set<String> TOOL_SUCCESS_STATUSES = Set.of("SUCCEEDED", "COMPLETED", "EXITED");
     private static final Set<String> TOOL_FAILURE_STATUSES = Set.of("FAILED", "DENIED", "CANCELLED", "TIMEOUT");
 
@@ -951,8 +907,6 @@ public final class TerminalUiReducer {
         }
         int toolsSucceeded = 0;
         int toolsFailed = 0;
-        int executions = 0;
-        int executionsFailed = 0;
         int changeSets = 0;
         long earliestStart = Long.MAX_VALUE;
         for (int position = segmentStart; position < items.size(); position++) {
@@ -960,9 +914,6 @@ public final class TerminalUiReducer {
             if (item.kind() == TranscriptItem.Kind.TOOL) {
                 if (TOOL_SUCCESS_STATUSES.contains(item.status())) toolsSucceeded++;
                 else if (TOOL_FAILURE_STATUSES.contains(item.status())) toolsFailed++;
-            } else if (item.kind() == TranscriptItem.Kind.EXECUTION) {
-                executions++;
-                if (TOOL_FAILURE_STATUSES.contains(item.status())) executionsFailed++;
             } else if (item.kind() == TranscriptItem.Kind.RESOURCE
                     && item.body().startsWith("workspace-change-set")) {
                 changeSets++;
@@ -989,7 +940,6 @@ public final class TerminalUiReducer {
         duration.ifPresent(value -> chips.add(TerminalDurations.human(value)));
         int tools = toolsSucceeded + toolsFailed;
         if (tools > 0) chips.add(tools + (tools == 1 ? " tool" : " tools"));
-        if (executions > 0) chips.add(executions + (executions == 1 ? " command" : " commands"));
         if (changeSets > 0) chips.add(changeSets + (changeSets == 1 ? " change set" : " change sets"));
         String chipLine = chips.isEmpty() ? "" : " · " + String.join(" · ", chips);
         List<String> body = new ArrayList<>();
@@ -998,9 +948,6 @@ public final class TerminalUiReducer {
         if (tools > 0) {
             body.add("Tools: " + toolsSucceeded + " succeeded"
                     + (toolsFailed > 0 ? " · " + toolsFailed + " failed" : ""));
-        }
-        if (executions > 0) {
-            body.add("Commands: " + executions + (executionsFailed > 0 ? " · " + executionsFailed + " failed" : ""));
         }
         if (changeSets > 0) body.add("Workspace changes: " + changeSets + " change set" + (changeSets == 1 ? "" : "s"));
         duration.ifPresent(value -> body.add("Duration: " + TerminalDurations.human(value)));
@@ -1014,17 +961,6 @@ public final class TerminalUiReducer {
                 Optional.empty(),
                 Optional.empty(),
                 duration);
-    }
-
-    private static String executionBody(RunEventPayloads.ExecutionLifecycle payload) {
-        List<String> lines = new ArrayList<>();
-        if (!payload.logicalWorkdir().isBlank()) lines.add("Workdir: " + payload.logicalWorkdir());
-        if (!payload.streamKind().isBlank()) lines.add("Stream: " + payload.streamKind());
-        if (!payload.chunkOrRef().isBlank()) lines.add(payload.chunkOrRef());
-        if (payload.exitCode() != null) lines.add("Exit: " + payload.exitCode());
-        if (payload.truncated()) lines.add("Output truncated");
-        if (!payload.fileChangeSetRef().isBlank()) lines.add("Changes: " + payload.fileChangeSetRef());
-        return lines.isEmpty() ? "No execution details available." : String.join("\n", lines);
     }
 
     private static String deliveryTitle(RunEventPayloads.DeliveryLifecycle payload) {

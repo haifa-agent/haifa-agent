@@ -256,28 +256,16 @@ class RuntimeEventFeedTest {
                         Optional.empty(),
                         Optional.empty()))
                 .orElseThrow();
-        var execution = projector
-                .project(new RuntimeEvent(
-                        "execution",
-                        runId,
-                        2,
-                        "execution.completed",
-                        "1",
-                        Map.of(
-                                "executionId", "execution-1",
-                                "toolCallId", "call-1",
-                                "status", "SUCCEEDED",
-                                "commandSummary", "shell command",
-                                "logicalWorkdir", ".",
-                                "streamKind", "MERGED",
-                                "chunkOrRef", "output:1",
-                                "exitCode", 0,
-                                "truncated", false,
-                                "fileChangeSetRef", "changes:1"),
-                        NOW,
-                        Optional.empty(),
-                        Optional.empty()))
-                .orElseThrow();
+        var execution = projector.project(new RuntimeEvent(
+                "execution",
+                runId,
+                2,
+                "execution.completed",
+                "1",
+                Map.of("executionId", "execution-1", "toolCallId", "call-1", "status", "SUCCEEDED"),
+                NOW,
+                Optional.empty(),
+                Optional.empty()));
         var resource = projector
                 .project(new RuntimeEvent(
                         "resource",
@@ -316,8 +304,7 @@ class RuntimeEventFeedTest {
                 });
         assertThat(tool.eventType()).isEqualTo("tool.call.succeeded");
         assertThat(tool.payload()).isInstanceOf(RunEventPayloads.ToolLifecycle.class);
-        assertThat(execution.eventType()).isEqualTo("execution.completed");
-        assertThat(execution.payload()).isInstanceOf(RunEventPayloads.ExecutionLifecycle.class);
+        assertThat(execution).isEmpty();
         assertThat(resource.eventType()).isEqualTo("checkpoint.available");
         assertThat(resource.payload()).isInstanceOf(RunEventPayloads.ResourceAvailable.class);
     }

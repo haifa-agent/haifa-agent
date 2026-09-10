@@ -773,7 +773,9 @@ public final class ToolPipeline {
                     result.successful() ? "SUCCEEDED" : "FAILED",
                     result.successful() ? "NONE" : stableResultFailureCode(result),
                     result.assets().isEmpty() ? "" : result.assets().getFirst().assetId());
-            appendExecutionAndResourceEvents(run, call, result);
+            result.artifacts()
+                    .forEach(reference ->
+                            appendResource(run, reference.artifactId(), "artifact", "Published artifact", "AVAILABLE"));
         } catch (RuntimeException persistenceFailure) {
             throw new ToolResultPersistenceException(persistenceFailure);
         }
@@ -821,97 +823,10 @@ public final class ToolPipeline {
                         "reasonCode",
                         reasonCode,
                         "targetSummary",
-                        targetSummary(call),
+                        call.toolName(),
                         "resultRef",
                         resultRef),
                 time.now());
-    }
-
-    static String targetSummary(ToolCall call) {
-        if (!isExecutionTool(call)) return call.toolName();
-        Map<String, Object> arguments = call.arguments().values();
-        String mode = safeText(arguments.get("mode"), "COMMAND");
-        String language = safeText(arguments.get("language"), "default-shell");
-        String purpose = safeText(arguments.get("purpose"), "Approved execution");
-        return boundedText(mode + " · " + language + " · " + purpose, 512);
-    }
-
-    private void appendExecutionAndResourceEvents(AgentRun run, ToolCall call, ToolResult result) {
-        if (isExecutionTool(call)) {
-            Map<String, Object> data = result.structuredData();
-            if (Boolean.TRUE.equals(data.get("scratchProvisioned"))) {
-                events.append(
-                        run.id(),
-                        "execution.scratch-provisioned",
-                        Map.of(
-                                "toolCallId",
-                                call.id().value(),
-                                "specDigest",
-                                safeText(data.get("scratchSpecDigest"), "unknown"),
-                                "capability",
-                                "WRITABLE_PRIVATE_SCRATCH"),
-                        time.now());
-            }
-            if (Boolean.TRUE.equals(data.get("scratchCleanupFailed"))) {
-                events.append(
-                        run.id(),
-                        "execution.scratch-cleanup-failed",
-                        Map.of(
-                                "toolCallId",
-                                call.id().value(),
-                                "specDigest",
-                                safeText(data.get("scratchSpecDigest"), "unknown"),
-                                "status",
-                                "OUTCOME_UNKNOWN"),
-                        time.now());
-            }
-            Object status = data.get("status");
-            if (status instanceof String lifecycle) {
-                var event = new java.util.LinkedHashMap<String, Object>();
-                event.put(
-                        "executionId",
-                        data.get("executionId") instanceof String id
-                                ? id
-                                : call.id().value());
-                event.put("toolCallId", call.id().value());
-                event.put("rawStatus", lifecycle);
-                event.put(
-                        "status",
-                        result.successful() ? (lifecycle.equals("EXITED") ? "COMPLETED" : "SUCCEEDED") : lifecycle);
-                if (data.get("semanticOutcome") instanceof String semanticOutcome) {
-                    event.put("semanticOutcome", semanticOutcome);
-                }
-                if (data.get("commandOutcomeCode") instanceof String commandOutcomeCode) {
-                    event.put("commandOutcomeCode", commandOutcomeCode);
-                }
-                event.put(
-                        "commandSummary",
-                        safeText(call.arguments().values().get("purpose"), "approved command or script"));
-                Object workspaceRef = call.arguments().values().get("workspaceRef");
-                if (workspaceRef != null) event.put("workspaceRef", safeText(workspaceRef, "unknown"));
-                Object logicalWorkdir = call.arguments().values().containsKey("relativeWorkdir")
-                        ? call.arguments().values().get("relativeWorkdir")
-                        : call.arguments().values().get("workdir");
-                event.put("logicalWorkdir", safeText(logicalWorkdir, "."));
-                event.put("streamKind", "MERGED");
-                event.put("chunkOrRef", executionOutput(data));
-                event.put("truncated", Boolean.TRUE.equals(data.get("truncated")));
-                if (data.get("exitCode") instanceof Number exitCode) event.put("exitCode", exitCode.intValue());
-                events.append(
-                        run.id(),
-                        result.successful()
-                                ? "execution.completed"
-                                : switch (lifecycle) {
-                                    case "CANCELLED" -> "execution.cancelled";
-                                    default -> "execution.failed";
-                                },
-                        Map.copyOf(event),
-                        time.now());
-            }
-        }
-        result.artifacts()
-                .forEach(reference ->
-                        appendResource(run, reference.artifactId(), "artifact", "Published artifact", "AVAILABLE"));
     }
 
     private static Map<String, Object> failureAttributes(String toolName, ToolResult result) {
@@ -963,16 +878,6 @@ public final class ToolPipeline {
         }
     }
 
-    private static String executionOutput(Map<String, Object> data) {
-        Object legacy = data.get("outputRef") != null ? data.get("outputRef") : data.get("output");
-        if (legacy != null) return boundedText(legacy, 4096);
-        String stdout = boundedText(data.get("stdoutSummary"), 3072);
-        String stderr = boundedText(data.get("stderrSummary"), 1024);
-        if (stdout.isBlank()) return stderr;
-        if (stderr.isBlank()) return stdout;
-        return stdout + "\n" + stderr;
-    }
-
     private void appendResource(AgentRun run, String reference, String kind, String title, String status) {
         events.append(
                 run.id(),
@@ -986,30 +891,10 @@ public final class ToolPipeline {
                 time.now());
     }
 
-    private static String safeText(Object value, String fallback) {
-        return value instanceof String text && !text.isBlank() ? boundedText(text, 512) : fallback;
-    }
-
-    private static String boundedText(Object value, int maximum) {
-        if (!(value instanceof String text)) return "";
-        StringBuilder safe = new StringBuilder(Math.min(text.length(), maximum));
-        text.codePoints().forEach(codePoint -> {
-            if ((codePoint == '\n' || codePoint == '\r' || codePoint == '\t' || !Character.isISOControl(codePoint))
-                    && safe.length() + Character.charCount(codePoint) <= maximum) {
-                safe.appendCodePoint(codePoint);
-            }
-        });
-        return safe.toString();
-    }
-
     private java.util.Optional<io.haifa.agent.core.reference.AssetRef> putResultAssetWithOnePersistenceRetry(
             ToolCall call, ToolResult rawResult) {
         var firstAttempt = resultAssets.tryPut(call.id(), rawResult);
         return firstAttempt.isPresent() ? firstAttempt : resultAssets.tryPut(call.id(), rawResult);
-    }
-
-    private static boolean isExecutionTool(ToolCall call) {
-        return "execution.run".equals(call.toolName()) || "execution_run".equals(call.toolName());
     }
 
     public boolean hasUncertainExecution(AgentRun run) {

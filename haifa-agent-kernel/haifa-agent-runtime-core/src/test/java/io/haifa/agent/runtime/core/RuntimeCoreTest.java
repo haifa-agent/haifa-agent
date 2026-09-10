@@ -1315,16 +1315,8 @@ class RuntimeCoreTest {
         assertThat(persistedCall.status()).isEqualTo(ToolCallStatus.COMPLETED);
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
-                .contains("tool.succeeded", "execution.completed")
-                .doesNotContain("tool.failed", "execution.failed");
-        assertThat(fixture.store.eventsFor(accepted.runId()))
-                .filteredOn(event -> event.type().equals("execution.completed"))
-                .singleElement()
-                .satisfies(event -> assertThat(event.data())
-                        .containsEntry("toolCallId", persistedCall.id().value())
-                        .containsEntry("rawStatus", "EXITED")
-                        .containsEntry("status", "COMPLETED")
-                        .containsEntry("exitCode", 1));
+                .contains("tool.succeeded")
+                .doesNotContain("tool.failed", "execution.completed", "execution.failed", "execution.cancelled");
     }
 
     @Test
