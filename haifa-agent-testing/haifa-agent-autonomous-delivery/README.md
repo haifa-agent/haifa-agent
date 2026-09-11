@@ -16,7 +16,21 @@
 
 ## 当前状态
 
-23 题阶梯题库定义已落码（`AutonomousDeliveryLadderCatalog`：题目 ID、标题、任务描述、三维标签与
-变体标记），并由 `AutonomousDeliveryCapabilityLadderTest` 守护结构不变量。下一阶段为每题制作
-自包含工作区（`prompt.txt`、`base-workspace/`、`acceptance.py`）并实现极简单任务执行器。
-历史 17 题 fixture 素材安全保留在 `haifa-agent-test-fixtures` 中作为素材库。
+23 题已在独立资产仓 [`haifa-agent-autonomous-delivery-assets`](https://github.com/haifa-agent/haifa-agent-autonomous-delivery-assets) 作者化（L1×5、L2×5、L3×4、L4×4、L5×3、L6×2，其中 L6-02 为 Java/Maven 题）。每个题目目录 `cases/<caseId>/` 自包含 `case.yaml`（单源元数据）、`prompt.txt`（英文题面）、`base-workspace/`（初始为红的可运行工作区）、`reference/`（参考解）与 `acceptance.py`（工作区之外执行的黑盒验收，输出单行 JSON）。
+
+本模块只保留 Runner、共享结果契约和不可变资产锁。`assets.lock.json` 固定 GitHub 仓、完整 Git commit SHA 和 manifest SHA-256；`tools/fetch_assets.py` 是唯一下载入口，Maven 默认测试不会访问网络。先显式下载，再将已校验目录传给 `tools/run_case.py`：
+
+```powershell
+python haifa-agent-testing/haifa-agent-autonomous-delivery/tools/fetch_assets.py `
+  --cache-dir D:\haifa-agent-cache\autonomous-delivery --print-path
+python haifa-agent-testing/haifa-agent-autonomous-delivery/tools/run_case.py `
+  --assets-dir D:\haifa-agent-cache\autonomous-delivery\assets-bd864dc9c290b69fdbe8f36fded1eb561510f30a `
+  --case L1-01 --mode nop
+```
+
+`agent` 模式的 `--agent-command` 使用 `{workspace}` 指向每次运行的新工作区，也可使用 `{prompt_file}` 读取该题英文题面；Runner 不会把题面或模型原始输出写进 report。
+
+实施契约（工件布局、分级配方、变体机制、验收与结果契约、题目质量门、实施切片）见
+[`34-autonomous-delivery-ladder-case-authoring-prompt.md`](../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-ladder-case-authoring-prompt.md)；
+已确认决策：题面语言英文、L6 保留 1 道 Java/Maven 题、历史 17 题冻结为 Legacy。
+每题验收输出遵循 [`acceptance-result.schema.json`](../haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/schemas/acceptance-result.schema.json)（与冻结的历史 17 题结果共用一个 `oneOf` 契约），并由 `tools/run_case.py` 在每次运行后校验结果契约；L5 题带 AST/依赖约束检查，L3/L5 题带改动文件数与时间预算检查。历史 17 题 fixture 冻结保留在 `haifa-agent-test-fixtures`。
