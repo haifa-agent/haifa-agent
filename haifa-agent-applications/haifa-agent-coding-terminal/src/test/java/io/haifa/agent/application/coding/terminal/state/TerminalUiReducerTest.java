@@ -3,8 +3,14 @@ package io.haifa.agent.application.coding.terminal.state;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryItem;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
+import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
+import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
+import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
@@ -23,12 +29,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
-import io.haifa.agent.application.project.product.coding.CodingSessionHistoryItem;
-import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
-import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
-import io.haifa.agent.application.project.product.coding.CodingSessionView;
-import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.core.session.AgentSessionStatus;
 import org.junit.jupiter.api.Test;
 
 class TerminalUiReducerTest {
@@ -299,16 +299,10 @@ class TerminalUiReducerTest {
                 Instant.EPOCH,
                 0);
         CodingSessionView sessionView = new CodingSessionView(
-                summary,
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                "sha256:test",
-                "cli-coding@1.0.0");
+                summary, Optional.empty(), Optional.empty(), Optional.empty(), "sha256:test", "cli-coding@1.0.0");
 
         TerminalUiState state = reducer.reduce(
-                TerminalUiState.initial(120, 40),
-                new TerminalUiAction.SessionLoaded(sessionView, List.of()));
+                TerminalUiState.initial(120, 40), new TerminalUiAction.SessionLoaded(sessionView, List.of()));
 
         CodingSessionHistoryPage history = new CodingSessionHistoryPage(
                 sessionId,
