@@ -529,6 +529,12 @@ class SqliteMissionStoreTest {
             assertThatThrownBy(() -> connection.createStatement().executeQuery("SELECT 1 FROM personal_mission_event"))
                     .isInstanceOf(SQLException.class)
                     .hasMessageContaining("no such table: personal_mission_event");
+            try (var statement = connection.createStatement();
+                    var result = statement.executeQuery(
+                            "SELECT sql FROM sqlite_master WHERE type='index' AND name='uq_personal_mission_active_attempt_global'")) {
+                assertThat(result.next()).isTrue();
+                assertThat(result.getString(1)).contains("WHERE state IN ('DISPATCH_PENDING','BOUND')");
+            }
         }
 
         io.haifa.agent.personalassistant.application.mission.PersonalMission mission =
