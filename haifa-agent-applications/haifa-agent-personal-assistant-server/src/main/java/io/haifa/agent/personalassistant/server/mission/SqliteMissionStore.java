@@ -51,8 +51,8 @@ import java.util.function.Supplier;
 
 /** Product-owned SQLite migration, Store and UoW. It deliberately does not modify public Runtime mappings. */
 public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork, MissionExecutionStore {
-    private static final int SCHEMA_VERSION = 7;
-    private static final String MIGRATION =
+    private static final int SCHEMA_VERSION = 8;
+    static final String MIGRATION =
             """
             CREATE TABLE personal_mission (
                 mission_id TEXT PRIMARY KEY NOT NULL,
@@ -199,6 +199,15 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 CHECK(attempt_no >= 1 AND version >= 0)
             );
 
+            CREATE TABLE personal_mission_event (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mission_id TEXT NOT NULL REFERENCES personal_mission(mission_id) ON DELETE RESTRICT,
+                event_type TEXT NOT NULL,
+                schema_version TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL
+            );
+            CREATE INDEX ix_personal_mission_event ON personal_mission_event(mission_id, event_id);
 
             CREATE TABLE personal_mission_outbox (
                 outbox_id TEXT PRIMARY KEY NOT NULL,
@@ -236,7 +245,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 schema_version INTEGER NOT NULL
             );
             """;
-    private static final String MIGRATION_V2 =
+    static final String MIGRATION_V2 =
             """
             CREATE UNIQUE INDEX uq_personal_mission_active_attempt_global
                 ON personal_mission_task_attempt((1))
@@ -244,23 +253,23 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             CREATE INDEX ix_personal_mission_task_ready_fifo
                 ON personal_mission_task(state, updated_at_ms, mission_id, task_id);
             """;
-    private static final String MIGRATION_V3 =
+    static final String MIGRATION_V3 =
             """
             ALTER TABLE personal_mission ADD COLUMN mode TEXT NOT NULL DEFAULT 'STANDARD'
                 CHECK(mode IN ('STANDARD','DEEP_RESEARCH'));
             ALTER TABLE personal_mission ADD COLUMN research_brief_json TEXT;
             """;
-    private static final String MIGRATION_V4 =
+    static final String MIGRATION_V4 =
             """
             ALTER TABLE personal_mission ADD COLUMN artifact_refs_json TEXT NOT NULL DEFAULT '[]';
             ALTER TABLE personal_mission ADD COLUMN sources_json TEXT NOT NULL DEFAULT '[]';
             ALTER TABLE personal_mission ADD COLUMN final_result_json TEXT;
             """;
-    private static final String MIGRATION_V5 =
+    static final String MIGRATION_V5 =
             """
             ALTER TABLE personal_mission ADD COLUMN selected_skill_binding TEXT;
             """;
-    private static final String MIGRATION_V6 =
+    static final String MIGRATION_V6 =
             """
             ALTER TABLE personal_mission ADD COLUMN usage_model_tokens INTEGER NOT NULL DEFAULT 0
                 CHECK(usage_model_tokens >= 0);
@@ -269,10 +278,14 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             ALTER TABLE personal_mission ADD COLUMN usage_tool_calls INTEGER NOT NULL DEFAULT 0
                 CHECK(usage_tool_calls >= 0);
             """;
-    private static final String MIGRATION_V7 =
+    static final String MIGRATION_V7 =
             """
             ALTER TABLE personal_mission ADD COLUMN model_binding_json TEXT NOT NULL DEFAULT
                 '{"modelId":"legacy-default","modelDisplayName":"Legacy default model","providerId":"legacy","providerDisplayName":"Legacy configuration","configurationDigest":"legacy-unfrozen"}';
+            """;
+    static final String MIGRATION_V8 =
+            """
+            DROP TABLE IF EXISTS personal_mission_event;
             """;
 
     private final String jdbcUrl;
@@ -1069,6 +1082,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             applyMigration(connection, 5, MIGRATION_V5);
             applyMigration(connection, 6, MIGRATION_V6);
             applyMigration(connection, 7, MIGRATION_V7);
+            applyMigration(connection, 8, MIGRATION_V8);
         } catch (SQLException exception) {
             throw failure(exception);
         }
@@ -2001,7 +2015,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         else statement.setNull(index, java.sql.Types.BIGINT);
     }
 
-    private static String sha256(String value) {
+    static String sha256(String value) {
         try {
             return HexFormat.of()
                     .formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
