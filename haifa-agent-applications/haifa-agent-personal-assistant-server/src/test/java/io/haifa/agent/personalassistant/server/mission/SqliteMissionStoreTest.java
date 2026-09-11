@@ -52,7 +52,7 @@ class SqliteMissionStoreTest {
                 MissionConstraints.DEFAULT);
 
         MissionSnapshot created = first.create(command);
-        assertThat(firstStore.schemaVersion()).isEqualTo(7);
+        assertThat(firstStore.schemaVersion()).isEqualTo(8);
 
         SqliteMissionStore restartedStore = new SqliteMissionStore(database, new ObjectMapper());
         MissionApplicationService restarted = service(restartedStore, ids);
@@ -459,7 +459,7 @@ class SqliteMissionStoreTest {
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
                 var statement = connection.prepareStatement(
                         "INSERT INTO personal_schema_history(version,checksum,installed_at_ms) VALUES (?,?,?)")) {
-            statement.setInt(1, 8);
+            statement.setInt(1, 9);
             statement.setString(2, "future");
             statement.setLong(3, CLOCK.instant().toEpochMilli());
             statement.executeUpdate();
@@ -468,6 +468,72 @@ class SqliteMissionStoreTest {
                 .isInstanceOf(MissionException.class)
                 .extracting(value -> ((MissionException) value).code())
                 .isEqualTo("MISSION_SCHEMA_NEWER_THAN_APPLICATION");
+    }
+
+    @Test
+    void upgradesExistingDatabaseFromSchemaVersionSevenDroppingEventTableWithoutDrift() throws Exception {
+        Path database = directory.resolve("v7-existing.sqlite");
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath())) {
+            connection
+                    .createStatement()
+                    .execute(
+                            "CREATE TABLE IF NOT EXISTS personal_schema_history(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, installed_at_ms INTEGER NOT NULL)");
+            List<String> v7Scripts = List.of(
+                    SqliteMissionStore.MIGRATION,
+                    SqliteMissionStore.MIGRATION_V2,
+                    SqliteMissionStore.MIGRATION_V3,
+                    SqliteMissionStore.MIGRATION_V4,
+                    SqliteMissionStore.MIGRATION_V5,
+                    SqliteMissionStore.MIGRATION_V6,
+                    SqliteMissionStore.MIGRATION_V7);
+            for (int v = 1; v <= 7; v++) {
+                String script = v7Scripts.get(v - 1);
+                for (String sql : io.haifa.agent.store.sqlite.migration.SqlScriptParser.parse(script)) {
+                    connection.createStatement().execute(sql);
+                }
+                var insert = connection.prepareStatement(
+                        "INSERT INTO personal_schema_history(version, checksum, installed_at_ms) VALUES (?, ?, ?)");
+                insert.setInt(1, v);
+                insert.setString(2, SqliteMissionStore.sha256(script));
+                insert.setLong(3, CLOCK.instant().toEpochMilli());
+                insert.executeUpdate();
+            }
+            connection
+                    .createStatement()
+                    .execute(
+                            """
+                    INSERT INTO personal_mission (
+                        mission_id, conversation_id, owner_scope, model_binding_json, objective,
+                        acceptance_json, constraints_json, state, version, created_at_ms, updated_at_ms, deadline_at_ms
+                    ) VALUES (
+                        'm-legacy', 'c-legacy', 'local/public-user',
+                        '{"modelId":"qwen3.7-plus","modelDisplayName":"Qwen3.7 Plus","providerId":"aliyun","providerDisplayName":"Aliyun","configurationDigest":"sha256:digest"}',
+                        'Legacy objective', '["Criteria 1"]', '{"maxTasks":4,"maxDependencyDepth":2}',
+                        'PLANNING', 0, 1000, 1000, 2000
+                    )
+                    """);
+            connection
+                    .createStatement()
+                    .execute(
+                            """
+                    INSERT INTO personal_mission_event (
+                        mission_id, event_type, schema_version, payload_json, created_at_ms
+                    ) VALUES ('m-legacy', 'MISSION_CREATED', 'v1', '{}', 1000)
+                    """);
+        }
+
+        SqliteMissionStore store = new SqliteMissionStore(database, new ObjectMapper());
+        assertThat(store.schemaVersion()).isEqualTo(8);
+
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath())) {
+            assertThatThrownBy(() -> connection.createStatement().executeQuery("SELECT 1 FROM personal_mission_event"))
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("no such table: personal_mission_event");
+        }
+
+        io.haifa.agent.personalassistant.application.mission.PersonalMission mission =
+                store.execute(() -> store.find("m-legacy", "local/public-user")).orElseThrow();
+        assertThat(mission.snapshot().missionId()).isEqualTo("m-legacy");
     }
 
     private static String createConcurrently(

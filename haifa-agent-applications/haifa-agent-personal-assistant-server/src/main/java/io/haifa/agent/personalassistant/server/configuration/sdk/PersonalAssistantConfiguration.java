@@ -333,7 +333,7 @@ public class PersonalAssistantConfiguration {
         return new MissionPlanValidator(
                 Set.of("GENERAL", "RESEARCH"),
                 Set.of("deep-research"),
-                Set.of("pa.task-result@v1", "pa.research-task-result@v1"));
+                Set.of("pa.task-result@v1", "pa.research-task-result@v1", "pa.research-task-result@v2"));
     }
 
     @Bean
