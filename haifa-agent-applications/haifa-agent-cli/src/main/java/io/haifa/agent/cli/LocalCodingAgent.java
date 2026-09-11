@@ -22,8 +22,6 @@ import io.haifa.agent.application.project.product.coding.delivery.CodingDelivery
 import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionMiddleware;
 import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionService;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
-import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionMiddleware;
-import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionService;
 import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileMiddleware;
@@ -692,8 +690,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     completionPolicy,
                     persistence.ports().events(),
                     persistence.ports().runs());
-            var workProjection = new CodingWorkProjectionService(
-                    persistence.ports().state(), taskModes, deliveryEvidence, deliveryProfile, time, deliveryIntents);
             var runtimeBuilder = persistence
                     .configure(new RuntimeCoreBuilder())
                     .identifierGenerator(identifiers)
@@ -704,16 +700,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     })
                     .failureDiagnostics(CliFailureDiagnosticSink.forPersistence(configuration.persistence()))
                     .completionPolicy(completionPolicy)
-                    .middleware(CodingWorkProjectionMiddleware.events(
-                            workProjection,
-                            io.haifa.agent.runtime.core.middleware.RuntimePhase.BEFORE_RUN,
-                            persistence.ports().events(),
-                            time))
-                    .middleware(CodingWorkProjectionMiddleware.events(
-                            workProjection,
-                            io.haifa.agent.runtime.core.middleware.RuntimePhase.AFTER_DECISION_EXECUTION,
-                            persistence.ports().events(),
-                            time))
                     .middleware(new CodingRunOutcomeProjectionMiddleware(
                             outcomeProjection, persistence.ports().events(), time))
                     .middleware(new CodingVerificationProfileMiddleware(verificationProfiles))

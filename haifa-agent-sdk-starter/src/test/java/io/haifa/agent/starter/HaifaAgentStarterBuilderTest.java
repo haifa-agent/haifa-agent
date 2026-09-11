@@ -3,6 +3,7 @@ package io.haifa.agent.starter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.CredentialRef;
@@ -302,6 +303,14 @@ public class HaifaAgentStarterBuilderTest {
                     .start(new StartConversationCommand("tool-1", "Weather", "Weather in Shanghai?"));
             var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
 
+            assertThat(completed.status())
+                    .as(
+                            "run failed with: %s",
+                            completed
+                                    .error()
+                                    .map(io.haifa.agent.core.error.AgentError::message)
+                                    .orElse("none"))
+                    .isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(completed.output()).contains("The weather is sunny.");
             assertThat(invoked.get()).isEqualTo(new WeatherRequest("Shanghai"));
             assertThat(modelCalls).hasValue(2);

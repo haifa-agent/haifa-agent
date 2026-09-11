@@ -45,13 +45,11 @@ Output Store 读取、持久化或 Runtime Completion Gate。
 Agent-visible、用户不可见的 Session 消息追加；旧请求因此保持为新请求的完整历史前缀。追加消息不包含
 Case/Fixture 信息、宿主路径、原始 Tool 输出或模型自报的语义覆盖。
 
-`CodingWorkProjectionService` 从既有 ToolCall、Plan、Interaction、Usage、ChangeSet 和交付证据确定性
-重建 `ORIENT/PLAN/CHANGE/VERIFY/REVIEW/DELIVER/BLOCKED` 派生阶段；它不是新的 Core Run 状态或事实源。
-投影只保留有界摘要、稳定错误簇和路径/版本/变更/产物的 SHA-256 引用；Middleware 仅在阶段、缺失证据
-或交付预留变化时追加 Agent-visible 控制消息和安全 Client Event，保持模型请求历史前缀只追加不改写。
-ANALYZE/REVIEW 不会被强制进入 CHANGE；仅修改工作区也
-不会隐式产生 commit、push 或 PR 意图。旧 Checkpoint 不增加 Codec 或 Migration，Resume 直接从权威
-记录重建投影。
+Coding Agent 不再向模型上下文注入 `ORIENT/PLAN/CHANGE/VERIFY/REVIEW/DELIVER/BLOCKED`
+等叙事性阶段，也不再持续派发 `coding.work-phase` 进展事件。模型自主负责规划并决定下一步操作；确定性
+逻辑仅在终态完成时由 `CodingCompletionPolicy` 守住用户明确的交付约束（如必需的变更/验证证据、
+未解决的确定性阻塞、硬预算限制以及提交/推送/PR 意图），不满足要求时阻止任务完成，满足时中性放行。
+ANALYZE/REVIEW 任务保持只读约束；修改工作区不会隐式产生 commit、push 或 PR 意图。
 
 `execution.run` 2.0.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和

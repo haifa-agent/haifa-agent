@@ -3,8 +3,14 @@ package io.haifa.agent.application.coding.terminal.state;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryItem;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
+import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
+import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
+import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
@@ -271,14 +277,80 @@ class TerminalUiReducerTest {
 
         TranscriptItem summary = state.transcript().getLast();
         assertThat(summary.kind()).isEqualTo(TranscriptItem.Kind.SUMMARY);
-        assertThat(summary.title()).isEqualTo("Run completed · 4s · 2 tools · 1 change set");
+        assertThat(summary.title()).isEqualTo("Run completed");
+        assertThat(summary.durationMillis()).isEmpty();
         assertThat(summary.body())
-                .contains("Tools: 1 succeeded · 1 failed", "Workspace changes: 1 change set", "Duration: 4s");
+                .contains("Status: COMPLETED")
+                .doesNotContain("Duration:", "Tools:", "Workspace changes:");
         assertThat(summary.collapsible()).isTrue();
     }
 
     @Test
-    void includesLocalShellExecutionInTheRunSummary() {
+    void restoredHistoryDoesNotProduceBogusDurationOnSubsequentRunCompletion() {
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        CodingSessionSummary summary = new CodingSessionSummary(
+                sessionId,
+                new ProjectId("project-1"),
+                "session",
+                AgentSessionStatus.ACTIVE,
+                Optional.empty(),
+                Optional.empty(),
+                0,
+                Instant.EPOCH,
+                0);
+        CodingSessionView sessionView = new CodingSessionView(
+                summary, Optional.empty(), Optional.empty(), Optional.empty(), "sha256:test", "cli-coding@1.0.0");
+
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40), new TerminalUiAction.SessionLoaded(sessionView, List.of()));
+
+        CodingSessionHistoryPage history = new CodingSessionHistoryPage(
+                sessionId,
+                List.of(
+                        new CodingSessionHistoryItem(
+                                "history-1",
+                                CodingSessionHistoryItem.Kind.USER,
+                                "You",
+                                "old question",
+                                "COMPLETED",
+                                1,
+                                Instant.parse("2026-07-26T00:00:00Z")),
+                        new CodingSessionHistoryItem(
+                                "history-2",
+                                CodingSessionHistoryItem.Kind.ASSISTANT,
+                                "Assistant",
+                                "old answer",
+                                "COMPLETED",
+                                2,
+                                Instant.parse("2026-07-26T00:00:05Z"))),
+                false);
+
+        state = reducer.reduce(state, new TerminalUiAction.HistoryLoaded(history));
+
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle("tool-1", "file_read", "STARTED", "NONE", "a.txt", ""),
+                        Instant.parse("2026-07-27T10:00:00Z"))));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"),
+                        Instant.parse("2026-07-27T10:00:05Z"))));
+
+        TranscriptItem summaryItem = state.transcript().getLast();
+        assertThat(summaryItem.kind()).isEqualTo(TranscriptItem.Kind.SUMMARY);
+        assertThat(summaryItem.title()).isEqualTo("Run completed");
+        assertThat(summaryItem.durationMillis()).isEmpty();
+        assertThat(summaryItem.body()).contains("Status: COMPLETED").doesNotContain("Duration:");
+    }
+
+    @Test
+    void retainsLocalShellExecutionInTranscriptWithoutSummaryAggregation() {
         TerminalUiState state = reducer.reduce(
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.ShellCompleted("!pwd", "D:/workspace", "SUCCEEDED"));
@@ -290,7 +362,11 @@ class TerminalUiReducerTest {
                         new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"),
                         Instant.parse("2026-07-27T00:00:01Z"))));
 
-        assertThat(state.transcript().getLast().body()).contains("Tools: 1 succeeded");
+        assertThat(state.transcript())
+                .anySatisfy(item -> assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.EXECUTION));
+        assertThat(state.transcript().getLast().body())
+                .contains("Status: COMPLETED")
+                .doesNotContain("Tools:");
     }
 
     @Test
@@ -504,7 +580,7 @@ class TerminalUiReducerTest {
     }
 
     @Test
-    void deliveryEventsDriveCompletionBudgetAndCodingWorkPhaseWithoutParsingText() {
+    void deliveryEventsDriveCompletionAndBudgetWithoutParsingText() {
         TerminalUiState firstDeferral = reducer.reduce(
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.RunEventReceived(event(
@@ -544,18 +620,6 @@ class TerminalUiReducerTest {
                                 "TOOL_CALLS",
                                 24,
                                 32))));
-        TerminalUiState workPhase = reducer.reduce(
-                budget,
-                new TerminalUiAction.RunEventReceived(event(
-                        4,
-                        "event-4",
-                        new RunEventPayloads.DeliveryLifecycle(
-                                "VERIFY",
-                                "ACTIVE",
-                                "AUTHORITATIVE_EVIDENCE_PROJECTION",
-                                List.of("VALIDATION_ATTEMPT", "DIFF_INSPECTION"),
-                                42,
-                                0))));
 
         assertThat(firstDeferral.status()).isEqualTo("Completion deferred");
         assertThat(secondDeferral.status()).isEqualTo("Completion deferred");
@@ -574,14 +638,6 @@ class TerminalUiReducerTest {
                 .singleElement()
                 .satisfies(item -> assertThat(item.body())
                         .contains("Limiting resource: TOOL_CALLS", "Usage: 24 / 32", "Remaining: 25%"));
-        assertThat(workPhase.status()).isEqualTo("Work phase: VERIFY");
-        assertThat(workPhase.transcript())
-                .filteredOn(item -> item.id().equals("delivery-ACTIVE"))
-                .singleElement()
-                .satisfies(item -> {
-                    assertThat(item.title()).isEqualTo("Work phase · VERIFY");
-                    assertThat(item.body()).contains("VALIDATION_ATTEMPT", "DIFF_INSPECTION", "Remaining: 42%");
-                });
     }
 
     @Test
