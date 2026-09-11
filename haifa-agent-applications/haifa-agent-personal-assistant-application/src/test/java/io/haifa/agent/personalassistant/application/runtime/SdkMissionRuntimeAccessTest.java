@@ -1005,6 +1005,59 @@ class SdkMissionRuntimeAccessTest {
                         assertThat(finding.path("unverified").asBoolean()).isTrue());
     }
 
+    @Test
+    void dependentTaskContextFallbackPreservesV2TaskSummaryWhenContextExceedsCeiling() throws Exception {
+        java.util.ArrayList<MissionTaskRunInput.DependencyResult> dependencies = new java.util.ArrayList<>();
+        for (int i = 1; i <= 15; i++) {
+            StringBuilder sources = new StringBuilder();
+            StringBuilder findings = new StringBuilder();
+            for (int s = 1; s <= 6; s++) {
+                if (s > 1) sources.append(",");
+                sources.append("""
+                        {"sourceId":"src-%d-%d","locator":"https://example.org/source-%d-%d/%s",
+                         "normalizedLocator":"https://example.org/source-%d-%d/%s","title":"Source %d-%d",
+                         "status":"FETCHED","publishedAt":"2026-08-01T00:00:00Z"}"""
+                        .formatted(i, s, i, s, "x".repeat(150), i, s, "x".repeat(150), i, s));
+            }
+            for (int f = 1; f <= 6; f++) {
+                if (f > 1) findings.append(",");
+                findings.append("""
+                        {"findingId":"find-%d-%d","title":"Title %d-%d %s",
+                         "mechanism":"Mechanism %d-%d %s","keyParameters":[],
+                         "evidenceSummary":"Summary","implications":"Implications","limitations":"None",
+                         "supportingSourceIds":["src-%d-1"],"opposingSourceIds":[],
+                         "evidenceAssessment":"SUPPORTED","unverified":false}"""
+                        .formatted(i, f, i, f, "t".repeat(100), i, f, "m".repeat(400), i));
+            }
+            String dependencyJson = """
+                    {
+                      "schemaVersion":"pa.research-task-result/v2",
+                      "taskSummary":"Critical upstream conclusion for task %d.",
+                      "sources":[%s],
+                      "findings":[%s],
+                      "unresolvedQuestions":["Question %d"]
+                    }"""
+                    .formatted(i, sources, findings, i);
+            dependencies.add(new MissionTaskRunInput.DependencyResult(
+                    "task-" + i,
+                    "pa.research-task-result",
+                    "v2",
+                    "sha256:" + String.format("%064d", i),
+                    dependencyJson));
+        }
+
+        String projected = MissionDependencyContextProjector.project(dependencies);
+        JsonNode root = new ObjectMapper().readTree(projected);
+
+        assertThat(root.path("projection").asText()).isEqualTo("SUMMARY_ONLY_CONTEXT_LIMIT");
+        assertThat(root.path("dependencies")).hasSize(15);
+        for (int i = 0; i < 15; i++) {
+            JsonNode dep = root.path("dependencies").get(i);
+            assertThat(dep.path("brief").asText())
+                    .isEqualTo("Critical upstream conclusion for task " + (i + 1) + ".");
+        }
+    }
+
     private static ResearchBrief truthfulnessBrief() {
         return new ResearchBrief(
                 "Which claims about Acme AI are true?",
