@@ -950,7 +950,7 @@ public final class PersonalModelFactory {
                         "claims":[{"claimId":"claim-1","claim":"The primary finding is independently corroborated.",
                         "supportingSourceIds":["source-1","source-2"],"opposingSourceIds":[],
                         "limitations":"Offline fixtures do not establish external freshness.","unverified":false,
-                        "quotedSpans":[]}],"artifactRefs":[],
+                        "quotedSpans":[]}],
                         "unresolvedQuestions":["The offline fixture cannot establish external freshness."],
                         "stopReason":"SUFFICIENT_EVIDENCE",
                         "limitsUsed":{"searchCalls":%d,"fetchCalls":%d,"sources":2,"contentBytes":%d}}

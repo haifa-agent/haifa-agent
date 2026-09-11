@@ -1163,7 +1163,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 characters, implications under 3000 characters, limitations under 2000 characters, and unresolvedQuestions
                 to at most 10 items.
 
-                Required exact top-level fields are schemaVersion, taskSummary, queries, findings, sources, artifactRefs,
+                Required exact top-level fields are schemaVersion, taskSummary, queries, findings, sources,
                 unresolvedQuestions, stopReason, and limitsUsed. schemaVersion must be pa.research-task-result/v2. Each
                 query has only query and phase. Each finding has exactly findingId, title, mechanism, keyParameters,
                 evidenceSummary, implications, limitations, supportingSourceIds, opposingSourceIds, evidenceAssessment,
@@ -1172,7 +1172,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 primary source for a normative or first-party fact, or from at least two genuinely independent sources
                 for an empirical or interpretive claim. Retrieval success alone never establishes factual support. Each source has
                 exactly sourceId, locator, normalizedLocator, locatorDigest, title, safetyType, fetchedAt, publishedAt,
-                status, excerpt, and contentDigest. artifactRefs must be empty. limitsUsed has exactly searchCalls,
+                status, excerpt, and contentDigest. limitsUsed has exactly searchCalls,
                 fetchCalls, sources, and contentBytes. Use lower-case kebab-case stable IDs.
                 To make evidence identity Mission-wide, prefix every sourceId and findingId with `%s--`; references in
                 supportingSourceIds and opposingSourceIds must use the same prefixed source IDs.
@@ -1182,7 +1182,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 - source.safetyType: PUBLIC_WEB, or DEVELOPMENT_STUB only for an explicit local fixture;
                 - stopReason: SUFFICIENT_EVIDENCE, SOURCE_LIMIT, CONTENT_LIMIT, TIME_LIMIT, TOOL_LIMIT,
                   NO_MORE_SAFE_SOURCES, or CANCELLED.
-                artifactRefs, keyParameters, supportingSourceIds, and opposingSourceIds must be JSON arrays, never objects.
+                keyParameters, supportingSourceIds, and opposingSourceIds must be JSON arrays, never objects.
 
                 Preserve only evidence present in the notes. Do not invent a source, locator, date, or finding.
                 Encode publishedAt as UTC ISO-8601 instant such as 2026-08-10T00:00:00Z. When a source provides only
