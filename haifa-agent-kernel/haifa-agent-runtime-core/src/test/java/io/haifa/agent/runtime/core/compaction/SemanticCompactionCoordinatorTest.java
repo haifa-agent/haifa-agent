@@ -575,12 +575,12 @@ class SemanticCompactionCoordinatorTest {
 
         SessionMessageSource messageSource = new SessionMessageSource(store, store, deterministic, policy, ids, time);
 
-        var selection = messageSource.select(run, 0);
+        var selection = messageSource.select(run);
         assertThat(selection.summary()).isPresent();
         assertThat(selection.summary().get().compressorVersion()).isEqualTo("semantic-v1");
         assertThat(selection.summary().get().semanticSummary()).isPresent();
 
-        var forcedSelection = messageSource.select(run, 1, 1);
+        var forcedSelection = messageSource.compactIfNeeded(run, 1, 1);
         assertThat(forcedSelection.compacted()).isFalse();
         assertThat(forcedSelection.summary()).contains(selection.summary().orElseThrow());
         assertThat(store.latestVersion(session)).isEqualTo(1L);

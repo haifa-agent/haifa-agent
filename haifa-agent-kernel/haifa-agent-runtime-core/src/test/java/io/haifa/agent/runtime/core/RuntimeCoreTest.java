@@ -8,6 +8,9 @@ import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.error.AgentErrorCode;
+import io.haifa.agent.core.message.AgentMessageId;
+import io.haifa.agent.core.message.MessageRole;
+import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.plan.AgentPlan;
 import io.haifa.agent.core.plan.AgentPlanId;
@@ -40,6 +43,7 @@ import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
@@ -75,6 +79,7 @@ import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
@@ -432,6 +437,66 @@ class RuntimeCoreTest {
         assertThat(finalRequest.get().options()).doesNotContainKey(RuntimeControlOptions.FINALIZE_AFTER_TOOL_CALLS);
         assertThat(finalRequest.get().messages()).anySatisfy(message -> assertThat(message.content())
                 .contains("FINALIZE_ONLY", "No more Tools", "DSML", "not a final answer"));
+    }
+
+    @Test
+    void todoContextReducesTheSessionBudgetBeforeHistoryIsCompacted() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        Fixture fixture = fixture(
+                request -> {
+                    modelCalls.incrementAndGet();
+                    return response(finalDecision("completed with a bounded context"));
+                },
+                builder -> builder.profiles((id, overrides) -> new ResolvedProfile(
+                        id,
+                        "1.0.0",
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(10_000, 10_000, 10_000, 4, 4, 0, "USD", 0),
+                        new AgentRunLimits(4, 0, 1, 60_000, 60_000),
+                        constrainedContextModel(),
+                        Map.of(),
+                        Map.of())));
+        String sessionText = "s".repeat(800);
+        var accepted = fixture.runtime.start(new AgentRunRequest(
+                "todo-budget",
+                new AgentDefinitionId("test-agent"),
+                Optional.empty(),
+                "default",
+                new AgentSessionId("todo-budget-session"),
+                Optional.empty(),
+                sessionText,
+                List.of(),
+                RuntimeOverrides.NONE));
+        var run = fixture.store.find(accepted.runId()).orElseThrow();
+        fixture.store.savePlan(new AgentPlan(
+                new AgentPlanId("todo-budget-plan"),
+                run.id(),
+                "keep this work visible",
+                List.of(new TodoItem(
+                        new TodoItemId("todo-budget-item"),
+                        "t".repeat(400),
+                        "keep the bounded context regression covered",
+                        TodoPriority.HIGH,
+                        List.of())),
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("todo-budget-follow-up"),
+                run.sessionId(),
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.USER,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new TextPart(sessionText, "plain")),
+                Map.of(),
+                Instant.parse("2026-07-21T00:00:00Z")));
+
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(modelCalls).hasValue(1);
+        assertThat(fixture.store.latestValid(run.sessionId())).isPresent();
     }
 
     @Test
@@ -2267,6 +2332,28 @@ class RuntimeCoreTest {
 
     private static Fixture fixture(AgentChatModel model) {
         return fixture(model, builder -> builder);
+    }
+
+    private static ResolvedModelSnapshot constrainedContextModel() {
+        ResolvedModelSnapshot defaults = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        return ResolvedModelSnapshot.create(
+                defaults.providerId(),
+                defaults.providerVersion(),
+                defaults.modelId(),
+                defaults.modelVersion(),
+                defaults.providerModelId(),
+                defaults.adapterType(),
+                defaults.adapterVersion(),
+                defaults.apiStyle(),
+                defaults.dialect(),
+                defaults.endpoint(),
+                defaults.credentialRef(),
+                defaults.nativeStreaming(),
+                defaults.capabilities(),
+                1_000,
+                128,
+                defaults.providerOptions(),
+                defaults.invocationOptions());
     }
 
     private static Fixture fixture(

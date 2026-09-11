@@ -5,11 +5,8 @@ import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.common.time.TimeProvider;
-import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.DeterministicContextCompressor;
-import io.haifa.agent.context.core.DefaultAgentContextBuilder;
-import io.haifa.agent.context.selection.ContextSelectionPolicy;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -602,12 +599,7 @@ public final class RuntimeCoreBuilder {
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard()),
                 new DefaultRuntimeContextBuilder(
-                        state,
-                        middleware,
-                        new DefaultAgentContextBuilder(new HeuristicTokenEstimator(), new ContextSelectionPolicy()),
-                        sessionMessageSource,
-                        memoryContextSource,
-                        skillContentLoader),
+                        state, middleware, sessionMessageSource, memoryContextSource, skillContentLoader),
                 models,
                 new DefaultDecisionValidator(new DuplicateToolCallGuard(), new ChildRunGuard(state)),
                 decisionExecutor,
