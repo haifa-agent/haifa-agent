@@ -28,7 +28,7 @@ public final class DeterministicMissionPlanner implements MissionPlanner {
                     research ? "RESEARCH" : "GENERAL",
                     research ? Set.of("deep-research") : Set.of(),
                     research ? "pa.research-task-result" : "pa.task-result",
-                    "v1",
+                    research ? "v2" : "v1",
                     MissionTaskState.PLANNED));
         }
         return new PlanningResult(

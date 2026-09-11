@@ -85,7 +85,6 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     public static final String SYNTHESIS_PROTOCOL_VERSION = "v7";
     public static final String STANDARD_SYNTHESIS_PROTOCOL_VERSION = "v4";
     public static final String STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION = "v2";
-    private static final int SYNTHESIS_MAX_UNVERIFIED_CLAIMS = 320;
     public static final long TASK_MAX_TOOL_CALLS = MissionTaskRunInput.PRIMARY_RESEARCH_TOOL_CALL_HARD_LIMIT;
     public static final long TASK_RESEARCH_TOOL_CALL_TARGET =
             MissionTaskRunInput.PRIMARY_RESEARCH_TOOL_CALL_STOP_TARGET;
@@ -648,22 +647,14 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         try {
             JsonNode root = JSON.readTree(value);
             String schemaVersion = root.path("schemaVersion").asText();
-            String resource;
-            String version;
-            if ("pa.research-task-result/v2".equals(schemaVersion)) {
-                resource = "schemas/research-task-result-v2.json";
-                version = "v2";
-            } else if ("pa.research-task-result/v1".equals(schemaVersion)) {
-                resource = "schemas/research-task-result-v1.json";
-                version = "v1";
-            } else {
+            if (!"pa.research-task-result/v2".equals(schemaVersion)) {
                 return false;
             }
-            Map<String, Object> schemaDocument =
-                    JSON.readValue(deepResearchSkill.resource(resource), new TypeReference<>() {});
+            Map<String, Object> schemaDocument = JSON.readValue(
+                    deepResearchSkill.resource("schemas/research-task-result-v2.json"), new TypeReference<>() {});
             Map<String, Object> instance = JSON.convertValue(root, new TypeReference<>() {});
             boolean schemaValid = new JsonSchema202012Validator()
-                    .validate(new ToolSchema("pa.research-task-result", version, schemaDocument), instance)
+                    .validate(new ToolSchema("pa.research-task-result", "v2", schemaDocument), instance)
                     .valid();
             return schemaValid && researchTaskSemanticsValid(root);
         } catch (Exception ignored) {
@@ -690,7 +681,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 canonicalizeInstant(source, "publishedAt", true);
             }
             String schema = parsed.path("schemaVersion").asText();
-            if ("pa.research-task-result/v1".equals(schema) || "pa.research-task-result/v2".equals(schema)) {
+            if ("pa.research-task-result/v2".equals(schema)) {
                 canonicalizeResearchEvidence((ObjectNode) parsed, taskId, completedFetches);
             }
             return JSON.writeValueAsString(parsed);
@@ -795,38 +786,6 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         }
         root.set("sources", canonicalSources);
 
-        if (root.has("claims")) {
-            ArrayNode canonicalClaims = JSON.createArrayNode();
-            LinkedHashSet<String> claimIds = new LinkedHashSet<>();
-            for (JsonNode candidate : root.path("claims")) {
-                if (!(candidate instanceof ObjectNode claim)) continue;
-                String claimId =
-                        namespacedStableId(taskId, claim.path("claimId").asText());
-                if (claimId.isBlank() || !claimIds.add(claimId)) continue;
-                claim.put("claimId", claimId);
-                if (claim.path("limitations").isArray()) {
-                    String limitations = java.util.stream.StreamSupport.stream(
-                                    claim.path("limitations").spliterator(), false)
-                            .map(JsonNode::asText)
-                            .filter(text -> !text.isBlank())
-                            .collect(java.util.stream.Collectors.joining("; "));
-                    claim.put("limitations", limitations);
-                }
-                // Normalized Task results intentionally carry no verbatim quotations. Enforce the required empty
-                // placeholder even when the model omits it, instead of rejecting otherwise usable evidence.
-                claim.putArray("quotedSpans");
-                LinkedHashSet<String> references = new LinkedHashSet<>();
-                rewriteSourceReferences(claim, "supportingSourceIds", sourceAliases, fetchedBySource, references);
-                rewriteSourceReferences(claim, "opposingSourceIds", sourceAliases, fetchedBySource, references);
-                if (references.isEmpty()) continue;
-                if (references.stream().anyMatch(sourceId -> !fetchedBySource.getOrDefault(sourceId, false))) {
-                    claim.put("unverified", true);
-                }
-                canonicalClaims.add(claim);
-            }
-            root.set("claims", canonicalClaims);
-        }
-
         if (root.has("findings")) {
             ArrayNode canonicalFindings = JSON.createArrayNode();
             LinkedHashSet<String> findingIds = new LinkedHashSet<>();
@@ -873,11 +832,9 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             root.set("findings", canonicalFindings);
         }
 
-        if ("pa.research-task-result/v2".equals(root.path("schemaVersion").asText())) {
-            if (!root.hasNonNull("taskSummary") && root.hasNonNull("brief")) {
-                root.set("taskSummary", root.get("brief"));
-                root.remove("brief");
-            }
+        if (!root.hasNonNull("taskSummary") && root.hasNonNull("brief")) {
+            root.set("taskSummary", root.get("brief"));
+            root.remove("brief");
         }
 
         if (root.path("limitsUsed") instanceof ObjectNode limits) {
@@ -1085,12 +1042,12 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
 
     public static String conservativeResearchTaskResult(String objective, String result, String normalizationFailure) {
         ObjectNode root = JSON.createObjectNode();
-        root.put("schemaVersion", "pa.research-task-result/v1");
-        String brief = containsToolProtocolMarkup(JSON.getNodeFactory().textNode(result))
+        root.put("schemaVersion", "pa.research-task-result/v2");
+        String taskSummary = containsToolProtocolMarkup(JSON.getNodeFactory().textNode(result))
                 ? objective
                         + " Structured normalization discarded serialized Tool protocol markup; evidence requires review."
                 : result;
-        root.put("brief", brief.substring(0, Math.min(brief.length(), 8_000)));
+        root.put("taskSummary", taskSummary.substring(0, Math.min(taskSummary.length(), 8_000)));
         ArrayNode queries = root.putArray("queries");
         ObjectNode query = queries.addObject();
         query.put("query", objective.substring(0, Math.min(objective.length(), 2_048)));
@@ -1124,8 +1081,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             source.put("excerpt", "");
             source.putNull("contentDigest");
         }
-        root.putArray("claims");
-        root.putArray("artifactRefs");
+        root.putArray("findings");
         root.putArray("unresolvedQuestions")
                 .add("Structured normalization was unavailable (" + normalizationFailure
                         + "); recovered notes and source locators require verification.");
@@ -1163,7 +1119,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 characters, implications under 3000 characters, limitations under 2000 characters, and unresolvedQuestions
                 to at most 10 items.
 
-                Required exact top-level fields are schemaVersion, taskSummary, queries, findings, sources, artifactRefs,
+                Required exact top-level fields are schemaVersion, taskSummary, queries, findings, sources,
                 unresolvedQuestions, stopReason, and limitsUsed. schemaVersion must be pa.research-task-result/v2. Each
                 query has only query and phase. Each finding has exactly findingId, title, mechanism, keyParameters,
                 evidenceSummary, implications, limitations, supportingSourceIds, opposingSourceIds, evidenceAssessment,
@@ -1172,7 +1128,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 primary source for a normative or first-party fact, or from at least two genuinely independent sources
                 for an empirical or interpretive claim. Retrieval success alone never establishes factual support. Each source has
                 exactly sourceId, locator, normalizedLocator, locatorDigest, title, safetyType, fetchedAt, publishedAt,
-                status, excerpt, and contentDigest. artifactRefs must be empty. limitsUsed has exactly searchCalls,
+                status, excerpt, and contentDigest. limitsUsed has exactly searchCalls,
                 fetchCalls, sources, and contentBytes. Use lower-case kebab-case stable IDs.
                 To make evidence identity Mission-wide, prefix every sourceId and findingId with `%s--`; references in
                 supportingSourceIds and opposingSourceIds must use the same prefixed source IDs.
@@ -1182,7 +1138,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 - source.safetyType: PUBLIC_WEB, or DEVELOPMENT_STUB only for an explicit local fixture;
                 - stopReason: SUFFICIENT_EVIDENCE, SOURCE_LIMIT, CONTENT_LIMIT, TIME_LIMIT, TOOL_LIMIT,
                   NO_MORE_SAFE_SOURCES, or CANCELLED.
-                artifactRefs, keyParameters, supportingSourceIds, and opposingSourceIds must be JSON arrays, never objects.
+                keyParameters, supportingSourceIds, and opposingSourceIds must be JSON arrays, never objects.
 
                 Preserve only evidence present in the notes. Do not invent a source, locator, date, or finding.
                 Encode publishedAt as UTC ISO-8601 instant such as 2026-08-10T00:00:00Z. When a source provides only
@@ -1761,201 +1717,6 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 + Objects.requireNonNull(invalidRunId);
     }
 
-    static String canonicalizeResearchSynthesis(String value) {
-        try {
-            JsonNode parsed = JSON.readTree(value);
-            if (!(parsed instanceof ObjectNode root)
-                    || !"pa.research-final-result/v1"
-                            .equals(root.path("schemaVersion").asText())) {
-                return value;
-            }
-            for (String field : List.of(
-                    "reportArtifactRef",
-                    "sourcesArtifactRef",
-                    "claimEvidenceArtifactRef",
-                    "resultArtifactRef",
-                    "unresolvedArtifactRef")) {
-                root.putNull(field);
-            }
-            ArrayNode artifactRefs = JSON.createArrayNode();
-            root.path("artifactRefs").forEach(reference -> {
-                if (reference.isObject()) artifactRefs.add(reference);
-            });
-            root.set("artifactRefs", artifactRefs);
-            canonicalizeSynthesisDirectAnswer(root);
-            for (String field : List.of(
-                    "completedItems",
-                    "failedItems",
-                    "sourceRefs",
-                    "unverifiedClaims",
-                    "unresolvedQuestions",
-                    "residualRisks")) {
-                canonicalizeSynthesisTextItems(root, field);
-            }
-            root.retain(List.of(
-                    "schemaVersion",
-                    "reportArtifactRef",
-                    "sourcesArtifactRef",
-                    "claimEvidenceArtifactRef",
-                    "resultArtifactRef",
-                    "unresolvedArtifactRef",
-                    "directAnswer",
-                    "completedItems",
-                    "failedItems",
-                    "artifactRefs",
-                    "sourceRefs",
-                    "unverifiedClaims",
-                    "unresolvedQuestions",
-                    "residualRisks",
-                    "completionKind"));
-            return JSON.writeValueAsString(root);
-        } catch (Exception ignored) {
-            return value;
-        }
-    }
-
-    private static void canonicalizeSynthesisDirectAnswer(ObjectNode root) {
-        JsonNode answer = root.get("directAnswer");
-        if (answer == null || answer.isTextual()) return;
-        LinkedHashSet<String> parts = new LinkedHashSet<>();
-        collectSynthesisAnswerParts(answer, parts);
-        String normalized = String.join("\n\n", parts);
-        if (!normalized.isBlank()) {
-            root.put("directAnswer", normalized.substring(0, Math.min(normalized.length(), 24_000)));
-        }
-    }
-
-    private static void collectSynthesisAnswerParts(JsonNode value, LinkedHashSet<String> parts) {
-        if (value.isTextual()) {
-            String text = value.asText().trim();
-            if (!text.isBlank()) parts.add(text);
-            return;
-        }
-        if (value.isContainerNode()) value.forEach(child -> collectSynthesisAnswerParts(child, parts));
-    }
-
-    private static void canonicalizeSynthesisTextItems(ObjectNode root, String field) {
-        JsonNode values = root.get(field);
-        if (values == null || !values.isArray()) return;
-        ArrayNode normalized = JSON.createArrayNode();
-        LinkedHashSet<String> unique = new LinkedHashSet<>();
-        values.forEach(value -> {
-            String text = synthesisTextItem(value);
-            if (!text.isBlank() && unique.add(text)) normalized.add(text);
-        });
-        root.set(field, normalized);
-    }
-
-    private static String synthesisTextItem(JsonNode value) {
-        if (value.isTextual()) return value.asText().trim();
-        if (!value.isObject()) return "";
-        String taskId = value.path("taskId").asText().trim();
-        String detail = "";
-        for (String field : List.of("result", "reason", "failure", "brief", "message", "status")) {
-            JsonNode candidate = value.get(field);
-            if (candidate != null
-                    && candidate.isTextual()
-                    && !candidate.asText().isBlank()) {
-                detail = candidate.asText().trim();
-                break;
-            }
-        }
-        String result = taskId.isBlank() ? detail : detail.isBlank() ? taskId : taskId + ": " + detail;
-        return result.length() <= 4_096 ? result : result.substring(0, 4_096);
-    }
-
-    public static String conservativeResearchSynthesis(MissionSynthesisIntent intent, String synthesisFailure) {
-        return conservativeResearchSynthesis(intent, synthesisFailure, "");
-    }
-
-    public static String conservativeResearchSynthesis(
-            MissionSynthesisIntent intent, String synthesisFailure, String preferredSynthesis) {
-        ObjectNode root = JSON.createObjectNode();
-        root.put("schemaVersion", "pa.research-final-result/v1");
-        root.putNull("reportArtifactRef");
-        root.putNull("sourcesArtifactRef");
-        root.putNull("claimEvidenceArtifactRef");
-        root.putNull("resultArtifactRef");
-        root.putNull("unresolvedArtifactRef");
-
-        StringBuilder answer = new StringBuilder();
-        ArrayNode completedItems = root.putArray("completedItems");
-        LinkedHashSet<String> sourceRefs = new LinkedHashSet<>();
-        LinkedHashSet<String> unverifiedClaims = new LinkedHashSet<>();
-        LinkedHashSet<String> unresolvedQuestions = new LinkedHashSet<>();
-        int itemNo = 0;
-        for (String encoded : intent.taskResults()) {
-            itemNo++;
-            try {
-                JsonNode task = JSON.readTree(encoded);
-                String brief = task.path("taskSummary").asText();
-                if (brief.isBlank()) brief = task.path("brief").asText();
-                if (!brief.isBlank()) {
-                    if (!answer.isEmpty()) answer.append("\n\n");
-                    answer.append("### Research item ")
-                            .append(itemNo)
-                            .append("\n\n")
-                            .append(brief);
-                    completedItems.add("Research item " + itemNo + " completed");
-                }
-                task.path("sources")
-                        .forEach(
-                                source -> sourceRefs.add(source.path("sourceId").asText()));
-                task.path("claims").forEach(claim -> {
-                    if (claim.path("unverified").asBoolean()) {
-                        unverifiedClaims.add(claim.path("claimId").asText());
-                    }
-                });
-                task.path("findings").forEach(finding -> {
-                    if (finding.path("unverified").asBoolean()) {
-                        unverifiedClaims.add(finding.path("findingId").asText());
-                    }
-                });
-                task.path("unresolvedQuestions").forEach(value -> unresolvedQuestions.add(value.asText()));
-            } catch (Exception ignored) {
-                unresolvedQuestions.add("A settled research item could not be decoded during fallback synthesis.");
-            }
-        }
-        String preferredAnswer = preferredResearchAnswer(preferredSynthesis);
-        if (answer.isEmpty()) answer.append(intent.objective());
-        String trustedAnswer = preferredAnswer.isBlank() ? answer.toString() : preferredAnswer;
-        root.put("directAnswer", trustedAnswer.substring(0, Math.min(trustedAnswer.length(), 24_000)));
-        ArrayNode failedItems = JSON.valueToTree(intent.failedItems());
-        root.set("failedItems", failedItems);
-        root.putArray("artifactRefs");
-        ArrayNode finalSourceRefs =
-                JSON.valueToTree(sourceRefs.stream().limit(24).toList());
-        root.set("sourceRefs", finalSourceRefs);
-        ArrayNode finalUnverifiedClaims = JSON.valueToTree(
-                unverifiedClaims.stream().limit(SYNTHESIS_MAX_UNVERIFIED_CLAIMS).toList());
-        root.set("unverifiedClaims", finalUnverifiedClaims);
-        ArrayNode finalUnresolvedQuestions =
-                JSON.valueToTree(unresolvedQuestions.stream().limit(20).toList());
-        root.set("unresolvedQuestions", finalUnresolvedQuestions);
-        root.putArray("residualRisks")
-                .add("Model synthesis was unavailable (" + synthesisFailure
-                        + "); a deterministic evidence-preserving fallback was used.");
-        root.put("completionKind", intent.failedItems().isEmpty() ? "COMPLETE" : "PARTIAL");
-        try {
-            return JSON.writeValueAsString(root);
-        } catch (Exception failure) {
-            throw new MissionException(
-                    "MISSION_SYNTHESIS_FALLBACK_FAILED", "Mission Synthesis fallback could not be encoded", failure);
-        }
-    }
-
-    private static String preferredResearchAnswer(String synthesis) {
-        if (synthesis == null || synthesis.isBlank()) return "";
-        try {
-            JsonNode answer = JSON.readTree(synthesis).path("directAnswer");
-            if (answer.isTextual() && !answer.asText().isBlank()) return answer.asText();
-        } catch (Exception ignored) {
-            // A non-JSON synthesis may still be a useful integrated answer.
-        }
-        String stripped = synthesis.strip();
-        return stripped.startsWith("{") || stripped.startsWith("[") ? "" : stripped;
-    }
-
     @Override
     public void appendFinalMessage(
             String conversationId, String missionId, String synthesisRunId, String finalMessage) {
@@ -2062,7 +1823,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     Required shape: {"schemaVersion":"pa.mission-plan/v1","tasks":[{"taskId":"task-1","ordinal":1,
                     "title":"...","objective":"...","acceptanceCriteria":["..."],"dependsOn":[],
                     "taskType":"RESEARCH","requiredSkillIds":["deep-research"],
-                    "resultSchema":{"id":"pa.research-task-result","version":"v1"}}]}.
+                    "resultSchema":{"id":"pa.research-task-result","version":"v2"}}]}.
                     Use at most %d tasks and dependency depth %d. Task IDs must be lower-case kebab-case, ordinals contiguous,
                     and every dependency must exactly equal the taskId of an earlier object in this same tasks array. Never
                     use ordinal placeholders such as task-1 or task-2 unless those are the actual taskId values. Only
@@ -2169,7 +1930,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 Required shape: {"schemaVersion":"pa.mission-plan/v1","tasks":[{"taskId":"specific-kebab-id",
                 "ordinal":1,"title":"...","objective":"...","acceptanceCriteria":["..."],"dependsOn":[],
                 "taskType":"%s","requiredSkillIds":%s,
-                "resultSchema":{"id":"%s","version":"v1"}}]}.
+                "resultSchema":{"id":"%s","version":"%s"}}]}.
                 Maximum tasks: %d. Maximum dependency depth: %d. Dependencies must reference earlier taskId values.
                 Dependency depth counts task nodes, not edges: root depth is 1, a direct dependent is depth 2, and a
                 dependent of that Task is depth 3. Flatten dependencies as needed to stay within the maximum.
@@ -2186,6 +1947,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         request.mode() == MissionMode.DEEP_RESEARCH ? "RESEARCH" : "GENERAL",
                         request.mode() == MissionMode.DEEP_RESEARCH ? "[\"deep-research\"]" : "[]",
                         request.mode() == MissionMode.DEEP_RESEARCH ? "pa.research-task-result" : "pa.task-result",
+                        request.mode() == MissionMode.DEEP_RESEARCH ? "v2" : "v1",
                         request.constraints().maxTasks(),
                         request.constraints().maxDependencyDepth(),
                         dependencyRepair,

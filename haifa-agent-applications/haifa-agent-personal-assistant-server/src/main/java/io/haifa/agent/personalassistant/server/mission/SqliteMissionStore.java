@@ -51,8 +51,8 @@ import java.util.function.Supplier;
 
 /** Product-owned SQLite migration, Store and UoW. It deliberately does not modify public Runtime mappings. */
 public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork, MissionExecutionStore {
-    private static final int SCHEMA_VERSION = 7;
-    private static final String MIGRATION =
+    private static final int SCHEMA_VERSION = 8;
+    static final String MIGRATION =
             """
             CREATE TABLE personal_mission (
                 mission_id TEXT PRIMARY KEY NOT NULL,
@@ -245,31 +245,31 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 schema_version INTEGER NOT NULL
             );
             """;
-    private static final String MIGRATION_V2 =
+    static final String MIGRATION_V2 =
             """
             CREATE UNIQUE INDEX uq_personal_mission_active_attempt_global
                 ON personal_mission_task_attempt((1))
-                WHERE state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING');
+                WHERE state IN ('DISPATCH_PENDING','BOUND');
             CREATE INDEX ix_personal_mission_task_ready_fifo
                 ON personal_mission_task(state, updated_at_ms, mission_id, task_id);
             """;
-    private static final String MIGRATION_V3 =
+    static final String MIGRATION_V3 =
             """
             ALTER TABLE personal_mission ADD COLUMN mode TEXT NOT NULL DEFAULT 'STANDARD'
                 CHECK(mode IN ('STANDARD','DEEP_RESEARCH'));
             ALTER TABLE personal_mission ADD COLUMN research_brief_json TEXT;
             """;
-    private static final String MIGRATION_V4 =
+    static final String MIGRATION_V4 =
             """
             ALTER TABLE personal_mission ADD COLUMN artifact_refs_json TEXT NOT NULL DEFAULT '[]';
             ALTER TABLE personal_mission ADD COLUMN sources_json TEXT NOT NULL DEFAULT '[]';
             ALTER TABLE personal_mission ADD COLUMN final_result_json TEXT;
             """;
-    private static final String MIGRATION_V5 =
+    static final String MIGRATION_V5 =
             """
             ALTER TABLE personal_mission ADD COLUMN selected_skill_binding TEXT;
             """;
-    private static final String MIGRATION_V6 =
+    static final String MIGRATION_V6 =
             """
             ALTER TABLE personal_mission ADD COLUMN usage_model_tokens INTEGER NOT NULL DEFAULT 0
                 CHECK(usage_model_tokens >= 0);
@@ -278,10 +278,13 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             ALTER TABLE personal_mission ADD COLUMN usage_tool_calls INTEGER NOT NULL DEFAULT 0
                 CHECK(usage_tool_calls >= 0);
             """;
-    private static final String MIGRATION_V7 =
+    static final String MIGRATION_V7 =
             """
             ALTER TABLE personal_mission ADD COLUMN model_binding_json TEXT NOT NULL DEFAULT
                 '{"modelId":"legacy-default","modelDisplayName":"Legacy default model","providerId":"legacy","providerDisplayName":"Legacy configuration","configurationDigest":"legacy-unfrozen"}';
+            """;
+    static final String MIGRATION_V8 = """
+            DROP TABLE IF EXISTS personal_mission_event;
             """;
 
     private final String jdbcUrl;
@@ -399,7 +402,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 """)) {
             bindMission(statement, value);
             statement.executeUpdate();
-            appendEvent(value.missionId(), "MISSION_CREATED", value.createdAt());
         } catch (SQLException exception) {
             throw constraint(exception);
         }
@@ -432,7 +434,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             }
             persistRevisions(value);
             if (value.confirmedPlanRevisionNo().isEmpty()) replaceActiveTasks(value);
-            appendEvent(value.missionId(), "MISSION_" + value.state().name(), value.updatedAt());
         } catch (SQLException exception) {
             throw constraint(exception);
         }
@@ -524,7 +525,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 long activeMissions = scalar(
                         "SELECT COUNT(*) FROM personal_mission WHERE state NOT IN ('COMPLETED','PARTIALLY_COMPLETED','FAILED','CANCELLED')");
                 long activeAttempts = scalar(
-                        "SELECT COUNT(*) FROM personal_mission_task_attempt WHERE state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING')");
+                        "SELECT COUNT(*) FROM personal_mission_task_attempt WHERE state IN ('DISPATCH_PENDING','BOUND')");
                 long unsettledAttempts = scalar(
                         "SELECT COUNT(*) FROM personal_mission_task_attempt WHERE state NOT IN ('SETTLED','FAILED','OUTCOME_UNKNOWN','CANCELLED')");
                 long pendingOutbox =
@@ -674,7 +675,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 outbox.setString(2, intent.outboxId());
                 outbox.executeUpdate();
                 touchMission(intent.missionId(), now);
-                appendEvent(intent.missionId(), "MISSION_TASK_BOUND", now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -699,7 +699,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                             .prepareStatement(
                                     """
                     SELECT * FROM personal_mission_task_attempt
-                    WHERE state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING')
+                    WHERE state IN ('DISPATCH_PENDING','BOUND')
                     ORDER BY created_at_ms, mission_id, task_id
                     """);
                     var result = statement.executeQuery()) {
@@ -789,7 +789,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 statement.setString(5, attempt.taskId());
                 statement.executeUpdate();
                 updateMissionState(attempt.missionId(), "RUNNING", now, "state IN ('RUNNING','WAITING_USER')");
-                appendEvent(attempt.missionId(), "MISSION_TASK_COMPLETED", now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -830,7 +829,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 statement.setString(2, attempt.missionId());
                 statement.setString(3, attempt.taskId());
                 statement.executeUpdate();
-                appendEvent(attempt.missionId(), "MISSION_TASK_CANCELLED", now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -882,7 +880,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                             "MISSION_TASK_NOT_RETRYABLE", "Mission Task is not blocked and retryable");
                 }
                 updateMissionState(missionId, "RUNNING", now, "state='WAITING_USER'");
-                appendEvent(missionId, "MISSION_TASK_RETRY_REQUESTED", now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -1033,12 +1030,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                     return null;
                 }
                 addUsage(intent.missionId(), synthesis.usage(), now);
-                appendEvent(
-                        intent.missionId(),
-                        "PARTIALLY_COMPLETED".equals(terminalState)
-                                ? "MISSION_SYNTHESIS_PARTIALLY_COMPLETED"
-                                : "MISSION_SYNTHESIS_COMPLETED",
-                        now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -1060,7 +1051,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 statement.setLong(3, now.toEpochMilli());
                 statement.setString(4, intent.missionId());
                 statement.executeUpdate();
-                appendEvent(intent.missionId(), "MISSION_SYNTHESIS_FAILED", now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -1091,6 +1081,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             applyMigration(connection, 5, MIGRATION_V5);
             applyMigration(connection, 6, MIGRATION_V6);
             applyMigration(connection, 7, MIGRATION_V7);
+            applyMigration(connection, 8, MIGRATION_V8);
         } catch (SQLException exception) {
             throw failure(exception);
         }
@@ -1260,7 +1251,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 mission.setLong(1, now.toEpochMilli());
                 mission.setString(2, missionId);
                 mission.executeUpdate();
-                appendEvent(missionId, "MISSION_BUDGET_EXHAUSTED", now);
             }
         }
     }
@@ -1274,7 +1264,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 WHERE state IN ('RUNNING','WAITING_USER') AND deadline_at_ms<=?
                   AND NOT EXISTS (SELECT 1 FROM personal_mission_task_attempt a
                     WHERE a.mission_id=m.mission_id
-                      AND a.state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING'))
+                      AND a.state IN ('DISPATCH_PENDING','BOUND'))
                 ORDER BY created_at_ms,mission_id
                 """)) {
             statement.setLong(1, now.toEpochMilli());
@@ -1305,14 +1295,14 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             tasks.executeUpdate();
             mission.setLong(1, now.toEpochMilli());
             mission.setString(2, missionId);
-            if (mission.executeUpdate() == 1) appendEvent(missionId, "MISSION_DEADLINE_EXCEEDED", now);
+            mission.executeUpdate();
         }
     }
 
     private boolean hasActiveAttempt() throws SQLException {
         try (var statement = current()
                         .prepareStatement(
-                                "SELECT 1 FROM personal_mission_task_attempt WHERE state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING') LIMIT 1");
+                                "SELECT 1 FROM personal_mission_task_attempt WHERE state IN ('DISPATCH_PENDING','BOUND') LIMIT 1");
                 var result = statement.executeQuery()) {
             return result.next();
         }
@@ -1423,7 +1413,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 outbox.setLong(8, now.toEpochMilli());
                 outbox.executeUpdate();
                 touchMission(missionId, now);
-                appendEvent(missionId, "MISSION_TASK_DISPATCH_PENDING", now);
             }
         }
     }
@@ -1487,7 +1476,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                     autoRetry ? "RUNNING" : "WAITING_USER",
                     now,
                     "state IN ('RUNNING','WAITING_USER')");
-            appendEvent(attempt.missionId(), autoRetry ? "MISSION_TASK_RETRY_SCHEDULED" : "MISSION_TASK_BLOCKED", now);
         } catch (SQLException exception) {
             throw failure(exception);
         }
@@ -1524,7 +1512,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             Instant now) {
         try (var statement = current()
                 .prepareStatement(
-                        "UPDATE personal_mission_task_attempt SET state=?,result_digest=?,failure_code=?,settled_at_ms=?,updated_at_ms=?,version=version+1 WHERE mission_id=? AND task_id=? AND attempt_no=? AND state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING')")) {
+                        "UPDATE personal_mission_task_attempt SET state=?,result_digest=?,failure_code=?,settled_at_ms=?,updated_at_ms=?,version=version+1 WHERE mission_id=? AND task_id=? AND attempt_no=? AND state IN ('DISPATCH_PENDING','BOUND')")) {
             statement.setString(1, target.name());
             statement.setString(2, resultDigest);
             statement.setString(3, failureCode);
@@ -1890,17 +1878,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         }
     }
 
-    private void appendEvent(String missionId, String type, Instant at) throws SQLException {
-        try (var statement = current()
-                .prepareStatement(
-                        "INSERT INTO personal_mission_event(mission_id,event_type,schema_version,payload_json,created_at_ms) VALUES (?,?,'v1','{}',?)")) {
-            statement.setString(1, missionId);
-            statement.setString(2, type);
-            statement.setLong(3, at.toEpochMilli());
-            statement.executeUpdate();
-        }
-    }
-
     private void bindMission(java.sql.PreparedStatement statement, PersonalMission.Persistence value)
             throws SQLException {
         statement.setString(1, value.missionId());
@@ -2037,7 +2014,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         else statement.setNull(index, java.sql.Types.BIGINT);
     }
 
-    private static String sha256(String value) {
+    static String sha256(String value) {
         try {
             return HexFormat.of()
                     .formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));

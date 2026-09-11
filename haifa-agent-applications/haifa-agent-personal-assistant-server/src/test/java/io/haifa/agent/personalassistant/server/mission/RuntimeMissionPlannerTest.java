@@ -34,6 +34,36 @@ class RuntimeMissionPlannerTest {
     }
 
     @Test
+    void acceptsResearchPlanWithV2ResultSchema() {
+        var validator = new MissionPlanValidator(
+                java.util.Set.of("RESEARCH"),
+                java.util.Set.of("deep-research"),
+                java.util.Set.of("pa.research-task-result@v2"));
+        var planner = new RuntimeMissionPlanner(
+                ignored -> new MissionRuntimeAccess.PlannerRunResult(
+                        "session-1",
+                        "run-1",
+                        """
+                        {"schemaVersion":"pa.mission-plan/v1","tasks":[{"taskId":"task-1","ordinal":1,
+                        "title":"Research","objective":"Investigate topic","acceptanceCriteria":["Evidence"],
+                        "dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],
+                        "resultSchema":{"id":"pa.research-task-result","version":"v2"}}]}
+                        """),
+                validator,
+                new ObjectMapper());
+
+        var result = planner.plan(request());
+
+        assertThat(result.tasks()).singleElement().satisfies(task -> {
+            assertThat(task.taskId()).isEqualTo("task-1");
+            assertThat(task.taskType()).isEqualTo("RESEARCH");
+            assertThat(task.resultSchemaId()).isEqualTo("pa.research-task-result");
+            assertThat(task.resultSchemaVersion()).isEqualTo("v2");
+            assertThat(task.state().name()).isEqualTo("PLANNED");
+        });
+    }
+
+    @Test
     void rejectsProseFencesUnknownFieldsAndTrailingJson() {
         for (String output : List.of(
                 "Here is the plan: {}",

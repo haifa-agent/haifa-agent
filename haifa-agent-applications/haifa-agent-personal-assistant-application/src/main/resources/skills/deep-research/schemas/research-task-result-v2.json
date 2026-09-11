@@ -3,7 +3,7 @@
   "$id": "pa.research-task-result/v2",
   "type": "object",
   "required": [
-    "schemaVersion", "taskSummary", "queries", "findings", "sources", "artifactRefs",
+    "schemaVersion", "taskSummary", "queries", "findings", "sources",
     "unresolvedQuestions", "stopReason", "limitsUsed"
   ],
   "properties": {
@@ -69,7 +69,6 @@
       }
     },
     "unresolvedQuestions": { "type": "array", "maxItems": 20, "items": { "type": "string" } },
-    "artifactRefs": { "type": "array", "maxItems": 8, "items": { "type": "object" } },
     "stopReason": {
       "enum": [
         "SUFFICIENT_EVIDENCE", "SOURCE_LIMIT", "CONTENT_LIMIT", "TIME_LIMIT", "TOOL_LIMIT",
