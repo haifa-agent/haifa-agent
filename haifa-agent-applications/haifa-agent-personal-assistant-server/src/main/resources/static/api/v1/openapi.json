@@ -1093,7 +1093,7 @@
         "properties": {
           "taskId": {"type": "string"},
           "attemptNo": {"type": "integer", "minimum": 1},
-          "state": {"type": "string", "enum": ["CREATED", "DISPATCH_PENDING", "BOUND", "SETTLEMENT_PENDING", "SETTLED", "FAILED", "CANCELLED", "OUTCOME_UNKNOWN"]},
+          "state": {"type": "string", "enum": ["DISPATCH_PENDING", "BOUND", "SETTLED", "FAILED", "CANCELLED", "OUTCOME_UNKNOWN"]},
           "sessionId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
           "runId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
           "failureCode": {"oneOf": [{"type": "string"}, {"type": "null"}]},

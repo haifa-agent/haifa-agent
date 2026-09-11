@@ -470,7 +470,7 @@ export interface MissionExecution {
 export interface MissionAttempt {
   taskId: string;
   attemptNo: number;
-  state: "CREATED" | "DISPATCH_PENDING" | "BOUND" | "SETTLEMENT_PENDING" | "SETTLED" | "FAILED" | "CANCELLED" | "OUTCOME_UNKNOWN";
+  state: "DISPATCH_PENDING" | "BOUND" | "SETTLED" | "FAILED" | "CANCELLED" | "OUTCOME_UNKNOWN";
   sessionId: string | null;
   runId: string | null;
   failureCode: string | null;

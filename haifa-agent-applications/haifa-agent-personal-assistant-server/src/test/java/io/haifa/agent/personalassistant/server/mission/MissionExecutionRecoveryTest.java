@@ -18,7 +18,6 @@ import io.haifa.agent.personalassistant.application.mission.MissionTaskAttempt;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskAttemptState;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskState;
 import java.nio.file.Path;
-import java.sql.DriverManager;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
