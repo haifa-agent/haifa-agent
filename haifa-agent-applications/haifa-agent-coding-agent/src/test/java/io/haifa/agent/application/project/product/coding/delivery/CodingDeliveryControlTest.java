@@ -5,6 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.product.coding.CodingCommandBinding;
 import io.haifa.agent.application.project.product.coding.InMemoryCodingSessionStore;
+import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCost;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationSource;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationTrigger;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
@@ -40,6 +47,7 @@ import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -312,7 +320,9 @@ class CodingDeliveryControlTest {
         assertThat(new CodingCompletionPolicy(
                                 new CodingTaskModeResolver(fixture.store()),
                                 new CodingDeliveryEvidenceLedger(fixture.store()),
-                                new CodingDeliveryProfile(true))
+                                new CodingDeliveryProfile(true),
+                                null,
+                                promisedVerificationProfiles())
                         .evaluate(fixture.run(), finalDecision())
                         .allowed())
                 .isTrue();
@@ -331,7 +341,9 @@ class CodingDeliveryControlTest {
         assertThat(new CodingCompletionPolicy(
                                 new CodingTaskModeResolver(fixture.store()),
                                 new CodingDeliveryEvidenceLedger(fixture.store()),
-                                new CodingDeliveryProfile(true))
+                                new CodingDeliveryProfile(true),
+                                null,
+                                promisedVerificationProfiles())
                         .evaluate(fixture.run(), finalDecision())
                         .allowed())
                 .isTrue();
@@ -372,6 +384,30 @@ class CodingDeliveryControlTest {
                         .blockers())
                 .extracting(blocker -> blocker.code())
                 .containsExactlyInAnyOrder("VALIDATION_ATTEMPT_MISSING");
+    }
+
+    @Test
+    void documentChangeWithoutExplicitVerificationPromiseCompletesWithoutValidation() {
+        Fixture fixture = fixture("update the docs", trusted("CHANGE"));
+        CodingCompletionPolicy policy = policy(fixture.store(), environmentOnlyVerificationProfiles());
+        tool(fixture, "file.write", Map.of("path", "docs/notes.md"), Map.of("path", "docs/notes.md"));
+
+        var result = policy.evaluate(fixture.run(), finalDecision());
+
+        assertThat(result.allowed()).isTrue();
+        assertThat(result.evidenceCodes()).contains("WORKSPACE_CHANGE");
+    }
+
+    @Test
+    void unknownModeObservedChangeWithoutVerificationPromiseNeedsOnlyMutationEvidence() {
+        Fixture changed = fixture("please take a look", Map.of());
+        CodingCompletionPolicy policy = policy(changed.store(), environmentOnlyVerificationProfiles());
+        tool(changed, "file.write", Map.of("path", "README.md"), Map.of("path", "README.md"));
+
+        var result = policy.evaluate(changed.run(), finalDecision());
+
+        assertThat(result.allowed()).isTrue();
+        assertThat(result.evidenceCodes()).contains("WORKSPACE_CHANGE");
     }
 
     @Test
@@ -536,7 +572,8 @@ class CodingDeliveryControlTest {
                 new CodingTaskModeResolver(fixture.store()),
                 new CodingDeliveryEvidenceLedger(fixture.store()),
                 CodingDeliveryProfile.safeDefault(),
-                intents);
+                intents,
+                promisedVerificationProfiles());
         changeTool(fixture, "file.write", "change-1");
         tool(fixture, "execution.run", Map.of(), Map.of("operationFamily", "TEST", "status", "SUCCEEDED"));
         deliveryEvidence(fixture, "STAGE_COMPLETED");
@@ -562,10 +599,37 @@ class CodingDeliveryControlTest {
     }
 
     private static CodingCompletionPolicy policy(InMemoryRuntimeStore store) {
+        return policy(store, promisedVerificationProfiles());
+    }
+
+    private static CodingCompletionPolicy policy(
+            InMemoryRuntimeStore store, CodingVerificationProfileProvider verificationProfiles) {
         return new CodingCompletionPolicy(
                 new CodingTaskModeResolver(store),
                 new CodingDeliveryEvidenceLedger(store),
-                CodingDeliveryProfile.safeDefault());
+                CodingDeliveryProfile.safeDefault(),
+                null,
+                verificationProfiles);
+    }
+
+    private static CodingVerificationProfileProvider promisedVerificationProfiles() {
+        return ignored -> CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(
+                List.of(candidate(CodingVerificationSource.USER_EXPLICIT, "user-request")), List.of()));
+    }
+
+    private static CodingVerificationProfileProvider environmentOnlyVerificationProfiles() {
+        return ignored -> CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(
+                List.of(candidate(CodingVerificationSource.BUILD_CONFIGURATION, "pom.xml")), List.of()));
+    }
+
+    private static CodingVerificationCandidate candidate(CodingVerificationSource source, String reference) {
+        return new CodingVerificationCandidate(
+                "mvn test",
+                CodingVerificationCost.HIGH,
+                Duration.ofMinutes(10),
+                CodingVerificationTrigger.FINAL_GATE,
+                source,
+                reference);
     }
 
     private static void tool(

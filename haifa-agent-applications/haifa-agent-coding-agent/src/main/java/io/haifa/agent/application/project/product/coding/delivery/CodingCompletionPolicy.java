@@ -1,5 +1,6 @@
 package io.haifa.agent.application.project.product.coding.delivery;
 
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.completion.CompletionPolicy;
@@ -9,27 +10,30 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/** Minimal Coding completion gate over trusted task mode and reconstructed authoritative evidence. */
+/**
+ * Minimal Coding completion gate over trusted task mode and reconstructed authoritative evidence.
+ * Validation blockers require an explicit, frozen verification promise from the session's
+ * verification configuration; observed workspace changes alone never demand Build/Test.
+ */
 public final class CodingCompletionPolicy implements CompletionPolicy {
     private final CodingTaskModeResolver taskModes;
     private final CodingDeliveryEvidenceLedger evidence;
     private final CodingDeliveryProfile profile;
     private final CodingDeliveryIntentResolver deliveryIntents;
-
-    public CodingCompletionPolicy(
-            CodingTaskModeResolver taskModes, CodingDeliveryEvidenceLedger evidence, CodingDeliveryProfile profile) {
-        this(taskModes, evidence, profile, null);
-    }
+    private final CodingVerificationProfileProvider verificationProfiles;
 
     public CodingCompletionPolicy(
             CodingTaskModeResolver taskModes,
             CodingDeliveryEvidenceLedger evidence,
             CodingDeliveryProfile profile,
-            CodingDeliveryIntentResolver deliveryIntents) {
+            CodingDeliveryIntentResolver deliveryIntents,
+            CodingVerificationProfileProvider verificationProfiles) {
         this.taskModes = Objects.requireNonNull(taskModes, "taskModes must not be null");
         this.evidence = Objects.requireNonNull(evidence, "evidence must not be null");
         this.profile = Objects.requireNonNull(profile, "profile must not be null");
         this.deliveryIntents = deliveryIntents;
+        this.verificationProfiles =
+                Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
     }
 
     @Override
@@ -44,10 +48,10 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
         CodingDeliveryEvidenceLedger.Snapshot snapshot = evidence.reconstruct(run.id());
         List<CompletionBlocker> blockers = new ArrayList<>();
         switch (taskMode) {
-            case CHANGE, CREATE -> changeBlockers(snapshot, blockers);
+            case CHANGE, CREATE -> changeBlockers(run, snapshot, blockers);
             case ANALYZE -> readOnlyBlockers(snapshot, blockers, "ANALYSIS_EVIDENCE_MISSING");
             case REVIEW -> readOnlyBlockers(snapshot, blockers, "REVIEW_EVIDENCE_MISSING");
-            case UNKNOWN -> unknownBlockers(snapshot, blockers);
+            case UNKNOWN -> unknownBlockers(run, snapshot, blockers);
         }
         deliveryBlockers(deliveryIntent(run), snapshot, blockers);
         if (blockers.isEmpty()) return CompletionPolicyResult.accepted(snapshot.codes());
@@ -130,7 +134,8 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
                 required.name()));
     }
 
-    private void changeBlockers(CodingDeliveryEvidenceLedger.Snapshot snapshot, List<CompletionBlocker> blockers) {
+    private void changeBlockers(
+            AgentRun run, CodingDeliveryEvidenceLedger.Snapshot snapshot, List<CompletionBlocker> blockers) {
         if (!snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)
                 && !snapshot.has(CodingDeliveryEvidenceKind.NO_CHANGE_JUSTIFICATION)) {
             blockers.add(CompletionBlocker.recoverable(
@@ -138,18 +143,20 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
                     "No authoritative workspace change or evidence-backed no-change result exists.",
                     "WORKSPACE_CHANGE"));
         }
-        boolean changed = snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
-        if (!snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)
-                || (changed
-                        && !snapshot.hasAfter(
-                                CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT,
-                                CodingDeliveryEvidenceKind.WORKSPACE_CHANGE))) {
-            blockers.add(CompletionBlocker.recoverable(
-                    "VALIDATION_ATTEMPT_MISSING",
-                    changed
-                            ? "No authoritative validation attempt exists after the latest workspace change."
-                            : "No authoritative validation attempt exists.",
-                    "VALIDATION_ATTEMPT"));
+        if (verificationPromised(run)) {
+            boolean changed = snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
+            if (!snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)
+                    || (changed
+                            && !snapshot.hasAfter(
+                                    CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT,
+                                    CodingDeliveryEvidenceKind.WORKSPACE_CHANGE))) {
+                blockers.add(CompletionBlocker.recoverable(
+                        "VALIDATION_ATTEMPT_MISSING",
+                        changed
+                                ? "No authoritative validation attempt exists after the latest workspace change."
+                                : "No authoritative validation attempt exists.",
+                        "VALIDATION_ATTEMPT"));
+            }
         }
         boolean latestFailed = snapshot.latestValidationFailed()
                 || (snapshot.validationAttempts().isEmpty()
@@ -178,9 +185,17 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
         }
     }
 
-    private void unknownBlockers(CodingDeliveryEvidenceLedger.Snapshot snapshot, List<CompletionBlocker> blockers) {
+    private boolean verificationPromised(AgentRun run) {
+        return verificationProfiles
+                .configurationFor(run.id())
+                .profile()
+                .hasExplicitVerificationPromise();
+    }
+
+    private void unknownBlockers(
+            AgentRun run, CodingDeliveryEvidenceLedger.Snapshot snapshot, List<CompletionBlocker> blockers) {
         if (snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
-            changeBlockers(snapshot, blockers);
+            changeBlockers(run, snapshot, blockers);
             return;
         }
         if (snapshot.has(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION)) return;

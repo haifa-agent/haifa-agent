@@ -425,7 +425,6 @@ final class LocalCodingAgent implements AutoCloseable {
         TenantRef tenant = new TenantRef("local");
         ProjectPersistenceAssembly persistence =
                 ProjectPersistenceAssembly.open(configuration.persistence(), clock, identifiers, continuationProtector);
-        var executionResources = new java.util.ArrayList<CliExecutionPlatform>();
         try {
             validateSkillWorkspaceIsolation(
                     workspaceRoot, configuration.skills().localDirectories());
@@ -575,7 +574,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             files,
                             identifiers,
                             time,
-                            workspaceId,
                             workspaceRoot,
                             output,
                             resolvedEnvironment,
@@ -586,7 +584,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             principal,
                             runtimeExecutionVerifier)
                     : null;
-            if (executionPlatform != null) executionResources.add(executionPlatform);
             var repositoryBaselines = executionPlatform == null
                     ? new io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry(
                             (boundary, candidate) ->
@@ -685,7 +682,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
             var deliveryProfile = CodingDeliveryProfile.safeDefault();
             var completionPolicy =
-                    new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile, deliveryIntents);
+                    new CodingCompletionPolicy(
+                            taskModes, deliveryEvidence, deliveryProfile, deliveryIntents, verificationProfiles);
             var outcomeProjection = new CodingRunOutcomeProjectionService(
                     completionPolicy,
                     persistence.ports().events(),
@@ -866,13 +864,6 @@ final class LocalCodingAgent implements AutoCloseable {
             } catch (Exception closeFailure) {
                 exception.addSuppressed(new IllegalStateException("authentication close failed", closeFailure));
             }
-            executionResources.forEach(resource -> {
-                try {
-                    resource.close();
-                } catch (RuntimeException closeFailure) {
-                    exception.addSuppressed(closeFailure);
-                }
-            });
             try {
                 persistence.close();
             } catch (RuntimeException closeFailure) {
@@ -1195,12 +1186,6 @@ final class LocalCodingAgent implements AutoCloseable {
         }
         try {
             mcpPlatform.close();
-        } catch (RuntimeException exception) {
-            if (failure == null) failure = exception;
-            else failure.addSuppressed(exception);
-        }
-        try {
-            executionPlatform.ifPresent(CliExecutionPlatform::close);
         } catch (RuntimeException exception) {
             if (failure == null) failure = exception;
             else failure.addSuppressed(exception);

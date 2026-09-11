@@ -211,7 +211,7 @@ public class PersonalAssistantConfiguration {
                         : Optional.of(Path.of(properties.trustedScriptManifest())
                                 .toAbsolutePath()
                                 .normalize());
-        PersonalExecutionPlatform execution = null;
+        PersonalExecutionPlatform execution;
         try {
             execution = PersonalExecutionRuntime.create(
                     dataDirectory,
@@ -272,13 +272,6 @@ public class PersonalAssistantConfiguration {
                     imageStore,
                     audioStore));
         } catch (RuntimeException | Error exception) {
-            if (execution != null) {
-                try {
-                    execution.close();
-                } catch (RuntimeException closeFailure) {
-                    exception.addSuppressed(closeFailure);
-                }
-            }
             try {
                 sqlite.persistence().close();
             } catch (RuntimeException closeFailure) {

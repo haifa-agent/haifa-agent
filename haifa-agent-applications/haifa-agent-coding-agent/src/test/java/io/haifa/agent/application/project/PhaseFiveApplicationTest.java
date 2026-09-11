@@ -209,8 +209,7 @@ class PhaseFiveApplicationTest {
                 ref -> actualProfile,
                 prof -> sandboxProvider,
                 workspaces,
-                bindings,
-                ignored -> List::of);
+                bindings);
 
         var config = new io.haifa.agent.execution.core.tool.ExecutionToolConfiguration(
                 io.haifa.agent.execution.api.ExecutionEnvironmentRef.empty(),

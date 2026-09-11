@@ -678,28 +678,6 @@ class ProjectExecutionNormalizationTest {
     }
 
     @Test
-    void mapsPreExecutionObserverFailureAsFailedToolResult() {
-        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                throw new ExecutionPreflightException(
-                        "WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE",
-                        "workspace change observation could not be established before execution",
-                        new IllegalStateException("observer failed"));
-            }
-        };
-
-        var result = operations(broker, 1024, 2000)
-                .execute(invocation(Map.of("command", "representative command"), () -> false), access());
-
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData().get("status")).isEqualTo("FAILED");
-        assertThat(result.structuredData().get("failureCode")).isEqualTo("WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE");
-        assertThat(result.structuredData().get("output").toString())
-                .contains("workspace change observation could not be established before execution");
-    }
-
-    @Test
     void raisesTrustedNotDispatchedFailureOnlyForEligibleDirectGitPreflight() {
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override

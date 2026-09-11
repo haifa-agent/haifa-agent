@@ -7,16 +7,12 @@ import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionOutputStore;
-import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ExecutionStore;
 import io.haifa.agent.execution.api.ResolvedExecutionEnvironment;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
-import io.haifa.agent.execution.core.change.WorkspaceChangeObservation;
-import io.haifa.agent.execution.core.change.WorkspaceChangeObserver;
-import io.haifa.agent.execution.core.change.WorkspaceChangeObserverException;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.WorkspacePermission;
@@ -47,7 +43,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
     private final SandboxProviderResolver providers;
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
-    private final WorkspaceChangeObserver workspaceChanges;
     private final ConcurrentHashMap<ExecutionId, SandboxSession> active = new ConcurrentHashMap<>();
 
     public DefaultExecutionBroker(
@@ -58,8 +53,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             SandboxResolver profiles,
             SandboxProviderResolver providers,
             WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
-            WorkspaceChangeObserver workspaceChanges) {
+            WorkspaceBindingStore bindings) {
         this.executions = Objects.requireNonNull(executions, "executions must not be null");
         this.outputs = Objects.requireNonNull(outputs, "outputs must not be null");
         this.environments = Objects.requireNonNull(environments, "environments must not be null");
@@ -68,7 +62,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         this.providers = Objects.requireNonNull(providers, "providers must not be null");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
-        this.workspaceChanges = Objects.requireNonNull(workspaceChanges, "workspaceChanges must not be null");
     }
 
     @Override
@@ -93,15 +86,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         ResolvedSandbox resolved = resolveSandbox(request, false);
         ResolvedExecutionEnvironment environment = environments.resolve(request.environmentRef());
         List<byte[]> secrets = RedactingExecutionOutputObserver.extractSecrets(environment);
-        WorkspaceChangeObservation changeObservation = beginChangeObservation(request);
-        SandboxSession session;
-        try {
-            executions.create(request);
-            session = resolved.provider().open(resolved.profile(), resolved.mount());
-        } catch (RuntimeException exception) {
-            changeObservation.cancel();
-            throw exception;
-        }
+        executions.create(request);
+        SandboxSession session = resolved.provider().open(resolved.profile(), resolved.mount());
         active.put(request.id(), session);
         try (session) {
             io.haifa.agent.sandbox.api.SandboxProcessResult process;
@@ -125,14 +111,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                     request.id(), ExecutionOutputChannel.STDERR, stderrBytes, 4096, process.stderrTruncated());
             ExecutionStatus status = map(process.status(), process.exitCode());
             ExecutionFailure failure = failure(status, process.processTreeTerminated());
-            try {
-                changeObservation.complete();
-            } catch (RuntimeException observationFailure) {
-                status = ExecutionStatus.UNKNOWN;
-                failure = new ExecutionFailure(
-                        WorkspaceChangeObserverException.RESYNC_FAILED,
-                        "post-execution workspace changes could not be fully observed");
-            }
             ExecutionResult result = new ExecutionResult(
                     request.id(),
                     status,
@@ -151,7 +129,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             executions.complete(request, result);
             return result;
         } finally {
-            changeObservation.cancel();
             active.remove(request.id());
         }
     }
@@ -178,15 +155,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         ResolvedSandbox resolved = resolveSandbox(request, true);
         ResolvedExecutionEnvironment environment = environments.resolve(request.environmentRef());
         List<byte[]> secrets = RedactingExecutionOutputObserver.extractSecrets(environment);
-        WorkspaceChangeObservation changeObservation = beginChangeObservation(request);
-        SandboxSession sandbox;
-        try {
-            executions.create(request);
-            sandbox = resolved.provider().open(resolved.profile(), resolved.mount());
-        } catch (RuntimeException exception) {
-            changeObservation.cancel();
-            throw exception;
-        }
+        executions.create(request);
+        SandboxSession sandbox = resolved.provider().open(resolved.profile(), resolved.mount());
         active.put(request.id(), sandbox);
         try {
             var process = sandbox.openManagedProcess(new SandboxExecution(
@@ -196,10 +166,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                     request.limits(),
                     request.input(),
                     request.scratchSpace()));
-            return new BrokerManagedSession(
-                    request, sandbox, process, environment.values(), secrets, changeObservation);
+            return new BrokerManagedSession(request, sandbox, process, environment.values(), secrets);
         } catch (RuntimeException exception) {
-            changeObservation.cancel();
             active.remove(request.id());
             sandbox.close();
             throw exception;
@@ -257,7 +225,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         private final io.haifa.agent.sandbox.api.SandboxManagedProcess process;
         private final Map<String, String> environment;
         private final List<byte[]> secrets;
-        private final WorkspaceChangeObservation changeObservation;
         private final ByteArrayOutputStream stdout = new ByteArrayOutputStream();
         private final ByteArrayOutputStream stderr = new ByteArrayOutputStream();
         private final java.util.concurrent.atomic.AtomicBoolean closed =
@@ -272,16 +239,13 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                 SandboxSession sandbox,
                 io.haifa.agent.sandbox.api.SandboxManagedProcess process,
                 Map<String, String> environment,
-                List<byte[]> secrets,
-                WorkspaceChangeObservation changeObservation) {
+                List<byte[]> secrets) {
             this.request = request;
             this.sandbox = sandbox;
             this.process = process;
             this.environment = environment;
             this.secrets = secrets;
-            this.changeObservation = changeObservation;
             this.exit = process.exit().thenApply(this::complete);
-            this.exit.whenComplete((ignored, failure) -> changeObservation.cancel());
             this.redactingObserver = new RedactingExecutionOutputObserver(
                     chunk -> {
                         synchronized (this) {
@@ -347,10 +311,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                 exit.get(5, java.util.concurrent.TimeUnit.SECONDS);
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
-                changeObservation.cancel();
                 throw new IllegalStateException("managed execution close was interrupted", exception);
             } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException exception) {
-                changeObservation.cancel();
                 throw new IllegalStateException("managed execution did not settle during close", exception);
             } finally {
                 sandbox.close();
@@ -371,14 +333,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             var storedStderr = outputs.store(request.id(), ExecutionOutputChannel.STDERR, stderrBytes, 4096, false);
             ExecutionStatus status = processExit.status();
             ExecutionFailure executionFailure = failure(status, processExit.processTreeTerminated());
-            try {
-                changeObservation.complete();
-            } catch (RuntimeException observationFailure) {
-                status = ExecutionStatus.UNKNOWN;
-                executionFailure = new ExecutionFailure(
-                        WorkspaceChangeObserverException.RESYNC_FAILED,
-                        "post-execution workspace changes could not be fully observed");
-            }
             ExecutionResult result = new ExecutionResult(
                     request.id(),
                     status,
@@ -413,17 +367,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                 && first.input().equals(second.input())
                 && first.scratchSpace().equals(second.scratchSpace())
                 && first.invocationDigest().equals(second.invocationDigest());
-    }
-
-    private WorkspaceChangeObservation beginChangeObservation(ExecutionRequest request) {
-        try {
-            return workspaceChanges.begin(request.workspaceId());
-        } catch (RuntimeException exception) {
-            throw new ExecutionPreflightException(
-                    WorkspaceChangeObserverException.UNAVAILABLE,
-                    "workspace change observation could not be established before execution",
-                    exception);
-        }
     }
 
     private static ExecutionStatus map(SandboxProcessStatus status, Integer exitCode) {

@@ -20,9 +20,6 @@ import io.haifa.agent.execution.api.ProcessInputChunk;
 import io.haifa.agent.execution.api.ResolvedExecutionEnvironment;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
-import io.haifa.agent.execution.core.change.WorkspaceChangeObservation;
-import io.haifa.agent.execution.core.change.WorkspaceChangeObserver;
-import io.haifa.agent.execution.core.change.WorkspaceChangeObserverException;
 import io.haifa.agent.execution.core.manifest.ManifestBudget;
 import io.haifa.agent.execution.core.manifest.ManifestDiffService;
 import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
@@ -320,44 +317,6 @@ class ExecutionCoreTest {
     }
 
     @Test
-    void rejectsUnavailablePreExecutionObserverBeforeOpeningTheProcess() {
-        Fixture fixture = fixture();
-        AtomicInteger processStarts = new AtomicInteger();
-        SandboxProvider provider = fakeProvider(processStarts::incrementAndGet, new byte[0]);
-        WorkspaceChangeObserver unavailable = ignored -> {
-            throw WorkspaceChangeObserverException.resyncFailed(new IllegalStateException("observer unavailable"));
-        };
-        DefaultExecutionBroker broker =
-                fixture.broker(provider, (request, entryPoint) -> {}, fixture.profile(provider), unavailable);
-
-        assertThatThrownBy(() -> broker.execute(fixture.request(
-                        "observer-failure", "observer-failure-key", Set.of("execution.run"), List.of("fake"))))
-                .isInstanceOfSatisfying(ExecutionPreflightException.class, exception -> assertThat(exception.code())
-                        .isEqualTo("WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE"));
-        assertThat(processStarts).hasValue(0);
-    }
-
-    @Test
-    void reportsPostExecutionObserverConvergenceFailureSeparately() {
-        Fixture fixture = fixture();
-        SandboxProvider provider = fakeProvider(() -> {}, new byte[0]);
-        WorkspaceChangeObserver failingCompletion = ignored -> new WorkspaceChangeObservation() {
-            @Override
-            public List<io.haifa.agent.project.changeset.FileChange> complete() {
-                throw new IllegalStateException("observer resync failed");
-            }
-        };
-        DefaultExecutionBroker broker =
-                fixture.broker(provider, (request, entryPoint) -> {}, fixture.profile(provider), failingCompletion);
-
-        var result = broker.execute(
-                fixture.request("observer-resync", "observer-resync-key", Set.of("execution.run"), List.of("fake")));
-
-        assertThat(result.status()).isEqualTo(ExecutionStatus.UNKNOWN);
-        assertThat(result.failure().code()).isEqualTo("WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED");
-    }
-
-    @Test
     void manifestDiffRecognizesMoveAsOneCorrelatedChange() throws Exception {
         Files.writeString(root.resolve("old.txt"), "same\n");
         Fixture fixture = fixture();
@@ -524,6 +483,89 @@ class ExecutionCoreTest {
         assertThat(opens).hasValue(0);
     }
 
+    @Test
+    void executesANewlyAuthorizedWorktreeWorkspaceWithoutChangeObservationPreflight() throws Exception {
+        Fixture fixture = fixture();
+        WorkspaceId worktreeId = new WorkspaceId("workspace-worktree");
+        WorkspaceBindingId worktreeBindingId = new WorkspaceBindingId("binding-worktree");
+        WorkspaceLocationRef worktreeLocationRef = new WorkspaceLocationRef("location-worktree");
+        Path worktreeRoot = root.resolve("worktree");
+        Files.createDirectories(worktreeRoot);
+        fixture.locations().register(worktreeLocationRef, worktreeRoot);
+        fixture.bindings().create(WorkspaceBinding.provision(
+                        worktreeBindingId,
+                        worktreeLocationRef,
+                        WorkspaceBindingMode.DIRECT,
+                        new PrincipalRef("owner", "user"),
+                        WorkspaceCapabilitySet.executionFiles(),
+                        WorkspacePermissionSet.readWriteExecute(),
+                        HostWorkspaceLocationStore.fingerprintFor(worktreeRoot),
+                        NOW)
+                .activate(NOW));
+        fixture.workspaces().create(Workspace.provision(
+                        worktreeId,
+                        new ProjectId("project-1"),
+                        WorkspacePurpose.PRIMARY,
+                        new WorkspaceRoot(ProjectPath.root(), worktreeBindingId, "test"),
+                        WorkspaceRevision.initial("worktree-v1"),
+                        NOW)
+                .activate(NOW));
+        AtomicInteger opens = new AtomicInteger();
+        SandboxProvider provider = new SandboxProvider() {
+            @Override
+            public String providerId() {
+                return "fake";
+            }
+
+            @Override
+            public SandboxCapabilities capabilities() {
+                return new SandboxCapabilities(true);
+            }
+
+            @Override
+            public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+                opens.incrementAndGet();
+                return new SandboxSession() {
+                    @Override
+                    public SandboxSessionId id() {
+                        return new SandboxSessionId("session-worktree");
+                    }
+
+                    @Override
+                    public SandboxProcessResult execute(SandboxExecution execution) {
+                        return new SandboxProcessResult(
+                                SandboxProcessStatus.EXITED,
+                                0,
+                                "rev-parse-ok\n".getBytes(StandardCharsets.UTF_8),
+                                new byte[0],
+                                NOW,
+                                NOW.plusSeconds(1),
+                                false,
+                                false,
+                                true,
+                                1);
+                    }
+
+                    @Override
+                    public boolean cancel() {
+                        return true;
+                    }
+
+                    @Override
+                    public void close() {}
+                };
+            }
+        };
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
+
+        var result = broker.execute(fixture.request(
+                worktreeId, "worktree-execution", "worktree-key", Set.of("execution.run"), List.of("fake")));
+
+        assertThat(opens).hasValue(1);
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
+        assertThat(result.stdout().summary()).isEqualTo("rev-parse-ok\n");
+    }
+
     private Fixture fixture() {
         WorkspaceId workspaceId = new WorkspaceId("workspace-1");
         WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-1");
@@ -555,7 +597,7 @@ class ExecutionCoreTest {
         var fileService = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
         var manifests = new WorkspaceManifestService(
                 workspaces, fileService, new ManifestBudget(100, 1024 * 1024, 1024 * 1024), "test-v1");
-        return new Fixture(workspaceId, root, workspaces, bindings, manifests, new InMemoryExecutionOutputStore());
+        return new Fixture(workspaceId, root, workspaces, bindings, locations, manifests, new InMemoryExecutionOutputStore());
     }
 
     @Test
@@ -753,6 +795,7 @@ class ExecutionCoreTest {
             Path root,
             InMemoryWorkspaceStore workspaces,
             InMemoryWorkspaceBindingStore bindings,
+            HostWorkspaceLocationStore locations,
             WorkspaceManifestService manifests,
             InMemoryExecutionOutputStore outputs) {
         DefaultExecutionBroker broker(SandboxProvider provider, ExecutionPolicy policy) {
@@ -800,28 +843,15 @@ class ExecutionCoreTest {
                     ignored -> profile,
                     ignored -> provider,
                     workspaces,
-                    bindings,
-                    ignored -> () -> List.of());
-        }
-
-        DefaultExecutionBroker broker(
-                SandboxProvider provider,
-                ExecutionPolicy policy,
-                SandboxProfile profile,
-                WorkspaceChangeObserver workspaceChanges) {
-            return new DefaultExecutionBroker(
-                    new InMemoryExecutionStore(),
-                    outputs,
-                    ignored -> ResolvedExecutionEnvironment.of(Map.of("SECRET", "secret-token"), Set.of("SECRET")),
-                    policy,
-                    ignored -> profile,
-                    ignored -> provider,
-                    workspaces,
-                    bindings,
-                    workspaceChanges);
+                    bindings);
         }
 
         ExecutionRequest request(String id, String key, Set<String> capabilities, List<String> argv) {
+            return request(workspaceId, id, key, capabilities, argv);
+        }
+
+        ExecutionRequest request(
+                WorkspaceId workspace, String id, String key, Set<String> capabilities, List<String> argv) {
             return new ExecutionRequest(
                     new ExecutionId(id),
                     key,
@@ -832,8 +862,8 @@ class ExecutionCoreTest {
                             capabilities,
                             ExecutionOrigin.PRODUCT_USER_COMMAND,
                             Optional.empty()),
-                    workspaceId,
-                    WorkspacePath.root(workspaceId),
+                    workspace,
+                    WorkspacePath.root(workspace),
                     new ExecutionCommand(ExecutionCommandMode.DIRECT, argv),
                     new ExecutionEnvironmentRef(List.of("lease-1")),
                     new ExecutionLimits(Duration.ofSeconds(5), 8192, 8192, 2),

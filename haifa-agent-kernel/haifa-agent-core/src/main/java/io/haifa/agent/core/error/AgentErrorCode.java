@@ -140,16 +140,6 @@ public enum AgentErrorCode {
             "Workspace manifest is unavailable",
             AgentErrorCategory.CONFIGURATION,
             Retryability.RETRYABLE_AFTER_INTERACTION),
-    WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE(
-            "WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE",
-            "Workspace change observation is unavailable",
-            AgentErrorCategory.CONFIGURATION,
-            Retryability.RETRYABLE_AFTER_INTERACTION),
-    WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED(
-            "WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED",
-            "Workspace changes could not be fully observed",
-            AgentErrorCategory.INTERNAL,
-            Retryability.RETRYABLE_AFTER_INTERACTION),
     RUNTIME_EXECUTION_INTERRUPTED(
             "RUNTIME_EXECUTION_INTERRUPTED",
             "Execution interrupted; continue from saved facts",
