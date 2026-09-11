@@ -87,6 +87,34 @@ class SqliteMigrationRunnerTest {
     }
 
     @Test
+    void acceptsLegacyV8ToolReconciliationChecksumForExistingDatabase() throws Exception {
+        SqliteConnectionFactory connections = initializedConnections();
+        SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
+        try (Connection connection = connections.openConnection();
+                Statement statement = connection.createStatement()) {
+            statement.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS schema_migration (
+                        version INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL UNIQUE,
+                        checksum TEXT NOT NULL,
+                        applied_at INTEGER NOT NULL CHECK (applied_at >= 0)
+                    )
+                    """);
+            statement.executeUpdate(
+                    "INSERT INTO schema_migration (version, name, checksum, applied_at) VALUES "
+                            + "(8, 'tool_reconciliation_evidence', 'sha256:9d6eedef3e025900bf300f6a791d23a3ea1744e06b839689b875d01728f2cba5', 0)");
+        }
+
+        runner.migrate(HaifaAgentStoreMigrations.all());
+
+        try (Connection connection = connections.openConnection()) {
+            assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
+                    .isEqualTo(HaifaAgentStoreMigrations.all().size());
+        }
+    }
+
+    @Test
     void preservesExistingInteractionDeadlineWhileMakingTheColumnNullable() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);

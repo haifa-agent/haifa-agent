@@ -249,7 +249,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             """
             CREATE UNIQUE INDEX uq_personal_mission_active_attempt_global
                 ON personal_mission_task_attempt((1))
-                WHERE state IN ('DISPATCH_PENDING','BOUND');
+                WHERE state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING');
             CREATE INDEX ix_personal_mission_task_ready_fifo
                 ON personal_mission_task(state, updated_at_ms, mission_id, task_id);
             """;
@@ -283,8 +283,13 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             ALTER TABLE personal_mission ADD COLUMN model_binding_json TEXT NOT NULL DEFAULT
                 '{"modelId":"legacy-default","modelDisplayName":"Legacy default model","providerId":"legacy","providerDisplayName":"Legacy configuration","configurationDigest":"legacy-unfrozen"}';
             """;
-    static final String MIGRATION_V8 = """
+    static final String MIGRATION_V8 =
+            """
             DROP TABLE IF EXISTS personal_mission_event;
+            DROP INDEX IF EXISTS uq_personal_mission_active_attempt_global;
+            CREATE UNIQUE INDEX uq_personal_mission_active_attempt_global
+                ON personal_mission_task_attempt((1))
+                WHERE state IN ('DISPATCH_PENDING','BOUND');
             """;
 
     private final String jdbcUrl;
