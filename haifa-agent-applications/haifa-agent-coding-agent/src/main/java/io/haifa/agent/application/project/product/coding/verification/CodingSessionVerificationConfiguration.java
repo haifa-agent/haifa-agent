@@ -10,9 +10,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Frozen, bounded Coding Session metadata; it selects evidence semantics but never authorizes execution. */
+/**
+ * Frozen, bounded Coding Session metadata; it selects evidence semantics but never authorizes execution.
+ * The explicit {@code requiresValidationEvidence} fact distinguishes committed verification requirements
+ * (frozen at session creation) from the remaining recommended candidates.
+ */
 public record CodingSessionVerificationConfiguration(
-        String schemaVersion, CodingVerificationProfile profile, String digest) {
+        String schemaVersion, CodingVerificationProfile profile, boolean requiresValidationEvidence, String digest) {
     public static final String METADATA_KEY = "codingVerification";
     public static final String SCHEMA_VERSION = "coding-session-verification/1";
 
@@ -21,13 +25,15 @@ public record CodingSessionVerificationConfiguration(
             throw new IllegalArgumentException("unsupported Coding Session verification schemaVersion");
         }
         profile = Objects.requireNonNull(profile, "profile must not be null");
-        String expected = digest(profile);
+        String expected = digest(profile, requiresValidationEvidence);
         if (!expected.equals(digest)) throw new IllegalArgumentException("Coding Session verification digest mismatch");
     }
 
     public static CodingSessionVerificationConfiguration freeze(CodingVerificationProfile profile) {
         CodingVerificationProfile frozen = Objects.requireNonNull(profile, "profile must not be null");
-        return new CodingSessionVerificationConfiguration(SCHEMA_VERSION, frozen, digest(frozen));
+        boolean requiresValidationEvidence = frozen.hasCommittedVerificationCandidates();
+        return new CodingSessionVerificationConfiguration(
+                SCHEMA_VERSION, frozen, requiresValidationEvidence, digest(frozen, requiresValidationEvidence));
     }
 
     public Map<String, Object> sessionMetadata() {
@@ -40,6 +46,8 @@ public record CodingSessionVerificationConfiguration(
                 schemaVersion,
                 "digest",
                 digest,
+                "requiresValidationEvidence",
+                requiresValidationEvidence,
                 "candidates",
                 encode(profile.candidates()),
                 "ignoredCandidates",
@@ -54,7 +62,7 @@ public record CodingSessionVerificationConfiguration(
             CodingVerificationProfile profile =
                     new CodingVerificationProfile(decode(map.get("candidates")), decode(map.get("ignoredCandidates")));
             return Optional.of(new CodingSessionVerificationConfiguration(
-                    text(map, "schemaVersion"), profile, text(map, "digest")));
+                    text(map, "schemaVersion"), profile, bool(map, "requiresValidationEvidence"), text(map, "digest")));
         } catch (IllegalArgumentException | ClassCastException ignored) {
             return Optional.empty();
         }
@@ -65,9 +73,11 @@ public record CodingSessionVerificationConfiguration(
         return PolicyDigest.sha256Fields(fields(candidate));
     }
 
-    private static String digest(CodingVerificationProfile profile) {
+    private static String digest(CodingVerificationProfile profile, boolean requiresValidationEvidence) {
         List<String> fields = new ArrayList<>();
         fields.add(SCHEMA_VERSION);
+        fields.add("requiresValidationEvidence");
+        fields.add(Boolean.toString(requiresValidationEvidence));
         profile.candidates().forEach(candidate -> {
             fields.add("selected");
             fields.addAll(fields(candidate));
@@ -134,5 +144,11 @@ public record CodingSessionVerificationConfiguration(
         Object value = map.get(key);
         if (!(value instanceof String text) || text.isBlank()) throw new IllegalArgumentException(key + " is invalid");
         return text;
+    }
+
+    private static boolean bool(Map<?, ?> map, String key) {
+        Object value = map.get(key);
+        if (!(value instanceof Boolean flag)) throw new IllegalArgumentException(key + " is invalid");
+        return flag;
     }
 }

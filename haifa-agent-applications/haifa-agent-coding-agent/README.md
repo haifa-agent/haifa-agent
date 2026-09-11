@@ -69,11 +69,18 @@ Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/R
 引用重建工作区修改、确定性 Change Review、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
 修改或验证通过证据。Issue 29 将文件变更事实从 `FileChangeSet` 事务收敛为成功的 Mutation ToolCall 与按需审查（Git 目录使用 Git 工作树状态，Plain 目录使用会话内有界记录 `SessionChangeLedger`），移除每次写操作同步生成 Review 的开销。Phase 3 以 Run 级 `RepositoryBaseline` 在首次受管写入前冻结各仓 HEAD 与 dirty 摘要，按 nearest repository boundary 分流 Git/Plain Review；`execution.run` 无法证明全部写入归属、初始工作树已脏或证据读取不完整时，`coding-change-review/2` 明确产出 `ATTRIBUTION_PARTIAL`，不会伪装成完整证据。既有 `coding-change-review/1` 仍可确定性读取。
 
-`CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限 No-change、最后一次修改之后的验证尝试，
-以及覆盖最后一次修改的确定性 Review；`DIFF_INSPECTION` 不再作为修改任务完成门禁的兼容 fallback，
-但 DIFF 命令、只读审阅能力和对应诊断事实继续保留。ANALYZE/REVIEW 要求只读证据且拒绝意外修改。UNKNOWN 用于普通交互：
-没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；一旦观察到 Workspace 修改，
-仍必须满足完整的修改、验证和 Review 证据。需要硬性交付保证的调用方必须提供可信任务模式。
+`CodingCompletionPolicy` 对 CHANGE/CREATE 始终要求权威修改或受限 No-change 事实；验证 blocker 只在
+Session 冻结配置的显式 `requiresValidationEvidence` 事实为真时产生。该事实在会话创建时由
+`CodingSessionVerificationConfiguration.freeze` 一次性推导并随 digest 冻结：来源为用户显式
+（`USER_EXPLICIT`）或仓库指令（`REPOSITORY_INSTRUCTIONS`）的候选构成必须完成的验证要求；
+`BUILD_CONFIGURATION`、`ADJACENT_TEST`、`ECOSYSTEM_DEFAULT` 候选只是推荐，环境恰好存在 Maven/pytest
+不构成验证承诺，普通文档或配置写入不会被强制送入 Build/Test 补救循环。权威验证一旦失败仍阻塞完成，
+除非冻结 profile 允许 blocked validation 且存在 `BLOCKER_CONFIRMED`。`DIFF_INSPECTION` 不再作为修改任务
+完成门禁的兼容 fallback，但 DIFF 命令、只读审阅能力和对应诊断事实继续保留。ANALYZE/REVIEW 要求只读证据
+且拒绝意外修改。UNKNOWN 用于普通交互：没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；
+观察到 Workspace 修改时仍要求修改事实，验证要求同样只取决于冻结验证要求。明确承诺 commit/push/PR 的交付
+继续按冻结 `CodingDeliveryIntent` 要求有序的 stage/commit/push/PR 证据，不能以普通回复代替。需要硬性交付
+保证的调用方必须提供可信任务模式。
 
 轻量 `CodingVerificationProfile` 只保存有界候选、来源、成本、超时与触发层级，按“用户显式配置 →
 仓库指令/构建配置 → 相邻测试 → 生态默认”在每个触发层级独立选择，不引入语言插件框架。验证阶梯仍由

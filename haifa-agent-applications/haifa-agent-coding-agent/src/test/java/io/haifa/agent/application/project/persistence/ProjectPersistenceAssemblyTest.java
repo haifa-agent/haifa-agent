@@ -7,11 +7,17 @@ import io.haifa.agent.application.project.product.ProjectProductService;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.product.coding.CodingFollowUp;
 import io.haifa.agent.application.project.product.coding.CodingFollowUpStatus;
+import io.haifa.agent.application.project.product.coding.CodingModelCatalog;
 import io.haifa.agent.application.project.product.coding.CodingModelPreference;
 import io.haifa.agent.application.project.product.coding.CodingSessionActivity;
+import io.haifa.agent.application.project.product.coding.CodingSessionCreateOptions;
 import io.haifa.agent.application.project.product.coding.CodingSessionQuery;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
+import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
+import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
@@ -19,14 +25,29 @@ import io.haifa.agent.application.project.product.coding.verification.CodingVeri
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationSource;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationTrigger;
+import io.haifa.agent.application.project.product.coding.verification.PersistedCodingVerificationProfileProvider;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.AgentRunLimits;
+import io.haifa.agent.core.run.AgentRunSpec;
 import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.step.AgentStepId;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
+import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelUsage;
@@ -489,6 +510,112 @@ class ProjectPersistenceAssemblyTest {
     }
 
     @Test
+    void codingCompletionPolicyConsumesTheVerificationRequirementFrozenAtSessionCreation() {
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("verification-policy");
+        CodingVerificationProfile cliDefaults = new CodingVerificationProfile(
+                List.of(new CodingVerificationCandidate(
+                        "mvn test",
+                        CodingVerificationCost.HIGH,
+                        Duration.ofMinutes(10),
+                        CodingVerificationTrigger.FINAL_GATE,
+                        CodingVerificationSource.BUILD_CONFIGURATION,
+                        "pom.xml",
+                        CodingValidationScope.FULL)),
+                List.of());
+        CodingSessionCreateOptions userCommitted = new CodingSessionCreateOptions(
+                CodingDeliveryIntent.WORKTREE_ONLY,
+                List.of(new CodingVerificationCandidate(
+                        "python -m pytest tests/test_api.py",
+                        CodingVerificationCost.LOW,
+                        Duration.ofMinutes(3),
+                        CodingVerificationTrigger.ADJACENT_CHANGE,
+                        CodingVerificationSource.USER_EXPLICIT,
+                        "trusted-coding-host",
+                        CodingValidationScope.SELECTED)));
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService coding = fixture.codingService(assembly, runtime, ids, cliDefaults);
+            var recommended = coding.createSession(fixture.projectId, "update the docs", List.of(), "verification-key");
+            var committed = coding.createSession(
+                    fixture.projectId, "fix the implementation", List.of(), "verification-promise-key", userCommitted);
+            AgentRunId recommendedRunId = recommended.activeRun().orElseThrow().runId();
+            AgentRunId committedRunId = committed.activeRun().orElseThrow().runId();
+
+            var profiles = new PersistedCodingVerificationProfileProvider(
+                    assembly.ports().runs(), assembly.ports().sessions());
+            appendRunAndMutation(
+                    assembly, recommendedRunId, recommended.summary().sessionId());
+            appendRunAndMutation(assembly, committedRunId, committed.summary().sessionId());
+            assertThat(profiles.configurationFor(recommendedRunId).requiresValidationEvidence())
+                    .as("environment-discovered candidates stay recommendations")
+                    .isFalse();
+            assertThat(profiles.configurationFor(committedRunId).requiresValidationEvidence())
+                    .as("a user-explicit candidate freezes a validation requirement")
+                    .isTrue();
+
+            var policy = new CodingCompletionPolicy(
+                    new CodingTaskModeResolver(assembly.ports().state()),
+                    new CodingDeliveryEvidenceLedger(assembly.ports().state()),
+                    CodingDeliveryProfile.safeDefault(),
+                    null,
+                    profiles);
+
+            assertThat(policy.evaluateEvidence(assembly.ports()
+                                    .runs()
+                                    .find(recommendedRunId)
+                                    .orElseThrow())
+                            .allowed())
+                    .isTrue();
+            assertThat(policy.evaluateEvidence(
+                                    assembly.ports().runs().find(committedRunId).orElseThrow())
+                            .blockers())
+                    .extracting(blocker -> blocker.code())
+                    .containsExactly("VALIDATION_ATTEMPT_MISSING");
+        }
+    }
+
+    private static void appendRunAndMutation(
+            ProjectPersistenceAssembly assembly, AgentRunId runId, AgentSessionId sessionId) {
+        assembly.ports()
+                .runs()
+                .insert(AgentRun.createRoot(
+                        runId,
+                        new AgentRunSpec(
+                                sessionId,
+                                null,
+                                TENANT,
+                                PRINCIPAL,
+                                new AgentDefinitionId("coding-agent"),
+                                new AgentDefinitionVersion(1, 0, 0),
+                                "coding",
+                                "1.0",
+                                AgentRunType.CHAT,
+                                "frozen request",
+                                new AgentRunBudget(1000, 1000, 1000, 20, 20, 0, "USD", 1000),
+                                new AgentRunLimits(20, 0, 1, 60_000, 60_000),
+                                new RunConfigurationSnapshotRef("config-1", "sha256:config")),
+                        NOW));
+        ToolCall call = new ToolCall(
+                new ToolCallId("tool-1"),
+                runId,
+                new AgentStepId("step-1"),
+                new ProviderToolCallCorrelationId("provider-1"),
+                new RuntimeIdempotencyKey("idempotency-1"),
+                "file.write",
+                "1.0.0",
+                new ToolArguments("input", "1.0", Map.of("path", "docs/notes.md")),
+                NOW);
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(NOW);
+        call.complete(
+                new ToolResult(true, "completed", Map.of("path", "docs/notes.md"), List.of(), List.of(), false), NOW);
+        assembly.ports().state().appendToolCall(call);
+    }
+
+    @Test
     void codingSessionLifecycleUsesCoreAuthorityAndLogicalDelete() {
         ProductFixture fixture = productFixture();
         CapturingRuntime runtime = new CapturingRuntime();
@@ -733,6 +860,14 @@ class ProjectPersistenceAssemblyTest {
 
         private CodingSessionService codingService(
                 ProjectPersistenceAssembly persistence, AgentRuntime runtime, IdentifierGenerator ids) {
+            return codingService(persistence, runtime, ids, CodingVerificationProfile.empty());
+        }
+
+        private CodingSessionService codingService(
+                ProjectPersistenceAssembly persistence,
+                AgentRuntime runtime,
+                IdentifierGenerator ids,
+                CodingVerificationProfile defaultVerificationProfile) {
             var callers = (io.haifa.agent.application.project.product.TrustedProductCallerProvider)
                     () -> new TrustedProductCaller(TENANT, PRINCIPAL);
             return new CodingSessionService(
@@ -749,7 +884,9 @@ class ProjectPersistenceAssemblyTest {
                     callers,
                     runtime,
                     ids,
-                    CLOCK);
+                    CLOCK,
+                    CodingModelCatalog.fixed("coding-default", "Configured model"),
+                    defaultVerificationProfile);
         }
     }
 

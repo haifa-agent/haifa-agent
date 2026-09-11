@@ -72,7 +72,6 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final Set<String> mcpToolAliases;
     private final PersonalModelCatalog models;
     private final PersonalModelPreferenceStore modelPreferences;
-    private final AutoCloseable executionLifecycle;
     private final MissionRuntimeAccess missionRuntime;
     private final ArtifactService artifacts;
     private final Map<String, String> skillBindingReferences;
@@ -87,7 +86,6 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             PersonalModelCatalog models,
             PersonalModelPreferenceStore modelPreferences,
             PersonalQuestionRecommender questionRecommender,
-            AutoCloseable executionLifecycle,
             MissionRuntimeAccess missionRuntime,
             ArtifactService artifacts,
             Map<String, String> skillBindingReferences) {
@@ -99,7 +97,6 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 models,
                 modelPreferences,
                 questionRecommender,
-                executionLifecycle,
                 missionRuntime,
                 artifacts,
                 skillBindingReferences,
@@ -114,7 +111,6 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             PersonalModelCatalog models,
             PersonalModelPreferenceStore modelPreferences,
             PersonalQuestionRecommender questionRecommender,
-            AutoCloseable executionLifecycle,
             MissionRuntimeAccess missionRuntime,
             ArtifactService artifacts,
             Map<String, String> skillBindingReferences,
@@ -126,7 +122,6 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         this.models = Objects.requireNonNull(models);
         this.modelPreferences = Objects.requireNonNull(modelPreferences);
         this.questionRecommender = Objects.requireNonNull(questionRecommender);
-        this.executionLifecycle = Objects.requireNonNull(executionLifecycle);
         this.missionRuntime = Objects.requireNonNull(missionRuntime);
         this.artifacts = Objects.requireNonNull(artifacts);
         this.skillBindingReferences = Map.copyOf(skillBindingReferences);
@@ -610,15 +605,6 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             agent.close();
         } catch (RuntimeException exception) {
             failure = exception;
-        }
-        try {
-            executionLifecycle.close();
-        } catch (Exception exception) {
-            RuntimeException normalized = exception instanceof RuntimeException runtime
-                    ? runtime
-                    : new IllegalStateException("Personal execution resources could not be closed", exception);
-            if (failure == null) failure = normalized;
-            else failure.addSuppressed(normalized);
         }
         try {
             mcp.close();
