@@ -98,27 +98,43 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         long fixedTokens =
                 middlewareContext.prompts().stream().mapToLong(budget::estimate).sum()
                         + effectiveTools.stream().mapToLong(budget::estimate).sum();
-        requireFits(fixedTokens, budget, "required prompts and tool definitions exceed the model input budget");
+        long requiredTokens = fixedTokens
+                + middlewareContext.contextItems().stream()
+                        .mapToLong(budget::estimate)
+                        .sum();
+        requireFits(
+                requiredTokens,
+                budget,
+                "required prompts, tool definitions, and runtime context exceed the model input budget");
 
-        List<ContextItem> memoryItems = memoryThatFits(
-                memorySource.select(run, model, loopContext), budget.availableInputTokens() - fixedTokens);
+        List<ContextItem> memoryItems = loopContext.forcedContextRebuildAttempts() > 0
+                ? List.of()
+                : memoryThatFits(
+                        memorySource.select(run, model, loopContext), budget.availableInputTokens() - requiredTokens);
         long memoryTokens = memoryItems.stream().mapToLong(budget::estimate).sum();
-        long sessionTokenBudget = budget.availableInputTokens() - fixedTokens - memoryTokens;
-        sessionMessages.compactIfNeeded(run, loopContext.forcedContextRebuildAttempts(), sessionTokenBudget);
+        long sessionTokenBudget = positiveBudget(budget.availableInputTokens() - requiredTokens - memoryTokens);
         SessionMessageSource.Selection selection = sessionMessages.select(run, sessionTokenBudget);
-        List<ContextItem> items = new ArrayList<>(selection.items());
-        selection.items().stream()
-                .filter(item -> item.content() instanceof MessageGroupContextContent)
-                .map(item -> (MessageGroupContextContent) item.content())
-                .flatMap(group -> group.messages().stream())
-                .forEach(this::validateContents);
-        // Mutable snapshots follow the append-only Session prefix. Their provenance digests are traced as
-        // explicit window-boundary inputs when a Plan or governed Memory selection changes.
-        items.addAll(middlewareContext.contextItems());
-        items.addAll(memoryItems);
-        long itemTokens = items.stream().mapToLong(budget::estimate).sum();
-        long totalTokens = Math.addExact(fixedTokens, itemTokens);
-        requireFits(totalTokens, budget, "session history and optional context exceed the model input budget");
+        ContextAssembly assembly =
+                assemble(selection, middlewareContext.contextItems(), memoryItems, budget, fixedTokens);
+
+        // Memory is optional. Remove it before compacting the Session so a transient Memory match
+        // cannot cause history to be summarized or a Run to fail unnecessarily.
+        if (assembly.exceeds(budget) && !memoryItems.isEmpty()) {
+            memoryItems = List.of();
+            sessionTokenBudget = positiveBudget(budget.availableInputTokens() - requiredTokens);
+            selection = sessionMessages.select(run, sessionTokenBudget);
+            assembly = assemble(selection, middlewareContext.contextItems(), memoryItems, budget, fixedTokens);
+        }
+        if (assembly.exceeds(budget) || loopContext.forcedContextRebuildAttempts() > 0) {
+            selection = sessionMessages.compactIfNeeded(
+                    run, loopContext.forcedContextRebuildAttempts(), sessionTokenBudget);
+            assembly = assemble(selection, middlewareContext.contextItems(), memoryItems, budget, fixedTokens);
+        }
+        if (assembly.exceeds(budget)) {
+            throw new LocalContextOverflowException();
+        }
+        List<ContextItem> items = assembly.items();
+        long totalTokens = assembly.totalTokens();
         var context =
                 new AgentContext(middlewareContext.prompts(), items, effectiveTools, budget.window(), totalTokens);
         var built = new ContextBuildResult(
@@ -144,9 +160,39 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         return List.copyOf(fitting);
     }
 
+    private ContextAssembly assemble(
+            SessionMessageSource.Selection selection,
+            List<ContextItem> runtimeItems,
+            List<ContextItem> memoryItems,
+            TokenBudget budget,
+            long requiredTokens) {
+        selection.items().stream()
+                .filter(item -> item.content() instanceof MessageGroupContextContent)
+                .map(item -> (MessageGroupContextContent) item.content())
+                .flatMap(group -> group.messages().stream())
+                .forEach(this::validateContents);
+        // Mutable snapshots follow the append-only Session prefix. Their provenance digests are traced as
+        // explicit window-boundary inputs when a Plan or governed Memory selection changes.
+        List<ContextItem> items = new ArrayList<>(selection.items());
+        items.addAll(runtimeItems);
+        items.addAll(memoryItems);
+        long itemTokens = items.stream().mapToLong(budget::estimate).sum();
+        return new ContextAssembly(List.copyOf(items), Math.addExact(requiredTokens, itemTokens));
+    }
+
+    private static long positiveBudget(long value) {
+        return Math.max(1L, value);
+    }
+
     private static void requireFits(long tokens, TokenBudget budget, String message) {
         if (tokens > budget.availableInputTokens()) {
             throw new ContextBuildException(ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE, message);
+        }
+    }
+
+    private record ContextAssembly(List<ContextItem> items, long totalTokens) {
+        private boolean exceeds(TokenBudget budget) {
+            return totalTokens > budget.availableInputTokens();
         }
     }
 
