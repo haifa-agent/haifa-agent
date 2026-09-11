@@ -283,8 +283,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             ALTER TABLE personal_mission ADD COLUMN model_binding_json TEXT NOT NULL DEFAULT
                 '{"modelId":"legacy-default","modelDisplayName":"Legacy default model","providerId":"legacy","providerDisplayName":"Legacy configuration","configurationDigest":"legacy-unfrozen"}';
             """;
-    static final String MIGRATION_V8 =
-            """
+    static final String MIGRATION_V8 = """
             DROP TABLE IF EXISTS personal_mission_event;
             """;
 
