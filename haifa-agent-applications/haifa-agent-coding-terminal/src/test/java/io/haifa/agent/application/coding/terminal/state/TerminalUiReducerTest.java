@@ -271,14 +271,15 @@ class TerminalUiReducerTest {
 
         TranscriptItem summary = state.transcript().getLast();
         assertThat(summary.kind()).isEqualTo(TranscriptItem.Kind.SUMMARY);
-        assertThat(summary.title()).isEqualTo("Run completed · 4s · 2 tools · 1 change set");
+        assertThat(summary.title()).isEqualTo("Run completed · 4s");
         assertThat(summary.body())
-                .contains("Tools: 1 succeeded · 1 failed", "Workspace changes: 1 change set", "Duration: 4s");
+                .contains("Status: COMPLETED", "Duration: 4s")
+                .doesNotContain("Tools:", "Workspace changes:");
         assertThat(summary.collapsible()).isTrue();
     }
 
     @Test
-    void includesLocalShellExecutionInTheRunSummary() {
+    void retainsLocalShellExecutionInTranscriptWithoutSummaryAggregation() {
         TerminalUiState state = reducer.reduce(
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.ShellCompleted("!pwd", "D:/workspace", "SUCCEEDED"));
@@ -290,7 +291,11 @@ class TerminalUiReducerTest {
                         new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"),
                         Instant.parse("2026-07-27T00:00:01Z"))));
 
-        assertThat(state.transcript().getLast().body()).contains("Tools: 1 succeeded");
+        assertThat(state.transcript())
+                .anySatisfy(item -> assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.EXECUTION));
+        assertThat(state.transcript().getLast().body())
+                .contains("Status: COMPLETED")
+                .doesNotContain("Tools:");
     }
 
     @Test
@@ -504,7 +509,7 @@ class TerminalUiReducerTest {
     }
 
     @Test
-    void deliveryEventsDriveCompletionBudgetAndCodingWorkPhaseWithoutParsingText() {
+    void deliveryEventsDriveCompletionAndBudgetWithoutParsingText() {
         TerminalUiState firstDeferral = reducer.reduce(
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.RunEventReceived(event(
@@ -544,18 +549,6 @@ class TerminalUiReducerTest {
                                 "TOOL_CALLS",
                                 24,
                                 32))));
-        TerminalUiState workPhase = reducer.reduce(
-                budget,
-                new TerminalUiAction.RunEventReceived(event(
-                        4,
-                        "event-4",
-                        new RunEventPayloads.DeliveryLifecycle(
-                                "VERIFY",
-                                "ACTIVE",
-                                "AUTHORITATIVE_EVIDENCE_PROJECTION",
-                                List.of("VALIDATION_ATTEMPT", "DIFF_INSPECTION"),
-                                42,
-                                0))));
 
         assertThat(firstDeferral.status()).isEqualTo("Completion deferred");
         assertThat(secondDeferral.status()).isEqualTo("Completion deferred");
@@ -574,14 +567,6 @@ class TerminalUiReducerTest {
                 .singleElement()
                 .satisfies(item -> assertThat(item.body())
                         .contains("Limiting resource: TOOL_CALLS", "Usage: 24 / 32", "Remaining: 25%"));
-        assertThat(workPhase.status()).isEqualTo("Work phase: VERIFY");
-        assertThat(workPhase.transcript())
-                .filteredOn(item -> item.id().equals("delivery-ACTIVE"))
-                .singleElement()
-                .satisfies(item -> {
-                    assertThat(item.title()).isEqualTo("Work phase · VERIFY");
-                    assertThat(item.body()).contains("VALIDATION_ATTEMPT", "DIFF_INSPECTION", "Remaining: 42%");
-                });
     }
 
     @Test

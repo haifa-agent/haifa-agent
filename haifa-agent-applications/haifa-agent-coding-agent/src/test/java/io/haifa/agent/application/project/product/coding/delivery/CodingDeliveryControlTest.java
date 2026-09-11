@@ -34,7 +34,6 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
@@ -226,15 +225,6 @@ class CodingDeliveryControlTest {
         CodingDeliveryEvidenceLedger.Snapshot snapshot = new CodingDeliveryEvidenceLedger(fixture.store())
                 .reconstruct(fixture.run().id());
         assertThat(snapshot.kinds()).contains(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
-
-        CodingWorkProjection projection = new CodingWorkProjectionService(
-                        fixture.store(),
-                        new CodingTaskModeResolver(fixture.store()),
-                        new CodingDeliveryEvidenceLedger(fixture.store()),
-                        new CodingDeliveryProfile(20, 25, 20, true),
-                        () -> NOW)
-                .project(fixture.run());
-        assertThat(projection.diffEvidenceRefs()).isNotEmpty();
     }
 
     @Test
@@ -425,11 +415,6 @@ class CodingDeliveryControlTest {
                         .evaluate(fixture.run(), finalDecision())
                         .allowed())
                 .isTrue();
-        CodingWorkProjection projection = projection(fixture.store()).project(fixture.run());
-        assertThat(projection.validationEvidenceRefs()).hasSize(2);
-        assertThat(projection.contextText())
-                .contains("counts=COUNTS_UNAVAILABLE")
-                .doesNotContain("complete test suite");
 
         validationTool(fixture, false, 1, 1, 0);
         assertThat(policy(fixture.store())
@@ -570,197 +555,6 @@ class CodingDeliveryControlTest {
         deliveryEvidence(fixture, "PULL_REQUEST_VERIFIED");
 
         assertThat(policy.evaluate(fixture.run(), finalDecision()).allowed()).isTrue();
-        assertThat(new CodingWorkProjectionService(
-                                fixture.store(),
-                                new CodingTaskModeResolver(fixture.store()),
-                                new CodingDeliveryEvidenceLedger(fixture.store()),
-                                CodingDeliveryProfile.safeDefault(),
-                                () -> NOW.plusSeconds(20),
-                                intents)
-                        .project(fixture.run()))
-                .satisfies(projection -> {
-                    assertThat(projection.deliveryIntent()).isEqualTo("PULL_REQUEST");
-                    assertThat(projection.missingEvidence()).isEmpty();
-                    assertThat(projection.phase()).isEqualTo(CodingWorkPhase.DELIVER);
-                });
-    }
-
-    @Test
-    void workProjectionAdvancesFromAuthoritativeEvidenceAndKeepsOnlySafeBoundedRefs() {
-        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
-        CodingWorkProjectionService projections = projection(fixture.store());
-
-        assertThat(projections.project(fixture.run()).phase()).isEqualTo(CodingWorkPhase.ORIENT);
-
-        tool(
-                fixture,
-                "file.read",
-                Map.of("path", "private/source/Main.java"),
-                Map.of("path", "private/source/Main.java", "contentVersion", "version-1"));
-        CodingWorkProjection changed = projections.project(fixture.run());
-        assertThat(changed.phase()).isEqualTo(CodingWorkPhase.CHANGE);
-        assertThat(changed.readFileRefs()).singleElement().satisfies(value -> assertThat(value)
-                .matches("read:[0-9a-f]{64}"));
-        assertThat(changed.contextText()).doesNotContain("private/source/Main.java", "version-1");
-
-        changeTool(fixture, "file.write", "change-1");
-        assertThat(projections.project(fixture.run()).phase()).isEqualTo(CodingWorkPhase.VERIFY);
-
-        tool(
-                fixture,
-                "execution.run",
-                Map.of("command", "test-command"),
-                Map.of("operationFamily", "TEST", "status", "SUCCEEDED", "exitCode", 0));
-        CodingWorkProjection delivered = projections.project(fixture.run());
-        assertThat(delivered.phase()).isEqualTo(CodingWorkPhase.DELIVER);
-        assertThat(delivered.missingEvidence()).isEmpty();
-        assertThat(delivered.deliveryIntent()).isEqualTo("WORKTREE_ONLY");
-        assertThat(delivered.contextText()).doesNotContain("test-command", "change-1");
-    }
-
-    @Test
-    void workProjectionUsesStableBoundedDigestForLongTaskContent() {
-        String prefix = "long-task-contract:";
-        Fixture first = fixture(prefix + "a".repeat(24_512 - prefix.length()), trusted("CHANGE"));
-        Fixture same = fixture(prefix + "a".repeat(24_512 - prefix.length()), trusted("CHANGE"));
-        Fixture different = fixture(prefix + "a".repeat(24_511 - prefix.length()) + "b", trusted("CHANGE"));
-
-        String firstDigest = projection(first.store()).project(first.run()).taskContractDigest();
-        String sameDigest = projection(same.store()).project(same.run()).taskContractDigest();
-        String differentDigest =
-                projection(different.store()).project(different.run()).taskContractDigest();
-
-        assertThat(firstDigest).matches("[0-9a-f]{64}").isEqualTo(sameDigest).isNotEqualTo(differentDigest);
-    }
-
-    @Test
-    void workProjectionDoesNotForceReadOnlyTasksIntoChangeAndReportsStructuredBlockers() {
-        Fixture review = fixture("review only", trusted("REVIEW"));
-        tool(review, "file.read", Map.of("path", "README.md"), Map.of("path", "README.md"));
-        assertThat(projection(review.store()).project(review.run()).phase()).isEqualTo(CodingWorkPhase.REVIEW);
-
-        Fixture blocked = fixture("fix the implementation", trusted("CHANGE"));
-        tool(blocked, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
-        tool(
-                blocked,
-                "execution.run",
-                Map.of("command", "test-secret-path"),
-                Map.of(
-                        "operationFamily",
-                        "TEST",
-                        "status",
-                        "FAILED",
-                        "failureCategory",
-                        "DEPENDENCY_UNAVAILABLE",
-                        "stableFailureCode",
-                        "TOOLCHAIN_UNAVAILABLE",
-                        "resourceClass",
-                        "TOOLCHAIN"));
-        CodingWorkProjection projection = projection(blocked.store()).project(blocked.run());
-        assertThat(projection.phase()).isEqualTo(CodingWorkPhase.BLOCKED);
-        assertThat(projection.failureClusterSummaries()).containsExactly("TOOLCHAIN_UNAVAILABLE:TOOLCHAIN:1");
-        assertThat(projection.contextText()).doesNotContain("test-secret-path");
-    }
-
-    @Test
-    void workProjectionMiddlewareAppendsSafeControlMessagesOnlyForMaterialPhaseChanges() {
-        Fixture eventFixture = fixture("fix the implementation", trusted("CHANGE"));
-        CodingWorkProjectionService projections = projection(eventFixture.store());
-        RuntimeMiddlewareContext eventContext = new RuntimeMiddlewareContext(eventFixture.run(), eventFixture.store());
-        var beforeRun = CodingWorkProjectionMiddleware.events(
-                projections, RuntimePhase.BEFORE_RUN, eventFixture.store(), () -> NOW.plusSeconds(20));
-        beforeRun.apply(eventContext);
-        beforeRun.apply(eventContext);
-        assertThat(eventFixture.store().eventsFor(eventFixture.run().id()))
-                .filteredOn(event -> event.type().equals("coding.work-phase"))
-                .singleElement()
-                .satisfies(event -> assertThat(event.data()).containsEntry("phase", "ORIENT"));
-        assertThat(eventFixture.store().messages(eventFixture.run().id()))
-                .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("codingWorkProjection")))
-                .singleElement()
-                .satisfies(message -> {
-                    assertThat(message.role()).isEqualTo(MessageRole.RUNTIME);
-                    assertThat(message.visibility()).isEqualTo(MessageVisibility.AGENT_VISIBLE);
-                    assertThat(message.contents().toString())
-                            .contains("phase=ORIENT")
-                            .doesNotContain("fix the implementation");
-                });
-
-        tool(eventFixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
-        CodingWorkProjectionMiddleware.events(
-                        projections,
-                        RuntimePhase.AFTER_DECISION_EXECUTION,
-                        eventFixture.store(),
-                        () -> NOW.plusSeconds(30))
-                .apply(eventContext);
-
-        assertThat(eventFixture.store().eventsFor(eventFixture.run().id()))
-                .filteredOn(event -> event.type().equals("coding.work-phase"))
-                .extracting(event -> event.data().get("phase"))
-                .containsExactly("ORIENT", "VERIFY");
-        assertThat(eventFixture.store().messages(eventFixture.run().id()))
-                .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("codingWorkProjection")))
-                .extracting(message -> message.metadata().get("phase"))
-                .containsExactly("ORIENT", "VERIFY");
-    }
-
-    @Test
-    void workProjectionReportsPositiveLimitsWhenBudgetIsDisabled() {
-        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
-        AgentRun run = AgentRun.createRoot(
-                new AgentRunId("run-disabled-budget"),
-                new AgentRunSpec(
-                        new AgentSessionId("session-1"),
-                        null,
-                        new TenantRef("tenant"),
-                        new PrincipalRef("principal", "user"),
-                        new AgentDefinitionId("coding-agent"),
-                        new AgentDefinitionVersion(1, 0, 0),
-                        "coding",
-                        "1.0",
-                        AgentRunType.CHAT,
-                        "task text",
-                        AgentRunBudget.disabled(),
-                        new AgentRunLimits(20, 0, 1, 60_000, 60_000, 64, 32, 8),
-                        new RunConfigurationSnapshotRef("config-1", "sha256:config")),
-                NOW);
-        store.insert(run);
-        store.appendSessionMessage(new SessionMessageDraft(
-                new AgentMessageId("message-1"),
-                run.sessionId(),
-                Optional.of(run.id()),
-                Optional.empty(),
-                MessageRole.USER,
-                MessageStatus.COMPLETED,
-                MessageVisibility.USER_VISIBLE,
-                List.of(new TextPart("task text", "plain")),
-                trusted("CHANGE"),
-                NOW));
-
-        CodingWorkProjection projection = projection(store).project(run);
-        assertThat(projection.remainingModelCalls()).isEqualTo(64);
-        assertThat(projection.remainingToolCalls()).isEqualTo(32);
-        assertThat(projection.remainingPercent()).isEqualTo(83);
-        assertThat(projection.contextText()).contains("remainingModelCalls=64").contains("remainingToolCalls=32");
-    }
-
-    @Test
-    void workProjectionKeepsTheMostRecentBoundedReferencesDeterministically() {
-        Fixture fixture = fixture("review the repository", trusted("REVIEW"));
-        for (int index = 1; index <= 17; index++) {
-            tool(
-                    fixture,
-                    "file.read",
-                    Map.of("path", "src/File" + index + ".java"),
-                    Map.of("path", "src/File" + index + ".java", "contentVersion", "version-" + index));
-        }
-
-        CodingWorkProjection projection = projection(fixture.store()).project(fixture.run());
-
-        assertThat(projection.readFileRefs())
-                .hasSize(CodingWorkProjection.MAXIMUM_REFERENCES_PER_KIND)
-                .doesNotContain("read:" + PolicyDigest.sha256Fields(List.of("src/File1.java", "version-1")))
-                .contains("read:" + PolicyDigest.sha256Fields(List.of("src/File17.java", "version-17")));
     }
 
     private static Map<String, Object> trusted(String intent) {
@@ -772,13 +566,6 @@ class CodingDeliveryControlTest {
                 new CodingTaskModeResolver(store),
                 new CodingDeliveryEvidenceLedger(store),
                 CodingDeliveryProfile.safeDefault());
-    }
-
-    private static CodingWorkProjectionService projection(InMemoryRuntimeStore store) {
-        var taskModes = new CodingTaskModeResolver(store);
-        var evidence = new CodingDeliveryEvidenceLedger(store);
-        return new CodingWorkProjectionService(
-                store, taskModes, evidence, CodingDeliveryProfile.safeDefault(), () -> NOW.plusSeconds(10));
     }
 
     private static void tool(
