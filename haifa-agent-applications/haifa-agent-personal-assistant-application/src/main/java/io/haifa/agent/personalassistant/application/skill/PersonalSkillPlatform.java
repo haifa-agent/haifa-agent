@@ -196,7 +196,6 @@ public record PersonalSkillPlatform(
                 "references/source-quality.md",
                 "references/citation-rules.md",
                 "references/report-quality.md",
-                "schemas/research-task-result-v1.json",
                 "schemas/research-task-result-v2.json",
                 "schemas/research-delivery-v2.json",
                 "templates/report.md");

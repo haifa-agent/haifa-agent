@@ -190,7 +190,7 @@ class MissionArtifactPublisherTest {
 
     @Test
     void validatesCitationClosureEvidenceStateDuplicateLocatorAndQuoteBounds() throws Exception {
-        assertInvalid(task -> ((ArrayNode) task.path("claims").get(0).path("supportingSourceIds"))
+        assertInvalid(task -> ((ArrayNode) task.path("findings").get(0).path("supportingSourceIds"))
                 .set(0, MAPPER.getNodeFactory().textNode("missing")));
         assertInvalid(task -> {
             ObjectNode duplicate = task.path("sources").get(1).deepCopy();
@@ -204,17 +204,12 @@ class MissionArtifactPublisherTest {
             source.putNull("fetchedAt");
             source.putNull("contentDigest");
             source.put("excerpt", "");
-            ((ArrayNode) task.path("claims").get(0).path("supportingSourceIds"))
+            ((ArrayNode) task.path("findings").get(0).path("supportingSourceIds"))
                     .removeAll()
                     .add("source-2");
         });
         assertInvalid(task -> {
-            ObjectNode quote = MAPPER.createObjectNode();
-            quote.put("sourceId", "source-1");
-            quote.put(
-                    "text",
-                    "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four twenty-five twenty-six");
-            ((ArrayNode) task.path("claims").get(0).path("quotedSpans")).add(quote);
+            ((ObjectNode) task.path("findings").get(0)).put("evidenceAssessment", "INVALID_ASSESSMENT");
         });
     }
 
@@ -244,9 +239,9 @@ class MissionArtifactPublisherTest {
     @Test
     void trustedPublisherAddsUnverifiedAndSingleSourceEvidenceWarnings() throws Exception {
         ObjectNode task = validTask();
-        ObjectNode claim = (ObjectNode) task.path("claims").get(0);
-        ((ArrayNode) claim.path("supportingSourceIds")).removeAll().add("source-1");
-        claim.put("unverified", true);
+        ObjectNode finding = (ObjectNode) task.path("findings").get(0);
+        ((ArrayNode) finding.path("supportingSourceIds")).removeAll().add("source-1");
+        finding.put("unverified", true);
         var metadata = new InMemoryArtifactStore();
         var service = artifactService(metadata, newIds());
 
@@ -264,7 +259,8 @@ class MissionArtifactPublisherTest {
                         .path("singleSourceClaimCount")
                         .asInt())
                 .isEqualTo(1);
-        assertThat(markdown).contains("本报告包含尚未充分核实的判断，不应解读为所有关键结论均已确认。", "<!-- haifa-single-source-risk: claim-1 -->");
+        assertThat(markdown)
+                .contains("本报告包含尚未充分核实的判断，不应解读为所有关键结论均已确认。", "<!-- haifa-single-source-risk: finding-1 -->");
     }
 
     @Test
@@ -814,12 +810,12 @@ class MissionArtifactPublisherTest {
     private static ObjectNode validTask() throws Exception {
         return (ObjectNode) MAPPER.readTree(
                 """
-                {"schemaVersion":"pa.research-task-result/v1","brief":"Bounded research",
+                {"schemaVersion":"pa.research-task-result/v2","taskSummary":"Bounded research",
                 "queries":[{"query":"primary evidence","phase":"DISCOVER"},{"query":"independent evidence","phase":"CROSS_CHECK"}],
                 "sources":[
                 {"sourceId":"source-1","locator":"https://research.stub/source-1","normalizedLocator":"https://research.stub/source-1","locatorDigest":"sha256:%s","title":"Primary","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z","status":"FETCHED","excerpt":"Primary evidence.","contentDigest":"sha256:%s"},
                 {"sourceId":"source-2","locator":"https://research.stub/source-2","normalizedLocator":"https://research.stub/source-2","locatorDigest":"sha256:%s","title":"Independent","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-02-01T00:00:00Z","status":"FETCHED","excerpt":"Independent evidence.","contentDigest":"sha256:%s"}],
-                "claims":[{"claimId":"claim-1","claim":"Supported claim","supportingSourceIds":["source-1","source-2"],"opposingSourceIds":[],"limitations":"Offline fixture","unverified":false,"quotedSpans":[]}],
+                "findings":[{"findingId":"finding-1","title":"Supported finding","mechanism":"Supported claim","keyParameters":["param: 1"],"evidenceSummary":"Primary evidence summary.","implications":"Offline implications","limitations":"Offline fixture","supportingSourceIds":["source-1","source-2"],"opposingSourceIds":[],"evidenceAssessment":"SUPPORTED","unverified":false}],
                 "unresolvedQuestions":["External freshness"],"stopReason":"SUFFICIENT_EVIDENCE","limitsUsed":{"searchCalls":1,"fetchCalls":2,"sources":2,"contentBytes":128}}
                 """
                         .formatted("a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64)));

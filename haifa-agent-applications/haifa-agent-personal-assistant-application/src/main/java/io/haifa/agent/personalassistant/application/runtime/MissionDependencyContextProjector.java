@@ -30,9 +30,12 @@ final class MissionDependencyContextProjector {
             JsonNode source = parse(dependency);
             ObjectNode target = projected.addObject();
             identity(target, dependency);
-            target.put("brief", bounded(source.path("brief").asText(), briefLimit));
+            String brief = source.hasNonNull("taskSummary")
+                    ? source.path("taskSummary").asText()
+                    : source.path("brief").asText();
+            target.put("brief", bounded(brief, briefLimit));
             projectSources(source.path("sources"), target.putArray("sources"));
-            projectClaims(source.path("claims"), target.putArray("claims"));
+            projectFindingsOrClaims(source, target.putArray("claims"));
             projectTextArray(
                     source.path("unresolvedQuestions"),
                     target.putArray("unresolvedQuestions"),
@@ -59,6 +62,30 @@ final class MissionDependencyContextProjector {
         }
     }
 
+    private static void projectFindingsOrClaims(JsonNode source, ArrayNode target) {
+        if (source.has("findings") && source.path("findings").isArray()) {
+            int count = 0;
+            for (JsonNode value : source.path("findings")) {
+                if (count++ >= MAX_CLAIMS_PER_DEPENDENCY) break;
+                ObjectNode claim = target.addObject();
+                claim.put("claimId", bounded(value.path("findingId").asText(), 128));
+                String title = value.path("title").asText();
+                String mechanism = value.path("mechanism").asText();
+                claim.put(
+                        "claim",
+                        bounded(
+                                title.isBlank() ? mechanism : title + (mechanism.isBlank() ? "" : ": " + mechanism),
+                                800));
+                projectTextArray(value.path("supportingSourceIds"), claim.putArray("supportingSourceIds"), 8, 128);
+                projectTextArray(value.path("opposingSourceIds"), claim.putArray("opposingSourceIds"), 8, 128);
+                copyText(value, claim, "limitations", 300);
+                claim.put("unverified", value.path("unverified").asBoolean(true));
+            }
+        } else {
+            projectClaims(source.path("claims"), target);
+        }
+    }
+
     private static void projectClaims(JsonNode values, ArrayNode target) {
         if (!values.isArray()) return;
         int count = 0;
@@ -73,7 +100,6 @@ final class MissionDependencyContextProjector {
             claim.put("unverified", value.path("unverified").asBoolean(true));
         }
     }
-
 
     private static void projectTextArray(JsonNode values, ArrayNode target, int maximumItems, int maximumCharacters) {
         if (!values.isArray()) return;

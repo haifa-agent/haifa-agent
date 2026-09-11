@@ -570,14 +570,10 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         for (String encoded : taskResults) {
             JsonNode task = object(encoded, "Research Task result");
             String schema = task.path("schemaVersion").asText();
-            if (!"pa.research-task-result/v1".equals(schema) && !"pa.research-task-result/v2".equals(schema)) {
+            if (!"pa.research-task-result/v2".equals(schema)) {
                 invalid("Result schema is unsupported");
             }
-            if ("pa.research-task-result/v2".equals(schema)) {
-                requiredText(task, "taskSummary", 8_000);
-            } else {
-                requiredText(task, "brief", 8_000);
-            }
+            requiredText(task, "taskSummary", 8_000);
             JsonNode queries = requiredArray(task, "queries", 20);
             validateQueries(queries);
             for (JsonNode query : queries) {
@@ -627,25 +623,14 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         Map<String, JsonNode> claims = new LinkedHashMap<>();
         LinkedHashSet<String> requiredUnverified = new LinkedHashSet<>();
         for (NormalizedTask task : taskObjects) {
-            if (task.value().has("findings")) {
-                for (JsonNode finding : requiredArray(task.value(), "findings", 40)) {
-                    rewriteFindingSourceRefs(finding, task.sourceAliases());
-                    validateFinding(finding, task.sources());
-                    String id = stableId(finding, "findingId");
-                    ObjectNode claimNode = projectFindingToClaim(finding);
-                    JsonNode previous = claims.putIfAbsent(id, claimNode);
-                    if (previous != null && !previous.equals(claimNode)) invalid("Finding ID is ambiguous");
-                    if (claimNode.path("unverified").asBoolean(false)) requiredUnverified.add(id);
-                }
-            } else {
-                for (JsonNode claim : requiredArray(task.value(), "claims", 40)) {
-                    rewriteClaimSourceRefs(claim, task.sourceAliases());
-                    validateClaim(claim, task.sources());
-                    String id = stableId(claim, "claimId");
-                    JsonNode previous = claims.putIfAbsent(id, claim);
-                    if (previous != null && !previous.equals(claim)) invalid("Claim ID is ambiguous");
-                    if (claim.get("unverified").asBoolean()) requiredUnverified.add(id);
-                }
+            for (JsonNode finding : requiredArray(task.value(), "findings", 40)) {
+                rewriteFindingSourceRefs(finding, task.sourceAliases());
+                validateFinding(finding, task.sources());
+                String id = stableId(finding, "findingId");
+                ObjectNode claimNode = projectFindingToClaim(finding);
+                JsonNode previous = claims.putIfAbsent(id, claimNode);
+                if (previous != null && !previous.equals(claimNode)) invalid("Finding ID is ambiguous");
+                if (claimNode.path("unverified").asBoolean(false)) requiredUnverified.add(id);
             }
         }
         LinkedHashSet<String> aggregateDowngraded = new LinkedHashSet<>();
@@ -792,18 +777,6 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         rewriteSourceIds(requiredArray(finding, "opposingSourceIds", 20), aliases);
     }
 
-    private void rewriteClaimSourceRefs(JsonNode claim, Map<String, String> aliases) {
-        rewriteSourceIds(requiredArray(claim, "supportingSourceIds", 20), aliases);
-        rewriteSourceIds(requiredArray(claim, "opposingSourceIds", 20), aliases);
-        for (JsonNode quote : requiredArray(claim, "quotedSpans", 20)) {
-            if (!quote.isObject()) invalid("Quoted span shape is invalid");
-            String original = requiredText(quote, "sourceId", 128);
-            String canonical = aliases.get(original);
-            if (canonical == null) invalid("Claim references an unavailable source");
-            ((ObjectNode) quote).put("sourceId", canonical);
-        }
-    }
-
     private static void rewriteSourceIds(JsonNode values, Map<String, String> aliases) {
         ArrayNode array = (ArrayNode) values;
         for (int index = 0; index < array.size(); index++) {
@@ -819,33 +792,6 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         if (canonical == null && evidence.sources().containsKey(reference)) canonical = reference;
         if (canonical == null) invalid("Final result cites an unavailable source");
         return canonical;
-    }
-
-    private void validateClaim(JsonNode claim, Map<String, JsonNode> sources) {
-        if (!claim.isObject() || claim.size() != 7) invalid("Claim shape is invalid");
-        stableId(claim, "claimId");
-        requiredText(claim, "claim", 4_000);
-        List<String> supporting = textArray(claim, "supportingSourceIds", 20);
-        List<String> opposing = textArray(claim, "opposingSourceIds", 20);
-        requiredTextAllowEmpty(claim, "limitations", 2_000);
-        JsonNode unverifiedNode = claim.get("unverified");
-        if (unverifiedNode == null || !unverifiedNode.isBoolean()) invalid("Claim unverified flag is invalid");
-        LinkedHashSet<String> references = new LinkedHashSet<>(supporting);
-        references.addAll(opposing);
-        if (references.isEmpty() || !sources.keySet().containsAll(references)) {
-            invalid("Claim references an unavailable source");
-        }
-        boolean insufficient = supporting.isEmpty()
-                || references.stream().anyMatch(id -> !"FETCHED"
-                        .equals(sources.get(id).get("status").asText()));
-        if (insufficient && !unverifiedNode.asBoolean()) invalid("Insufficiently supported claim must be unverified");
-        for (JsonNode quote : requiredArray(claim, "quotedSpans", 20)) {
-            if (!quote.isObject() || quote.size() != 2) invalid("Quoted span shape is invalid");
-            String sourceId = requiredText(quote, "sourceId", 128);
-            if (!references.contains(sourceId)) invalid("Quoted span source is unavailable");
-            String text = requiredText(quote, "text", 320);
-            if (quotedWords(text) > 25 || cjkCharacters(text) > 80) invalid("Quoted span exceeds the source limit");
-        }
     }
 
     private void validateFinding(JsonNode finding, Map<String, JsonNode> sources) {
@@ -1279,21 +1225,6 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                 throw new MissionException("MISSION_RESULT_SCHEMA_INVALID", field + " is invalid", dateFailure);
             }
         }
-    }
-
-    private static int quotedWords(String text) {
-        String normalized = text.replaceAll("[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}]", " ")
-                .trim();
-        return normalized.isEmpty() ? 0 : normalized.split("\\s+").length;
-    }
-
-    private static long cjkCharacters(String text) {
-        return text.codePoints()
-                .filter(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN
-                        || Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HIRAGANA
-                        || Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.KATAKANA
-                        || Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HANGUL)
-                .count();
     }
 
     private String encode(Object value) {

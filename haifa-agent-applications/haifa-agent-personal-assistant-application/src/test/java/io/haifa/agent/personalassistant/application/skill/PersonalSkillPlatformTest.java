@@ -61,7 +61,7 @@ class PersonalSkillPlatformTest {
         assertThat(platform.bindingReferences().get("deep-research"))
                 .isEqualTo(binding.coordinate().externalForm())
                 .contains("product", "personal-assistant-bundled@1", "deep-research@2.3.0")
-                .endsWith("#sha256:2c7de1a4bc83fcb68fc70149218ee05769230f9eebf9d827813ae444edd2022e");
+                .endsWith("#sha256:aec8ed486327e437c69d4ef267f9b0a8f322b92e5b825deb749096589eabe93a");
         assertThat(content.readableResources())
                 .containsKeys(
                         "references/research-types.md",
@@ -69,11 +69,10 @@ class PersonalSkillPlatformTest {
                         "references/source-quality.md",
                         "references/citation-rules.md",
                         "references/report-quality.md",
-                        "schemas/research-task-result-v1.json",
                         "schemas/research-task-result-v2.json",
                         "schemas/research-delivery-v2.json",
                         "templates/report.md");
-        assertThat(content.readableResources()).hasSize(9);
+        assertThat(content.readableResources()).hasSize(8);
         assertThat(content.resource("references/research-types.md"))
                 .contains(
                         "TRUTHFULNESS_INVESTIGATION",
@@ -120,10 +119,6 @@ class PersonalSkillPlatformTest {
                         "Counterevidence",
                         "Context",
                         "promotion verified; truth not independently verified");
-        assertThat(content.resource("schemas/research-task-result-v1.json"))
-                .hasSize(4_208)
-                .contains("pa.research-task-result/v1", "DISCOVER", "DEEPEN", "CROSS_CHECK")
-                .doesNotContain("sourceRole", "confidence");
         assertThat(content.resource("schemas/research-task-result-v2.json"))
                 .contains("pa.research-task-result/v2", "DISCOVER", "DEEPEN", "CROSS_CHECK");
         assertThat(content.resource("schemas/research-delivery-v2.json"))

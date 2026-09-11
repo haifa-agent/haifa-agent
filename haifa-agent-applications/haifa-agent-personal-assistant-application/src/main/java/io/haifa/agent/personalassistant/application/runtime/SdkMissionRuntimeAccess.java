@@ -647,22 +647,14 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         try {
             JsonNode root = JSON.readTree(value);
             String schemaVersion = root.path("schemaVersion").asText();
-            String resource;
-            String version;
-            if ("pa.research-task-result/v2".equals(schemaVersion)) {
-                resource = "schemas/research-task-result-v2.json";
-                version = "v2";
-            } else if ("pa.research-task-result/v1".equals(schemaVersion)) {
-                resource = "schemas/research-task-result-v1.json";
-                version = "v1";
-            } else {
+            if (!"pa.research-task-result/v2".equals(schemaVersion)) {
                 return false;
             }
-            Map<String, Object> schemaDocument =
-                    JSON.readValue(deepResearchSkill.resource(resource), new TypeReference<>() {});
+            Map<String, Object> schemaDocument = JSON.readValue(
+                    deepResearchSkill.resource("schemas/research-task-result-v2.json"), new TypeReference<>() {});
             Map<String, Object> instance = JSON.convertValue(root, new TypeReference<>() {});
             boolean schemaValid = new JsonSchema202012Validator()
-                    .validate(new ToolSchema("pa.research-task-result", version, schemaDocument), instance)
+                    .validate(new ToolSchema("pa.research-task-result", "v2", schemaDocument), instance)
                     .valid();
             return schemaValid && researchTaskSemanticsValid(root);
         } catch (Exception ignored) {
@@ -689,7 +681,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 canonicalizeInstant(source, "publishedAt", true);
             }
             String schema = parsed.path("schemaVersion").asText();
-            if ("pa.research-task-result/v1".equals(schema) || "pa.research-task-result/v2".equals(schema)) {
+            if ("pa.research-task-result/v2".equals(schema)) {
                 canonicalizeResearchEvidence((ObjectNode) parsed, taskId, completedFetches);
             }
             return JSON.writeValueAsString(parsed);
@@ -794,38 +786,6 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         }
         root.set("sources", canonicalSources);
 
-        if (root.has("claims")) {
-            ArrayNode canonicalClaims = JSON.createArrayNode();
-            LinkedHashSet<String> claimIds = new LinkedHashSet<>();
-            for (JsonNode candidate : root.path("claims")) {
-                if (!(candidate instanceof ObjectNode claim)) continue;
-                String claimId =
-                        namespacedStableId(taskId, claim.path("claimId").asText());
-                if (claimId.isBlank() || !claimIds.add(claimId)) continue;
-                claim.put("claimId", claimId);
-                if (claim.path("limitations").isArray()) {
-                    String limitations = java.util.stream.StreamSupport.stream(
-                                    claim.path("limitations").spliterator(), false)
-                            .map(JsonNode::asText)
-                            .filter(text -> !text.isBlank())
-                            .collect(java.util.stream.Collectors.joining("; "));
-                    claim.put("limitations", limitations);
-                }
-                // Normalized Task results intentionally carry no verbatim quotations. Enforce the required empty
-                // placeholder even when the model omits it, instead of rejecting otherwise usable evidence.
-                claim.putArray("quotedSpans");
-                LinkedHashSet<String> references = new LinkedHashSet<>();
-                rewriteSourceReferences(claim, "supportingSourceIds", sourceAliases, fetchedBySource, references);
-                rewriteSourceReferences(claim, "opposingSourceIds", sourceAliases, fetchedBySource, references);
-                if (references.isEmpty()) continue;
-                if (references.stream().anyMatch(sourceId -> !fetchedBySource.getOrDefault(sourceId, false))) {
-                    claim.put("unverified", true);
-                }
-                canonicalClaims.add(claim);
-            }
-            root.set("claims", canonicalClaims);
-        }
-
         if (root.has("findings")) {
             ArrayNode canonicalFindings = JSON.createArrayNode();
             LinkedHashSet<String> findingIds = new LinkedHashSet<>();
@@ -872,11 +832,9 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             root.set("findings", canonicalFindings);
         }
 
-        if ("pa.research-task-result/v2".equals(root.path("schemaVersion").asText())) {
-            if (!root.hasNonNull("taskSummary") && root.hasNonNull("brief")) {
-                root.set("taskSummary", root.get("brief"));
-                root.remove("brief");
-            }
+        if (!root.hasNonNull("taskSummary") && root.hasNonNull("brief")) {
+            root.set("taskSummary", root.get("brief"));
+            root.remove("brief");
         }
 
         if (root.path("limitsUsed") instanceof ObjectNode limits) {
@@ -1084,12 +1042,12 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
 
     public static String conservativeResearchTaskResult(String objective, String result, String normalizationFailure) {
         ObjectNode root = JSON.createObjectNode();
-        root.put("schemaVersion", "pa.research-task-result/v1");
-        String brief = containsToolProtocolMarkup(JSON.getNodeFactory().textNode(result))
+        root.put("schemaVersion", "pa.research-task-result/v2");
+        String taskSummary = containsToolProtocolMarkup(JSON.getNodeFactory().textNode(result))
                 ? objective
                         + " Structured normalization discarded serialized Tool protocol markup; evidence requires review."
                 : result;
-        root.put("brief", brief.substring(0, Math.min(brief.length(), 8_000)));
+        root.put("taskSummary", taskSummary.substring(0, Math.min(taskSummary.length(), 8_000)));
         ArrayNode queries = root.putArray("queries");
         ObjectNode query = queries.addObject();
         query.put("query", objective.substring(0, Math.min(objective.length(), 2_048)));
@@ -1123,8 +1081,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             source.put("excerpt", "");
             source.putNull("contentDigest");
         }
-        root.putArray("claims");
-        root.putArray("artifactRefs");
+        root.putArray("findings");
         root.putArray("unresolvedQuestions")
                 .add("Structured normalization was unavailable (" + normalizationFailure
                         + "); recovered notes and source locators require verification.");
@@ -1866,7 +1823,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     Required shape: {"schemaVersion":"pa.mission-plan/v1","tasks":[{"taskId":"task-1","ordinal":1,
                     "title":"...","objective":"...","acceptanceCriteria":["..."],"dependsOn":[],
                     "taskType":"RESEARCH","requiredSkillIds":["deep-research"],
-                    "resultSchema":{"id":"pa.research-task-result","version":"v1"}}]}.
+                    "resultSchema":{"id":"pa.research-task-result","version":"v2"}}]}.
                     Use at most %d tasks and dependency depth %d. Task IDs must be lower-case kebab-case, ordinals contiguous,
                     and every dependency must exactly equal the taskId of an earlier object in this same tasks array. Never
                     use ordinal placeholders such as task-1 or task-2 unless those are the actual taskId values. Only
@@ -1973,7 +1930,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 Required shape: {"schemaVersion":"pa.mission-plan/v1","tasks":[{"taskId":"specific-kebab-id",
                 "ordinal":1,"title":"...","objective":"...","acceptanceCriteria":["..."],"dependsOn":[],
                 "taskType":"%s","requiredSkillIds":%s,
-                "resultSchema":{"id":"%s","version":"v1"}}]}.
+                "resultSchema":{"id":"%s","version":"%s"}}]}.
                 Maximum tasks: %d. Maximum dependency depth: %d. Dependencies must reference earlier taskId values.
                 Dependency depth counts task nodes, not edges: root depth is 1, a direct dependent is depth 2, and a
                 dependent of that Task is depth 3. Flatten dependencies as needed to stay within the maximum.
@@ -1990,6 +1947,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         request.mode() == MissionMode.DEEP_RESEARCH ? "RESEARCH" : "GENERAL",
                         request.mode() == MissionMode.DEEP_RESEARCH ? "[\"deep-research\"]" : "[]",
                         request.mode() == MissionMode.DEEP_RESEARCH ? "pa.research-task-result" : "pa.task-result",
+                        request.mode() == MissionMode.DEEP_RESEARCH ? "v2" : "v1",
                         request.constraints().maxTasks(),
                         request.constraints().maxDependencyDepth(),
                         dependencyRepair,

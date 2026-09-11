@@ -928,8 +928,8 @@ public final class PersonalModelFactory {
                 return response(
                         current,
                         """
-                        {"schemaVersion":"pa.research-task-result/v1",
-                        "brief":"Bounded deterministic research task",
+                        {"schemaVersion":"pa.research-task-result/v2",
+                        "taskSummary":"Bounded deterministic research task",
                         "queries":[{"query":"deterministic deep research evidence","phase":"DISCOVER"},
                         {"query":"independent deterministic research corroboration","phase":"CROSS_CHECK"}],
                         "sources":[
@@ -947,10 +947,15 @@ public final class PersonalModelFactory {
                         "fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-02-01T00:00:00Z",
                         "status":"FETCHED","excerpt":"Independent evidence corroborates the primary finding.",
                         "contentDigest":"sha256:2badb1b783b31c475f4112dba70fd85edbd4721e5c0b326ab83cb292a36be30a"}],
-                        "claims":[{"claimId":"claim-1","claim":"The primary finding is independently corroborated.",
+                        "findings":[{
+                        "findingId":"finding-1","title":"Primary finding",
+                        "mechanism":"The primary finding is independently corroborated.",
+                        "keyParameters":["corroborated: true"],
+                        "evidenceSummary":"Primary and independent evidence agree.",
+                        "implications":"Deterministic fixture implication.",
+                        "limitations":"Offline fixtures do not establish external freshness.",
                         "supportingSourceIds":["source-1","source-2"],"opposingSourceIds":[],
-                        "limitations":"Offline fixtures do not establish external freshness.","unverified":false,
-                        "quotedSpans":[]}],
+                        "evidenceAssessment":"SUPPORTED","unverified":false}],
                         "unresolvedQuestions":["The offline fixture cannot establish external freshness."],
                         "stopReason":"SUFFICIENT_EVIDENCE",
                         "limitsUsed":{"searchCalls":%d,"fetchCalls":%d,"sources":2,"contentBytes":%d}}
