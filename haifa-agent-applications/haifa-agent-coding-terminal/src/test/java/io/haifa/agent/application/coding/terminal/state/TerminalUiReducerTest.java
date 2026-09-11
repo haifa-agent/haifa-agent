@@ -23,6 +23,12 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryItem;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
+import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
+import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.core.session.AgentSessionStatus;
 import org.junit.jupiter.api.Test;
 
 class TerminalUiReducerTest {
@@ -271,11 +277,82 @@ class TerminalUiReducerTest {
 
         TranscriptItem summary = state.transcript().getLast();
         assertThat(summary.kind()).isEqualTo(TranscriptItem.Kind.SUMMARY);
-        assertThat(summary.title()).isEqualTo("Run completed · 4s");
+        assertThat(summary.title()).isEqualTo("Run completed");
+        assertThat(summary.durationMillis()).isEmpty();
         assertThat(summary.body())
-                .contains("Status: COMPLETED", "Duration: 4s")
-                .doesNotContain("Tools:", "Workspace changes:");
+                .contains("Status: COMPLETED")
+                .doesNotContain("Duration:", "Tools:", "Workspace changes:");
         assertThat(summary.collapsible()).isTrue();
+    }
+
+    @Test
+    void restoredHistoryDoesNotProduceBogusDurationOnSubsequentRunCompletion() {
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        CodingSessionSummary summary = new CodingSessionSummary(
+                sessionId,
+                new ProjectId("project-1"),
+                "session",
+                AgentSessionStatus.ACTIVE,
+                Optional.empty(),
+                Optional.empty(),
+                0,
+                Instant.EPOCH,
+                0);
+        CodingSessionView sessionView = new CodingSessionView(
+                summary,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                "sha256:test",
+                "cli-coding@1.0.0");
+
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.SessionLoaded(sessionView, List.of()));
+
+        CodingSessionHistoryPage history = new CodingSessionHistoryPage(
+                sessionId,
+                List.of(
+                        new CodingSessionHistoryItem(
+                                "history-1",
+                                CodingSessionHistoryItem.Kind.USER,
+                                "You",
+                                "old question",
+                                "COMPLETED",
+                                1,
+                                Instant.parse("2026-07-26T00:00:00Z")),
+                        new CodingSessionHistoryItem(
+                                "history-2",
+                                CodingSessionHistoryItem.Kind.ASSISTANT,
+                                "Assistant",
+                                "old answer",
+                                "COMPLETED",
+                                2,
+                                Instant.parse("2026-07-26T00:00:05Z"))),
+                false);
+
+        state = reducer.reduce(state, new TerminalUiAction.HistoryLoaded(history));
+
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle("tool-1", "file_read", "STARTED", "NONE", "a.txt", ""),
+                        Instant.parse("2026-07-27T10:00:00Z"))));
+        state = reducer.reduce(
+                state,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"),
+                        Instant.parse("2026-07-27T10:00:05Z"))));
+
+        TranscriptItem summaryItem = state.transcript().getLast();
+        assertThat(summaryItem.kind()).isEqualTo(TranscriptItem.Kind.SUMMARY);
+        assertThat(summaryItem.title()).isEqualTo("Run completed");
+        assertThat(summaryItem.durationMillis()).isEmpty();
+        assertThat(summaryItem.body()).contains("Status: COMPLETED").doesNotContain("Duration:");
     }
 
     @Test
