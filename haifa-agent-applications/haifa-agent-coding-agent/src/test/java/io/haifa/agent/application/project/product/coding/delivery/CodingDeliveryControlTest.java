@@ -312,7 +312,7 @@ class CodingDeliveryControlTest {
         assertThat(new CodingCompletionPolicy(
                                 new CodingTaskModeResolver(fixture.store()),
                                 new CodingDeliveryEvidenceLedger(fixture.store()),
-                                new CodingDeliveryProfile(20, 25, 20, true))
+                                new CodingDeliveryProfile(true))
                         .evaluate(fixture.run(), finalDecision())
                         .allowed())
                 .isTrue();
@@ -331,7 +331,7 @@ class CodingDeliveryControlTest {
         assertThat(new CodingCompletionPolicy(
                                 new CodingTaskModeResolver(fixture.store()),
                                 new CodingDeliveryEvidenceLedger(fixture.store()),
-                                new CodingDeliveryProfile(20, 25, 20, true))
+                                new CodingDeliveryProfile(true))
                         .evaluate(fixture.run(), finalDecision())
                         .allowed())
                 .isTrue();

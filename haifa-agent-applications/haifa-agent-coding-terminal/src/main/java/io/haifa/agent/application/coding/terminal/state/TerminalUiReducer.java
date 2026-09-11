@@ -613,7 +613,7 @@ public final class TerminalUiReducer {
         }
         if (event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle
                 && TERMINAL_RUN_STATUSES.contains(lifecycle.status())) {
-            items.add(runSummaryItem(items, lifecycle, event));
+            items.add(runSummaryItem(lifecycle, event));
         }
         return List.copyOf(items);
     }
@@ -892,25 +892,8 @@ public final class TerminalUiReducer {
     }
 
     private static TranscriptItem runSummaryItem(
-            List<TranscriptItem> items, RunEventPayloads.RunLifecycle payload, AgentRunEvent event) {
-        int segmentStart = 0;
-        for (int position = items.size() - 1; position >= 0; position--) {
-            if (items.get(position).kind() == TranscriptItem.Kind.SUMMARY) {
-                segmentStart = position + 1;
-                break;
-            }
-        }
-        long earliestStart = Long.MAX_VALUE;
-        for (int position = segmentStart; position < items.size(); position++) {
-            TranscriptItem item = items.get(position);
-            if (item.startedAtEpochMillis().isPresent()) {
-                earliestStart =
-                        Math.min(earliestStart, item.startedAtEpochMillis().orElseThrow());
-            }
-        }
-        Optional<Long> duration = earliestStart == Long.MAX_VALUE
-                ? Optional.empty()
-                : Optional.of(Math.max(0, event.occurredAt().toEpochMilli() - earliestStart));
+            RunEventPayloads.RunLifecycle payload, AgentRunEvent event) {
+        Optional<Long> duration = Optional.empty();
         String title =
                 switch (payload.status()) {
                     case "COMPLETED" -> "Run completed";
