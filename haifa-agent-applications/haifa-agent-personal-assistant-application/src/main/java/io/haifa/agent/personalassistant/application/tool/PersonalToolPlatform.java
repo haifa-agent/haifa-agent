@@ -17,6 +17,7 @@ import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
+import io.haifa.agent.skill.api.SkillTrustSnapshot;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import io.haifa.agent.tool.core.ToolCatalogBuilder;
@@ -52,10 +53,6 @@ public record PersonalToolPlatform(
                 execution.definition(),
                 "personal-execution-v2",
                 execution.provider());
-        PersonalTrustedFinanceTools.Prepared trusted = PersonalTrustedFinanceTools.prepare(skills, execution);
-        trusted.provider().ifPresent(provider -> trusted.entries()
-                .forEach(item -> builder.register(
-                        item.alias(), item.spec().definition(), item.providerBindingReference(), provider)));
         web.contributions()
                 .forEach(item -> builder.register(
                         item.alias(), item.definition(), item.providerBindingReference(), item.provider()));
@@ -67,7 +64,8 @@ public record PersonalToolPlatform(
         mcpTools.forEach(item ->
                 builder.register(item.alias(), item.definition(), item.providerBindingReference(), item.provider()));
         var catalog = builder.freeze();
-        var trust = PersonalTrustedFinanceTools.freezeTrust(skills, trusted, catalog);
+        var trust = new SkillTrustSnapshot(
+                skills.trustManifest().digest(), skills.packageTrust().packageReviewGrants(), List.of());
 
         var tool = new ToolPlatformContribution(
                 metadata(
@@ -97,7 +95,7 @@ public record PersonalToolPlatform(
                         SdkConfigurationDigest.sha256(aliases.stream().sorted().toArray(String[]::new)),
                         "Personal explicit loopback MCP allowlist"),
                 aliases);
-        return new PersonalToolPlatform(tool, skill, mcpContribution, trusted.aliases());
+        return new PersonalToolPlatform(tool, skill, mcpContribution, Set.of());
     }
 
     private static SdkContributionMetadata metadata(
