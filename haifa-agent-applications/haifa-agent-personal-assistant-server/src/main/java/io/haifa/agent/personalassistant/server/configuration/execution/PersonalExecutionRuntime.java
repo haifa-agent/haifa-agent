@@ -17,7 +17,6 @@ import io.haifa.agent.execution.core.tool.ExecutionInvocationScopeResolver.Execu
 import io.haifa.agent.execution.core.tool.ExecutionToolConfiguration;
 import io.haifa.agent.execution.core.tool.ExecutionToolProvider;
 import io.haifa.agent.execution.core.tool.ScriptRuntimeResolver;
-import io.haifa.agent.execution.host.change.LocalIncrementalWorkspaceChangeObserver;
 import io.haifa.agent.execution.host.tool.HostScriptRuntimeResolver;
 import io.haifa.agent.personalassistant.application.execution.PersonalAssistantExecutionPolicy;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
@@ -123,8 +122,7 @@ public final class PersonalExecutionRuntime {
         String profileVersion = "3-"
                 + SandboxConfigurationDigest.sha256Fields(List.of(
                                 host.configurationDigest().value(),
-                                HostExecutionEnvironmentResolver.POLICY_VERSION,
-                                PersonalWorkspaceChangeIgnorePolicy.VERSION))
+                                HostExecutionEnvironmentResolver.POLICY_VERSION))
                         .value()
                         .substring("sha256:".length());
         SandboxProfile profile = SandboxProfile.hostGuarded(
@@ -158,8 +156,6 @@ public final class PersonalExecutionRuntime {
                 ToolRequestCanonicalizer.identity(),
                 publicToolPolicy);
         var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(
-                workspaceId, workspaceRoot, new PersonalWorkspaceChangeIgnorePolicy());
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
@@ -168,8 +164,7 @@ public final class PersonalExecutionRuntime {
                 new ImmutableSandboxProfileRegistry(List.of(profile)),
                 new ImmutableSandboxProviderRegistry(List.of(host)),
                 workspaces,
-                bindings,
-                workspaceChanges);
+                bindings);
         var provider = new ExecutionToolProvider(
                 broker,
                 identifiers,
@@ -178,22 +173,16 @@ public final class PersonalExecutionRuntime {
                 configuration,
                 (resolvedWorkspaceId, inputPaths) -> inputPaths.forEach(path ->
                         files.stat(new io.haifa.agent.project.path.WorkspacePath(resolvedWorkspaceId, path), false)));
-        try {
-            return PersonalExecutionPlatform.create(
-                    provider,
-                    profile,
-                    runtimes,
-                    (requester, target, responder) -> {
-                        boolean samePrincipal = requester.tenant().equals(responder.tenant())
-                                && requester.principal().equals(responder.principal());
-                        return new ApprovalVerification(
-                                samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
-                    },
-                    workspaceChanges);
-        } catch (RuntimeException | Error exception) {
-            workspaceChanges.close();
-            throw exception;
-        }
+        return PersonalExecutionPlatform.create(
+                provider,
+                profile,
+                runtimes,
+                (requester, target, responder) -> {
+                    boolean samePrincipal = requester.tenant().equals(responder.tenant())
+                            && requester.principal().equals(responder.principal());
+                    return new ApprovalVerification(
+                            samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
+                });
     }
 
     private static Optional<Path> configuredPath(String value) {

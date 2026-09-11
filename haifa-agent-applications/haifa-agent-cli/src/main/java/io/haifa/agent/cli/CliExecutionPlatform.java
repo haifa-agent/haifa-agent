@@ -18,7 +18,6 @@ import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
-import io.haifa.agent.execution.host.change.LocalIncrementalWorkspaceChangeObserver;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
@@ -43,12 +42,11 @@ import java.util.Objects;
 import java.util.Set;
 
 /** Owns the CLI's trusted local execution assembly without exposing provider controls to the model. */
-final class CliExecutionPlatform implements AutoCloseable {
+final class CliExecutionPlatform {
     private final ProjectExecutionToolOperations operations;
     private final SandboxProfile profile;
     private final String shellDisplayName;
     private final String securitySummary;
-    private final LocalIncrementalWorkspaceChangeObserver workspaceChanges;
     private final CliRepositoryBaselineSupport repositoryBaselines;
 
     private CliExecutionPlatform(
@@ -56,13 +54,11 @@ final class CliExecutionPlatform implements AutoCloseable {
             SandboxProfile profile,
             String shellDisplayName,
             String securitySummary,
-            LocalIncrementalWorkspaceChangeObserver workspaceChanges,
             CliRepositoryBaselineSupport repositoryBaselines) {
         this.operations = operations;
         this.profile = profile;
         this.shellDisplayName = shellDisplayName;
         this.securitySummary = securitySummary;
-        this.workspaceChanges = workspaceChanges;
         this.repositoryBaselines = repositoryBaselines;
     }
 
@@ -74,7 +70,6 @@ final class CliExecutionPlatform implements AutoCloseable {
             HostWorkspaceFileService files,
             IdentifierGenerator identifiers,
             TimeProvider time,
-            WorkspaceId workspaceId,
             Path workspaceRoot,
             PrintStream output,
             Map<String, String> hostEnvironment,
@@ -109,9 +104,7 @@ final class CliExecutionPlatform implements AutoCloseable {
                 workspaceRoot,
                 scratchRoot);
         Map<String, String> environment = resolvedEnvironment.environment();
-        var ignorePolicy = CliWorkspaceChangeIgnorePolicy.load(workspaceRoot);
-        SandboxProfile profile =
-                profile(configuration, host, resolvedEnvironment.allowedEnvironmentNames(), ignorePolicy.version());
+        SandboxProfile profile = profile(configuration, host, resolvedEnvironment.allowedEnvironmentNames());
         var profileRegistry = new ImmutableSandboxProfileRegistry(List.of(profile));
         var providerRegistry = new ImmutableSandboxProviderRegistry(List.of(host));
         SandboxPreflight preflight;
@@ -122,7 +115,6 @@ final class CliExecutionPlatform implements AutoCloseable {
         }
         ExecutionEnvironmentRef environmentRef = new ExecutionEnvironmentRef(
                 List.of("cli-execution-" + profile.contentDigest().value()));
-        var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(workspaceId, workspaceRoot, ignorePolicy);
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
@@ -143,8 +135,7 @@ final class CliExecutionPlatform implements AutoCloseable {
                 profileRegistry,
                 providerRegistry,
                 workspaces,
-                bindings,
-                workspaceChanges);
+                bindings);
         CliRepositoryBaselineSupport repositoryBaselines =
                 CliRepositoryBaselineSupport.create(broker, identifiers, profile.ref(), provisioning);
         ExecutionOutputObserver observer = new CliOutputObserver(output);
@@ -168,7 +159,7 @@ final class CliExecutionPlatform implements AutoCloseable {
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(
-                operations, profile, shell.displayName(), securitySummary, workspaceChanges, repositoryBaselines);
+                operations, profile, shell.displayName(), securitySummary, repositoryBaselines);
     }
 
     ProjectExecutionToolOperations operations() {
@@ -209,11 +200,6 @@ final class CliExecutionPlatform implements AutoCloseable {
 
     String profileDigest() {
         return profile.ref().value() + "@" + profile.ref().version();
-    }
-
-    @Override
-    public void close() {
-        workspaceChanges.close();
     }
 
     static String policyResourceDigest(String command, String workdir, String profileDigest) {
@@ -263,19 +249,16 @@ final class CliExecutionPlatform implements AutoCloseable {
                 .normalize();
         var environment = CliExecutionEnvironment.resolve(
                 configuration, boundary, boundary.resolve("workspace"), boundary.resolve("scratch"));
-        return profile(
-                configuration, provider, environment.allowedEnvironmentNames(), "cli-workspace-change-unbound-v1");
+        return profile(configuration, provider, environment.allowedEnvironmentNames());
     }
 
     private static SandboxProfile profile(
             CliConfiguration.Execution configuration,
             SandboxProvider provider,
-            Set<String> inheritedEnvironment,
-            String workspaceChangePolicyVersion) {
+            Set<String> inheritedEnvironment) {
         List<String> identityFields = new java.util.ArrayList<>();
         identityFields.add("cli-execution-v3");
         identityFields.add(HostExecutionEnvironmentResolver.POLICY_VERSION);
-        identityFields.add(workspaceChangePolicyVersion);
         identityFields.add(provider.providerId());
         identityFields.add(provider.configurationDigest().value());
         configuration.inheritEnvironment().stream()

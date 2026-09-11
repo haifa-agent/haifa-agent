@@ -18,6 +18,12 @@ public record CodingVerificationProfile(
         return new CodingVerificationProfile(List.of(), List.of());
     }
 
+    /** True when the frozen profile carries a caller-promised (USER_EXPLICIT) verification candidate. */
+    public boolean hasExplicitVerificationPromise() {
+        return candidates.stream()
+                .anyMatch(candidate -> candidate.source() == CodingVerificationSource.USER_EXPLICIT);
+    }
+
     public Optional<CodingVerificationCandidate> exactCandidate(String command) {
         String normalized =
                 Objects.requireNonNull(command, "command must not be null").trim();

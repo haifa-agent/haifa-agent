@@ -59,6 +59,23 @@ class CodingVerificationProfileTest {
                 .hasMessage("command is invalid");
     }
 
+    @Test
+    void explicitVerificationPromiseRequiresUserExplicitCandidatesOnly() {
+        assertThat(CodingVerificationProfile.empty().hasExplicitVerificationPromise()).isFalse();
+        assertThat(new CodingVerificationProfile(
+                        List.of(candidate(
+                                "./mvnw test", CodingVerificationSource.BUILD_CONFIGURATION, CodingVerificationTrigger.FINAL_GATE)),
+                        List.of())
+                .hasExplicitVerificationPromise())
+                .isFalse();
+        assertThat(new CodingVerificationProfile(
+                        List.of(candidate(
+                                "./mvnw test", CodingVerificationSource.USER_EXPLICIT, CodingVerificationTrigger.FINAL_GATE)),
+                        List.of())
+                .hasExplicitVerificationPromise())
+                .isTrue();
+    }
+
     private static CodingVerificationCandidate candidate(
             String command, CodingVerificationSource source, CodingVerificationTrigger trigger) {
         return new CodingVerificationCandidate(

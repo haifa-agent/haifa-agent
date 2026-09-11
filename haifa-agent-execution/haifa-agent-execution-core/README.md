@@ -13,15 +13,11 @@ caller 可构造的 request/context。首次执行、缓存结果返回和 manag
 `execution.run` 的用户可见审批仍发生在 Tool/Runtime 的 Interaction 层。产品 Policy 不能覆盖 Broker
 既有的 Frozen Capability、Workspace、Profile、Provider、Sandbox、deadline、输出和审计硬边界。
 
-实现 `ExecutionBroker`、内存 Journal/输出存储、可替换的 `WorkspaceChangeObserver` 端口及 `FileChangeSet`
-对账。`LocalIncrementalWorkspaceChangeObserver` 的 NIO 实现位于 `haifa-agent-execution-host`，显式绑定一个
-`WorkspaceId` 与规范化物理根，首次使用
-建立基线，正常窗口只处理 WatchService 候选；macOS 对短窗口内遗漏的事件使用元数据索引补齐候选，仍只对
-变化候选计算内容哈希；settle deadline 只在事件持续活跃时触发安全重同步，不把安静轮询期间的 Runner
-调度停顿误判为 overflow；真实 overflow 或状态不确定时仅在该 Workspace 内重同步。产品
-只提供 Workspace 内逻辑路径的 ignore policy，不扫描 HOME、AppData、XDG 或其它宿主安装目录。进程启动前观察基线失败以稳定错误
-`WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` 明确拒绝，不产生 Execution 记录，也不进入结果未知状态；进程启动后
-观察收敛失败映射为 `WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED`。
+实现 `ExecutionBroker`、内存 Journal/输出存储与 `FileChangeSet` 对账。Broker 不再以 Workspace Change
+Observer 成功为执行前置条件：`execution.run` 不自动扫描 Workspace 推导文件变更，其可信事实只有授权、
+Sandbox、进程 dispatch、退出状态、有界输出、超时、取消和结果未知。文件级变更证据由产品层从成功的
+Mutation ToolCall、按需 Git/Plain Change Review 与 Artifact/Snapshot 引用重建；`workspace.change-set.available`
+等通用 Resource 投影及其 Tool Result producer 与本 Broker 无关。
 
 Broker 负责 capability、policy、profile、环境租约、Sandbox 生命周期、输出脱敏与审计编排，但不复制 Agent Run 状态机，也不依赖具体 Sandbox Provider。一次性执行与托管会话的展示 observer 经过有界异步分发与流式脱敏，不阻塞进程管道，observer 异常不影响进程收尾和 Execution Journal。流式脱敏（`RedactingExecutionOutputObserver`）对 URL Userinfo（`https://user:pass@host` → `https://***@host`）及环境租约注入的非基线凭据值进行跨 chunk 安全脱敏，Live 终端与 OutputStore 落盘结果保持完全一致的脱敏视图，平台基线变量（`PATH`、`USERPROFILE`、`GIT_PAGER` 等公共路径/控制值）保持保真，不破坏行号与代码事实。Provider 只在 `ProcessBuilder.start()` 成功后发出 `onStarted`，上层据此记录真实 DISPATCHED 边界。
 
@@ -34,8 +30,7 @@ inline 阈值后返回 `AssetRef`。`ExecutionOutputOverflowPolicy.RETAIN_HEAD_T
 `TERMINATE` 则在预算耗尽时终止进程树并返回 `OUTPUT_LIMIT_EXCEEDED`，供产品对探索性调用执行收窄重试。
 策略来自可信结构化请求，不检查 Shell 命令字符串或具体 CLI 选项。
 
-Provider 检测到进程数超过预算且已确认收敛进程树时返回 `PROCESS_LIMIT_EXCEEDED`；只有进程树终止或
-Workspace 观察无法确认时才返回 `UNKNOWN`。资源上限触发与未知副作用必须保持不同语义。
+Provider 检测到进程数超过预算且已确认收敛进程树时返回 `PROCESS_LIMIT_EXCEEDED`；只有进程树终止或结果无法确认时才返回 `UNKNOWN`。资源上限触发与未知副作用必须保持不同语义。
 
 长驻会话与一次性执行共享相同的可信上下文、授权、环境解析、Sandbox Profile、输出预算、脱敏、Manifest 和审计流程。会话关闭、取消或异常退出时，Broker 先收敛底层进程与输出，再释放环境租约并完成审计记录。
 
