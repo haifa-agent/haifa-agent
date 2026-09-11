@@ -555,8 +555,8 @@ class Tui4jTerminalViewTest {
                         item(
                                 "run-summary-run-1",
                                 TranscriptItem.Kind.SUMMARY,
-                                "Run completed · 4s · 2 tools",
-                                "Status: COMPLETED\nTools: 2 succeeded",
+                                "Run completed · 4s",
+                                "Status: COMPLETED\nDuration: 4s",
                                 "COMPLETED",
                                 false)),
                 initial.pending(),
@@ -580,7 +580,7 @@ class Tui4jTerminalViewTest {
                 .contains(
                         "✓ file_read · README.md · 300 ms",
                         "Duration 300 ms · 2 lines",
-                        "✓ Run completed · 4s · 2 tools · ctrl+o expand")
+                        "✓ Run completed · 4s · ctrl+o expand")
                 .doesNotContain("Status: COMPLETED");
     }
 

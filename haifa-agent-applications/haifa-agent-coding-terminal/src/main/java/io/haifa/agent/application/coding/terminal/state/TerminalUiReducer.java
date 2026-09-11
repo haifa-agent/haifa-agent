@@ -684,8 +684,6 @@ public final class TerminalUiReducer {
         if (event.payload() instanceof RunEventPayloads.DeliveryLifecycle lifecycle) {
             return switch (lifecycle.phase()) {
                 case "BUDGET" -> "Budget threshold";
-                case "ORIENT", "PLAN", "CHANGE", "VERIFY", "REVIEW", "DELIVER", "BLOCKED" ->
-                    "Work phase: " + lifecycle.phase();
                 default -> "Completion deferred";
             };
         }
@@ -893,9 +891,6 @@ public final class TerminalUiReducer {
         return prefix + target.substring(0, end) + "…";
     }
 
-    private static final Set<String> TOOL_SUCCESS_STATUSES = Set.of("SUCCEEDED");
-    private static final Set<String> TOOL_FAILURE_STATUSES = Set.of("FAILED", "DENIED", "CANCELLED", "TIMEOUT");
-
     private static TranscriptItem runSummaryItem(
             List<TranscriptItem> items, RunEventPayloads.RunLifecycle payload, AgentRunEvent event) {
         int segmentStart = 0;
@@ -905,21 +900,9 @@ public final class TerminalUiReducer {
                 break;
             }
         }
-        int toolsSucceeded = 0;
-        int toolsFailed = 0;
-        int changeSets = 0;
         long earliestStart = Long.MAX_VALUE;
         for (int position = segmentStart; position < items.size(); position++) {
             TranscriptItem item = items.get(position);
-            if (item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION) {
-                if (TOOL_SUCCESS_STATUSES.contains(item.status())) toolsSucceeded++;
-                else if (TOOL_FAILURE_STATUSES.contains(item.status())) toolsFailed++;
-            } else if (item.kind() == TranscriptItem.Kind.RESOURCE
-                    && item.body().startsWith("workspace-change-set")) {
-                changeSets++;
-            } else {
-                continue;
-            }
             if (item.startedAtEpochMillis().isPresent()) {
                 earliestStart =
                         Math.min(earliestStart, item.startedAtEpochMillis().orElseThrow());
@@ -938,18 +921,11 @@ public final class TerminalUiReducer {
                 };
         List<String> chips = new ArrayList<>();
         duration.ifPresent(value -> chips.add(TerminalDurations.human(value)));
-        int tools = toolsSucceeded + toolsFailed;
-        if (tools > 0) chips.add(tools + (tools == 1 ? " tool" : " tools"));
-        if (changeSets > 0) chips.add(changeSets + (changeSets == 1 ? " change set" : " change sets"));
         String chipLine = chips.isEmpty() ? "" : " · " + String.join(" · ", chips);
         List<String> body = new ArrayList<>();
         body.add("Status: " + payload.status()
                 + ("NONE".equals(payload.reasonCode()) ? "" : " · " + payload.reasonCode()));
-        if (tools > 0) {
-            body.add("Tools: " + toolsSucceeded + " succeeded"
-                    + (toolsFailed > 0 ? " · " + toolsFailed + " failed" : ""));
-        }
-        if (changeSets > 0) body.add("Workspace changes: " + changeSets + " change set" + (changeSets == 1 ? "" : "s"));
+        payload.errorMessage().ifPresent(message -> body.add("Error: " + message));
         duration.ifPresent(value -> body.add("Duration: " + TerminalDurations.human(value)));
         return new TranscriptItem(
                 "run-summary-" + event.runId().value(),
@@ -966,8 +942,6 @@ public final class TerminalUiReducer {
     private static String deliveryTitle(RunEventPayloads.DeliveryLifecycle payload) {
         return switch (payload.phase()) {
             case "BUDGET" -> "Budget threshold";
-            case "ORIENT", "PLAN", "CHANGE", "VERIFY", "REVIEW", "DELIVER", "BLOCKED" ->
-                "Work phase · " + payload.phase();
             default -> "Completion deferred";
         };
     }
