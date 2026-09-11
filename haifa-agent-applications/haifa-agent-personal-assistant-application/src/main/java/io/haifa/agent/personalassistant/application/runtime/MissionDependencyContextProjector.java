@@ -30,10 +30,7 @@ final class MissionDependencyContextProjector {
             JsonNode source = parse(dependency);
             ObjectNode target = projected.addObject();
             identity(target, dependency);
-            String brief = source.hasNonNull("taskSummary")
-                    ? source.path("taskSummary").asText()
-                    : source.path("brief").asText();
-            target.put("brief", bounded(brief, briefLimit));
+            target.put("brief", bounded(extractBrief(source), briefLimit));
             projectSources(source.path("sources"), target.putArray("sources"));
             projectFindingsOrClaims(source, target.putArray("claims"));
             projectTextArray(
@@ -119,7 +116,7 @@ final class MissionDependencyContextProjector {
             JsonNode source = parse(dependency);
             ObjectNode target = projected.addObject();
             identity(target, dependency);
-            target.put("brief", bounded(source.path("brief").asText(), 2_000));
+            target.put("brief", bounded(extractBrief(source), 2_000));
             projectTextArray(source.path("unresolvedQuestions"), target.putArray("unresolvedQuestions"), 3, 300);
         }
         String result = encode(root);
@@ -128,6 +125,12 @@ final class MissionDependencyContextProjector {
                     "MISSION_DEPENDENCY_CONTEXT_TOO_LARGE", "Bounded Mission dependency context still exceeds limit");
         }
         return result;
+    }
+
+    private static String extractBrief(JsonNode source) {
+        return source.hasNonNull("taskSummary")
+                ? source.path("taskSummary").asText()
+                : source.path("brief").asText();
     }
 
     private static JsonNode parse(MissionTaskRunInput.DependencyResult dependency) {
