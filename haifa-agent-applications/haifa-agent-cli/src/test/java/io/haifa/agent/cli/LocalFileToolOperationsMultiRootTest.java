@@ -11,36 +11,17 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.changeset.FileChangeType;
-import io.haifa.agent.project.configuration.ProjectConfigurationId;
 import io.haifa.agent.project.core.ledger.InMemorySessionChangeLedger;
-import io.haifa.agent.project.core.mutation.InMemoryWorkspaceWriteLeaseManager;
-import io.haifa.agent.project.core.store.InMemoryProjectStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
-import io.haifa.agent.project.core.workspace.WorkspaceService;
-import io.haifa.agent.project.domain.Project;
-import io.haifa.agent.project.domain.ProjectConfigurationRef;
-import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
-import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
-import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
-import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -49,13 +30,14 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class LocalFileToolOperationsMultiRootTest {
 
@@ -80,107 +62,23 @@ class LocalFileToolOperationsMultiRootTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        tempDir = tempDir.toRealPath();
-        workspaceDir = tempDir.resolve("workspace-repo");
-        docsDir = tempDir.resolve("docs-repo");
-        configDir = tempDir.resolve("config-repo");
-        Files.createDirectories(workspaceDir);
-        Files.createDirectories(docsDir);
-        Files.createDirectories(configDir);
-
-        Instant now = Instant.parse("2026-08-05T00:00:00Z");
-        workspaceId = new WorkspaceId("ws-multiroot");
-        bindings = new InMemoryWorkspaceBindingStore();
-        workspaces = new InMemoryWorkspaceStore();
-        locations = new HostWorkspaceLocationStore();
-        ProjectId projectId = new ProjectId("proj-multiroot");
-        owner = new PrincipalRef("owner", "user");
-        tenant = new TenantRef("local");
-        registerWorkspace(workspaceId, workspaceDir, WorkspacePurpose.PRIMARY, now);
-        docsWorkspaceId = new WorkspaceId("ws-docs");
-        registerWorkspace(docsWorkspaceId, docsDir, WorkspacePurpose.DIRECTORY, now);
-        configWorkspaceId = new WorkspaceId("ws-config");
-        registerWorkspace(configWorkspaceId, configDir, WorkspacePurpose.DIRECTORY, now);
-
-        var projects = new InMemoryProjectStore();
-        projects.create(Project.create(
-                        projectId,
-                        tenant,
-                        owner,
-                        "multi-root-test",
-                        "test project",
-                        new ProjectConfigurationRef(new ProjectConfigurationId("config-1").value(), "1.0.0"),
-                        now,
-                        Map.of())
-                .assignDefaultWorkspace(workspaceId, now));
-        var idSequence = new AtomicInteger();
-        var identifiers =
-                (io.haifa.agent.common.id.IdentifierGenerator) () -> "multi-root-test-" + idSequence.incrementAndGet();
-        var workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, () -> now);
-        var scope = new HostWorkspaceScope(
-                List.of(
-                        AuthorizedHostDirectory.of(workspaceId, workspaceDir.toRealPath()),
-                        AuthorizedHostDirectory.of(docsWorkspaceId, docsDir.toRealPath()),
-                        AuthorizedHostDirectory.of(configWorkspaceId, configDir.toRealPath())),
-                1L);
-        provisioning = new AuthorizedWorkspaceProvisioning(
-                projectId, workspaces, bindings, locations, workspaceService, owner, () -> now, scope);
-
-        var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var mutations = new HostWorkspaceMutationService(
-                workspaces,
-                bindings,
-                locations,
-                SensitivePathPolicy.defaults(),
-                new InMemoryWorkspaceWriteLeaseManager(),
-                identifiers,
-                () -> now);
-        ledger = new InMemorySessionChangeLedger();
-        workspaceAccess = new InMemoryWorkspaceAccessStore();
-        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, workspaceId, WorkspaceAccessMode.DEVELOP));
-        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, docsWorkspaceId, WorkspaceAccessMode.READ));
-        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, configWorkspaceId, WorkspaceAccessMode.DEVELOP));
-
-        operations = new LocalFileToolOperations(
-                workspaces,
-                files,
-                mutations,
-                identifiers,
-                () -> now,
-                provisioning,
-                ledger,
-                null,
-                true,
-                workspaceAccess,
-                tenant,
-                owner);
-    }
-
-    private void registerWorkspace(WorkspaceId id, Path directory, WorkspacePurpose purpose, Instant now)
-            throws IOException {
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("loc-" + id.value());
-        WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-" + id.value());
-        Path realPath = directory.toRealPath();
-        locations.register(locationRef, realPath);
-        WorkspaceBinding binding = WorkspaceBinding.provision(
-                        bindingId,
-                        locationRef,
-                        WorkspaceBindingMode.DIRECT,
-                        new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.readWriteFiles(),
-                        WorkspacePermissionSet.readWrite(),
-                        HostWorkspaceLocationStore.fingerprintFor(realPath),
-                        now)
-                .activate(now);
-        bindings.create(binding);
-        workspaces.create(Workspace.provision(
-                        id,
-                        new ProjectId("proj-multiroot"),
-                        purpose,
-                        new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
-                        WorkspaceRevision.initial(binding.rootFingerprint()),
-                        now)
-                .activate(now));
+        var fixture = LocalFileToolTestSupport.createMultiRootFixture(tempDir);
+        tempDir = fixture.tempDir();
+        workspaceDir = fixture.workspaceDir();
+        docsDir = fixture.docsDir();
+        configDir = fixture.configDir();
+        workspaceId = fixture.workspaceId();
+        docsWorkspaceId = fixture.docsWorkspaceId();
+        configWorkspaceId = fixture.configWorkspaceId();
+        workspaces = fixture.workspaces();
+        bindings = fixture.bindings();
+        locations = fixture.locations();
+        provisioning = fixture.provisioning();
+        ledger = fixture.ledger();
+        workspaceAccess = fixture.workspaceAccess();
+        operations = fixture.operations();
+        owner = fixture.owner();
+        tenant = fixture.tenant();
     }
 
     @Test
@@ -327,40 +225,29 @@ class LocalFileToolOperationsMultiRootTest {
         assertThat(res.structuredData()).containsEntry("path", docPath);
     }
 
-    @Test
-    void deniesWriteToReadOnlyRoot() {
+    @ParameterizedTest(name = "denies {0} to read-only root")
+    @CsvSource(
+            textBlock =
+                    """
+            file.create, '# Guide'
+            file.write, '# Updated'
+            file.delete,
+            """)
+    void deniesMutationToReadOnlyRoot(String toolName, String content) {
         String docPath =
                 docsDir.resolve("guide.md").toAbsolutePath().normalize().toString();
-        var createRes = operations.execute(
-                "file.create",
-                workspaceId,
-                new PrincipalRef("operator", "user"),
-                "run-1",
-                arguments(Map.of("path", docPath, "content", "# Guide")));
-        assertThat(createRes.successful()).isFalse();
-        assertThat(createRes.structuredData())
-                .containsEntry("errorCode", "PERMISSION_DENIED")
-                .containsEntry("stableFailureCode", "WORKSPACE_ACCESS_MODE_DENIED")
-                .containsEntry("failureCategory", "POLICY_DENIED")
-                .containsEntry("failureActionCode", "REQUEST_WRITE_PERMISSION");
-
-        var writeRes = operations.execute(
-                "file.write",
-                workspaceId,
-                new PrincipalRef("operator", "user"),
-                "run-1",
-                arguments(Map.of("path", docPath, "content", "# Updated")));
-        assertThat(writeRes.successful()).isFalse();
-        assertThat(writeRes.structuredData()).containsEntry("errorCode", "PERMISSION_DENIED");
-
-        var deleteRes = operations.execute(
-                "file.delete",
-                workspaceId,
-                new PrincipalRef("operator", "user"),
-                "run-1",
-                arguments(Map.of("path", docPath)));
-        assertThat(deleteRes.successful()).isFalse();
-        assertThat(deleteRes.structuredData()).containsEntry("errorCode", "PERMISSION_DENIED");
+        Map<String, Object> args =
+                content != null ? Map.of("path", docPath, "content", content) : Map.of("path", docPath);
+        var res = operations.execute(
+                toolName, workspaceId, new PrincipalRef("operator", "user"), "run-1", arguments(args));
+        assertThat(res.successful()).isFalse();
+        assertThat(res.structuredData()).containsEntry("errorCode", "PERMISSION_DENIED");
+        if ("file.create".equals(toolName)) {
+            assertThat(res.structuredData())
+                    .containsEntry("stableFailureCode", "WORKSPACE_ACCESS_MODE_DENIED")
+                    .containsEntry("failureCategory", "POLICY_DENIED")
+                    .containsEntry("failureActionCode", "REQUEST_WRITE_PERMISSION");
+        }
     }
 
     @Test
@@ -871,14 +758,15 @@ class LocalFileToolOperationsMultiRootTest {
         assertThat(result.structuredData()).containsEntry("errorCode", "PATH_NOT_FOUND");
     }
 
-    @Test
-    void rejectsUnregisteredRootAlias() {
+    @ParameterizedTest(name = "rejects invalid path: {0}")
+    @ValueSource(strings = {"unregistered:data.csv", "main:../../etc/passwd"})
+    void rejectsInvalidPathFormats(String invalidPath) {
         var res = operations.execute(
                 "file.read",
                 workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
-                arguments(Map.of("path", "unregistered:data.csv")));
+                arguments(Map.of("path", invalidPath)));
         assertThat(res.successful()).isFalse();
         assertThat(res.structuredData())
                 .containsEntry("errorCode", "INVALID_ARGUMENT")
@@ -901,21 +789,6 @@ class LocalFileToolOperationsMultiRootTest {
                 .containsEntry("errorCode", "ACCESS_DENIED")
                 .containsEntry("failureCategory", "WORKSPACE_SCOPE_DENIED")
                 .containsEntry("failureActionCode", "REQUEST_DIRECTORY_AUTHORIZATION");
-    }
-
-    @Test
-    void rejectsDirectoryTraversalEscape() {
-        var res = operations.execute(
-                "file.read",
-                workspaceId,
-                new PrincipalRef("operator", "user"),
-                "run-1",
-                arguments(Map.of("path", "main:../../etc/passwd")));
-        assertThat(res.successful()).isFalse();
-        assertThat(res.structuredData())
-                .containsEntry("errorCode", "INVALID_ARGUMENT")
-                .containsEntry("failureCategory", "INVALID_INPUT")
-                .containsEntry("failureActionCode", "USE_ABSOLUTE_HOST_PATH");
     }
 
     private static ToolArguments arguments(Map<String, Object> values) {
