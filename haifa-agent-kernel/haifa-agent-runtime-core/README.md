@@ -21,6 +21,10 @@ Checkpoint stores only Run ID, next iteration and forced-context-rebuild count a
 boundaries. Tool, Summary, Memory, Skill, model continuation, configuration and external capability state are no longer
 copied. These facts remain in their authoritative stores and are read through current access and integrity boundaries.
 Historical checkpoint selection, per-iteration capture and generic capability snapshot/restore participants are removed.
+
+Before a model call, Runtime accounts for required middleware context in the Session budget. If the assembled local
+window still does not fit, it first removes optional Memory and then performs the one allowed forced rebuild; only a
+second local overflow terminates as context-too-long.
 Runtime payload is 6.0; SQLite checkpoint codec is 2. Rebuild development databases after the cutover.
 
 recover(runId) settles abandoned executing Runs as FAILED with RUNTIME_EXECUTION_INTERRUPTED (or TOOL_OUTCOME_UNKNOWN)
@@ -234,7 +238,7 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - `OutboxMessage` 保存与对应 `RuntimeEvent` 相同的 Run 内 `sequence` 和稳定 `schemaVersion`。本地
   `ExecutionOwnershipPort` 以当前进程实例 ID 精确匹配 Attempt `workerId`，进程重启后的旧 Attempt
   不再被误判为仍由本地持有。
-- Runtime 使用可信 Run 身份检索 RUN/SESSION/USER Scope 的 ACTIVE Memory；授权和状态过滤先于排序，结果仍通过 `ContextItem` IR 和统一 Token 预算。Memory selection 不再复制到 Checkpoint；继续时重新检索授权且有效的 Memory。
+- Runtime 使用可信 Run 身份检索 RUN/SESSION/USER Scope 的 ACTIVE Memory；授权和状态过滤先于排序，结果仍通过 `ContextItem` IR 和统一 Token 预算。同一执行内以最新 COMPLETED USER 消息为回合键缓存检索结果，并且每个回合只持久化一次 `RuntimeMemorySelection`；继续时重新检索授权且有效的 Memory。Memory selection 不再复制到 Checkpoint。
 - Checkpoint 仅保存正常暂停／交互的最小续跑计数；SQLite 适配器保留有界持久化耗时指标。
 - 模块不依赖 Spring、模型 Provider SDK、MCP、Docker、JPA、产品模块或管理端。
 

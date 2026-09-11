@@ -1,6 +1,5 @@
 package io.haifa.agent.runtime.core.middleware;
 
-import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.item.ContextItemId;
 import io.haifa.agent.context.item.ContextItemType;
@@ -10,6 +9,7 @@ import io.haifa.agent.context.item.ContextRetention;
 import io.haifa.agent.context.item.ContextRole;
 import io.haifa.agent.context.item.ContextSecurity;
 import io.haifa.agent.context.item.TextContextContent;
+import io.haifa.agent.runtime.core.loop.TokenBudget;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -34,7 +34,7 @@ final class RuntimeContextItems {
                 new ContextItemId(id),
                 type,
                 new TextContextContent(role, text),
-                HeuristicTokenEstimator.tokens(text) + 4,
+                TokenBudget.tokens(text) + 4,
                 priority,
                 retention,
                 new ContextSecurity(labels),

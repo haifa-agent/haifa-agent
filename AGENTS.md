@@ -24,6 +24,7 @@
 - `test-config/` 是独立私有仓库 `haifa-agent-test-config`；使用 `git -C test-config ...`并遵守其
   `AGENTS.md`，默认在其 `main` 上直接提交并推送。
 - 根仓、`docs/` 和 `test-config/` 必须分别检查、暂存、提交和推送；禁止跨仓库混合交付。
+- 建立git worktree使用父目录统一在../haifa-agent-worktrees/
 
 ## 事实源与任务路由
 

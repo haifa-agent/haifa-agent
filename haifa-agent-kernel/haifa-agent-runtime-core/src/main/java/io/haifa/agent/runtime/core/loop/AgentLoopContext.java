@@ -1,8 +1,11 @@
 package io.haifa.agent.runtime.core.loop;
 
+import io.haifa.agent.context.item.ContextItem;
+import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceContext;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -11,6 +14,7 @@ public final class AgentLoopContext {
     private int forcedContextRebuildAttempts;
     private final Set<Integer> issuedBudgetThresholds = new LinkedHashSet<>();
     private RunBudgetSnapshot budgetSnapshot;
+    private MemoryTurnSelection memoryTurnSelection;
     private final Optional<RuntimeTraceContext> traceContext;
 
     public AgentLoopContext(int iteration) {
@@ -65,5 +69,23 @@ public final class AgentLoopContext {
 
     public int forcedContextRebuildAttempts() {
         return forcedContextRebuildAttempts;
+    }
+
+    public Optional<List<ContextItem>> memorySelectionFor(AgentMessageId userMessageId) {
+        if (memoryTurnSelection == null || !memoryTurnSelection.userMessageId().equals(userMessageId)) {
+            return Optional.empty();
+        }
+        return Optional.of(memoryTurnSelection.items());
+    }
+
+    public void cacheMemorySelection(AgentMessageId userMessageId, List<ContextItem> items) {
+        memoryTurnSelection = new MemoryTurnSelection(userMessageId, items);
+    }
+
+    private record MemoryTurnSelection(AgentMessageId userMessageId, List<ContextItem> items) {
+        private MemoryTurnSelection {
+            userMessageId = java.util.Objects.requireNonNull(userMessageId, "userMessageId must not be null");
+            items = List.copyOf(java.util.Objects.requireNonNull(items, "items must not be null"));
+        }
     }
 }

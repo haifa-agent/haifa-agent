@@ -31,6 +31,7 @@ import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -300,10 +301,23 @@ public final class SemanticCompactionCoordinator {
                 projected.toolAliases().values().forEach(id -> historicalDurableRefs.add(id.value()));
                 batchStart = batchEnd;
             }
+        } catch (CancellationObservedException cancelled) {
+            throw cancelled;
         } catch (Exception ex) {
             log.warn("Semantic compaction failed: {}", ex.getMessage());
-            if (overflow && policy.allowDeterministicDegradedFallback()) {
-                log.info("Falling back to deterministic degraded compaction on overflow");
+            boolean degraded = policy.allowDeterministicDegradedFallback();
+            events.append(
+                    run.id(),
+                    "session.compaction-failed",
+                    Map.of(
+                            "reason", reason.name(),
+                            "failureCategory", failureCategory(ex),
+                            "validationErrorCode", validationErrorCode(ex),
+                            "physicalCalls", physicalCalls,
+                            "degraded", degraded),
+                    time.now());
+            if (degraded) {
+                log.info("Falling back to deterministic degraded compaction");
                 fallbackToDeterministic(run, previousSummary, sourceToCompact, visible, expectedPreviousVersion);
                 return;
             }
@@ -319,6 +333,14 @@ public final class SemanticCompactionCoordinator {
                 reason,
                 physicalCalls,
                 expectedPreviousVersion);
+    }
+
+    private static String failureCategory(Exception exception) {
+        return exception instanceof SemanticSummaryValidationException ? "VALIDATION" : "MODEL_OR_RUNTIME";
+    }
+
+    private static String validationErrorCode(Exception exception) {
+        return exception instanceof SemanticSummaryValidationException ? "VALIDATION_REJECTED" : "NONE";
     }
 
     private void fallbackToDeterministic(

@@ -2,7 +2,6 @@ package io.haifa.agent.runtime.core.loop;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
-import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.CompressionRequest;
 import io.haifa.agent.context.compression.ContextCompressor;
@@ -100,43 +99,66 @@ public final class SessionMessageSource {
         this.time = Objects.requireNonNull(time);
     }
 
-    public Selection select(AgentRun run, int forcedRebuildAttempt) {
-        return select(run, forcedRebuildAttempt, Long.MAX_VALUE);
+    /** Reads the current compatible checkpoint and complete atomic message groups without writing. */
+    public Selection select(AgentRun run) {
+        return select(run, Long.MAX_VALUE);
     }
 
-    public Selection select(AgentRun run, int forcedRebuildAttempt, long sessionTokenBudget) {
+    /** Reads the current window against the supplied assembly budget without triggering compaction. */
+    public Selection select(AgentRun run, long sessionTokenBudget) {
         Objects.requireNonNull(run, "run must not be null");
-        return select(run.sessionId(), forcedRebuildAttempt, sessionTokenBudget, false);
+        if (sessionTokenBudget < 1) {
+            throw new IllegalArgumentException("sessionTokenBudget must be positive");
+        }
+        return currentSelection(run.sessionId(), sessionTokenBudget);
+    }
+
+    /**
+     * Performs the explicit deterministic compaction step before context assembly when required.
+     * Semantic compaction remains owned by {@code SemanticCompactionCoordinator} during observation.
+     */
+    public Selection compactIfNeeded(AgentRun run, int forcedRebuildAttempt, long sessionTokenBudget) {
+        Objects.requireNonNull(run, "run must not be null");
+        return compactSelection(run.sessionId(), forcedRebuildAttempt, sessionTokenBudget, false);
     }
 
     /** Explicit deterministic compaction for the single linear Session path. */
     public Selection compact(AgentSessionId sessionId) {
-        return select(sessionId, 1, Long.MAX_VALUE, true);
+        return compactSelection(sessionId, 1, Long.MAX_VALUE, true);
     }
 
-    private Selection select(
+    private Selection currentSelection(AgentSessionId sessionId, long sessionTokenBudget) {
+        List<AgentMessage> visible = visibleMessages(sessionId);
+        if (visible.isEmpty()) {
+            return emptySelection(sessionId, sessionTokenBudget);
+        }
+        List<List<AgentMessage>> groups = atomicGroups(visible);
+        Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
+        Optional<ConversationSummary> checkpoint = compatibleCheckpoint(sessionId, visible);
+        List<List<AgentMessage>> activeGroups = groupsAfterCheckpoint(visible, checkpoint);
+        long activeTokens = checkpoint.map(ConversationSummary::estimatedTokens).orElse(0)
+                + estimateGroups(activeGroups, toolCallsByRun);
+        return selection(
+                sessionId,
+                checkpoint,
+                activeGroups,
+                visible.getLast().cursor(),
+                toolCallsByRun,
+                false,
+                CompactionReason.NONE,
+                0,
+                activeTokens,
+                sessionTokenBudget == Long.MAX_VALUE ? Math.max(1L, activeTokens) : sessionTokenBudget);
+    }
+
+    private Selection compactSelection(
             AgentSessionId sessionId, int forcedRebuildAttempt, long requestedSessionTokenBudget, boolean manual) {
         if (requestedSessionTokenBudget < 1) {
             throw new IllegalArgumentException("sessionTokenBudget must be positive");
         }
-        List<AgentMessage> visible =
-                messages.messagesAfter(sessionId, MessageCursor.BEFORE_FIRST, Integer.MAX_VALUE).stream()
-                        .filter(this::visibleToContext)
-                        .toList();
+        List<AgentMessage> visible = visibleMessages(sessionId);
         if (visible.isEmpty()) {
-            return new Selection(
-                    List.of(),
-                    MessageCursor.BEFORE_FIRST,
-                    Optional.empty(),
-                    policy.version(),
-                    compressor.version(),
-                    0,
-                    summaries.latestVersion(sessionId),
-                    false,
-                    CompactionReason.NONE,
-                    0,
-                    0,
-                    requestedSessionTokenBudget);
+            return emptySelection(sessionId, requestedSessionTokenBudget);
         }
         List<List<AgentMessage>> groups = atomicGroups(visible);
         Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
@@ -228,6 +250,28 @@ public final class SessionMessageSource {
                 reason,
                 compactionElapsedMillis,
                 compactedTokens,
+                sessionTokenBudget);
+    }
+
+    private List<AgentMessage> visibleMessages(AgentSessionId sessionId) {
+        return messages.messagesAfter(sessionId, MessageCursor.BEFORE_FIRST, Integer.MAX_VALUE).stream()
+                .filter(this::visibleToContext)
+                .toList();
+    }
+
+    private Selection emptySelection(AgentSessionId sessionId, long sessionTokenBudget) {
+        return new Selection(
+                List.of(),
+                MessageCursor.BEFORE_FIRST,
+                Optional.empty(),
+                policy.version(),
+                compressor.version(),
+                0,
+                summaries.latestVersion(sessionId),
+                false,
+                CompactionReason.NONE,
+                0,
+                0,
                 sessionTokenBudget);
     }
 
@@ -482,16 +526,16 @@ public final class SessionMessageSource {
                     .orElseGet(Map::of);
             for (ContentPart part : message.contents()) {
                 if (part instanceof TextPart text) {
-                    estimatedTokens = saturatedAdd(estimatedTokens, HeuristicTokenEstimator.tokens(text.text()));
+                    estimatedTokens = saturatedAdd(estimatedTokens, TokenBudget.tokens(text.text()));
                 } else if (part instanceof ToolCallPart call) {
                     estimatedTokens = saturatedAdd(
                             estimatedTokens,
                             sumTokens(
-                                    HeuristicTokenEstimator.tokens(call.toolName()),
-                                    HeuristicTokenEstimator.tokens(
+                                    TokenBudget.tokens(call.toolName()),
+                                    TokenBudget.tokens(
                                             call.providerCorrelationId().value()),
                                     authoritativeCalls.containsKey(call.toolCallId())
-                                            ? HeuristicTokenEstimator.tokens(authoritativeCalls
+                                            ? TokenBudget.tokens(authoritativeCalls
                                                     .get(call.toolCallId())
                                                     .arguments()
                                                     .values())
@@ -502,15 +546,14 @@ public final class SessionMessageSource {
                     estimatedTokens = saturatedAdd(
                             estimatedTokens,
                             sumTokens(
-                                    HeuristicTokenEstimator.tokens(result.summary()),
-                                    HeuristicTokenEstimator.tokens(
+                                    TokenBudget.tokens(result.summary()),
+                                    TokenBudget.tokens(
                                             result.providerCorrelationId().value()),
                                     authoritative == null
                                             ? 0
                                             : authoritative
                                                     .result()
-                                                    .map(value ->
-                                                            HeuristicTokenEstimator.tokens(value.structuredData()))
+                                                    .map(value -> TokenBudget.tokens(value.structuredData()))
                                                     .orElse(0),
                                     12));
                 }
