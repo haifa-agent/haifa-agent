@@ -151,8 +151,7 @@ class HostStdioMcpComponentTest {
                 ignored -> profile,
                 ignored -> host,
                 workspaces,
-                bindings,
-                ignoredWorkspace -> java.util.List::of);
+                bindings);
         return new Fixture(workspaceId, broker);
     }
 

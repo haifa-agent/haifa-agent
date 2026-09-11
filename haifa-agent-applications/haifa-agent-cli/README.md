@@ -726,16 +726,10 @@ CLI 还会从 Workspace 根的 `pom.xml`、Gradle 文件、`pyproject.toml`/`pyt
 冻结到可信 Session metadata；重启后以冻结摘要和精确命令匹配恢复 scope。runner 输出不再用于推断
 discovered/selected/ignored 或完整覆盖，当前统一保留 `COUNTS_UNAVAILABLE`，成功退出也不等于完整测试覆盖。
 
-CLI 使用 Execution Core 公共增量 Observer，不再在产品内维护扫描算法，也不再为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。启动后的首次执行建立一次基线，
-后续通过 `WatchService` 收集执行窗口内的候选路径，只重新检查和哈希候选文件；事件溢出、Watcher
-失效或候选状态无法确认时才在授权 Workspace 内执行受限重同步，不能确认则以
-`WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED` fail closed。
-冻结的 ignore policy 排除标准构建/IDE 目录，并读取根
-`.gitignore` 中不含 glob 的目录规则。默认还忽略 `.pytest_cache`、`.mypy_cache`、`.ruff_cache`、`.tox`、
-`.venv` 和 `__pycache__`；`!` 只撤销可能包含该重新纳入目录的正向目录规则，不再清空其他无关规则。
-进程启动前 Observer 不可用时使用稳定错误
-`WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` 且不标记 DISPATCHED；只有 OS 进程创建成功后才进入 DISPATCHED。
-进程启动后的增量对账失败仍按结果不确定失败关闭。
+CLI 不再为 OS 执行建立 Workspace Change Observer，也不在产品内维护扫描算法或为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。`execution.run` 的可信事实是授权、Sandbox、进程 dispatch、退出状态、有界输出、超时、取消和结果未知；它不自动扫描 Workspace 推导文件变更，也不因文件观察失败进入
+`WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` / `WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED`（两个错误码已删除）。
+只有 OS 进程创建成功后才进入 DISPATCHED。文件级变更事实由 Coding 产品层从成功的 Mutation ToolCall、
+`SessionChangeLedger`、`RepositoryBaseline` 与按需 Git/Plain Change Review 重建。
 
 Runtime 会在冻结 Tool Definition 首次出现 `FILE_WRITE` 或 `PROCESS_EXECUTION` 时、实际 dispatch 前创建
 `WORKSPACE_SNAPSHOT` 类型的 Runtime checkpoint。当前本地 CLI 未注册持久

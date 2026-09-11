@@ -18,6 +18,17 @@ public record CodingVerificationProfile(
         return new CodingVerificationProfile(List.of(), List.of());
     }
 
+    /**
+     * True when the frozen profile carries committed verification candidates: user-explicit and
+     * repository-instruction sources are trusted verification obligations, while build-configuration,
+     * adjacent-test, and ecosystem-default candidates remain recommendations only.
+     */
+    public boolean hasCommittedVerificationCandidates() {
+        return candidates.stream()
+                .anyMatch(candidate -> candidate.source() == CodingVerificationSource.USER_EXPLICIT
+                        || candidate.source() == CodingVerificationSource.REPOSITORY_INSTRUCTIONS);
+    }
+
     public Optional<CodingVerificationCandidate> exactCandidate(String command) {
         String normalized =
                 Objects.requireNonNull(command, "command must not be null").trim();

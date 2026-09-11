@@ -255,7 +255,6 @@ public final class PersonalAssistantAssembler {
                     dependencies.modelCatalog(),
                     dependencies.modelPreferences(),
                     new PersonalQuestionRecommender(dependencies.model()),
-                    dependencies.execution(),
                     new SdkMissionRuntimeAccess(
                             agent,
                             dependencies.persistence(),
@@ -272,11 +271,6 @@ public final class PersonalAssistantAssembler {
                     skills.bindingReferences(),
                     new RuntimeFetchEvidenceReader(dependencies.persistence().runtimePersistence()));
         } catch (RuntimeException | Error exception) {
-            try {
-                dependencies.execution().close();
-            } catch (RuntimeException closeFailure) {
-                exception.addSuppressed(closeFailure);
-            }
             try {
                 mcp.close();
             } catch (RuntimeException closeFailure) {
