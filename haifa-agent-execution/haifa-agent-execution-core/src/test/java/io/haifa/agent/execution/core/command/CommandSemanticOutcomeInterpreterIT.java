@@ -27,10 +27,11 @@ class CommandSemanticOutcomeInterpreterIT {
         int exitCode = process.exitValue();
 
         assertThat(exitCode).isEqualTo(1);
-        assertThat(CommandSemanticOutcomeInterpreter.interpret(
-                                "git diff --no-index -- before after", ExecutionStatus.FAILED, exitCode)
-                        .outcome())
-                .isEqualTo(CommandSemanticOutcome.EXPECTED_VARIANT);
+        CommandSemanticOutcomeInterpreter.Interpretation interpretation = CommandSemanticOutcomeInterpreter.interpret(
+                "git diff --no-index -- before after", ExecutionStatus.EXITED, exitCode);
+        assertThat(interpretation.outcome()).isEqualTo(CommandSemanticOutcome.SUCCEEDED);
+        assertThat(interpretation.reasonCode()).isEqualTo("COMMAND_EXITED");
+        assertThat(interpretation.successfulToolResult()).isTrue();
     }
 
     private static boolean gitAvailable() {

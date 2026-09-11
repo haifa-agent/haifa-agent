@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.error.AgentErrorCode;
@@ -447,15 +448,20 @@ class RuntimeCoreTest {
                     modelCalls.incrementAndGet();
                     return response(finalDecision("completed with a bounded context"));
                 },
-                builder -> builder.profiles((id, overrides) -> new ResolvedProfile(
-                        id,
-                        "1.0.0",
-                        AgentRunType.CHAT,
-                        new AgentRunBudget(10_000, 10_000, 10_000, 4, 4, 0, "USD", 0),
-                        new AgentRunLimits(4, 0, 1, 60_000, 60_000),
-                        constrainedContextModel(),
-                        Map.of(),
-                        Map.of())));
+                builder -> builder
+                        // This regression covers the deterministic token-budget reduction path; automatic
+                        // semantic compaction is owned by the coordinator and its summary model call is
+                        // not part of this fixture's single-call chat model.
+                        .compressionPolicy(new CompressionPolicy(12, 32, 4).withSemanticCompactionEnabled(false))
+                        .profiles((id, overrides) -> new ResolvedProfile(
+                                id,
+                                "1.0.0",
+                                AgentRunType.CHAT,
+                                new AgentRunBudget(10_000, 10_000, 10_000, 4, 4, 0, "USD", 0),
+                                new AgentRunLimits(4, 0, 1, 60_000, 60_000),
+                                constrainedContextModel(),
+                                Map.of(),
+                                Map.of())));
         String sessionText = "s".repeat(800);
         var accepted = fixture.runtime.start(new AgentRunRequest(
                 "todo-budget",

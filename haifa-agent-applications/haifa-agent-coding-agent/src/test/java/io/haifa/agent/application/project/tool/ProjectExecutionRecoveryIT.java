@@ -186,10 +186,13 @@ class ProjectExecutionRecoveryIT {
             assertThat(instance.ports().interactions().pending(runId)).isEmpty();
 
             instance.runtime().recover(runId);
+            assertThat(instance.scheduler().pending()).isZero();
             instance.scheduler().runAll();
 
             var finishedRun = instance.runtime().find(runId).orElseThrow();
-            assertThat(finishedRun.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(finishedRun.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(finishedRun.error().orElseThrow().code())
+                    .isEqualTo(io.haifa.agent.core.error.AgentErrorCode.RUNTIME_EXECUTION_INTERRUPTED);
             assertThat(instance.ports().interactions().pending(runId)).isEmpty();
 
             var toolCalls = instance.ports().state().toolCalls(runId);
@@ -200,7 +203,7 @@ class ProjectExecutionRecoveryIT {
                     .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
                     .containsEntry("dispatchState", "NOT_DISPATCHED");
 
-            assertThat(modelCalls).hasValue(3);
+            assertThat(modelCalls).hasValue(2);
             assertThat(brokerCalls).hasValue(1);
             assertLegacyTablesAbsent(database);
         }
