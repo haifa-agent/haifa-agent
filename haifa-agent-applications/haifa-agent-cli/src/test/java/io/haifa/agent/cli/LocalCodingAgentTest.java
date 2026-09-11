@@ -1306,12 +1306,7 @@ class LocalCodingAgentTest {
                         .filter(message -> message.role() == ModelMessageRole.USER)
                         .map(message -> message.content())
                         .toList())
-                .satisfiesExactly(
-                        content -> assertThat(content).isEqualTo("List the workspace root."),
-                        content -> assertThat(content)
-                                .startsWith("[CODING_WORK_PROJECTION coding-work-projection/1]")
-                                .contains("phase=ORIENT")
-                                .doesNotContain(workspace.toString()));
+                .containsExactly("List the workspace root.");
     }
 
     @Test

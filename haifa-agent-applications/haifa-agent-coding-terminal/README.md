@@ -11,8 +11,7 @@ Dashboard、Scenario toolbar 或另一套产品 UI。
 Terminal 只消费 Runtime API 的 `DeliveryLifecycle` 安全 DTO，不读取 Runtime Store、SQLite、模型正文或
 Tool 原始输出来推断交付状态。`completion.deferred` 的 `phase` 由 Runtime 中性发布为 `COMPLETION`，
 Terminal 统一显示 Completion deferred，不再把 Runtime 的 blocker code 猜测成 Recovering 或 Verifying；
-产品自己的 `coding.work-phase` 仍按 Coding 的证据显示 Work phase，`budget.threshold-reached`
-显示 Budget threshold；卡片只包含
+`budget.threshold-reached` 显示 Budget threshold；卡片只包含
 稳定 reason code、缺失 Evidence code、实际限制资源、当前用量/冻结上限、剩余百分比和纠偏次数，
 不再要求用户从一个聚合百分比猜测限制来源。Run 到达终态后仍由既有生命周期归约
 收起活动状态。NoColor 模式保留同样的稳定文字，不显示 Host Path、stderr、Fingerprint 或 Credential。
@@ -105,10 +104,10 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
   以 `✓`/`✗`/`●` 状态符号开头，随后是 `名称 · 目标` 与完成耗时（如 `✓ file_read · README.md · 0.3s`），
   并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。失败项在折叠状态额外保留
   最多两行安全原因，展开后才显示既有有界详情和 `Duration … · N lines · X KB` 元数据尾行；
-- Run 进入终态（completed/failed/cancelled/timeout）时追加一张可折叠的 Run Summary 卡片，
-  标题聚合耗时、工具数与 Workspace Change Set 数（如
-  `Run completed · 24s · 8 tools · 2 change sets`），展开后给出分类计数；
-- Approval 使用 Pending 语义，Error 使用 Error 语义；Recovery/Work-phase 等 `delivery-*` 与
+- Run 进入终态（completed/failed/cancelled/timeout）时追加一张 Run Summary 卡片，
+  标题显示终态与可得耗时（如 `Run completed · 24s`），正文显示终态、稳定错误码及耗时，
+  不再从本地 Transcript 反推或累加工具与变更集计数；
+- Approval 使用 Pending 语义，Error 使用 Error 语义；`delivery-*` 与
   `resource-*` Resource 项默认可折叠为一行，认证、历史等关键 Resource 项保持展开可见；
 - Editor/Selector 的当前操作提示使用 Focus 语义。
 
@@ -159,10 +158,6 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   工具开始、工具完成后返回模型、进入/离开审批、应用 Steer、恢复、验证和取消阶段时从 `1s` 重新开始；
   Assistant Delta、轮询、重复事件和 viewport 操作不重置。`WORKING` 只追加短 Tool
   名称，例如 `WORKING (12s) · execution.run`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
-  ToolCallId；
-- `coding.work-phase` 只投影派生的 `ORIENT/PLAN/CHANGE/VERIFY/REVIEW/DELIVER/BLOCKED`，终端显示
-  `Work phase: <PHASE>`；同一阶段与缺失证据集合不变时不重复发事件，UI 不读取 Prompt、Host Path、
-  命令或内部摘要来猜测阶段；
 - 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
   五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；
 
