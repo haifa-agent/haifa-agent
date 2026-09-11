@@ -290,7 +290,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             if (compactionCoordinator != null) {
                 compactionCoordinator.evaluateAndCompactIfNeeded(run, progress.iteration(), model);
             }
-            RuntimeContextBuildResult built = contextBuilder.build(run, progress, model);
+            RuntimeContextBuildResult built = buildContext(run, progress, model);
             recordPromptDiagnostics(built);
             recordTrace(new RuntimeTraceEvent(
                     traceContext.traceId(),
@@ -1046,6 +1046,23 @@ public final class DefaultAgentLoop implements AgentLoop {
     private boolean isContextTooLong(RuntimeException error) {
         return error instanceof ModelInvocationException modelError
                 && modelError.category() == ModelErrorCategory.CONTEXT_TOO_LONG;
+    }
+
+    private RuntimeContextBuildResult buildContext(AgentRun run, AgentLoopContext progress, FrozenModelBinding model) {
+        try {
+            return contextBuilder.build(run, progress, model);
+        } catch (LocalContextOverflowException overflow) {
+            progress.recordForcedContextRebuild();
+            if (compactionCoordinator != null) {
+                compactionCoordinator.forceCompactOnOverflow(run, progress.iteration(), model);
+            }
+            try {
+                return contextBuilder.build(run, progress, model);
+            } catch (LocalContextOverflowException exhausted) {
+                throw new ContextRebuildExhaustedException(
+                        "local context remained too long after the single forced rebuild");
+            }
+        }
     }
 
     private Map<String, Object> modelTraceAttributes(AgentRun run, ModelInvocationResult response) {

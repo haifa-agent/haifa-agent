@@ -21,6 +21,10 @@ Checkpoint stores only Run ID, next iteration and forced-context-rebuild count a
 boundaries. Tool, Summary, Memory, Skill, model continuation, configuration and external capability state are no longer
 copied. These facts remain in their authoritative stores and are read through current access and integrity boundaries.
 Historical checkpoint selection, per-iteration capture and generic capability snapshot/restore participants are removed.
+
+Before a model call, Runtime accounts for required middleware context in the Session budget. If the assembled local
+window still does not fit, it first removes optional Memory and then performs the one allowed forced rebuild; only a
+second local overflow terminates as context-too-long.
 Runtime payload is 6.0; SQLite checkpoint codec is 2. Rebuild development databases after the cutover.
 
 recover(runId) settles abandoned executing Runs as FAILED with RUNTIME_EXECUTION_INTERRUPTED (or TOOL_OUTCOME_UNKNOWN)
