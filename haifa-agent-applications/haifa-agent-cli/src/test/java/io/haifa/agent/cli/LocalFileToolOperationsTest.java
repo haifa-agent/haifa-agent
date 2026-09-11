@@ -6,49 +6,18 @@ import io.haifa.agent.application.project.product.coding.delivery.AttributionSta
 import io.haifa.agent.application.project.product.coding.delivery.RepositoryBaseline;
 import io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry;
 import io.haifa.agent.application.project.tool.ProjectToolCallContext;
-import io.haifa.agent.application.project.workspace.InMemoryWorkspaceAccessStore;
-import io.haifa.agent.application.project.workspace.WorkspaceAccess;
-import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.git.GitRepositoryRef;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.configuration.ProjectConfigurationId;
 import io.haifa.agent.project.core.ledger.InMemorySessionChangeLedger;
-import io.haifa.agent.project.core.mutation.InMemoryWorkspaceWriteLeaseManager;
-import io.haifa.agent.project.core.store.InMemoryProjectStore;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
-import io.haifa.agent.project.core.workspace.WorkspaceService;
-import io.haifa.agent.project.domain.Project;
-import io.haifa.agent.project.domain.ProjectConfigurationRef;
-import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostGitInspectionStatus;
-import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
-import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
-import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
-import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
-import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
-import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
-import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
-import io.haifa.agent.project.path.ProjectPath;
-import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
-import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
@@ -385,85 +354,9 @@ class LocalFileToolOperationsTest {
             InMemorySessionChangeLedger ledger,
             RunRepositoryBaselineRegistry repositoryBaselines,
             boolean workspaceAttachmentDisclosed) {
-        Instant now = Instant.parse("2026-08-05T00:00:00Z");
-        WorkspaceId workspaceId = new WorkspaceId("workspace-file-read");
-        ProjectId projectId = new ProjectId("project-file-read");
-        WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-file-read");
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("location-file-read");
-        var bindings = new InMemoryWorkspaceBindingStore();
-        var workspaces = new InMemoryWorkspaceStore();
-        var locations = new HostWorkspaceLocationStore();
-        Path realRoot;
-        try {
-            realRoot = root.toRealPath();
-        } catch (IOException e) {
-            realRoot = root.toAbsolutePath().normalize();
-        }
-        locations.register(locationRef, realRoot);
-        WorkspaceBinding binding = WorkspaceBinding.provision(
-                        bindingId,
-                        locationRef,
-                        WorkspaceBindingMode.DIRECT,
-                        new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.readWriteFiles(),
-                        WorkspacePermissionSet.readWrite(),
-                        HostWorkspaceLocationStore.fingerprintFor(realRoot),
-                        now)
-                .activate(now);
-        bindings.create(binding);
-        workspaces.create(Workspace.provision(
-                        workspaceId,
-                        projectId,
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
-                        WorkspaceRevision.initial(binding.rootFingerprint()),
-                        now)
-                .activate(now));
-        var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        HostWorkspaceScope scope = HostWorkspaceScope.initial(AuthorizedHostDirectory.of(workspaceId, realRoot));
-        var sequence = new AtomicInteger();
-        var identifiers =
-                (io.haifa.agent.common.id.IdentifierGenerator) () -> "file-tool-test-" + sequence.incrementAndGet();
-        PrincipalRef owner = new PrincipalRef("owner", "user");
-        var projects = new InMemoryProjectStore();
-        projects.create(Project.create(
-                        projectId,
-                        new TenantRef("local"),
-                        owner,
-                        "file-tool-test",
-                        "test project",
-                        new ProjectConfigurationRef(new ProjectConfigurationId("config-1").value(), "1.0.0"),
-                        now,
-                        Map.of())
-                .assignDefaultWorkspace(workspaceId, now));
-        var workspaceService = new WorkspaceService(projects, workspaces, bindings, identifiers, () -> now);
-        var provisioning = new AuthorizedWorkspaceProvisioning(
-                projectId, workspaces, bindings, locations, workspaceService, owner, () -> now, scope);
-        var mutations = new HostWorkspaceMutationService(
-                workspaces,
-                bindings,
-                locations,
-                SensitivePathPolicy.defaults(),
-                new InMemoryWorkspaceWriteLeaseManager(),
-                identifiers,
-                () -> now);
-        TenantRef tenant = new TenantRef("local");
-        var workspaceAccess = new InMemoryWorkspaceAccessStore();
-        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, workspaceId, WorkspaceAccessMode.DEVELOP));
-        var operations = new LocalFileToolOperations(
-                workspaces,
-                files,
-                mutations,
-                identifiers,
-                () -> now,
-                provisioning,
-                ledger,
-                repositoryBaselines,
-                workspaceAttachmentDisclosed,
-                workspaceAccess,
-                tenant,
-                owner);
-        return new Fixture(workspaceId, operations);
+        var support = LocalFileToolTestSupport.createSingleRootFixture(
+                root, ledger, repositoryBaselines, workspaceAttachmentDisclosed);
+        return new Fixture(support.workspaceId(), support.operations());
     }
 
     private static ToolArguments arguments(Map<String, Object> values) {
