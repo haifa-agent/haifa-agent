@@ -1,7 +1,8 @@
 # Autonomous Delivery Capability Ladder Specification & Placeholder
 
-> **Status**: Design Approved / Module Placeholder (v2 implementation deferred)
-> **Architecture Reference**: [`docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md`](../../../../../../../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md)
+> **Status**: Implemented runner / externally versioned assets
+> **Architecture Reference**: [`docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md`](../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-capability-ladder-design.md)
+> **Implementation Contract**: [34-autonomous-delivery-ladder-case-authoring-prompt.md](../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-ladder-case-authoring-prompt.md)
 > **External Evaluation Repo**: `haifa-agent-evals` (owns industry benchmarks like SWE-bench & polyglot)
 
 ---
@@ -56,47 +57,20 @@ Every case is tagged across three orthogonal axes (1 to 5):
 
 ---
 
-## 5. Planned Case Catalog (23 Cases)
+## 5. Published Case Assets (23 Cases)
 
-The catalog is mirrored in code by `AutonomousDeliveryLadderCatalog` (module `src/main`); the
-structural test `AutonomousDeliveryCapabilityLadderTest` keeps both in sync. Labels are
-`Loc` (localization) / `Span` (modification span) / `Acc` (acceptance complexity), each 1..5.
-Case task statements are seeded from public benchmark styles: Exercism-style
-instructions+stub+unit-test tasks for L1/L2, symptom/stack-trace driven tasks for L3
-(SWE-bench issue style), and open GitHub-issue tasks for L6. Authoring of per-case
-workspaces (`prompt.txt`, `base-workspace/`, `acceptance.py`) is the next execution phase.
+`haifa-agent-autonomous-delivery-assets` is the only source of authored task statements, titles,
+labels, variants and workspaces. Its `assets-manifest.json` enumerates the 23 cases; each
+`case.yaml` carries the per-case metadata. The main repository pins one exact asset commit and
+the manifest SHA-256 in `assets.lock.json`, then validates the published case-tree digest before
+running a case.
 
-| ID | Title | Level | Loc/Span/Acc | Variant |
-| --- | --- | --- | --- | --- |
-| L1-01 | Fix off-by-one page window slicing | L1 | 1/1/1 | |
-| L1-02 | Fix century leap-year rule | L1 | 1/1/1 | |
-| L1-03 | Recover slugify edge cases from a red suite | L1 | 2/1/2 | Error Recovery |
-| L1-04 | Fix integer division in conversion rate | L1 | 1/1/1 | |
-| L1-05 | Make record search case-insensitive | L1 | 1/1/1 | |
-| L2-01 | Thread verbose flag through config to CLI | L2 | 1/3/2 | |
-| L2-02 | Add cancelled status to order state machine | L2 | 1/3/2 | |
-| L2-03 | Propagate optional coupon field through service | L2 | 1/3/2 | |
-| L2-04 | Add CSV export beside existing JSON export | L2 | 2/3/2 | |
-| L2-05 | Add page size while preserving default ordering | L2 | 1/3/3 | Regression Protection |
-| L3-01 | Diagnose settings ignored on Windows paths | L3 | 4/1/1 | |
-| L3-02 | Recover report generator from stack trace | L3 | 4/1/2 | Error Recovery |
-| L3-03 | Diagnose duplicate nightly aggregation entries | L3 | 4/1/2 | |
-| L3-04 | Diagnose batch import hang on large input | L3 | 3/1/2 | |
-| L4-01 | Propagate priority field across all layers | L4 | 1/4/3 | |
-| L4-02 | Introduce new event type through pipeline | L4 | 2/4/3 | |
-| L4-03 | Add validated tool parameter across boundaries | L4 | 1/4/3 | |
-| L4-04 | Extend status API without breaking consumers | L4 | 2/4/4 | Regression Protection |
-| L5-01 | Validate emails without new public types | L5 | 2/2/4 | |
-| L5-02 | Speed up dedup using standard library only | L5 | 3/2/4 | |
-| L5-03 | Rename calculation entry point backward compatibly | L5 | 2/2/4 | |
-| L6-01 | Open issue: bulk inventory import from CSV | L6 | 3/5/4 | |
-| L6-02 | Open issue: resumable batch export | L6 | 4/5/5 | |
-
-Distribution check: L1..L4 carry 18 of 23 cases (78% ≥ 70% baseline); L5/L6 carry 5 (22% ≤ 30%).
+The intended distribution is L1×5, L2×5, L3×4, L4×4, L5×3 and L6×2. L1..L4 therefore carry 18
+of 23 cases (78% ≥ 70% baseline); L5/L6 carry 5 (22% ≤ 30%).
 
 ---
 
 ## 6. Current State & Legacy Material
 
-- **Legacy Cases (`cases/01` ~ `cases/17`)**: Preserved as historical synthetic test material for curation into the new ladder.
-- **Implementation State**: Ladder case definitions (ids, titles, statements, three-dimensional labels, variant marks) are committed in `AutonomousDeliveryLadderCatalog`. Authoring of per-case workspaces, acceptance scripts, and the minimal single-task runner is scheduled for the next execution phase.
+- **Legacy Cases (`cases/01` ~ `cases/17`)**: 已冻结为历史素材（决策：冷冻 Legacy），保留在 `haifa-agent-test-fixtures` 中可运行、可校验，不进入能力阶梯探针题集。
+- **Implementation State**: All 23 cases (L1..L6) are authored in the external asset repository. The Maven module publishes the result contract, validates the immutable asset lock locally, and provides the explicit `fetch_assets.py` and offline `run_case.py` workflow. Each run validates against the shared `acceptance-result.schema.json` published by `haifa-agent-test-fixtures`.
