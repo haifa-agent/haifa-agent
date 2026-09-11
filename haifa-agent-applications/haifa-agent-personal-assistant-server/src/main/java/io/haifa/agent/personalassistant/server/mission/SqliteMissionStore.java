@@ -199,15 +199,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 CHECK(attempt_no >= 1 AND version >= 0)
             );
 
-            CREATE TABLE personal_mission_event (
-                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                mission_id TEXT NOT NULL REFERENCES personal_mission(mission_id) ON DELETE RESTRICT,
-                event_type TEXT NOT NULL,
-                schema_version TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                created_at_ms INTEGER NOT NULL
-            );
-            CREATE INDEX ix_personal_mission_event ON personal_mission_event(mission_id, event_id);
 
             CREATE TABLE personal_mission_outbox (
                 outbox_id TEXT PRIMARY KEY NOT NULL,
@@ -399,7 +390,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 """)) {
             bindMission(statement, value);
             statement.executeUpdate();
-            appendEvent(value.missionId(), "MISSION_CREATED", value.createdAt());
         } catch (SQLException exception) {
             throw constraint(exception);
         }
@@ -432,7 +422,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             }
             persistRevisions(value);
             if (value.confirmedPlanRevisionNo().isEmpty()) replaceActiveTasks(value);
-            appendEvent(value.missionId(), "MISSION_" + value.state().name(), value.updatedAt());
         } catch (SQLException exception) {
             throw constraint(exception);
         }
@@ -674,7 +663,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 outbox.setString(2, intent.outboxId());
                 outbox.executeUpdate();
                 touchMission(intent.missionId(), now);
-                appendEvent(intent.missionId(), "MISSION_TASK_BOUND", now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -789,7 +777,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 statement.setString(5, attempt.taskId());
                 statement.executeUpdate();
                 updateMissionState(attempt.missionId(), "RUNNING", now, "state IN ('RUNNING','WAITING_USER')");
-                appendEvent(attempt.missionId(), "MISSION_TASK_COMPLETED", now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -830,7 +817,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 statement.setString(2, attempt.missionId());
                 statement.setString(3, attempt.taskId());
                 statement.executeUpdate();
-                appendEvent(attempt.missionId(), "MISSION_TASK_CANCELLED", now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -882,7 +868,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                             "MISSION_TASK_NOT_RETRYABLE", "Mission Task is not blocked and retryable");
                 }
                 updateMissionState(missionId, "RUNNING", now, "state='WAITING_USER'");
-                appendEvent(missionId, "MISSION_TASK_RETRY_REQUESTED", now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -1033,12 +1018,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                     return null;
                 }
                 addUsage(intent.missionId(), synthesis.usage(), now);
-                appendEvent(
-                        intent.missionId(),
-                        "PARTIALLY_COMPLETED".equals(terminalState)
-                                ? "MISSION_SYNTHESIS_PARTIALLY_COMPLETED"
-                                : "MISSION_SYNTHESIS_COMPLETED",
-                        now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -1060,7 +1039,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 statement.setLong(3, now.toEpochMilli());
                 statement.setString(4, intent.missionId());
                 statement.executeUpdate();
-                appendEvent(intent.missionId(), "MISSION_SYNTHESIS_FAILED", now);
             } catch (SQLException exception) {
                 throw failure(exception);
             }
@@ -1260,7 +1238,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 mission.setLong(1, now.toEpochMilli());
                 mission.setString(2, missionId);
                 mission.executeUpdate();
-                appendEvent(missionId, "MISSION_BUDGET_EXHAUSTED", now);
             }
         }
     }
@@ -1305,7 +1282,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             tasks.executeUpdate();
             mission.setLong(1, now.toEpochMilli());
             mission.setString(2, missionId);
-            if (mission.executeUpdate() == 1) appendEvent(missionId, "MISSION_DEADLINE_EXCEEDED", now);
+            mission.executeUpdate();
         }
     }
 
@@ -1423,7 +1400,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 outbox.setLong(8, now.toEpochMilli());
                 outbox.executeUpdate();
                 touchMission(missionId, now);
-                appendEvent(missionId, "MISSION_TASK_DISPATCH_PENDING", now);
             }
         }
     }
@@ -1487,7 +1463,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                     autoRetry ? "RUNNING" : "WAITING_USER",
                     now,
                     "state IN ('RUNNING','WAITING_USER')");
-            appendEvent(attempt.missionId(), autoRetry ? "MISSION_TASK_RETRY_SCHEDULED" : "MISSION_TASK_BLOCKED", now);
         } catch (SQLException exception) {
             throw failure(exception);
         }
@@ -1890,16 +1865,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         }
     }
 
-    private void appendEvent(String missionId, String type, Instant at) throws SQLException {
-        try (var statement = current()
-                .prepareStatement(
-                        "INSERT INTO personal_mission_event(mission_id,event_type,schema_version,payload_json,created_at_ms) VALUES (?,?,'v1','{}',?)")) {
-            statement.setString(1, missionId);
-            statement.setString(2, type);
-            statement.setLong(3, at.toEpochMilli());
-            statement.executeUpdate();
-        }
-    }
 
     private void bindMission(java.sql.PreparedStatement statement, PersonalMission.Persistence value)
             throws SQLException {
