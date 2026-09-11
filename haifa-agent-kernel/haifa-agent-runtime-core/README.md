@@ -122,12 +122,17 @@ replay-then-tail 订阅。Task 03 的 HTTP/SSE 参考 Adapter 位于 Integration
 访问本模块。
 
 `SessionMessageSource` 把有效 `ConversationSummary` 作为不可变 Context Window Checkpoint；普通消息只从
-`coveredThrough` 之后追加。启用语义压缩时，`SemanticCompactionCoordinator` 是自动生成下一代 Summary
-的唯一写入者：它可在一次逻辑压缩中连续 Fold 多个有界批次，全部验证成功后只做一次 CAS；任一批次失败
-不提交中间状态。未启用语义压缩时，输入 Token 阈值与强制重建仍使用确定性压缩；手动入口始终显式可用。
+`coveredThrough` 之后追加。语义压缩默认启用（`CompressionPolicy.defaults().semanticCompactionEnabled()`），
+`SemanticCompactionCoordinator` 是自动生成下一代 Summary 的唯一写入者：它可在一次逻辑压缩中连续 Fold
+多个有界批次，全部验证成功后只做一次 CAS；任一批次失败不提交中间状态。显式
+`withSemanticCompactionEnabled(false)` 关闭后，输入 Token 阈值与强制重建回退到确定性压缩；
+手动入口始终显式可用。
 Tail 按 Token 预算从后向前选择，固定消息组数只作为安全上限，Tool Call/Result 原子组不会被拆开。
 `compact(sessionId)` 是产品手动压缩复用的唯一入口，并与自动切换共用 Policy/version、CAS、Redaction
 校验和原始 Message 保留语义。Context Trace 只记录窗口摘要、代次、触发原因和 Token 数，不记录正文。
+本次默认启用把 Policy 窗口版本从 `session-window-v2` 提升到 `session-window-v3`；Checkpoint 兼容性要求
+Policy 版本精确匹配，因此旧版本摘要不再被复用为 Checkpoint，并在下一次压缩中确定性重建，
+源消息始终是权威事实。
 Todo 与 governed Memory 等可变快照位于 append-only Session 前缀之后，其安全 provenance digest 参与
 `windowGeneration` identity；变化表现为显式窗口边界，而不是静默改写未标识的前置内容。Tree/活动路径
 延期期间不得把该入口解释为分支感知压缩。
