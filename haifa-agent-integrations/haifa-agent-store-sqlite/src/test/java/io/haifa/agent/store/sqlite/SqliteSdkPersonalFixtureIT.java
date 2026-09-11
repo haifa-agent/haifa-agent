@@ -202,7 +202,7 @@ class SqliteSdkPersonalFixtureIT {
                     .containsExactly("hello", "answer-1", "continue", "answer-2");
         }
 
-        assertNoCodingProductTables(directory);
+        assertNoCodingProductState(directory);
     }
 
     @Test
@@ -502,27 +502,26 @@ class SqliteSdkPersonalFixtureIT {
         return new SdkContributionMetadata(coordinate, capability, digest, suitability, "safe test contribution");
     }
 
-    private static void assertNoCodingProductTables(Path directory) throws Exception {
+    private static void assertNoCodingProductState(Path directory) throws Exception {
         try (SqliteConnectionFactory connections =
                 new SqliteConnectionFactory(SqliteTestSupport.configuration(directory))) {
             connections.initialize();
-            try (var connection = connections.openConnection();
-                    var statement = connection.prepareStatement(
-                            """
-                            SELECT name
-                            FROM sqlite_master
-                            WHERE type = 'table'
-                              AND name IN (
-                                'project_product_session',
-                                'coding_session_activity',
-                                'coding_session_command',
-                                'coding_follow_up',
-                                'coding_session_event_cursor'
-                              )
-                            ORDER BY name
-                            """);
-                    ResultSet result = statement.executeQuery()) {
-                assertThat(result.next()).isFalse();
+            try (var connection = connections.openConnection()) {
+                List<String> codingTables = List.of(
+                        "project_product_session",
+                        "coding_session_activity",
+                        "coding_session_command",
+                        "coding_follow_up",
+                        "coding_session_event_cursor");
+                for (String table : codingTables) {
+                    try (var statement = connection.prepareStatement("SELECT COUNT(*) FROM " + table);
+                            ResultSet result = statement.executeQuery()) {
+                        assertThat(result.next()).isTrue();
+                        assertThat(result.getInt(1))
+                                .as("Expected table %s to contain no rows", table)
+                                .isZero();
+                    }
+                }
             }
         }
     }

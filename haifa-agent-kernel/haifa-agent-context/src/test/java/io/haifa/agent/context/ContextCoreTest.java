@@ -58,7 +58,12 @@ class ContextCoreTest {
 
         assertThat(policy.retainedTailTokenPercent()).isEqualTo(50);
         assertThat(policy.forcedRetainedTailTokenPercent()).isEqualTo(25);
-        assertThat(policy.version()).isEqualTo("session-window-v2");
+        assertThat(policy.version()).isEqualTo("session-window-v3");
+        assertThat(policy.semanticCompactionEnabled()).isTrue();
+        assertThat(CompressionPolicy.defaults()
+                        .withSemanticCompactionEnabled(false)
+                        .semanticCompactionEnabled())
+                .isFalse();
         assertThatThrownBy(() -> new CompressionPolicy(12, 32, 4, 50, 51)).isInstanceOf(IllegalArgumentException.class);
     }
 

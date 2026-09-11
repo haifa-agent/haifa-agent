@@ -41,7 +41,7 @@ public record CompressionPolicy(
                 24_000,
                 3,
                 false,
-                false);
+                true);
     }
 
     public CompressionPolicy {
@@ -75,7 +75,7 @@ public record CompressionPolicy(
     }
 
     public static CompressionPolicy defaults() {
-        return new CompressionPolicy(12, 32, 4, 50, 25, 15, 8_000, 32_000, 25, 8_000, 24_000, 3, false, false);
+        return new CompressionPolicy(12, 32, 4, 50, 25, 15, 8_000, 32_000, 25, 8_000, 24_000, 3, false, true);
     }
 
     public CompressionPolicy withSemanticCompactionEnabled(boolean enabled) {
@@ -133,6 +133,6 @@ public record CompressionPolicy(
     }
 
     public String version() {
-        return "session-window-v2";
+        return "session-window-v3";
     }
 }

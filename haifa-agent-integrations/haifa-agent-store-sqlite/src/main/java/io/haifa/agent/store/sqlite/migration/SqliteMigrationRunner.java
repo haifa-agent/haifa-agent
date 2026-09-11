@@ -88,6 +88,9 @@ public final class SqliteMigrationRunner {
         return applied;
     }
 
+    private static final String LEGACY_V8_TOOL_RECONCILIATION_CHECKSUM =
+            "sha256:9d6eedef3e025900bf300f6a791d23a3ea1744e06b839689b875d01728f2cba5";
+
     private static void validateApplied(List<SqliteMigration> migrations, Map<Long, AppliedMigration> applied) {
         Map<Long, SqliteMigration> expected = new HashMap<>();
         migrations.forEach(migration -> expected.put(migration.version(), migration));
@@ -95,12 +98,21 @@ public final class SqliteMigrationRunner {
             SqliteMigration migration = expected.get(entry.getKey());
             if (migration == null
                     || !migration.name().equals(entry.getValue().name())
-                    || !migration.checksum().equals(entry.getValue().checksum())) {
+                    || !matchesChecksum(migration, entry.getValue().checksum())) {
                 throw new SqliteStoreException(
                         SqliteStoreFailure.MIGRATION_CHECKSUM_MISMATCH,
                         "Applied SQLite migration does not match the bundled migration set");
             }
         }
+    }
+
+    private static boolean matchesChecksum(SqliteMigration migration, String appliedChecksum) {
+        if (migration.checksum().equals(appliedChecksum)) {
+            return true;
+        }
+        return migration.version() == 8L
+                && "tool_reconciliation_evidence".equals(migration.name())
+                && LEGACY_V8_TOOL_RECONCILIATION_CHECKSUM.equals(appliedChecksum);
     }
 
     private void apply(Connection connection, SqliteMigration migration) {

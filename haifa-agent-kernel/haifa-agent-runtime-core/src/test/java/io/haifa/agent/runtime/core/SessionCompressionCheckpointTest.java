@@ -247,7 +247,7 @@ class SessionCompressionCheckpointTest {
                 store,
                 store,
                 new DeterministicContextCompressor(),
-                new CompressionPolicy(12, 32, 4),
+                new CompressionPolicy(12, 32, 4).withSemanticCompactionEnabled(false),
                 () -> "token-summary-" + ids.incrementAndGet(),
                 () -> NOW);
 
