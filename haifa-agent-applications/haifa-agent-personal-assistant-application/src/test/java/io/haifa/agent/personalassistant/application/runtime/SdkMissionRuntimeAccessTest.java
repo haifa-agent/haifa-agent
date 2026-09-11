@@ -215,7 +215,7 @@ class SdkMissionRuntimeAccessTest {
                 "RESEARCH",
                 List.of("deep-research"),
                 "pa.research-task-result",
-                "v1",
+                "v2",
                 Optional.of(truthfulnessBrief()),
                 List.of());
         var intent = new MissionDispatchIntent(
@@ -279,9 +279,9 @@ class SdkMissionRuntimeAccessTest {
         String dependencyResult =
                 """
                 {
-                  "brief":"Verified policy evidence",
+                  "taskSummary":"Verified policy evidence",
                   "sources":[{"sourceId":"official-1","normalizedLocator":"https://example.gov/policy","title":"Policy","status":"FETCHED","publishedAt":"2026-08-01T00:00:00Z"}],
-                  "claims":[{"claimId":"claim-1","claim":"The policy applies","supportingSourceIds":["official-1"],"opposingSourceIds":[],"limitations":"Current as queried","unverified":false}],
+                  "findings":[{"findingId":"finding-1","title":"Policy","mechanism":"The policy applies","keyParameters":[],"evidenceSummary":"","implications":"","limitations":"Current as queried","supportingSourceIds":["official-1"],"opposingSourceIds":[],"evidenceAssessment":"SUPPORTED","unverified":false}],
                   "unresolvedQuestions":[]
                 }
                 """;
@@ -293,10 +293,10 @@ class SdkMissionRuntimeAccessTest {
                 "RESEARCH",
                 List.of("deep-research"),
                 "pa.research-task-result",
-                "v1",
+                "v2",
                 Optional.of(truthfulnessBrief()),
                 List.of(new MissionTaskRunInput.DependencyResult(
-                        "policy", "pa.research-task-result", "v1", "sha256:" + "b".repeat(64), dependencyResult)));
+                        "policy", "pa.research-task-result", "v2", "sha256:" + "b".repeat(64), dependencyResult)));
         var intent = new MissionDispatchIntent(
                 "outbox-2",
                 "mission-1",
@@ -355,7 +355,7 @@ class SdkMissionRuntimeAccessTest {
                 "owner-1",
                 MissionMode.DEEP_RESEARCH,
                 brief.question(),
-                List.of("{\"schemaVersion\":\"pa.research-task-result/v1\"}"),
+                List.of("{\"schemaVersion\":\"pa.research-task-result/v2\"}"),
                 List.of(),
                 List.of("truthfulness"),
                 2,
@@ -434,7 +434,7 @@ class SdkMissionRuntimeAccessTest {
                     "owner-1",
                     MissionMode.DEEP_RESEARCH,
                     scenario.question(),
-                    List.of("{\"schemaVersion\":\"pa.research-task-result/v1\"}"),
+                    List.of("{\"schemaVersion\":\"pa.research-task-result/v2\"}"),
                     List.of(),
                     List.of("task-1"),
                     2,
@@ -487,12 +487,12 @@ class SdkMissionRuntimeAccessTest {
                 "Research Jingning hydropower", notes, "MODEL_RESPONSE_INVALID");
         var root = new ObjectMapper().readTree(fallback);
 
-        assertThat(root.path("schemaVersion").asText()).isEqualTo("pa.research-task-result/v1");
-        assertThat(root.path("brief").asText()).hasSize(8_000);
+        assertThat(root.path("schemaVersion").asText()).isEqualTo("pa.research-task-result/v2");
+        assertThat(root.path("taskSummary").asText()).hasSize(8_000);
         assertThat(root.path("sources").size()).isEqualTo(2);
         assertThat(root.path("sources").get(0).path("status").asText()).isEqualTo("UNKNOWN");
         assertThat(root.path("sources").get(1).path("status").asText()).isEqualTo("UNKNOWN");
-        assertThat(root.path("claims").size()).isZero();
+        assertThat(root.path("findings").size()).isZero();
         assertThat(root.path("unresolvedQuestions").get(0).asText()).contains("MODEL_RESPONSE_INVALID");
         assertThat(SdkMissionRuntimeAccess.isResearchTaskResult(fallback, skill))
                 .isTrue();
@@ -506,9 +506,9 @@ class SdkMissionRuntimeAccessTest {
                 .load("deep-research", tenant, principal);
         String invalid =
                 """
-                {"schemaVersion":"pa.research-task-result/v1","brief":"notes",
-                "queries":[{"query":"topic","phase":"RESEARCH"}],"sources":[],"claims":[],
-                "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"TIME_LIMIT",
+                {"schemaVersion":"pa.research-task-result/v2","taskSummary":"notes",
+                "queries":[{"query":"topic","phase":"RESEARCH"}],"sources":[],"findings":[],
+                "unresolvedQuestions":[],"stopReason":"TIME_LIMIT",
                 "limitsUsed":{"searchCalls":0,"fetchCalls":0,"sources":0,"contentBytes":0}}
                 """;
 
@@ -516,7 +516,7 @@ class SdkMissionRuntimeAccessTest {
     }
 
     @Test
-    void normalizationRejectsV2WithoutQueriesAndArtifactRefs() throws Exception {
+    void normalizationRejectsV2WithoutQueries() throws Exception {
         var tenant = new TenantRef("local");
         var principal = new PrincipalRef("personal-user", "user");
         var skill = PersonalSkillPlatform.create(tenant, principal, Optional.empty(), List.of())
@@ -680,7 +680,7 @@ class SdkMissionRuntimeAccessTest {
         String input =
                 """
                 {
-                  "schemaVersion":"pa.research-task-result/v1","brief":"Evidence",
+                  "schemaVersion":"pa.research-task-result/v2","taskSummary":"Evidence",
                   "queries":[{"query":"evidence","phase":"CROSS_CHECK"}],
                   "sources":[{
                     "sourceId":"source-1","locator":"https://example.com/Spec/A",
@@ -688,7 +688,7 @@ class SdkMissionRuntimeAccessTest {
                     "title":"Specification","safetyType":"PUBLIC_WEB","fetchedAt":null,"publishedAt":null,
                     "status":"UNKNOWN","excerpt":"Relevant evidence.","contentDigest":null
                   }],
-                  "claims":[],"artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "findings":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
                   "limitsUsed":{"searchCalls":1,"fetchCalls":0,"sources":1,"contentBytes":0}
                 }
                 """
@@ -748,8 +748,8 @@ class SdkMissionRuntimeAccessTest {
         String invalid =
                 """
                 {
-                  "schemaVersion":"pa.research-task-result/v1",
-                  "brief":"<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"web_fetch\">",
+                  "schemaVersion":"pa.research-task-result/v2",
+                  "taskSummary":"<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"web_fetch\">",
                   "queries":[{"query":"Amazon Halo","phase":"CROSS_CHECK"}],
                   "sources":[{
                     "sourceId":"source-1","locator":"https://example.com/halo",
@@ -758,7 +758,7 @@ class SdkMissionRuntimeAccessTest {
                     "fetchedAt":"2026-08-10T00:00:00Z","publishedAt":null,"status":"FETCHED",
                     "excerpt":"Evidence","contentDigest":"sha256:%s"
                   }],
-                  "claims":[],"artifactRefs":[],"unresolvedQuestions":[],"stopReason":"TIME_LIMIT",
+                  "findings":[],"unresolvedQuestions":[],"stopReason":"TIME_LIMIT",
                   "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":1,"contentBytes":64}
                 }
                 """
@@ -775,7 +775,7 @@ class SdkMissionRuntimeAccessTest {
                 "MISSION_TASK_NORMALIZATION_SCHEMA_INVALID");
         JsonNode root = new ObjectMapper().readTree(fallback);
 
-        assertThat(root.path("brief").asText())
+        assertThat(root.path("taskSummary").asText())
                 .contains("Select one representative product failure", "discarded serialized Tool protocol markup")
                 .doesNotContain("DSML", "tool_calls", "invoke name");
         assertThat(root.path("sources")).hasSize(1);
@@ -791,8 +791,8 @@ class SdkMissionRuntimeAccessTest {
         String result =
                 """
                 {
-                  "schemaVersion":"pa.research-task-result/v1",
-                  "brief":"Verified public evidence",
+                  "schemaVersion":"pa.research-task-result/v2",
+                  "taskSummary":"Verified public evidence",
                   "queries":[{"query":"official policy","phase":"CROSS_CHECK"}],
                   "sources":[{
                     "sourceId":"official-1","locator":"http://www.news.cn/policy",
@@ -801,11 +801,14 @@ class SdkMissionRuntimeAccessTest {
                     "fetchedAt":"2026-08-10T00:00:00Z","publishedAt":null,"status":"FETCHED",
                     "excerpt":"Verified excerpt","contentDigest":"sha256:%s"
                   }],
-                  "claims":[{
-                    "claimId":"claim-1","claim":"The policy applies","supportingSourceIds":["official-1"],
-                    "opposingSourceIds":[],"limitations":"Current as queried","unverified":false,"quotedSpans":[]
+                  "findings":[{
+                    "findingId":"finding-1","title":"Policy finding","mechanism":"The policy applies",
+                    "keyParameters":["policy: applied"],"evidenceSummary":"Direct source statement.",
+                    "implications":"Policy implications","limitations":"Current as queried",
+                    "supportingSourceIds":["official-1"],"opposingSourceIds":[],
+                    "evidenceAssessment":"SUPPORTED","unverified":false
                   }],
-                  "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
                   "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":1,"contentBytes":64}
                 }
                 """
@@ -837,7 +840,7 @@ class SdkMissionRuntimeAccessTest {
         String raw =
                 """
                 {
-                  "schemaVersion":"pa.research-task-result/v1","brief":"Google Stadia evidence",
+                  "schemaVersion":"pa.research-task-result/v2","taskSummary":"Google Stadia evidence",
                   "queries":[{"query":"Google Stadia","phase":"CROSS_CHECK"}],
                   "sources":[{
                     "sourceId":"stadia-baike","locator":"https://baike.baidu.com/item/Stadia/云游戏",
@@ -846,12 +849,13 @@ class SdkMissionRuntimeAccessTest {
                     "fetchedAt":"2026-08-10T00:00:00Z","publishedAt":null,"status":"FETCHED",
                     "excerpt":"Search-only evidence","contentDigest":null
                   }],
-                  "claims":[{
-                    "claimId":"stadia-closed","claim":"Stadia closed","supportingSourceIds":["stadia-baike"],
-                    "opposingSourceIds":[],"limitations":["Only a search result was available"],
-                    "unverified":false
+                  "findings":[{
+                    "findingId":"stadia-closed","title":"Stadia closed","mechanism":"Stadia closed",
+                    "keyParameters":[],"evidenceSummary":"","implications":"","limitations":["Only a search result was available"],
+                    "supportingSourceIds":["stadia-baike"],
+                    "opposingSourceIds":[],"evidenceAssessment":"SUPPORTED","unverified":false
                   }],
-                  "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
                   "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":9,"contentBytes":10}
                 }
                 """
@@ -865,11 +869,10 @@ class SdkMissionRuntimeAccessTest {
                 .doesNotEndWith("0".repeat(64));
         assertThat(canonical.path("sources").get(0).path("status").asText()).isEqualTo("UNKNOWN");
         assertThat(canonical.path("sources").get(0).path("fetchedAt").isNull()).isTrue();
-        assertThat(canonical.path("claims").get(0).path("limitations").asText())
+        assertThat(canonical.path("findings").get(0).path("limitations").asText())
                 .isEqualTo("Only a search result was available");
-        assertThat(canonical.path("claims").get(0).path("unverified").asBoolean())
+        assertThat(canonical.path("findings").get(0).path("unverified").asBoolean())
                 .isTrue();
-        assertThat(canonical.path("claims").get(0).path("quotedSpans")).isEmpty();
         assertThat(canonical.path("limitsUsed").path("sources").asInt()).isEqualTo(1);
         assertThat(SdkMissionRuntimeAccess.isResearchTaskResult(canonical.toString(), skill))
                 .isTrue();
@@ -880,7 +883,7 @@ class SdkMissionRuntimeAccessTest {
         String raw =
                 """
                 {
-                  "schemaVersion":"pa.research-task-result/v1","brief":"Google Stadia evidence",
+                  "schemaVersion":"pa.research-task-result/v2","taskSummary":"Google Stadia evidence",
                   "queries":[{"query":"Google Stadia","phase":"CROSS_CHECK"}],
                   "sources":[{
                     "sourceId":"official-1","locator":"https://blog.google/products/stadia/message-on-stadia-streaming-strategy/",
@@ -889,12 +892,13 @@ class SdkMissionRuntimeAccessTest {
                     "fetchedAt":"2026-08-10T00:00:00Z","publishedAt":"2022-09-29T00:00:00Z",
                     "status":"FETCHED","excerpt":"Google announced the shutdown.","contentDigest":"sha256:%s"
                   }],
-                  "claims":[{
-                    "claimId":"shutdown-announcement","claim":"Google announced the shutdown.",
-                    "supportingSourceIds":["official-1"],"opposingSourceIds":[],"limitations":"Official statement only",
-                    "unverified":false,"quotedSpans":[]
+                  "findings":[{
+                    "findingId":"shutdown-announcement","title":"Google announced shutdown","mechanism":"Google announced the shutdown.",
+                    "keyParameters":[],"evidenceSummary":"","implications":"","limitations":"Official statement only",
+                    "supportingSourceIds":["official-1"],"opposingSourceIds":[],"evidenceAssessment":"SUPPORTED",
+                    "unverified":false
                   }],
-                  "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
                   "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":1,"contentBytes":64}
                 }
                 """
@@ -905,10 +909,10 @@ class SdkMissionRuntimeAccessTest {
 
         assertThat(canonical.path("sources").get(0).path("sourceId").asText())
                 .isEqualTo("narrative-comparison--official-1");
-        assertThat(canonical.path("claims").get(0).path("claimId").asText())
+        assertThat(canonical.path("findings").get(0).path("findingId").asText())
                 .isEqualTo("narrative-comparison--shutdown-announcement");
         assertThat(canonical
-                        .path("claims")
+                        .path("findings")
                         .get(0)
                         .path("supportingSourceIds")
                         .get(0)
@@ -921,7 +925,7 @@ class SdkMissionRuntimeAccessTest {
         String raw =
                 """
                 {
-                  "schemaVersion":"pa.research-task-result/v1","brief":"Ethereum upgrade evidence",
+                  "schemaVersion":"pa.research-task-result/v2","taskSummary":"Ethereum upgrade evidence",
                   "queries":[{"query":"Ethereum Hegota upgrade","phase":"CROSS_CHECK"}],
                   "sources":[{
                     "sourceId":"evidence-task--especificación-éip","locator":"https://eips.ethereum.org/EIPS/eip-7702",
@@ -930,12 +934,13 @@ class SdkMissionRuntimeAccessTest {
                     "fetchedAt":null,"publishedAt":"2024-05-07T00:00:00Z",
                     "status":"UNKNOWN","excerpt":"","contentDigest":null
                   }],
-                  "claims":[{
-                    "claimId":"evidence-task--hegotá-2026","claim":"The roadmap name contains an accented character.",
+                  "findings":[{
+                    "findingId":"evidence-task--hegotá-2026","title":"Roadmap name","mechanism":"The roadmap name contains an accented character.",
+                    "keyParameters":[],"evidenceSummary":"","implications":"","limitations":"Roadmap timing remains uncertain",
                     "supportingSourceIds":["evidence-task--especificación-éip"],"opposingSourceIds":[],
-                    "limitations":"Roadmap timing remains uncertain","unverified":true,"quotedSpans":[]
+                    "evidenceAssessment":"SUPPORTED","unverified":true
                   }],
-                  "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
                   "limitsUsed":{"searchCalls":1,"fetchCalls":0,"sources":1,"contentBytes":0}
                 }
                 """
@@ -946,9 +951,10 @@ class SdkMissionRuntimeAccessTest {
 
         assertThat(canonical.path("sources").get(0).path("sourceId").asText())
                 .isEqualTo("evidence-task--especificacion-eip");
-        assertThat(canonical.path("claims").get(0).path("claimId").asText()).isEqualTo("evidence-task--hegota-2026");
+        assertThat(canonical.path("findings").get(0).path("findingId").asText())
+                .isEqualTo("evidence-task--hegota-2026");
         assertThat(canonical
-                        .path("claims")
+                        .path("findings")
                         .get(0)
                         .path("supportingSourceIds")
                         .get(0)
@@ -961,7 +967,7 @@ class SdkMissionRuntimeAccessTest {
         String raw =
                 """
                 {
-                  "schemaVersion":"pa.research-task-result/v1","brief":"Evidence",
+                  "schemaVersion":"pa.research-task-result/v2","taskSummary":"Evidence",
                   "queries":[{"query":"evidence","phase":"CROSS_CHECK"}],
                   "sources":[
                     {"sourceId":"unknown-source","locator":"https://example.com/unknown",
@@ -973,13 +979,13 @@ class SdkMissionRuntimeAccessTest {
                      "title":"Fetched","safetyType":"PUBLIC_WEB","fetchedAt":"2026-08-10T00:00:00Z",
                      "publishedAt":null,"status":"FETCHED","excerpt":"Evidence","contentDigest":"%s"}
                   ],
-                  "claims":[
-                    {"claimId":"unknown-claim","claim":"Unknown claim","supportingSourceIds":["unknown-source"],
-                     "opposingSourceIds":[],"limitations":"Unknown","unverified":true,"quotedSpans":[]},
-                    {"claimId":"fetch-claim","claim":"Fetch claim","supportingSourceIds":["invalid-fetch"],
-                     "opposingSourceIds":[],"limitations":"Invalid digest","unverified":false,"quotedSpans":[]}
+                  "findings":[
+                    {"findingId":"unknown-claim","title":"Unknown finding","mechanism":"Unknown claim","keyParameters":[],"evidenceSummary":"","implications":"","supportingSourceIds":["unknown-source"],
+                     "opposingSourceIds":[],"limitations":"Unknown","evidenceAssessment":"SUPPORTED","unverified":true},
+                    {"findingId":"fetch-claim","title":"Fetch finding","mechanism":"Fetch claim","keyParameters":[],"evidenceSummary":"","implications":"","supportingSourceIds":["invalid-fetch"],
+                     "opposingSourceIds":[],"limitations":"Invalid digest","evidenceAssessment":"SUPPORTED","unverified":false}
                   ],
-                  "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
                   "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":2,"contentBytes":64}
                 }
                 """
@@ -994,9 +1000,9 @@ class SdkMissionRuntimeAccessTest {
             assertThat(source.path("contentDigest").isNull()).isTrue();
             assertThat(source.path("excerpt").asText()).isEmpty();
         });
-        assertThat(canonical.path("claims"))
-                .allSatisfy(claim ->
-                        assertThat(claim.path("unverified").asBoolean()).isTrue());
+        assertThat(canonical.path("findings"))
+                .allSatisfy(finding ->
+                        assertThat(finding.path("unverified").asBoolean()).isTrue());
     }
 
     private static ResearchBrief truthfulnessBrief() {
