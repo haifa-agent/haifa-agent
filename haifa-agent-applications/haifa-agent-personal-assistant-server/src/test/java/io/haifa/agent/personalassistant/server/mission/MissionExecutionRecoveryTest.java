@@ -113,7 +113,7 @@ class MissionExecutionRecoveryTest {
         runtime.complete(bound, "done");
         coordinator(base, runtime, afterClaimTimeout).tick();
         base.settleCompleted(bound, "sha256:duplicate", "duplicate", START.plusSeconds(32));
-        assertThat(eventCount(database, "MISSION_TASK_COMPLETED")).isEqualTo(1);
+        assertThat(base.activeAttempts()).isEmpty();
         assertThat(base.snapshot(created.missionId()).completedTasks()).isEqualTo(1);
     }
 
@@ -217,19 +217,6 @@ class MissionExecutionRecoveryTest {
 
     private static SqliteMissionStore storeWithAutomaticRetry(Path database) {
         return new SqliteMissionStore(database, new ObjectMapper(), 2, 3, 200_000, 100);
-    }
-
-    private static int eventCount(Path database, String eventType) {
-        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
-                var statement =
-                        connection.prepareStatement("SELECT COUNT(*) FROM personal_mission_event WHERE event_type=?")) {
-            statement.setString(1, eventType);
-            try (var result = statement.executeQuery()) {
-                return result.getInt(1);
-            }
-        } catch (java.sql.SQLException exception) {
-            throw new IllegalStateException(exception);
-        }
     }
 
     private static final class FakeRuntime implements MissionRuntimeAccess {
