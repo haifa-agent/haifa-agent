@@ -33,7 +33,6 @@ final class MissionDependencyContextProjector {
             target.put("brief", bounded(source.path("brief").asText(), briefLimit));
             projectSources(source.path("sources"), target.putArray("sources"));
             projectClaims(source.path("claims"), target.putArray("claims"));
-            projectArtifactRefs(source.path("artifactRefs"), target.putArray("artifactRefs"));
             projectTextArray(
                     source.path("unresolvedQuestions"),
                     target.putArray("unresolvedQuestions"),
@@ -75,18 +74,6 @@ final class MissionDependencyContextProjector {
         }
     }
 
-    private static void projectArtifactRefs(JsonNode values, ArrayNode target) {
-        if (!values.isArray()) return;
-        int count = 0;
-        for (JsonNode value : values) {
-            if (count++ >= 8) break;
-            ObjectNode artifact = target.addObject();
-            copyFirstText(value, artifact, "artifactId", List.of("artifactId", "id", "ref"), 256);
-            copyText(value, artifact, "contentDigest", 128);
-            copyText(value, artifact, "mediaType", 128);
-            copyText(value, artifact, "title", 256);
-        }
-    }
 
     private static void projectTextArray(JsonNode values, ArrayNode target, int maximumItems, int maximumCharacters) {
         if (!values.isArray()) return;

@@ -656,7 +656,7 @@ class MissionArtifactPublisherTest {
                     "fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z",
                     "status":"FETCHED","excerpt":"The specification defines the value.","contentDigest":"sha256:%s"
                   }],
-                  "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
                   "limitsUsed":{"searchCalls":1,"fetchCalls":1,"sources":1,"contentBytes":128}
                 }
                 """
@@ -820,7 +820,7 @@ class MissionArtifactPublisherTest {
                 {"sourceId":"source-1","locator":"https://research.stub/source-1","normalizedLocator":"https://research.stub/source-1","locatorDigest":"sha256:%s","title":"Primary","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z","status":"FETCHED","excerpt":"Primary evidence.","contentDigest":"sha256:%s"},
                 {"sourceId":"source-2","locator":"https://research.stub/source-2","normalizedLocator":"https://research.stub/source-2","locatorDigest":"sha256:%s","title":"Independent","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-02-01T00:00:00Z","status":"FETCHED","excerpt":"Independent evidence.","contentDigest":"sha256:%s"}],
                 "claims":[{"claimId":"claim-1","claim":"Supported claim","supportingSourceIds":["source-1","source-2"],"opposingSourceIds":[],"limitations":"Offline fixture","unverified":false,"quotedSpans":[]}],
-                "artifactRefs":[],"unresolvedQuestions":["External freshness"],"stopReason":"SUFFICIENT_EVIDENCE","limitsUsed":{"searchCalls":1,"fetchCalls":2,"sources":2,"contentBytes":128}}
+                "unresolvedQuestions":["External freshness"],"stopReason":"SUFFICIENT_EVIDENCE","limitsUsed":{"searchCalls":1,"fetchCalls":2,"sources":2,"contentBytes":128}}
                 """
                         .formatted("a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64)));
     }

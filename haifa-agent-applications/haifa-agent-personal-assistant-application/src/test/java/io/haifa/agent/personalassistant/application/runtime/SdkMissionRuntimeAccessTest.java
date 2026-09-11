@@ -257,7 +257,7 @@ class SdkMissionRuntimeAccessTest {
                         "Do not invent a source",
                         "query.phase: DISCOVER, DEEPEN, or CROSS_CHECK",
                         "source.safetyType: PUBLIC_WEB",
-                        "artifactRefs, keyParameters, supportingSourceIds, and opposingSourceIds must be JSON arrays",
+                        "keyParameters, supportingSourceIds, and opposingSourceIds must be JSON arrays",
                         "continues the same source",
                         "serialized DSML",
                         "Never substitute another company",
@@ -282,7 +282,7 @@ class SdkMissionRuntimeAccessTest {
                   "brief":"Verified policy evidence",
                   "sources":[{"sourceId":"official-1","normalizedLocator":"https://example.gov/policy","title":"Policy","status":"FETCHED","publishedAt":"2026-08-01T00:00:00Z"}],
                   "claims":[{"claimId":"claim-1","claim":"The policy applies","supportingSourceIds":["official-1"],"opposingSourceIds":[],"limitations":"Current as queried","unverified":false}],
-                  "artifactRefs":[],"unresolvedQuestions":[]
+                  "unresolvedQuestions":[]
                 }
                 """;
         var input = MissionTaskRunInput.create(

@@ -588,9 +588,6 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             JsonNode limits = requiredObject(task, "limitsUsed");
             validateLimits(limits);
             if (!STOP_REASONS.contains(requiredText(task, "stopReason", 64))) invalid("stopReason is invalid");
-            if (!requiredArray(task, "artifactRefs", 8).isEmpty()) {
-                invalid("Task result cannot invent Artifact references");
-            }
             JsonNode taskSources = requiredArray(task, "sources", maxSources);
             if (limits.get("sources").intValue() != taskSources.size()
                     || limits.get("fetchCalls").intValue()
