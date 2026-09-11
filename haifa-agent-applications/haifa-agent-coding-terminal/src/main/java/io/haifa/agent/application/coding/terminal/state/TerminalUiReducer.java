@@ -891,8 +891,7 @@ public final class TerminalUiReducer {
         return prefix + target.substring(0, end) + "…";
     }
 
-    private static TranscriptItem runSummaryItem(
-            RunEventPayloads.RunLifecycle payload, AgentRunEvent event) {
+    private static TranscriptItem runSummaryItem(RunEventPayloads.RunLifecycle payload, AgentRunEvent event) {
         Optional<Long> duration = Optional.empty();
         String title =
                 switch (payload.status()) {

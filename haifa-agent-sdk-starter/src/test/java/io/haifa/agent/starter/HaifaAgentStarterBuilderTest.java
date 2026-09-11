@@ -304,7 +304,12 @@ public class HaifaAgentStarterBuilderTest {
             var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
 
             assertThat(completed.status())
-                    .as("run failed with: %s", completed.error().map(io.haifa.agent.core.error.AgentError::message).orElse("none"))
+                    .as(
+                            "run failed with: %s",
+                            completed
+                                    .error()
+                                    .map(io.haifa.agent.core.error.AgentError::message)
+                                    .orElse("none"))
                     .isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(completed.output()).contains("The weather is sunny.");
             assertThat(invoked.get()).isEqualTo(new WeatherRequest("Shanghai"));
