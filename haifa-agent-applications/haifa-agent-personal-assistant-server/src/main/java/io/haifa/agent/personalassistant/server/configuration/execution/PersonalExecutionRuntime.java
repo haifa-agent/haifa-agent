@@ -121,8 +121,7 @@ public final class PersonalExecutionRuntime {
         Set<String> environmentNames = resolvedEnvironment.allowedEnvironmentNames();
         String profileVersion = "3-"
                 + SandboxConfigurationDigest.sha256Fields(List.of(
-                                host.configurationDigest().value(),
-                                HostExecutionEnvironmentResolver.POLICY_VERSION))
+                                host.configurationDigest().value(), HostExecutionEnvironmentResolver.POLICY_VERSION))
                         .value()
                         .substring("sha256:".length());
         SandboxProfile profile = SandboxProfile.hostGuarded(
@@ -173,16 +172,12 @@ public final class PersonalExecutionRuntime {
                 configuration,
                 (resolvedWorkspaceId, inputPaths) -> inputPaths.forEach(path ->
                         files.stat(new io.haifa.agent.project.path.WorkspacePath(resolvedWorkspaceId, path), false)));
-        return PersonalExecutionPlatform.create(
-                provider,
-                profile,
-                runtimes,
-                (requester, target, responder) -> {
-                    boolean samePrincipal = requester.tenant().equals(responder.tenant())
-                            && requester.principal().equals(responder.principal());
-                    return new ApprovalVerification(
-                            samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
-                });
+        return PersonalExecutionPlatform.create(provider, profile, runtimes, (requester, target, responder) -> {
+            boolean samePrincipal = requester.tenant().equals(responder.tenant())
+                    && requester.principal().equals(responder.principal());
+            return new ApprovalVerification(
+                    samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
+        });
     }
 
     private static Optional<Path> configuredPath(String value) {

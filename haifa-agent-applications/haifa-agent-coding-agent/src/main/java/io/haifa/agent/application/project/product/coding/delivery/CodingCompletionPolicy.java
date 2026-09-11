@@ -12,8 +12,8 @@ import java.util.Objects;
 
 /**
  * Minimal Coding completion gate over trusted task mode and reconstructed authoritative evidence.
- * Validation blockers require an explicit, frozen verification promise from the session's
- * verification configuration; observed workspace changes alone never demand Build/Test.
+ * Validation blockers require the explicit, frozen {@code requiresValidationEvidence} fact from the
+ * session's verification configuration; observed workspace changes alone never demand Build/Test.
  */
 public final class CodingCompletionPolicy implements CompletionPolicy {
     private final CodingTaskModeResolver taskModes;
@@ -143,7 +143,7 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
                     "No authoritative workspace change or evidence-backed no-change result exists.",
                     "WORKSPACE_CHANGE"));
         }
-        if (verificationPromised(run)) {
+        if (validationRequired(run)) {
             boolean changed = snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
             if (!snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)
                     || (changed
@@ -185,11 +185,8 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
         }
     }
 
-    private boolean verificationPromised(AgentRun run) {
-        return verificationProfiles
-                .configurationFor(run.id())
-                .profile()
-                .hasExplicitVerificationPromise();
+    private boolean validationRequired(AgentRun run) {
+        return verificationProfiles.configurationFor(run.id()).requiresValidationEvidence();
     }
 
     private void unknownBlockers(

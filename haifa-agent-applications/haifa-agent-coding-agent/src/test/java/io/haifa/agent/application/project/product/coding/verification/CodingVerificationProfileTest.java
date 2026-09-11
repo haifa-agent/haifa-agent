@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class CodingVerificationProfileTest {
@@ -60,20 +61,60 @@ class CodingVerificationProfileTest {
     }
 
     @Test
-    void explicitVerificationPromiseRequiresUserExplicitCandidatesOnly() {
-        assertThat(CodingVerificationProfile.empty().hasExplicitVerificationPromise()).isFalse();
-        assertThat(new CodingVerificationProfile(
-                        List.of(candidate(
-                                "./mvnw test", CodingVerificationSource.BUILD_CONFIGURATION, CodingVerificationTrigger.FINAL_GATE)),
-                        List.of())
-                .hasExplicitVerificationPromise())
+    void committedVerificationCandidatesAreUserExplicitOrRepositoryInstructionsOnly() {
+        assertThat(CodingVerificationProfile.empty().hasCommittedVerificationCandidates())
                 .isFalse();
-        assertThat(new CodingVerificationProfile(
-                        List.of(candidate(
-                                "./mvnw test", CodingVerificationSource.USER_EXPLICIT, CodingVerificationTrigger.FINAL_GATE)),
-                        List.of())
-                .hasExplicitVerificationPromise())
-                .isTrue();
+        for (CodingVerificationSource recommended : List.of(
+                CodingVerificationSource.BUILD_CONFIGURATION,
+                CodingVerificationSource.ADJACENT_TEST,
+                CodingVerificationSource.ECOSYSTEM_DEFAULT)) {
+            assertThat(new CodingVerificationProfile(
+                                    List.of(candidate(
+                                            "./mvnw test", recommended, CodingVerificationTrigger.FINAL_GATE)),
+                                    List.of())
+                            .hasCommittedVerificationCandidates())
+                    .as(recommended.name())
+                    .isFalse();
+        }
+        for (CodingVerificationSource committed :
+                List.of(CodingVerificationSource.USER_EXPLICIT, CodingVerificationSource.REPOSITORY_INSTRUCTIONS)) {
+            assertThat(new CodingVerificationProfile(
+                                    List.of(candidate("./mvnw test", committed, CodingVerificationTrigger.FINAL_GATE)),
+                                    List.of())
+                            .hasCommittedVerificationCandidates())
+                    .as(committed.name())
+                    .isTrue();
+        }
+    }
+
+    @Test
+    void frozenConfigurationCarriesAnExplicitValidationRequirementFactWithDigestProtection() {
+        CodingVerificationProfile recommended = new CodingVerificationProfile(List.of(), List.of());
+        CodingSessionVerificationConfiguration recommendedFrozen =
+                CodingSessionVerificationConfiguration.freeze(recommended);
+        assertThat(recommendedFrozen.requiresValidationEvidence()).isFalse();
+        assertThat(CodingSessionVerificationConfiguration.fromSessionMetadata(recommendedFrozen.sessionMetadata()))
+                .contains(recommendedFrozen);
+
+        CodingVerificationProfile committed = new CodingVerificationProfile(
+                List.of(candidate(
+                        "./mvnw test",
+                        CodingVerificationSource.REPOSITORY_INSTRUCTIONS,
+                        CodingVerificationTrigger.FINAL_GATE)),
+                List.of());
+        CodingSessionVerificationConfiguration committedFrozen =
+                CodingSessionVerificationConfiguration.freeze(committed);
+        assertThat(committedFrozen.requiresValidationEvidence()).isTrue();
+        assertThat(CodingSessionVerificationConfiguration.fromSessionMetadata(committedFrozen.sessionMetadata()))
+                .contains(committedFrozen);
+
+        var tampered = new java.util.LinkedHashMap<>(committedFrozen.sessionMetadata());
+        @SuppressWarnings("unchecked")
+        var data = new java.util.LinkedHashMap<>((Map<String, Object>) tampered.get("codingVerification"));
+        data.put("requiresValidationEvidence", false);
+        tampered.put("codingVerification", data);
+        assertThat(CodingSessionVerificationConfiguration.fromSessionMetadata(tampered))
+                .isEmpty();
     }
 
     private static CodingVerificationCandidate candidate(

@@ -12,7 +12,6 @@ import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
-import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ManagedProcessRequest;
@@ -492,24 +491,26 @@ class ExecutionCoreTest {
         Path worktreeRoot = root.resolve("worktree");
         Files.createDirectories(worktreeRoot);
         fixture.locations().register(worktreeLocationRef, worktreeRoot);
-        fixture.bindings().create(WorkspaceBinding.provision(
-                        worktreeBindingId,
-                        worktreeLocationRef,
-                        WorkspaceBindingMode.DIRECT,
-                        new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.executionFiles(),
-                        WorkspacePermissionSet.readWriteExecute(),
-                        HostWorkspaceLocationStore.fingerprintFor(worktreeRoot),
-                        NOW)
-                .activate(NOW));
-        fixture.workspaces().create(Workspace.provision(
-                        worktreeId,
-                        new ProjectId("project-1"),
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), worktreeBindingId, "test"),
-                        WorkspaceRevision.initial("worktree-v1"),
-                        NOW)
-                .activate(NOW));
+        fixture.bindings()
+                .create(WorkspaceBinding.provision(
+                                worktreeBindingId,
+                                worktreeLocationRef,
+                                WorkspaceBindingMode.DIRECT,
+                                new PrincipalRef("owner", "user"),
+                                WorkspaceCapabilitySet.executionFiles(),
+                                WorkspacePermissionSet.readWriteExecute(),
+                                HostWorkspaceLocationStore.fingerprintFor(worktreeRoot),
+                                NOW)
+                        .activate(NOW));
+        fixture.workspaces()
+                .create(Workspace.provision(
+                                worktreeId,
+                                new ProjectId("project-1"),
+                                WorkspacePurpose.PRIMARY,
+                                new WorkspaceRoot(ProjectPath.root(), worktreeBindingId, "test"),
+                                WorkspaceRevision.initial("worktree-v1"),
+                                NOW)
+                        .activate(NOW));
         AtomicInteger opens = new AtomicInteger();
         SandboxProvider provider = new SandboxProvider() {
             @Override
@@ -597,7 +598,8 @@ class ExecutionCoreTest {
         var fileService = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
         var manifests = new WorkspaceManifestService(
                 workspaces, fileService, new ManifestBudget(100, 1024 * 1024, 1024 * 1024), "test-v1");
-        return new Fixture(workspaceId, root, workspaces, bindings, locations, manifests, new InMemoryExecutionOutputStore());
+        return new Fixture(
+                workspaceId, root, workspaces, bindings, locations, manifests, new InMemoryExecutionOutputStore());
     }
 
     @Test

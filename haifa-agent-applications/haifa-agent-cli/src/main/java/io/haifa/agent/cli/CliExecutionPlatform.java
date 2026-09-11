@@ -158,8 +158,7 @@ final class CliExecutionPlatform {
                 repositoryBaselines.observer());
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
-        return new CliExecutionPlatform(
-                operations, profile, shell.displayName(), securitySummary, repositoryBaselines);
+        return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary, repositoryBaselines);
     }
 
     ProjectExecutionToolOperations operations() {
@@ -253,9 +252,7 @@ final class CliExecutionPlatform {
     }
 
     private static SandboxProfile profile(
-            CliConfiguration.Execution configuration,
-            SandboxProvider provider,
-            Set<String> inheritedEnvironment) {
+            CliConfiguration.Execution configuration, SandboxProvider provider, Set<String> inheritedEnvironment) {
         List<String> identityFields = new java.util.ArrayList<>();
         identityFields.add("cli-execution-v3");
         identityFields.add(HostExecutionEnvironmentResolver.POLICY_VERSION);

@@ -681,9 +681,8 @@ final class LocalCodingAgent implements AutoCloseable {
             var deliveryEvidence =
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
             var deliveryProfile = CodingDeliveryProfile.safeDefault();
-            var completionPolicy =
-                    new CodingCompletionPolicy(
-                            taskModes, deliveryEvidence, deliveryProfile, deliveryIntents, verificationProfiles);
+            var completionPolicy = new CodingCompletionPolicy(
+                    taskModes, deliveryEvidence, deliveryProfile, deliveryIntents, verificationProfiles);
             var outcomeProjection = new CodingRunOutcomeProjectionService(
                     completionPolicy,
                     persistence.ports().events(),

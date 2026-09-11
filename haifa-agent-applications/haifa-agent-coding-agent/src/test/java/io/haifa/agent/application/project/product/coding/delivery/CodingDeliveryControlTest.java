@@ -399,6 +399,20 @@ class CodingDeliveryControlTest {
     }
 
     @Test
+    void repositoryInstructionCandidatesAreTrustedFrozenVerificationRequirements() {
+        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
+        CodingCompletionPolicy policy = policy(fixture.store(), repositoryInstructionVerificationProfiles());
+        tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("path", "src/Main.java"));
+
+        assertThat(policy.evaluate(fixture.run(), finalDecision()).blockers())
+                .extracting(blocker -> blocker.code())
+                .containsExactly("VALIDATION_ATTEMPT_MISSING");
+
+        validationTool(fixture, true, 8, 8, 0);
+        assertThat(policy.evaluate(fixture.run(), finalDecision()).allowed()).isTrue();
+    }
+
+    @Test
     void unknownModeObservedChangeWithoutVerificationPromiseNeedsOnlyMutationEvidence() {
         Fixture changed = fixture("please take a look", Map.of());
         CodingCompletionPolicy policy = policy(changed.store(), environmentOnlyVerificationProfiles());
@@ -613,13 +627,20 @@ class CodingDeliveryControlTest {
     }
 
     private static CodingVerificationProfileProvider promisedVerificationProfiles() {
-        return ignored -> CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(
-                List.of(candidate(CodingVerificationSource.USER_EXPLICIT, "user-request")), List.of()));
+        return frozenVerificationProfiles(CodingVerificationSource.USER_EXPLICIT);
+    }
+
+    private static CodingVerificationProfileProvider repositoryInstructionVerificationProfiles() {
+        return frozenVerificationProfiles(CodingVerificationSource.REPOSITORY_INSTRUCTIONS);
     }
 
     private static CodingVerificationProfileProvider environmentOnlyVerificationProfiles() {
-        return ignored -> CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(
-                List.of(candidate(CodingVerificationSource.BUILD_CONFIGURATION, "pom.xml")), List.of()));
+        return frozenVerificationProfiles(CodingVerificationSource.BUILD_CONFIGURATION);
+    }
+
+    private static CodingVerificationProfileProvider frozenVerificationProfiles(CodingVerificationSource source) {
+        return ignored -> CodingSessionVerificationConfiguration.freeze(
+                new CodingVerificationProfile(List.of(candidate(source, source.name())), List.of()));
     }
 
     private static CodingVerificationCandidate candidate(CodingVerificationSource source, String reference) {
