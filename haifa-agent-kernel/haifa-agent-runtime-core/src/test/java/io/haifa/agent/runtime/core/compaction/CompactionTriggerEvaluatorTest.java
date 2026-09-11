@@ -42,7 +42,7 @@ class CompactionTriggerEvaluatorTest {
     @Test
     @DisplayName("evaluate does not trigger compaction when disabled by policy")
     void testDisabledPolicy() {
-        CompressionPolicy policy = CompressionPolicy.defaults(); // semanticCompactionEnabled = false
+        CompressionPolicy policy = CompressionPolicy.defaults().withSemanticCompactionEnabled(false);
         CompactionTriggerEvaluator evaluator = new CompactionTriggerEvaluator(policy);
 
         CompactionTriggerDecision decision = evaluator.evaluate(128_000L, 4_096L, 2_000L, 1_000L, 120_000L, 10);
