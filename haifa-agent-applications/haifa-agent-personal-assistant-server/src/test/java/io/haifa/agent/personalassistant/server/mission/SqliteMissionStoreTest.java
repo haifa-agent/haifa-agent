@@ -474,8 +474,10 @@ class SqliteMissionStoreTest {
     void upgradesExistingDatabaseFromSchemaVersionSevenDroppingEventTableWithoutDrift() throws Exception {
         Path database = directory.resolve("v7-existing.sqlite");
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath())) {
-            connection.createStatement().execute(
-                    "CREATE TABLE IF NOT EXISTS personal_schema_history(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, installed_at_ms INTEGER NOT NULL)");
+            connection
+                    .createStatement()
+                    .execute(
+                            "CREATE TABLE IF NOT EXISTS personal_schema_history(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, installed_at_ms INTEGER NOT NULL)");
             List<String> v7Scripts = List.of(
                     SqliteMissionStore.MIGRATION,
                     SqliteMissionStore.MIGRATION_V2,
@@ -496,8 +498,10 @@ class SqliteMissionStoreTest {
                 insert.setLong(3, CLOCK.instant().toEpochMilli());
                 insert.executeUpdate();
             }
-            connection.createStatement().execute(
-                    """
+            connection
+                    .createStatement()
+                    .execute(
+                            """
                     INSERT INTO personal_mission (
                         mission_id, conversation_id, owner_scope, model_binding_json, objective,
                         acceptance_json, constraints_json, state, version, created_at_ms, updated_at_ms, deadline_at_ms
@@ -508,8 +512,10 @@ class SqliteMissionStoreTest {
                         'PLANNING', 0, 1000, 1000, 2000
                     )
                     """);
-            connection.createStatement().execute(
-                    """
+            connection
+                    .createStatement()
+                    .execute(
+                            """
                     INSERT INTO personal_mission_event (
                         mission_id, event_type, schema_version, payload_json, created_at_ms
                     ) VALUES ('m-legacy', 'MISSION_CREATED', 'v1', '{}', 1000)

@@ -137,7 +137,7 @@ class MissionApplicationServiceTest {
                 new MissionPlanValidator(
                         Set.of("GENERAL", "RESEARCH"),
                         Set.of("deep-research"),
-                        Set.of("pa.task-result@v1", "pa.research-task-result@v1")),
+                        Set.of("pa.task-result@v1", "pa.research-task-result@v1", "pa.research-task-result@v2")),
                 () -> "research-mission",
                 CLOCK,
                 MissionExecutionStore.unavailable(),
@@ -176,6 +176,7 @@ class MissionApplicationServiceTest {
             assertThat(task.taskType()).isEqualTo("RESEARCH");
             assertThat(task.requiredSkillIds()).containsExactly("deep-research");
             assertThat(task.resultSchemaId()).isEqualTo("pa.research-task-result");
+            assertThat(task.resultSchemaVersion()).isEqualTo("v2");
         });
     }
 
@@ -224,7 +225,7 @@ class MissionApplicationServiceTest {
                 new MissionPlanValidator(
                         Set.of("GENERAL", "RESEARCH"),
                         Set.of("deep-research"),
-                        Set.of("pa.task-result@v1", "pa.research-task-result@v1")),
+                        Set.of("pa.task-result@v1", "pa.research-task-result@v1", "pa.research-task-result@v2")),
                 () -> "research-mission-" + ids.incrementAndGet(),
                 clock,
                 MissionExecutionStore.unavailable(),
