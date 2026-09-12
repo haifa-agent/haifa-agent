@@ -70,7 +70,7 @@ python -m unittest discover -s haifa-agent-testing/haifa-agent-autonomous-delive
 评测过程中的输出：每题开始时的三维标签与变体、Agent 预算与日志文件名、每 15 秒一次的心跳（已用时间/预算、
 输出行数、最后一行输出）、每题结束时的状态（`PASSED` / `FAILED` / `INCOMPLETE_BUDGET`）、通过的检查数、
 Agent 耗时与退出码、改动的源文件；失败时列出失败检查名及其原因。每题之后打印总进度与累计通过率，
-结束时按 level 汇总，并写出 `ladder-report.json`、`run-records.jsonl` 与每题 Agent 日志；报告的 `mode` 区分 `agent` 与 `rehearse`，彩排结果不会被误读为真实评测。
+结束时按 level 汇总，并写出 `ladder-report.json`、`run-records.jsonl` 与每题 Agent 日志；报告的 `mode` 区分 `agent` 与 `rehearse`，彩排结果不会被误读为真实评测；报告与每条运行记录还带`evaluation` 溯源信息（模式、模型、审批模式、题集版本与 manifest 摘要、是否为锁定题集），未锁定题集在汇总和报告里都会标为 `UNPINNED`。
 
 Windows 上 `haifa-coding.cmd` 会自动替换为同目录的 `haifa-agent.jar`：批处理启动器经 cmd.exe 传参会把
 多行题面截断到第一行。控制台与报告不输出题面、凭据值或完整模型响应，日志中出现的凭据值会被替换为 `***`。
