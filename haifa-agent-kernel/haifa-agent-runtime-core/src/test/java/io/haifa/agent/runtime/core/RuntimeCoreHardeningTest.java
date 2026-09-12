@@ -650,7 +650,7 @@ class RuntimeCoreHardeningTest {
         Fixture fixture = fixture(
                 boundedModel,
                 builder -> TestToolPlatform.install(
-                        builder, "environment-probe", "1.0.0", "environment-probe.input", false, ignored -> {
+                        builder, "environment_probe", "1.0.0", "environment-probe.input", false, ignored -> {
                             toolCalls.incrementAndGet();
                             return new ToolResult(
                                     false,
@@ -743,15 +743,15 @@ class RuntimeCoreHardeningTest {
     @Test
     void workspaceToolsDoNotTriggerRuntimeBaselineSnapshots() {
         ToolRequest write = toolRequest(
-                "workspace-write",
-                "workspace-write",
+                "workspace_write",
+                "workspace_write",
                 "1.0.0",
                 new ToolArguments("workspace-write.input", "1", Map.of("path", "src/Main.java")));
         Fixture mutating = fixture(
                 model(new ToolCallDecision(List.of(write)), finalDecision("done")),
                 builder -> TestToolPlatform.install(
                         builder,
-                        "workspace-write",
+                        "workspace_write",
                         "1.0.0",
                         "workspace-write.input",
                         true,
@@ -774,15 +774,15 @@ class RuntimeCoreHardeningTest {
                 .noneMatch(event -> event.type().equals("workspace.baseline-checkpoint-captured"));
 
         ToolRequest read = toolRequest(
-                "workspace-read",
-                "workspace-read",
+                "workspace_read",
+                "workspace_read",
                 "1.0.0",
                 new ToolArguments("workspace-read.input", "1", Map.of("path", "src/Main.java")));
         Fixture readOnly = fixture(
                 model(new ToolCallDecision(List.of(read)), finalDecision("done")),
                 builder -> TestToolPlatform.install(
                         builder,
-                        "workspace-read",
+                        "workspace_read",
                         "1.0.0",
                         "workspace-read.input",
                         false,
@@ -850,7 +850,7 @@ class RuntimeCoreHardeningTest {
                 stalledModel,
                 builder -> TestToolPlatform.install(
                         builder,
-                        "progress-probe",
+                        "progress_probe",
                         "1.0.0",
                         "progress-probe.input",
                         false,
@@ -896,7 +896,7 @@ class RuntimeCoreHardeningTest {
         };
         Fixture fixture = fixture(interrupted, builder -> TestToolPlatform.install(
                         builder,
-                        "progress-probe",
+                        "progress_probe",
                         "1.0.0",
                         "progress-probe.input",
                         false,
@@ -1239,7 +1239,7 @@ class RuntimeCoreHardeningTest {
                                         .getFirst())));
                     },
                     builder -> TestToolPlatform.install(
-                            builder, "environment-probe", "1.0.0", "environment-probe.input", false, request -> {
+                            builder, "environment_probe", "1.0.0", "environment-probe.input", false, request -> {
                                 executions.incrementAndGet();
                                 return new ToolResult(
                                         false,
@@ -1473,7 +1473,7 @@ class RuntimeCoreHardeningTest {
     private static ToolCallDecision environmentFailureRequest(String key, String randomPath, String commandForm) {
         return new ToolCallDecision(List.of(toolRequest(
                 key,
-                "environment-probe",
+                "environment_probe",
                 "1.0.0",
                 new ToolArguments(
                         "environment-probe.input",
@@ -1492,7 +1492,7 @@ class RuntimeCoreHardeningTest {
     private static ToolCallDecision progressRequest(String key, String purpose) {
         return new ToolCallDecision(List.of(toolRequest(
                 key,
-                "progress-probe",
+                "progress_probe",
                 "1.0.0",
                 new ToolArguments("progress-probe.input", "1", Map.of("purpose", purpose)))));
     }
