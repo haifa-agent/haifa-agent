@@ -30,8 +30,7 @@ public final class TripPlanTool implements JavaTool<TripPlanTool.Request, TripPl
     public record Response(String destination, LocalDate travelDate, List<Stop> stops, Map<String, String> notes) {}
 
     private static final JavaToolSpec<Request, Response> SPEC = JavaToolSpec.builder(
-                    "travel.plan", Request.class, Response.class)
-            .alias("trip_plan")
+                    "trip_plan", Request.class, Response.class)
             .description("Build a deterministic itinerary from structured preferences")
             .pure()
             .build();

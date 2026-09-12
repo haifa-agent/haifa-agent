@@ -1191,7 +1191,7 @@ class RuntimeCoreTest {
                     }
                 },
                 builder -> TestToolPlatform.install(
-                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
+                        builder, "execution_run", "1.0.0", "execution.run.input", true, invocation -> {
                             int callIndex = toolCalls.incrementAndGet();
                             if (callIndex == 1) {
                                 throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
@@ -1241,7 +1241,7 @@ class RuntimeCoreTest {
                                 ? new ToolCallDecision(List.of(request))
                                 : finalDecision("Network permission is required to proceed")),
                 builder -> TestToolPlatform.install(
-                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
+                        builder, "execution_run", "1.0.0", "execution.run.input", true, invocation -> {
                             toolCalls.incrementAndGet();
                             throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
                                     "NETWORK_PERMISSION_REQUIRED",
@@ -1272,7 +1272,7 @@ class RuntimeCoreTest {
         Fixture fixture = fixture(
                 model(new ToolCallDecision(List.of(request))),
                 builder -> TestToolPlatform.install(
-                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
+                        builder, "execution_run", "1.0.0", "execution.run.input", true, invocation -> {
                             toolCalls.incrementAndGet();
                             throw new IllegalStateException("workspace change observation could not be established");
                         }));
@@ -1307,7 +1307,7 @@ class RuntimeCoreTest {
                                 ? new ToolCallDecision(List.of(firstRequest, secondRequest))
                                 : finalDecision("handled sibling failure")),
                 builder -> TestToolPlatform.install(
-                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
+                        builder, "execution_run", "1.0.0", "execution.run.input", true, invocation -> {
                             toolCalls.incrementAndGet();
                             throw io.haifa.agent.tool.api.ToolInvocationException.preflight(
                                     "NETWORK_PERMISSION_REQUIRED", "host network access requires operator approval");
@@ -1343,7 +1343,7 @@ class RuntimeCoreTest {
                                 ? new ToolCallDecision(List.of(request))
                                 : finalDecision("handled failure")),
                 builder -> TestToolPlatform.install(
-                        builder, "execution.run", "1.0.0", "execution.run.input", true, invocation -> {
+                        builder, "execution_run", "1.0.0", "execution.run.input", true, invocation -> {
                             toolCalls.incrementAndGet();
                             return new ToolResult(
                                     false,
@@ -1378,7 +1378,7 @@ class RuntimeCoreTest {
                 model(new ToolCallDecision(List.of(request)), finalDecision("handled failure")),
                 builder -> TestToolPlatform.install(
                         builder,
-                        "execution.run",
+                        "execution_run",
                         "1.0.0",
                         "execution.run.input",
                         true,
@@ -1416,7 +1416,7 @@ class RuntimeCoreTest {
                 model(new ToolCallDecision(List.of(request)), finalDecision("handled exit code")),
                 builder -> TestToolPlatform.install(
                         builder,
-                        "execution.run",
+                        "execution_run",
                         "1.0.0",
                         "execution.run.input",
                         true,

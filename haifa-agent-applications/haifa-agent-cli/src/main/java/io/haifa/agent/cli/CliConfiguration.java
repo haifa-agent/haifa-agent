@@ -37,18 +37,18 @@ record CliConfiguration(
         ProjectPersistenceConfiguration persistence) {
     private static final long DEFAULT_MAX_MODEL_CALLS = 64L;
     private static final Set<String> DEFAULT_TOOLS = Set.of(
-            "file.list",
-            "file.stat",
-            "file.read",
-            "file.create",
-            "file.write",
-            "file.patch",
-            "file.delete",
-            "file.move",
-            "workspace.attach",
-            "workspace.worktree.create",
-            "execution.run");
-    private static final Set<String> OPTIONAL_TOOLS = Set.of("file.search", "web.search", "web.fetch");
+            "file_list",
+            "file_stat",
+            "file_read",
+            "file_create",
+            "file_write",
+            "file_patch",
+            "file_delete",
+            "file_move",
+            "workspace_attach",
+            "workspace_worktree_create",
+            "execution_run");
+    private static final Set<String> OPTIONAL_TOOLS = Set.of("file_search", "web_search", "web_fetch");
     private static final Set<String> SUPPORTED_TOOLS = java.util.stream.Stream.concat(
                     DEFAULT_TOOLS.stream(), OPTIONAL_TOOLS.stream())
             .collect(java.util.stream.Collectors.toUnmodifiableSet());
@@ -73,8 +73,8 @@ record CliConfiguration(
         if (!SUPPORTED_TOOLS.containsAll(enabledTools)) {
             throw new IllegalArgumentException("CLI supports only configured tools: " + SUPPORTED_TOOLS);
         }
-        if (enabledTools.contains("web.search") != web.search().enabled()
-                || enabledTools.contains("web.fetch") != web.fetch().enabled()) {
+        if (enabledTools.contains("web_search") != web.search().enabled()
+                || enabledTools.contains("web_fetch") != web.fetch().enabled()) {
             throw new IllegalArgumentException("tools.enabled and web provider enabled flags must match");
         }
         if (mcpServers.stream().map(McpServer::id).distinct().count() != mcpServers.size()) {

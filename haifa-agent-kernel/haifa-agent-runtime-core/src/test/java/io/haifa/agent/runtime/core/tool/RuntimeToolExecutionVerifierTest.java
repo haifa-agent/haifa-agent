@@ -212,7 +212,7 @@ class RuntimeToolExecutionVerifierTest {
         Map<String, Object> schema =
                 Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
         var definition = new ToolDefinition(
-                new ToolName("execution.run"),
+                new ToolName("execution_run"),
                 new SemanticVersion("2.0.0"),
                 new ToolProviderId("haifa-execution"),
                 "Run execution",
@@ -226,7 +226,7 @@ class RuntimeToolExecutionVerifierTest {
                 ToolIdempotency.NON_IDEMPOTENT,
                 ToolRisk.HIGH,
                 Set.of(ToolSideEffect.PROCESS_EXECUTION),
-                new ToolResourceRequirements(Set.of("execution.run"), Set.of(), Set.of("test@1")),
+                new ToolResourceRequirements(Set.of("execution_run"), Set.of(), Set.of("test@1")),
                 List.of(),
                 ToolApprovalRequirement.ALWAYS,
                 "test",

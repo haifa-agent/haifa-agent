@@ -139,8 +139,7 @@ public class HaifaAgentAutoConfigurationTest {
 
     static final class WeatherTool implements JavaTool<WeatherRequest, WeatherResponse> {
         private static final JavaToolSpec<WeatherRequest, WeatherResponse> SPEC = JavaToolSpec.builder(
-                        "weather.get", WeatherRequest.class, WeatherResponse.class)
-                .alias("weather_get")
+                        "weather_get", WeatherRequest.class, WeatherResponse.class)
                 .pure()
                 .build();
 

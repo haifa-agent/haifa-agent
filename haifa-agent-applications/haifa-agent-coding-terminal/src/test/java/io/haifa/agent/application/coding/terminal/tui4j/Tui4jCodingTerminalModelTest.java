@@ -367,15 +367,15 @@ class Tui4jCodingTerminalModelTest {
 
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
                 2,
-                new RunEventPayloads.ToolLifecycle("tool-1", "execution.run", "STARTED", "NONE", "git status", ""))));
+                new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "STARTED", "NONE", "git status", ""))));
         fixture.model.update(new WindowSizeMessage(80, 24));
-        assertThat(fixture.model.view()).contains("WORKING (1s) · execution.run");
+        assertThat(fixture.model.view()).contains("WORKING (1s) · execution_run");
         clock.set(Duration.ofSeconds(14).toNanos());
-        assertThat(fixture.model.view()).contains("WORKING (5s) · execution.run");
+        assertThat(fixture.model.view()).contains("WORKING (5s) · execution_run");
 
         fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
                 3,
-                new RunEventPayloads.ToolLifecycle("tool-1", "execution.run", "SUCCEEDED", "NONE", "git status", ""))));
+                new RunEventPayloads.ToolLifecycle("tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", ""))));
         fixture.model.update(new WindowSizeMessage(80, 24));
         assertThat(fixture.model.view()).contains("THINKING (1s)").doesNotContain("WORKING (");
     }

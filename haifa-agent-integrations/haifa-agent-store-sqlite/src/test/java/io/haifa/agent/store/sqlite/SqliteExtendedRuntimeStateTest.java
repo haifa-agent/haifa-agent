@@ -129,7 +129,7 @@ class SqliteExtendedRuntimeStateTest {
                 step.id(),
                 new ProviderToolCallCorrelationId("provider-call"),
                 new RuntimeIdempotencyKey("asset-key"),
-                "file.read",
+                "file_read",
                 "1",
                 new ToolArguments("tool.arguments", "1", Map.of("path", hostAbsolutePath)),
                 NOW);
@@ -146,7 +146,7 @@ class SqliteExtendedRuntimeStateTest {
                 secondStep.id(),
                 new ProviderToolCallCorrelationId("provider-call-2"),
                 new RuntimeIdempotencyKey("asset-key-2"),
-                "file.read",
+                "file_read",
                 "1",
                 new ToolArguments("tool.arguments", "1", Map.of("path", "readme")),
                 NOW);

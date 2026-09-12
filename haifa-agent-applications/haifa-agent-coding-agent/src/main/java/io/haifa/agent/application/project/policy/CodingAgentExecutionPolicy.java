@@ -99,7 +99,7 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
     }
 
     private void authorizeRuntime(ExecutionRequest request) {
-        if (!request.context().allows("execution.run")) {
+        if (!request.context().allows("execution_run")) {
             throw denied("CODING_EXECUTION_CAPABILITY_DENIED", "Runtime execution capability is absent");
         }
         requireWorkspace(request, WorkspaceAccessMode.DEVELOP);
@@ -121,7 +121,7 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
 
     private void authorizeUserCommand(ExecutionRequest request) {
         if (request.context().sourceToolCallId().isPresent()
-                || !request.context().allows("execution.run")
+                || !request.context().allows("execution_run")
                 || request.command().mode() != ExecutionCommandMode.SHELL) {
             throw denied("CODING_USER_EXECUTION_DENIED", "CLI user execution origin is malformed");
         }
@@ -183,7 +183,7 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             RuntimeConfigurationSnapshot configuration,
             FrozenToolBinding binding,
             ToolRequest toolRequest) {
-        if (!"execution.run".equals(binding.definition().name().value())) {
+        if (!"execution_run".equals(binding.definition().name().value())) {
             throw new SecurityException("source Tool is not the frozen execution capability");
         }
         Map<String, Object> values = toolRequest.arguments().values();

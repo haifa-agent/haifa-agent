@@ -29,7 +29,7 @@ import java.util.Set;
 public final class TavilyWebSearchProvider implements WebSearchProvider {
     public static final URI DEFAULT_ENDPOINT = URI.create("https://api.tavily.com/search");
     public static final CredentialRequirement CREDENTIAL =
-            WebHttpSupport.credential("web-search-tavily", "Tavily web search", "web.search");
+            WebHttpSupport.credential("web-search-tavily", "Tavily web search", "web_search");
     private static final Map<String, String> COUNTRY_OVERRIDES = Map.ofEntries(
             Map.entry("bo", "bolivia"),
             Map.entry("bn", "brunei"),

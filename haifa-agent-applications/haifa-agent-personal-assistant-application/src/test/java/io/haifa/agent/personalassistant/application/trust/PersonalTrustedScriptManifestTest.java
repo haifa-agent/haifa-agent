@@ -77,7 +77,7 @@ class PersonalTrustedScriptManifestTest {
                     runtimeRef: runtime
                     executionConfigurationDigest: %s
                     sandboxDigest: sha256:%s
-                    capabilities: [execution.run]
+                    capabilities: [execution_run]
                     networkHosts: []
                     scope: PRODUCT
                     state: REVOKED

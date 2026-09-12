@@ -1,8 +1,8 @@
 # Haifa Agent Tool API
 
-Provider-neutral Tool contracts. A tool's immutable identity is `name + semanticVersion + providerId + definitionHash`; the model-visible alias is a separate frozen binding. Public JSON values are represented as deeply immutable JDK maps/lists/scalars.
+Provider-neutral Tool contracts. A tool's immutable identity is `name + semanticVersion + providerId + definitionHash`; the model-visible alias remains a separately typed frozen field but must contain the same name. Public JSON values are represented as deeply immutable JDK maps/lists/scalars.
 
-Canonical internal names remain lowercase dot-separated coordinates such as `file.read`. Model-visible aliases use the OpenAI-compatible function-name intersection: 1-64 ASCII letters, digits, underscores, or hyphens, starting with a letter or digit. Applications map namespaced identities to unambiguous aliases such as `file_read` before disclosure.
+Canonical names use the model-safe function-name intersection directly: 1-64 ASCII letters, digits, or underscores, starting with a letter or digit. Built-in names use lowercase underscore-separated values such as `file_read`. Catalog freeze rejects any alias that differs from its Tool definition name, so disclosure, persistence, policy, recovery, and Provider invocation use one value without name conversion.
 
 Model tool specifications use non-strict JSON Schema by default. Strict provider modes remain opt-in until their endpoint and supported-schema constraints are verified end to end.
 

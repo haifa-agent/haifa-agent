@@ -396,7 +396,7 @@ class CodingAgentLiveE2E {
                 .map(RunEventPayloads.ToolLifecycle.class::cast)
                 .filter(event -> event.status().equals("SUCCEEDED"))
                 .map(RunEventPayloads.ToolLifecycle::displayName)
-                .filter(Set.of("file.create", "file.write", "execution.run")::contains)
+                .filter(Set.of("file_create", "file_write", "execution_run")::contains)
                 .count();
         assertThat(executedSideEffects).isZero();
     }

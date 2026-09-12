@@ -67,7 +67,7 @@ class SqliteSessionMessageRepositoryTest {
                         new ToolCallPart(
                                 new ToolCallId("call"),
                                 new ProviderToolCallCorrelationId("provider-call"),
-                                "file.read",
+                                "file_read",
                                 "1"),
                         new ToolResultPart(
                                 new ToolCallId("call"), new ProviderToolCallCorrelationId("provider-call"), "done")),

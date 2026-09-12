@@ -301,11 +301,11 @@ class Tui4jTerminalViewTest {
                 initial.appliedCursor(),
                 initial.seenEventIds(),
                 initial.recoverableError(),
-                new TerminalActivity(2, "execution.run"),
+                new TerminalActivity(2, "execution_run"),
                 initial.exitRequested());
 
         assertThat(view.render(working, transcript(working), editor(80), true, false, Duration.ofSeconds(12)))
-                .contains("WORKING (12s) · execution.run");
+                .contains("WORKING (12s) · execution_run");
     }
 
     @Test

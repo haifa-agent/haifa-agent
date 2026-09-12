@@ -1216,7 +1216,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     print(f"  MCP health:       http://127.0.0.1:{MCP_PORT}/actuator/health")
     print(
         "  Web Tools:        "
-        f"web.search ({args.web_search_provider}), web.fetch ({args.web_fetch_provider})"
+        f"web_search ({args.web_search_provider}), web_fetch ({args.web_fetch_provider})"
     )
     print(f"\nState: {value.state}")
     print(f"Logs:  {value.logs}")

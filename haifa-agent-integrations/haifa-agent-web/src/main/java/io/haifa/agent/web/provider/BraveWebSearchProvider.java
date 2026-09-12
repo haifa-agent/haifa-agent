@@ -28,7 +28,7 @@ import java.util.Set;
 public final class BraveWebSearchProvider implements WebSearchProvider {
     public static final URI DEFAULT_ENDPOINT = URI.create("https://api.search.brave.com/res/v1/web/search");
     public static final CredentialRequirement CREDENTIAL =
-            WebHttpSupport.credential("web-search-brave", "Brave web search", "web.search");
+            WebHttpSupport.credential("web-search-brave", "Brave web search", "web_search");
     private final HttpClient client;
     private final ObjectMapper mapper;
     private final Clock clock;

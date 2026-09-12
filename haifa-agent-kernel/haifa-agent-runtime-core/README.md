@@ -210,7 +210,7 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - `ModelMessageAssembler` 是 `AgentContext(PromptComponent/ContextItem)` 到供应商无关 `ModelMessage` 的唯一转换边界；Middleware 产生结构化 Context IR，不拼接共享 Prompt 字符串。跨 Run 的 Session 历史按每条消息所属 Run 解析权威 ToolCall，批准或拒绝工具后的下一轮仍可重建完整 Provider Tool 协议。跨模型历史继续投影为结构化 Tool Call/Result，同时剥离旧 continuation，并仅在模型请求内确定性重映射 Provider correlation；持久化事实不变。`SessionMessageSource` 正常丢弃未闭合历史组，Assembler 对绕过该筛选的跨模型历史防御性补充“结果未记录”的结构化 Tool Result；当前模型组不完整仍 fail closed。
 - 大型 Tool Result 先归一化为有界内联事实，再尽力写入外部 Asset；Asset 写入失败不会覆盖已知 Tool Outcome，也不会阻断下一轮模型诊断。只有权威内联结果本身无法持久化时才以 `TOOL_RESULT_PERSISTENCE_FAILED` 终止。
 - Run 配置按 alias 冻结精确 `FrozenSkillBinding`、Catalog digest 和 Resolution Policy reference；普通未启用 Skill 的 Profile 冻结空集合。
-- 模型初始上下文只披露冻结 Skill 的有界元数据。`skill.load` 与 `skill.resource.read` 作为普通 Tool 经统一冻结、Policy、Schema、Journal 和调用管线执行；激活后的指令进入最弱 `PromptLayer.SKILL`，资源只可从当前 Run 已冻结、已激活且索引为可读文本的包中按需读取。未允许、未激活、未索引或非文本资源会返回结构化 Tool 失败供模型修正请求；调用者越权、内容摘要漂移等完整性故障仍 fail closed。
+- 模型初始上下文只披露冻结 Skill 的有界元数据。`skill_load` 与 `skill_resource_read` 作为普通 Tool 经统一冻结、Policy、Schema、Journal 和调用管线执行；激活后的指令进入最弱 `PromptLayer.SKILL`，资源只可从当前 Run 已冻结、已激活且索引为可读文本的包中按需读取。未允许、未激活、未索引或非文本资源会返回结构化 Tool 失败供模型修正请求；调用者越权、内容摘要漂移等完整性故障仍 fail closed。
 - Skill 激活是 Run-scope 的幂等事实，保存在 Skill 状态仓。继续执行时检查冻结 Binding 与内容访问，不复制到 Checkpoint。
 - `ToolCall` 是工具调用的权威记录。`ToolCallPart`/`ToolResultPart` 只保存领域 `ToolCallId`、Provider correlation 等协议引用和有界摘要；组装下一轮模型请求时，从权威 `ToolCall.result()` 重建已归一化的 `structuredData` 与 `truncated`，Runtime idempotency key 不发送给模型。
 - Session Context 的 Token 估算同样从权威 `ToolCall` 读取完整 arguments 与 structured result；Tool 执行和持久化 Trace 记录实际 AgentLoop iteration，不使用占位值。

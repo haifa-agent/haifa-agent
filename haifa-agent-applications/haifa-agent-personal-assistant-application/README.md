@@ -154,7 +154,7 @@ category、retryability、安全 details、diagnosticId 和 occurredAt。应用�
 - Personal Mission create/list/get/replace/regenerate/confirm/cancel/task retry 和安全执行 Snapshot；
 - Personal Product Profile；
 - 一个确定性产品 Tool、版本化内置 Skill、可信只读本地 Skill Source；
-- 从公共 `haifa-agent-web` 模块显式装配 Aliyun IQS `web.search` / `web.fetch` 和短生命周期凭据；
+- 从公共 `haifa-agent-web` 模块显式装配 Aliyun IQS `web_search` / `web_fetch` 和短生命周期凭据；
 - 显式本地 MCP connect/discover/allowlist；
 - Tool、Skill、MCP 统一冻结到一个 Tool Catalog，并进入同一 Runtime Tool Pipeline。
 
@@ -164,7 +164,7 @@ Assistant Turn 已持久化且仍是会话最后一条 Turn 时生成；结果�
 问候和已完全闭合的请求返回空数组。解析失败、模型失败或不足 2 个有效问题时同样返回空数组，不影响
 主回答。该辅助调用的 Token 不计入已终态 Run 的权威 Usage。
 
-Personal 在产品装配层对冻结目录中精确选中的 `web.search` / `web.fetch` coordinate 生成
+Personal 在产品装配层对冻结目录中精确选中的 `web_search` / `web_fetch` coordinate 生成
 request-bound `ALLOW` Decision，因此公共 Web Search/Fetch 默认不创建 Approval Interaction。
 启动时会复核 Tool 名称、完整 coordinate、Provider binding、`POLICY` 声明、Medium 风险、
 幂等性、Remote Provider、网络 Host 约束和 Side Effect 集；任一事实漂移都会 fail closed。
@@ -195,11 +195,11 @@ bounded arguments, timeout, invocation digest, and risk metadata; script or comm
 fits and otherwise as a marked preview with the original character count. Authorization continues to bind the complete
 arguments digest and frozen Tool target rather than the display prompt.
 
-Personal Profile 通过 SDK 的 `ShellPlatformContribution` 接入共享 `execution.run`，产品别名为
-`execution_run`。`PersonalExecutionPlatform` 负责产品级 alias、Skill 和审批文案，不复制
+Personal Profile 通过 SDK 的 `ShellPlatformContribution` 接入共享 `execution_run`；Tool 名称从冻结绑定、
+模型披露到 Provider 调用始终为 `execution_run`。`PersonalExecutionPlatform` 负责产品级 Tool 装配、Skill 和审批文案，不复制
 Execution Broker、Sandbox 或 Policy。
 
-PA 的 Broker policy 只接受来自当前持久化 Run 中 `execution.run` frozen ToolCall 的 Runtime 请求，
+PA 的 Broker policy 只接受来自当前持久化 Run 中 `execution_run` frozen ToolCall 的 Runtime 请求，
 并按 server-owned `ExecutionToolConfiguration` 重构命令、输入、cwd、environment、profile、scratch、
 limits 与 digest。它拒绝 direct user/internal/managed 入口，也不创建、读取或依赖 Coding Agent 的
 WorkspaceAccess。

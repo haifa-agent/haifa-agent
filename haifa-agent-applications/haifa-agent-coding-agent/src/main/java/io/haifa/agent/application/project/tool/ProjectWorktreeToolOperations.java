@@ -22,7 +22,7 @@ import java.util.Objects;
 
 /** CA-only controlled worktree creation path. Runtime owns approval; this class owns convergence. */
 public final class ProjectWorktreeToolOperations {
-    public static final String TOOL_NAME = "workspace.worktree.create";
+    public static final String TOOL_NAME = "workspace_worktree_create";
 
     private final GitWorktreeIsolationProvider provider;
     private final AuthorizedWorkspaceProvisioning provisioning;

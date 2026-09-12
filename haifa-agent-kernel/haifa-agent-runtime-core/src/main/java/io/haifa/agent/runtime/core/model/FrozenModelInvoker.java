@@ -84,7 +84,7 @@ public final class FrozenModelInvoker {
         var definition = binding.definition();
         var schema = definition.inputSchema();
         return new ModelToolSpecification(
-                binding.alias().value(),
+                definition.name().value(),
                 definition.version().value(),
                 definition.description(),
                 schema.id(),

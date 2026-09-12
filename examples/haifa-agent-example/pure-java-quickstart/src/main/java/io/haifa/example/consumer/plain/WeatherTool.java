@@ -11,8 +11,7 @@ public final class WeatherTool implements JavaTool<WeatherTool.Request, WeatherT
     public record Response(String forecast) {}
 
     private static final JavaToolSpec<Request, Response> SPEC = JavaToolSpec.builder(
-                    "weather.get", Request.class, Response.class)
-            .alias("weather_get")
+                    "weather_get", Request.class, Response.class)
             .title("Weather")
             .description("Get deterministic example weather for a city")
             .pure()

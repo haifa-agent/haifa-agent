@@ -127,7 +127,7 @@ class ProductProfileTest {
         assertThat(enterprise.requirement(ProductCapabilities.EXECUTION).mode()).isEqualTo(ProductCapabilityMode.NONE);
         assertThat(enterprise.requirement(ProductCapabilities.SHELL).mode()).isEqualTo(ProductCapabilityMode.NONE);
         assertThat(enterprise.requirement(terminal).mode()).isEqualTo(ProductCapabilityMode.NONE);
-        assertThat(enterprise.allowedTools()).doesNotContain("execution.run", "execution_run", "shell", "terminal");
+        assertThat(enterprise.allowedTools()).doesNotContain("execution_run", "execution_run", "shell", "terminal");
     }
 
     private static ProductProfile profile(ProductPolicies policies, ProductCapabilityRequirement extraRequirement) {

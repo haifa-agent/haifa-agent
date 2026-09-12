@@ -53,7 +53,7 @@ public final class WebToolCatalog {
     private static ToolDefinition searchDefinition(
             WebSearchToolProvider provider, WebProviderDescriptor descriptor, String binding) {
         return definition(
-                "web.search",
+                "web_search",
                 provider.id(),
                 "Search the public web",
                 "Search public web sources and return structured, untrusted external results.",
@@ -67,7 +67,7 @@ public final class WebToolCatalog {
     private static ToolDefinition fetchDefinition(
             WebFetchToolProvider provider, WebProviderDescriptor descriptor, String binding) {
         return definition(
-                "web.fetch",
+                "web_fetch",
                 provider.id(),
                 "Fetch a public web page",
                 "Fetch one public URL through the configured provider and return untrusted external content.",

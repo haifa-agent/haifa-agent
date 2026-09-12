@@ -76,8 +76,7 @@ public final class MultiToolCollaborationExample {
 
     private static final class GeocodeTool implements JavaTool<CityRequest, Coordinates> {
         private static final JavaToolSpec<CityRequest, Coordinates> SPEC = JavaToolSpec.builder(
-                        "location.geocode", CityRequest.class, Coordinates.class)
-                .alias("geocode")
+                        "geocode", CityRequest.class, Coordinates.class)
                 .description("Resolve a city to deterministic example coordinates")
                 .pure()
                 .build();
@@ -95,8 +94,7 @@ public final class MultiToolCollaborationExample {
 
     private static final class WeatherAtCoordinatesTool implements JavaTool<CoordinateRequest, Forecast> {
         private static final JavaToolSpec<CoordinateRequest, Forecast> SPEC = JavaToolSpec.builder(
-                        "weather.at-coordinates", CoordinateRequest.class, Forecast.class)
-                .alias("weather_at_coordinates")
+                        "weather_at_coordinates", CoordinateRequest.class, Forecast.class)
                 .description("Return deterministic example weather for coordinates")
                 .pure()
                 .build();

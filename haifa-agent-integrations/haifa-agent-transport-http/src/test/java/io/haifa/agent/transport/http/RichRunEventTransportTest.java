@@ -21,7 +21,7 @@ class RichRunEventTransportTest {
         HttpJsonCodec json = new HttpJsonCodec(new ObjectMapper().findAndRegisterModules());
         List<AgentRunEvent.Payload> payloads = List.of(
                 new RunEventPayloads.ToolLifecycle(
-                        "call-1", "execution.run", "SUCCEEDED", "NONE", "workspace command", "result:1"),
+                        "call-1", "execution_run", "SUCCEEDED", "NONE", "workspace command", "result:1"),
                 new RunEventPayloads.ResourceAvailable(
                         "checkpoint:1", "checkpoint", "Checkpoint 1", "AVAILABLE", "resume"));
 

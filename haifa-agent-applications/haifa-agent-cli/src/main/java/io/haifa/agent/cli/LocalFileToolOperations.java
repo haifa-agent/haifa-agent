@@ -141,16 +141,16 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         MutationContext mutationContext = context(idempotencyKey, runRef, toolCallRef, actor);
         try {
             return switch (toolName) {
-                case "file.list" -> list(arguments.values());
-                case "file.stat" -> stat(arguments.values());
-                case "file.read" -> read(arguments.values());
-                case "file.search" -> search(arguments.values());
-                case "file.create" -> create(mutationContext, arguments.values());
-                case "file.write" -> write(mutationContext, arguments.values());
-                case "file.patch" -> patch(workspaceId, mutationContext, arguments.values());
-                case "file.delete" -> delete(mutationContext, arguments.values());
-                case "file.move" -> move(mutationContext, arguments.values());
-                case "workspace.attach" -> attach(arguments.values());
+                case "file_list" -> list(arguments.values());
+                case "file_stat" -> stat(arguments.values());
+                case "file_read" -> read(arguments.values());
+                case "file_search" -> search(arguments.values());
+                case "file_create" -> create(mutationContext, arguments.values());
+                case "file_write" -> write(mutationContext, arguments.values());
+                case "file_patch" -> patch(workspaceId, mutationContext, arguments.values());
+                case "file_delete" -> delete(mutationContext, arguments.values());
+                case "file_move" -> move(mutationContext, arguments.values());
+                case "workspace_attach" -> attach(arguments.values());
                 default -> throw new IllegalStateException("CLI does not support tool: " + toolName);
             };
         } catch (HostWorkspaceScopeException exception) {
@@ -352,7 +352,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 .workspaceId()
                 .equals(dstTarget.workspacePath().workspaceId())) {
             throw HostWorkspaceScopeException.crossDirectoryMove(
-                    srcStr, "cross-directory file.move is not supported; use file.create and file.delete explicitly");
+                    srcStr, "cross-directory file_move is not supported; use file_create and file_delete explicitly");
         }
 
         TargetMetadata before = requireRegularFile(srcTarget);
@@ -585,7 +585,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         var document = patchParser.parse(patchWorkspace, logicalPatch);
         if (document.files().stream().anyMatch(file -> file.deletion() || file.move())) {
             throw new IllegalArgumentException(
-                    "file.patch supports Add and Update only; use file.delete or file.move for Delete and Move");
+                    "file_patch supports Add and Update only; use file_delete or file_move for Delete and Move");
         }
 
         List<PatchPlanItem> plan = new ArrayList<>();
@@ -843,7 +843,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         String requestedPath = string(values, "path");
         Path requested = Path.of(requestedPath);
         if (!requested.isAbsolute()) {
-            throw new IllegalArgumentException("workspace.attach path must be an absolute host directory");
+            throw new IllegalArgumentException("workspace_attach path must be an absolute host directory");
         }
         WorkspaceAccessMode mode =
                 switch (string(values, "mode")) {
@@ -854,14 +854,14 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         try {
             Path normalizedPath = requested.toAbsolutePath().normalize();
             if (Files.isSymbolicLink(normalizedPath)) {
-                throw new IllegalArgumentException("workspace.attach path must not be a symbolic link");
+                throw new IllegalArgumentException("workspace_attach path must not be a symbolic link");
             }
             Path realPath = normalizedPath.toRealPath();
             if (!Files.isDirectory(realPath)) {
-                throw new IllegalArgumentException("workspace.attach path must be an existing directory");
+                throw new IllegalArgumentException("workspace_attach path must be an existing directory");
             }
             if (Files.isSymbolicLink(realPath)) {
-                throw new IllegalArgumentException("workspace.attach path must not be a symbolic link");
+                throw new IllegalArgumentException("workspace_attach path must not be a symbolic link");
             }
             var result = provisioning.authorizeApprovedAttach(realPath, attachedDirectory -> {
                 WorkspaceAccessMode activationMode = mode;
@@ -891,7 +891,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                             "source", view.source().name(),
                             "status", view.status().name()));
         } catch (IOException e) {
-            throw new IllegalArgumentException("workspace.attach path cannot be accessed");
+            throw new IllegalArgumentException("workspace_attach path cannot be accessed");
         }
     }
 

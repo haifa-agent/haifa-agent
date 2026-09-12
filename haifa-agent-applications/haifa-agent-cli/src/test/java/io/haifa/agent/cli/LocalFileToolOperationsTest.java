@@ -33,14 +33,14 @@ class LocalFileToolOperationsTest {
 
         String hostPath = file.toAbsolutePath().normalize().toString();
         var first = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 arguments(Map.of("path", hostPath, "maxBytes", 8, "maxLines", 1)));
         String cursor = (String) first.structuredData().get("nextCursor");
         var second = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -56,7 +56,7 @@ class LocalFileToolOperationsTest {
 
         Files.writeString(file, "changed\ncontent\n", StandardCharsets.UTF_8);
         var stale = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -74,7 +74,7 @@ class LocalFileToolOperationsTest {
         Fixture fixture = fixture();
 
         var result = fixture.operations.execute(
-                "file.list",
+                "file_list",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -97,7 +97,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = sourceFile.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.patch",
+                "file_patch",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -133,7 +133,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = sourceFile.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.patch",
+                "file_patch",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -162,7 +162,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = sourceFile.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.patch",
+                "file_patch",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -196,7 +196,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = sourceFile.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.patch",
+                "file_patch",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -225,7 +225,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = sourceFile.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.patch",
+                "file_patch",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -255,7 +255,7 @@ class LocalFileToolOperationsTest {
                 root.resolve("existing.txt").toAbsolutePath().normalize().toString();
 
         var result = fixture.operations.execute(
-                "file.create",
+                "file_create",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -278,13 +278,13 @@ class LocalFileToolOperationsTest {
         String sensitivePath = root.resolve(".env").toAbsolutePath().normalize().toString();
 
         var missingWrite = fixture.operations.execute(
-                "file.write",
+                "file_write",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 arguments(Map.of("path", missingPath, "content", "new")));
         var sensitiveRead = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -312,7 +312,7 @@ class LocalFileToolOperationsTest {
         ToolArguments arguments = arguments(Map.of("path", hostPath, "content", "after"));
 
         var result = fixture.operations.execute(
-                "file.write",
+                "file_write",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-reconcile",
@@ -353,7 +353,7 @@ class LocalFileToolOperationsTest {
     void rejectsRelativePathOrAlias() {
         Fixture fixture = fixture();
         var resultAlias = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -366,7 +366,7 @@ class LocalFileToolOperationsTest {
                 .containsEntry("failureActionCode", "USE_ABSOLUTE_HOST_PATH");
 
         var resultRelative = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -384,7 +384,7 @@ class LocalFileToolOperationsTest {
         Fixture fixture = fixture();
         Path outside = root.resolveSibling("outside.txt").toAbsolutePath().normalize();
         var result = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -402,7 +402,7 @@ class LocalFileToolOperationsTest {
         Fixture fixture = fixture(true);
         Path outside = root.resolveSibling("outside.txt").toAbsolutePath().normalize();
         var result = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -422,7 +422,7 @@ class LocalFileToolOperationsTest {
         Fixture fixture = fixture();
 
         var result = fixture.operations.execute(
-                "file.delete",
+                "file_delete",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -440,7 +440,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = trash.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.delete",
+                "file_delete",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -460,7 +460,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = root.resolve("hello.txt").toAbsolutePath().normalize().toString();
         var createRes = f.operations.execute(
-                "file.create",
+                "file_create",
                 f.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",

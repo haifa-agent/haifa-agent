@@ -72,13 +72,13 @@ class StandaloneCodingAgentsTest {
                 """
                 tools:
                   enabled:
-                    - file.list
-                    - file.stat
-                    - file.read
-                    - file.search
-                    - file.create
-                    - file.write
-                    - web.search
+                    - file_list
+                    - file_stat
+                    - file_read
+                    - file_search
+                    - file_create
+                    - file_write
+                    - web_search
                 web:
                   search:
                     enabled: true

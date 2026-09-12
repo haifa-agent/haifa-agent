@@ -140,7 +140,7 @@ public final class TrustedSkillScriptPublicToolPolicy implements PublicToolPolic
     private static boolean eligibleFixedTool(FrozenToolBinding tool) {
         var definition = tool.definition();
         if (definition.approvalRequirement() != ToolApprovalRequirement.ALWAYS) return false;
-        if ("execution.run".equals(definition.name().value())) return false;
+        if ("execution_run".equals(definition.name().value())) return false;
         if (definition.sideEffects().contains(ToolSideEffect.NETWORK_ACCESS)
                 && definition.resources().networkHosts().isEmpty()) return false;
         Object properties = definition.inputSchema().document().get("properties");

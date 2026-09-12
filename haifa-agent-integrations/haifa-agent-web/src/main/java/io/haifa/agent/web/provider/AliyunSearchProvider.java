@@ -28,7 +28,7 @@ import java.util.Set;
 public final class AliyunSearchProvider implements WebSearchProvider {
     public static final URI DEFAULT_ENDPOINT = URI.create("https://cloud-iqs.aliyuncs.com/search/unified");
     public static final CredentialRequirement CREDENTIAL =
-            WebHttpSupport.credential("web-search-aliyun", "Aliyun IQS web search", "web.search");
+            WebHttpSupport.credential("web-search-aliyun", "Aliyun IQS web search", "web_search");
     private final HttpClient client;
     private final ObjectMapper mapper;
     private final Clock clock;

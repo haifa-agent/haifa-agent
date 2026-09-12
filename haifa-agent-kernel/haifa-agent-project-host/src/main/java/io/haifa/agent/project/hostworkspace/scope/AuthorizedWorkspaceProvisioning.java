@@ -254,7 +254,7 @@ public final class AuthorizedWorkspaceProvisioning {
         if (!child.root().bindingId().equals(childBindingId)
                 || !binding.locationRef().equals(childLocationRef)
                 || binding.mode() != WorkspaceBindingMode.COPY_ON_WRITE
-                || !binding.capabilities().allows("execution.run")) {
+                || !binding.capabilities().allows("execution_run")) {
             throw new IllegalStateException("provider-created worktree authority does not match registration");
         }
         Path target;

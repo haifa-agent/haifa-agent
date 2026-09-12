@@ -100,8 +100,7 @@ public record WeatherResponse(String forecast) {}
 
 public final class WeatherTool implements JavaTool<WeatherRequest, WeatherResponse> {
     private static final JavaToolSpec<WeatherRequest, WeatherResponse> SPEC =
-            JavaToolSpec.builder("weather.get", WeatherRequest.class, WeatherResponse.class)
-                    .alias("weather_get")
+            JavaToolSpec.builder("weather_get", WeatherRequest.class, WeatherResponse.class)
                     .description("Get the current weather for a city")
                     .pure()
                     .build();
@@ -126,7 +125,7 @@ HaifaAgent agent = HaifaAgents.builder()
         .build();
 ```
 
-SDK 会为 record 生成有界 JSON Schema，完成 Map 与 record 的双向转换，把 Tool alias 加入本次装配的
+SDK 会为 record 生成有界 JSON Schema，完成 Map 与 record 的双向转换，把同一个下划线 Tool 名称加入本次装配的
 有效 Product Profile，并与已有 Catalog 确定性合并。调用仍进入统一的 Schema、Policy、Approval、
 Credential、Journal 和 Tool Pipeline。`Optional<T>` 只用于可选的直接 record component；不支持递归
 record、通配泛型、任意 POJO 或非 String Map key。注解式 Tool 不属于当前版本。
@@ -198,7 +197,7 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
   Execution 主机/网络/并发/超时政策冻结进 Profile canonical digest；本阶段不允许关闭
   Memory Candidate 人工审查。
 - Model、Tool Platform、Skill、MCP Tool binding、Context、Memory、Artifact、Policy、Approval、
-  Credential 和 Execution/Sandbox 均通过显式 typed Contribution 注册。MCP alias 还必须同时
+  Credential 和 Execution/Sandbox 均通过显式 typed Contribution 注册。MCP 本地 Tool 名称还必须同时
   出现在 Profile allowlist 与统一 Tool Catalog 中，不存在第二条 MCP 执行通道。
 - 应用级 Java Tool 通过 `HaifaAgentBuilder.tool(JavaTool)` 逐个注册；SDK 在构建时生成并合并内部
   Tool Platform Contribution，应用无需理解 Catalog digest 与 frozen binding。

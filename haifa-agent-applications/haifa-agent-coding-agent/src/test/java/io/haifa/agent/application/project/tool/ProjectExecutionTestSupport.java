@@ -127,7 +127,7 @@ final class ProjectExecutionTestSupport {
             Map<String, Object> arguments, ToolCancellation cancellation, ToolInvocationObserver observer) {
         arguments = executionArguments(arguments);
         var binding = new ProjectToolCatalog()
-                .freeze(Set.of("execution.run"), Set.of("execution.run"), true, provider(), executionProfile())
+                .freeze(Set.of("execution_run"), Set.of("execution_run"), true, provider(), executionProfile())
                 .snapshot()
                 .bindings()
                 .getFirst();
@@ -146,11 +146,11 @@ final class ProjectExecutionTestSupport {
     }
 
     static RunWorkspaceAccess access() {
-        return new RunWorkspaceAccess(WORKSPACE_ID, Set.of("execution.run"));
+        return new RunWorkspaceAccess(WORKSPACE_ID, Set.of("execution_run"));
     }
 
     static RunWorkspaceAccess access(WorkspaceId workspaceId) {
-        return new RunWorkspaceAccess(workspaceId, Set.of("execution.run"));
+        return new RunWorkspaceAccess(workspaceId, Set.of("execution_run"));
     }
 
     static Map<String, Object> executionArguments(Map<String, Object> arguments) {

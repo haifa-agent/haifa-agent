@@ -25,7 +25,7 @@ import java.util.Set;
 public final class AliyunFetchProvider implements WebFetchProvider {
     public static final URI DEFAULT_ENDPOINT = URI.create("https://cloud-iqs.aliyuncs.com/readpage/basic");
     public static final CredentialRequirement CREDENTIAL =
-            WebHttpSupport.credential("web-fetch-aliyun", "Aliyun IQS web fetch", "web.fetch");
+            WebHttpSupport.credential("web-fetch-aliyun", "Aliyun IQS web fetch", "web_fetch");
     private final HttpClient client;
     private final ObjectMapper mapper;
     private final Clock clock;

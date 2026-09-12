@@ -150,7 +150,7 @@ class OfficialDualEraMcpCompatibilityLiveIT {
                         McpTestFixtures.TENANT,
                         "mcp-control",
                         McpTestFixtures.PRINCIPAL,
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
                         ExecutionOrigin.PRODUCT_INTERNAL,
                         Optional.empty()),
                 workspaceId,

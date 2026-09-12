@@ -72,7 +72,7 @@ final class CliWebPlatform {
                     .orElseThrow(() -> new IllegalStateException("Web provider credential requirement is missing"));
             String operation = contribution.definition().name().value();
             CliConfiguration.WebProvider providerConfiguration =
-                    operation.equals("web.search") ? configuration.search() : configuration.fetch();
+                    operation.equals("web_search") ? configuration.search() : configuration.fetch();
             String environmentName = providerConfiguration.credentialRef().substring("env://".length());
             String secret = environment.apply(environmentName);
             if (secret == null || secret.isBlank()) {

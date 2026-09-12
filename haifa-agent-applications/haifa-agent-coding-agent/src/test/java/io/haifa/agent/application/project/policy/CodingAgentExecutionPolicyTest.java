@@ -225,7 +225,7 @@ class CodingAgentExecutionPolicyTest {
         return new ExecutionRequest(
                 new ExecutionId("internal"),
                 "internal-key",
-                context(ExecutionOrigin.PRODUCT_INTERNAL, Set.of("execution.run", "git.read"), Optional.empty()),
+                context(ExecutionOrigin.PRODUCT_INTERNAL, Set.of("execution_run", "git.read"), Optional.empty()),
                 WORKSPACE,
                 WorkspacePath.root(WORKSPACE),
                 ExecutionCommand.direct(argv),
@@ -270,7 +270,7 @@ class CodingAgentExecutionPolicyTest {
         return new ExecutionRequest(
                 new ExecutionId("user"),
                 "user-key",
-                context(ExecutionOrigin.PRODUCT_USER_COMMAND, Set.of("execution.run"), Optional.empty()),
+                context(ExecutionOrigin.PRODUCT_USER_COMMAND, Set.of("execution_run"), Optional.empty()),
                 WORKSPACE,
                 WorkspacePath.root(WORKSPACE),
                 ExecutionCommand.shell(command),
@@ -286,7 +286,7 @@ class CodingAgentExecutionPolicyTest {
         return new ExecutionRequest(
                 new ExecutionId("runtime"),
                 "runtime-key",
-                context(ExecutionOrigin.RUNTIME_TOOL, Set.of("execution.run"), Optional.of(source)),
+                context(ExecutionOrigin.RUNTIME_TOOL, Set.of("execution_run"), Optional.of(source)),
                 WORKSPACE,
                 WorkspacePath.root(WORKSPACE),
                 ExecutionCommand.shell("git status"),

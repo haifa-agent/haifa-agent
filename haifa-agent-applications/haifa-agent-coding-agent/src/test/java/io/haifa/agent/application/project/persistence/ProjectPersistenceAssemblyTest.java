@@ -599,7 +599,7 @@ class ProjectPersistenceAssemblyTest {
                 new AgentStepId("step-1"),
                 new ProviderToolCallCorrelationId("provider-1"),
                 new RuntimeIdempotencyKey("idempotency-1"),
-                "file.write",
+                "file_write",
                 "1.0.0",
                 new ToolArguments("input", "1.0", Map.of("path", "docs/notes.md")),
                 NOW);
@@ -825,8 +825,8 @@ class ProjectPersistenceAssemblyTest {
                 workspaceId,
                 "coding",
                 "1",
-                Set.of("file.read"),
-                Set.of("file.read"),
+                Set.of("file_read"),
+                Set.of("file_read"),
                 "policy-1"));
         return new ProductFixture(projectId, projects, workspaces, configurations);
     }

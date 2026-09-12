@@ -29,21 +29,21 @@ import java.util.Set;
 /** Builds the project product's model-visible tools through the platform Tool catalog. */
 public final class ProjectToolCatalog {
     private static final Map<String, String> REQUIRED_CAPABILITY = Map.ofEntries(
-            Map.entry("file.list", "file.read"),
-            Map.entry("file.stat", "file.read"),
-            Map.entry("file.read", "file.read"),
-            Map.entry("file.search", "file.read"),
-            Map.entry("file.create", "file.write"),
-            Map.entry("file.write", "file.write"),
-            Map.entry("file.delete", "file.write"),
-            Map.entry("file.move", "file.write"),
-            Map.entry("file.diff", "file.read"),
-            Map.entry("file.patch", "file.write"),
-            Map.entry("workspace.attach", "file.read"),
-            Map.entry(ProjectWorktreeToolOperations.TOOL_NAME, "execution.run"),
-            Map.entry("execution.run", "execution.run"));
+            Map.entry("file_list", "file_read"),
+            Map.entry("file_stat", "file_read"),
+            Map.entry("file_read", "file_read"),
+            Map.entry("file_search", "file_read"),
+            Map.entry("file_create", "file_write"),
+            Map.entry("file_write", "file_write"),
+            Map.entry("file_delete", "file_write"),
+            Map.entry("file_move", "file_write"),
+            Map.entry("file_diff", "file_read"),
+            Map.entry("file_patch", "file_write"),
+            Map.entry("workspace_attach", "file_read"),
+            Map.entry(ProjectWorktreeToolOperations.TOOL_NAME, "execution_run"),
+            Map.entry("execution_run", "execution_run"));
     private static final Set<String> WRITES =
-            Set.of("file.create", "file.write", "file.delete", "file.move", "file.patch");
+            Set.of("file_create", "file_write", "file_delete", "file_move", "file_patch");
 
     public DefaultToolCatalog freeze(
             Set<String> configuredTools,
@@ -204,7 +204,7 @@ public final class ProjectToolCatalog {
                 .filter(configuredTools::contains)
                 .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
                 .forEach(name -> builder.register(
-                        modelAlias(name),
+                        new ToolAlias(name),
                         definition(name, executionProfile, scratchSpace),
                         "project-workspace",
                         provider));
@@ -236,17 +236,13 @@ public final class ProjectToolCatalog {
         return REQUIRED_CAPABILITY.keySet();
     }
 
-    private static ToolAlias modelAlias(String name) {
-        return new ToolAlias(name.replace('.', '_'));
-    }
-
     private static ToolDefinition definition(
             String name, SandboxProfile executionProfile, ExecutionScratchSpaceSpec scratchSpace) {
-        boolean execution = name.equals("execution.run");
+        boolean execution = name.equals("execution_run");
         if (execution && executionProfile == null) {
             throw new IllegalArgumentException(name + " requires a frozen sandbox profile");
         }
-        boolean attach = name.equals("workspace.attach");
+        boolean attach = name.equals("workspace_attach");
         boolean worktree = name.equals(ProjectWorktreeToolOperations.TOOL_NAME);
         boolean write = WRITES.contains(name);
         ToolRisk risk = execution || attach || worktree ? ToolRisk.HIGH : write ? ToolRisk.MEDIUM : ToolRisk.LOW;
@@ -269,18 +265,18 @@ public final class ProjectToolCatalog {
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         String version =
                 switch (name) {
-                    case "execution.run" -> "2.0.0";
-                    case "file.patch" -> "2.1.0";
-                    case "file.list",
-                            "file.read",
-                            "file.search",
-                            "file.write",
-                            "file.create",
-                            "file.delete",
-                            "file.move",
-                            "file.diff",
-                            "file.stat" -> "2.0.0";
-                    case "workspace.attach" -> "3.0.0";
+                    case "execution_run" -> "2.0.0";
+                    case "file_patch" -> "2.1.0";
+                    case "file_list",
+                            "file_read",
+                            "file_search",
+                            "file_write",
+                            "file_create",
+                            "file_delete",
+                            "file_move",
+                            "file_diff",
+                            "file_stat" -> "2.0.0";
+                    case "workspace_attach" -> "3.0.0";
                     case ProjectWorktreeToolOperations.TOOL_NAME -> "2.0.0";
                     default -> "1.0.0";
                 };
@@ -307,7 +303,7 @@ public final class ProjectToolCatalog {
                 approval,
                 "haifa-coding-agent",
                 false,
-                Set.of("project", name.substring(0, name.indexOf('.'))));
+                Set.of("project", name.substring(0, name.indexOf('_'))));
     }
 
     private static Set<ToolSideEffect> executionEffects(boolean execution, boolean write) {
@@ -318,25 +314,25 @@ public final class ProjectToolCatalog {
 
     private static String title(String name) {
         return switch (name) {
-            case "file.list" -> "List workspace files";
-            case "file.stat" -> "Inspect workspace path";
-            case "file.read" -> "Read workspace file";
-            case "file.search" -> "Search workspace files";
-            case "file.create" -> "Create workspace file";
-            case "file.write" -> "Write workspace file";
-            case "file.delete" -> "Delete workspace path";
-            case "file.move" -> "Move workspace path";
-            case "file.diff" -> "Preview file diff";
-            case "file.patch" -> "Apply workspace patch";
-            case "workspace.attach" -> "Attach a user-approved directory";
+            case "file_list" -> "List workspace files";
+            case "file_stat" -> "Inspect workspace path";
+            case "file_read" -> "Read workspace file";
+            case "file_search" -> "Search workspace files";
+            case "file_create" -> "Create workspace file";
+            case "file_write" -> "Write workspace file";
+            case "file_delete" -> "Delete workspace path";
+            case "file_move" -> "Move workspace path";
+            case "file_diff" -> "Preview file diff";
+            case "file_patch" -> "Apply workspace patch";
+            case "workspace_attach" -> "Attach a user-approved directory";
             case ProjectWorktreeToolOperations.TOOL_NAME -> "Create a controlled Git worktree";
-            case "execution.run" -> "Run a local shell command";
+            case "execution_run" -> "Run a local shell command";
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         };
     }
 
     private static String description(String name, SandboxProfile executionProfile) {
-        if (name.equals("execution.run")) {
+        if (name.equals("execution_run")) {
             return "Run complete command text through the frozen "
                     + executionProfile.providerId()
                     + " execution profile inside an active registered workspace selected by workspaceRef and relativeWorkdir. This is the general OS CLI path for scalable "
@@ -351,24 +347,24 @@ public final class ProjectToolCatalog {
                     + "audit controls as other execution commands; delivery intent is completion metadata, not "
                     + "command authorization.";
         }
-        if (name.equals("file.read")) {
+        if (name.equals("file_read")) {
             return "Read one bounded text window from a workspace file. Continue with nextCursor only when hasMore "
                     + "is true; the cursor detects path reuse and file changes, so large files are never loaded in "
                     + "full by default. On FILE_CURSOR_STALE, restart once without the old cursor; sensitive paths "
                     + "require user action and must not be copied or renamed.";
         }
-        if (name.equals("file.create")) {
-            return "Create a new file only when the target is absent. If the target exists, use file.write for an "
-                    + "intentional full replacement or file.patch for a bounded edit.";
+        if (name.equals("file_create")) {
+            return "Create a new file only when the target is absent. If the target exists, use file_write for an "
+                    + "intentional full replacement or file_patch for a bounded edit.";
         }
-        if (name.equals("file.write")) {
+        if (name.equals("file_write")) {
             return "Replace the complete contents of an existing file with revision and content-hash protection; "
-                    + "if the target is absent, creates the file atomically. Prefer file.patch for bounded edits.";
+                    + "if the target is absent, creates the file atomically. Prefer file_patch for bounded edits.";
         }
-        if (name.equals("file.patch")) {
+        if (name.equals("file_patch")) {
             return "Apply a bounded, non-atomic context patch to up to 100 files in one authorized directory using host absolute paths. Use "
-                    + "*** Begin Patch / *** End Patch with Add File or Update File sections; use file.delete and "
-                    + "file.move for those operations. An Update File hunk starts with @@ and may include @@ <text> as an "
+                    + "*** Begin Patch / *** End Patch with Add File or Update File sections; use file_delete and "
+                    + "file_move for those operations. An Update File hunk starts with @@ and may include @@ <text> as an "
                     + "optional navigation hint. The old and context lines determine the edit: a unique exact match applies "
                     + "even when the hint is stale; repeated matches must be reduced to one by a unique exact hint or the patch is ambiguous. "
                     + "A pure insertion needs a unique hint, an exact context line, or *** End of File. "
@@ -376,7 +372,7 @@ public final class ProjectToolCatalog {
                     + "first write. Cross-directory patches are rejected. A commit-time failure reports its committed prefix "
                     + "and requires a fresh read before regenerating the patch.";
         }
-        if (name.equals("workspace.attach")) {
+        if (name.equals("workspace_attach")) {
             return "Request one additional existing local directory for this Coding Agent registry. Supply an "
                     + "absolute host path and explicit read or develop mode. The user "
                     + "must approve the exact directory and mode before it becomes available in the scope; "
@@ -403,13 +399,13 @@ public final class ProjectToolCatalog {
         var properties = new LinkedHashMap<String, Object>();
         var required = new java.util.ArrayList<String>();
         switch (name) {
-            case "file.list" -> {
+            case "file_list" -> {
                 path(properties, required, "path");
                 properties.put("recursive", Map.of("type", "boolean"));
                 properties.put("maxDepth", Map.of("type", "integer", "minimum", 1, "maximum", 32));
             }
-            case "file.stat", "file.delete" -> path(properties, required, "path");
-            case "file.read" -> {
+            case "file_stat", "file_delete" -> path(properties, required, "path");
+            case "file_read" -> {
                 path(properties, required, "path");
                 properties.put(
                         "cursor",
@@ -425,21 +421,21 @@ public final class ProjectToolCatalog {
                 properties.put("maxBytes", Map.of("type", "integer", "minimum", 1, "maximum", 262144));
                 properties.put("maxLines", Map.of("type", "integer", "minimum", 1, "maximum", 2000));
             }
-            case "file.search" -> {
+            case "file_search" -> {
                 path(properties, required, "path");
                 string(properties, required, "query");
                 properties.put("glob", Map.of("type", "string"));
                 properties.put("maxResults", Map.of("type", "integer", "minimum", 1, "maximum", 1000));
             }
-            case "file.create", "file.write", "file.diff" -> {
+            case "file_create", "file_write", "file_diff" -> {
                 path(properties, required, "path");
                 string(properties, required, "content");
             }
-            case "file.move" -> {
+            case "file_move" -> {
                 path(properties, required, "source");
                 path(properties, required, "destination");
             }
-            case "file.patch" -> {
+            case "file_patch" -> {
                 properties.put(
                         "patch",
                         Map.of(
@@ -454,7 +450,7 @@ public final class ProjectToolCatalog {
                                         + "Each Update File hunk begins with @@; @@ <text> adds an optional navigation hint. Old/context lines must have a unique exact match, or a unique exact hint must reduce repeated matches to one; otherwise the patch is ambiguous. A pure insertion needs a unique hint, an exact context line, or *** End of File."));
                 required.add("patch");
             }
-            case "workspace.attach" -> {
+            case "workspace_attach" -> {
                 properties.put(
                         "path",
                         Map.of(
@@ -480,7 +476,7 @@ public final class ProjectToolCatalog {
                 required.addAll(
                         List.of("sourceWorkspaceRef", "baseCommit", "branchName", "targetName", "deliveryIntent"));
             }
-            case "execution.run" -> {
+            case "execution_run" -> {
                 properties.put(
                         "command",
                         Map.of(
@@ -563,7 +559,7 @@ public final class ProjectToolCatalog {
     }
 
     private static Map<String, Object> outputSchema(String name) {
-        if (name.equals("file.read")) {
+        if (name.equals("file_read")) {
             return Map.of(
                     "$schema",
                     ToolSchema.DRAFT_2020_12,
@@ -595,7 +591,7 @@ public final class ProjectToolCatalog {
                     "additionalProperties",
                     false);
         }
-        if (name.equals("execution.run")) {
+        if (name.equals("execution_run")) {
             var properties = new LinkedHashMap<String, Object>();
             properties.put("toolCallId", Map.of("type", "string"));
             properties.put("executionId", Map.of("type", "string"));

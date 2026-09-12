@@ -39,7 +39,7 @@ class AgentDefinitionSessionTest {
                 AgentType.CODING,
                 "prompt:coding@1",
                 "model:balanced@2",
-                Set.of("file.read", "file.patch"),
+                Set.of("file_read", "file_patch"),
                 Set.of("java"),
                 Set.of("reviewer"),
                 List.of(new AgentCapabilityRequirement("sandbox", ">=1.0", true)),

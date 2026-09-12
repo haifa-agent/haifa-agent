@@ -315,8 +315,8 @@ class CliModelConfigurationTest {
         assertThat(result.persistence().transcriptRoot()).contains(transcriptRoot);
         assertThat(result.persistence().protectorReference()).isEmpty();
         assertThat(result.enabledTools())
-                .contains("file.read", "file.write", "execution.run")
-                .doesNotContain("file.search");
+                .contains("file_read", "file_write", "execution_run")
+                .doesNotContain("file_search");
     }
 
     @Test
