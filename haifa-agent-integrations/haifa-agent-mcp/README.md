@@ -9,7 +9,7 @@
 - 2026 Streamable HTTP：使用 `server/discover`，不发送 `initialize`、GET、DELETE 或 session header；每个 POST 同时携带标准 `_meta`、`MCP-Protocol-Version`、`Mcp-Method`，`tools/call` 携带安全编码的 `Mcp-Name` 和经校验的 `x-mcp-header` 参数头，并接受 JSON 或 request-scoped SSE response。
 - 资源边界：JDK HttpClient 包装器在 SDK transport 下方强制 response header/body 字节预算；request/deadline/cancel 会终止受影响连接并保留 dispatch certainty。
 - stdio：2025 会话协议和 2026 per-request metadata 协议都通过唯一 `ExecutionBroker.openManagedSession` 桥接换行分隔 JSON-RPC；MCP 模块不使用 `ProcessBuilder`。
-- 本地治理：server allowlist、HTTPS/loopback Origin、alias、保守风险/副作用/审批、受限 Schema、分页/Tool/Schema/deadline 预算。
+- 本地治理：server allowlist、HTTPS/loopback Origin、单一下划线 Tool 名称、保守风险/副作用/审批、受限 Schema、分页/Tool/Schema/deadline 预算。
 - 冻结恢复：`McpToolBindingSnapshot` 分别保存 server binding digest、remote definition digest 与本地 Tool definition hash，缺失或漂移时 fail closed。
 - 内容映射：Text/structured content 映射到唯一 Core `ToolResult`；`isError` 保留为业务失败；媒体只允许经有界 externalizer 形成 `AssetRef`。
 - 动态目录：`tools/list_changed` 经 `McpToolRefreshCoordinator` 去抖动后生成新的、待审查 candidate snapshot，不热改已有 Run；`CodingAgentMcpProfile` 给出保守 utility allowlist 示例。
@@ -30,7 +30,7 @@ HTTP 401/403 不会把 SDK request snapshot 或凭据带入对外异常：未配
 
 `McpServerDefinition.create(...)` 生成内容寻址的不可变 server binding。HTTP 使用 `StreamableHttpDefinition`，stdio 使用只包含逻辑 executable、固定 argv、逻辑 cwd 和 env allowlist 的 `StdioDefinition`。应用层按 server 注册 `McpToolProvider`，再用 `McpToolCatalogContribution` 把已审查候选加入现有 `ToolCatalogBuilder`。
 
-远端发现不等于启用。Tool 必须同时通过本地 allowlist/denylist、alias 唯一性、风险元数据和 Schema import diagnostic；不可信 MCP annotations 不能降低本地策略。
+远端发现不等于启用。Tool 必须同时通过本地 allowlist/denylist、本地下划线名称唯一性、风险元数据和 Schema import diagnostic；不可信 MCP annotations 不能降低本地策略。外部远端名保留在 MCP binding snapshot 中用于协议调用；本地名称不做字符转换，不能与 namespace 直接组成合法下划线名称时拒绝导入。
 
 ## 测试
 

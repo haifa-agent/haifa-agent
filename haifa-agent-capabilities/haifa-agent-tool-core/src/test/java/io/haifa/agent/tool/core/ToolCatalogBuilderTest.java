@@ -19,10 +19,18 @@ class ToolCatalogBuilderTest {
     @Test
     void freezesDeterministicContentAddressedBindingsAndModelDisclosure() {
         var first = new ToolCatalogBuilder()
-                .register(new ToolAlias("read"), ToolFixtures.definition(), "project-default", ToolFixtures.provider())
+                .register(
+                        new ToolAlias("file_read"),
+                        ToolFixtures.definition(),
+                        "project-default",
+                        ToolFixtures.provider())
                 .freeze();
         var second = new ToolCatalogBuilder()
-                .register(new ToolAlias("read"), ToolFixtures.definition(), "project-default", ToolFixtures.provider())
+                .register(
+                        new ToolAlias("file_read"),
+                        ToolFixtures.definition(),
+                        "project-default",
+                        ToolFixtures.provider())
                 .freeze();
 
         assertThat(first.snapshot().digest()).isEqualTo(second.snapshot().digest());
@@ -30,7 +38,7 @@ class ToolCatalogBuilderTest {
                 .isEqualTo(second.snapshot().bindings().getFirst().coordinate().definitionHash());
         ModelToolSpecification specification = new ModelToolSpecificationMapper()
                 .map(first.snapshot().bindings().getFirst());
-        assertThat(specification.name()).isEqualTo("read");
+        assertThat(specification.name()).isEqualTo("file_read");
         assertThat(specification.inputJsonSchema())
                 .isEqualTo(ToolFixtures.definition().inputSchema().document());
         assertThat(specification.strict()).isFalse();
@@ -40,9 +48,9 @@ class ToolCatalogBuilderTest {
     @Test
     void rejectsDuplicateAliasesAndFreezesDeepJsonValues() {
         var builder = new ToolCatalogBuilder()
-                .register(new ToolAlias("read"), ToolFixtures.definition(), "binding", ToolFixtures.provider());
+                .register(new ToolAlias("file_read"), ToolFixtures.definition(), "binding", ToolFixtures.provider());
         assertThatThrownBy(() -> builder.register(
-                        new ToolAlias("read"), ToolFixtures.definition(), "binding", ToolFixtures.provider()))
+                        new ToolAlias("file_read"), ToolFixtures.definition(), "binding", ToolFixtures.provider()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("duplicate");
 
@@ -59,7 +67,7 @@ class ToolCatalogBuilderTest {
     void canonicalHashHasGoldenValueAndIgnoresMapInsertionOrder() {
         var canonicalizer = new ToolDefinitionCanonicalizer();
         assertThat(canonicalizer.hash(ToolFixtures.definition()).value())
-                .isEqualTo("8a929b725a834ddd01a63ffafae9c798447637a3978e6bbc66ec8d3dac3001ce");
+                .isEqualTo("5ffe5147b410988226beac731a569ffc2998fa92bc030badac04b41c48a0f935");
 
         var ordered = new LinkedHashMap<String, Object>();
         ordered.put("$schema", ToolSchema.DRAFT_2020_12);
@@ -85,20 +93,21 @@ class ToolCatalogBuilderTest {
     }
 
     @Test
-    void rejectsDuplicateCoordinatesEvenWhenAliasesDiffer() {
-        var builder = new ToolCatalogBuilder()
-                .register(new ToolAlias("read"), ToolFixtures.definition(), "binding", ToolFixtures.provider())
-                .register(new ToolAlias("read_again"), ToolFixtures.definition(), "binding", ToolFixtures.provider());
-
-        assertThatThrownBy(builder::freeze)
+    void rejectsAliasesThatDifferFromTheCanonicalToolName() {
+        assertThatThrownBy(() -> new ToolCatalogBuilder()
+                        .register(
+                                new ToolAlias("read_again"),
+                                ToolFixtures.definition(),
+                                "binding",
+                                ToolFixtures.provider()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("coordinate");
+                .hasMessageContaining("alias must equal tool name");
     }
 
     @Test
     void frozenCatalogRejectsMutationAndInvokerFailsClosedOnDefinitionDrift() {
         var builder = new ToolCatalogBuilder()
-                .register(new ToolAlias("read"), ToolFixtures.definition(), "binding", ToolFixtures.provider());
+                .register(new ToolAlias("file_read"), ToolFixtures.definition(), "binding", ToolFixtures.provider());
         var catalog = builder.freeze();
         assertThatThrownBy(() -> builder.register(
                         new ToolAlias("other"), ToolFixtures.definition(), "binding", ToolFixtures.provider()))

@@ -124,8 +124,7 @@ public final class WeatherTool
     public record Response(String forecast) {}
 
     private static final JavaToolSpec<Request, Response> SPEC =
-            JavaToolSpec.builder("weather.get", Request.class, Response.class)
-                    .alias("weather_get")
+            JavaToolSpec.builder("weather_get", Request.class, Response.class)
                     .description("Get the current weather for a city")
                     .pure()
                     .build();
@@ -270,7 +269,7 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
   资源按需读取；
 - 共享 `git` / `github` CLI Skill，以及 Coding `git-delivery` 和 Personal Assistant
   `github-project-watch` Product Skill；Skill 只提供流程，不授予执行、网络或 Credential 权限；
-- `web.search` 支持 Aliyun IQS、Brave、Tavily；`web.fetch` 支持 Aliyun IQS、Browserless、Tavily；
+- `web_search` 支持 Aliyun IQS、Brave、Tavily；`web_fetch` 支持 Aliyun IQS、Browserless、Tavily；
 - MCP Tool 和 Skill 激活不会绕过 Runtime Tool Pipeline，也不能扩大 Run 已冻结的 Tool 集。
 
 ### Context、Memory 与持久化
@@ -289,7 +288,7 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 - 显式 Artifact Export、内容寻址 payload、provenance、完整性校验与 SQLite 单机持久化；
 - `ExecutionBroker`、Sandbox SPI、受控 Host Provider，以及 macOS Seatbelt / Linux bubblewrap
   Local Native Provider；
-- 模型通过受控 `execution.run` 直接调用系统 `git` / `gh`；Java Git Integration 只保留不向模型披露的
+- 模型通过受控 `execution_run` 直接调用系统 `git` / `gh`；Java Git Integration 只保留不向模型披露的
   Worktree、Patch 合并、Revision Probe，以及供 Path-local Review 使用的有界仓库检查和只读证据采集，
   不再注册 `git.*` / `github.*` 子命令 Tool；
 - 五字段瞬态 Policy Decision、`DENY > ASK > ALLOW`、Interaction-owned ASK 恢复、CA WorkspaceAccess、

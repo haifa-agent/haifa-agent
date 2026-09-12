@@ -2,16 +2,9 @@ package io.haifa.agent.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.haifa.agent.application.project.product.coding.delivery.AttributionStatus;
-import io.haifa.agent.application.project.product.coding.delivery.RepositoryBaseline;
-import io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry;
-import io.haifa.agent.application.project.tool.ProjectToolCallContext;
 import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
-import io.haifa.agent.git.GitRepositoryRef;
 import io.haifa.agent.project.core.ledger.InMemorySessionChangeLedger;
-import io.haifa.agent.project.hostworkspace.HostGitInspectionStatus;
 import io.haifa.agent.project.ledger.SessionFileChangeRecord;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.io.IOException;
@@ -19,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -41,14 +33,14 @@ class LocalFileToolOperationsTest {
 
         String hostPath = file.toAbsolutePath().normalize().toString();
         var first = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 arguments(Map.of("path", hostPath, "maxBytes", 8, "maxLines", 1)));
         String cursor = (String) first.structuredData().get("nextCursor");
         var second = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -64,7 +56,7 @@ class LocalFileToolOperationsTest {
 
         Files.writeString(file, "changed\ncontent\n", StandardCharsets.UTF_8);
         var stale = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -82,7 +74,7 @@ class LocalFileToolOperationsTest {
         Fixture fixture = fixture();
 
         var result = fixture.operations.execute(
-                "file.list",
+                "file_list",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -105,7 +97,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = sourceFile.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.patch",
+                "file_patch",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -141,7 +133,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = sourceFile.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.patch",
+                "file_patch",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -170,7 +162,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = sourceFile.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.patch",
+                "file_patch",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -204,7 +196,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = sourceFile.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.patch",
+                "file_patch",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -233,7 +225,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = sourceFile.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.patch",
+                "file_patch",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -263,7 +255,7 @@ class LocalFileToolOperationsTest {
                 root.resolve("existing.txt").toAbsolutePath().normalize().toString();
 
         var result = fixture.operations.execute(
-                "file.create",
+                "file_create",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -286,13 +278,13 @@ class LocalFileToolOperationsTest {
         String sensitivePath = root.resolve(".env").toAbsolutePath().normalize().toString();
 
         var missingWrite = fixture.operations.execute(
-                "file.write",
+                "file_write",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
                 arguments(Map.of("path", missingPath, "content", "new")));
         var sensitiveRead = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -320,7 +312,7 @@ class LocalFileToolOperationsTest {
         ToolArguments arguments = arguments(Map.of("path", hostPath, "content", "after"));
 
         var result = fixture.operations.execute(
-                "file.write",
+                "file_write",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-reconcile",
@@ -335,27 +327,19 @@ class LocalFileToolOperationsTest {
     }
 
     private Fixture fixture() {
-        return fixture(null, null, false);
+        return fixture(null, false);
     }
 
     private Fixture fixture(InMemorySessionChangeLedger ledger) {
-        return fixture(ledger, null, false);
-    }
-
-    private Fixture fixture(InMemorySessionChangeLedger ledger, RunRepositoryBaselineRegistry repositoryBaselines) {
-        return fixture(ledger, repositoryBaselines, false);
+        return fixture(ledger, false);
     }
 
     private Fixture fixture(boolean workspaceAttachmentDisclosed) {
-        return fixture(null, null, workspaceAttachmentDisclosed);
+        return fixture(null, workspaceAttachmentDisclosed);
     }
 
-    private Fixture fixture(
-            InMemorySessionChangeLedger ledger,
-            RunRepositoryBaselineRegistry repositoryBaselines,
-            boolean workspaceAttachmentDisclosed) {
-        var support = LocalFileToolTestSupport.createSingleRootFixture(
-                root, ledger, repositoryBaselines, workspaceAttachmentDisclosed);
+    private Fixture fixture(InMemorySessionChangeLedger ledger, boolean workspaceAttachmentDisclosed) {
+        var support = LocalFileToolTestSupport.createSingleRootFixture(root, ledger, workspaceAttachmentDisclosed);
         return new Fixture(support.workspaceId(), support.operations());
     }
 
@@ -366,94 +350,10 @@ class LocalFileToolOperationsTest {
     private record Fixture(WorkspaceId workspaceId, LocalFileToolOperations operations) {}
 
     @Test
-    void establishesRepositoryBaselineBeforeFirstPhysicalWrite() {
-        Path target = root.resolve("before-write.txt");
-        AtomicInteger captures = new AtomicInteger();
-        var registry = new RunRepositoryBaselineRegistry(
-                (boundary, candidate) -> candidate.equals(root)
-                        ? HostGitInspectionStatus.WORKTREE_ROOT
-                        : HostGitInspectionStatus.NOT_WORKTREE_ROOT,
-                (context, repository) -> {
-                    assertThat(Files.exists(target)).isFalse();
-                    captures.incrementAndGet();
-                    return cleanBaseline(repository);
-                });
-        Fixture fixture = fixture(null, registry);
-
-        var result = fixture.operations.execute(
-                callContext(fixture.workspaceId, "run-baseline"),
-                "file.create",
-                arguments(Map.of("path", target.toString(), "content", "created")));
-
-        assertThat(result.successful()).isTrue();
-        assertThat(Files.exists(target)).isTrue();
-        assertThat(captures).hasValue(1);
-    }
-
-    @Test
-    void doesNotWriteWhenRepositoryBaselineFails() {
-        Path target = root.resolve("blocked-write.txt");
-        var registry = new RunRepositoryBaselineRegistry(
-                (boundary, candidate) -> candidate.equals(root)
-                        ? HostGitInspectionStatus.WORKTREE_ROOT
-                        : HostGitInspectionStatus.NOT_WORKTREE_ROOT,
-                (context, repository) -> {
-                    throw new IllegalStateException("git unavailable");
-                });
-        Fixture fixture = fixture(null, registry);
-
-        var result = fixture.operations.execute(
-                callContext(fixture.workspaceId, "run-blocked"),
-                "file.create",
-                arguments(Map.of("path", target.toString(), "content", "must not exist")));
-
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData()).containsEntry("errorCode", "REPOSITORY_BASELINE_UNAVAILABLE");
-        assertThat(Files.exists(target)).isFalse();
-    }
-
-    @Test
-    void keepsFileAuthorizationIndependentWhenGitInspectionIsUnavailable() throws Exception {
-        Path target = root.resolve("git-unavailable.txt");
-        var registry = new RunRepositoryBaselineRegistry(
-                (boundary, candidate) -> HostGitInspectionStatus.UNAVAILABLE, (context, repository) -> {
-                    throw new AssertionError("capture must not run without a located repository");
-                });
-        Fixture fixture = fixture(null, registry);
-
-        var result = fixture.operations.execute(
-                callContext(fixture.workspaceId, "run-git-unavailable"),
-                "file.create",
-                arguments(Map.of("path", target.toString(), "content", "authorized")));
-
-        assertThat(result.successful()).isTrue();
-        assertThat(Files.readString(target)).isEqualTo("authorized");
-        assertThat(registry.attributionStatus("run-git-unavailable")).isEqualTo(AttributionStatus.ATTRIBUTION_PARTIAL);
-    }
-
-    private static ProjectToolCallContext callContext(WorkspaceId workspaceId, String runRef) {
-        return new ProjectToolCallContext(
-                new TenantRef("tenant"),
-                workspaceId,
-                new PrincipalRef("operator", "user"),
-                runRef,
-                "tool-call",
-                "idempotency");
-    }
-
-    private static RepositoryBaseline cleanBaseline(GitRepositoryRef repository) {
-        return new RepositoryBaseline(
-                repository,
-                "abc123",
-                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                AttributionStatus.COMPLETE);
-    }
-
-    @Test
     void rejectsRelativePathOrAlias() {
         Fixture fixture = fixture();
         var resultAlias = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -466,7 +366,7 @@ class LocalFileToolOperationsTest {
                 .containsEntry("failureActionCode", "USE_ABSOLUTE_HOST_PATH");
 
         var resultRelative = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -484,7 +384,7 @@ class LocalFileToolOperationsTest {
         Fixture fixture = fixture();
         Path outside = root.resolveSibling("outside.txt").toAbsolutePath().normalize();
         var result = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -502,7 +402,7 @@ class LocalFileToolOperationsTest {
         Fixture fixture = fixture(true);
         Path outside = root.resolveSibling("outside.txt").toAbsolutePath().normalize();
         var result = fixture.operations.execute(
-                "file.read",
+                "file_read",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -522,7 +422,7 @@ class LocalFileToolOperationsTest {
         Fixture fixture = fixture();
 
         var result = fixture.operations.execute(
-                "file.delete",
+                "file_delete",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -540,7 +440,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = trash.toAbsolutePath().normalize().toString();
         var result = fixture.operations.execute(
-                "file.delete",
+                "file_delete",
                 fixture.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",
@@ -560,7 +460,7 @@ class LocalFileToolOperationsTest {
 
         String hostPath = root.resolve("hello.txt").toAbsolutePath().normalize().toString();
         var createRes = f.operations.execute(
-                "file.create",
+                "file_create",
                 f.workspaceId,
                 new PrincipalRef("operator", "user"),
                 "run-1",

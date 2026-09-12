@@ -36,7 +36,7 @@ class PersonalWebPlatformTest {
         assertThat(platform.aliases()).containsExactlyInAnyOrder("web_search", "web_fetch");
         assertThat(platform.contributions())
                 .extracting(item -> item.definition().name().value())
-                .containsExactly("web.search", "web.fetch");
+                .containsExactly("web_search", "web_fetch");
         assertThat(platform.contributions())
                 .extracting(item -> item.definition().providerId().value())
                 .containsExactly("web-search.aliyun", "web-fetch.browserless");
@@ -48,11 +48,11 @@ class PersonalWebPlatformTest {
             var definition = contribution.definition();
             var requirement = definition.credentialRequirements().getFirst();
             String actual = platform.credential().broker().requireSecret(requirement.credentialId());
-            String expected = definition.name().value().equals("web.search") ? "aliyun-secret" : "browserless-secret";
+            String expected = definition.name().value().equals("web_search") ? "aliyun-secret" : "browserless-secret";
             assertThat(actual).isEqualTo(expected);
         }
         var search = platform.contributions().stream()
-                .filter(item -> item.definition().name().value().equals("web.search"))
+                .filter(item -> item.definition().name().value().equals("web_search"))
                 .findFirst()
                 .orElseThrow();
         assertThat(inputProperties(search.definition().inputSchema().document()))

@@ -12,7 +12,7 @@ import java.util.Objects;
 
 /** Canonicalizes Coding workspace protocol fields before any policy or approval digest is created. */
 public final class CodingExecutionToolRequestCanonicalizer implements ToolRequestCanonicalizer {
-    private static final String EXECUTION_RUN = "execution.run";
+    private static final String EXECUTION_RUN = "execution_run";
 
     public CodingExecutionToolRequestCanonicalizer() {}
 

@@ -57,7 +57,7 @@ models:
       nativeStreaming: true
       allowedBindings: [antigravity-gemini, antigravity-gemini-3-8-flash, antigravity-gemini-3-7-flash, antigravity-gemini-3-1-pro-preview]
 tools:
-  enabled: [file.list, file.stat, file.read, file.create, file.write, file.patch, file.delete, file.move,  workspace.attach, workspace.worktree.create,execution.run]
+  enabled: [file_list, file_stat, file_read, file_create, file_write, file_patch, file_delete, file_move,  workspace_attach, workspace_worktree_create,execution_run]
 skills:
   allowed: [task-planning, result-verification, git, github, git-delivery]
 approval:

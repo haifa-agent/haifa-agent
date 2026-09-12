@@ -11,9 +11,9 @@ class CodingAgentPromptTest {
         CodingAgentPrompt.Snapshot second = CodingAgentPrompt.current();
 
         assertThat(second).isEqualTo(first);
-        assertThat(first.version()).isEqualTo("1.8.0");
+        assertThat(first.version()).isEqualTo("1.8.1");
         assertThat(first.digest()).matches("sha256:[0-9a-f]{64}");
-        assertThat(first.identity()).startsWith("coding-agent-prompt@1.8.0#sha256:");
+        assertThat(first.identity()).startsWith("coding-agent-prompt@1.8.1#sha256:");
         assertThat(first.text())
                 .contains(
                         "You are Haifa Coding Agent",
@@ -29,9 +29,9 @@ class CodingAgentPromptTest {
                         "Read applicable repository instructions",
                         "smallest complete change",
                         "authoritative tool results show a workspace change",
-                        "validation attempt",
-                        "deterministic change-review evidence",
-                        "Do not run a DIFF-family command only to satisfy the completion protocol",
+                        "any required validation attempt",
+                        "inspect the current changes",
+                        "do not run a DIFF-family command only to manufacture completion evidence",
                         "public API/types",
                         "input/output grammar, encoding, boundaries, shape, serialization, and framing",
                         "invalid/error contracts",
@@ -55,6 +55,8 @@ class CodingAgentPromptTest {
                         "result-verification skill",
                         "checks, skipped checks, and remaining risks")
                 .doesNotContain(
+                        "deterministic change-review evidence",
+                        "derives deterministic review evidence on demand",
                         "workspace_attach",
                         "Use host absolute paths for every file operation",
                         "aider/polyglot_",

@@ -28,7 +28,7 @@ class ToolEffectClassTest {
         Map<String, Object> schema =
                 Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", false);
         return new ToolDefinition(
-                new ToolName("fixture.tool"),
+                new ToolName("fixture_tool"),
                 new SemanticVersion("1.0.0"),
                 new ToolProviderId("fixture"),
                 "Fixture",

@@ -350,7 +350,7 @@ class DomainReconstitutionTest {
                 new AgentStepId("step"),
                 new ProviderToolCallCorrelationId("provider-" + id),
                 new RuntimeIdempotencyKey("key-" + id),
-                "file.read",
+                "file_read",
                 "1.0.0",
                 new ToolArguments("file-read", "1", Map.of("path", "README.md")),
                 NOW);

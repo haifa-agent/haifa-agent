@@ -37,7 +37,7 @@ Coding Agent 的基础工作方法由产品拥有的版本化资源
 
 BUILD/TEST 首次失败但有界输出没有可操作证据时，基础 Prompt 要求 Agent 不原样盲重试；
 `result-verification` Skill 指导它最多重跑一次，在同一 Shell 命令中把 stdout/stderr 重定向到临时日志，
-仅返回关键词命中及少量上下文，保留原测试退出码并清理文件。该协议直接复用 `execution.run`，不增加日志 Tool、
+仅返回关键词命中及少量上下文，保留原测试退出码并清理文件。该协议直接复用 `execution_run`，不增加日志 Tool、
 Output Store 读取、持久化或 Runtime Completion Gate。
 
 交付约束位于版本化基础 Prompt。精确剩余预算和完整交付状态留在权威控制面与 Trace，不再通过每轮
@@ -51,7 +51,7 @@ Coding Agent 不再向模型上下文注入 `ORIENT/PLAN/CHANGE/VERIFY/REVIEW/DE
 未解决的确定性阻塞、硬预算限制以及提交/推送/PR 意图），不满足要求时阻止任务完成，满足时中性放行。
 ANALYZE/REVIEW 任务保持只读约束；修改工作区不会隐式产生 commit、push 或 PR 意图。
 
-`execution.run` 2.0.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
+`execution_run` 2.0.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
 可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
 失败结果同样保留执行状态、可选退出码、墙钟耗时、截断标记、bounded 合并输出和稳定失败/动作码，
@@ -65,17 +65,18 @@ TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观�
 Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/REVIEW` 模式；没有可信模式时保持
 `UNKNOWN`，不从普通用户文本的关键词推断意图。模型消息不能改变模式，也不能制造交付证据。
 
-`CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、有界执行事实和按需审查状态
-引用重建工作区修改、确定性 Change Review、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
-修改或验证通过证据。Issue 29 将文件变更事实从 `FileChangeSet` 事务收敛为成功的 Mutation ToolCall 与按需审查（Git 目录使用 Git 工作树状态，Plain 目录使用会话内有界记录 `SessionChangeLedger`），移除每次写操作同步生成 Review 的开销。Phase 3 以 Run 级 `RepositoryBaseline` 在首次受管写入前冻结各仓 HEAD 与 dirty 摘要，按 nearest repository boundary 分流 Git/Plain Review；`execution.run` 无法证明全部写入归属、初始工作树已脏或证据读取不完整时，`coding-change-review/2` 明确产出 `ATTRIBUTION_PARTIAL`，不会伪装成完整证据。既有 `coding-change-review/1` 仍可确定性读取。
+`CodingDeliveryEvidenceLedger` 只从当前 canonical ToolCall 的结构化结果重建工作区修改、验证、只读检查、
+阻塞和有证据的 No-change 事实；不回退读取 AgentStep 结果，也不兼容旧 dotted Tool identity 或旧验证
+schema。模型自由文本不构成修改或验证通过证据。文件变更事实来自成功的 Mutation ToolCall；Coding 产品
+不维护仓库基线或 Git/Plain Change Review 链，也不会为此执行隐藏的 Git 探测。
 
 `CodingCompletionPolicy` 对 CHANGE/CREATE 始终要求权威修改或受限 No-change 事实；验证 blocker 只在
 Session 冻结配置的显式 `requiresValidationEvidence` 事实为真时产生。该事实在会话创建时由
 `CodingSessionVerificationConfiguration.freeze` 一次性推导并随 digest 冻结：来源为用户显式
 （`USER_EXPLICIT`）或仓库指令（`REPOSITORY_INSTRUCTIONS`）的候选构成必须完成的验证要求；
 `BUILD_CONFIGURATION`、`ADJACENT_TEST`、`ECOSYSTEM_DEFAULT` 候选只是推荐，环境恰好存在 Maven/pytest
-不构成验证承诺，普通文档或配置写入不会被强制送入 Build/Test 补救循环。权威验证一旦失败仍阻塞完成，
-除非冻结 profile 允许 blocked validation 且存在 `BLOCKER_CONFIRMED`。`DIFF_INSPECTION` 不再作为修改任务
+不构成验证承诺，普通文档或配置写入不会被强制送入 Build/Test 补救循环。最新一次权威验证失败始终阻塞完成，
+即使失败类别已经确认也不能绕过。`DIFF_INSPECTION` 不再作为修改任务
 完成门禁的兼容 fallback，但 DIFF 命令、只读审阅能力和对应诊断事实继续保留。ANALYZE/REVIEW 要求只读证据
 且拒绝意外修改。UNKNOWN 用于普通交互：没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；
 观察到 Workspace 修改时仍要求修改事实，验证要求同样只取决于冻结验证要求。明确承诺 commit/push/PR 的交付
@@ -96,15 +97,14 @@ Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影�
 candidate。该投影不是公共 `WorkspaceSnapshot`、Capability Detector 或恢复事实源；Coding Agent 模块不新增
 对应公共 DTO、持久化 Schema 或动态 executable/version 探测，具体静态发现和路径脱敏仍由 CLI 宿主负责。
 
-`CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别投影为
-`SATISFIED/INCOMPLETE` 和 `CLEAN/PARTIAL/UNCLEAN/IN_PROGRESS`，并通过 `coding-run-outcome/2` 的幂等
-`coding.task-outcome` 安全事件记录。Coding CLI、Coding Web 与受信 Coding Host 可通过
-`CodingSessionClient.findOutcome` 查询权威投影，无需解析 Event map；归档查看器仍可兼容读取历史
-`outcome/1` 与当前 `outcome/2` 文件事件。它不是 Benchmark Verifier 结果，也不增加新的 Core Run 状态。
+`CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别按需投影为
+`SATISFIED/INCOMPLETE` 和 `CLEAN/PARTIAL/UNCLEAN/IN_PROGRESS`。Coding CLI、Coding Web 与受信 Coding Host 可通过
+`CodingSessionClient.findOutcome` 查询权威投影；它作为只读纯推导服务运行，不向 Event Store 写入持久化的
+`coding.task-outcome` 事件，也不是 Benchmark Verifier 结果，不增加新的 Core Run 状态。
 
 可信宿主还可在创建 Session 或提交新 Turn 时冻结 `WORKTREE_ONLY/LOCAL_COMMIT/REMOTE_PUSH/PULL_REQUEST`
 交付意图；默认仍是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。交付意图只表达完成目标和投影
-元数据，不授权或拦截 Git 命令。Commit、Push、PR 与其他命令一样通过唯一的 `execution.run` 进入通用
+元数据，不授权或拦截 Git 命令。Commit、Push、PR 与其他命令一样通过唯一的 `execution_run` 进入通用
 风险分类、Policy/Approval、Workspace、Sandbox、网络权限和审计边界，不再经过 Coding 产品专用的
 Broker 前置交付门禁。系统仍从 Tool 结果投影有界交付证据；显式选择更高交付目标时，完成策略仍按顺序
 检查相应结果。证据绑定脱敏的 workspace-relative Repository Scope Digest，因此根仓、`docs/`、
@@ -211,21 +211,21 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 实现：偏好保存内部 Model ID 和独立 revision，只允许在无活动 Run/dispatch 时切换，下一新 Run
 冻结对应快照；配置中已删除的模型要求重选，不静默回退。
 
-`ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`workspace.attach`、
-`workspace.worktree.create` 与 `execution.run` 共 13 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
+`ProjectToolCatalog` 将 `file_list/stat/read/search/create/write/delete/move/diff/patch`、`workspace_attach`、
+`workspace_worktree_create` 与 `execution_run` 共 13 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
 `github.*` Tool；Git/GitHub 操作由
-`execution.run` 直接调用系统 `git` / `gh`。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、
+`execution_run` 直接调用系统 `git` / `gh`。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、
 幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
-Catalog 保留 `file.search` 供显式配置兼容，但 Coding CLI 默认不冻结该能力；大型仓库的文件发现和内容
-搜索使用通用 `execution.run`，由模型根据冻结 Shell 与 `PATH` 选择 `rg`、`rg --files` 或平台适配的
+Catalog 保留 `file_search` 供显式配置兼容，但 Coding CLI 默认不冻结该能力；大型仓库的文件发现和内容
+搜索使用通用 `execution_run`，由模型根据冻结 Shell 与 `PATH` 选择 `rg`、`rg --files` 或平台适配的
 替代命令。应用不增加搜索专用 Executor、不解析搜索意图，也不在 Java 中拼接命令选项。
-普通手工源码更新优先使用 `file.patch` 2.1.0：它接受 Codex 风格的上下文 Patch，覆盖新增、更新和同一授权
-目录内的多文件调用；删除和移动分别使用 `file.delete`、`file.move`。Update hunk 的 `@@ <text>` 只是可选
+普通手工源码更新优先使用 `file_patch` 2.1.0：它接受 Codex 风格的上下文 Patch，覆盖新增、更新和同一授权
+目录内的多文件调用；删除和移动分别使用 `file_delete`、`file_move`。Update hunk 的 `@@ <text>` 只是可选
 导航提示，旧正文/context 的唯一精确匹配才决定落点；多处匹配无法由唯一提示消歧时 fail closed，不选择第一个位置。
-`file.write` 保留给有意整体替换的小文件；目标不存在时会原子创建，生成代码和机械批量修改继续通过通用 CLI/生成器完成。
-文件 Mutation 保证完整原子替换；遇到外部冲突或不确定结果时 fail closed 返回错误，不自动重放或自动对账。`execution.run` 会在进程启动时记录 execution ID、PID 和工作目录
+`file_write` 保留给有意整体替换的小文件；目标不存在时会原子创建，生成代码和机械批量修改继续通过通用 CLI/生成器完成。
+文件 Mutation 保证完整原子替换；遇到外部冲突或不确定结果时 fail closed 返回错误，不自动重放或自动对账。`execution_run` 会在进程启动时记录 execution ID、PID 和工作目录
 摘要；已得到终态进程结果可直接对账，未知终止或失败不得自动重放。
-`execution.run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，
+`execution_run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，
 Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一精确 Profile Ref/version。
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于
 新 Profile；模型可见 Schema 包含 command、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir`、有界 timeout、安全描述和可选
@@ -254,23 +254,23 @@ Wrapper 形式为 HIGH。HIGH 继续进入用户阈值，不是分类失败；�
 并允许上层 Application 显式加入
 绑定当前可信 tenant/principal 的只读 `USER` Scope 本地目录 Source。目录 root 不来自模型或 Run 请求，
 Application 必须在扫描前验证绝对路径、可读性和 symlink 边界。普通旧装配路径不隐式加入 Skill，只有产品
-Profile 显式 allowlist 后，`skill.load` / `skill.resource.read` 才作为
+Profile 显式 allowlist 后，`skill_load` / `skill_resource_read` 才作为
 `SkillToolCatalogContribution` 写入同一个 `ProjectToolCatalog`。
 
-显式启用的 `web.search` / `web.fetch` 也写入同一个 `ToolCatalogBuilder`。Search 可精确选择 Aliyun、
+显式启用的 `web_search` / `web_fetch` 也写入同一个 `ToolCatalogBuilder`。Search 可精确选择 Aliyun、
 Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Provider、endpoint、非秘密配置和 Fetch URL Policy
 进入冻结 binding；Provider 不读取环境变量、不保存 Credential、不执行 fallback。
 
-配置、权限和精确 Tool 身份继续使用点号命名；模型披露使用 Provider-safe Alias，例如
-`file.read -> file_read` 和 `execution.run -> execution_run`。Alias 只影响模型协议，不改变 Provider
-执行时收到的精确 Tool 名称。历史 frozen Run 中旧 `git.*` identity 仅用于读取持久化交付证据，不能进入
-新 Run 的 Tool Catalog。
+配置、权限、冻结绑定、模型披露、ToolCall 持久化和 Provider 执行统一使用 Provider-safe 下划线名称，例如
+`file_read` 和 `execution_run`。`ToolAlias` 仍是冻结协议中的独立类型，但其值必须与精确 Tool 名称相同，
+不再执行点号到下划线的转换，也不读取历史 frozen Run 中的 dotted Tool identity；新旧数据之间不提供
+兼容映射或迁移。
 
 经审查启用的 MCP Tool 由 `McpToolCatalogContribution` 写入同一个 `ToolCatalogBuilder`，不会建立 MCP 专用 Registry。每个 MCP server 使用独立 `mcp.<serverId>` Provider；本地 definition hash 与远端 definition digest 分别冻结，Runtime 只通过 `FrozenToolBinding.providerBindingReference` 恢复精确 binding。
 
 `ProjectToolExecutor` 是 Tool Provider adapter，只接收最小化 `ToolInvocationRequest`，并在委派前重新解析 Run Workspace、Principal 和 capability。文件操作继续走 `ProjectToolOperations`；`ProjectExecutionToolOperations` 把
 `command/workspaceRef/relativeWorkdir/timeoutMillis/description` 及可选 `operationFamily`
-映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令
+映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。`execution_run` 使用配置 Shell 的通用命令文本，不包含命令
 目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。Coding Profile 在产品边界为通用 Scratch 增加
 `GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、
 退出码、有界合并首尾、明确省略标记、Output Ref、耗时、安全失败类别、稳定错误码、
@@ -279,9 +279,8 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 `OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
 不包装或解释普通命令语义。
 进程数预算触发且进程树已收敛时返回 `PROCESS_LIMIT_EXCEEDED`，不会伪装成 `OUTCOME_UNKNOWN`。已持久化的
-ExecutionResult 是权威执行事实；Change Review 等派生投影失败只返回安全的不可用原因码，不得吞掉执行结果。
-Change Review 成功结果中的 `artifactRef` 与 `changeReviewArtifactRef` 均由严格输出 Schema 声明，避免
-确定的 ExecutionResult 因派生字段契约漂移被误判为 `TOOL_OUTCOME_UNKNOWN`。
+ExecutionResult 是权威执行事实。Coding 产品不再维护 Change Review Artifact 或 Repository Baseline；
+需要检查当前变更时，模型通过已披露的只读文件/Diff 能力或 `execution_run` 按需读取，不制造完成证据。
 命中冻结验证候选时生成的 `validationAttemptRef` 同样属于严格 Schema 契约，并在直接返回与只读
 reconcile 路径使用同一份冻结定义校验。
 Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版本。普通命令默认只接受退出码 0；
@@ -295,7 +294,7 @@ Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版�
 `WORKSPACE_PROTOCOL_REQUIRED`，不再升级成不可批准的权限拒绝。dispatch 前的确定性拒绝直接保存失败
 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
 
-`workspace.worktree.create` 是 CA 独有的始终审批能力：精确目标同时绑定 source `workspaceRef`、不可变 base
+`workspace_worktree_create` 是 CA 独有的始终审批能力：精确目标同时绑定 source `workspaceRef`、不可变 base
 commit、新分支、受控 target name 和交付意图，不接受模型指定的主机目标路径或权限；source 必须具有当前
 `DEVELOP` Access。受信 Git Provider 创建并校验 worktree 后，CA 才把新 root 以
 `APPROVED_WORKTREE_CREATE` 登记、写入新 workspace 的 `DEVELOP` Access 并返回脱敏

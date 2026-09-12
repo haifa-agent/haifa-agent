@@ -249,7 +249,7 @@ class RuntimeEventFeedTest {
                         "1",
                         Map.of(
                                 "toolCallId", "call-1",
-                                "toolName", "execution.run",
+                                "toolName", "execution_run",
                                 "targetSummary", "workspace command",
                                 "resultRef", "tool-result:1"),
                         NOW,

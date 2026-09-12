@@ -43,7 +43,7 @@ final class ToolFixtures {
 
     static ToolDefinition definition(ToolRisk risk, ToolSchema inputSchema) {
         return new ToolDefinition(
-                new ToolName("file.read"),
+                new ToolName("file_read"),
                 new SemanticVersion("1.0.0"),
                 PROVIDER_ID,
                 "Read file",

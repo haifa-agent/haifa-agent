@@ -291,8 +291,7 @@ public class HaifaAgentFacadeTest {
     private static final class WeatherTool implements JavaTool<WeatherRequest, WeatherResponse> {
         @Override
         public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
-            return JavaToolSpec.builder("weather.get", WeatherRequest.class, WeatherResponse.class)
-                    .alias("weather_get")
+            return JavaToolSpec.builder("weather_get", WeatherRequest.class, WeatherResponse.class)
                     .description("Gets the weather for a city")
                     .pure()
                     .build();

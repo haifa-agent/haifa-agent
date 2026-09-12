@@ -24,8 +24,8 @@ class CodingValidationEvidenceTest {
                 CodingVerificationSource.USER_EXPLICIT,
                 "coding-client",
                 CodingValidationScope.SELECTED);
-        CodingSessionVerificationConfiguration configuration = CodingSessionVerificationConfiguration.freeze(
-                new CodingVerificationProfile(List.of(candidate), List.of()));
+        CodingSessionVerificationConfiguration configuration =
+                CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
 
         for (String ignoredRunnerOutput : List.of(
                 "1 passed, 4 deselected in 0.12s",
@@ -57,8 +57,8 @@ class CodingValidationEvidenceTest {
                 CodingVerificationSource.BUILD_CONFIGURATION,
                 "pom.xml",
                 CodingValidationScope.FULL);
-        CodingSessionVerificationConfiguration configuration = CodingSessionVerificationConfiguration.freeze(
-                new CodingVerificationProfile(List.of(candidate), List.of()));
+        CodingSessionVerificationConfiguration configuration =
+                CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
 
         CodingValidationAttemptEvidence evidence = CodingValidationAttemptFactory.create(
                         "BUILD", "./mvnw test && echo done", false, configuration)
@@ -80,8 +80,8 @@ class CodingValidationEvidenceTest {
                 CodingVerificationSource.BUILD_CONFIGURATION,
                 "verify.ps1",
                 CodingValidationScope.FULL);
-        CodingSessionVerificationConfiguration configuration = CodingSessionVerificationConfiguration.freeze(
-                new CodingVerificationProfile(List.of(candidate), List.of()));
+        CodingSessionVerificationConfiguration configuration =
+                CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
 
         assertThat(CodingValidationAttemptFactory.create("UNKNOWN", candidate.command(), true, configuration))
                 .get()
@@ -97,7 +97,7 @@ class CodingValidationEvidenceTest {
     }
 
     @Test
-    void normalizesLegacyRunnerCountsToUntrustedUnknownEvidence() {
+    void rejectsLegacyRunnerEvidence() {
         Map<String, Object> legacy = Map.ofEntries(
                 Map.entry("schemaVersion", "coding-validation-evidence/1"),
                 Map.entry("status", "PASSED"),
@@ -108,15 +108,6 @@ class CodingValidationEvidenceTest {
                 Map.entry("countSource", "PYTEST_SUMMARY"),
                 Map.entry("claimCode", "SELECTED_TESTS_ONLY"));
 
-        CodingValidationAttemptEvidence evidence =
-                CodingValidationAttemptEvidence.fromStructuredData(legacy).orElseThrow();
-
-        assertThat(evidence.schemaVersion()).isEqualTo("coding-validation-evidence/2");
-        assertThat(evidence.selectedTestCount()).isNull();
-        assertThat(evidence.scope()).isEqualTo(CodingValidationScope.UNKNOWN);
-        assertThat(evidence.countSource()).isEqualTo("COUNTS_UNAVAILABLE");
-        assertThat(evidence.claimCode()).isEqualTo("LEGACY_COUNTS_UNTRUSTED");
-        assertThat(CodingValidationAttemptEvidence.fromStructuredData(evidence.toStructuredData()))
-                .contains(evidence);
+        assertThat(CodingValidationAttemptEvidence.fromStructuredData(legacy)).isEmpty();
     }
 }

@@ -91,7 +91,7 @@ class CoreModelTest {
                 new AgentStepId("step-1"),
                 new ProviderToolCallCorrelationId("provider-call-1"),
                 new RuntimeIdempotencyKey("runtime-key-1"),
-                "file.read",
+                "file_read",
                 "1.0.0",
                 arguments,
                 NOW);

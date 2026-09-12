@@ -1,13 +1,11 @@
 package io.haifa.agent.application.project.product.coding.delivery;
 
-import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -17,39 +15,12 @@ import java.util.Set;
 public final class CodingDeliveryEvidenceLedger {
     private static final Set<String> NO_CHANGE_CODES =
             Set.of("ALREADY_SATISFIED", "ARCHITECTURE_STOP", "SECURITY_STOP", "DETERMINISTIC_BLOCKER");
-    private static final Set<String> MUTATION_TOOLS = Set.of(
-            "file.create",
-            "file.write",
-            "file.delete",
-            "file.move",
-            "file.patch",
-            "file_create",
-            "file_write",
-            "file_delete",
-            "file_move",
-            "file_patch");
-    // Legacy identities remain readable for persisted frozen Runs; new catalogs do not disclose git.* Tools.
+    private static final Set<String> MUTATION_TOOLS =
+            Set.of("file_create", "file_write", "file_delete", "file_move", "file_patch");
     private static final Set<String> READ_TOOLS = Set.of(
-            "file.list",
-            "file.stat",
-            "file.read",
-            "file.search",
-            "file.diff",
-            "git.inspect",
-            "git.status",
-            "file_list",
-            "file_stat",
-            "file_read",
-            "file_search",
-            "file_diff",
-            "git_inspect",
-            "git_status",
-            "skill.load",
-            "skill.resource.read",
-            "skill_load",
-            "skill_resource_read");
-    private static final Set<String> DIFF_TOOLS = Set.of("file.diff", "git.diff", "file_diff", "git_diff");
-    private static final Set<String> EXECUTION_TOOLS = Set.of("execution.run", "execution_run");
+            "file_list", "file_stat", "file_read", "file_search", "file_diff", "skill_load", "skill_resource_read");
+    private static final Set<String> DIFF_TOOLS = Set.of("file_diff");
+    private static final String EXECUTION_TOOL = "execution_run";
 
     private final RuntimeStateRepository state;
 
@@ -58,8 +29,6 @@ public final class CodingDeliveryEvidenceLedger {
     }
 
     public Snapshot reconstruct(io.haifa.agent.core.run.AgentRunId runId) {
-        Map<String, AgentStep> steps = new LinkedHashMap<>();
-        state.steps(runId).forEach(step -> steps.put(step.id().value(), step));
         EnumSet<CodingDeliveryEvidenceKind> facts = EnumSet.noneOf(CodingDeliveryEvidenceKind.class);
         Map<CodingDeliveryEvidenceKind, Integer> latestDeliveryEvidence =
                 new java.util.EnumMap<>(CodingDeliveryEvidenceKind.class);
@@ -71,7 +40,7 @@ public final class CodingDeliveryEvidenceLedger {
         for (int index = 0; index < calls.size(); index++) {
             ToolCall call = calls.get(index);
             EnumSet<CodingDeliveryEvidenceKind> callFacts = EnumSet.noneOf(CodingDeliveryEvidenceKind.class);
-            collect(call, steps.get(call.stepId().value()), callFacts, validationAttempts);
+            collect(call, callFacts, validationAttempts);
             facts.addAll(callFacts);
             int position = index;
             callFacts.forEach(kind -> latestDeliveryEvidence.put(kind, position));
@@ -81,15 +50,10 @@ public final class CodingDeliveryEvidenceLedger {
 
     private static void collect(
             ToolCall call,
-            AgentStep step,
             EnumSet<CodingDeliveryEvidenceKind> facts,
             List<CodingValidationAttemptEvidence> validationAttempts) {
-        Map<String, Object> data = call.result()
-                .map(result -> result.structuredData())
-                .orElseGet(() -> java.util.Optional.ofNullable(step)
-                        .flatMap(AgentStep::result)
-                        .map(result -> result.data())
-                        .orElse(Map.of()));
+        Map<String, Object> data =
+                call.result().map(result -> result.structuredData()).orElse(Map.of());
         if (call.status() == ToolCallStatus.COMPLETED && READ_TOOLS.contains(call.toolName())) {
             facts.add(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION);
         }
@@ -102,13 +66,10 @@ public final class CodingDeliveryEvidenceLedger {
         if (call.status() == ToolCallStatus.COMPLETED && MUTATION_TOOLS.contains(call.toolName())) {
             facts.add(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
         }
-        CodingChangeReviewArtifact.fromStructuredData(data.get("changeReviewArtifact"))
-                .filter(CodingChangeReviewArtifact::complete)
-                .ifPresent(review -> facts.add(CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW));
         if (call.status() == ToolCallStatus.COMPLETED && DIFF_TOOLS.contains(call.toolName())) {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
         }
-        if (!EXECUTION_TOOLS.contains(call.toolName()) || data.isEmpty()) return;
+        if (!EXECUTION_TOOL.equals(call.toolName()) || data.isEmpty()) return;
 
         Object deliveryEvidenceCode = data.get("deliveryEvidenceCode");
         if (deliveryEvidenceCode instanceof String code) {
@@ -119,8 +80,7 @@ public final class CodingDeliveryEvidenceLedger {
             }
         }
 
-        String declaredFamily = String.valueOf(
-                data.getOrDefault("declaredOperationFamily", data.getOrDefault("operationFamily", "UNKNOWN")));
+        String declaredFamily = String.valueOf(data.getOrDefault("operationFamily", "UNKNOWN"));
         String effectiveFamily = String.valueOf(data.getOrDefault(
                 "effectiveOperationFamily",
                 data.containsKey("commandOperation") ? data.get("commandOperation") : declaredFamily));
@@ -146,8 +106,8 @@ public final class CodingDeliveryEvidenceLedger {
         }
         java.util.Optional<CodingValidationAttemptEvidence> structuredValidation =
                 CodingValidationAttemptEvidence.fromStructuredData(data.get("validationEvidence"));
-        if (structuredValidation.isPresent() || "BUILD".equals(declaredFamily) || "TEST".equals(declaredFamily)) {
-            CodingValidationAttemptEvidence validation = structuredValidation.orElseGet(() -> legacyValidation(status));
+        if (structuredValidation.isPresent()) {
+            CodingValidationAttemptEvidence validation = structuredValidation.orElseThrow();
             validationAttempts.add(validation);
             facts.add(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT);
             facts.add(
@@ -167,16 +127,8 @@ public final class CodingDeliveryEvidenceLedger {
         }
     }
 
-    private static CodingValidationAttemptEvidence legacyValidation(String status) {
-        return CodingValidationAttemptEvidence.unavailable(
-                "SUCCEEDED".equals(status) ? CodingValidationStatus.PASSED : CodingValidationStatus.FAILED,
-                "LEGACY_TOOL_RESULT");
-    }
-
     private static boolean trustedReadOnlyClassification(Map<String, Object> data) {
-        if (!data.containsKey("commandTarget") && !data.containsKey("commandRisk")) {
-            return true; // Frozen legacy execution results predate trusted command classification.
-        }
+        if (!data.containsKey("commandTarget") || !data.containsKey("commandRisk")) return false;
         String target = String.valueOf(data.getOrDefault("commandTarget", "OTHER"));
         String risk = String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN"));
         return ("OTHER".equals(target) && ("NOT_APPLICABLE".equals(risk) || "UNKNOWN".equals(risk)))
@@ -185,9 +137,7 @@ public final class CodingDeliveryEvidenceLedger {
     }
 
     private static boolean trustedOperationFamily(Map<String, Object> data, String family) {
-        if (!data.containsKey("commandOperation")) {
-            return true; // Frozen legacy results predate trusted operation classification.
-        }
+        if (!data.containsKey("commandOperation")) return false;
         if ("OTHER".equals(String.valueOf(data.getOrDefault("commandTarget", "OTHER")))
                 && ("NOT_APPLICABLE".equals(String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN")))
                         || "UNKNOWN".equals(String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN"))))) {

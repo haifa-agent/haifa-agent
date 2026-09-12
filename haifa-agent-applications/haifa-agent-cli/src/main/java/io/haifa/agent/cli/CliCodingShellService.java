@@ -109,7 +109,7 @@ final class CliCodingShellService implements CodingShellService {
                         Optional.empty(),
                         policy.rules().approvalMode(),
                         Optional.of(profileDigest)),
-                new PolicyAction("execution.run", "invoke"),
+                new PolicyAction("execution_run", "invoke"),
                 new PolicyResource(
                         "execution",
                         "terminal-shell-" + token,
@@ -141,7 +141,7 @@ final class CliCodingShellService implements CodingShellService {
                 value.auditRunId(),
                 tenant,
                 principal,
-                new RunWorkspaceAccess(workspaceId, Set.of("execution.run")),
+                new RunWorkspaceAccess(workspaceId, Set.of("execution_run")),
                 value.command(),
                 ".",
                 timeout,

@@ -228,7 +228,7 @@ the deterministic acceptance profile keeps its explicit 30-minute test deadline.
 
 Phase 3 adds product schema V5 for the frozen Mission-level Skill binding and uses shared Runtime
 schema V7 Artifact metadata plus an application-owned, no-follow payload directory. Deep Research
-uses only the approved `web.search` / `web.fetch` pipeline, validates canonical source identities,
+uses only the approved `web_search` / `web_fetch` pipeline, validates canonical source identities,
 citation closure and quote bounds, then applies a deterministic marked-Markdown Report Gate and at most two stable
 idempotent revisions. It publishes report, sources, claim-evidence and unresolved Artifacts, validates their
 hash/version/media type, and publishes the code-owned `pa.research-delivery/v2` manifest last as the fifth owner-only
@@ -362,7 +362,7 @@ $env:HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED='true'
 Personal 产品使用固定的 `personal-execution` Server 私有 Workspace，模型不能指定 cwd。默认单次 15 秒、最大 30 秒、
 64 KiB / 1000 行输出和最多 4 个并发进程；可执行文件从可信 Server 配置和当前 OS 解析。三端 Host Guarded
 复用公共 HOST_USER 环境解析器，显式提供真实用户 HOME，并保留 Windows `USERPROFILE/APPDATA/LOCALAPPDATA`
-等受信任目录；HOME 不安全时进程启动前 fail closed。PA 的 `execution.run` 不再装配 Workspace Change
+等受信任目录；HOME 不安全时进程启动前 fail closed。PA 的 `execution_run` 不再装配 Workspace Change
 Observer，也不扫描或记录 HOME、AppData、XDG 和包安装目录，不把 Server 凭据注入子进程。每次调用仍必须经过 Runtime Interaction exact
 approval；开关只确认 Provider 部署风险，不构成某次调用授权。
 
@@ -381,7 +381,7 @@ $env:HAIFA_PERSONAL_MCP_DISPLAY_NAME='Haifa Utility MCP'
 使 Server 启动失败；不会回退到 embedded echo。
 
 Web Search 与 Fetch 默认关闭并独立配置。两项默认 Provider 均为 Tavily；
-启用后分别装配 `web_search -> web.search` 和 `web_fetch -> web.fetch`：
+启用后分别装配 `web_search -> web_search` 和 `web_fetch -> web_fetch`：
 
 ```powershell
 $env:HAIFA_PERSONAL_WEB_SEARCH_ENABLED='true'
@@ -482,5 +482,5 @@ For initial diagnostics, a script entry may be `REVOKED` with an all-zero expect
 server starts and Admin exposes the computed safe binding/digest metadata, but the script cannot be
 auto-approved. After reviewing the exact package, script, fixed Tool Schema, runtime, sandbox, capabilities,
 and hosts, the operator records the real hash, changes the grant to `ACTIVE`, and restarts. Any subsequent
-drift returns that invocation to ordinary approval or rejection. Generic `execution.run` always keeps its
+drift returns that invocation to ordinary approval or rejection. Generic `execution_run` always keeps its
 existing exact human approval.

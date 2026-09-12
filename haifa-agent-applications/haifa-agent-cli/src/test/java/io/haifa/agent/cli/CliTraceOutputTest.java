@@ -40,7 +40,7 @@ class CliTraceOutputTest {
             trace.accept(event(
                     "tool.execute",
                     Optional.of(new ToolCallId("tool-call-1")),
-                    Map.of("toolName", "skill.load", "providerId", "haifa-runtime-skill")));
+                    Map.of("toolName", "skill_load", "providerId", "haifa-runtime-skill")));
             trace.accept(event(
                     "tool.persisted",
                     Optional.of(new ToolCallId("tool-call-1")),
@@ -61,7 +61,7 @@ class CliTraceOutputTest {
         assertThat(output)
                 .doesNotContain("context.built")
                 .contains("skill started")
-                .contains("toolName=skill.load")
+                .contains("toolName=skill_load")
                 .contains("skill completed")
                 .contains("successful=true")
                 .contains("toolCallId=tool-call-1")
@@ -200,12 +200,12 @@ class CliTraceOutputTest {
             trace.accept(event(
                     "tool.execute",
                     Optional.of(new ToolCallId("tool-call-1")),
-                    Map.of("toolName", "file.read", "definitionHash", "abc123")));
+                    Map.of("toolName", "file_read", "definitionHash", "abc123")));
             trace.accept(event(
                     "tool.persisted",
                     Optional.of(new ToolCallId("tool-call-1")),
                     Map.of(
-                            "toolName", "file.read",
+                            "toolName", "file_read",
                             "successful", true,
                             "truncated", true,
                             "externalizationRequired", false,

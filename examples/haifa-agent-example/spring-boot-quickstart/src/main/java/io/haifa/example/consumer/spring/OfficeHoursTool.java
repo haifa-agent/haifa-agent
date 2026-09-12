@@ -13,8 +13,7 @@ public final class OfficeHoursTool implements JavaTool<OfficeHoursTool.Request, 
     public record Response(String hours) {}
 
     private static final JavaToolSpec<Request, Response> SPEC = JavaToolSpec.builder(
-                    "office.hours", Request.class, Response.class)
-            .alias("office_hours")
+                    "office_hours", Request.class, Response.class)
             .title("Office hours")
             .description("Return deterministic opening hours for an office")
             .pure()

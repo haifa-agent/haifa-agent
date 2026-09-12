@@ -5,7 +5,7 @@ license: Apache-2.0
 metadata:
   haifa.version: 1.0.0
   haifa.requires.bins: gh,git
-  haifa.requires.tools: execution.run
+  haifa.requires.tools: execution_run
 allowed-tools: execution_run
 ---
 

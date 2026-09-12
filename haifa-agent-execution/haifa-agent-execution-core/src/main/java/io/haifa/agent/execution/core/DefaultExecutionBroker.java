@@ -186,7 +186,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
     }
 
     private void authorize(ExecutionRequest request) {
-        if (!request.context().allows("execution.run"))
+        if (!request.context().allows("execution_run"))
             throw reject("CAPABILITY_DENIED", "execution capability is absent");
         var workspace = workspaces
                 .find(request.workspaceId())
@@ -194,7 +194,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         var binding = bindings.find(workspace.root().bindingId())
                 .orElseThrow(() -> reject("BINDING_NOT_FOUND", "workspace binding not found"));
         if (!binding.permissions().allows(WorkspacePermission.EXECUTE)
-                || !binding.capabilities().allows("execution.run")) {
+                || !binding.capabilities().allows("execution_run")) {
             throw reject("WORKSPACE_EXECUTION_DENIED", "workspace execution capability is denied");
         }
     }

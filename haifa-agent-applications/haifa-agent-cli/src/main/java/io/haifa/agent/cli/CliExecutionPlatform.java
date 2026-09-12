@@ -47,19 +47,16 @@ final class CliExecutionPlatform {
     private final SandboxProfile profile;
     private final String shellDisplayName;
     private final String securitySummary;
-    private final CliRepositoryBaselineSupport repositoryBaselines;
 
     private CliExecutionPlatform(
             ProjectExecutionToolOperations operations,
             SandboxProfile profile,
             String shellDisplayName,
-            String securitySummary,
-            CliRepositoryBaselineSupport repositoryBaselines) {
+            String securitySummary) {
         this.operations = operations;
         this.profile = profile;
         this.shellDisplayName = shellDisplayName;
         this.securitySummary = securitySummary;
-        this.repositoryBaselines = repositoryBaselines;
     }
 
     static CliExecutionPlatform create(
@@ -136,8 +133,6 @@ final class CliExecutionPlatform {
                 providerRegistry,
                 workspaces,
                 bindings);
-        CliRepositoryBaselineSupport repositoryBaselines =
-                CliRepositoryBaselineSupport.create(broker, identifiers, profile.ref(), provisioning);
         ExecutionOutputObserver observer = new CliOutputObserver(output);
         var operations = new ProjectExecutionToolOperations(
                 broker,
@@ -154,19 +149,14 @@ final class CliExecutionPlatform {
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 workspaceTargetResolver(provisioning, workspaceAccess, tenant, principal),
-                verificationProfiles,
-                repositoryBaselines.observer());
+                verificationProfiles);
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
-        return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary, repositoryBaselines);
+        return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary);
     }
 
     ProjectExecutionToolOperations operations() {
         return operations;
-    }
-
-    io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry repositoryBaselines() {
-        return repositoryBaselines == null ? null : repositoryBaselines.registry();
     }
 
     static io.haifa.agent.application.project.tool.ExecutionWorkspaceTargetResolver workspaceTargetResolver(

@@ -157,7 +157,7 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   `WAITING FOR APPROVAL`（等待用户审批）。计时是当前活动阶段耗时，不是整轮 Run 总耗时：新 Run、
   工具开始、工具完成后返回模型、进入/离开审批、应用 Steer、恢复、验证和取消阶段时从 `1s` 重新开始；
   Assistant Delta、轮询、重复事件和 viewport 操作不重置。`WORKING` 只追加短 Tool
-  名称，例如 `WORKING (12s) · execution.run`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
+  名称，例如 `WORKING (12s) · execution_run`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
 - 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
   五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；
 

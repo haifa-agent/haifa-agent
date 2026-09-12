@@ -27,7 +27,7 @@ import java.util.Set;
 public final class TavilyFetchProvider implements WebFetchProvider {
     public static final URI DEFAULT_ENDPOINT = URI.create("https://api.tavily.com/extract");
     public static final CredentialRequirement CREDENTIAL =
-            WebHttpSupport.credential("web-fetch-tavily", "Tavily web fetch", "web.fetch");
+            WebHttpSupport.credential("web-fetch-tavily", "Tavily web fetch", "web_fetch");
 
     private final HttpClient client;
     private final ObjectMapper mapper;

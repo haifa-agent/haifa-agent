@@ -5,17 +5,15 @@ import java.util.Objects;
 import java.util.Optional;
 
 /** Bounded product-owned command candidates; it is a policy input, not a language plugin registry. */
-public record CodingVerificationProfile(
-        List<CodingVerificationCandidate> candidates, List<CodingVerificationCandidate> ignoredCandidates) {
+public record CodingVerificationProfile(List<CodingVerificationCandidate> candidates) {
     public static final int MAXIMUM_CANDIDATES = 16;
 
     public CodingVerificationProfile {
         candidates = bounded(candidates, "candidates");
-        ignoredCandidates = bounded(ignoredCandidates, "ignoredCandidates");
     }
 
     public static CodingVerificationProfile empty() {
-        return new CodingVerificationProfile(List.of(), List.of());
+        return new CodingVerificationProfile(List.of());
     }
 
     /**
