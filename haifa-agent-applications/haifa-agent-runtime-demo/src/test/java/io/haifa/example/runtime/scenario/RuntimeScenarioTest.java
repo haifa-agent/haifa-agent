@@ -22,7 +22,7 @@ class RuntimeScenarioTest {
         var scenario = new RawToolRuntimeScenario();
 
         assertThat(scenario.catalog().snapshot().bindings()).singleElement().satisfies(binding -> {
-            assertThat(binding.alias()).isEqualTo(new ToolAlias(RawToolRuntimeScenario.TOOL_ALIAS));
+            assertThat(binding.alias()).isEqualTo(new ToolAlias(RawToolRuntimeScenario.TOOL_NAME));
             assertThat(binding.definition().sideEffects()).isEmpty();
             assertThat(binding.definition().risk().name()).isEqualTo("LOW");
             assertThat(binding.definition().idempotency().name()).isEqualTo("PURE");

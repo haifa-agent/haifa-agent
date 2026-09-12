@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 class ToolIdentityTest {
     @Test
     void acceptsCanonicalNamesAliasesProvidersAndSemanticVersions() {
-        assertEquals("workspace.file.read", new ToolName("workspace.file.read").value());
+        assertEquals("workspace_file_read", new ToolName("workspace_file_read").value());
         assertEquals("file_read", new ToolAlias("file_read").value());
         assertEquals("builtin.project", new ToolProviderId("builtin.project").value());
         assertEquals("1.2.3-alpha.1+build.7", new SemanticVersion("1.2.3-alpha.1+build.7").value());
@@ -17,8 +17,11 @@ class ToolIdentityTest {
     @Test
     void rejectsMalformedNamesAliasesProvidersAndSemanticVersions() {
         assertThrows(IllegalArgumentException.class, () -> new ToolName("workspace/file/read"));
+        assertThrows(IllegalArgumentException.class, () -> new ToolName("workspace.file.read"));
+        assertThrows(IllegalArgumentException.class, () -> new ToolName("workspace-file-read"));
         assertThrows(IllegalArgumentException.class, () -> new ToolAlias("file read"));
         assertThrows(IllegalArgumentException.class, () -> new ToolAlias("file.read"));
+        assertThrows(IllegalArgumentException.class, () -> new ToolAlias("file-read"));
         assertThrows(IllegalArgumentException.class, () -> new ToolAlias("a".repeat(65)));
         assertThrows(IllegalArgumentException.class, () -> new ToolProviderId("mcp/server"));
         assertThrows(IllegalArgumentException.class, () -> new SemanticVersion("1.0"));

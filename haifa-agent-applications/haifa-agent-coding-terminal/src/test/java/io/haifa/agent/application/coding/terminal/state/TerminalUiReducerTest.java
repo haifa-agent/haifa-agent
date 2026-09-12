@@ -381,21 +381,21 @@ class TerminalUiReducerTest {
                         2,
                         "event-2",
                         new RunEventPayloads.ToolLifecycle(
-                                "tool-1", "execution.run", "REQUESTED", "NONE", "git status", ""))));
+                                "tool-1", "execution_run", "REQUESTED", "NONE", "git status", ""))));
         TerminalUiState working = reducer.reduce(
                 requested,
                 new TerminalUiAction.RunEventReceived(event(
                         3,
                         "event-3",
                         new RunEventPayloads.ToolLifecycle(
-                                "tool-1", "execution.run", "STARTED", "NONE", "git status", ""))));
+                                "tool-1", "execution_run", "STARTED", "NONE", "git status", ""))));
         TerminalUiState resumedThinking = reducer.reduce(
                 working,
                 new TerminalUiAction.RunEventReceived(event(
                         4,
                         "event-4",
                         new RunEventPayloads.ToolLifecycle(
-                                "tool-1", "execution.run", "SUCCEEDED", "NONE", "git status", ""))));
+                                "tool-1", "execution_run", "SUCCEEDED", "NONE", "git status", ""))));
         TerminalUiState modelOutput = reducer.reduce(
                 resumedThinking,
                 new TerminalUiAction.RunEventReceived(
@@ -405,7 +405,7 @@ class TerminalUiReducerTest {
         assertThat(requested.activity()).isEqualTo(thinking.activity());
         assertThat(working.status()).isEqualTo("WORKING");
         assertThat(working.activity().revision()).isEqualTo(thinking.activity().revision() + 1);
-        assertThat(working.activity().label()).isEqualTo("execution.run");
+        assertThat(working.activity().label()).isEqualTo("execution_run");
         assertThat(resumedThinking.status()).isEqualTo("THINKING");
         assertThat(resumedThinking.activity().revision())
                 .isEqualTo(working.activity().revision() + 1);
@@ -422,7 +422,7 @@ class TerminalUiReducerTest {
                         "event-1",
                         new RunEventPayloads.ToolLifecycle(
                                 "tool-1",
-                                "execution.run",
+                                "execution_run",
                                 "FAILED",
                                 "COMMAND_CLASSIFICATION_REJECTED",
                                 "git status; git log -1",

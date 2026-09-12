@@ -73,31 +73,6 @@ final class ProjectExecutionTestSupport {
                 verificationProfiles);
     }
 
-    static ProjectExecutionToolOperations operations(
-            ExecutionBroker broker,
-            int maximumOutputBytes,
-            int maximumOutputLines,
-            CodingVerificationProfileProvider verificationProfiles,
-            ExecutionRepositoryBaselineObserver repositoryBaselines) {
-        return new ProjectExecutionToolOperations(
-                broker,
-                () -> "execution-1",
-                () -> NOW,
-                new ExecutionEnvironmentRef(List.of("environment-1")),
-                new SandboxProfileRef("shell", "1"),
-                Duration.ofMinutes(2),
-                Duration.ofMinutes(30),
-                maximumOutputBytes,
-                maximumOutputLines,
-                8,
-                ExecutionOutputObserver.noop(),
-                UnaryOperator.identity(),
-                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
-                verificationProfiles,
-                repositoryBaselines);
-    }
-
     static ProjectExecutionToolOperations operationsWithSanitizer(
             ExecutionBroker broker,
             int maximumOutputBytes,
@@ -152,7 +127,7 @@ final class ProjectExecutionTestSupport {
             Map<String, Object> arguments, ToolCancellation cancellation, ToolInvocationObserver observer) {
         arguments = executionArguments(arguments);
         var binding = new ProjectToolCatalog()
-                .freeze(Set.of("execution.run"), Set.of("execution.run"), true, provider(), executionProfile())
+                .freeze(Set.of("execution_run"), Set.of("execution_run"), true, provider(), executionProfile())
                 .snapshot()
                 .bindings()
                 .getFirst();
@@ -171,11 +146,11 @@ final class ProjectExecutionTestSupport {
     }
 
     static RunWorkspaceAccess access() {
-        return new RunWorkspaceAccess(WORKSPACE_ID, Set.of("execution.run"));
+        return new RunWorkspaceAccess(WORKSPACE_ID, Set.of("execution_run"));
     }
 
     static RunWorkspaceAccess access(WorkspaceId workspaceId) {
-        return new RunWorkspaceAccess(workspaceId, Set.of("execution.run"));
+        return new RunWorkspaceAccess(workspaceId, Set.of("execution_run"));
     }
 
     static Map<String, Object> executionArguments(Map<String, Object> arguments) {

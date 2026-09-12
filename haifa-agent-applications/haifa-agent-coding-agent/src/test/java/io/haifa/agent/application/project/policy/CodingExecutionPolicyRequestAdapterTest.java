@@ -118,8 +118,8 @@ class CodingExecutionPolicyRequestAdapterTest {
         return new PolicyRequest(
                 new PolicySubject(new TenantRef("tenant"), new PrincipalRef("user", "user"), "haifa-coding-agent"),
                 PolicyContext.run("run", ApprovalMode.ASK),
-                new PolicyAction("execution.run", "invoke"),
-                new PolicyResource("tool", "execution.run@1", Optional.of("0".repeat(64)), "Execution"),
+                new PolicyAction("execution_run", "invoke"),
+                new PolicyResource("tool", "execution_run@1", Optional.of("0".repeat(64)), "Execution"),
                 new PolicyRisk(
                         PolicyRiskLevel.HIGH, Set.of(PolicySideEffect.PROCESS_EXECUTION), false, Optional.empty()));
     }
@@ -129,7 +129,7 @@ class CodingExecutionPolicyRequestAdapterTest {
                 new ToolCallId("tool-call"),
                 new ProviderToolCallCorrelationId("provider-call"),
                 new RuntimeIdempotencyKey("idempotency"),
-                "execution.run",
+                "execution_run",
                 "1.0.0",
                 new ToolArguments(
                         "haifa.execution.run.input",

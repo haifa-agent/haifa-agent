@@ -1,6 +1,5 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry;
 import io.haifa.agent.application.project.workspace.InMemoryWorkspaceAccessStore;
 import io.haifa.agent.application.project.workspace.WorkspaceAccess;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
@@ -148,7 +147,6 @@ final class LocalFileToolTestSupport {
                 () -> now,
                 provisioning,
                 ledger,
-                null,
                 true,
                 workspaceAccess,
                 tenant,
@@ -175,27 +173,19 @@ final class LocalFileToolTestSupport {
     }
 
     static SingleRootFixture createSingleRootFixture(Path root) {
-        return createSingleRootFixture(root, null, null, false);
+        return createSingleRootFixture(root, null, false);
     }
 
     static SingleRootFixture createSingleRootFixture(Path root, InMemorySessionChangeLedger ledger) {
-        return createSingleRootFixture(root, ledger, null, false);
-    }
-
-    static SingleRootFixture createSingleRootFixture(
-            Path root, InMemorySessionChangeLedger ledger, RunRepositoryBaselineRegistry repositoryBaselines) {
-        return createSingleRootFixture(root, ledger, repositoryBaselines, false);
+        return createSingleRootFixture(root, ledger, false);
     }
 
     static SingleRootFixture createSingleRootFixture(Path root, boolean workspaceAttachmentDisclosed) {
-        return createSingleRootFixture(root, null, null, workspaceAttachmentDisclosed);
+        return createSingleRootFixture(root, null, workspaceAttachmentDisclosed);
     }
 
     static SingleRootFixture createSingleRootFixture(
-            Path root,
-            InMemorySessionChangeLedger ledger,
-            RunRepositoryBaselineRegistry repositoryBaselines,
-            boolean workspaceAttachmentDisclosed) {
+            Path root, InMemorySessionChangeLedger ledger, boolean workspaceAttachmentDisclosed) {
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         WorkspaceId workspaceId = new WorkspaceId("workspace-file-read");
         ProjectId projectId = new ProjectId("project-file-read");
@@ -268,7 +258,6 @@ final class LocalFileToolTestSupport {
                 () -> now,
                 provisioning,
                 ledger,
-                repositoryBaselines,
                 workspaceAttachmentDisclosed,
                 workspaceAccess,
                 tenant,

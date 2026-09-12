@@ -17,9 +17,12 @@ public final class PersistedCodingVerificationProfileProvider implements CodingV
 
     @Override
     public CodingSessionVerificationConfiguration configurationFor(AgentRunId runId) {
-        return runs.find(Objects.requireNonNull(runId, "runId must not be null"))
-                .flatMap(run -> sessions.find(run.sessionId()))
-                .flatMap(session -> CodingSessionVerificationConfiguration.fromSessionMetadata(session.metadata()))
-                .orElseGet(() -> CodingSessionVerificationConfiguration.freeze(CodingVerificationProfile.empty()));
+        var run = runs.find(Objects.requireNonNull(runId, "runId must not be null"))
+                .orElseThrow(() -> new IllegalStateException("Coding Run is unavailable"));
+        var session = sessions.find(run.sessionId())
+                .orElseThrow(() -> new IllegalStateException("Coding Session is unavailable"));
+        return CodingSessionVerificationConfiguration.fromSessionMetadata(session.metadata())
+                .orElseThrow(() -> new IllegalStateException(
+                        "Coding Session verification configuration is unavailable or invalid"));
     }
 }

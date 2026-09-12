@@ -84,13 +84,13 @@ class ProjectApplicationTest {
                 throw new UnsupportedOperationException();
             }
         };
-        assertThat(catalog.freeze(Set.of("file.read", "execution.run"), Set.of(), true, provider)
+        assertThat(catalog.freeze(Set.of("file_read", "execution_run"), Set.of(), true, provider)
                         .snapshot()
                         .bindings())
                 .isEmpty();
         var disclosed = catalog.freeze(
-                Set.of("file.read", "file.write", "execution.run"),
-                Set.of("file.read", "execution.run"),
+                Set.of("file_read", "file_write", "execution_run"),
+                Set.of("file_read", "execution_run"),
                 true,
                 provider,
                 executionProfile("host-guarded", "one"));
@@ -122,13 +122,13 @@ class ProjectApplicationTest {
         var outputProperties = (java.util.Map<String, Object>)
                 execution.definition().outputSchema().document().get("properties");
         assertThat(outputProperties)
-                .containsKeys(
-                        "deliveryRepositoryScopeDigest",
+                .containsKeys("deliveryRepositoryScopeDigest", "validationEvidence", "validationAttemptRef")
+                .doesNotContainKeys(
                         "changeReviewArtifact",
                         "changeReviewArtifactRef",
                         "artifactRef",
-                        "validationEvidence",
-                        "validationAttemptRef");
+                        "changeReviewStatus",
+                        "changeReviewReasonCode");
         assertThat(execution.definition().resources().executionProfiles())
                 .singleElement()
                 .asString()
@@ -165,11 +165,11 @@ class ProjectApplicationTest {
                 .isEqualTo(
                         "Host absolute path within an authorized directory. Relative paths and root aliases are not allowed.");
         assertThat(disclosed.snapshot().digest()).matches("[0-9a-f]{64}");
-        assertThat(catalog.freeze(Set.of("file.read"), Set.of("file.read"), false, provider)
+        assertThat(catalog.freeze(Set.of("file_read"), Set.of("file_read"), false, provider)
                         .snapshot()
                         .bindings())
                 .isEmpty();
-        assertThat(catalog.freeze(Set.of("file.read"), Set.of("file.read"), true, provider, List.of())
+        assertThat(catalog.freeze(Set.of("file_read"), Set.of("file_read"), true, provider, List.of())
                         .snapshot()
                         .bindings())
                 .extracting(binding -> binding.alias().value())
@@ -180,8 +180,8 @@ class ProjectApplicationTest {
     void versionsEveryAbsolutePathReadToolAsTwoPointZero() {
         var bindings = new ProjectToolCatalog()
                 .freeze(
-                        Set.of("file.list", "file.search", "file.diff"),
-                        Set.of("file.read"),
+                        Set.of("file_list", "file_search", "file_diff"),
+                        Set.of("file_read"),
                         true,
                         providerThatMustNotRun())
                 .snapshot()
@@ -189,7 +189,7 @@ class ProjectApplicationTest {
 
         assertThat(bindings)
                 .extracting(binding -> binding.definition().name().value())
-                .containsExactlyInAnyOrder("file.list", "file.search", "file.diff");
+                .containsExactlyInAnyOrder("file_list", "file_search", "file_diff");
         assertThat(bindings)
                 .allSatisfy(binding ->
                         assertThat(binding.definition().version().value()).isEqualTo("2.0.0"));
@@ -239,7 +239,7 @@ class ProjectApplicationTest {
         var catalog = new ProjectToolCatalog();
         var frozen = catalog.freeze(
                 catalog.names(),
-                Set.of("file.read", "file.write", "execution.run"),
+                Set.of("file_read", "file_write", "execution_run"),
                 true,
                 providerThatMustNotRun(),
                 executionProfile("host-guarded", "two"));
@@ -262,6 +262,8 @@ class ProjectApplicationTest {
                         "workspace_attach",
                         "workspace_worktree_create");
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
+            assertThat(binding.alias().value())
+                    .isEqualTo(binding.definition().name().value());
             assertThat(binding.definition().inputSchema().document()).containsKey("$schema");
             assertThat(binding.definition().outputSchema().document()).containsKey("$schema");
             assertThat(binding.definition().sideEffects()).isNotEmpty();
@@ -330,8 +332,8 @@ class ProjectApplicationTest {
     void executionProfileChangeFrozenToolIdentity() {
         var catalog = new ProjectToolCatalog();
         var first = catalog.freeze(
-                        Set.of("execution.run"),
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
+                        Set.of("execution_run"),
                         true,
                         providerThatMustNotRun(),
                         executionProfile("host-guarded", "3-first", "first"))
@@ -339,8 +341,8 @@ class ProjectApplicationTest {
                 .bindings()
                 .getFirst();
         var second = catalog.freeze(
-                        Set.of("execution.run"),
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
+                        Set.of("execution_run"),
                         true,
                         providerThatMustNotRun(),
                         executionProfile("host-guarded", "3-second", "second"))
@@ -361,7 +363,7 @@ class ProjectApplicationTest {
     @Test
     void projectProviderPreservesRunWorkspaceAndCapabilityBoundary() {
         var binding = new ProjectToolCatalog()
-                .freeze(Set.of("file.read"), Set.of("file.read"), true, providerThatMustNotRun())
+                .freeze(Set.of("file_read"), Set.of("file_read"), true, providerThatMustNotRun())
                 .snapshot()
                 .bindings()
                 .getFirst();
@@ -370,7 +372,7 @@ class ProjectApplicationTest {
         AtomicReference<String> observed = new AtomicReference<>();
         ProjectToolExecutor executor = new ProjectToolExecutor(
                 (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
-                        workspaceId, Set.of("file.read")),
+                        workspaceId, Set.of("file_read")),
                 (toolName, workspace, actor, runRef, arguments) -> {
                     observed.set(toolName + "|" + workspace.value() + "|" + actor.principalId() + "|" + runRef);
                     return new ToolResult(true, "read", java.util.Map.of(), List.of(), List.of(), false);
@@ -389,7 +391,7 @@ class ProjectApplicationTest {
                 io.haifa.agent.tool.api.ToolInvocationObserver.noop());
 
         assertThat(executor.invoke(request).successful()).isTrue();
-        assertThat(observed).hasValue("file.read|workspace-tool|operator|run-tool");
+        assertThat(observed).hasValue("file_read|workspace-tool|operator|run-tool");
 
         ProjectToolExecutor denied = new ProjectToolExecutor(
                 (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(workspaceId, Set.of()),
@@ -433,8 +435,8 @@ class ProjectApplicationTest {
                 workspaceId,
                 "coding",
                 "1",
-                Set.of("file.read"),
-                Set.of("file.read"),
+                Set.of("file_read"),
+                Set.of("file_read"),
                 "policy-1");
         configurationStore.publish(configuration);
         var runtime = new CapturingRuntime();

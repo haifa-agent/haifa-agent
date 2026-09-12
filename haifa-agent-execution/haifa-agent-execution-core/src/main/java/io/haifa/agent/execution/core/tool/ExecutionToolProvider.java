@@ -103,12 +103,12 @@ public final class ExecutionToolProvider implements ToolProvider {
     @Override
     public ToolResult invoke(ToolInvocationRequest invocation) {
         Objects.requireNonNull(invocation, "invocation must not be null");
-        if (!"execution.run".equals(invocation.binding().definition().name().value())) {
+        if (!"execution_run".equals(invocation.binding().definition().name().value())) {
             throw new IllegalArgumentException("unsupported execution tool");
         }
         var scope = scopes.resolve(invocation);
-        if (!scope.capabilities().contains("execution.run")) {
-            throw new SecurityException("execution.run is not authorized by the invocation scope");
+        if (!scope.capabilities().contains("execution_run")) {
+            throw new SecurityException("execution_run is not authorized by the invocation scope");
         }
         ParsedInvocation parsed = parse(configuration, invocation.arguments().values());
         return invokeParsed(invocation, scope, parsed);

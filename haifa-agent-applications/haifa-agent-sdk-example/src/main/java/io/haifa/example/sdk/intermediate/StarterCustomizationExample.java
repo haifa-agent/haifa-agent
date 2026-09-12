@@ -35,8 +35,7 @@ public final class StarterCustomizationExample {
 
     private static final class SupportLookupTool implements JavaTool<SupportRequest, SupportResponse> {
         private static final JavaToolSpec<SupportRequest, SupportResponse> SPEC = JavaToolSpec.builder(
-                        "support.lookup", SupportRequest.class, SupportResponse.class)
-                .alias("support_lookup")
+                        "support_lookup", SupportRequest.class, SupportResponse.class)
                 .description("Return deterministic support information")
                 .pure()
                 .build();

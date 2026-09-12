@@ -18,12 +18,12 @@ class CliFeatureConfigurationTest {
     void defaultsToGenericOsCliSearchWhileKeepingFileSearchAsExplicitCompatibilityTool() {
         CliConfiguration defaults = CliConfiguration.defaults();
 
-        assertThat(defaults.enabledTools()).contains("execution.run").doesNotContain("file.search");
+        assertThat(defaults.enabledTools()).contains("execution_run").doesNotContain("file_search");
         assertThat(defaults.maxModelCalls()).isEqualTo(64);
 
         var explicitCompatibilityConfiguration = new CliConfiguration(
                 defaults.model(),
-                Set.of("file.search"),
+                Set.of("file_search"),
                 defaults.mcpServers(),
                 defaults.web(),
                 defaults.skills(),
@@ -33,7 +33,7 @@ class CliFeatureConfigurationTest {
                 defaults.maxIterations(),
                 defaults.maxToolCalls(),
                 defaults.persistence());
-        assertThat(explicitCompatibilityConfiguration.enabledTools()).containsExactly("file.search");
+        assertThat(explicitCompatibilityConfiguration.enabledTools()).containsExactly("file_search");
     }
 
     @Test
@@ -95,7 +95,7 @@ class CliFeatureConfigurationTest {
                               contextWindow: 8192
                               maxOutputTokens: 1024
                     tools:
-                      enabled: [file.read, file.write]
+                      enabled: [file_read, file_write]
                     approval:
                       mode: deny
                     execution:
@@ -128,7 +128,7 @@ class CliFeatureConfigurationTest {
                         Path.of("."));
 
         assertThat(result.model().modelId()).isEqualTo("test-model");
-        assertThat(result.enabledTools()).containsExactlyInAnyOrder("file.read", "file.write");
+        assertThat(result.enabledTools()).containsExactlyInAnyOrder("file_read", "file_write");
         assertThat(result.approval()).isEqualTo(ApprovalMode.DENY);
         assertThat(result.timeout()).isEqualTo(java.time.Duration.ofMillis(120000));
         assertThat(result.maxModelCalls()).isEqualTo(5);
@@ -339,7 +339,7 @@ class CliFeatureConfigurationTest {
                 configuration,
                 """
                     tools:
-                      enabled: [file.read, web.search]
+                      enabled: [file_read, web_search]
                     web:
                       search:
                         enabled: true
@@ -369,7 +369,7 @@ class CliFeatureConfigurationTest {
                 configuration,
                 """
                     tools:
-                      enabled: [file.read, web.fetch]
+                      enabled: [file_read, web_fetch]
                     web:
                       search:
                         enabled: false
@@ -399,7 +399,7 @@ class CliFeatureConfigurationTest {
                 configuration,
                 """
                     tools:
-                      enabled: [file.read, web.fetch]
+                      enabled: [file_read, web_fetch]
                     web:
                       search:
                         enabled: false
@@ -426,7 +426,7 @@ class CliFeatureConfigurationTest {
         assertThatThrownBy(() -> new CliConfiguration(
                         defaults.model(),
                         java.util.stream.Stream.concat(
-                                        defaults.enabledTools().stream(), java.util.stream.Stream.of("web.search"))
+                                        defaults.enabledTools().stream(), java.util.stream.Stream.of("web_search"))
                                 .collect(java.util.stream.Collectors.toUnmodifiableSet()),
                         defaults.mcpServers(),
                         defaults.web(),

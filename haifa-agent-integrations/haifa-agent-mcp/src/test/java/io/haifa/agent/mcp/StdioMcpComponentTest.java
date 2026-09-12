@@ -220,7 +220,7 @@ class StdioMcpComponentTest {
                         new io.haifa.agent.core.reference.TenantRef("tenant"),
                         "mcp-control",
                         McpTestFixtures.PRINCIPAL,
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
                         ExecutionOrigin.PRODUCT_INTERNAL,
                         Optional.empty()),
                 workspace,

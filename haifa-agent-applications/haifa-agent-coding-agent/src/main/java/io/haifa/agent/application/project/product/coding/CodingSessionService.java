@@ -172,7 +172,6 @@ public final class CodingSessionService {
         List<io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate> candidates =
                 new java.util.ArrayList<>(trustedOptions.userVerificationCandidates());
         candidates.addAll(defaultVerificationProfile.candidates());
-        candidates.addAll(defaultVerificationProfile.ignoredCandidates());
         CodingSessionVerificationConfiguration verification = CodingSessionVerificationConfiguration.freeze(
                 new CodingVerificationProfileResolver().resolve(candidates));
         String requestedModelId = trustedOptions.initialModelId().orElse(models.defaultModelId());

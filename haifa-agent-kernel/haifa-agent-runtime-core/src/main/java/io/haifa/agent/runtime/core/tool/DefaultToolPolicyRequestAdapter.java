@@ -35,16 +35,16 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
         var definition = binding.definition();
         String invocationDigest = resourceDigest(definition.name().value(), request);
         String resourceDigest;
-        boolean execution = definition.name().value().equals("execution.run");
+        boolean execution = definition.name().value().equals("execution_run");
         if (execution) {
             String scratchSpecDigest =
                     executionScratchSpecDigest(definition.inputSchema().document());
             invocationDigest = PolicyDigest.sha256Fields(List.of(invocationDigest, scratchSpecDigest));
             String executionProfile = definition.resources().executionProfiles().stream()
                     .reduce((first, ignored) -> {
-                        throw new IllegalArgumentException("execution.run must bind exactly one execution profile");
+                        throw new IllegalArgumentException("execution_run must bind exactly one execution profile");
                     })
-                    .orElseThrow(() -> new IllegalArgumentException("execution.run requires an execution profile"));
+                    .orElseThrow(() -> new IllegalArgumentException("execution_run requires an execution profile"));
             resourceDigest = PolicyDigest.sha256Fields(List.of(invocationDigest, executionProfile));
         } else {
             resourceDigest = invocationDigest;
@@ -58,7 +58,7 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
                         Optional.empty(),
                         approvalMode,
                         Optional.empty()),
-                new PolicyAction(execution ? "execution.run" : definition.name().value(), "invoke"),
+                new PolicyAction(execution ? "execution_run" : definition.name().value(), "invoke"),
                 new PolicyResource(
                         "tool", binding.coordinate().externalForm(), Optional.of(resourceDigest), definition.title()),
                 new PolicyRisk(
@@ -72,7 +72,7 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
     }
 
     public static String resourceDigest(String capability, ToolRequest request) {
-        if ("execution.run".equals(capability)) {
+        if ("execution_run".equals(capability)) {
             Object command = request.arguments().values().get("command");
             Object workspaceRef = request.arguments().values().get("workspaceRef");
             Object relativeWorkdir = request.arguments().values().get("relativeWorkdir");
@@ -127,7 +127,7 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
     private static String executionScratchSpecDigest(Map<String, Object> schema) {
         Object value = schema.get("x-haifa-scratch-spec-digest");
         if (!(value instanceof String digest) || !digest.matches("[0-9a-f]{64}")) {
-            throw new IllegalArgumentException("execution.run requires a frozen scratch specification");
+            throw new IllegalArgumentException("execution_run requires a frozen scratch specification");
         }
         return digest;
     }

@@ -303,7 +303,7 @@ class PersonalAssistantRestartTest {
                             "tool.failed",
                             Map.of(
                                     "toolCallId", "legacy-failure",
-                                    "toolName", "execution.run",
+                                    "toolName", "execution_run",
                                     "status", "FAILED",
                                     "reasonCode", "LEGACY_DIAGNOSTIC_FAILURE"),
                             java.time.Instant.now());

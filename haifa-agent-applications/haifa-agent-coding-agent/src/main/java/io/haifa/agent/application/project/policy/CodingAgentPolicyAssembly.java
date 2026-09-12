@@ -112,7 +112,7 @@ public final class CodingAgentPolicyAssembly {
                                     Optional.of("haifa-coding-agent"),
                                     Optional.empty(),
                                     Optional.empty(),
-                                    Optional.of("execution.run"),
+                                    Optional.of("execution_run"),
                                     Optional.of("invoke"),
                                     Optional.empty(),
                                     Optional.of(minimumRisk),
@@ -122,7 +122,7 @@ public final class CodingAgentPolicyAssembly {
                             "RISK_THRESHOLD_APPROVAL_REQUIRED")));
             if (mode == ApprovalMode.ASK) {
                 for (String capability :
-                        List.of("file.create", "file.write", "file.delete", "file.move", "file.patch")) {
+                        List.of("file_create", "file_write", "file_delete", "file_move", "file_patch")) {
                     rules.add(rule(
                             "coding-" + capability.replace('.', '-'),
                             capabilitySideEffectMatcher(capability, PolicySideEffect.FILE_WRITE),
@@ -130,7 +130,7 @@ public final class CodingAgentPolicyAssembly {
                             Optional.of(PolicyChallenge.APPROVAL),
                             "CODING_SIDE_EFFECT_ASK"));
                 }
-                for (String capability : List.of("web.search", "web.fetch")) {
+                for (String capability : List.of("web_search", "web_fetch")) {
                     rules.add(rule(
                             "coding-" + capability.replace('.', '-'),
                             capabilitySideEffectMatcher(capability, PolicySideEffect.NETWORK_ACCESS),

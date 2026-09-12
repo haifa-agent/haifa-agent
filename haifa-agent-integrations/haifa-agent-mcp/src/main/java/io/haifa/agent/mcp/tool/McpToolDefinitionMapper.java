@@ -36,9 +36,11 @@ public final class McpToolDefinitionMapper {
     public McpToolImportCandidate map(
             McpServerDefinition server, String negotiatedProtocolVersion, McpRemoteTool remote) {
         String remoteDigest = remote.remoteDefinitionDigest();
+        String localName = server.importPolicy().aliasNamespace() + "_" + remote.name();
         List<McpToolImportDiagnostic> diagnostics = new ArrayList<>();
-        if (!remote.name().matches("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")) {
-            diagnostics.add(new McpToolImportDiagnostic("MCP_TOOL_NAME_INVALID", "remote tool name is invalid"));
+        if (!localName.matches("[A-Za-z0-9][A-Za-z0-9_]{0,63}")) {
+            diagnostics.add(new McpToolImportDiagnostic(
+                    "MCP_TOOL_NAME_INVALID", "namespaced remote tool name is not model-safe"));
         }
         if (!server.importPolicy().permits(remote.name())) {
             diagnostics.add(new McpToolImportDiagnostic(
@@ -72,7 +74,7 @@ public final class McpToolDefinitionMapper {
                 ? Set.of(http.endpoint().getHost().toLowerCase())
                 : Set.of();
         var definition = new ToolDefinition(
-                new ToolName("mcp." + server.serverId().value() + "." + remote.name()),
+                new ToolName(localName),
                 new SemanticVersion(server.bindingVersion()),
                 new ToolProviderId("mcp." + server.serverId().value()),
                 remote.title(),
@@ -113,7 +115,7 @@ public final class McpToolDefinitionMapper {
                 remote.name(),
                 remoteDigest,
                 true,
-                Optional.of(new ToolAlias(server.importPolicy().aliasNamespace() + "_" + remote.name())),
+                Optional.of(new ToolAlias(localName)),
                 Optional.of(definition),
                 Optional.of(snapshot),
                 List.of());

@@ -36,7 +36,7 @@ class CounterfactualNewsroomSkillPlatformTest {
                 });
         assertThat(platform.toolCatalog().snapshot().bindings()).singleElement().satisfies(binding -> {
             assertThat(binding.alias().value()).isEqualTo(CounterfactualNewsroomSkillPlatform.SKILL_LOAD_ALIAS);
-            assertThat(binding.definition().name().value()).isEqualTo("skill.load");
+            assertThat(binding.definition().name().value()).isEqualTo("skill_load");
         });
     }
 }

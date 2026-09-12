@@ -14,5 +14,5 @@ ID, language mix or observed failure counts.
 
 `OBSERVED` values were recomputed from the frozen primary CSV and the selected 30 authoritative SQLite databases.
 `firstEffectiveWrite` is deliberately `INFERRED`: the historical data proves that nine failed trials had no completed
-dedicated file mutation tool call, but cannot rule out a side effect issued through `execution.run`. Consumers must
+dedicated file mutation tool call, but cannot rule out a side effect issued through `execution_run`. Consumers must
 retain that evidence grade instead of presenting the value as an exact execution fact.

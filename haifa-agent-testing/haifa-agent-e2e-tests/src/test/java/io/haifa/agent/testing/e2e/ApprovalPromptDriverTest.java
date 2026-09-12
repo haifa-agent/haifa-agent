@@ -14,9 +14,9 @@ class ApprovalPromptDriverTest {
                 new ApprovalPromptDriver.Decision("web_search", "n"),
                 new ApprovalPromptDriver.Decision("web_fetch", "y")));
 
-        assertThat(feed(driver, "Approve tool web_search (web.search@1)" + ApprovalPromptDriver.PROMPT_SUFFIX))
+        assertThat(feed(driver, "Approve tool web_search (web_search@1)" + ApprovalPromptDriver.PROMPT_SUFFIX))
                 .containsExactly("n" + System.lineSeparator());
-        assertThat(feed(driver, "Approve tool web_fetch (web.fetch@1)" + ApprovalPromptDriver.PROMPT_SUFFIX))
+        assertThat(feed(driver, "Approve tool web_fetch (web_fetch@1)" + ApprovalPromptDriver.PROMPT_SUFFIX))
                 .containsExactly("y" + System.lineSeparator());
         driver.assertComplete();
     }
@@ -25,7 +25,7 @@ class ApprovalPromptDriverTest {
     void failsClosedForWrongMissingOrAdditionalPrompts() {
         var wrong = new ApprovalPromptDriver(List.of(new ApprovalPromptDriver.Decision("web_search", "y")));
         assertThatThrownBy(
-                        () -> feed(wrong, "Approve tool web_fetch (web.fetch@1)" + ApprovalPromptDriver.PROMPT_SUFFIX))
+                        () -> feed(wrong, "Approve tool web_fetch (web_fetch@1)" + ApprovalPromptDriver.PROMPT_SUFFIX))
                 .hasMessageContaining("expected target web_search");
 
         var missing = new ApprovalPromptDriver(List.of(new ApprovalPromptDriver.Decision("web_search", "y")));

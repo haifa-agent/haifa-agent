@@ -98,7 +98,7 @@ class TrustedSkillScriptPublicToolPolicyTest {
 
     @Test
     void exactFrozenEvidenceProducesAuditedAllowWithTheSharedRequirementDigest() {
-        Fixture fixture = fixture(SANDBOX_DIGEST, "trusted.transform");
+        Fixture fixture = fixture(SANDBOX_DIGEST, "trusted_transform");
 
         PolicyDecision decision =
                 fixture.policy().evaluate(fixture.run(), fixture.tool(), request("trusted_transform"));
@@ -112,7 +112,7 @@ class TrustedSkillScriptPublicToolPolicyTest {
 
     @Test
     void sandboxDigestDriftFallsBackToOrdinaryApproval() {
-        Fixture fixture = fixture(digest('f'), "trusted.transform");
+        Fixture fixture = fixture(digest('f'), "trusted_transform");
 
         PolicyDecision decision =
                 fixture.policy().evaluate(fixture.run(), fixture.tool(), request("trusted_transform"));
@@ -124,8 +124,8 @@ class TrustedSkillScriptPublicToolPolicyTest {
 
     @Test
     void missingOrAmbiguousGrantEvidenceFallsBackToOrdinaryApproval() {
-        Fixture missing = fixture(SANDBOX_DIGEST, "trusted.transform", NOW, subject(), false, false);
-        Fixture ambiguous = fixture(SANDBOX_DIGEST, "trusted.transform", NOW, subject(), true, true);
+        Fixture missing = fixture(SANDBOX_DIGEST, "trusted_transform", NOW, subject(), false, false);
+        Fixture ambiguous = fixture(SANDBOX_DIGEST, "trusted_transform", NOW, subject(), true, true);
 
         assertThat(missing.policy()
                         .evaluate(missing.run(), missing.tool(), request("trusted_transform"))
@@ -142,10 +142,10 @@ class TrustedSkillScriptPublicToolPolicyTest {
 
     @Test
     void expiredOrSubjectDriftedGrantFallsBackToOrdinaryApproval() {
-        Fixture expired = fixture(SANDBOX_DIGEST, "trusted.transform", NOW.plusSeconds(601), subject(), false, true);
+        Fixture expired = fixture(SANDBOX_DIGEST, "trusted_transform", NOW.plusSeconds(601), subject(), false, true);
         Fixture subjectDrift = fixture(
                 SANDBOX_DIGEST,
-                "trusted.transform",
+                "trusted_transform",
                 NOW,
                 new PolicySubject(TENANT, new PrincipalRef("different-principal", "human"), PRODUCT),
                 false,
@@ -166,9 +166,9 @@ class TrustedSkillScriptPublicToolPolicyTest {
 
     @Test
     void forgedToolNameAndArgumentsCannotReuseAnotherFixedToolGrant() {
-        Fixture fixture = fixture(SANDBOX_DIGEST, "trusted.transform");
+        Fixture fixture = fixture(SANDBOX_DIGEST, "trusted_transform");
         FrozenToolBinding forged = tool(
-                "forged.transform",
+                "forged_transform",
                 Map.of(
                         "trusted", Map.of("type", "boolean"),
                         "skill", Map.of("type", "string"),
@@ -182,8 +182,8 @@ class TrustedSkillScriptPublicToolPolicyTest {
 
     @Test
     void genericExecutionToolAlwaysUsesTheOrdinaryApprovalPath() {
-        Fixture fixture = fixture(SANDBOX_DIGEST, "trusted.transform");
-        FrozenToolBinding generic = tool("execution.run", Map.of("content", Map.of("type", "string")));
+        Fixture fixture = fixture(SANDBOX_DIGEST, "trusted_transform");
+        FrozenToolBinding generic = tool("execution_run", Map.of("content", Map.of("type", "string")));
 
         PolicyDecision decision = fixture.policy().evaluate(fixture.run(), generic, request("execution_run"));
 
@@ -249,7 +249,7 @@ class TrustedSkillScriptPublicToolPolicyTest {
                                 .sorted()
                                 .toList()),
                 grantSandboxDigest,
-                List.of("execution.run"),
+                List.of("execution_run"),
                 List.of(),
                 NOW.minusSeconds(60),
                 Optional.of(NOW.plusSeconds(600)),
@@ -439,15 +439,14 @@ class TrustedSkillScriptPublicToolPolicyTest {
                 ToolRisk.HIGH,
                 Set.of(ToolSideEffect.PROCESS_EXECUTION),
                 new ToolResourceRequirements(
-                        Set.of("execution.run"), Set.of(), Set.of(EXECUTION_DIGEST, "sandbox@" + SANDBOX_DIGEST)),
+                        Set.of("execution_run"), Set.of(), Set.of(EXECUTION_DIGEST, "sandbox@" + SANDBOX_DIGEST)),
                 List.of(),
                 ToolApprovalRequirement.ALWAYS,
                 PRODUCT,
                 false,
                 Set.of());
         ToolCoordinate coordinate = new ToolCoordinate(name, version, provider, new ToolDefinitionHash("0".repeat(64)));
-        return new FrozenToolBinding(
-                new ToolAlias(nameValue.replace('.', '_')), coordinate, definition, "fixture", "catalog");
+        return new FrozenToolBinding(new ToolAlias(nameValue), coordinate, definition, "fixture", "catalog");
     }
 
     private static ToolRequest request(String alias) {

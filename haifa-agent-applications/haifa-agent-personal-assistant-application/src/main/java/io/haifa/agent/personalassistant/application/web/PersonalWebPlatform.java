@@ -239,7 +239,7 @@ public record PersonalWebPlatform(
                     .findFirst()
                     .orElseThrow(() -> new IllegalStateException("Web provider credential requirement is missing"));
             String operation = contribution.definition().name().value();
-            ProviderConfiguration configuration = operation.equals("web.search") ? search : fetch;
+            ProviderConfiguration configuration = operation.equals("web_search") ? search : fetch;
             secrets.put(requirement.credentialId(), configuration.credential());
         }
         return new DefaultCredentialBroker(secrets);

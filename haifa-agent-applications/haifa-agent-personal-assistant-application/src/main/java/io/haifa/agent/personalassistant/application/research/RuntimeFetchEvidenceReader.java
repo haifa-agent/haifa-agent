@@ -88,7 +88,7 @@ public final class RuntimeFetchEvidenceReader implements ResearchFetchEvidenceRe
 
     private static boolean isWebFetchTool(ToolCall call) {
         String name = call.toolName();
-        return "web_fetch".equalsIgnoreCase(name) || "web.fetch".equalsIgnoreCase(name);
+        return "web_fetch".equalsIgnoreCase(name) || "web_fetch".equalsIgnoreCase(name);
     }
 
     private static String extractUrl(ToolCall call, Map<String, Object> data, String key) {

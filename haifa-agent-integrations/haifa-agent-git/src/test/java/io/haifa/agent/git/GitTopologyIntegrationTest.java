@@ -200,7 +200,7 @@ class GitTopologyIntegrationTest {
                 new io.haifa.agent.core.reference.TenantRef("tenant"),
                 runRef,
                 new PrincipalRef("actor", "user"),
-                Set.of("execution.run", "git.read"),
+                Set.of("execution_run", "git.read"),
                 ExecutionOrigin.PRODUCT_INTERNAL,
                 Optional.empty());
     }

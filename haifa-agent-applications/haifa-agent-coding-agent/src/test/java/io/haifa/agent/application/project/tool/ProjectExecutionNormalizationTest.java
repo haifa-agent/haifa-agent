@@ -79,7 +79,7 @@ class ProjectExecutionNormalizationTest {
         assertThat(captured.get().command().shellCommand()).contains("| cat > result.txt");
         assertThat(captured.get().workingDirectory().projectPath().value()).isEqualTo("src");
         assertThat(captured.get().limits().timeout()).isEqualTo(Duration.ofSeconds(5));
-        assertThat(captured.get().context().frozenCapabilities()).contains("execution.run");
+        assertThat(captured.get().context().frozenCapabilities()).contains("execution_run");
         assertThat(captured.get().scratchSpace()).isEqualTo(CodingToolchainEnvironmentProfile.defaultScratchSpace());
         assertThat(captured.get().scratchSpace().rootEnvironmentNames()).contains("GOTMPDIR");
         assertThat(captured.get().scratchSpace().childBindings())

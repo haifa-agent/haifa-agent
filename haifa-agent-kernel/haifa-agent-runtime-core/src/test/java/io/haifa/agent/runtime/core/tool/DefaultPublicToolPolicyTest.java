@@ -222,7 +222,7 @@ class DefaultPublicToolPolicyTest {
             ToolResourceRequirements resources,
             List<CredentialRequirement> credentials,
             ToolApprovalRequirement approvalRequirement) {
-        ToolName name = new ToolName("policy.test");
+        ToolName name = new ToolName("policy_test");
         SemanticVersion version = new SemanticVersion("1.0.0");
         ToolProviderId provider = new ToolProviderId("runtime-core-test");
         Map<String, Object> schema =

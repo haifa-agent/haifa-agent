@@ -34,7 +34,7 @@ public final class WebFetchToolProvider implements ToolProvider {
 
     @Override
     public ToolResult invoke(ToolInvocationRequest request) {
-        if (!request.binding().definition().name().value().equals("web.fetch")) {
+        if (!request.binding().definition().name().value().equals("web_fetch")) {
             throw WebToolProviderSupport.invalid("web fetch provider received a different tool");
         }
         Map<String, Object> arguments = request.arguments().values();

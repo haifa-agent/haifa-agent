@@ -18,7 +18,7 @@ import java.util.Optional;
 public record CodingSessionVerificationConfiguration(
         String schemaVersion, CodingVerificationProfile profile, boolean requiresValidationEvidence, String digest) {
     public static final String METADATA_KEY = "codingVerification";
-    public static final String SCHEMA_VERSION = "coding-session-verification/1";
+    public static final String SCHEMA_VERSION = "coding-session-verification/2";
 
     public CodingSessionVerificationConfiguration {
         if (!SCHEMA_VERSION.equals(schemaVersion)) {
@@ -49,9 +49,7 @@ public record CodingSessionVerificationConfiguration(
                 "requiresValidationEvidence",
                 requiresValidationEvidence,
                 "candidates",
-                encode(profile.candidates()),
-                "ignoredCandidates",
-                encode(profile.ignoredCandidates()));
+                encode(profile.candidates()));
     }
 
     public static Optional<CodingSessionVerificationConfiguration> fromSessionMetadata(Map<String, Object> metadata) {
@@ -59,8 +57,7 @@ public record CodingSessionVerificationConfiguration(
         Object value = metadata.get(METADATA_KEY);
         if (!(value instanceof Map<?, ?> map)) return Optional.empty();
         try {
-            CodingVerificationProfile profile =
-                    new CodingVerificationProfile(decode(map.get("candidates")), decode(map.get("ignoredCandidates")));
+            CodingVerificationProfile profile = new CodingVerificationProfile(decode(map.get("candidates")));
             return Optional.of(new CodingSessionVerificationConfiguration(
                     text(map, "schemaVersion"), profile, bool(map, "requiresValidationEvidence"), text(map, "digest")));
         } catch (IllegalArgumentException | ClassCastException ignored) {
@@ -80,10 +77,6 @@ public record CodingSessionVerificationConfiguration(
         fields.add(Boolean.toString(requiresValidationEvidence));
         profile.candidates().forEach(candidate -> {
             fields.add("selected");
-            fields.addAll(fields(candidate));
-        });
-        profile.ignoredCandidates().forEach(candidate -> {
-            fields.add("ignored");
             fields.addAll(fields(candidate));
         });
         return PolicyDigest.sha256Fields(fields);
