@@ -26,7 +26,7 @@
 python haifa-agent-testing/haifa-agent-autonomous-delivery/tools/fetch_assets.py `
   --cache-dir D:\haifa-agent-cache\autonomous-delivery --print-path
 python haifa-agent-testing/haifa-agent-autonomous-delivery/tools/run_case.py `
-  --assets-dir D:\haifa-agent-cache\autonomous-delivery\assets-0f9232f0aef6c7b0c18b4652ada1d00d7f9385b9 `
+  --assets-dir D:\haifa-agent-cache\autonomous-delivery\assets-34674c775b68d84163f508bf7e6364cad205de93 `
   --case L1-01 --mode nop
 ```
 
