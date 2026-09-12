@@ -38,6 +38,9 @@ MODES = ("nop", "oracle", "agent")
 DEFAULT_AGENT_TIMEOUT_SECONDS = 3600
 DEFAULT_ACCEPTANCE_TIMEOUT_SECONDS = 900
 BUDGET_EXIT_CODE = 3
+# Child output is decoded as UTF-8 and never as the host code page: a single non-ASCII byte in a
+# non-UTF-8 locale would otherwise fail the reader thread and drop the whole run.
+CHILD_TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
 
 CASE_ID_PATTERN = re.compile(r"^caseId:\s*(L[1-6]-0[1-9])", re.MULTILINE)
 LEVEL_PATTERN = re.compile(r"^level:\s*(L[1-6])", re.MULTILINE)
@@ -107,6 +110,17 @@ def overlay_reference(case_dir: Path, workspace: Path) -> None:
             shutil.copy2(path, target)
 
 
+def isolated_prompt(case_dir: Path, prompt_dir: Path) -> Path:
+    """Copy the task statement outside the case directory.
+
+    ``reference/`` and ``acceptance.py`` live next to ``prompt.txt``; handing the agent a path
+    inside the asset checkout would put the reference solution one directory away.
+    """
+    prompt_file = prompt_dir / "prompt.txt"
+    shutil.copyfile(case_dir / "prompt.txt", prompt_file)
+    return prompt_file
+
+
 def case_metadata(case_dir: Path) -> dict:
     """Read the case metadata the runner needs without a YAML dependency."""
     text = (case_dir / "case.yaml").read_text(encoding="utf-8")
@@ -130,18 +144,18 @@ def run_acceptance(case_dir: Path, workspace: Path, timeout_seconds: int) -> tup
     completed = subprocess.run(
         [sys.executable, str(acceptance), str(workspace)],
         capture_output=True,
-        text=True,
         timeout=timeout_seconds,
+        **CHILD_TEXT,
     )
     result: dict | None = None
-    for line in reversed(completed.stdout.splitlines()):
+    for line in reversed((completed.stdout or "").splitlines()):
         if line.strip().startswith("{"):
             try:
                 result = json.loads(line)
                 break
             except json.JSONDecodeError:
                 continue
-    return completed.returncode, result, completed.stderr.strip()
+    return completed.returncode, result, (completed.stderr or "").strip()
 
 
 def result_contract_problems(result: dict | None, case_id: str) -> list[str]:
@@ -187,16 +201,22 @@ def run_once(case_dir: Path, args: argparse.Namespace, index: int) -> dict:
         if not args.agent_command:
             raise SystemExit("--agent-command is required in agent mode")
         timeout = args.timeout_seconds or metadata["timeoutSeconds"] or DEFAULT_AGENT_TIMEOUT_SECONDS
-        command = (
-            args.agent_command.replace("{workspace}", str(workspace))
-            .replace("{prompt_file}", str(case_dir / "prompt.txt"))
-        )
+        prompt_dir = Path(tempfile.mkdtemp(prefix="ladder-prompt-"))
         try:
-            agent = subprocess.run(command, shell=True, cwd=workspace, capture_output=True, text=True, timeout=timeout)
+            prompt_file = isolated_prompt(case_dir, prompt_dir)
+            command = (
+                args.agent_command.replace("{workspace}", str(workspace))
+                .replace("{prompt_file}", str(prompt_file))
+            )
+            agent = subprocess.run(
+                command, shell=True, cwd=workspace, capture_output=True, timeout=timeout, **CHILD_TEXT
+            )
             if agent.returncode != 0:
                 print(f"agent command exited {agent.returncode}", file=sys.stderr)
         except subprocess.TimeoutExpired:
             budget_exhausted = f"agent command exceeded {timeout}s"
+        finally:
+            shutil.rmtree(prompt_dir, ignore_errors=True)
 
     contract_problems: list[str] = []
     if budget_exhausted is not None:
