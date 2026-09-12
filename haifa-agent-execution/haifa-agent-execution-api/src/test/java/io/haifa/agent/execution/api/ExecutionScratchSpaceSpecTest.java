@@ -33,4 +33,23 @@ class ExecutionScratchSpaceSpecTest {
         assertThat(ExecutionRequest.digestWithScratch(base, generic))
                 .isNotEqualTo(ExecutionRequest.digestWithScratch(base, coding));
     }
+
+    @Test
+    void noneSpecRepresentsEmptyScratchWithoutModifyingBaseDigest() {
+        var none = ExecutionScratchSpaceSpec.none();
+        assertThat(none.required()).isFalse();
+        assertThat(none.isPresent()).isFalse();
+        assertThat(none.isEmpty()).isTrue();
+        assertThat(none.rootEnvironmentNames()).isEmpty();
+        assertThat(none.childBindings()).isEmpty();
+        assertThat(none.canonicalDigest()).hasSize(64);
+
+        String base = "b".repeat(64);
+        assertThat(ExecutionRequest.digestWithScratch(base, none)).isEqualTo(base);
+        assertThat(ExecutionRequest.digestWithScratch(base, null)).isEqualTo(base);
+
+        assertThatThrownBy(() -> new ExecutionScratchSpaceSpec(true, Set.of(), List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("required scratch space cannot be empty");
+    }
 }

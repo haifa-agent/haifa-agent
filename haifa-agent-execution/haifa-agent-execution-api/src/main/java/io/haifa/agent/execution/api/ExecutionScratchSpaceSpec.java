@@ -22,25 +22,45 @@ public record ExecutionScratchSpaceSpec(
     public ExecutionScratchSpaceSpec {
         Objects.requireNonNull(rootEnvironmentNames, "rootEnvironmentNames must not be null");
         Objects.requireNonNull(childBindings, "childBindings must not be null");
-        if (rootEnvironmentNames.isEmpty() || rootEnvironmentNames.size() > 16 || childBindings.size() > 16) {
-            throw new IllegalArgumentException("scratch environment binding count is out of range");
-        }
-        LinkedHashSet<String> roots = new LinkedHashSet<>();
-        rootEnvironmentNames.stream()
-                .sorted()
-                .map(ExecutionScratchSpaceSpec::requireEnvironmentName)
-                .forEach(roots::add);
-        LinkedHashSet<String> childNames = new LinkedHashSet<>();
-        for (ExecutionScratchBinding binding : childBindings) {
-            Objects.requireNonNull(binding, "child binding must not be null");
-            if (roots.contains(binding.environmentName()) || !childNames.add(binding.environmentName())) {
-                throw new IllegalArgumentException("scratch environment names must be unique");
+        if (rootEnvironmentNames.isEmpty() && childBindings.isEmpty()) {
+            if (required) {
+                throw new IllegalArgumentException("required scratch space cannot be empty");
             }
+            rootEnvironmentNames = Set.of();
+            childBindings = List.of();
+        } else {
+            if (rootEnvironmentNames.isEmpty() || rootEnvironmentNames.size() > 16 || childBindings.size() > 16) {
+                throw new IllegalArgumentException("scratch environment binding count is out of range");
+            }
+            LinkedHashSet<String> roots = new LinkedHashSet<>();
+            rootEnvironmentNames.stream()
+                    .sorted()
+                    .map(ExecutionScratchSpaceSpec::requireEnvironmentName)
+                    .forEach(roots::add);
+            LinkedHashSet<String> childNames = new LinkedHashSet<>();
+            for (ExecutionScratchBinding binding : childBindings) {
+                Objects.requireNonNull(binding, "child binding must not be null");
+                if (roots.contains(binding.environmentName()) || !childNames.add(binding.environmentName())) {
+                    throw new IllegalArgumentException("scratch environment names must be unique");
+                }
+            }
+            rootEnvironmentNames = Set.copyOf(roots);
+            childBindings = childBindings.stream()
+                    .sorted(java.util.Comparator.comparing(ExecutionScratchBinding::environmentName))
+                    .toList();
         }
-        rootEnvironmentNames = Set.copyOf(roots);
-        childBindings = childBindings.stream()
-                .sorted(java.util.Comparator.comparing(ExecutionScratchBinding::environmentName))
-                .toList();
+    }
+
+    public static ExecutionScratchSpaceSpec none() {
+        return new ExecutionScratchSpaceSpec(false, Set.of(), List.of());
+    }
+
+    public boolean isPresent() {
+        return !rootEnvironmentNames.isEmpty() || !childBindings.isEmpty();
+    }
+
+    public boolean isEmpty() {
+        return !isPresent();
     }
 
     public static ExecutionScratchSpaceSpec genericRequired() {

@@ -155,7 +155,7 @@ public final class ProjectToolCatalog {
                 webTools,
                 skillTools,
                 executionProfile,
-                ExecutionScratchSpaceSpec.genericRequired());
+                ExecutionScratchSpaceSpec.none());
     }
 
     public DefaultToolCatalog freeze(
@@ -289,7 +289,8 @@ public final class ProjectToolCatalog {
                 new ToolSchema(
                         "haifa." + name + ".input",
                         version,
-                        inputSchema(name, execution ? scratchSpace.canonicalDigest() : null)),
+                        inputSchema(
+                                name, execution && scratchSpace.isPresent() ? scratchSpace.canonicalDigest() : null)),
                 new ToolSchema("haifa." + name + ".output", version, outputSchema(name)),
                 execution ? ToolExecutionMode.HOST_PROCESS : ToolExecutionMode.IN_PROCESS,
                 true,

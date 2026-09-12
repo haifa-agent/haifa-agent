@@ -22,7 +22,8 @@ Mutation ToolCall、按需 Git/Plain Change Review 与 Artifact/Snapshot 引用�
 Broker 负责 capability、policy、profile、环境租约、Sandbox 生命周期、输出脱敏与审计编排，但不复制 Agent Run 状态机，也不依赖具体 Sandbox Provider。一次性执行与托管会话的展示 observer 经过有界异步分发与流式脱敏，不阻塞进程管道，observer 异常不影响进程收尾和 Execution Journal。流式脱敏（`RedactingExecutionOutputObserver`）对 URL Userinfo（`https://user:pass@host` → `https://***@host`）及环境租约注入的非基线凭据值进行跨 chunk 安全脱敏，Live 终端与 OutputStore 落盘结果保持完全一致的脱敏视图，平台基线变量（`PATH`、`USERPROFILE`、`GIT_PAGER` 等公共路径/控制值）保持保真，不破坏行号与代码事实。Provider 只在 `ProcessBuilder.start()` 成功后发出 `onStarted`，上层据此记录真实 DISPATCHED 边界。
 
 Broker 将请求的逻辑 Scratch Spec 原样传给选定 Provider，并把一次性与 Managed Process 的创建、清理
-状态带回结果。`execution_run` 的冻结配置摘要和幂等身份包含 Scratch Spec digest；Tool 结构化结果与
+状态带回结果。当 Scratch Spec 为空时，Provider 保持宿主环境原有临时目录语义且不执行创建与清理。
+`execution_run` 的冻结配置摘要和幂等身份在非空时包含 Scratch Spec digest；Tool 结构化结果与
 Runtime Event 只记录该 digest、能力和状态，不记录物理路径。
 
 stdout/stderr 由 Provider 持续排空，并在固定内存中保留有界首部和尾部；中间省略量写入明确标记，超过
@@ -30,7 +31,8 @@ inline 阈值后返回 `AssetRef`。`ExecutionOutputOverflowPolicy.RETAIN_HEAD_T
 `TERMINATE` 则在预算耗尽时终止进程树并返回 `OUTPUT_LIMIT_EXCEEDED`，供产品对探索性调用执行收窄重试。
 策略来自可信结构化请求，不检查 Shell 命令字符串或具体 CLI 选项。
 
-Provider 检测到进程数超过预算且已确认收敛进程树时返回 `PROCESS_LIMIT_EXCEEDED`；只有进程树终止或结果无法确认时才返回 `UNKNOWN`。资源上限触发与未知副作用必须保持不同语义。
+若显式配置了进程数上限，Provider 检测到进程数超过预算且已确认收敛进程树时返回 `PROCESS_LIMIT_EXCEEDED`；
+默认未配置时不做通用进程数硬限制；只有进程树终止或结果无法确认时才返回 `UNKNOWN`。资源上限触发与未知副作用必须保持不同语义。
 
 长驻会话与一次性执行共享相同的可信上下文、授权、环境解析、Sandbox Profile、输出预算、脱敏、Manifest 和审计流程。会话关闭、取消或异常退出时，Broker 先收敛底层进程与输出，再释放环境租约并完成审计记录。
 

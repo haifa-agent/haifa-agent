@@ -151,6 +151,35 @@ class HostSandboxIT {
             assertThat(processLimit.status()).isEqualTo(SandboxProcessStatus.PROCESS_LIMIT_EXCEEDED);
             assertThat(processLimit.processTreeTerminated()).isTrue();
 
+            Path unboundedChildPid = root.resolve("unbounded-child.pid");
+            try (var managedUnbounded = session.openManagedProcess(new SandboxExecution(
+                    new ExecutionCommand(
+                            ExecutionCommandMode.DIRECT,
+                            List.of(
+                                    "java",
+                                    "-cp",
+                                    ".",
+                                    "io.haifa.agent.sandbox.host.ProcessTreeParent",
+                                    unboundedChildPid.getFileName().toString())),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 1024, 1024)))) {
+                long deadline = System.currentTimeMillis() + 5000;
+                while (!Files.exists(unboundedChildPid) && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(50);
+                }
+                assertThat(Files.exists(unboundedChildPid)).isTrue();
+                assertThat(managedUnbounded.exit().isDone()).isFalse();
+                assertThat(managedUnbounded.cancel()).isTrue();
+                var cancelledUnbounded = managedUnbounded.exit().get(5, TimeUnit.SECONDS);
+                assertThat(cancelledUnbounded.status())
+                        .isEqualTo(io.haifa.agent.execution.api.ExecutionStatus.CANCELLED);
+                long unboundedChildPidValue =
+                        Long.parseLong(Files.readString(unboundedChildPid).trim());
+                assertThat(ProcessHandle.of(unboundedChildPidValue).filter(ProcessHandle::isAlive))
+                        .isEmpty();
+            }
+
             try (var managed = session.openManagedProcess(new SandboxExecution(
                     new ExecutionCommand(
                             ExecutionCommandMode.DIRECT,
@@ -499,6 +528,68 @@ class HostSandboxIT {
                     .isEqualTo("scratch-ok");
         }
         assertThat(scratchRoot).isDirectory().isEmptyDirectory();
+    }
+
+    @Test
+    void omitsScratchProvisioningWhenScratchSpecIsNone() throws Exception {
+        Fixture fixture = fixture(root, "workspace-no-scratch", "binding-no-scratch", "location-no-scratch");
+        Path scratchRoot = isolatedBase.resolve("host-no-scratch");
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces,
+                fixture.bindings,
+                fixture.locations,
+                () -> "no-scratch-session",
+                Instant::now,
+                HostShell.auto(),
+                scratchRoot);
+        var profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("no-scratch-test", "1"),
+                provider.configurationDigest(),
+                Set.of(),
+                hostBaselineEnvironment().keySet(),
+                true);
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+            String probeFile = "haifa-shared-tmp-probe-" + System.currentTimeMillis() + ".txt";
+            String writeCommand = isWindows()
+                    ? "[IO.File]::WriteAllText((Join-Path $env:TEMP '" + probeFile
+                            + "'), 'persisted-tmp'); [Console]::Out.Write('step-1-ok')"
+                    : "printf persisted-tmp > \"${TMPDIR:-/tmp}/" + probeFile + "\" && printf step-1-ok";
+
+            var step1 = session.execute(new SandboxExecution(
+                    ExecutionCommand.shell(writeCommand),
+                    WorkspacePath.root(fixture.workspaceId),
+                    hostBaselineEnvironment(),
+                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096),
+                    ExecutionInput.none(),
+                    ExecutionScratchSpaceSpec.none()));
+
+            assertThat(step1.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(step1.exitCode()).isZero();
+            assertThat(step1.scratchProvisioned()).isFalse();
+            assertThat(step1.scratchCleanupFailed()).isFalse();
+            assertThat(new String(step1.stdout(), java.nio.charset.StandardCharsets.UTF_8))
+                    .isEqualTo("step-1-ok");
+
+            String readCommand = isWindows()
+                    ? "[IO.File]::ReadAllText((Join-Path $env:TEMP '" + probeFile + "'))"
+                    : "cat \"${TMPDIR:-/tmp}/" + probeFile + "\"";
+
+            var step2 = session.execute(new SandboxExecution(
+                    ExecutionCommand.shell(readCommand),
+                    WorkspacePath.root(fixture.workspaceId),
+                    hostBaselineEnvironment(),
+                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096),
+                    ExecutionInput.none(),
+                    ExecutionScratchSpaceSpec.none()));
+
+            assertThat(step2.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(step2.exitCode()).isZero();
+            assertThat(step2.scratchProvisioned()).isFalse();
+            assertThat(new String(step2.stdout(), java.nio.charset.StandardCharsets.UTF_8).trim())
+                    .isEqualTo("persisted-tmp");
+        }
+        assertThat(scratchRoot).doesNotExist();
     }
 
     @Test

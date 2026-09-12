@@ -37,9 +37,11 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
         String resourceDigest;
         boolean execution = definition.name().value().equals("execution_run");
         if (execution) {
-            String scratchSpecDigest =
+            Optional<String> scratchSpecDigest =
                     executionScratchSpecDigest(definition.inputSchema().document());
-            invocationDigest = PolicyDigest.sha256Fields(List.of(invocationDigest, scratchSpecDigest));
+            if (scratchSpecDigest.isPresent()) {
+                invocationDigest = PolicyDigest.sha256Fields(List.of(invocationDigest, scratchSpecDigest.get()));
+            }
             String executionProfile = definition.resources().executionProfiles().stream()
                     .reduce((first, ignored) -> {
                         throw new IllegalArgumentException("execution_run must bind exactly one execution profile");
@@ -124,12 +126,15 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
         return codes.toString();
     }
 
-    private static String executionScratchSpecDigest(Map<String, Object> schema) {
+    private static Optional<String> executionScratchSpecDigest(Map<String, Object> schema) {
         Object value = schema.get("x-haifa-scratch-spec-digest");
-        if (!(value instanceof String digest) || !digest.matches("[0-9a-f]{64}")) {
-            throw new IllegalArgumentException("execution_run requires a frozen scratch specification");
+        if (value == null) {
+            return Optional.empty();
         }
-        return digest;
+        if (!(value instanceof String digest) || !digest.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("execution_run has invalid scratch specification digest");
+        }
+        return Optional.of(digest);
     }
 
     private static PolicyRiskLevel map(ToolRisk risk) {

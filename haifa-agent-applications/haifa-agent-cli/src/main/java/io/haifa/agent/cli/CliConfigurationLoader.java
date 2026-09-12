@@ -549,7 +549,10 @@ final class CliConfigurationLoader {
                         source, "maxTimeoutMillis", defaults.maximumTimeout().toMillis())),
                 Math.toIntExact(number(source, "maxOutputBytes", defaults.maxOutputBytes())),
                 Math.toIntExact(number(source, "maxOutputLines", defaults.maxOutputLines())),
-                Math.toIntExact(number(source, "maxProcesses", defaults.maxProcesses())),
+                source.containsKey("maxProcesses")
+                        ? Optional.ofNullable(source.get("maxProcesses"))
+                                .map(ignored -> Math.toIntExact(number(source, "maxProcesses", 1)))
+                        : defaults.maxProcesses(),
                 stringSet(source.get("inheritEnvironment"), defaults.inheritEnvironment()));
     }
 

@@ -25,7 +25,6 @@ import io.haifa.agent.application.project.product.coding.verification.CodingSess
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileMiddleware;
 import io.haifa.agent.application.project.product.coding.verification.PersistedCodingVerificationProfileProvider;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
-import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
 import io.haifa.agent.application.project.workspace.WorkspaceAccess;
@@ -654,8 +653,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             mcpPlatform.contributions(),
                             webPlatform.contributions(),
                             skillTools,
-                            executionPlatform == null ? null : executionPlatform.profile(),
-                            CodingToolchainEnvironmentProfile.defaultScratchSpace());
+                            executionPlatform == null ? null : executionPlatform.profile());
             Set<String> disclosedToolAliases = catalog.snapshot().bindings().stream()
                     .map(binding -> binding.alias().value())
                     .collect(java.util.stream.Collectors.toUnmodifiableSet());
