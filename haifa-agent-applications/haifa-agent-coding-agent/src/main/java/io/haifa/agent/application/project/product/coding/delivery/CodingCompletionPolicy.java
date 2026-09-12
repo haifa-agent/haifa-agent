@@ -18,19 +18,16 @@ import java.util.Objects;
 public final class CodingCompletionPolicy implements CompletionPolicy {
     private final CodingTaskModeResolver taskModes;
     private final CodingDeliveryEvidenceLedger evidence;
-    private final CodingDeliveryProfile profile;
     private final CodingDeliveryIntentResolver deliveryIntents;
     private final CodingVerificationProfileProvider verificationProfiles;
 
     public CodingCompletionPolicy(
             CodingTaskModeResolver taskModes,
             CodingDeliveryEvidenceLedger evidence,
-            CodingDeliveryProfile profile,
             CodingDeliveryIntentResolver deliveryIntents,
             CodingVerificationProfileProvider verificationProfiles) {
         this.taskModes = Objects.requireNonNull(taskModes, "taskModes must not be null");
         this.evidence = Objects.requireNonNull(evidence, "evidence must not be null");
-        this.profile = Objects.requireNonNull(profile, "profile must not be null");
         this.deliveryIntents = deliveryIntents;
         this.verificationProfiles =
                 Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
@@ -158,15 +155,10 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
                         "VALIDATION_ATTEMPT"));
             }
         }
-        boolean latestFailed = snapshot.latestValidationFailed()
-                || (snapshot.validationAttempts().isEmpty()
-                        && snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED)
-                        && !snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_PASSED));
-        if (latestFailed
-                && !(profile.allowBlockedValidation() && snapshot.has(CodingDeliveryEvidenceKind.BLOCKER_CONFIRMED))) {
+        if (snapshot.latestValidationFailed()) {
             blockers.add(CompletionBlocker.recoverable(
                     "VALIDATION_NOT_PASSED",
-                    "Validation did not pass and the frozen profile does not permit blocked completion.",
+                    "The latest authoritative validation attempt did not pass.",
                     "VALIDATION_PASSED"));
         }
     }

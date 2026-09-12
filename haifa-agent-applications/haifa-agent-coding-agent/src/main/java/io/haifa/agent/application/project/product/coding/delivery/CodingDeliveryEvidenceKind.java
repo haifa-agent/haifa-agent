@@ -2,7 +2,6 @@ package io.haifa.agent.application.project.product.coding.delivery;
 
 public enum CodingDeliveryEvidenceKind {
     WORKSPACE_CHANGE,
-    DETERMINISTIC_CHANGE_REVIEW,
     DIFF_INSPECTION,
     VALIDATION_ATTEMPT,
     VALIDATION_PASSED,

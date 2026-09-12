@@ -18,8 +18,6 @@ import io.haifa.agent.application.project.product.coding.client.CodingAuthentica
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntentResolver;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
-import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionMiddleware;
 import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionService;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
 import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
@@ -584,15 +582,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             principal,
                             runtimeExecutionVerifier)
                     : null;
-            var repositoryBaselines = executionPlatform == null
-                    ? new io.haifa.agent.application.project.product.coding.delivery.RunRepositoryBaselineRegistry(
-                            (boundary, candidate) ->
-                                    io.haifa.agent.project.hostworkspace.HostGitInspectionStatus.UNAVAILABLE,
-                            (context, repository) -> {
-                                throw new IllegalStateException(
-                                        "Git review is unavailable without an execution platform");
-                            })
-                    : executionPlatform.repositoryBaselines();
             var operations = new LocalFileToolOperations(
                     workspaces,
                     files,
@@ -601,7 +590,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     time,
                     provisioning,
                     sessionLedger,
-                    repositoryBaselines,
                     configuredTools.contains("workspace.attach"),
                     persistence.workspaceAccess(),
                     tenant,
@@ -680,9 +668,8 @@ final class LocalCodingAgent implements AutoCloseable {
             var taskModes = new CodingTaskModeResolver(persistence.ports().state());
             var deliveryEvidence =
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
-            var deliveryProfile = CodingDeliveryProfile.safeDefault();
-            var completionPolicy = new CodingCompletionPolicy(
-                    taskModes, deliveryEvidence, deliveryProfile, deliveryIntents, verificationProfiles);
+            var completionPolicy =
+                    new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryIntents, verificationProfiles);
             var outcomeProjection = new CodingRunOutcomeProjectionService(
                     completionPolicy,
                     persistence.ports().events(),
@@ -697,8 +684,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     })
                     .failureDiagnostics(CliFailureDiagnosticSink.forPersistence(configuration.persistence()))
                     .completionPolicy(completionPolicy)
-                    .middleware(new CodingRunOutcomeProjectionMiddleware(
-                            outcomeProjection, persistence.ports().events(), time))
                     .middleware(new CodingVerificationProfileMiddleware(verificationProfiles))
                     .completionRepair(new CompletionRepairPolicy(2));
             modelAdapters.forEach((key, adapter) ->

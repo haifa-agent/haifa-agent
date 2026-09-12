@@ -16,7 +16,6 @@ import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
@@ -131,8 +130,8 @@ class ProjectPersistenceAssemblyTest {
                 CodingVerificationSource.USER_EXPLICIT,
                 "trusted-coding-host",
                 CodingValidationScope.SELECTED);
-        CodingSessionVerificationConfiguration expected = CodingSessionVerificationConfiguration.freeze(
-                new CodingVerificationProfile(List.of(candidate), List.of()));
+        CodingSessionVerificationConfiguration expected =
+                CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
 
         try (ProjectPersistenceAssembly first = ProjectPersistenceAssembly.open(
                 ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"),
@@ -514,16 +513,14 @@ class ProjectPersistenceAssemblyTest {
         ProductFixture fixture = productFixture();
         CapturingRuntime runtime = new CapturingRuntime();
         TestIds ids = new TestIds("verification-policy");
-        CodingVerificationProfile cliDefaults = new CodingVerificationProfile(
-                List.of(new CodingVerificationCandidate(
-                        "mvn test",
-                        CodingVerificationCost.HIGH,
-                        Duration.ofMinutes(10),
-                        CodingVerificationTrigger.FINAL_GATE,
-                        CodingVerificationSource.BUILD_CONFIGURATION,
-                        "pom.xml",
-                        CodingValidationScope.FULL)),
-                List.of());
+        CodingVerificationProfile cliDefaults = new CodingVerificationProfile(List.of(new CodingVerificationCandidate(
+                "mvn test",
+                CodingVerificationCost.HIGH,
+                Duration.ofMinutes(10),
+                CodingVerificationTrigger.FINAL_GATE,
+                CodingVerificationSource.BUILD_CONFIGURATION,
+                "pom.xml",
+                CodingValidationScope.FULL)));
         CodingSessionCreateOptions userCommitted = new CodingSessionCreateOptions(
                 CodingDeliveryIntent.WORKTREE_ONLY,
                 List.of(new CodingVerificationCandidate(
@@ -558,7 +555,6 @@ class ProjectPersistenceAssemblyTest {
             var policy = new CodingCompletionPolicy(
                     new CodingTaskModeResolver(assembly.ports().state()),
                     new CodingDeliveryEvidenceLedger(assembly.ports().state()),
-                    CodingDeliveryProfile.safeDefault(),
                     null,
                     profiles);
 

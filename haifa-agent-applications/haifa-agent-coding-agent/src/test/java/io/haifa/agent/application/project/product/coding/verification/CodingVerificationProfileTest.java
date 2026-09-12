@@ -31,7 +31,6 @@ class CodingVerificationProfileTest {
                 .resolve(List.of(explicit), List.of(repository), List.of(adjacent), List.of(fallback));
 
         assertThat(profile.candidates()).containsExactly(adjacent, explicit);
-        assertThat(profile.ignoredCandidates()).containsExactly(repository, fallback);
         assertThat(profile.instructionText())
                 .contains(
                         "sourcePriority=USER_EXPLICIT>REPOSITORY_INSTRUCTIONS>BUILD_CONFIGURATION>ADJACENT_TEST>ECOSYSTEM_DEFAULT")
@@ -42,6 +41,9 @@ class CodingVerificationProfileTest {
         assertThat(CodingSessionVerificationConfiguration.fromSessionMetadata(frozen.sessionMetadata()))
                 .contains(frozen);
         assertThat(frozen.digest()).hasSize(64);
+        assertThat(frozen.toStructuredData())
+                .containsEntry("schemaVersion", "coding-session-verification/2")
+                .doesNotContainKey("ignoredCandidates");
     }
 
     @Test
@@ -68,10 +70,8 @@ class CodingVerificationProfileTest {
                 CodingVerificationSource.BUILD_CONFIGURATION,
                 CodingVerificationSource.ADJACENT_TEST,
                 CodingVerificationSource.ECOSYSTEM_DEFAULT)) {
-            assertThat(new CodingVerificationProfile(
-                                    List.of(candidate(
-                                            "./mvnw test", recommended, CodingVerificationTrigger.FINAL_GATE)),
-                                    List.of())
+            assertThat(new CodingVerificationProfile(List.of(
+                                    candidate("./mvnw test", recommended, CodingVerificationTrigger.FINAL_GATE)))
                             .hasCommittedVerificationCandidates())
                     .as(recommended.name())
                     .isFalse();
@@ -79,8 +79,7 @@ class CodingVerificationProfileTest {
         for (CodingVerificationSource committed :
                 List.of(CodingVerificationSource.USER_EXPLICIT, CodingVerificationSource.REPOSITORY_INSTRUCTIONS)) {
             assertThat(new CodingVerificationProfile(
-                                    List.of(candidate("./mvnw test", committed, CodingVerificationTrigger.FINAL_GATE)),
-                                    List.of())
+                                    List.of(candidate("./mvnw test", committed, CodingVerificationTrigger.FINAL_GATE)))
                             .hasCommittedVerificationCandidates())
                     .as(committed.name())
                     .isTrue();
@@ -89,19 +88,17 @@ class CodingVerificationProfileTest {
 
     @Test
     void frozenConfigurationCarriesAnExplicitValidationRequirementFactWithDigestProtection() {
-        CodingVerificationProfile recommended = new CodingVerificationProfile(List.of(), List.of());
+        CodingVerificationProfile recommended = new CodingVerificationProfile(List.of());
         CodingSessionVerificationConfiguration recommendedFrozen =
                 CodingSessionVerificationConfiguration.freeze(recommended);
         assertThat(recommendedFrozen.requiresValidationEvidence()).isFalse();
         assertThat(CodingSessionVerificationConfiguration.fromSessionMetadata(recommendedFrozen.sessionMetadata()))
                 .contains(recommendedFrozen);
 
-        CodingVerificationProfile committed = new CodingVerificationProfile(
-                List.of(candidate(
-                        "./mvnw test",
-                        CodingVerificationSource.REPOSITORY_INSTRUCTIONS,
-                        CodingVerificationTrigger.FINAL_GATE)),
-                List.of());
+        CodingVerificationProfile committed = new CodingVerificationProfile(List.of(candidate(
+                "./mvnw test",
+                CodingVerificationSource.REPOSITORY_INSTRUCTIONS,
+                CodingVerificationTrigger.FINAL_GATE)));
         CodingSessionVerificationConfiguration committedFrozen =
                 CodingSessionVerificationConfiguration.freeze(committed);
         assertThat(committedFrozen.requiresValidationEvidence()).isTrue();
@@ -112,6 +109,12 @@ class CodingVerificationProfileTest {
         @SuppressWarnings("unchecked")
         var data = new java.util.LinkedHashMap<>((Map<String, Object>) tampered.get("codingVerification"));
         data.put("requiresValidationEvidence", false);
+        tampered.put("codingVerification", data);
+        assertThat(CodingSessionVerificationConfiguration.fromSessionMetadata(tampered))
+                .isEmpty();
+
+        data.put("requiresValidationEvidence", true);
+        data.put("schemaVersion", "coding-session-verification/1");
         tampered.put("codingVerification", data);
         assertThat(CodingSessionVerificationConfiguration.fromSessionMetadata(tampered))
                 .isEmpty();

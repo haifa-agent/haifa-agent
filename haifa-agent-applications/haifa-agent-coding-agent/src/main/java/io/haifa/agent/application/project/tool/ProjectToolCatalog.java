@@ -625,7 +625,6 @@ public final class ProjectToolCatalog {
             properties.put("failureAction", Map.of("type", "string"));
             properties.put("failureActionCode", Map.of("type", "string"));
             properties.put("operationFamily", Map.of("type", "string"));
-            properties.put("declaredOperationFamily", Map.of("type", "string"));
             properties.put("effectiveOperationFamily", Map.of("type", "string"));
             properties.put("commandTarget", Map.of("type", "string"));
             properties.put("commandRisk", Map.of("type", "string"));
@@ -650,11 +649,6 @@ public final class ProjectToolCatalog {
             properties.put("diffCountsComplete", Map.of("type", "boolean"));
             properties.put("diffSummary", Map.of("type", "string"));
             properties.put("diffArtifactRef", Map.of("type", "string"));
-            properties.put("changeReviewArtifactRef", Map.of("type", "string"));
-            properties.put("artifactRef", Map.of("type", "string"));
-            properties.put("changeReviewArtifact", Map.of("type", "object", "additionalProperties", true));
-            properties.put("changeReviewStatus", Map.of("type", "string"));
-            properties.put("changeReviewReasonCode", Map.of("type", "string"));
             properties.put("validationEvidence", Map.of("type", "object", "additionalProperties", true));
             properties.put("validationAttemptRef", Map.of("type", "string"));
             properties.put("sandboxProfileDigest", Map.of("type", "string"));

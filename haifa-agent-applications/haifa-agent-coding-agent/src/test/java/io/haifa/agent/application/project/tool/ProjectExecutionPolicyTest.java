@@ -10,12 +10,10 @@ import static io.haifa.agent.application.project.tool.ProjectExecutionTestSuppor
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
-import io.haifa.agent.application.project.product.coding.delivery.RepositoryBaselineUnavailableException;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCost;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationSource;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationTrigger;
 import io.haifa.agent.core.reference.PrincipalRef;
@@ -29,7 +27,6 @@ import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.policy.api.PolicyDigest;
-import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolReconciliationRequest;
@@ -37,7 +34,6 @@ import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -48,65 +44,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class ProjectExecutionPolicyTest {
-
-    @Test
-    void establishesExecutionBaselineBeforeDispatchAndInvalidatesAfterCompletion() {
-        List<String> order = new ArrayList<>();
-        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                order.add("dispatch");
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
-            }
-        };
-        ExecutionRepositoryBaselineObserver baselines = new ExecutionRepositoryBaselineObserver() {
-            @Override
-            public void beforeDispatch(TenantRef tenant, String runRef, PrincipalRef actor, WorkspacePath workdir) {
-                order.add("before");
-            }
-
-            @Override
-            public void afterCompletion(TenantRef tenant, String runRef, PrincipalRef actor, WorkspacePath workdir) {
-                order.add("after");
-            }
-        };
-
-        ToolResult result = operations(broker, 1024, 100, CodingVerificationProfileProvider.empty(), baselines)
-                .execute(invocation(Map.of("command", "echo ok", "relativeWorkdir", "src"), () -> false), access());
-
-        assertThat(result.successful()).isTrue();
-        assertThat(order).containsExactly("before", "dispatch", "after");
-    }
-
-    @Test
-    void doesNotDispatchExecutionWhenBaselineIsUnavailable() {
-        AtomicBoolean dispatched = new AtomicBoolean();
-        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                dispatched.set(true);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
-            }
-        };
-        ExecutionRepositoryBaselineObserver baselines = new ExecutionRepositoryBaselineObserver() {
-            @Override
-            public void beforeDispatch(TenantRef tenant, String runRef, PrincipalRef actor, WorkspacePath workdir) {
-                throw new RepositoryBaselineUnavailableException("unavailable", new IllegalStateException("git"));
-            }
-
-            @Override
-            public void afterCompletion(TenantRef tenant, String runRef, PrincipalRef actor, WorkspacePath workdir) {
-                throw new AssertionError("completion must not run when dispatch never started");
-            }
-        };
-
-        ToolResult result = operations(broker, 1024, 100, CodingVerificationProfileProvider.empty(), baselines)
-                .execute(invocation(Map.of("command", "echo blocked"), () -> false), access());
-
-        assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData()).containsEntry("errorCode", "REPOSITORY_BASELINE_UNAVAILABLE");
-        assertThat(dispatched).isFalse();
-    }
 
     @Test
     void validatesExactFrozenCandidateScopeAcrossDirectAndReconciledResults() {
@@ -135,8 +72,8 @@ class ProjectExecutionPolicyTest {
                 CodingVerificationSource.USER_EXPLICIT,
                 "trusted-host",
                 CodingValidationScope.SELECTED);
-        CodingSessionVerificationConfiguration configuration = CodingSessionVerificationConfiguration.freeze(
-                new CodingVerificationProfile(List.of(candidate), List.of()));
+        CodingSessionVerificationConfiguration configuration =
+                CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
         ToolInvocationRequest invocation =
                 invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false);
         var operations = operations(broker, 4096, 100, ignored -> configuration);

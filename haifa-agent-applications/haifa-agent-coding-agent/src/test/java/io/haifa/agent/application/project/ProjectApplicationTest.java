@@ -122,13 +122,13 @@ class ProjectApplicationTest {
         var outputProperties = (java.util.Map<String, Object>)
                 execution.definition().outputSchema().document().get("properties");
         assertThat(outputProperties)
-                .containsKeys(
-                        "deliveryRepositoryScopeDigest",
+                .containsKeys("deliveryRepositoryScopeDigest", "validationEvidence", "validationAttemptRef")
+                .doesNotContainKeys(
                         "changeReviewArtifact",
                         "changeReviewArtifactRef",
                         "artifactRef",
-                        "validationEvidence",
-                        "validationAttemptRef");
+                        "changeReviewStatus",
+                        "changeReviewReasonCode");
         assertThat(execution.definition().resources().executionProfiles())
                 .singleElement()
                 .asString()
