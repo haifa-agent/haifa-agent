@@ -480,7 +480,11 @@ class ModelResolutionTest(unittest.TestCase):
     def distribution(self, directory: str, default_model: str) -> Path:
         root = Path(directory)
         (root / "haifa-coding.yaml").write_text(
-            "models:" + chr(10) + "  default: " + default_model + chr(10) + "  providers: []" + chr(10),
+            "models:" + chr(10)
+            + "  default: " + default_model + chr(10)
+            + "  providers:" + chr(10)
+            + "    - id: deepseek" + chr(10)
+            + "      credentialRef: model-auth://deepseek/default" + chr(10),
             encoding="utf-8",
         )
         launcher = root / "haifa-coding.cmd"
@@ -559,7 +563,73 @@ class StoredConnectionTest(unittest.TestCase):
             MODULE.AUTH_STORE = original
 
 
+class CredentialReferenceTest(unittest.TestCase):
+    def distribution(self, directory: str) -> Path:
+        root = Path(directory)
+        (root / "haifa-coding.yaml").write_text(
+            "models:" + chr(10)
+            + "  default: deepseek-responses-flash" + chr(10)
+            + "  providers:" + chr(10)
+            + "    - id: deepseek" + chr(10)
+            + "      endpoint: https://api.deepseek.com" + chr(10)
+            + "      credentialRef: model-auth://deepseek/default" + chr(10)
+            + "    - id: zhipu" + chr(10)
+            + "      credentialRef: env://BIGMODEL_API_KEY" + chr(10),
+            encoding="utf-8",
+        )
+        launcher = root / "haifa-coding.cmd"
+        launcher.write_text("@echo off" + chr(10), encoding="utf-8")
+        return launcher
+
+    def test_the_configured_reference_is_read_per_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = self.distribution(directory)
+
+            self.assertEqual("model-auth://deepseek/default", MODULE.credential_reference(str(launcher), "deepseek"))
+            self.assertEqual("env://BIGMODEL_API_KEY", MODULE.credential_reference(str(launcher), "zhipu"))
+            self.assertIsNone(MODULE.credential_reference(str(launcher), "kimi"))
+
+    def test_another_account_of_the_same_provider_does_not_authenticate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = self.distribution(directory)
+            store = Path(directory) / "auth.json"
+            store.write_text(
+                json.dumps({"version": 1, "credentials": {"model-auth://deepseek/other": {"kind": "api_key"}}}),
+                encoding="utf-8",
+            )
+            original = MODULE.AUTH_STORE
+            MODULE.AUTH_STORE = store
+            try:
+                problem = MODULE.stored_connection_problem("deepseek", "model-auth://deepseek/default")
+                problems = MODULE.missing_environment(settings(agent=str(launcher)))
+            finally:
+                MODULE.AUTH_STORE = original
+
+        self.assertIn("model-auth://deepseek/default", problem)
+        self.assertTrue(any("model-auth://deepseek/default" in entry for entry in problems))
+
+
 class CredentialScrubbingTest(unittest.TestCase):
+    def test_the_gate_runs_without_provider_credentials(self):
+        seen = []
+
+        def recording_run_once(*_arguments, **_keywords):
+            seen.append(os.environ.get("BIGMODEL_API_KEY"))
+            return {"verdict": "OK"}
+
+        os.environ["BIGMODEL_API_KEY"] = "secret-value"
+        original = MODULE.run_case.run_once
+        MODULE.run_case.run_once = recording_run_once
+        try:
+            with redirect_stdout(io.StringIO()):
+                ok, _ = MODULE.run_gate(settings(), Path("cases"), "nop", ["L1-01"], 1)
+        finally:
+            MODULE.run_case.run_once = original
+            os.environ.pop("BIGMODEL_API_KEY", None)
+
+        self.assertTrue(ok)
+        self.assertEqual([None], seen)
+
     def test_the_acceptance_environment_has_no_provider_credential(self):
         os.environ["BIGMODEL_API_KEY"] = "secret-value"
         try:
@@ -625,7 +695,7 @@ class GateGuardTest(unittest.TestCase):
         MODULE.run_case.run_once = timing_out
         try:
             with redirect_stdout(io.StringIO()):
-                ok, detail = MODULE.run_gate(Path("cases"), "nop", ["L1-01"], 1)
+                ok, detail = MODULE.run_gate(settings(), Path("cases"), "nop", ["L1-01"], 1)
         finally:
             MODULE.run_case.run_once = original
 

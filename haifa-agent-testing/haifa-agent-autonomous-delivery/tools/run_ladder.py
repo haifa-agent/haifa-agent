@@ -184,6 +184,23 @@ def effective_model(settings: "Settings") -> tuple[str | None, str]:
     return None, "unknown"
 
 
+def credential_reference(agent: str | None, provider: str) -> str | None:
+    """Return the credential reference the distribution configures for ``provider``."""
+    if not agent:
+        return None
+    configuration = Path(agent).with_name("haifa-coding.yaml")
+    if not configuration.is_file():
+        return None
+    current: str | None = None
+    for line in configuration.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- id:"):
+            current = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("credentialRef:") and current == provider:
+            return stripped.split(":", 1)[1].strip() or None
+    return None
+
+
 def model_auth_provider(model: str | None) -> str | None:
     """Return the provider whose stored connection serves ``model``, if it uses one."""
     lowered = (model or "").strip().lower()
@@ -193,8 +210,12 @@ def model_auth_provider(model: str | None) -> str | None:
     return None
 
 
-def stored_connection_problem(provider: str) -> str | None:
-    """Return why the stored connection of ``provider`` cannot be used, or None when it exists."""
+def stored_connection_problem(provider: str, reference: str | None = None) -> str | None:
+    """Return why the stored connection of ``provider`` cannot be used, or None when it exists.
+
+    ``reference`` is the exact ``model-auth://provider/account`` slot the launcher is configured to
+    use; a different account of the same provider does not authenticate the run.
+    """
     if not AUTH_STORE.is_file():
         return f"no stored connection for {provider}: {AUTH_STORE} does not exist"
     try:
@@ -204,7 +225,11 @@ def stored_connection_problem(provider: str) -> str | None:
         return f"the stored connections cannot be read: {type(error).__name__}"
     if not isinstance(credentials, dict):
         return "the stored connections have an unexpected shape"
-    if any(str(reference).startswith(f"model-auth://{provider}/") for reference in credentials):
+    if reference:
+        if reference in credentials:
+            return None
+        return f"no stored connection {reference} in {AUTH_STORE}; start the agent once and use /login"
+    if any(str(entry).startswith(f"model-auth://{provider}/") for entry in credentials):
         return None
     return f"no stored connection for {provider} in {AUTH_STORE}; start the agent once and use /login"
 
@@ -377,7 +402,7 @@ def missing_environment(settings: Settings) -> list[str]:
         problems.append(f"{variable} is empty ({reason})")
     provider = model_auth_provider(model) if not settings.credential_env else None
     if provider:
-        stored = stored_connection_problem(provider)
+        stored = stored_connection_problem(provider, credential_reference(settings.agent, provider))
         if stored:
             problems.append(stored)
     return problems
@@ -528,7 +553,7 @@ def select_cases(cases_root: Path, patterns: list[str]) -> list[str]:
     return [case_id for case_id in available if any(fnmatch.fnmatchcase(case_id, pattern) for pattern in patterns)]
 
 
-def run_gate(cases_root: Path, mode: str, case_ids: list[str], repeat: int) -> tuple[bool, str]:
+def run_gate(settings: Settings, cases_root: Path, mode: str, case_ids: list[str], repeat: int) -> tuple[bool, str]:
     """Run the NOP or oracle gate over the selected cases through the single-case runner."""
     arguments = argparse.Namespace(
         mode=mode,
@@ -544,7 +569,8 @@ def run_gate(cases_root: Path, mode: str, case_ids: list[str], repeat: int) -> t
         verdicts = set()
         for attempt in range(1, repeat + 1):
             try:
-                record = run_case.run_once(cases_root / case_id, arguments, attempt)
+                with without_credentials(settings):
+                    record = run_case.run_once(cases_root / case_id, arguments, attempt)
                 verdicts.add(record["verdict"])
             except subprocess.TimeoutExpired:
                 verdicts.add("ACCEPTANCE_TIMEOUT")
@@ -593,7 +619,7 @@ def preflight(settings: Settings) -> tuple[bool, Path | None, list[str], AssetPr
     elif case_ids:
         for mode in ("nop", "oracle"):
             say(f"  running the {mode} gate over {len(case_ids)} case(s), {settings.gate_repeat} run(s) each")
-            ok_gate, gate_detail = run_gate(cases_root, mode, case_ids, settings.gate_repeat)
+            ok_gate, gate_detail = run_gate(settings, cases_root, mode, case_ids, settings.gate_repeat)
             report_check(f"{mode} gate", ok_gate, gate_detail)
             ok_gates = ok_gates and ok_gate
 
