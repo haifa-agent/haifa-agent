@@ -38,6 +38,41 @@ Runner 自身的单元测试离线运行：
 python -m unittest discover -s haifa-agent-testing/haifa-agent-autonomous-delivery/tools/tests -p "test_*.py"
 ```
 
+## 一键评测
+
+`tools/run-ladder.ps1`（Windows）与 `tools/run-ladder.sh`（macOS/Linux）是"先体检、再全量评测"的单一入口，公共逻辑在 `tools/run_ladder.py`。
+
+必需环境变量（缺失时脚本打印可直接粘贴的设置命令并退出，不会开始评测）：
+
+| 变量 | 说明 |
+| --- | --- |
+| `HAIFA_LADDER_ALLOW_REAL_PROVIDER` | 必须为 `true`：评测调用真实 Provider 并产生费用 |
+| `HAIFA_LADDER_AGENT` | Coding Agent 启动器；未设置时自动发现 `~/.haifa-agent/coding/haifa-coding(.cmd)` |
+| 凭据变量 | 由模型 id 推断（`glm-*` → `BIGMODEL_API_KEY`、`kimi-*` → `KIMI_API_KEY` 等）；`deepseek`/`gpt-*` 等经 `~/.haifa-agent/auth.json` 认证的模型无需设置 |
+
+可选：`HAIFA_LADDER_MODEL`、`HAIFA_LADDER_APPROVAL`（默认 `auto`，评测必须非交互）、`HAIFA_LADDER_CASES`、
+`HAIFA_LADDER_REPEAT`、`HAIFA_LADDER_TIMEOUT_SCALE`、`HAIFA_LADDER_OUTPUT`、`HAIFA_LADDER_CACHE_DIR`、
+`HAIFA_LADDER_ASSETS_DIR`；每个变量都有同名 `--kebab-case` 参数，参数优先。
+
+```powershell
+# 只体检：环境变量、工具链、按锁下载并校验资产、Runner 单测、NOP/oracle 门
+.\haifa-agent-testing\haifa-agent-autonomous-delivery	oolsun-ladder.ps1 check
+
+# 体检通过后评测全部 23 题
+.\haifa-agent-testing\haifa-agent-autonomous-delivery	oolsun-ladder.ps1 run
+
+# 彩排：用参考解跑通整条链路，不调用模型、不产生费用
+.\haifa-agent-testing\haifa-agent-autonomous-delivery	oolsun-ladder.ps1 run --rehearse --skip-gates
+```
+
+评测过程中的输出：每题开始时的三维标签与变体、Agent 预算与日志文件名、每 15 秒一次的心跳（已用时间/预算、
+输出行数、最后一行输出）、每题结束时的状态（`PASSED` / `FAILED` / `INCOMPLETE_BUDGET`）、通过的检查数、
+Agent 耗时与退出码、改动的源文件；失败时列出失败检查名及其原因。每题之后打印总进度与累计通过率，
+结束时按 level 汇总，并写出 `ladder-report.json`、`run-records.jsonl` 与每题 Agent 日志。
+
+Windows 上 `haifa-coding.cmd` 会自动替换为同目录的 `haifa-agent.jar`：批处理启动器经 cmd.exe 传参会把
+多行题面截断到第一行。控制台与报告不输出题面、凭据值或完整模型响应，日志中出现的凭据值会被替换为 `***`。
+
 实施契约（工件布局、分级配方、变体机制、验收与结果契约、题目质量门、实施切片）见
 [`34-autonomous-delivery-ladder-case-authoring-prompt.md`](../../docs/prompts/34-testing-architecture-simplification/34-autonomous-delivery-ladder-case-authoring-prompt.md)；
 已确认决策：题面语言英文、L6 保留 1 道 Java/Maven 题、历史 17 题冻结为 Legacy、失败恢复变体以“初始红 + 一次错误修复尝试”实现（不依赖工作区 Git 历史）。
