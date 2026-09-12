@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -6,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from argparse import Namespace
+from contextlib import redirect_stdout
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "run_ladder.py"
@@ -91,6 +93,23 @@ class CredentialTest(unittest.TestCase):
 
         self.assertNotIn("super-secret-value", line)
         self.assertIn("***", line)
+
+    def test_a_short_credential_is_redacted_too(self):
+        os.environ["TINY_KEY"] = "s3cr3t"
+        try:
+            secrets = MODULE.secret_values(settings(credential_env="TINY_KEY"))
+            line = MODULE.redact("authorization: s3cr3t", secrets)
+        finally:
+            os.environ.pop("TINY_KEY", None)
+
+        self.assertNotIn("s3cr3t", line)
+
+    def test_an_empty_credential_is_not_redacted(self):
+        os.environ["TINY_KEY"] = "   "
+        try:
+            self.assertEqual([], MODULE.secret_values(settings(credential_env="TINY_KEY")))
+        finally:
+            os.environ.pop("TINY_KEY", None)
 
 
 class LauncherTest(unittest.TestCase):
@@ -395,6 +414,7 @@ class RunRecordTest(unittest.TestCase):
             {
                 "mode": "agent",
                 "model": "glm-5.3-flash",
+                "approval": "auto",
                 "assetVersion": "2026.09.11.2",
                 "assetManifestSha256": "b" * 64,
                 "assetsPinned": False,
@@ -471,6 +491,38 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertEqual("45s", MODULE.duration(45))
         self.assertEqual("2m05s", MODULE.duration(125))
         self.assertEqual("1h01m", MODULE.duration(3700))
+
+
+class GateGuardTest(unittest.TestCase):
+    def test_a_stuck_gate_acceptance_fails_the_gate_instead_of_preflight(self):
+        def timing_out(*_arguments, **_keywords):
+            raise subprocess.TimeoutExpired(cmd="acceptance.py", timeout=900)
+
+        original = MODULE.run_case.run_once
+        MODULE.run_case.run_once = timing_out
+        try:
+            with redirect_stdout(io.StringIO()):
+                ok, detail = MODULE.run_gate(Path("cases"), "nop", ["L1-01"], 1)
+        finally:
+            MODULE.run_case.run_once = original
+
+        self.assertFalse(ok)
+        self.assertIn("ACCEPTANCE_TIMEOUT", detail)
+
+
+class MalformedDiagnosticsTest(unittest.TestCase):
+    def test_a_non_object_payload_is_ignored(self):
+        self.assertEqual(([], {}), MODULE.parse_diagnostics("DIAGNOSTICS []"))
+
+    def test_wrongly_typed_fields_are_ignored(self):
+        changed, details = MODULE.parse_diagnostics('DIAGNOSTICS {"changedSources": 1, "details": "boom"}')
+
+        self.assertEqual(([], {}), (changed, details))
+
+    def test_values_are_coerced_to_strings(self):
+        changed, details = MODULE.parse_diagnostics('DIAGNOSTICS {"changedSources": [1], "details": {"a": 2}}')
+
+        self.assertEqual((["1"], {"a": "2"}), (changed, details))
 
 
 class SettingsTest(unittest.TestCase):

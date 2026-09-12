@@ -234,7 +234,7 @@ def secret_values(settings: Settings) -> list[str]:
     names = set(CREDENTIAL_BY_PREFIX.values())
     if settings.credential_env:
         names.add(settings.credential_env)
-    return [value for value in (os.environ.get(name, "") for name in names) if len(value) >= 8]
+    return [value for value in (os.environ.get(name, "").strip() for name in names) if value]
 
 
 def redact(text: str, secrets: list[str]) -> str:
@@ -251,7 +251,17 @@ def parse_diagnostics(stderr: str) -> tuple[list[str], dict[str, str]]:
                 payload = json.loads(line[len("DIAGNOSTICS "):])
             except json.JSONDecodeError:
                 return [], {}
-            return list(payload.get("changedSources") or []), dict(payload.get("details") or {})
+            if not isinstance(payload, dict):
+                return [], {}
+            raw_changed = payload.get("changedSources")
+            changed = [str(item) for item in raw_changed] if isinstance(raw_changed, list) else []
+            raw_details = payload.get("details")
+            details = (
+                {str(name): str(value) for name, value in raw_details.items()}
+                if isinstance(raw_details, dict)
+                else {}
+            )
+            return changed, details
     return [], {}
 
 
@@ -470,8 +480,13 @@ def run_gate(cases_root: Path, mode: str, case_ids: list[str], repeat: int) -> t
     for index, case_id in enumerate(case_ids, start=1):
         verdicts = set()
         for attempt in range(1, repeat + 1):
-            record = run_case.run_once(cases_root / case_id, arguments, attempt)
-            verdicts.add(record["verdict"])
+            try:
+                record = run_case.run_once(cases_root / case_id, arguments, attempt)
+                verdicts.add(record["verdict"])
+            except subprocess.TimeoutExpired:
+                verdicts.add("ACCEPTANCE_TIMEOUT")
+            except OSError as error:
+                verdicts.add(type(error).__name__)
         ok = verdicts == {"OK"}
         if not ok:
             unexpected.append(f"{case_id}:{'/'.join(sorted(verdicts))}")
@@ -688,6 +703,7 @@ def provenance_fields(settings: Settings, provenance: AssetProvenance) -> dict[s
     return {
         "mode": run_mode(settings),
         "model": settings.model,
+        "approval": settings.approval,
         "assetVersion": provenance.asset_version,
         "assetManifestSha256": provenance.manifest_sha256,
         "assetsPinned": provenance.pinned,
