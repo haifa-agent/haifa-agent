@@ -307,6 +307,44 @@ class ReportModeTest(unittest.TestCase):
         self.assertEqual(1, report["totals"]["passedRuns"])
 
 
+class PathResolutionTest(unittest.TestCase):
+    """The agent runs with cwd set to its workspace, so every path must be absolute beforehand."""
+
+    def test_a_relative_output_directory_becomes_absolute(self):
+        resolved = MODULE.resolve_settings(arguments(output="results", cache_dir="cache"))
+
+        self.assertTrue(resolved.output_dir.is_absolute())
+        self.assertTrue(resolved.cache_dir.is_absolute())
+        self.assertEqual("results", resolved.output_dir.name)
+
+    def test_a_relative_assets_directory_becomes_absolute(self):
+        resolved = MODULE.resolve_settings(arguments(assets_dir="assets"))
+
+        self.assertTrue(resolved.assets_dir.is_absolute())
+
+    def test_a_relative_launcher_becomes_absolute(self):
+        with tempfile.TemporaryDirectory() as directory:
+            distribution = Path(directory) / "dist"
+            distribution.mkdir()
+            launcher = distribution / "haifa-coding"
+            launcher.write_text("#!/bin/sh" + chr(10), encoding="utf-8")
+            previous = os.getcwd()
+            os.chdir(directory)
+            try:
+                resolved = MODULE.resolve_settings(arguments(agent=str(Path("dist") / "haifa-coding")))
+            finally:
+                os.chdir(previous)
+
+        self.assertTrue(Path(resolved.agent).is_absolute())
+        self.assertEqual("haifa-coding", Path(resolved.agent).name)
+
+    def test_an_unknown_launcher_is_kept_for_the_preflight_message(self):
+        resolved = MODULE.resolve_settings(arguments(agent="no-such-launcher"))
+
+        self.assertEqual("no-such-launcher", resolved.agent)
+        self.assertTrue(any("does not resolve" in problem for problem in MODULE.missing_environment(resolved)))
+
+
 class DiagnosticsTest(unittest.TestCase):
     def test_changed_sources_and_reasons_are_extracted(self):
         stderr = 'noise\nDIAGNOSTICS {"changedSources": ["a.py"], "details": {"functional.x": "returned 3"}}\n'

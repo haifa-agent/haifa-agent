@@ -151,6 +151,22 @@ def credential_variable(model: str | None, explicit: str | None) -> tuple[str | 
     return None, f"unknown provider for model id {model}"
 
 
+def absolute(value: str | Path) -> Path:
+    """Every path is resolved before a case starts: the agent runs with cwd set to its workspace."""
+    return Path(value).expanduser().resolve()
+
+
+def resolve_agent(value: str | None) -> str | None:
+    """Return an agent launcher that stays valid after the working directory changes."""
+    if not value:
+        return None
+    candidate = Path(value).expanduser()
+    if candidate.is_file():
+        return str(candidate.resolve())
+    found = shutil.which(value)
+    return str(absolute(found)) if found else value
+
+
 def integer(name: str, fallback: int) -> int:
     value = os.environ.get(name, "").strip()
     try:
@@ -176,7 +192,7 @@ def resolve_settings(arguments: argparse.Namespace) -> Settings:
     return Settings(
         action=arguments.action,
         allow_real_provider=environment_flag("HAIFA_LADDER_ALLOW_REAL_PROVIDER"),
-        agent=arguments.agent or os.environ.get("HAIFA_LADDER_AGENT") or default_agent(),
+        agent=resolve_agent(arguments.agent or os.environ.get("HAIFA_LADDER_AGENT") or default_agent()),
         model=arguments.model or os.environ.get("HAIFA_LADDER_MODEL") or os.environ.get("HAIFA_MODEL_ID"),
         credential_env=arguments.credential_env or os.environ.get("HAIFA_LADDER_CREDENTIAL_ENV"),
         approval=arguments.approval or os.environ.get("HAIFA_LADDER_APPROVAL", "auto"),
@@ -185,9 +201,9 @@ def resolve_settings(arguments: argparse.Namespace) -> Settings:
         timeout_scale=(
             arguments.timeout_scale if arguments.timeout_scale is not None else number("HAIFA_LADDER_TIMEOUT_SCALE", 1.0)
         ),
-        output_dir=Path(output) if output else REPOSITORY_ROOT / "local-tmp" / "autonomous-delivery-ladder" / timestamp,
-        cache_dir=Path(cache) if cache else REPOSITORY_ROOT / "local-tmp" / "autonomous-delivery-assets",
-        assets_dir=Path(assets) if assets else None,
+        output_dir=absolute(output) if output else REPOSITORY_ROOT / "local-tmp" / "autonomous-delivery-ladder" / timestamp,
+        cache_dir=absolute(cache) if cache else REPOSITORY_ROOT / "local-tmp" / "autonomous-delivery-assets",
+        assets_dir=absolute(assets) if assets else None,
         skip_gates=arguments.skip_gates,
         gate_repeat=arguments.gate_repeat,
         rehearse=arguments.rehearse,
