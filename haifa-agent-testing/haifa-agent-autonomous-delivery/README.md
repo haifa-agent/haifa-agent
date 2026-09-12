@@ -54,15 +54,17 @@ python -m unittest discover -s haifa-agent-testing/haifa-agent-autonomous-delive
 `HAIFA_LADDER_REPEAT`、`HAIFA_LADDER_TIMEOUT_SCALE`、`HAIFA_LADDER_OUTPUT`、`HAIFA_LADDER_CACHE_DIR`、
 `HAIFA_LADDER_ASSETS_DIR`；每个变量都有同名 `--kebab-case` 参数，参数优先。
 
+`--assets-dir` 指定的目录必须与 `assets.lock.json` 的 manifest 摘要一致，否则体检直接失败：题集不是锁定的那一版，结果无法与基线比较；确实要用未锁定的题集时加 `--allow-unpinned-assets`，体检会以 `UNPINNED` 标注继续。
+
 ```powershell
 # 只体检：环境变量、工具链、按锁下载并校验资产、Runner 单测、NOP/oracle 门
-.\haifa-agent-testing\haifa-agent-autonomous-delivery	oolsun-ladder.ps1 check
+.\haifa-agent-testing\haifa-agent-autonomous-delivery\tools\run-ladder.ps1 check
 
 # 体检通过后评测全部 23 题
-.\haifa-agent-testing\haifa-agent-autonomous-delivery	oolsun-ladder.ps1 run
+.\haifa-agent-testing\haifa-agent-autonomous-delivery\tools\run-ladder.ps1 run
 
 # 彩排：用参考解跑通整条链路，不调用模型、不产生费用
-.\haifa-agent-testing\haifa-agent-autonomous-delivery	oolsun-ladder.ps1 run --rehearse --skip-gates
+.\haifa-agent-testing\haifa-agent-autonomous-delivery\tools\run-ladder.ps1 run --rehearse --skip-gates
 ```
 
 评测过程中的输出：每题开始时的三维标签与变体、Agent 预算与日志文件名、每 15 秒一次的心跳（已用时间/预算、

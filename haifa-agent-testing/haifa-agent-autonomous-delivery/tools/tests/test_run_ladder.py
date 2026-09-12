@@ -34,6 +34,7 @@ def settings(**overrides):
         "gate_repeat": 1,
         "rehearse": False,
         "keep_workdir": False,
+        "allow_unpinned_assets": False,
     }
     defaults.update(overrides)
     return MODULE.Settings(**defaults)
@@ -122,6 +123,74 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual([], MODULE.missing_environment(settings(agent=None, rehearse=True, allow_real_provider=False)))
 
 
+class AssetLockTest(unittest.TestCase):
+    def checkout(self, directory: str, digest_source: str) -> Path:
+        checkout = Path(directory)
+        (checkout / "assets-manifest.json").write_text(digest_source, encoding="utf-8")
+        return checkout
+
+    def test_matching_manifest_digest_is_the_locked_asset_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = self.checkout(directory, '{"schemaVersion": 1}')
+            digest = MODULE.fetch_assets.sha256_file(checkout / "assets-manifest.json")
+
+            self.assertIsNone(MODULE.lock_mismatch(checkout, {"manifestSha256": digest}))
+
+    def test_other_checkouts_are_reported_as_unpinned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = self.checkout(directory, '{"schemaVersion": 1, "assetVersion": "other"}')
+
+            mismatch = MODULE.lock_mismatch(checkout, {"manifestSha256": "0" * 64})
+
+        self.assertIn("not the pinned asset set", mismatch)
+
+
+class ExitCodeTest(unittest.TestCase):
+    def record(self, case_id: str, status: str, accepted: bool, contract=()):
+        return {"caseId": case_id, "level": case_id[:2], "status": status, "accepted": accepted, "contractProblems": list(contract)}
+
+    def test_only_accepted_runs_count(self):
+        records = [
+            self.record("L1-01", "PASSED", True),
+            self.record("L1-02", "PASSED", False, ["passed must equal 'failures is empty'"]),
+            self.record("L1-03", "FAILED", False),
+        ]
+
+        self.assertEqual(1, MODULE.accepted_runs(records))
+
+    def test_a_contract_violation_keeps_the_run_unaccepted(self):
+        records = [self.record("L1-01", "PASSED", False, ["checks must be a non-empty boolean map"])]
+
+        self.assertEqual(0, MODULE.accepted_runs(records))
+
+
+class LauncherEnvironmentTest(unittest.TestCase):
+    def test_distribution_data_paths_are_restored(self):
+        variables = ("HAIFA_SQLITE_DATABASE_PATH", "HAIFA_TRANSCRIPT_ROOT", "HAIFA_LOG_DIR")
+        previous = {name: os.environ.pop(name, None) for name in variables}
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                distribution = Path(directory)
+                launcher = distribution / "haifa-coding.cmd"
+                launcher.write_text("@echo off" + chr(10), encoding="utf-8")
+
+                applied = MODULE.prepare_launcher_environment(str(launcher))
+
+                self.assertEqual(sorted(variables), sorted(applied))
+                self.assertEqual(str(distribution / "data" / "runtime.db"), os.environ["HAIFA_SQLITE_DATABASE_PATH"])
+                self.assertTrue((distribution / "data" / "transcripts").is_dir())
+                self.assertTrue((distribution / "logs").is_dir())
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+    def test_a_plain_executable_needs_no_data_paths(self):
+        self.assertEqual([], MODULE.prepare_launcher_environment("haifa-coding"))
+
+
 class DiagnosticsTest(unittest.TestCase):
     def test_changed_sources_and_reasons_are_extracted(self):
         stderr = 'noise\nDIAGNOSTICS {"changedSources": ["a.py"], "details": {"functional.x": "returned 3"}}\n'
@@ -161,6 +230,7 @@ class SettingsTest(unittest.TestCase):
                     gate_repeat=1,
                     rehearse=False,
                     keep_workdir=False,
+                    allow_unpinned_assets=False,
                 )
             )
         finally:
