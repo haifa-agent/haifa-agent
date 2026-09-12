@@ -65,17 +65,18 @@ TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观�
 Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/REVIEW` 模式；没有可信模式时保持
 `UNKNOWN`，不从普通用户文本的关键词推断意图。模型消息不能改变模式，也不能制造交付证据。
 
-`CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、有界执行事实和按需审查状态
-引用重建工作区修改、确定性 Change Review、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
-修改或验证通过证据。Issue 29 将文件变更事实从 `FileChangeSet` 事务收敛为成功的 Mutation ToolCall 与按需审查（Git 目录使用 Git 工作树状态，Plain 目录使用会话内有界记录 `SessionChangeLedger`），移除每次写操作同步生成 Review 的开销。Phase 3 以 Run 级 `RepositoryBaseline` 在首次受管写入前冻结各仓 HEAD 与 dirty 摘要，按 nearest repository boundary 分流 Git/Plain Review；`execution.run` 无法证明全部写入归属、初始工作树已脏或证据读取不完整时，`coding-change-review/2` 明确产出 `ATTRIBUTION_PARTIAL`，不会伪装成完整证据。既有 `coding-change-review/1` 仍可确定性读取。
+`CodingDeliveryEvidenceLedger` 只从当前 canonical ToolCall 的结构化结果重建工作区修改、验证、只读检查、
+阻塞和有证据的 No-change 事实；不回退读取 AgentStep 结果，也不兼容 snake_case Tool identity 或旧验证
+schema。模型自由文本不构成修改或验证通过证据。文件变更事实来自成功的 Mutation ToolCall；Coding 产品
+不维护仓库基线或 Git/Plain Change Review 链，也不会为此执行隐藏的 Git 探测。
 
 `CodingCompletionPolicy` 对 CHANGE/CREATE 始终要求权威修改或受限 No-change 事实；验证 blocker 只在
 Session 冻结配置的显式 `requiresValidationEvidence` 事实为真时产生。该事实在会话创建时由
 `CodingSessionVerificationConfiguration.freeze` 一次性推导并随 digest 冻结：来源为用户显式
 （`USER_EXPLICIT`）或仓库指令（`REPOSITORY_INSTRUCTIONS`）的候选构成必须完成的验证要求；
 `BUILD_CONFIGURATION`、`ADJACENT_TEST`、`ECOSYSTEM_DEFAULT` 候选只是推荐，环境恰好存在 Maven/pytest
-不构成验证承诺，普通文档或配置写入不会被强制送入 Build/Test 补救循环。权威验证一旦失败仍阻塞完成，
-除非冻结 profile 允许 blocked validation 且存在 `BLOCKER_CONFIRMED`。`DIFF_INSPECTION` 不再作为修改任务
+不构成验证承诺，普通文档或配置写入不会被强制送入 Build/Test 补救循环。最新一次权威验证失败始终阻塞完成，
+即使失败类别已经确认也不能绕过。`DIFF_INSPECTION` 不再作为修改任务
 完成门禁的兼容 fallback，但 DIFF 命令、只读审阅能力和对应诊断事实继续保留。ANALYZE/REVIEW 要求只读证据
 且拒绝意外修改。UNKNOWN 用于普通交互：没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；
 观察到 Workspace 修改时仍要求修改事实，验证要求同样只取决于冻结验证要求。明确承诺 commit/push/PR 的交付
@@ -96,11 +97,10 @@ Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影�
 candidate。该投影不是公共 `WorkspaceSnapshot`、Capability Detector 或恢复事实源；Coding Agent 模块不新增
 对应公共 DTO、持久化 Schema 或动态 executable/version 探测，具体静态发现和路径脱敏仍由 CLI 宿主负责。
 
-`CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别投影为
-`SATISFIED/INCOMPLETE` 和 `CLEAN/PARTIAL/UNCLEAN/IN_PROGRESS`，并通过 `coding-run-outcome/2` 的幂等
-`coding.task-outcome` 安全事件记录。Coding CLI、Coding Web 与受信 Coding Host 可通过
-`CodingSessionClient.findOutcome` 查询权威投影，无需解析 Event map；归档查看器仍可兼容读取历史
-`outcome/1` 与当前 `outcome/2` 文件事件。它不是 Benchmark Verifier 结果，也不增加新的 Core Run 状态。
+`CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别按需投影为
+`SATISFIED/INCOMPLETE` 和 `CLEAN/PARTIAL/UNCLEAN/IN_PROGRESS`。Coding CLI、Coding Web 与受信 Coding Host 可通过
+`CodingSessionClient.findOutcome` 查询权威投影；它作为只读纯推导服务运行，不向 Event Store 写入持久化的
+`coding.task-outcome` 事件，也不是 Benchmark Verifier 结果，不增加新的 Core Run 状态。
 
 可信宿主还可在创建 Session 或提交新 Turn 时冻结 `WORKTREE_ONLY/LOCAL_COMMIT/REMOTE_PUSH/PULL_REQUEST`
 交付意图；默认仍是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。交付意图只表达完成目标和投影

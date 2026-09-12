@@ -43,11 +43,7 @@ public final class CodingVerificationProfileResolver {
                 .filter(candidate -> candidate.source().priority() == best.get(candidate.trigger()))
                 .sorted(ORDER)
                 .toList();
-        List<CodingVerificationCandidate> ignored = all.stream()
-                .filter(candidate -> candidate.source().priority() != best.get(candidate.trigger()))
-                .sorted(ORDER)
-                .toList();
-        return new CodingVerificationProfile(selected, ignored);
+        return new CodingVerificationProfile(selected);
     }
 
     private static List<CodingVerificationCandidate> required(List<CodingVerificationCandidate> value, String field) {

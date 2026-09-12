@@ -594,12 +594,10 @@ MEMORY 模式仍只在当前进程有效。Tool 成功结果和新 Run 的模型
 相对路径和 root alias 不再接受；跨授权目录的 patch 与 move 仍明确拒绝。已被现有授权目录覆盖的重复授权
 复用原边界，不创建第二份目录身份；无法确认物理路径边界时拒绝操作。
 
-CLI 会在本地执行平台可用时用同一个 `ExecutionBroker` 做内部有界 Git 读取：受管文件写入在物理 I/O
-前为 nearest repository 建立一次 Run 基线，Plain 路径继续只进入 `SessionChangeLedger`；没有可用
-执行平台时文件授权和写入不受影响，但 Review 归因保守标为 `ATTRIBUTION_PARTIAL`。每次
-`execution.run` 完成后失效该授权目录的仓库定位缓存，以便下一次观察 `git init`、删除 `.git` 或
-worktree/submodule 拓扑变化。Git 只决定 Review 证据来源，不扩大文件授权范围，也不向模型暴露新的
-`git.*` Tool。
+CLI 不为受管文件写入建立仓库基线或 Git/Plain Change Review，也不为交付证据执行隐藏的 Git 读取。
+本地文件适配器仍记录既有 Session mutation ledger，但它不参与 Coding Completion 判定；完成策略的文件
+变更事实来自成功的 canonical Mutation ToolCall。Git 检查需要 Agent 通过已披露的 `execution.run`
+显式执行，且不会扩大文件授权范围。
 
 `file.patch` 接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，最多包含同一目录根下 100 个文件的新增或更新。
 删除和移动仍分别调用 `file.delete`、`file.move`；跨目录根的 patch 和移动明确拒绝。所有文件会在第一次写盘前完成
@@ -728,8 +726,8 @@ discovered/selected/ignored 或完整覆盖，当前统一保留 `COUNTS_UNAVAIL
 
 CLI 不再为 OS 执行建立 Workspace Change Observer，也不在产品内维护扫描算法或为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。`execution.run` 的可信事实是授权、Sandbox、进程 dispatch、退出状态、有界输出、超时、取消和结果未知；它不自动扫描 Workspace 推导文件变更，也不因文件观察失败进入
 `WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` / `WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED`（两个错误码已删除）。
-只有 OS 进程创建成功后才进入 DISPATCHED。文件级变更事实由 Coding 产品层从成功的 Mutation ToolCall、
-`SessionChangeLedger`、`RepositoryBaseline` 与按需 Git/Plain Change Review 重建。
+只有 OS 进程创建成功后才进入 DISPATCHED。文件级变更事实由 Coding 产品层从成功的 canonical Mutation
+ToolCall 重建；没有仓库基线或按需 Change Review 的隐藏旁路。
 
 Runtime 会在冻结 Tool Definition 首次出现 `FILE_WRITE` 或 `PROCESS_EXECUTION` 时、实际 dispatch 前创建
 `WORKSPACE_SNAPSHOT` 类型的 Runtime checkpoint。当前本地 CLI 未注册持久

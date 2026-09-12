@@ -73,31 +73,6 @@ final class ProjectExecutionTestSupport {
                 verificationProfiles);
     }
 
-    static ProjectExecutionToolOperations operations(
-            ExecutionBroker broker,
-            int maximumOutputBytes,
-            int maximumOutputLines,
-            CodingVerificationProfileProvider verificationProfiles,
-            ExecutionRepositoryBaselineObserver repositoryBaselines) {
-        return new ProjectExecutionToolOperations(
-                broker,
-                () -> "execution-1",
-                () -> NOW,
-                new ExecutionEnvironmentRef(List.of("environment-1")),
-                new SandboxProfileRef("shell", "1"),
-                Duration.ofMinutes(2),
-                Duration.ofMinutes(30),
-                maximumOutputBytes,
-                maximumOutputLines,
-                8,
-                ExecutionOutputObserver.noop(),
-                UnaryOperator.identity(),
-                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
-                verificationProfiles,
-                repositoryBaselines);
-    }
-
     static ProjectExecutionToolOperations operationsWithSanitizer(
             ExecutionBroker broker,
             int maximumOutputBytes,

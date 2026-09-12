@@ -19,7 +19,6 @@ public record CodingValidationAttemptEvidence(
         String verificationProfileDigest,
         String verificationCandidateDigest) {
     public static final String SCHEMA_VERSION = "coding-validation-evidence/2";
-    private static final String LEGACY_SCHEMA_VERSION = "coding-validation-evidence/1";
 
     public CodingValidationAttemptEvidence {
         if (!SCHEMA_VERSION.equals(schemaVersion)) {
@@ -73,7 +72,6 @@ public record CodingValidationAttemptEvidence(
         if (!(value instanceof Map<?, ?> map)) return Optional.empty();
         try {
             String schemaVersion = text(map, "schemaVersion");
-            if (LEGACY_SCHEMA_VERSION.equals(schemaVersion)) return Optional.of(fromLegacy(map));
             return Optional.of(new CodingValidationAttemptEvidence(
                     schemaVersion,
                     CodingValidationStatus.valueOf(text(map, "status")),
@@ -89,36 +87,6 @@ public record CodingValidationAttemptEvidence(
         } catch (IllegalArgumentException | ClassCastException ignored) {
             return Optional.empty();
         }
-    }
-
-    public static CodingValidationAttemptEvidence unavailable(CodingValidationStatus status, String source) {
-        return new CodingValidationAttemptEvidence(
-                SCHEMA_VERSION,
-                status,
-                null,
-                null,
-                null,
-                CodingValidationScope.UNKNOWN,
-                "COUNTS_UNAVAILABLE",
-                source,
-                "SCOPE_UNAVAILABLE",
-                "UNAVAILABLE",
-                "UNMATCHED");
-    }
-
-    private static CodingValidationAttemptEvidence fromLegacy(Map<?, ?> map) {
-        return new CodingValidationAttemptEvidence(
-                SCHEMA_VERSION,
-                CodingValidationStatus.valueOf(text(map, "status")),
-                null,
-                null,
-                null,
-                CodingValidationScope.UNKNOWN,
-                "COUNTS_UNAVAILABLE",
-                "LEGACY_TOOL_RESULT",
-                "LEGACY_COUNTS_UNTRUSTED",
-                "UNAVAILABLE",
-                "UNMATCHED");
     }
 
     private static Integer integer(Map<?, ?> map, String key) {

@@ -218,9 +218,9 @@ class ProjectExecutionValidationTest {
                 .execute(invocation(Map.of("command", "git status --short"), () -> false), access());
 
         assertThat(result.structuredData())
-                .containsEntry("declaredOperationFamily", "UNKNOWN")
                 .containsEntry("effectiveOperationFamily", "INSPECT")
-                .containsEntry("operationFamily", "UNKNOWN");
+                .containsEntry("operationFamily", "UNKNOWN")
+                .doesNotContainKey("declaredOperationFamily");
         assertThat(captured.get().limits().maxStdoutBytes()).isEqualTo(4096);
         assertThat(captured.get().limits().maxStderrBytes()).isEqualTo(4096);
     }
@@ -249,19 +249,19 @@ class ProjectExecutionValidationTest {
                 .containsEntry("status", "SUCCEEDED")
                 .containsEntry("commandRisk", "EXTERNAL_WRITE")
                 .containsEntry("commandTarget", "GIT")
-                .containsEntry("declaredOperationFamily", "INSPECT")
                 .containsEntry("effectiveOperationFamily", "MUTATE")
-                .containsEntry("operationHintCode", "OPERATION_HINT_IGNORED");
+                .containsEntry("operationHintCode", "OPERATION_HINT_IGNORED")
+                .doesNotContainKey("declaredOperationFamily");
         assertThat(tokenOverride.structuredData())
                 .containsEntry("stableFailureCode", "AUTHENTICATION_OVERRIDE_DENIED")
                 .containsEntry("failureActionCode", "REMOVE_AUTHENTICATION_OVERRIDE")
                 .containsEntry("commandRisk", "DENIED");
         assertThat(statusAsDiff.structuredData())
                 .containsEntry("status", "SUCCEEDED")
-                .containsEntry("declaredOperationFamily", "DIFF")
                 .containsEntry("effectiveOperationFamily", "INSPECT")
                 .containsEntry("operationHintCode", "OPERATION_HINT_IGNORED")
                 .containsEntry("commandOperation", "INSPECT")
-                .containsEntry("commandClassificationReason", "GIT_STATUS");
+                .containsEntry("commandClassificationReason", "GIT_STATUS")
+                .doesNotContainKey("declaredOperationFamily");
     }
 }
