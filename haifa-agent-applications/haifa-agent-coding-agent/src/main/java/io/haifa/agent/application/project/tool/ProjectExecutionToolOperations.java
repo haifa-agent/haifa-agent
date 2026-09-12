@@ -519,7 +519,7 @@ public final class ProjectExecutionToolOperations {
 
     /**
      * Product-owned user command path. It uses the same broker, policy decision, sandbox, output and
-     * audit boundaries as execution.run without manufacturing a model Tool Call.
+     * audit boundaries as execution_run without manufacturing a model Tool Call.
      */
     public ToolResult executeUserInitiated(
             AgentRunId auditRunId,

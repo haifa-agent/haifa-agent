@@ -231,7 +231,7 @@ class PhaseFiveApplicationTest {
                 () -> NOW,
                 ignored ->
                         new io.haifa.agent.execution.core.tool.ExecutionInvocationScopeResolver
-                                .ExecutionInvocationScope(workspaceId, java.util.Set.of("execution.run")),
+                                .ExecutionInvocationScope(workspaceId, java.util.Set.of("execution_run")),
                 config,
                 io.haifa.agent.execution.core.tool.TrustedWorkspacePathValidator.rejectWorkspaceInputs());
 

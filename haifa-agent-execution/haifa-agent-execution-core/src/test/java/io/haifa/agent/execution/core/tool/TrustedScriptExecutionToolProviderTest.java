@@ -70,7 +70,7 @@ class TrustedScriptExecutionToolProviderTest {
     void fixedScriptUsesBrokerWithHostOwnedContentRuntimeAndValidatedWorkspaceInput() {
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         AtomicReference<List<ProjectPath>> validated = new AtomicReference<>();
-        var provider = provider(captured, Set.of("execution.run"), (workspaceId, paths) -> {
+        var provider = provider(captured, Set.of("execution_run"), (workspaceId, paths) -> {
             assertThat(workspaceId).isEqualTo(new WorkspaceId("workspace"));
             validated.set(paths);
         });
@@ -83,7 +83,7 @@ class TrustedScriptExecutionToolProviderTest {
                 "fixed transform",
                 ".",
                 Duration.ofSeconds(5),
-                Set.of("execution.run"),
+                Set.of("execution_run"),
                 List.of(ProjectPath.of("input/value.txt")));
 
         assertThat(result.successful()).isTrue();
@@ -101,7 +101,7 @@ class TrustedScriptExecutionToolProviderTest {
     void reportsNormallyExitedNonZeroProcessAsSuccessfulToolResultWithSchemaValidFacts() {
         ExecutionToolProvider provider = provider(
                 new AtomicReference<>(),
-                Set.of("execution.run"),
+                Set.of("execution_run"),
                 TrustedWorkspacePathValidator.rejectWorkspaceInputs(),
                 1);
 
@@ -113,7 +113,7 @@ class TrustedScriptExecutionToolProviderTest {
                 "fixed transform",
                 ".",
                 Duration.ofSeconds(5),
-                Set.of("execution.run"),
+                Set.of("execution_run"),
                 List.of());
 
         assertThat(result.successful()).isTrue();
@@ -137,14 +137,14 @@ class TrustedScriptExecutionToolProviderTest {
                         "fixed transform",
                         ".",
                         Duration.ofSeconds(5),
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
                         List.of()))
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("capabilities");
         assertThat(captured).hasValue(null);
 
         var noPathValidator =
-                provider(captured, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+                provider(captured, Set.of("execution_run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
         assertThatThrownBy(() -> noPathValidator.invokeTrustedScript(
                         invocation(),
                         "fixture-runtime",
@@ -153,7 +153,7 @@ class TrustedScriptExecutionToolProviderTest {
                         "fixed transform",
                         ".",
                         Duration.ofSeconds(5),
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
                         List.of(ProjectPath.of("input/value.txt"))))
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("validation is not configured");
@@ -180,7 +180,7 @@ class TrustedScriptExecutionToolProviderTest {
             }
         };
         ExecutionToolProvider provider =
-                provider(broker, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+                provider(broker, Set.of("execution_run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
 
         assertThatThrownBy(() -> provider.invokeTrustedScript(
                         invocation(),
@@ -190,7 +190,7 @@ class TrustedScriptExecutionToolProviderTest {
                         "fixed transform",
                         ".",
                         Duration.ofSeconds(5),
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
                         List.of()))
                 .isInstanceOfSatisfying(io.haifa.agent.tool.api.ToolInvocationException.class, exception -> {
                     assertThat(exception.failureCode()).isEqualTo("POLICY_RESOURCE_MISMATCH");
@@ -220,7 +220,7 @@ class TrustedScriptExecutionToolProviderTest {
             }
         };
         ExecutionToolProvider provider =
-                provider(broker, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+                provider(broker, Set.of("execution_run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
 
         assertThatThrownBy(() -> provider.invokeTrustedScript(
                         invocation(),
@@ -230,7 +230,7 @@ class TrustedScriptExecutionToolProviderTest {
                         "fixed transform",
                         ".",
                         Duration.ofSeconds(5),
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
                         List.of()))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessage("unexpected broker internal fault");
@@ -256,7 +256,7 @@ class TrustedScriptExecutionToolProviderTest {
             }
         };
         ExecutionToolProvider provider =
-                provider(broker, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+                provider(broker, Set.of("execution_run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
 
         assertThatThrownBy(() -> provider.invokeTrustedScript(
                         invocation(),
@@ -266,7 +266,7 @@ class TrustedScriptExecutionToolProviderTest {
                         "fixed transform",
                         ".",
                         Duration.ofSeconds(5),
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
                         List.of()))
                 .isInstanceOfSatisfying(io.haifa.agent.tool.api.ToolInvocationException.class, exception -> {
                     assertThat(exception.failureCode()).isEqualTo("NETWORK_POLICY_UNENFORCEABLE");
@@ -298,7 +298,7 @@ class TrustedScriptExecutionToolProviderTest {
             }
         };
         ExecutionToolProvider provider =
-                provider(broker, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+                provider(broker, Set.of("execution_run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
 
         assertThatThrownBy(() -> provider.invokeTrustedScript(
                         invocation(),
@@ -308,7 +308,7 @@ class TrustedScriptExecutionToolProviderTest {
                         "fixed transform",
                         ".",
                         Duration.ofSeconds(5),
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
                         List.of()))
                 .isInstanceOfSatisfying(io.haifa.agent.sandbox.api.SandboxException.class, exception -> {
                     assertThat(exception).isNotInstanceOf(io.haifa.agent.sandbox.api.SandboxPreflightException.class);
@@ -356,7 +356,7 @@ class TrustedScriptExecutionToolProviderTest {
             public void acknowledged() {}
         };
         ExecutionToolProvider provider =
-                provider(broker, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+                provider(broker, Set.of("execution_run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
 
         provider.invokeTrustedScript(
                 invocation(binding(), observer),
@@ -366,7 +366,7 @@ class TrustedScriptExecutionToolProviderTest {
                 "fixed transform",
                 ".",
                 Duration.ofSeconds(5),
-                Set.of("execution.run"),
+                Set.of("execution_run"),
                 List.of());
 
         assertThat(dispatched.get())
@@ -379,7 +379,7 @@ class TrustedScriptExecutionToolProviderTest {
     @Test
     void fixedToolProviderLoadsAndRehashesTheFrozenSkillResource() {
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
-        ExecutionToolProvider execution = provider(captured, Set.of("execution.run"), (workspaceId, paths) -> {});
+        ExecutionToolProvider execution = provider(captured, Set.of("execution_run"), (workspaceId, paths) -> {});
         FrozenSkillBinding skill = skill();
         String script = "print('FROZEN_RESOURCE')";
         ToolDefinition definition = trustedDefinition(
@@ -392,7 +392,7 @@ class TrustedScriptExecutionToolProviderTest {
                 "fixture-runtime",
                 execution.configurationIdentity(),
                 SkillTrustDigests.sandbox(execution.sandboxProfileIdentity()),
-                Set.of("execution.run"),
+                Set.of("execution_run"),
                 Duration.ofSeconds(5),
                 "fixed transform",
                 arguments -> TrustedScriptArguments.atWorkspaceRoot(List.of(String.valueOf(arguments.get("value")))));
@@ -520,7 +520,7 @@ class TrustedScriptExecutionToolProviderTest {
     }
 
     private static FrozenToolBinding binding() {
-        ToolName name = new ToolName("trusted.transform");
+        ToolName name = new ToolName("trusted_transform");
         SemanticVersion version = new SemanticVersion("1.0.0");
         ToolProviderId provider = new ToolProviderId("fixed-script");
         Map<String, Object> schema =
@@ -568,7 +568,7 @@ class TrustedScriptExecutionToolProviderTest {
     }
 
     private static ToolDefinition trustedDefinition(String executionDigest, String sandboxDigest) {
-        ToolName name = new ToolName("trusted.transform");
+        ToolName name = new ToolName("trusted_transform");
         Map<String, Object> input = Map.of(
                 "$schema",
                 ToolSchema.DRAFT_2020_12,
@@ -596,7 +596,7 @@ class TrustedScriptExecutionToolProviderTest {
                 ToolRisk.HIGH,
                 Set.of(ToolSideEffect.PROCESS_EXECUTION),
                 new ToolResourceRequirements(
-                        Set.of("execution.run"), Set.of(), Set.of(executionDigest, "sandbox@" + sandboxDigest)),
+                        Set.of("execution_run"), Set.of(), Set.of(executionDigest, "sandbox@" + sandboxDigest)),
                 List.of(),
                 ToolApprovalRequirement.ALWAYS,
                 "test",

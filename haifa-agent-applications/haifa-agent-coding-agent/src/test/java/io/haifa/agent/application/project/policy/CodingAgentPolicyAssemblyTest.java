@@ -150,7 +150,7 @@ class CodingAgentPolicyAssemblyTest {
                                 ApprovalMode.ASK,
                                 CodingApprovalThreshold.LOW,
                                 PolicyRiskLevel.LOW,
-                                "file.read",
+                                "file_read",
                                 "invoke",
                                 Set.of(),
                                 false)
@@ -160,7 +160,7 @@ class CodingAgentPolicyAssemblyTest {
                                 ApprovalMode.ASK,
                                 CodingApprovalThreshold.HIGH,
                                 PolicyRiskLevel.MEDIUM,
-                                "file.write",
+                                "file_write",
                                 "invoke",
                                 Set.of(PolicySideEffect.FILE_WRITE),
                                 false)
@@ -170,7 +170,7 @@ class CodingAgentPolicyAssemblyTest {
                                 ApprovalMode.AUTO,
                                 CodingApprovalThreshold.NEVER,
                                 PolicyRiskLevel.MEDIUM,
-                                "file.write",
+                                "file_write",
                                 "invoke",
                                 Set.of(PolicySideEffect.FILE_WRITE),
                                 false)
@@ -220,7 +220,7 @@ class CodingAgentPolicyAssemblyTest {
             Set<PolicySideEffect> sideEffects,
             boolean credentialUse) {
         return decideAction(
-                mode, threshold, riskLevel, "execution.run", "invoke", resourceType, sideEffects, credentialUse);
+                mode, threshold, riskLevel, "execution_run", "invoke", resourceType, sideEffects, credentialUse);
     }
 
     private static io.haifa.agent.policy.api.PolicyDecision decideAction(

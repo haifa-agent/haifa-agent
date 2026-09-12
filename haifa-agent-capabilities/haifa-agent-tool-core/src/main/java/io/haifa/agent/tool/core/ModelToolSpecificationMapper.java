@@ -8,7 +8,7 @@ public final class ModelToolSpecificationMapper {
         var definition = binding.definition();
         var schema = definition.inputSchema();
         return new ModelToolSpecification(
-                binding.alias().value(),
+                binding.definition().name().value(),
                 definition.version().value(),
                 definition.description(),
                 schema.id(),

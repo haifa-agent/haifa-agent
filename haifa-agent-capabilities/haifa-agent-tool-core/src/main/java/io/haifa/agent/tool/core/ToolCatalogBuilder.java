@@ -28,6 +28,9 @@ public final class ToolCatalogBuilder {
         if (!provider.id().equals(definition.providerId())) {
             throw new IllegalArgumentException("provider id does not match tool definition");
         }
+        if (!alias.value().equals(definition.name().value())) {
+            throw new IllegalArgumentException("tool alias must equal tool name");
+        }
         validator.validate(definition);
         Registration previous = registrations.putIfAbsent(
                 alias, new Registration(alias, definition, providerBindingReference, provider));

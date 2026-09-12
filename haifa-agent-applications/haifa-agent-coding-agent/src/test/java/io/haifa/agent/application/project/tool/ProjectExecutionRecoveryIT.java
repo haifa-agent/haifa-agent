@@ -345,14 +345,14 @@ class ProjectExecutionRecoveryIT {
                     return new RunWorkspaceAccess(
                             WORKSPACE,
                             current.mode() == WorkspaceAccessMode.DEVELOP
-                                    ? Set.of("execution.run")
-                                    : Set.of("file.read"));
+                                    ? Set.of("execution_run")
+                                    : Set.of("file_read"));
                 },
                 unreachable,
                 normal,
                 null);
         var catalog = new ProjectToolCatalog()
-                .freeze(Set.of("execution.run"), Set.of("execution.run"), true, provider, normalProfile());
+                .freeze(Set.of("execution_run"), Set.of("execution_run"), true, provider, normalProfile());
         DefaultAgentRuntime runtime = new RuntimeCoreBuilder()
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .scheduler(scheduler)

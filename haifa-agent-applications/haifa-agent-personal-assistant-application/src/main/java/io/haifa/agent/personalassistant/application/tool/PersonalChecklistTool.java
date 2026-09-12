@@ -91,7 +91,7 @@ public final class PersonalChecklistTool implements ToolProvider {
                 "required",
                 List.of("items", "count"));
         return new ToolDefinition(
-                new ToolName("personal.checklist"),
+                new ToolName("personal_checklist"),
                 new SemanticVersion("1.0.0"),
                 PROVIDER_ID,
                 "Prepare checklist",

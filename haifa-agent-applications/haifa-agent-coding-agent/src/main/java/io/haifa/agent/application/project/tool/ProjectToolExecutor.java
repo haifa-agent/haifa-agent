@@ -52,14 +52,14 @@ public final class ProjectToolExecutor implements ToolProvider {
         }
         String toolName = request.binding().definition().name().value();
         ToolResult result;
-        if (toolName.equals("execution.run")) {
+        if (toolName.equals("execution_run")) {
             if (executionOperations == null) {
-                throw new IllegalStateException("execution.run is not configured for this application");
+                throw new IllegalStateException("execution_run is not configured for this application");
             }
             return executionOperations.execute(request, binding);
         } else if (toolName.equals(ProjectWorktreeToolOperations.TOOL_NAME)) {
             if (worktreeOperations == null) {
-                throw new IllegalStateException("workspace.worktree.create is not configured for this application");
+                throw new IllegalStateException("workspace_worktree_create is not configured for this application");
             }
             return worktreeOperations.execute(request, binding);
         } else {
@@ -87,7 +87,7 @@ public final class ProjectToolExecutor implements ToolProvider {
             throw new SecurityException("run workspace access does not authorize reconciliation");
         }
         String toolName = request.binding().definition().name().value();
-        if (toolName.equals("execution.run") && executionOperations != null) {
+        if (toolName.equals("execution_run") && executionOperations != null) {
             return executionOperations.reconcile(request, binding);
         }
         return operations.reconcile(

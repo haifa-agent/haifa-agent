@@ -196,7 +196,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             throw failure("READ_ONLY_UNENFORCEABLE", "host provider cannot safely execute against a read-only mount");
         }
         if (!binding.permissions().allows(WorkspacePermission.EXECUTE)
-                || !binding.capabilities().allows("execution.run")) {
+                || !binding.capabilities().allows("execution_run")) {
             throw failure("EXECUTION_DENIED", "workspace execution capability is denied");
         }
         try {

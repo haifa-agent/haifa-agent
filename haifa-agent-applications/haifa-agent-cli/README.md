@@ -7,7 +7,7 @@ CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVE
 ## Unified approval policy
 
 `ask/auto/deny` 由产品 immutable `PolicyRuleSet` 表达，默认 `ask` 映射为 `LOW`，`auto` 映射为 `NEVER`，
-`deny` 在 Catalog freeze 前移除 `execution.run` 与受控 worktree 入口。也可只配置
+`deny` 在 Catalog freeze 前移除 `execution_run` 与受控 worktree 入口。也可只配置
 `approval.threshold` 为 `low`、`medium`、`high` 或 `never`；同时配置 mode 和 threshold 时必须使用兼容组合。
 达到阈值的普通执行风险创建一次 Interaction 审批，批准后 Runtime 重验并继续同一 ToolCall，不产生第二个
 控制台审批。`NEVER` 会自动执行包括 HIGH 在内的普通命令，但不覆盖可信分类器的硬拒绝、
@@ -123,7 +123,7 @@ the exact Prod and Daily HTTPS endpoints are accepted, and a failed request neve
 Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核方法通过基础 Skill 按需加载。
 
 长任务期间，Coding 产品从权威记录重建派生工作阶段并向模型注入有界脱敏投影；Terminal 只消费安全
-阶段事件。`execution.run` 对 INSPECT、DIFF、TEST/BUILD 和其他命令分别应用输出预算，超大 Diff 返回
+阶段事件。`execution_run` 对 INSPECT、DIFF、TEST/BUILD 和其他命令分别应用输出预算，超大 Diff 返回
 观察统计、截断标记和可选 Artifact Ref。模型返回空终态时，Runtime 只在同一冻结 Binding 上默认重试
 两次，不切换 Provider/Model，也不会从空响应调度 Tool。
 
@@ -177,7 +177,7 @@ JSONL 只用于审计投影，不参与恢复。启动器按自身目录设置�
 `haifa-coding --config /absolute/path/to/config.yaml` 使用自定义配置，也可显式传
 `--workspace /absolute/path/to/project`；调用方参数位于默认参数之后，因此优先级更高。
 
-`execution.run` 直接在宿主机上运行，因此 JDK、SDK 及其他 Workspace 外工具链目录无需额外配置即可读取；
+`execution_run` 直接在宿主机上运行，因此 JDK、SDK 及其他 Workspace 外工具链目录无需额外配置即可读取；
 平台不再提供 bind-mount 式路径授权。不要把 API Key 写进 YAML。Java 21
 必须能从 `JAVA_HOME/bin/java` 或 `PATH` 找到。
 
@@ -229,7 +229,7 @@ Workspace。默认 `protection=NONE` 不需要 continuation key；如改为 `AES
 `approval=auto`。本地 Utility MCP 健康检查失败时，脚本会从
 `HAIFA_UTILITY_MCP_SERVICE_DIR` 指定的源码目录后台启动服务；服务可达后导入 Coding Agent
 已审核的 Utility 工具。检测到 `ALIYUN_IQS_API_KEY` 或 `HAIFA_ALIYUN_IQS_KEY_FILE` 后还会启用
-`web.search` 与 `web.fetch`。
+`web_search` 与 `web_fetch`。
 
 ```bash
 ./haifa-agent-testing/scripts/run-haifa-coding-terminal.command --check
@@ -287,7 +287,7 @@ Project/Workspace 身份；绝对路径不进入 Prompt、Client Event、JSONL �
 ## 真实联网编程配置
 
 Terminal 不是离线演示壳：普通消息进入真实 `CodingSessionService` 与 AgentLoop，文件修改、Git、
-`execution.run`、MCP、`web.search`/`web.fetch` 都走现有 Tool Pipeline、Policy、Approval 和
+`execution_run`、MCP、`web_search`/`web_fetch` 都走现有 Tool Pipeline、Policy、Approval 和
 ExecutionBroker。下面是 Windows 上“明确可信测试 Workspace”的联网配置要点：
 
 CLI 的 Coding Execution 装配默认请求 private required Scratch：`TMPDIR/TMP/TEMP/GOTMPDIR`
@@ -326,7 +326,7 @@ models:
           contextWindow: 131072
           maxOutputTokens: 8192
 tools:
-  enabled: [file.list, file.stat, file.read, file.create, file.write, execution.run, web.search, web.fetch]
+  enabled: [file_list, file_stat, file_read, file_create, file_write, execution_run, web_search, web_fetch]
 web:
   search:
     enabled: true
@@ -488,7 +488,7 @@ models:
           contextWindow: 131072
           maxOutputTokens: 8192
 tools:
-  enabled: [file.list, file.stat, file.read, file.create, file.write, file.patch, file.delete, file.move, workspace.attach, execution.run]
+  enabled: [file_list, file_stat, file_read, file_create, file_write, file_patch, file_delete, file_move, workspace_attach, execution_run]
 skills:
   allowed: [task-planning, result-verification, my-test-skill]
   localDirectories:
@@ -560,26 +560,27 @@ binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可�
 `HAIFA_SQLITE_DATABASE_PATH`、`HAIFA_TRANSCRIPT_ROOT` 和
 `HAIFA_CONTINUATION_PROTECTOR_REF`。
 
-`tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_patch`、
-`workspace_attach`、`workspace_worktree_create`、`execution_run` 等 Provider-safe function name。`execution.run` 接收完整命令文本、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
+`tools.enabled`、冻结 Tool Binding、模型披露、ToolCall 持久化和 Provider 执行统一使用
+`file_list`、`file_read`、`file_patch`、`workspace_attach`、`workspace_worktree_create`、`execution_run`
+等 Provider-safe 下划线名称，不执行名称转换。`execution_run` 接收完整命令文本、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
 命令仅是非穷举示例。Coding Agent 默认使用该通用 OS CLI 路径完成仓库级文件发现、内容搜索、源码
 检查、构建和测试：文件发现优先 `rg --files`，内容搜索优先 `rg`，命令不存在时由模型按当前 Shell
 选择替代方案。产品代码不识别搜索意图，也不拼接 `rg`、`grep` 或其他命令的具体选项。
 
-Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可在自定义 `tools.enabled` 中显式
+Java `file_search` 仍是 Project Tool Catalog 支持的有界兼容能力，可在自定义 `tools.enabled` 中显式
 加入；发行配置和 `CliConfiguration.defaults()` 不再默认披露它，避免 Coding Agent 在大型仓库反复走
 逐文件 Java 扫描。通用 Shell 命令仍遵循配置的 Approval、ExecutionBroker、Workspace、Sandbox、输出
 预算和审计边界；不会因为 `operationFamily=INSPECT` 是模型声明就自动降低授权要求。
 
-`file.read` 2.0.0 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
+`file_read` 2.0.0 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
 后续窗口通过 `SeekableByteChannel` 从游标字节位置读取，不按文件大小分配内存；游标绑定逻辑路径和版本，
 文件变化会返回 `FILE_CURSOR_STALE` 与 `RESTART_READ_FROM_CURRENT_VERSION`，只允许从当前版本无游标
 确定性重读一次；跨路径复用仍作为无效游标拒绝。敏感路径返回 `USER_ACTION_REQUIRED`，明确要求用户
-调整边界或授权，不建议模型通过随机改名、移动或复制绕过。`file.write` 会在目标不存在时原子创建文件；
-目标已存在时仍以版本和内容哈希保护整体替换。`file.create` 遇到已有目标返回
+调整边界或授权，不建议模型通过随机改名、移动或复制绕过。`file_write` 会在目标不存在时原子创建文件；
+目标已存在时仍以版本和内容哈希保护整体替换。`file_create` 遇到已有目标返回
 `USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。
 
-只有当 `tools.enabled` 显式包含 `workspace.attach` 时，用户要求读取或修改当前 Workspace 外的目录，模型才可
+只有当 `tools.enabled` 显式包含 `workspace_attach` 时，用户要求读取或修改当前 Workspace 外的目录，模型才可
 请求 `workspace_attach`：必须给出主机绝对路径和最小 Access mode（`read` 或 `develop`）。默认 `ask` 模式会向
 用户展示这两项并等待明确批准；批准后目录挂载到 CA 自有 Workspace Registry，并由 CA 控制面写入当前用户的
 `WorkspaceAccess`。SQLite 模式会保护物理路径并在进程重启时重新验证；只有状态仍为 ACTIVE、workspace/location
@@ -596,17 +597,17 @@ MEMORY 模式仍只在当前进程有效。Tool 成功结果和新 Run 的模型
 
 CLI 不为受管文件写入建立仓库基线或 Git/Plain Change Review，也不为交付证据执行隐藏的 Git 读取。
 本地文件适配器仍记录既有 Session mutation ledger，但它不参与 Coding Completion 判定；完成策略的文件
-变更事实来自成功的 canonical Mutation ToolCall。Git 检查需要 Agent 通过已披露的 `execution.run`
+变更事实来自成功的 canonical Mutation ToolCall。Git 检查需要 Agent 通过已披露的 `execution_run`
 显式执行，且不会扩大文件授权范围。
 
-`file.patch` 接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，最多包含同一目录根下 100 个文件的新增或更新。
-删除和移动仍分别调用 `file.delete`、`file.move`；跨目录根的 patch 和移动明确拒绝。所有文件会在第一次写盘前完成
+`file_patch` 接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，最多包含同一目录根下 100 个文件的新增或更新。
+删除和移动仍分别调用 `file_delete`、`file_move`；跨目录根的 patch 和移动明确拒绝。所有文件会在第一次写盘前完成
 路径、Hunk 与内容版本的乐观预检；它不是事务，提交期的 IO 或权限异常可能留下已提交前缀。此时工具返回
 `appliedPaths`、`failedPath` 和 `reconciliationRequired: true`，Coding Agent 必须重新读取实际文件后生成新 patch。
 Update hunk 的 `@@ <text>` 是可选导航提示：旧正文/context 只有一个精确匹配时，即使提示失效也允许应用；
 正文重复时，提示必须把候选确定性缩小到一个，否则返回 `PATCH_AMBIGUOUS_MATCH` 且不写入任何预检文件。没有旧正文
 的纯新增 hunk 必须包含唯一提示、精确 context 或 `*** End of File`，不能默认选择第一个行间位置。
-`file.delete` 可删除普通文件或空目录；不支持递归删除非空目录（非空目录清理须经命令审计走 `execution.run`）。主目录与附加目录对不存在路径统一
+`file_delete` 可删除普通文件或空目录；不支持递归删除非空目录（非空目录清理须经命令审计走 `execution_run`）。主目录与附加目录对不存在路径统一
 返回 `PATH_NOT_FOUND`，对非空目录、链接、reparse point 或特殊节点统一返回 `PATH_DENIED`。
 
 `execution.provider` 只接受 `host-guarded`；平台已放弃 OS namespace / 容器级强隔离，底层统一为
@@ -645,14 +646,14 @@ fail closed。Source root 不进入 Prompt、Tool 参数或 Runtime 配置快照
 可使用 `D:\haifa-agent-config` 作为测试配置根，把 Skill 放在 `skills\`，实际 Workspace 放在
 同级的 `workspaces\<case>\`。
 
-Web Tool 默认关闭。启用 Search 时需同时把 `web.search` 加入 `tools.enabled` 并设置
-`web.search.enabled: true`；可选 Provider 为 `aliyun`、`brave`、`tavily`。启用 Fetch 时同理加入
-`web.fetch`，可选 Provider 为 `aliyun`、`browserless`、`tavily`。Browserless 默认使用
+Web Tool 默认关闭。启用 Search 时需同时把 `web_search` 加入 `tools.enabled` 并设置
+`web_search.enabled: true`；可选 Provider 为 `aliyun`、`brave`、`tavily`。启用 Fetch 时同理加入
+`web_fetch`，可选 Provider 为 `aliyun`、`browserless`、`tavily`。Browserless 默认使用
 `https://production-sfo.browserless.io/content` 与 `env://BROWSERLESS_TOKEN`；例如：
 
 ```yaml
 tools:
-  enabled: [file.read, web.fetch]
+  enabled: [file_read, web_fetch]
 web:
   fetch:
     enabled: true
@@ -682,9 +683,9 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
 
-风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会将原 ToolCall 标记为终态 FAILED，将失败事实（`failureCode` 与 `NOT_DISPATCHED`）回传给模型并继续标准对话循环；模型可据此向用户报告阻塞或在标准策略下发起全新的普通工具调用，Runtime 不再维护双 Profile、专用 `execution-recovery` Interaction 或后继工具调用协议。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution.run` 与 `workspace.worktree.create`，模型不可见，底层授权仍 fail closed。
+风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会将原 ToolCall 标记为终态 FAILED，将失败事实（`failureCode` 与 `NOT_DISPATCHED`）回传给模型并继续标准对话循环；模型可据此向用户报告阻塞或在标准策略下发起全新的普通工具调用，Runtime 不再维护双 Profile、专用 `execution-recovery` Interaction 或后继工具调用协议。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run` 与 `workspace_worktree_create`，模型不可见，底层授权仍 fail closed。
 
-`workspace.worktree.create` 只接受具有当前 `DEVELOP` Access 的 source `workspaceRef`、不可变 base commit、新分支名、受控 target name 和交付意图；模型不能传入目标主机路径或权限。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验、Registry 登记和新 workspace 的 `DEVELOP` Access 写入全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
+`workspace_worktree_create` 只接受具有当前 `DEVELOP` Access 的 source `workspaceRef`、不可变 base commit、新分支名、受控 target name 和交付意图；模型不能传入目标主机路径或权限。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验、Registry 登记和新 workspace 的 `DEVELOP` Access 写入全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
 
 系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。Tool Result 保留原始退出码，并单独投影命令语义：
 当前本地 Terminal 的 Coding Session 仍默认冻结 `WORKTREE_ONLY`，但该值只作为完成目标和投影元数据，
@@ -693,7 +694,7 @@ Policy/Approval、Workspace、Sandbox、网络权限和审计；`--approval auto
 通用边界。可信宿主显式传入 `LOCAL_COMMIT`、`REMOTE_PUSH` 或 `PULL_REQUEST` 时，完成策略仍要求相应的
 Stage、Commit、Push 或 PR 权威结果证据，但不在 Broker Dispatch 前增加 Coding 产品专用交付拦截。
 
-`execution.run` 默认只接受退出码 0。只有命令文档明确把非零退出定义为正常观察结果时，调用方才可通过
+`execution_run` 默认只接受退出码 0。只有命令文档明确把非零退出定义为正常观察结果时，调用方才可通过
 同时包含 0 和该值的 `expectedExitCodes` 显式声明；例如 `git diff --exit-code` / `--no-index`、
 `git grep` 或 `rg` 可在预期退出 1 时使用 `[0, 1]`，结果投影为
 `EXPECTED_VARIANT/DECLARED_EXPECTED_EXIT_CODE`。无效 revision、未声明的构建或测试非零退出仍是失败，
@@ -724,7 +725,7 @@ CLI 还会从 Workspace 根的 `pom.xml`、Gradle 文件、`pyproject.toml`/`pyt
 冻结到可信 Session metadata；重启后以冻结摘要和精确命令匹配恢复 scope。runner 输出不再用于推断
 discovered/selected/ignored 或完整覆盖，当前统一保留 `COUNTS_UNAVAILABLE`，成功退出也不等于完整测试覆盖。
 
-CLI 不再为 OS 执行建立 Workspace Change Observer，也不在产品内维护扫描算法或为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。`execution.run` 的可信事实是授权、Sandbox、进程 dispatch、退出状态、有界输出、超时、取消和结果未知；它不自动扫描 Workspace 推导文件变更，也不因文件观察失败进入
+CLI 不再为 OS 执行建立 Workspace Change Observer，也不在产品内维护扫描算法或为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。`execution_run` 的可信事实是授权、Sandbox、进程 dispatch、退出状态、有界输出、超时、取消和结果未知；它不自动扫描 Workspace 推导文件变更，也不因文件观察失败进入
 `WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` / `WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED`（两个错误码已删除）。
 只有 OS 进程创建成功后才进入 DISPATCHED。文件级变更事实由 Coding 产品层从成功的 canonical Mutation
 ToolCall 重建；没有仓库基线或按需 Change Review 的隐藏旁路。

@@ -115,7 +115,7 @@ class AutonomousDeliveryRecoveryControlTest {
                 new AgentStepId("step-1"),
                 new ProviderToolCallCorrelationId("provider-" + id),
                 new RuntimeIdempotencyKey("key-" + id),
-                "execution.run",
+                "execution_run",
                 "1.0.0",
                 new ToolArguments("execution.input", "1", arguments),
                 NOW);

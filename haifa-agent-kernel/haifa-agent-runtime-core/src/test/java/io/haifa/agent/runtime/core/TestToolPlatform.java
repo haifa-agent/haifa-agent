@@ -230,7 +230,7 @@ final class TestToolPlatform {
     }
 
     private static ToolAlias alias(String name) {
-        return new ToolAlias(name.replace('.', '_'));
+        return new ToolAlias(name);
     }
 
     static PolicyDecision allow() {

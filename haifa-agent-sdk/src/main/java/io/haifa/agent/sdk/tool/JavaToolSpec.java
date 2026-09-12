@@ -40,7 +40,7 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
 
     private JavaToolSpec(Builder<I, O> builder) {
         name = new ToolName(builder.name);
-        alias = new ToolAlias(builder.alias);
+        alias = new ToolAlias(name.value());
         version = new SemanticVersion(builder.version);
         providerId = new ToolProviderId(builder.providerId);
         inputType = requireRecord(builder.inputType, "inputType");
@@ -159,7 +159,6 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
         private final String name;
         private final Class<I> inputType;
         private final Class<O> outputType;
-        private String alias;
         private String version = "1.0.0";
         private String providerId;
         private String title;
@@ -179,15 +178,9 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
             this.name = text(name, "name");
             this.inputType = Objects.requireNonNull(inputType, "inputType must not be null");
             this.outputType = Objects.requireNonNull(outputType, "outputType must not be null");
-            this.alias = defaultAlias(this.name);
             this.providerId = "java." + this.name;
             this.title = this.name;
             this.description = this.name;
-        }
-
-        public Builder<I, O> alias(String value) {
-            alias = value;
-            return this;
         }
 
         public Builder<I, O> version(String value) {
@@ -275,14 +268,6 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
 
         public JavaToolSpec<I, O> build() {
             return new JavaToolSpec<>(this);
-        }
-
-        private static String defaultAlias(String name) {
-            String value = name.replace('.', '_').replace('-', '_');
-            if (value.length() > 64) {
-                throw new IllegalArgumentException("derived alias exceeds 64 characters; configure alias explicitly");
-            }
-            return value;
         }
     }
 }

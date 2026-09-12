@@ -93,12 +93,12 @@ class LocalCodingAgentTest {
                 defaults.maxToolCalls());
 
         assertThat(LocalCodingAgent.effectiveBuiltInTools(denied))
-                .doesNotContain("execution.run", "execution.request_permissions");
+                .doesNotContain("execution_run", "execution.request_permissions");
         assertThat(LocalCodingAgent.effectiveBuiltInTools(defaults))
-                .contains("execution.run")
+                .contains("execution_run")
                 .doesNotContain("execution.request_permissions");
         assertThat(LocalCodingAgent.effectiveBuiltInTools(asking))
-                .contains("execution.run")
+                .contains("execution_run")
                 .doesNotContain("execution.request_permissions");
     }
 

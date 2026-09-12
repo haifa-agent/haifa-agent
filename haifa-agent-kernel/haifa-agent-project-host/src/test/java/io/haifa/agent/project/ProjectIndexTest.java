@@ -144,8 +144,8 @@ class ProjectIndexTest {
                 new WorkspaceId("workspace-1"),
                 "coding",
                 "1",
-                Set.of("file.read"),
-                Set.of("file.read"),
+                Set.of("file_read"),
+                Set.of("file_read"),
                 "policy-1");
         store.publish(configuration);
         assertThat(configuration.digest()).startsWith("sha256:");
@@ -156,7 +156,7 @@ class ProjectIndexTest {
                 configuration.defaultWorkspaceId(),
                 "coding",
                 "1",
-                Set.of("file.read", "file.write"),
+                Set.of("file_read", "file_write"),
                 configuration.tools(),
                 "policy-1");
         assertThatThrownBy(() -> store.publish(changed)).isInstanceOf(IllegalStateException.class);

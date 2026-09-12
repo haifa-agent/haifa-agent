@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
 /** PA-only direct allow for exact frozen public Web Tool coordinates. */
 public final class PersonalWebAllowPolicy implements PublicToolPolicy {
     private static final String PRODUCT_ID = "haifa-personal-assistant";
-    private static final Set<String> WEB_TOOL_NAMES = Set.of("web.search", "web.fetch");
+    private static final Set<String> WEB_TOOL_NAMES = Set.of("web_search", "web_fetch");
     private static final Set<ToolSideEffect> ALLOWED_SIDE_EFFECTS =
             Set.of(ToolSideEffect.NETWORK_ACCESS, ToolSideEffect.CREDENTIAL_USE);
 

@@ -145,11 +145,11 @@ public class JavaToolAssemblyTest {
     }
 
     @Test
-    void rejectsAliasConflictsAndMultipleBasePlatforms() {
+    void rejectsDuplicateToolNamesAndMultipleBasePlatforms() {
         ProductProfile profile = SdkTestFixtures.profile("java-tool-conflicts", Map.of());
 
         assertThatThrownBy(() -> JavaToolAssembly.prepare(
-                        profile, List.of(), List.of(new WeatherTool(), new ConflictingAliasTool())))
+                        profile, List.of(), List.of(new WeatherTool(), new DuplicateNameTool())))
                 .isInstanceOf(ProductAssemblyException.class)
                 .hasMessageContaining("duplicate Java Tool alias");
         assertThatThrownBy(() -> JavaToolAssembly.prepare(
@@ -249,8 +249,7 @@ public class JavaToolAssemblyTest {
     private static final class WeatherTool implements JavaTool<WeatherRequest, WeatherResponse> {
         @Override
         public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
-            return JavaToolSpec.builder("weather.get", WeatherRequest.class, WeatherResponse.class)
-                    .alias("weather_get")
+            return JavaToolSpec.builder("weather_get", WeatherRequest.class, WeatherResponse.class)
                     .description("Gets the weather for a city")
                     .pure()
                     .build();
@@ -277,11 +276,10 @@ public class JavaToolAssemblyTest {
         }
     }
 
-    private static final class ConflictingAliasTool implements JavaTool<WeatherRequest, WeatherResponse> {
+    private static final class DuplicateNameTool implements JavaTool<WeatherRequest, WeatherResponse> {
         @Override
         public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
-            return JavaToolSpec.builder("weather.other", WeatherRequest.class, WeatherResponse.class)
-                    .alias("weather_get")
+            return JavaToolSpec.builder("weather_get", WeatherRequest.class, WeatherResponse.class)
                     .pure()
                     .build();
         }

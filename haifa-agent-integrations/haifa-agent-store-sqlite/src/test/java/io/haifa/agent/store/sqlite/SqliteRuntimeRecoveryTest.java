@@ -1098,7 +1098,7 @@ class SqliteRuntimeRecoveryTest {
         Map<String, Object> objectSchema =
                 Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
         ToolDefinition definition = new ToolDefinition(
-                new ToolName("credential.test"),
+                new ToolName("credential_test"),
                 new SemanticVersion("1.0.0"),
                 providerId,
                 "credential test",

@@ -85,7 +85,7 @@ public record PersonalExecutionPlatform(
     }
 
     public String approvalPrompt(FrozenToolBinding binding, ToolCall call, boolean reauthentication) {
-        if (!"execution.run".equals(binding.definition().name().value())) {
+        if (!"execution_run".equals(binding.definition().name().value())) {
             return io.haifa.agent.sdk.contribution.ProductApprovalPromptFormatter.defaultFormatter()
                     .format(binding, call, reauthentication);
         }

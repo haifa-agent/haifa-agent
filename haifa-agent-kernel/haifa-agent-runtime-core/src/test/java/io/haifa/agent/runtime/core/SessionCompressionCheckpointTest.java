@@ -367,7 +367,7 @@ class SessionCompressionCheckpointTest {
                 new AgentStepId("estimated-step"),
                 correlation,
                 new RuntimeIdempotencyKey("estimated-idempotency"),
-                "file.read",
+                "file_read",
                 "1.0",
                 new ToolArguments("file.read.input", "1.0", Map.of("content", "a".repeat(1_200))),
                 NOW);
@@ -386,7 +386,7 @@ class SessionCompressionCheckpointTest {
                 MessageRole.ASSISTANT,
                 MessageStatus.COMPLETED,
                 MessageVisibility.AGENT_VISIBLE,
-                List.of(new ToolCallPart(callId, correlation, "file.read", "1.0")),
+                List.of(new ToolCallPart(callId, correlation, "file_read", "1.0")),
                 Map.of(),
                 NOW));
         store.appendSessionMessage(new SessionMessageDraft(

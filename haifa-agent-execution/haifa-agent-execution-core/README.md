@@ -10,11 +10,11 @@ Broker 自己把 `FIRST_EXECUTION`、`IDEMPOTENT_REPLAY` 或 `MANAGED_SESSION` �
 caller 可构造的 request/context。首次执行、缓存结果返回和 managed process open 之前都重新授权，
 产品撤权后不会因为已有幂等结果而绕过当前策略。
 
-`execution.run` 的用户可见审批仍发生在 Tool/Runtime 的 Interaction 层。产品 Policy 不能覆盖 Broker
+`execution_run` 的用户可见审批仍发生在 Tool/Runtime 的 Interaction 层。产品 Policy 不能覆盖 Broker
 既有的 Frozen Capability、Workspace、Profile、Provider、Sandbox、deadline、输出和审计硬边界。
 
 实现 `ExecutionBroker`、内存 Journal/输出存储与 `FileChangeSet` 对账。Broker 不再以 Workspace Change
-Observer 成功为执行前置条件：`execution.run` 不自动扫描 Workspace 推导文件变更，其可信事实只有授权、
+Observer 成功为执行前置条件：`execution_run` 不自动扫描 Workspace 推导文件变更，其可信事实只有授权、
 Sandbox、进程 dispatch、退出状态、有界输出、超时、取消和结果未知。文件级变更证据由产品层从成功的
 Mutation ToolCall、按需 Git/Plain Change Review 与 Artifact/Snapshot 引用重建；`workspace.change-set.available`
 等通用 Resource 投影及其 Tool Result producer 与本 Broker 无关。
@@ -22,7 +22,7 @@ Mutation ToolCall、按需 Git/Plain Change Review 与 Artifact/Snapshot 引用�
 Broker 负责 capability、policy、profile、环境租约、Sandbox 生命周期、输出脱敏与审计编排，但不复制 Agent Run 状态机，也不依赖具体 Sandbox Provider。一次性执行与托管会话的展示 observer 经过有界异步分发与流式脱敏，不阻塞进程管道，observer 异常不影响进程收尾和 Execution Journal。流式脱敏（`RedactingExecutionOutputObserver`）对 URL Userinfo（`https://user:pass@host` → `https://***@host`）及环境租约注入的非基线凭据值进行跨 chunk 安全脱敏，Live 终端与 OutputStore 落盘结果保持完全一致的脱敏视图，平台基线变量（`PATH`、`USERPROFILE`、`GIT_PAGER` 等公共路径/控制值）保持保真，不破坏行号与代码事实。Provider 只在 `ProcessBuilder.start()` 成功后发出 `onStarted`，上层据此记录真实 DISPATCHED 边界。
 
 Broker 将请求的逻辑 Scratch Spec 原样传给选定 Provider，并把一次性与 Managed Process 的创建、清理
-状态带回结果。`execution.run` 的冻结配置摘要和幂等身份包含 Scratch Spec digest；Tool 结构化结果与
+状态带回结果。`execution_run` 的冻结配置摘要和幂等身份包含 Scratch Spec digest；Tool 结构化结果与
 Runtime Event 只记录该 digest、能力和状态，不记录物理路径。
 
 stdout/stderr 由 Provider 持续排空，并在固定内存中保留有界首部和尾部；中间省略量写入明确标记，超过
@@ -67,7 +67,7 @@ UTF-8 Base64 and fixes console output to UTF-8 before parsing it. Bash and POSIX
 is unchanged.
 
 `ExecutionToolDefinitionFactory` 和 `ExecutionToolProvider` 把一次性命令/脚本执行作为平台级
-Tool 暴露，稳定名称为 `execution.run`，产品可提供 `execution_run` 等别名。它不是 Personal
+Tool 暴露，稳定名称为 `execution_run`；冻结 alias 必须使用同一个值。它不是 Personal
 Assistant 专用实现，也没有新增 Maven 模块。
 
 直接调用系统 `git` / `gh` 时，`SystemGitCliCommandClassifier` 生成可信的目标、风险与
@@ -82,7 +82,7 @@ Git Credential 配置/子命令和 GH Token 披露继续硬拒绝；为了覆盖
 `CommandSemanticOutcomeInterpreter` 在保留原始 `ExecutionStatus` 和 Exit Code 的同时提供产品无关的
 稳定语义：成功终态为 `SUCCEEDED`，普通非零退出统一为 `COMMAND_FAILED`，不再根据 Git、ripgrep 或
 命令文本猜测正常非零变体。产品 Tool 可在调用该解释器前通过自己的冻结输入契约显式接受有文档依据的
-非零退出；例如 Coding `execution.run` 使用 `expectedExitCodes`，但 Timeout、Cancel 和未知终止不能被
+非零退出；例如 Coding `execution_run` 使用 `expectedExitCodes`，但 Timeout、Cancel 和未知终止不能被
 该契约改写为成功。该解释器不把 Build/Test 失败改写成成功，也不推断复合命令内部各 Segment 的状态。
 进程数超限是已确认收敛的资源失败，解释为
 `COMMAND_FAILED/PROCESS_LIMIT_EXCEEDED`，不升级为未知副作用。
@@ -107,5 +107,5 @@ bounded business arguments and Workspace paths, resolves an application-configur
 `ExecutionBroker`, Sandbox, Journal, cancellation, timeout, output, and asset path as ordinary execution.
 
 The model cannot supply executable paths, source content, environment variables, arbitrary argv, endpoints, or
-trust claims. This facility does not change `execution.run` approval semantics and is neutral to products and
+trust claims. This facility does not change `execution_run` approval semantics and is neutral to products and
 script languages.

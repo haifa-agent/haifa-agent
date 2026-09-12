@@ -29,7 +29,7 @@ public final class WebSearchToolProvider implements ToolProvider {
 
     @Override
     public ToolResult invoke(ToolInvocationRequest request) {
-        if (!request.binding().definition().name().value().equals("web.search")) {
+        if (!request.binding().definition().name().value().equals("web_search")) {
             throw WebToolProviderSupport.invalid("web search provider received a different tool");
         }
         String requestedQuery = String.valueOf(request.arguments().values().getOrDefault("query", ""));

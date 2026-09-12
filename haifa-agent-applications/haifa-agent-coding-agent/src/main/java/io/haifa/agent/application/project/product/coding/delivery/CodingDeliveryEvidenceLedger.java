@@ -16,19 +16,11 @@ public final class CodingDeliveryEvidenceLedger {
     private static final Set<String> NO_CHANGE_CODES =
             Set.of("ALREADY_SATISFIED", "ARCHITECTURE_STOP", "SECURITY_STOP", "DETERMINISTIC_BLOCKER");
     private static final Set<String> MUTATION_TOOLS =
-            Set.of("file.create", "file.write", "file.delete", "file.move", "file.patch");
+            Set.of("file_create", "file_write", "file_delete", "file_move", "file_patch");
     private static final Set<String> READ_TOOLS = Set.of(
-            "file.list",
-            "file.stat",
-            "file.read",
-            "file.search",
-            "file.diff",
-            "git.inspect",
-            "git.status",
-            "skill.load",
-            "skill.resource.read");
-    private static final Set<String> DIFF_TOOLS = Set.of("file.diff", "git.diff");
-    private static final String EXECUTION_TOOL = "execution.run";
+            "file_list", "file_stat", "file_read", "file_search", "file_diff", "skill_load", "skill_resource_read");
+    private static final Set<String> DIFF_TOOLS = Set.of("file_diff");
+    private static final String EXECUTION_TOOL = "execution_run";
 
     private final RuntimeStateRepository state;
 

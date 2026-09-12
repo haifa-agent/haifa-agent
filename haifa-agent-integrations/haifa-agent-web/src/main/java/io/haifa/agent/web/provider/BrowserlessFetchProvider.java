@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
 public final class BrowserlessFetchProvider implements WebFetchProvider {
     public static final URI DEFAULT_ENDPOINT = URI.create("https://production-sfo.browserless.io/content");
     public static final CredentialRequirement CREDENTIAL =
-            WebHttpSupport.credential("web-fetch-browserless", "Browserless web fetch", "web.fetch");
+            WebHttpSupport.credential("web-fetch-browserless", "Browserless web fetch", "web_fetch");
     private static final Pattern TITLE = Pattern.compile("(?is)<title[^>]*>([^<]{1,2048})</title>");
 
     private final HttpClient client;

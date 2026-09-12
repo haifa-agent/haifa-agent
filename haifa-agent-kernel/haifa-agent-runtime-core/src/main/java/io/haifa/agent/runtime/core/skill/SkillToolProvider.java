@@ -60,7 +60,7 @@ public final class SkillToolProvider implements ToolProvider {
         ToolResult result;
         try {
             switch (request.binding().definition().name().value()) {
-                case "skill.load" -> {
+                case "skill_load" -> {
                     var activation = skills.activate(activationRequest);
                     result = result(
                             "Activated Skill " + activation.binding().alias().value(),
@@ -76,7 +76,7 @@ public final class SkillToolProvider implements ToolProvider {
                                     "instructionBytes", activation.instructionBytes(),
                                     "estimatedTokens", activation.estimatedTokens()));
                 }
-                case "skill.resource.read" -> {
+                case "skill_resource_read" -> {
                     String path = requiredText(request, "path");
                     SkillResourceRead resource = skills.readResource(activationRequest, path);
                     result = result(
@@ -136,7 +136,7 @@ public final class SkillToolProvider implements ToolProvider {
 
     private static ToolDefinition loadDefinition() {
         return definition(
-                "skill.load",
+                "skill_load",
                 "Activate Skill",
                 "Activate one Skill allowed by the frozen run configuration for the next context build.",
                 schema(
@@ -158,7 +158,7 @@ public final class SkillToolProvider implements ToolProvider {
 
     private static ToolDefinition resourceReadDefinition() {
         return definition(
-                "skill.resource.read",
+                "skill_resource_read",
                 "Read Skill resource",
                 "Read an indexed text resource from a Skill that is already activated for this run.",
                 schema(

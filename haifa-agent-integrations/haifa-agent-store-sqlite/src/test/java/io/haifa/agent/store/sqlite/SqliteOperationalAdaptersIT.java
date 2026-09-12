@@ -230,7 +230,7 @@ class SqliteOperationalAdaptersIT {
                 true,
                 new ToolApprovalTarget(
                         new ToolCallId("tool-call"),
-                        "builtin/file.write@1",
+                        "builtin/file_write@1",
                         "sha256:definition",
                         "sha256:arguments",
                         "tenant:principal",

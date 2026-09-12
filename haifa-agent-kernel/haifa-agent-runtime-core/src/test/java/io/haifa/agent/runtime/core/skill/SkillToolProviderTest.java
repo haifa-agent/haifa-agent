@@ -43,7 +43,7 @@ class SkillToolProviderTest {
         };
         SkillToolProvider provider = new SkillToolProvider(service);
         var contribution = provider.contributions().stream()
-                .filter(candidate -> candidate.definition().name().value().equals("skill.resource.read"))
+                .filter(candidate -> candidate.definition().name().value().equals("skill_resource_read"))
                 .findFirst()
                 .orElseThrow();
         var definition = contribution.definition();

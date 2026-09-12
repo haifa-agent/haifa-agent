@@ -23,7 +23,7 @@ public record WorkspaceCapabilitySet(Set<String> values) {
     public static WorkspaceCapabilitySet executionFiles() {
         java.util.HashSet<String> capabilities =
                 new java.util.HashSet<>(readWriteFiles().values());
-        capabilities.add("execution.run");
+        capabilities.add("execution_run");
         capabilities.add("git.read");
         return new WorkspaceCapabilitySet(capabilities);
     }

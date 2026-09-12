@@ -93,7 +93,7 @@ class ExecutionCoreTest {
             policyCalls.incrementAndGet();
             policyEntryPoints.add(entryPoint);
         });
-        ExecutionRequest request = fixture.request("execution-1", "key-1", Set.of("execution.run"), List.of("fake"));
+        ExecutionRequest request = fixture.request("execution-1", "key-1", Set.of("execution_run"), List.of("fake"));
 
         var result = broker.execute(request);
 
@@ -114,7 +114,7 @@ class ExecutionCoreTest {
                         ExecutionPolicyEntryPoint.FIRST_EXECUTION, ExecutionPolicyEntryPoint.IDEMPOTENT_REPLAY);
 
         assertThatThrownBy(() -> broker.execute(
-                        fixture.request("execution-2", "key-1", Set.of("execution.run"), List.of("different"))))
+                        fixture.request("execution-2", "key-1", Set.of("execution_run"), List.of("different"))))
                 .isInstanceOf(ExecutionRejectedException.class);
         assertThatThrownBy(() -> broker.execute(fixture.request("execution-3", "key-3", Set.of(), List.of("fake"))))
                 .isInstanceOfSatisfying(ExecutionRejectedException.class, exception -> assertThat(exception.code())
@@ -133,7 +133,7 @@ class ExecutionCoreTest {
                     }
                 });
         ExecutionRequest request =
-                fixture.request("replay-revoke", "replay-revoke-key", Set.of("execution.run"), List.of("fake"));
+                fixture.request("replay-revoke", "replay-revoke-key", Set.of("execution_run"), List.of("fake"));
 
         assertThat(broker.execute(request).replayed()).isFalse();
         revoked.set(true);
@@ -153,7 +153,7 @@ class ExecutionCoreTest {
                     throw new ExecutionRejectedException("PRODUCT_DENIED", "product denied execution");
                 });
         ExecutionRequest request =
-                fixture.request("policy-denied", "policy-denied-key", Set.of("execution.run"), List.of("fake"));
+                fixture.request("policy-denied", "policy-denied-key", Set.of("execution_run"), List.of("fake"));
 
         assertThatThrownBy(() -> broker.execute(request)).isInstanceOf(ExecutionRejectedException.class);
         assertThat(broker.find(request.id())).isEmpty();
@@ -167,7 +167,7 @@ class ExecutionCoreTest {
         DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
 
         var result = broker.execute(
-                fixture.request("process-limit", "process-limit-key", Set.of("execution.run"), List.of("fake")));
+                fixture.request("process-limit", "process-limit-key", Set.of("execution_run"), List.of("fake")));
 
         assertThat(result.status()).isEqualTo(ExecutionStatus.PROCESS_LIMIT_EXCEEDED);
         assertThat(result.exitCode()).isNull();
@@ -245,7 +245,7 @@ class ExecutionCoreTest {
         AtomicInteger starts = new AtomicInteger();
 
         var result = broker.execute(
-                fixture.request("streamed", "streamed-key", Set.of("execution.run"), List.of("fake")),
+                fixture.request("streamed", "streamed-key", Set.of("execution_run"), List.of("fake")),
                 new ExecutionOutputObserver() {
                     @Override
                     public void onStarted() {
@@ -263,7 +263,7 @@ class ExecutionCoreTest {
         assertThat(result.stdout().summary()).isEqualTo("***\n");
 
         var observerFailureResult = broker.execute(
-                fixture.request("observer-failure", "observer-failure-key", Set.of("execution.run"), List.of("fake")),
+                fixture.request("observer-failure", "observer-failure-key", Set.of("execution_run"), List.of("fake")),
                 chunk -> {
                     throw new IllegalStateException("presentation failed");
                 });
@@ -293,7 +293,7 @@ class ExecutionCoreTest {
                 fixture.broker(fakeProvider(() -> {}, stdout), (request, entryPoint) -> {}, resolvedEnv);
 
         var result = broker.execute(
-                fixture.request("redaction-policy", "redaction-policy-key", Set.of("execution.run"), List.of("fake")));
+                fixture.request("redaction-policy", "redaction-policy-key", Set.of("execution_run"), List.of("fake")));
 
         assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
         assertThat(result.stdout().summary())
@@ -341,7 +341,7 @@ class ExecutionCoreTest {
             policyEntryPoints.add(entryPoint);
         });
         ExecutionRequest request =
-                fixture.request("managed-execution", "managed-key", Set.of("execution.run"), List.of("fake"));
+                fixture.request("managed-execution", "managed-key", Set.of("execution_run"), List.of("fake"));
 
         try (var session = broker.openManagedSession(new ManagedProcessRequest(request))) {
             session.write(new ProcessInputChunk("request\n".getBytes(StandardCharsets.UTF_8)));
@@ -421,7 +421,7 @@ class ExecutionCoreTest {
                 ResolvedExecutionEnvironment.of(Map.of("LEAS_KEY", "secret-token"), Set.of("LEAS_KEY"));
         DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {}, env);
         ExecutionRequest request =
-                fixture.request("flush-exit", "flush-exit-key", Set.of("execution.run"), List.of("fake"));
+                fixture.request("flush-exit", "flush-exit-key", Set.of("execution_run"), List.of("fake"));
 
         try (var session = broker.openManagedSession(new ManagedProcessRequest(request))) {
             var accumulated = new StringBuilder();
@@ -476,7 +476,7 @@ class ExecutionCoreTest {
         DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {}, profile);
 
         assertThatThrownBy(() -> broker.execute(fixture.request(
-                        "capability-missing", "capability-key", Set.of("execution.run"), List.of("fake"))))
+                        "capability-missing", "capability-key", Set.of("execution_run"), List.of("fake"))))
                 .isInstanceOfSatisfying(SandboxException.class, exception -> assertThat(exception.code())
                         .isEqualTo("CAPABILITY_UNAVAILABLE"));
         assertThat(opens).hasValue(0);
@@ -560,7 +560,7 @@ class ExecutionCoreTest {
         DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
 
         var result = broker.execute(fixture.request(
-                worktreeId, "worktree-execution", "worktree-key", Set.of("execution.run"), List.of("fake")));
+                worktreeId, "worktree-execution", "worktree-key", Set.of("execution_run"), List.of("fake")));
 
         assertThat(opens).hasValue(1);
         assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
@@ -610,7 +610,7 @@ class ExecutionCoreTest {
         DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
 
         var result = broker.execute(
-                fixture.request("nonzero-exit", "nonzero-key", Set.of("execution.run"), List.of("git", "diff")));
+                fixture.request("nonzero-exit", "nonzero-key", Set.of("execution_run"), List.of("git", "diff")));
 
         assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
         assertThat(result.exitCode()).isEqualTo(1);

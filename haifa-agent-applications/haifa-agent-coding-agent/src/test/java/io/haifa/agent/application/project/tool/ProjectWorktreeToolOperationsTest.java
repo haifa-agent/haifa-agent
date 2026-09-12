@@ -290,7 +290,7 @@ class ProjectWorktreeToolOperationsTest {
         var binding = new ProjectToolCatalog()
                 .freeze(
                         Set.of(ProjectWorktreeToolOperations.TOOL_NAME),
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
                         true,
                         catalogOnlyProvider())
                 .snapshot()
@@ -324,7 +324,7 @@ class ProjectWorktreeToolOperationsTest {
     }
 
     private RunWorkspaceAccess access() {
-        return new RunWorkspaceAccess(initialWorkspace.id(), Set.of("execution.run"));
+        return new RunWorkspaceAccess(initialWorkspace.id(), Set.of("execution_run"));
     }
 
     private static ToolProvider catalogOnlyProvider() {

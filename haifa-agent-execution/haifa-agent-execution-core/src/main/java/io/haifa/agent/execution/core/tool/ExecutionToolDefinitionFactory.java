@@ -64,7 +64,7 @@ public final class ExecutionToolDefinitionFactory {
                 ? Set.of(ToolSideEffect.PROCESS_EXECUTION, ToolSideEffect.NETWORK_ACCESS)
                 : Set.of(ToolSideEffect.PROCESS_EXECUTION);
         return new ToolDefinition(
-                new ToolName("execution.run"),
+                new ToolName("execution_run"),
                 new SemanticVersion("2.0.0"),
                 ExecutionToolProvider.PROVIDER_ID,
                 "Run an approved command or script",
@@ -86,7 +86,7 @@ public final class ExecutionToolDefinitionFactory {
                 ToolRisk.HIGH,
                 effects,
                 new ToolResourceRequirements(
-                        Set.of("execution.run"),
+                        Set.of("execution_run"),
                         networkAllowed ? Set.of("unrestricted-network") : Set.of(),
                         Set.of(executionProfileIdentity)),
                 List.of(),

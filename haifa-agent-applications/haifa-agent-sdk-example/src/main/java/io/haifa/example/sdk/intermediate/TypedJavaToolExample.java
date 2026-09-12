@@ -66,8 +66,7 @@ public final class TypedJavaToolExample {
 
     private static final class WeatherTool implements JavaTool<WeatherRequest, WeatherResponse> {
         private static final JavaToolSpec<WeatherRequest, WeatherResponse> SPEC = JavaToolSpec.builder(
-                        "weather.get", WeatherRequest.class, WeatherResponse.class)
-                .alias("weather_get")
+                        "weather_get", WeatherRequest.class, WeatherResponse.class)
                 .description("Get the current weather for a city")
                 .pure()
                 .build();

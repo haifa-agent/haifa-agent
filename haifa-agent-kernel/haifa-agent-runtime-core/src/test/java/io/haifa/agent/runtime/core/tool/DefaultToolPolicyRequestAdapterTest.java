@@ -18,7 +18,7 @@ class DefaultToolPolicyRequestAdapterTest {
     void executionDigestUsesFrozenCapabilityRatherThanModelAlias() {
         var request = request("execution_run", "1.0.0", Map.of("command", "echo ok", "workdir", "."));
 
-        assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution.run", request))
+        assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution_run", request))
                 .isEqualTo(PolicyDigest.sha256Fields(List.of("echo ok", ".", "[0]")));
     }
 
@@ -35,7 +35,7 @@ class DefaultToolPolicyRequestAdapterTest {
                         "expectedExitCodes",
                         List.of(1, 0)));
 
-        assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution.run", request))
+        assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution_run", request))
                 .isEqualTo(PolicyDigest.sha256Fields(List.of("git diff --no-index before after", ".", "[0, 1]")));
     }
 
@@ -46,7 +46,7 @@ class DefaultToolPolicyRequestAdapterTest {
                 "2.0.0",
                 Map.of("command", "git status --short", "workspaceRef", "workspace-docs", "relativeWorkdir", "docs"));
 
-        assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution.run", request))
+        assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution_run", request))
                 .isEqualTo(PolicyDigest.sha256Fields(List.of("git status --short", "workspace-docs", "docs", "[0]")));
     }
 

@@ -43,7 +43,7 @@ public final class PersonalAssistantExecutionPolicy implements ExecutionPolicy {
         }
         if (request.context().origin() != ExecutionOrigin.RUNTIME_TOOL
                 || request.context().sourceToolCallId().isEmpty()
-                || !request.context().allows("execution.run")) {
+                || !request.context().allows("execution_run")) {
             throw denied("PERSONAL_EXECUTION_ORIGIN_DENIED", "Personal Assistant requires a Runtime Tool source");
         }
         if (!request.context().tenant().equals(tenant)
@@ -60,7 +60,7 @@ public final class PersonalAssistantExecutionPolicy implements ExecutionPolicy {
                     request.context().actor(),
                     request.context().sourceToolCallId().orElseThrow(),
                     (frozenConfiguration, binding, toolRequest) -> {
-                        if (!"execution.run".equals(binding.definition().name().value())
+                        if (!"execution_run".equals(binding.definition().name().value())
                                 || !frozenConfiguration.toolBindings().contains(binding)) {
                             throw new SecurityException("source Tool is not the frozen PA execution capability");
                         }

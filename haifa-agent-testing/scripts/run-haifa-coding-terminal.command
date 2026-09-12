@@ -199,13 +199,13 @@ print_capabilities() {
   print -r -- "Haifa Coding Agent Terminal 启动配置"
   print -r -- "审批模式: ${approval_mode:u}（AUTO 最少审批；凭据与安全门禁不会绕过）"
   print -r -- "命令网络: ALLOW"
-  print -r -- "内置工具: file.list, file.stat, file.read, file.search, file.create, file.write,"
+  print -r -- "内置工具: file_list, file_stat, file_read, file_search, file_create, file_write,"
   if [[ "$approval_mode" == "deny" ]]; then
-    print -r -- "          file.delete, file.move（DENY 模式会从模型目录移除 execution.run）"
+    print -r -- "          file_delete, file_move（DENY 模式会从模型目录移除 execution_run）"
   else
-    print -r -- "          file.delete, file.move, execution.run"
+    print -r -- "          file_delete, file_move, execution_run"
   fi
-  print -r -- "基础 Skill 工具: skill.load, skill.resource.read"
+  print -r -- "基础 Skill 工具: skill_load, skill_resource_read"
   if [[ "$mcp_enabled" == true ]]; then
     if [[ "$mcp_started" == true ]]; then
       print -r -- "Utility MCP: 已后台启动并启用 9 个已审核工具（${UTILITY_MCP_ENDPOINT}）"
@@ -218,7 +218,7 @@ print_capabilities() {
     print -r -- "Utility MCP: 已通过 --no-mcp 禁用"
   fi
   if [[ "$web_enabled" == true ]]; then
-    print -r -- "Web 工具: web.search, web.fetch（Aliyun IQS）"
+    print -r -- "Web 工具: web_search, web_fetch（Aliyun IQS）"
   else
     print -r -- "Web 工具: 未启用（设置 ALIYUN_IQS_API_KEY 或创建 ${ALIYUN_IQS_KEY_FILE} 后自动启用）"
   fi
@@ -260,18 +260,18 @@ cp "$VERIFIER_FILE" "${workspace_dir}/verify.py"
   print -r -- ""
   print -r -- "tools:"
   print -r -- "  enabled:"
-  print -r -- "    - file.list"
-  print -r -- "    - file.stat"
-  print -r -- "    - file.read"
-  print -r -- "    - file.search"
-  print -r -- "    - file.create"
-  print -r -- "    - file.write"
-  print -r -- "    - file.delete"
-  print -r -- "    - file.move"
-  print -r -- "    - execution.run"
+  print -r -- "    - file_list"
+  print -r -- "    - file_stat"
+  print -r -- "    - file_read"
+  print -r -- "    - file_search"
+  print -r -- "    - file_create"
+  print -r -- "    - file_write"
+  print -r -- "    - file_delete"
+  print -r -- "    - file_move"
+  print -r -- "    - execution_run"
   if [[ "$web_enabled" == true ]]; then
-    print -r -- "    - web.search"
-    print -r -- "    - web.fetch"
+    print -r -- "    - web_search"
+    print -r -- "    - web_fetch"
   fi
   print -r -- ""
   print -r -- "skills:"
