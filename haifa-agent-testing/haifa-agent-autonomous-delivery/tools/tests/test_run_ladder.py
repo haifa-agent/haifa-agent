@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -13,7 +14,32 @@ assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+CASE_YAML = 'caseId: L1-01\nlevel: L1\ntitle: Fixture case\nlabels:\n  localization: 1\n  modificationSpan: 1\n  acceptance: 1\nvariants: []\ncaseVersion: 2.0.0\nrunnerBudget:\n  timeoutSeconds: 60\n'
+
 PROMPT = "First line of the statement.\n\n- a bullet\n- another bullet\n"
+
+
+def arguments(**overrides):
+    defaults = {
+        "action": "check",
+        "agent": "haifa-coding",
+        "model": None,
+        "credential_env": None,
+        "approval": None,
+        "cases": None,
+        "repeat": None,
+        "timeout_scale": None,
+        "output": None,
+        "cache_dir": None,
+        "assets_dir": None,
+        "skip_gates": True,
+        "gate_repeat": 1,
+        "rehearse": False,
+        "keep_workdir": False,
+        "allow_unpinned_assets": False,
+    }
+    defaults.update(overrides)
+    return Namespace(**defaults)
 
 
 def settings(**overrides):
@@ -189,6 +215,96 @@ class LauncherEnvironmentTest(unittest.TestCase):
 
     def test_a_plain_executable_needs_no_data_paths(self):
         self.assertEqual([], MODULE.prepare_launcher_environment("haifa-coding"))
+
+
+class RunGuardTest(unittest.TestCase):
+    def test_a_repeat_below_one_would_evaluate_nothing(self):
+        problems = MODULE.missing_environment(settings(repeat=0))
+
+        self.assertTrue(any("repeat must be at least 1" in problem for problem in problems))
+
+    def test_a_non_positive_timeout_scale_is_rejected(self):
+        problems = MODULE.missing_environment(settings(timeout_scale=0.0))
+
+        self.assertTrue(any("timeout scale must be positive" in problem for problem in problems))
+
+    def test_interactive_approval_is_rejected_before_any_provider_call(self):
+        problems = MODULE.missing_environment(settings(approval="ask"))
+
+        self.assertTrue(any("stdin closed" in problem for problem in problems))
+
+    def test_a_rehearsal_needs_no_approval_mode(self):
+        self.assertEqual([], MODULE.missing_environment(settings(approval="ask", rehearse=True, allow_real_provider=False)))
+
+    def test_a_zero_flag_is_not_replaced_by_the_environment_default(self):
+        os.environ["HAIFA_LADDER_REPEAT"] = "3"
+        try:
+            resolved = MODULE.resolve_settings(arguments(repeat=0))
+        finally:
+            os.environ.pop("HAIFA_LADDER_REPEAT", None)
+
+        self.assertEqual(0, resolved.repeat)
+
+    def test_a_malformed_numeric_variable_is_reported(self):
+        os.environ["HAIFA_LADDER_REPEAT"] = "many"
+        try:
+            with self.assertRaises(SystemExit) as raised:
+                MODULE.resolve_settings(arguments())
+        finally:
+            os.environ.pop("HAIFA_LADDER_REPEAT", None)
+
+        self.assertIn("must be an integer", str(raised.exception))
+
+
+class ResultNormalizationTest(unittest.TestCase):
+    def test_malformed_checks_and_failures_do_not_abort_the_run(self):
+        checks, failures = MODULE.normalized_result({"checks": ["a", "b"], "failures": [1, 2]})
+
+        self.assertEqual({}, checks)
+        self.assertEqual(["1", "2"], failures)
+
+    def test_valid_payloads_are_kept(self):
+        checks, failures = MODULE.normalized_result({"checks": {"functional.x": True}, "failures": ["boundary.y"]})
+
+        self.assertEqual({"functional.x": True}, checks)
+        self.assertEqual(["boundary.y"], failures)
+
+    def test_missing_fields_become_empty(self):
+        self.assertEqual(({}, []), MODULE.normalized_result({}))
+
+
+class ReportModeTest(unittest.TestCase):
+    def test_a_rehearsal_is_never_reported_as_an_agent_run(self):
+        self.assertEqual("rehearse", MODULE.run_mode(settings(rehearse=True)))
+        self.assertEqual("agent", MODULE.run_mode(settings(rehearse=False)))
+
+    def test_the_aggregate_report_carries_the_rehearsal_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cases_root = root / "cases"
+            (cases_root / "L1-01").mkdir(parents=True)
+            (cases_root / "L1-01" / "case.yaml").write_text(CASE_YAML, encoding="utf-8")
+            records = [
+                {
+                    "caseId": "L1-01",
+                    "level": "L1",
+                    "mode": "rehearse",
+                    "verdict": "OK",
+                    "accepted": True,
+                    "expected": "PASSED",
+                    "status": "PASSED",
+                    "durationMillis": 10,
+                    "checks": {"functional.x": True},
+                    "failures": [],
+                    "contractProblems": [],
+                }
+            ]
+
+            report_path = MODULE.write_reports(settings(rehearse=True, output_dir=root / "out"), records, cases_root)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual("rehearse", report["mode"])
+        self.assertEqual(1, report["totals"]["passedRuns"])
 
 
 class DiagnosticsTest(unittest.TestCase):
