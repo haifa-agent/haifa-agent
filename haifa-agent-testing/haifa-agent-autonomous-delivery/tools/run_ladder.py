@@ -40,6 +40,7 @@ import sys
 import threading
 import time
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -60,6 +61,9 @@ CREDENTIAL_BY_PREFIX = {
     "tokenrhythm-": "TK_API_KEY",
 }
 CREDENTIAL_FILE_PREFIXES = ("deepseek", "gpt-", "antigravity")
+# Providers that authenticate through the stored connections of ~/.haifa-agent/auth.json.
+MODEL_AUTH_PROVIDERS = {"deepseek": "deepseek", "gpt-": "openai-codex", "antigravity": "google-antigravity"}
+AUTH_STORE = Path.home() / ".haifa-agent" / "auth.json"
 # `ask` maps to the LOW approval threshold and reads the answer from stdin, which the evaluation closes.
 NON_INTERACTIVE_APPROVALS = frozenset({"auto", "deny"})
 RESULT_STATUSES = frozenset({"PASSED", "FAILED", "INCOMPLETE_BUDGET"})
@@ -151,6 +155,58 @@ def default_agent() -> str | None:
     if launcher.is_file():
         return str(launcher)
     return shutil.which("haifa-coding")
+
+
+def configured_model(agent: str | None) -> str | None:
+    """Return the model a packaged distribution selects by default, when it can be read."""
+    if not agent:
+        return None
+    configuration = Path(agent).with_name("haifa-coding.yaml")
+    if not configuration.is_file():
+        return None
+    inside_models = False
+    for line in configuration.read_text(encoding="utf-8").splitlines():
+        if not line.startswith((" ", "	")):
+            inside_models = line.strip() == "models:"
+            continue
+        if inside_models and line.strip().startswith("default:"):
+            return line.split(":", 1)[1].strip() or None
+    return None
+
+
+def effective_model(settings: "Settings") -> tuple[str | None, str]:
+    """Return the model that will actually be evaluated and where the choice comes from."""
+    if settings.model:
+        return settings.model, "override"
+    configured = configured_model(settings.agent)
+    if configured:
+        return configured, "agent configuration"
+    return None, "unknown"
+
+
+def model_auth_provider(model: str | None) -> str | None:
+    """Return the provider whose stored connection serves ``model``, if it uses one."""
+    lowered = (model or "").strip().lower()
+    for prefix, provider in MODEL_AUTH_PROVIDERS.items():
+        if lowered.startswith(prefix):
+            return provider
+    return None
+
+
+def stored_connection_problem(provider: str) -> str | None:
+    """Return why the stored connection of ``provider`` cannot be used, or None when it exists."""
+    if not AUTH_STORE.is_file():
+        return f"no stored connection for {provider}: {AUTH_STORE} does not exist"
+    try:
+        store = json.loads(AUTH_STORE.read_text(encoding="utf-8"))
+        credentials = store.get("credentials", {}) if isinstance(store, dict) else {}
+    except (json.JSONDecodeError, OSError) as error:
+        return f"the stored connections cannot be read: {type(error).__name__}"
+    if not isinstance(credentials, dict):
+        return "the stored connections have an unexpected shape"
+    if any(str(reference).startswith(f"model-auth://{provider}/") for reference in credentials):
+        return None
+    return f"no stored connection for {provider} in {AUTH_STORE}; start the agent once and use /login"
 
 
 def credential_variable(model: str | None, explicit: str | None) -> tuple[str | None, str]:
@@ -315,9 +371,15 @@ def missing_environment(settings: Settings) -> list[str]:
             launcher_argv(settings.agent)
         except SystemExit as error:
             problems.append(str(error))
-    variable, reason = credential_variable(settings.model, settings.credential_env)
+    model, _ = effective_model(settings)
+    variable, reason = credential_variable(model, settings.credential_env)
     if variable and not os.environ.get(variable, "").strip():
         problems.append(f"{variable} is empty ({reason})")
+    provider = model_auth_provider(model) if not settings.credential_env else None
+    if provider:
+        stored = stored_connection_problem(provider)
+        if stored:
+            problems.append(stored)
     return problems
 
 
@@ -330,7 +392,7 @@ def executable_launcher(agent: str) -> bool:
 
 
 def setup_hint(settings: Settings) -> str:
-    variable, _ = credential_variable(settings.model, settings.credential_env)
+    variable, _ = credential_variable(effective_model(settings)[0], settings.credential_env)
     credential = variable or "BIGMODEL_API_KEY"
     launcher = Path.home() / ".haifa-agent" / "coding" / ("haifa-coding.cmd" if os.name == "nt" else "haifa-coding")
     agent = settings.agent or str(launcher)
@@ -356,13 +418,14 @@ def setup_hint(settings: Settings) -> str:
 
 
 def describe_settings(settings: Settings) -> None:
-    variable, reason = credential_variable(settings.model, settings.credential_env)
+    model, source = effective_model(settings)
+    variable, reason = credential_variable(model, settings.credential_env)
     state = "not required" if not variable else ("set" if os.environ.get(variable) else "MISSING")
     assets = str(settings.assets_dir) if settings.assets_dir else f"download per lock into {settings.cache_dir}"
     say("LADDER_SETTINGS")
     say(f"  action           : {settings.action}{' (rehearsal, no provider call)' if settings.rehearse else ''}")
     say(f"  agent            : {settings.agent or '-'}{launcher_note(settings)}")
-    say(f"  model            : {settings.model or '(agent configuration default)'}")
+    say(f"  model            : {model or '(unknown)'} ({source})")
     say(f"  credential       : {variable or '-'} [{state}] ({reason})")
     say(f"  approval         : {settings.approval}")
     say(f"  cases            : {', '.join(settings.case_patterns) if settings.case_patterns else 'all'}")
@@ -665,20 +728,30 @@ def run_agent(settings: Settings, argv: list[str], workspace: Path, log_path: Pa
 
         timed_out = False
         next_heartbeat = started + HEARTBEAT_SECONDS
-        while process.poll() is None:
-            time.sleep(0.5)
-            now = time.monotonic()
-            if now - started > budget_seconds:
-                timed_out = True
+        try:
+            while process.poll() is None:
+                time.sleep(0.5)
+                now = time.monotonic()
+                if now - started > budget_seconds:
+                    timed_out = True
+                    kill_process_tree(process)
+                    break
+                if now >= next_heartbeat:
+                    next_heartbeat = now + HEARTBEAT_SECONDS
+                    say(
+                        f"{prefix} working {duration(now - started)}/{duration(budget_seconds)} "
+                        f"lines={state['lines']} | {state['last'][:LAST_LINE_WIDTH] or '(no output yet)'}"
+                    )
+        finally:
+            if process.poll() is None:
+                # Ctrl-C or any unwinding must not leave an isolated agent making paid calls.
                 kill_process_tree(process)
-                break
-            if now >= next_heartbeat:
-                next_heartbeat = now + HEARTBEAT_SECONDS
-                say(
-                    f"{prefix} working {duration(now - started)}/{duration(budget_seconds)} "
-                    f"lines={state['lines']} | {state['last'][:LAST_LINE_WIDTH]}"
-                )
-        reader.join(timeout=15)
+            reader.join(timeout=15)
+            if process.stdout is not None:
+                try:
+                    process.stdout.close()
+                except OSError:
+                    pass
 
     return AgentOutcome(
         exit_code=None if timed_out else process.returncode,
@@ -687,6 +760,22 @@ def run_agent(settings: Settings, argv: list[str], workspace: Path, log_path: Pa
         duration_seconds=time.monotonic() - started,
         last_line=state["last"][:LAST_LINE_WIDTH],
     )
+
+
+@contextmanager
+def without_credentials(settings: Settings):
+    """Run a block with every configured provider credential removed from the environment.
+
+    The acceptance script is authored outside this repository; it must never see a provider key.
+    """
+    names = set(CREDENTIAL_BY_PREFIX.values())
+    if settings.credential_env:
+        names.add(settings.credential_env)
+    removed = {name: os.environ.pop(name) for name in names if name in os.environ}
+    try:
+        yield
+    finally:
+        os.environ.update(removed)
 
 
 def apply_reference(case_dir: Path, workspace: Path) -> None:
@@ -700,9 +789,11 @@ def apply_reference(case_dir: Path, workspace: Path) -> None:
 
 def provenance_fields(settings: Settings, provenance: AssetProvenance) -> dict[str, object]:
     """Provenance every run record carries, so a JSONL line identifies its benchmark on its own."""
+    model, source = effective_model(settings)
     return {
         "mode": run_mode(settings),
-        "model": settings.model,
+        "model": model,
+        "modelSource": source,
         "approval": settings.approval,
         "assetVersion": provenance.asset_version,
         "assetManifestSha256": provenance.manifest_sha256,
@@ -766,7 +857,8 @@ def evaluate_case(
     else:
         budget_seconds = run_case.DEFAULT_ACCEPTANCE_TIMEOUT_SECONDS
         try:
-            exit_code, result, acceptance_stderr = run_case.run_acceptance(case_dir, workspace, budget_seconds)
+            with without_credentials(settings):
+                exit_code, result, acceptance_stderr = run_case.run_acceptance(case_dir, workspace, budget_seconds)
             reason = f"acceptance exit {exit_code} without a result"
         except subprocess.TimeoutExpired:
             exit_code, result, acceptance_stderr = None, None, ""
@@ -787,7 +879,9 @@ def evaluate_case(
             }
             contract_problems = []
 
+    secrets = secret_values(settings)
     checks, failures = normalized_result(result)
+    failures = [redact(failure, secrets) for failure in failures]
     status = result.get("status") if result.get("status") in RESULT_STATUSES else "FAILED"
     if contract_problems:
         status = "FAILED"
@@ -812,7 +906,7 @@ def evaluate_case(
     if not settings.keep_workdir and not settings.rehearse and record["accepted"]:
         shutil.rmtree(workspace, ignore_errors=True)
 
-    changed_sources, reasons = parse_diagnostics(acceptance_stderr)
+    changed_sources, reasons = parse_diagnostics(redact(acceptance_stderr, secrets))
     return (
         CaseOutcome(
             case_id=case_dir.name,
@@ -880,9 +974,11 @@ def write_reports(settings: Settings, records: list[dict], cases_root: Path, pro
     arguments = argparse.Namespace(mode=run_mode(settings), repeat=settings.repeat)
     report = run_case.build_report(records, arguments, cases_root)
     # Provenance keeps a retained report attributable: which model produced it, and which case set.
+    model, source = effective_model(settings)
     report["evaluation"] = {
         "mode": run_mode(settings),
-        "model": settings.model,
+        "model": model,
+        "modelSource": source,
         "approval": settings.approval,
         "assets": provenance.as_dict(),
     }
