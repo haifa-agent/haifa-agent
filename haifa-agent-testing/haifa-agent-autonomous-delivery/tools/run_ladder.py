@@ -59,6 +59,9 @@ CREDENTIAL_BY_PREFIX = {
     "tokenrhythm-": "TK_API_KEY",
 }
 CREDENTIAL_FILE_PREFIXES = ("deepseek", "gpt-", "antigravity")
+# `ask` maps to the LOW approval threshold and reads the answer from stdin, which the evaluation closes.
+NON_INTERACTIVE_APPROVALS = frozenset({"auto", "deny"})
+RESULT_STATUSES = frozenset({"PASSED", "FAILED", "INCOMPLETE_BUDGET"})
 
 
 def load(module_name: str):
@@ -148,6 +151,22 @@ def credential_variable(model: str | None, explicit: str | None) -> tuple[str | 
     return None, f"unknown provider for model id {model}"
 
 
+def integer(name: str, fallback: int) -> int:
+    value = os.environ.get(name, "").strip()
+    try:
+        return int(value) if value else fallback
+    except ValueError:
+        raise SystemExit(f"{name} must be an integer, got {value!r}") from None
+
+
+def number(name: str, fallback: float) -> float:
+    value = os.environ.get(name, "").strip()
+    try:
+        return float(value) if value else fallback
+    except ValueError:
+        raise SystemExit(f"{name} must be a number, got {value!r}") from None
+
+
 def resolve_settings(arguments: argparse.Namespace) -> Settings:
     timestamp = time.strftime("%Y%m%dT%H%M%S")
     output = arguments.output or os.environ.get("HAIFA_LADDER_OUTPUT")
@@ -162,8 +181,10 @@ def resolve_settings(arguments: argparse.Namespace) -> Settings:
         credential_env=arguments.credential_env or os.environ.get("HAIFA_LADDER_CREDENTIAL_ENV"),
         approval=arguments.approval or os.environ.get("HAIFA_LADDER_APPROVAL", "auto"),
         case_patterns=[pattern.strip() for pattern in cases.split(",") if pattern.strip()],
-        repeat=arguments.repeat or int(os.environ.get("HAIFA_LADDER_REPEAT", "1")),
-        timeout_scale=arguments.timeout_scale or float(os.environ.get("HAIFA_LADDER_TIMEOUT_SCALE", "1.0")),
+        repeat=arguments.repeat if arguments.repeat is not None else integer("HAIFA_LADDER_REPEAT", 1),
+        timeout_scale=(
+            arguments.timeout_scale if arguments.timeout_scale is not None else number("HAIFA_LADDER_TIMEOUT_SCALE", 1.0)
+        ),
         output_dir=Path(output) if output else REPOSITORY_ROOT / "local-tmp" / "autonomous-delivery-ladder" / timestamp,
         cache_dir=Path(cache) if cache else REPOSITORY_ROOT / "local-tmp" / "autonomous-delivery-assets",
         assets_dir=Path(assets) if assets else None,
@@ -223,6 +244,17 @@ def missing_environment(settings: Settings) -> list[str]:
     if settings.action == "run" and not settings.rehearse and not settings.allow_real_provider:
         problems.append(
             "HAIFA_LADDER_ALLOW_REAL_PROVIDER is not true: a ladder run calls a real provider and costs money"
+        )
+    if settings.repeat < 1:
+        problems.append(f"repeat must be at least 1, got {settings.repeat}: nothing would be evaluated")
+    if settings.gate_repeat < 1:
+        problems.append(f"gate repeat must be at least 1, got {settings.gate_repeat}")
+    if settings.timeout_scale <= 0:
+        problems.append(f"timeout scale must be positive, got {settings.timeout_scale}")
+    if not settings.rehearse and settings.approval not in NON_INTERACTIVE_APPROVALS:
+        problems.append(
+            f"approval mode {settings.approval!r} waits for a terminal answer, but the evaluation runs the agent with "
+            f"stdin closed, so every approval would be denied; use one of {', '.join(sorted(NON_INTERACTIVE_APPROVALS))}"
         )
     if settings.rehearse:
         return problems
@@ -594,6 +626,21 @@ def apply_reference(case_dir: Path, workspace: Path) -> None:
             shutil.copy2(path, target)
 
 
+def normalized_result(result: dict) -> tuple[dict[str, bool], list[str]]:
+    """Return the checks and failures of an acceptance result, safe to aggregate and to print.
+
+    A contract violation is already recorded by ``result_contract_problems``; a malformed payload
+    (checks as a list, failures holding numbers) must still not abort the whole ladder run.
+    """
+    raw_checks = result.get("checks")
+    checks = (
+        {str(name): bool(value) for name, value in raw_checks.items()} if isinstance(raw_checks, dict) else {}
+    )
+    raw_failures = result.get("failures")
+    failures = [str(failure) for failure in raw_failures] if isinstance(raw_failures, list) else []
+    return checks, failures
+
+
 def evaluate_case(settings: Settings, case_dir: Path, attempt: int, prefix: str) -> tuple[CaseOutcome, dict]:
     """Prepare a workspace, let the agent work on it and grade the result."""
     metadata = run_case.case_metadata(case_dir)
@@ -646,16 +693,15 @@ def evaluate_case(settings: Settings, case_dir: Path, attempt: int, prefix: str)
                 "failures": [f"acceptance exit {exit_code} without a result"],
             }
 
-    checks = result.get("checks") or {}
-    failures = list(result.get("failures") or [])
-    status = result.get("status", "FAILED")
+    checks, failures = normalized_result(result)
+    status = result.get("status") if result.get("status") in RESULT_STATUSES else "FAILED"
     if contract_problems:
         status = "FAILED"
     duration_seconds = time.monotonic() - started
     record = {
         "caseId": case_dir.name,
         "level": metadata["level"],
-        "mode": "rehearse" if settings.rehearse else "agent",
+        "mode": run_mode(settings),
         "attempt": attempt,
         "verdict": "OK" if result.get("passed") and not contract_problems else "UNEXPECTED",
         "accepted": bool(result.get("passed")) and not contract_problems,
@@ -726,13 +772,18 @@ def print_case_result(
     say()
 
 
+def run_mode(settings: Settings) -> str:
+    """The mode the report claims; a rehearsal must never look like a provider evaluation."""
+    return "rehearse" if settings.rehearse else "agent"
+
+
 def write_reports(settings: Settings, records: list[dict], cases_root: Path) -> Path:
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     records_path = settings.output_dir / "run-records.jsonl"
     with records_path.open("w", encoding="utf-8", newline="\n") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n")
-    arguments = argparse.Namespace(mode="agent", repeat=settings.repeat)
+    arguments = argparse.Namespace(mode=run_mode(settings), repeat=settings.repeat)
     report = run_case.build_report(records, arguments, cases_root)
     report_path = settings.output_dir / "ladder-report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2) + "\n", encoding="utf-8")

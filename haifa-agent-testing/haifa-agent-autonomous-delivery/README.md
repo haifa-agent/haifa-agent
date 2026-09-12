@@ -50,7 +50,7 @@ python -m unittest discover -s haifa-agent-testing/haifa-agent-autonomous-delive
 | `HAIFA_LADDER_AGENT` | Coding Agent 启动器；未设置时自动发现 `~/.haifa-agent/coding/haifa-coding(.cmd)` |
 | 凭据变量 | 由模型 id 推断（`glm-*` → `BIGMODEL_API_KEY`、`kimi-*` → `KIMI_API_KEY` 等）；`deepseek`/`gpt-*` 等经 `~/.haifa-agent/auth.json` 认证的模型无需设置 |
 
-可选：`HAIFA_LADDER_MODEL`、`HAIFA_LADDER_APPROVAL`（默认 `auto`，评测必须非交互）、`HAIFA_LADDER_CASES`、
+可选：`HAIFA_LADDER_MODEL`、`HAIFA_LADDER_APPROVAL`（默认 `auto`，只接受 `auto` 或 `deny`：评测以关闭的 stdin 运行 Agent，`ask` 会让每次审批被拒，体检阶段直接拒绝）、`HAIFA_LADDER_CASES`、
 `HAIFA_LADDER_REPEAT`、`HAIFA_LADDER_TIMEOUT_SCALE`、`HAIFA_LADDER_OUTPUT`、`HAIFA_LADDER_CACHE_DIR`、
 `HAIFA_LADDER_ASSETS_DIR`；每个变量都有同名 `--kebab-case` 参数，参数优先。
 
@@ -70,7 +70,7 @@ python -m unittest discover -s haifa-agent-testing/haifa-agent-autonomous-delive
 评测过程中的输出：每题开始时的三维标签与变体、Agent 预算与日志文件名、每 15 秒一次的心跳（已用时间/预算、
 输出行数、最后一行输出）、每题结束时的状态（`PASSED` / `FAILED` / `INCOMPLETE_BUDGET`）、通过的检查数、
 Agent 耗时与退出码、改动的源文件；失败时列出失败检查名及其原因。每题之后打印总进度与累计通过率，
-结束时按 level 汇总，并写出 `ladder-report.json`、`run-records.jsonl` 与每题 Agent 日志。
+结束时按 level 汇总，并写出 `ladder-report.json`、`run-records.jsonl` 与每题 Agent 日志；报告的 `mode` 区分 `agent` 与 `rehearse`，彩排结果不会被误读为真实评测。
 
 Windows 上 `haifa-coding.cmd` 会自动替换为同目录的 `haifa-agent.jar`：批处理启动器经 cmd.exe 传参会把
 多行题面截断到第一行。控制台与报告不输出题面、凭据值或完整模型响应，日志中出现的凭据值会被替换为 `***`。
