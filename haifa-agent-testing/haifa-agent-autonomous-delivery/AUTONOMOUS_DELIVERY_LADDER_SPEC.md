@@ -41,7 +41,10 @@ Instead of monolithic tasks that conflate all cognitive burdens at once, tasks a
 
 ## 3. Two Orthogonal Variant Types
 
-1. **Error Recovery**: Initial state intentionally triggers compilation/test failures; verifies whether the agent recovers and resumes repair instead of failing closed or looping.
+1. **Error Recovery**: Initial state intentionally triggers compilation/test failures - an unfinished
+   or plainly wrong previous fix attempt is already in the working tree. It verifies whether the agent
+   recovers and resumes repair instead of failing closed or looping. No workspace Git history is
+   required: the red initial state and the wrong attempt carry the variant.
 2. **Regression Protection**: Modifying feature A while maintaining unmentioned feature B; verifies protection of existing behaviors.
 
 ---
@@ -68,9 +71,24 @@ running a case.
 The intended distribution is L1×5, L2×5, L3×4, L4×4, L5×3 and L6×2. L1..L4 therefore carry 18
 of 23 cases (78% ≥ 70% baseline); L5/L6 carry 5 (22% ≤ 30%).
 
+The published `cases/` tree is generated from the asset repository's `authoring/` sources; the asset
+version in use is `2026.09.11.2` (every case at `caseVersion` 2.0.0). Invariants the case set keeps,
+regardless of the individual case:
+
+- Hygiene checks guard only what a case promises: existing tests and protected files stay
+  byte-identical and changed source files stay inside the case's editable scope and change budget.
+  Adding tests, running the test tooling and leaving scratch files in the workspace are allowed.
+- Every hidden check runs in its own interpreter with its own timeout, so one crashing or hanging
+  check cannot zero the rest; check names keep the `functional.` / `boundary.` / `regression.` /
+  `constraint.` prefixes so that a failure maps to a dimension.
+- Performance-sensitive cases compare against an O(n) baseline measured on the same machine instead
+  of a fixed wall-clock budget.
+- L3 and L4 share one medium-size project with enforced layering, so localization labels reflect a
+  real search space and cross-layer cases can assert the dependency direction.
+
 ---
 
 ## 6. Current State & Legacy Material
 
 - **Legacy Cases (`cases/01` ~ `cases/17`)**: 已冻结为历史素材（决策：冷冻 Legacy），保留在 `haifa-agent-test-fixtures` 中可运行、可校验，不进入能力阶梯探针题集。
-- **Implementation State**: All 23 cases (L1..L6) are authored in the external asset repository. The Maven module publishes the result contract, validates the immutable asset lock locally, and provides the explicit `fetch_assets.py` and offline `run_case.py` workflow. Each run validates against the shared `acceptance-result.schema.json` published by `haifa-agent-test-fixtures`.
+- **Implementation State**: All 23 cases (L1..L6) are authored in the external asset repository. The Maven module publishes the result contract, validates the immutable asset lock locally, and provides the explicit `fetch_assets.py` and offline `run_case.py` workflow. Each run validates against the shared `acceptance-result.schema.json` published by `haifa-agent-test-fixtures`. The current asset revision passes the NOP and oracle gates three times per case, plus an adversarial probe suite kept in the asset repository.
