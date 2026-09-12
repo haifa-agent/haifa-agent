@@ -279,9 +279,8 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 `OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
 不包装或解释普通命令语义。
 进程数预算触发且进程树已收敛时返回 `PROCESS_LIMIT_EXCEEDED`，不会伪装成 `OUTCOME_UNKNOWN`。已持久化的
-ExecutionResult 是权威执行事实；Change Review 等派生投影失败只返回安全的不可用原因码，不得吞掉执行结果。
-Change Review 成功结果中的 `artifactRef` 与 `changeReviewArtifactRef` 均由严格输出 Schema 声明，避免
-确定的 ExecutionResult 因派生字段契约漂移被误判为 `TOOL_OUTCOME_UNKNOWN`。
+ExecutionResult 是权威执行事实。Coding 产品不再维护 Change Review Artifact 或 Repository Baseline；
+需要检查当前变更时，模型通过已披露的只读文件/Diff 能力或 `execution_run` 按需读取，不制造完成证据。
 命中冻结验证候选时生成的 `validationAttemptRef` 同样属于严格 Schema 契约，并在直接返回与只读
 reconcile 路径使用同一份冻结定义校验。
 Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版本。普通命令默认只接受退出码 0；
