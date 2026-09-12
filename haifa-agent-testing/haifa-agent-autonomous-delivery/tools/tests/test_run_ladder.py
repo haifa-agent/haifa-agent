@@ -226,7 +226,7 @@ class RunGuardTest(unittest.TestCase):
     def test_a_non_positive_timeout_scale_is_rejected(self):
         problems = MODULE.missing_environment(settings(timeout_scale=0.0))
 
-        self.assertTrue(any("timeout scale must be positive" in problem for problem in problems))
+        self.assertTrue(any("timeout scale must be a positive finite number" in problem for problem in problems))
 
     def test_interactive_approval_is_rejected_before_any_provider_call(self):
         problems = MODULE.missing_environment(settings(approval="ask"))
@@ -300,11 +300,22 @@ class ReportModeTest(unittest.TestCase):
                 }
             ]
 
-            report_path = MODULE.write_reports(settings(rehearse=True, output_dir=root / "out"), records, cases_root)
+            report_path = MODULE.write_reports(
+                settings(rehearse=True, output_dir=root / "out", model="glm-5.3-flash"),
+                records,
+                cases_root,
+                MODULE.AssetProvenance(manifest_sha256="a" * 64, pinned=False, asset_version="2026.09.11.2"),
+            )
             report = json.loads(report_path.read_text(encoding="utf-8"))
 
         self.assertEqual("rehearse", report["mode"])
         self.assertEqual(1, report["totals"]["passedRuns"])
+        self.assertEqual("rehearse", report["evaluation"]["mode"])
+        self.assertEqual("glm-5.3-flash", report["evaluation"]["model"])
+        self.assertEqual(
+            {"assetVersion": "2026.09.11.2", "manifestSha256": "a" * 64, "pinned": False},
+            report["evaluation"]["assets"],
+        )
 
 
 class PathResolutionTest(unittest.TestCase):
@@ -343,6 +354,31 @@ class PathResolutionTest(unittest.TestCase):
 
         self.assertEqual("no-such-launcher", resolved.agent)
         self.assertTrue(any("does not resolve" in problem for problem in MODULE.missing_environment(resolved)))
+
+
+class LauncherGuardTest(unittest.TestCase):
+    def test_a_non_finite_timeout_scale_is_rejected(self):
+        for scale in (float("nan"), float("inf")):
+            problems = MODULE.missing_environment(settings(timeout_scale=scale))
+
+            self.assertTrue(any("positive finite number" in problem for problem in problems), scale)
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits only")
+    def test_a_launcher_without_the_execute_permission_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = Path(directory) / "haifa-coding"
+            launcher.write_text("#!/bin/sh" + chr(10), encoding="utf-8")
+            launcher.chmod(0o644)
+
+            self.assertFalse(MODULE.executable_launcher(str(launcher)))
+            problems = MODULE.missing_environment(settings(agent=str(launcher)))
+
+            launcher.chmod(0o755)
+            self.assertTrue(any("chmod +x" in problem for problem in problems))
+            self.assertTrue(MODULE.executable_launcher(str(launcher)))
+
+    def test_a_command_on_path_needs_no_permission_check(self):
+        self.assertTrue(MODULE.executable_launcher("haifa-coding"))
 
 
 class DiagnosticsTest(unittest.TestCase):

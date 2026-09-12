@@ -32,6 +32,7 @@ import argparse
 import fnmatch
 import importlib.util
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -97,6 +98,22 @@ class Settings:
     rehearse: bool
     keep_workdir: bool
     allow_unpinned_assets: bool
+
+
+@dataclass
+class AssetProvenance:
+    """Identifies the evaluated case set inside the persisted report."""
+
+    manifest_sha256: str
+    pinned: bool
+    asset_version: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "assetVersion": self.asset_version,
+            "manifestSha256": self.manifest_sha256,
+            "pinned": self.pinned,
+        }
 
 
 @dataclass
@@ -265,8 +282,8 @@ def missing_environment(settings: Settings) -> list[str]:
         problems.append(f"repeat must be at least 1, got {settings.repeat}: nothing would be evaluated")
     if settings.gate_repeat < 1:
         problems.append(f"gate repeat must be at least 1, got {settings.gate_repeat}")
-    if settings.timeout_scale <= 0:
-        problems.append(f"timeout scale must be positive, got {settings.timeout_scale}")
+    if not math.isfinite(settings.timeout_scale) or settings.timeout_scale <= 0:
+        problems.append(f"timeout scale must be a positive finite number, got {settings.timeout_scale}")
     if not settings.rehearse and settings.approval not in NON_INTERACTIVE_APPROVALS:
         problems.append(
             f"approval mode {settings.approval!r} waits for a terminal answer, but the evaluation runs the agent with "
@@ -281,6 +298,8 @@ def missing_environment(settings: Settings) -> list[str]:
         )
     elif not Path(settings.agent).is_file() and not shutil.which(settings.agent):
         problems.append(f"HAIFA_LADDER_AGENT does not resolve to an executable: {settings.agent}")
+    elif not executable_launcher(settings.agent):
+        problems.append(f"HAIFA_LADDER_AGENT is not executable, run chmod +x: {settings.agent}")
     if settings.agent:
         try:
             launcher_argv(settings.agent)
@@ -290,6 +309,14 @@ def missing_environment(settings: Settings) -> list[str]:
     if variable and not os.environ.get(variable, "").strip():
         problems.append(f"{variable} is empty ({reason})")
     return problems
+
+
+def executable_launcher(agent: str) -> bool:
+    """A launcher file must carry the execute permission; Popen would otherwise fail per case."""
+    path = Path(agent)
+    if os.name == "nt" or not path.is_file():
+        return True
+    return os.access(path, os.X_OK)
 
 
 def setup_hint(settings: Settings) -> str:
@@ -367,6 +394,18 @@ def check_runner_tests() -> tuple[bool, str]:
     return completed.returncode == 0, (tail[0] if tail else "no output")
 
 
+def asset_provenance(checkout: Path, lock: dict) -> AssetProvenance:
+    """Return the identity of the case set at ``checkout`` relative to the immutable lock."""
+    manifest_path = checkout / run_case.ASSET_MANIFEST_NAME
+    digest = fetch_assets.sha256_file(manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return AssetProvenance(
+        manifest_sha256=digest,
+        pinned=digest == lock["manifestSha256"],
+        asset_version=str(manifest.get("assetVersion", "unknown")),
+    )
+
+
 def lock_mismatch(checkout: Path, lock: dict) -> str | None:
     """Return why ``checkout`` is not the locked asset set, or None when it matches.
 
@@ -383,28 +422,30 @@ def lock_mismatch(checkout: Path, lock: dict) -> str | None:
     )
 
 
-def resolve_assets(settings: Settings) -> tuple[bool, str, Path | None]:
+def resolve_assets(settings: Settings) -> tuple[bool, str, Path | None, AssetProvenance | None]:
     try:
         lock = fetch_assets.load_lock()
     except SystemExit as error:
-        return False, str(error), None
+        return False, str(error), None, None
     if settings.assets_dir:
         checkout = settings.assets_dir.resolve()
         try:
             run_case.verify_assets_root(checkout)
         except SystemExit as error:
-            return False, str(error), None
+            return False, str(error), None, None
+        provenance = asset_provenance(checkout, lock)
         mismatch = lock_mismatch(checkout, lock)
         if mismatch is None:
-            return True, f"locked revision at {checkout}", checkout
+            return True, f"locked revision {provenance.asset_version} at {checkout}", checkout, provenance
         if settings.allow_unpinned_assets:
-            return True, f"UNPINNED {checkout}: {mismatch}", checkout
-        return False, f"{mismatch} (use --allow-unpinned-assets to evaluate it on purpose)", None
+            return True, f"UNPINNED {checkout}: {mismatch}", checkout, provenance
+        return False, f"{mismatch} (use --allow-unpinned-assets to evaluate it on purpose)", None, None
     try:
         checkout = fetch_assets.materialize(settings.cache_dir.resolve(), lock)
     except SystemExit as error:
-        return False, str(error), None
-    return True, f"locked revision at {checkout}", checkout
+        return False, str(error), None, None
+    provenance = asset_provenance(checkout, lock)
+    return True, f"locked revision {provenance.asset_version} at {checkout}", checkout, provenance
 
 
 def select_cases(cases_root: Path, patterns: list[str]) -> list[str]:
@@ -440,26 +481,26 @@ def run_gate(cases_root: Path, mode: str, case_ids: list[str], repeat: int) -> t
     return True, f"{len(case_ids) * repeat} runs behaved as expected"
 
 
-def preflight(settings: Settings) -> tuple[bool, Path | None, list[str]]:
-    """Run every preflight check; return (ok, asset checkout, selected case ids)."""
+def preflight(settings: Settings) -> tuple[bool, Path | None, list[str], AssetProvenance | None]:
+    """Run every preflight check; return (ok, asset checkout, selected case ids, asset provenance)."""
     say("LADDER_PREFLIGHT")
     problems = missing_environment(settings)
     report_check("environment", not problems, "; ".join(problems) or "every required variable is set")
     if problems:
         say()
         say(setup_hint(settings))
-        return False, None, []
+        return False, None, [], None
 
     ok_python = sys.version_info >= (3, 11)
     report_check("python", ok_python, f"{sys.version.split()[0]} (3.11 or newer required)")
     ok_toolchain, toolchain_detail = check_toolchain()
     report_check("toolchain", ok_toolchain, toolchain_detail)
 
-    ok_assets, assets_detail, checkout = resolve_assets(settings)
+    ok_assets, assets_detail, checkout, provenance = resolve_assets(settings)
     report_check("assets", ok_assets, assets_detail)
-    if not ok_assets or checkout is None:
+    if not ok_assets or checkout is None or provenance is None:
         say("LADDER_PREFLIGHT_RESULT FAIL")
-        return False, None, []
+        return False, None, [], None
 
     cases_root = checkout / "cases"
     case_ids = select_cases(cases_root, settings.case_patterns)
@@ -481,7 +522,7 @@ def preflight(settings: Settings) -> tuple[bool, Path | None, list[str]]:
     ok = all([ok_python, ok_toolchain, ok_assets, bool(case_ids), ok_tests, ok_gates])
     say(f"LADDER_PREFLIGHT_RESULT {'PASS' if ok else 'FAIL'}")
     say()
-    return ok, checkout, case_ids
+    return ok, checkout, case_ids, provenance
 
 
 # ------------------------------------------------------------------------------------- evaluation
@@ -657,7 +698,9 @@ def normalized_result(result: dict) -> tuple[dict[str, bool], list[str]]:
     return checks, failures
 
 
-def evaluate_case(settings: Settings, case_dir: Path, attempt: int, prefix: str) -> tuple[CaseOutcome, dict]:
+def evaluate_case(
+    settings: Settings, case_dir: Path, attempt: int, prefix: str, provenance: AssetProvenance
+) -> tuple[CaseOutcome, dict]:
     """Prepare a workspace, let the agent work on it and grade the result."""
     metadata = run_case.case_metadata(case_dir)
     budget = int((metadata["timeoutSeconds"] or run_case.DEFAULT_AGENT_TIMEOUT_SECONDS) * settings.timeout_scale)
@@ -730,8 +773,11 @@ def evaluate_case(settings: Settings, case_dir: Path, attempt: int, prefix: str)
         "checks": checks,
         "failures": failures,
         "contractProblems": contract_problems,
+        "model": settings.model,
+        "assetVersion": provenance.asset_version,
+        "assetsPinned": provenance.pinned,
     }
-    if not settings.keep_workdir and not settings.rehearse and status == "PASSED":
+    if not settings.keep_workdir and not settings.rehearse and record["accepted"]:
         shutil.rmtree(workspace, ignore_errors=True)
 
     changed_sources, reasons = parse_diagnostics(acceptance_stderr)
@@ -793,7 +839,7 @@ def run_mode(settings: Settings) -> str:
     return "rehearse" if settings.rehearse else "agent"
 
 
-def write_reports(settings: Settings, records: list[dict], cases_root: Path) -> Path:
+def write_reports(settings: Settings, records: list[dict], cases_root: Path, provenance: AssetProvenance) -> Path:
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     records_path = settings.output_dir / "run-records.jsonl"
     with records_path.open("w", encoding="utf-8", newline="\n") as handle:
@@ -801,6 +847,13 @@ def write_reports(settings: Settings, records: list[dict], cases_root: Path) -> 
             handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n")
     arguments = argparse.Namespace(mode=run_mode(settings), repeat=settings.repeat)
     report = run_case.build_report(records, arguments, cases_root)
+    # Provenance keeps a retained report attributable: which model produced it, and which case set.
+    report["evaluation"] = {
+        "mode": run_mode(settings),
+        "model": settings.model,
+        "approval": settings.approval,
+        "assets": provenance.as_dict(),
+    }
     report_path = settings.output_dir / "ladder-report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return report_path
@@ -811,7 +864,7 @@ def accepted_runs(records: list[dict]) -> int:
     return sum(1 for record in records if record["accepted"])
 
 
-def print_summary(records: list[dict], report_path: Path, started: float) -> None:
+def print_summary(records: list[dict], report_path: Path, started: float, provenance: AssetProvenance) -> None:
     tally = Counter(record["status"] for record in records)
     accepted = accepted_runs(records)
     levels: dict[str, list[int]] = {}
@@ -833,10 +886,12 @@ def print_summary(records: list[dict], report_path: Path, started: float) -> Non
     contract = [record["caseId"] for record in records if record["contractProblems"]]
     if contract:
         say(f"  result contract violated by: {', '.join(contract)}")
+    pin_state = "pinned" if provenance.pinned else "UNPINNED, not comparable with the baseline"
+    say(f"  assets: {provenance.asset_version} ({pin_state})")
     say(f"  report: {report_path}")
 
 
-def evaluate(settings: Settings, checkout: Path, case_ids: list[str]) -> int:
+def evaluate(settings: Settings, checkout: Path, case_ids: list[str], provenance: AssetProvenance) -> int:
     cases_root = checkout / "cases"
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     total = len(case_ids) * settings.repeat
@@ -863,13 +918,13 @@ def evaluate(settings: Settings, checkout: Path, case_ids: list[str]) -> int:
                 f"{prefix} start  labels={labels.get('localization')}/{labels.get('modificationSpan')}"
                 f"/{labels.get('acceptance')} variants={variants}"
             )
-            outcome, record = evaluate_case(settings, cases_root / case_id, attempt, prefix)
+            outcome, record = evaluate_case(settings, cases_root / case_id, attempt, prefix, provenance)
             tally[outcome.status] += 1
             records.append(record)
             print_case_result(prefix, outcome, tally, accepted_runs(records), done, total, started)
 
-    report_path = write_reports(settings, records, cases_root)
-    print_summary(records, report_path, started)
+    report_path = write_reports(settings, records, cases_root, provenance)
+    print_summary(records, report_path, started, provenance)
     return 0 if accepted_runs(records) == total else 1
 
 
@@ -913,13 +968,13 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     settings = resolve_settings(parse_arguments(argv))
     describe_settings(settings)
-    ok, checkout, case_ids = preflight(settings)
-    if not ok or checkout is None:
+    ok, checkout, case_ids, provenance = preflight(settings)
+    if not ok or checkout is None or provenance is None:
         return 2
     if settings.action == "check":
         say("LADDER_CHECK_ONLY the environment is ready; run the same command with `run` to evaluate")
         return 0
-    return evaluate(settings, checkout, case_ids)
+    return evaluate(settings, checkout, case_ids, provenance)
 
 
 if __name__ == "__main__":
