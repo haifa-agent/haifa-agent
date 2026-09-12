@@ -683,6 +683,17 @@ def apply_reference(case_dir: Path, workspace: Path) -> None:
             shutil.copy2(path, target)
 
 
+def provenance_fields(settings: Settings, provenance: AssetProvenance) -> dict[str, object]:
+    """Provenance every run record carries, so a JSONL line identifies its benchmark on its own."""
+    return {
+        "mode": run_mode(settings),
+        "model": settings.model,
+        "assetVersion": provenance.asset_version,
+        "assetManifestSha256": provenance.manifest_sha256,
+        "assetsPinned": provenance.pinned,
+    }
+
+
 def normalized_result(result: dict) -> tuple[dict[str, bool], list[str]]:
     """Return the checks and failures of an acceptance result, safe to aggregate and to print.
 
@@ -737,20 +748,28 @@ def evaluate_case(
         contract_problems: list[str] = []
         acceptance_stderr = ""
     else:
-        exit_code, result, acceptance_stderr = run_case.run_acceptance(
-            case_dir, workspace, run_case.DEFAULT_ACCEPTANCE_TIMEOUT_SECONDS
-        )
+        budget_seconds = run_case.DEFAULT_ACCEPTANCE_TIMEOUT_SECONDS
+        try:
+            exit_code, result, acceptance_stderr = run_case.run_acceptance(case_dir, workspace, budget_seconds)
+            reason = f"acceptance exit {exit_code} without a result"
+        except subprocess.TimeoutExpired:
+            exit_code, result, acceptance_stderr = None, None, ""
+            reason = f"acceptance exceeded {budget_seconds}s"
+        except OSError as error:
+            exit_code, result, acceptance_stderr = None, None, ""
+            reason = f"acceptance could not be started: {type(error).__name__}"
         contract_problems = run_case.result_contract_problems(result, case_dir.name)
         if not isinstance(result, dict):
             result = {
                 "schemaVersion": 1,
                 "caseId": metadata["caseId"],
                 "caseVersion": metadata["caseVersion"],
-                "status": "FAILED",
+                "status": "INCOMPLETE_BUDGET" if reason.startswith("acceptance exceeded") else "FAILED",
                 "passed": False,
                 "checks": {"acceptance.produced": False},
-                "failures": [f"acceptance exit {exit_code} without a result"],
+                "failures": [reason],
             }
+            contract_problems = []
 
     checks, failures = normalized_result(result)
     status = result.get("status") if result.get("status") in RESULT_STATUSES else "FAILED"
@@ -760,7 +779,6 @@ def evaluate_case(
     record = {
         "caseId": case_dir.name,
         "level": metadata["level"],
-        "mode": run_mode(settings),
         "attempt": attempt,
         "verdict": "OK" if result.get("passed") and not contract_problems else "UNEXPECTED",
         "accepted": bool(result.get("passed")) and not contract_problems,
@@ -773,9 +791,7 @@ def evaluate_case(
         "checks": checks,
         "failures": failures,
         "contractProblems": contract_problems,
-        "model": settings.model,
-        "assetVersion": provenance.asset_version,
-        "assetsPinned": provenance.pinned,
+        **provenance_fields(settings, provenance),
     }
     if not settings.keep_workdir and not settings.rehearse and record["accepted"]:
         shutil.rmtree(workspace, ignore_errors=True)

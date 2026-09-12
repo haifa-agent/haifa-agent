@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -379,6 +380,79 @@ class LauncherGuardTest(unittest.TestCase):
 
     def test_a_command_on_path_needs_no_permission_check(self):
         self.assertTrue(MODULE.executable_launcher("haifa-coding"))
+
+
+class RunRecordTest(unittest.TestCase):
+    PROVENANCE = None
+
+    def setUp(self):
+        self.PROVENANCE = MODULE.AssetProvenance(manifest_sha256="b" * 64, pinned=False, asset_version="2026.09.11.2")
+
+    def test_every_record_identifies_its_benchmark(self):
+        fields = MODULE.provenance_fields(settings(model="glm-5.3-flash"), self.PROVENANCE)
+
+        self.assertEqual(
+            {
+                "mode": "agent",
+                "model": "glm-5.3-flash",
+                "assetVersion": "2026.09.11.2",
+                "assetManifestSha256": "b" * 64,
+                "assetsPinned": False,
+            },
+            fields,
+        )
+
+    def case_directory(self, root: Path) -> Path:
+        case_dir = root / "L1-01"
+        (case_dir / "base-workspace").mkdir(parents=True)
+        (case_dir / "reference").mkdir()
+        (case_dir / "base-workspace" / "module.py").write_text("value = 1" + chr(10), encoding="utf-8")
+        (case_dir / "reference" / "module.py").write_text("value = 2" + chr(10), encoding="utf-8")
+        (case_dir / "case.yaml").write_text(CASE_YAML, encoding="utf-8")
+        (case_dir / "prompt.txt").write_text("Fix it." + chr(10), encoding="utf-8")
+        return case_dir
+
+    def test_an_acceptance_timeout_fails_only_its_own_case(self):
+        def timing_out(*_arguments, **_keywords):
+            raise subprocess.TimeoutExpired(cmd="acceptance.py", timeout=900)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            case_dir = self.case_directory(root)
+            original = MODULE.run_case.run_acceptance
+            MODULE.run_case.run_acceptance = timing_out
+            try:
+                outcome, record = MODULE.evaluate_case(
+                    settings(rehearse=True, output_dir=root / "out"), case_dir, 1, "  [1/1] L1-01", self.PROVENANCE
+                )
+            finally:
+                MODULE.run_case.run_acceptance = original
+
+        self.assertEqual("INCOMPLETE_BUDGET", record["status"])
+        self.assertFalse(record["accepted"])
+        self.assertEqual(["acceptance exceeded 900s"], record["failures"])
+        self.assertEqual("b" * 64, record["assetManifestSha256"])
+        self.assertEqual("INCOMPLETE_BUDGET", outcome.status)
+
+    def test_an_acceptance_that_cannot_start_fails_only_its_own_case(self):
+        def not_startable(*_arguments, **_keywords):
+            raise FileNotFoundError("python is gone")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            case_dir = self.case_directory(root)
+            original = MODULE.run_case.run_acceptance
+            MODULE.run_case.run_acceptance = not_startable
+            try:
+                _, record = MODULE.evaluate_case(
+                    settings(rehearse=True, output_dir=root / "out"), case_dir, 1, "  [1/1] L1-01", self.PROVENANCE
+                )
+            finally:
+                MODULE.run_case.run_acceptance = original
+
+        self.assertEqual("FAILED", record["status"])
+        self.assertFalse(record["accepted"])
+        self.assertIn("FileNotFoundError", record["failures"][0])
 
 
 class DiagnosticsTest(unittest.TestCase):
