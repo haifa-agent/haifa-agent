@@ -271,14 +271,16 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 `ProjectToolExecutor` 是 Tool Provider adapter，只接收最小化 `ToolInvocationRequest`，并在委派前重新解析 Run Workspace、Principal 和 capability。文件操作继续走 `ProjectToolOperations`；`ProjectExecutionToolOperations` 把
 `command/workspaceRef/relativeWorkdir/timeoutMillis/description` 及可选 `operationFamily`
 映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。`execution_run` 使用配置 Shell 的通用命令文本，不包含命令
-目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。Coding Profile 在产品边界为通用 Scratch 增加
-`GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、
+目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。可信本地 Coding Agent 默认不注入或清理 per-tool
+scratch 空间，保持宿主 `TEMP/TMP/TMPDIR` 的普通 OS 语义以支持多步工具链临时文件复用；通用进程硬上限
+`maxProcesses` 默认为空（不设上限），避免 Maven Surefire、Gradle、pytest-xdist、npm 等并发构建树被误杀，
+同时完整保留超时、取消后的进程树回收与通道输出预算约束。最终 `ToolResult` 提供状态、
 退出码、有界合并首尾、明确省略标记、Output Ref、耗时、安全失败类别、稳定错误码、
-`failureAction`、可信 `commandOperation`、本次 `toolCallId`、Scratch 状态和 FileChangeSet
+`failureAction`、可信 `commandOperation`、本次 `toolCallId`、可选 Scratch 状态和 FileChangeSet
 引用。普通命令在固定内存中持续排空输出；`INSPECT` 在通道输出预算耗尽时终止进程树并返回
 `OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
 不包装或解释普通命令语义。
-进程数预算触发且进程树已收敛时返回 `PROCESS_LIMIT_EXCEEDED`，不会伪装成 `OUTCOME_UNKNOWN`。已持久化的
+显式配置进程数预算且进程树超限收敛时返回 `PROCESS_LIMIT_EXCEEDED`，不会伪装成 `OUTCOME_UNKNOWN`。已持久化的
 ExecutionResult 是权威执行事实。Coding 产品不再维护 Change Review Artifact 或 Repository Baseline；
 需要检查当前变更时，模型通过已披露的只读文件/Diff 能力或 `execution_run` 按需读取，不制造完成证据。
 命中冻结验证候选时生成的 `validationAttemptRef` 同样属于严格 Schema 契约，并在直接返回与只读

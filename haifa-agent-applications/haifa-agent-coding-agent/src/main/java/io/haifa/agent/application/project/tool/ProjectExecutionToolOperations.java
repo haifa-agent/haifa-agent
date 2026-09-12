@@ -81,7 +81,7 @@ public final class ProjectExecutionToolOperations {
     private final Duration maximumTimeout;
     private final int maximumModelOutputBytes;
     private final int maximumModelOutputLines;
-    private final int maximumProcesses;
+    private final Optional<Integer> maximumProcesses;
     private final ExecutionOutputObserver outputObserver;
     private final UnaryOperator<String> outputSanitizer;
     private final ExecutionScratchSpaceSpec scratchSpace;
@@ -110,11 +110,12 @@ public final class ProjectExecutionToolOperations {
                 maximumTimeout,
                 maximumModelOutputBytes,
                 maximumModelOutputLines,
-                maximumProcesses,
+                Optional.of(maximumProcesses),
                 outputObserver,
                 UnaryOperator.identity(),
-                ExecutionScratchSpaceSpec.genericRequired(),
-                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
+                ExecutionScratchSpaceSpec.none(),
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
+                CodingVerificationProfileProvider.empty());
     }
 
     public ProjectExecutionToolOperations(
@@ -140,11 +141,12 @@ public final class ProjectExecutionToolOperations {
                 maximumTimeout,
                 maximumModelOutputBytes,
                 maximumModelOutputLines,
-                maximumProcesses,
+                Optional.of(maximumProcesses),
                 outputObserver,
                 outputSanitizer,
-                ExecutionScratchSpaceSpec.genericRequired(),
-                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
+                ExecutionScratchSpaceSpec.none(),
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
+                CodingVerificationProfileProvider.empty());
     }
 
     public ProjectExecutionToolOperations(
@@ -171,11 +173,12 @@ public final class ProjectExecutionToolOperations {
                 maximumTimeout,
                 maximumModelOutputBytes,
                 maximumModelOutputLines,
-                maximumProcesses,
+                Optional.of(maximumProcesses),
                 outputObserver,
                 outputSanitizer,
                 scratchSpace,
-                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
+                CodingVerificationProfileProvider.empty());
     }
 
     public ProjectExecutionToolOperations(
@@ -203,7 +206,7 @@ public final class ProjectExecutionToolOperations {
                 maximumTimeout,
                 maximumModelOutputBytes,
                 maximumModelOutputLines,
-                maximumProcesses,
+                Optional.of(maximumProcesses),
                 outputObserver,
                 outputSanitizer,
                 scratchSpace,
@@ -222,6 +225,40 @@ public final class ProjectExecutionToolOperations {
             int maximumModelOutputBytes,
             int maximumModelOutputLines,
             int maximumProcesses,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer,
+            ExecutionScratchSpaceSpec scratchSpace,
+            ExecutionWorkspaceTargetResolver workspaceTargets,
+            CodingVerificationProfileProvider verificationProfiles) {
+        this(
+                broker,
+                identifiers,
+                time,
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                maximumModelOutputLines,
+                Optional.of(maximumProcesses),
+                outputObserver,
+                outputSanitizer,
+                scratchSpace,
+                workspaceTargets,
+                verificationProfiles);
+    }
+
+    public ProjectExecutionToolOperations(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            int maximumModelOutputLines,
+            Optional<Integer> maximumProcesses,
             ExecutionOutputObserver outputObserver,
             UnaryOperator<String> outputSanitizer,
             ExecutionScratchSpaceSpec scratchSpace,
@@ -246,8 +283,12 @@ public final class ProjectExecutionToolOperations {
         if (maximumModelOutputLines < 1 || maximumModelOutputLines > 10_000) {
             throw new IllegalArgumentException("maximumModelOutputLines is out of range");
         }
-        if (maximumProcesses < 1 || maximumProcesses > 64) {
-            throw new IllegalArgumentException("maximumProcesses is out of range");
+        Objects.requireNonNull(maximumProcesses, "maximumProcesses must not be null");
+        if (maximumProcesses.isPresent()) {
+            int limit = maximumProcesses.get();
+            if (limit < 1 || limit > 64) {
+                throw new IllegalArgumentException("maximumProcesses is out of range");
+            }
         }
         this.maximumModelOutputBytes = maximumModelOutputBytes;
         this.maximumModelOutputLines = maximumModelOutputLines;
@@ -472,6 +513,29 @@ public final class ProjectExecutionToolOperations {
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             int maximumProcesses) {
+        validateFrozenInvocation(
+                arguments,
+                request,
+                environment,
+                profile,
+                scratchSpace,
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                Optional.of(maximumProcesses));
+    }
+
+    /** Reconstructs the security-relevant request fields produced by this adapter without dispatching. */
+    public static void validateFrozenInvocation(
+            ToolArguments arguments,
+            ExecutionRequest request,
+            ExecutionEnvironmentRef environment,
+            SandboxProfileRef profile,
+            ExecutionScratchSpaceSpec scratchSpace,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            Optional<Integer> maximumProcesses) {
         Objects.requireNonNull(arguments, "arguments must not be null");
         Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(defaultTimeout, "defaultTimeout must not be null");
@@ -508,7 +572,7 @@ public final class ProjectExecutionToolOperations {
                 || request.limits().timeout().compareTo(maximumTimeout) > 0
                 || request.limits().maxStdoutBytes() != channelBudget
                 || request.limits().maxStderrBytes() != channelBudget
-                || request.limits().maxProcesses() != maximumProcesses
+                || !Objects.equals(request.limits().maxProcesses(), maximumProcesses)
                 || request.limits().outputOverflowPolicy()
                         != (boundedInspection
                                 ? io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE
@@ -847,9 +911,11 @@ public final class ProjectExecutionToolOperations {
                 "sandboxProfileDigest",
                 io.haifa.agent.policy.api.PolicyDigest.sha256Fields(
                         List.of(sandboxProfileRef.value(), sandboxProfileRef.version())));
-        data.put("scratchSpecDigest", scratchSpace.canonicalDigest());
-        data.put("scratchProvisioned", result.scratchProvisioned());
-        data.put("scratchCleanupFailed", result.scratchCleanupFailed());
+        if (scratchSpace.isPresent()) {
+            data.put("scratchSpecDigest", scratchSpace.canonicalDigest());
+            data.put("scratchProvisioned", result.scratchProvisioned());
+            data.put("scratchCleanupFailed", result.scratchCleanupFailed());
+        }
         CodingValidationAttemptFactory.create(
                         operationFamily,
                         command,

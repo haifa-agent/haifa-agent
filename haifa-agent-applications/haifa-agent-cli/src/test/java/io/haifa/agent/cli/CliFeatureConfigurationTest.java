@@ -137,7 +137,7 @@ class CliFeatureConfigurationTest {
         assertThat(result.execution().maximumTimeout()).isEqualTo(java.time.Duration.ofMillis(600000));
         assertThat(result.execution().maxOutputBytes()).isEqualTo(32768);
         assertThat(result.execution().maxOutputLines()).isEqualTo(900);
-        assertThat(result.execution().maxProcesses()).isEqualTo(3);
+        assertThat(result.execution().maxProcesses()).contains(3);
         assertThat(result.execution().inheritEnvironment()).containsExactlyInAnyOrder("PATH", "JAVA_HOME");
         assertThat(result.mcpServers()).singleElement().satisfies(server -> {
             assertThat(server.id()).isEqualTo("utility");
@@ -315,7 +315,15 @@ class CliFeatureConfigurationTest {
                         cache);
 
         assertThat(result.execution().provider()).isEqualTo("host-guarded");
-        assertThat(result.execution().maxProcesses()).isEqualTo(4);
+        assertThat(result.execution().maxProcesses()).contains(4);
+
+        Path minimalConfig = Files.createTempFile("haifa-cli-default-proc", ".yaml");
+        Files.writeString(minimalConfig, "execution:\n  provider: host-guarded\n");
+        CliConfiguration defaultResult = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(new String[] {"-m", "execution", "--config", minimalConfig.toString()}),
+                        cache);
+        assertThat(defaultResult.execution().maxProcesses()).isEmpty();
 
         CliConfiguration.Execution defaults = CliConfiguration.defaults().execution();
         assertThatThrownBy(() -> new CliConfiguration.Execution(

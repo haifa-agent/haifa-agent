@@ -80,14 +80,7 @@ class ProjectExecutionNormalizationTest {
         assertThat(captured.get().workingDirectory().projectPath().value()).isEqualTo("src");
         assertThat(captured.get().limits().timeout()).isEqualTo(Duration.ofSeconds(5));
         assertThat(captured.get().context().frozenCapabilities()).contains("execution_run");
-        assertThat(captured.get().scratchSpace()).isEqualTo(CodingToolchainEnvironmentProfile.defaultScratchSpace());
-        assertThat(captured.get().scratchSpace().rootEnvironmentNames()).contains("GOTMPDIR");
-        assertThat(captured.get().scratchSpace().childBindings())
-                .singleElement()
-                .satisfies(binding -> {
-                    assertThat(binding.environmentName()).isEqualTo("GOCACHE");
-                    assertThat(binding.relativeDirectory()).isEqualTo("go-build");
-                });
+        assertThat(captured.get().scratchSpace().isEmpty()).isTrue();
         assertThat(result.successful()).isFalse();
         assertThat(result.summary())
                 .contains("Command failed (exit 7)", "first", "1 lines omitted", "third")
@@ -103,9 +96,9 @@ class ProjectExecutionNormalizationTest {
                 .containsEntry("failureCategory", "COMMAND_FAILED")
                 .containsEntry("stableFailureCode", "NON_ZERO_EXIT")
                 .containsEntry("resourceClass", "COMMAND")
-                .containsEntry(
-                        "scratchSpecDigest",
-                        CodingToolchainEnvironmentProfile.defaultScratchSpace().canonicalDigest());
+                .doesNotContainKey("scratchSpecDigest")
+                .doesNotContainKey("scratchProvisioned")
+                .doesNotContainKey("scratchCleanupFailed");
         assertThat(result.structuredData().get("validationEvidence"))
                 .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
                         .containsEntry("status", "FAILED")

@@ -2,7 +2,6 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
-import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
@@ -124,7 +123,7 @@ final class CliExecutionPlatform {
                         principal,
                         environmentRef,
                         profile.ref(),
-                        CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                        io.haifa.agent.execution.api.ExecutionScratchSpaceSpec.none(),
                         configuration.defaultTimeout(),
                         configuration.maximumTimeout(),
                         configuration.maxOutputBytes(),
@@ -147,7 +146,7 @@ final class CliExecutionPlatform {
                 configuration.maxProcesses(),
                 observer,
                 java.util.function.UnaryOperator.identity(),
-                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                io.haifa.agent.execution.api.ExecutionScratchSpaceSpec.none(),
                 workspaceTargetResolver(provisioning, workspaceAccess, tenant, principal),
                 verificationProfiles);
         String securitySummary = securitySummary(profile, preflight);
@@ -193,8 +192,6 @@ final class CliExecutionPlatform {
 
     static String policyResourceDigest(String command, String workdir, String profileDigest) {
         String invocationDigest = PolicyDigest.sha256Fields(List.of(command, workdir));
-        invocationDigest = io.haifa.agent.execution.api.ExecutionRequest.digestWithScratch(
-                invocationDigest, CodingToolchainEnvironmentProfile.defaultScratchSpace());
         return PolicyDigest.sha256Fields(List.of(invocationDigest, profileDigest));
     }
 
@@ -251,18 +248,12 @@ final class CliExecutionPlatform {
         configuration.inheritEnvironment().stream()
                 .sorted()
                 .forEach(value -> identityFields.add("environment:" + value));
-        CodingToolchainEnvironmentProfile.defaultScratchSpace().environmentNames().stream()
-                .sorted()
-                .forEach(value -> identityFields.add("scratch-environment:" + value));
         String version = "3-"
                 + io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(identityFields)
                         .value()
                         .substring("sha256:".length());
         SandboxProfileRef reference = new SandboxProfileRef("cli-" + provider.providerId(), version);
-        Set<String> allowedEnvironment = java.util.stream.Stream.concat(
-                        inheritedEnvironment.stream(),
-                        CodingToolchainEnvironmentProfile.defaultScratchSpace().environmentNames().stream())
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        Set<String> allowedEnvironment = Set.copyOf(inheritedEnvironment);
         return SandboxProfile.hostGuarded(
                 reference, provider.configurationDigest(), Set.of("git"), allowedEnvironment, true);
     }

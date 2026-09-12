@@ -525,7 +525,8 @@ execution:
   maxTimeoutMillis: 1800000
   maxOutputLines: 2000
   maxOutputBytes: 51200
-  maxProcesses: 8
+  # maxProcesses is optional (omitted by default so ordinary build tools like Maven/Surefire are not killed).
+  # maxProcesses: 8
   # "*" inherits ordinary host variables after secret-like names are removed.
   # An explicit list remains supported for stricter deployments.
   inheritEnvironment: ["*"]
