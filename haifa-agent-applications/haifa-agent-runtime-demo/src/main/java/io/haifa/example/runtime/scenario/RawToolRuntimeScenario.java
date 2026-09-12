@@ -28,8 +28,7 @@ import java.util.Set;
  * {@code haifa-agent-sdk-example}.
  */
 public final class RawToolRuntimeScenario implements RuntimeScenario {
-    public static final String TOOL_ALIAS = "demo_echo";
-    private static final String TOOL_NAME = "demo.echo";
+    public static final String TOOL_NAME = "demo_echo";
 
     private final DefaultToolCatalog catalog = createCatalog();
 
@@ -58,7 +57,7 @@ public final class RawToolRuntimeScenario implements RuntimeScenario {
 
     @Override
     public Set<String> allowedToolAliases() {
-        return Set.of(TOOL_ALIAS);
+        return Set.of(TOOL_NAME);
     }
 
     @Override
@@ -128,7 +127,7 @@ public final class RawToolRuntimeScenario implements RuntimeScenario {
                 false,
                 Set.of("example", "runtime-demo"));
         return new ToolCatalogBuilder()
-                .register(new ToolAlias(TOOL_ALIAS), definition, "deepseek-runtime-demo.echo.v1", provider)
+                .register(new ToolAlias(TOOL_NAME), definition, "deepseek-runtime-demo.echo.v1", provider)
                 .freeze();
     }
 }
