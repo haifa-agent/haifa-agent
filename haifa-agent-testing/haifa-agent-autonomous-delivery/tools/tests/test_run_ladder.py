@@ -414,6 +414,7 @@ class RunRecordTest(unittest.TestCase):
             {
                 "mode": "agent",
                 "model": "glm-5.3-flash",
+                "modelSource": "override",
                 "approval": "auto",
                 "assetVersion": "2026.09.11.2",
                 "assetManifestSha256": "b" * 64,
@@ -473,6 +474,128 @@ class RunRecordTest(unittest.TestCase):
         self.assertEqual("FAILED", record["status"])
         self.assertFalse(record["accepted"])
         self.assertIn("FileNotFoundError", record["failures"][0])
+
+
+class ModelResolutionTest(unittest.TestCase):
+    def distribution(self, directory: str, default_model: str) -> Path:
+        root = Path(directory)
+        (root / "haifa-coding.yaml").write_text(
+            "models:" + chr(10) + "  default: " + default_model + chr(10) + "  providers: []" + chr(10),
+            encoding="utf-8",
+        )
+        launcher = root / "haifa-coding.cmd"
+        launcher.write_text("@echo off" + chr(10), encoding="utf-8")
+        return launcher
+
+    def test_the_configured_default_is_used_when_no_override_is_given(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = self.distribution(directory, "glm-5.3-flash")
+
+            self.assertEqual(("glm-5.3-flash", "agent configuration"), MODULE.effective_model(settings(agent=str(launcher))))
+
+    def test_an_override_wins_over_the_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = self.distribution(directory, "glm-5.3-flash")
+
+            resolved = MODULE.effective_model(settings(agent=str(launcher), model="kimi-k3"))
+
+        self.assertEqual(("kimi-k3", "override"), resolved)
+
+    def test_an_unknown_configuration_stays_unknown(self):
+        self.assertEqual((None, "unknown"), MODULE.effective_model(settings(agent="haifa-coding")))
+
+    def test_the_configured_default_drives_the_credential_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = self.distribution(directory, "glm-5.3-flash")
+            os.environ.pop("BIGMODEL_API_KEY", None)
+
+            problems = MODULE.missing_environment(settings(agent=str(launcher)))
+
+        self.assertTrue(any("BIGMODEL_API_KEY is empty" in problem for problem in problems))
+
+
+class StoredConnectionTest(unittest.TestCase):
+    def store(self, directory: str, references: list[str]) -> Path:
+        path = Path(directory) / "auth.json"
+        path.write_text(
+            json.dumps({"version": 1, "credentials": {reference: {"kind": "api_key"} for reference in references}}),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_model_auth_providers_are_recognized(self):
+        self.assertEqual("deepseek", MODULE.model_auth_provider("deepseek-responses-flash"))
+        self.assertEqual("openai-codex", MODULE.model_auth_provider("gpt-5.6-sol"))
+        self.assertIsNone(MODULE.model_auth_provider("glm-5.3-flash"))
+
+    def test_a_present_connection_is_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = MODULE.AUTH_STORE
+            MODULE.AUTH_STORE = self.store(directory, ["model-auth://deepseek/default"])
+            try:
+                self.assertIsNone(MODULE.stored_connection_problem("deepseek"))
+            finally:
+                MODULE.AUTH_STORE = original
+
+    def test_a_missing_connection_stops_the_run_before_it_starts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = MODULE.AUTH_STORE
+            MODULE.AUTH_STORE = self.store(directory, ["model-auth://openai-codex/default"])
+            try:
+                problem = MODULE.stored_connection_problem("deepseek")
+                problems = MODULE.missing_environment(settings(model="deepseek-responses-flash"))
+            finally:
+                MODULE.AUTH_STORE = original
+
+        self.assertIn("no stored connection for deepseek", problem)
+        self.assertTrue(any("no stored connection for deepseek" in entry for entry in problems))
+
+    def test_a_missing_store_is_reported(self):
+        original = MODULE.AUTH_STORE
+        MODULE.AUTH_STORE = Path(tempfile.gettempdir()) / "no-such-haifa-auth.json"
+        try:
+            self.assertIn("does not exist", MODULE.stored_connection_problem("deepseek"))
+        finally:
+            MODULE.AUTH_STORE = original
+
+
+class CredentialScrubbingTest(unittest.TestCase):
+    def test_the_acceptance_environment_has_no_provider_credential(self):
+        os.environ["BIGMODEL_API_KEY"] = "secret-value"
+        try:
+            with MODULE.without_credentials(settings()):
+                inside = os.environ.get("BIGMODEL_API_KEY")
+            outside = os.environ.get("BIGMODEL_API_KEY")
+        finally:
+            os.environ.pop("BIGMODEL_API_KEY", None)
+
+        self.assertIsNone(inside)
+        self.assertEqual("secret-value", outside)
+
+
+class InterruptTest(unittest.TestCase):
+    def test_an_unwinding_run_kills_the_agent(self):
+        killed = []
+        original_kill, original_heartbeat, original_say = MODULE.kill_process_tree, MODULE.HEARTBEAT_SECONDS, MODULE.say
+
+        def spy(process):
+            killed.append(process)
+            original_kill(process)
+
+        def exploding_say(_message=""):
+            raise RuntimeError("interrupted")
+
+        MODULE.kill_process_tree, MODULE.HEARTBEAT_SECONDS, MODULE.say = spy, 0, exploding_say
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                argv = [sys.executable, "-c", "import time; time.sleep(30)"]
+                with self.assertRaises(RuntimeError):
+                    MODULE.run_agent(settings(), argv, Path(directory), Path(directory) / "agent.log", 600, "  [1/1] L1-01")
+        finally:
+            MODULE.kill_process_tree, MODULE.HEARTBEAT_SECONDS, MODULE.say = original_kill, original_heartbeat, original_say
+
+        self.assertEqual(1, len(killed))
+        self.assertIsNotNone(killed[0].poll(), "the agent process must be gone")
 
 
 class DiagnosticsTest(unittest.TestCase):
