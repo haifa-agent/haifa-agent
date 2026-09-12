@@ -93,6 +93,7 @@ class Settings:
     gate_repeat: int
     rehearse: bool
     keep_workdir: bool
+    allow_unpinned_assets: bool
 
 
 @dataclass
@@ -170,6 +171,7 @@ def resolve_settings(arguments: argparse.Namespace) -> Settings:
         gate_repeat=arguments.gate_repeat,
         rehearse=arguments.rehearse,
         keep_workdir=arguments.keep_workdir,
+        allow_unpinned_assets=arguments.allow_unpinned_assets,
     )
 
 
@@ -317,15 +319,41 @@ def check_runner_tests() -> tuple[bool, str]:
     return completed.returncode == 0, (tail[0] if tail else "no output")
 
 
+def lock_mismatch(checkout: Path, lock: dict) -> str | None:
+    """Return why ``checkout`` is not the locked asset set, or None when it matches.
+
+    The manifest pins the case-tree digest and ``verify_assets_root`` already checked the tree
+    against it, so an equal manifest digest means the cases are byte-identical to the locked
+    revision. Anything else produces results that cannot be compared with the pinned baseline.
+    """
+    digest = fetch_assets.sha256_file(checkout / run_case.ASSET_MANIFEST_NAME)
+    if digest == lock["manifestSha256"]:
+        return None
+    return (
+        f"manifest digest {digest[:12]} does not match assets.lock.json {lock['manifestSha256'][:12]}: "
+        "this is not the pinned asset set"
+    )
+
+
 def resolve_assets(settings: Settings) -> tuple[bool, str, Path | None]:
+    try:
+        lock = fetch_assets.load_lock()
+    except SystemExit as error:
+        return False, str(error), None
     if settings.assets_dir:
+        checkout = settings.assets_dir.resolve()
         try:
-            run_case.verify_assets_root(settings.assets_dir)
+            run_case.verify_assets_root(checkout)
         except SystemExit as error:
             return False, str(error), None
-        return True, f"verified checkout {settings.assets_dir}", settings.assets_dir
+        mismatch = lock_mismatch(checkout, lock)
+        if mismatch is None:
+            return True, f"locked revision at {checkout}", checkout
+        if settings.allow_unpinned_assets:
+            return True, f"UNPINNED {checkout}: {mismatch}", checkout
+        return False, f"{mismatch} (use --allow-unpinned-assets to evaluate it on purpose)", None
     try:
-        checkout = fetch_assets.materialize(settings.cache_dir.resolve(), fetch_assets.load_lock())
+        checkout = fetch_assets.materialize(settings.cache_dir.resolve(), lock)
     except SystemExit as error:
         return False, str(error), None
     return True, f"locked revision at {checkout}", checkout
@@ -436,7 +464,6 @@ def launcher_argv(agent: str) -> tuple[list[str], str]:
         jar = path.with_name("haifa-agent.jar")
         configuration = path.with_name("haifa-coding.yaml")
         if jar.is_file() and configuration.is_file():
-            os.environ.setdefault("HAIFA_LOG_DIR", str(path.with_name("logs")))
             return [java_executable(), "-jar", str(jar), "--config", str(configuration)], f"{jar.name} (bypassing {path.name})"
         raise SystemExit(
             f"{path.name} is a batch launcher and cmd.exe would truncate the multi-line task statement, "
@@ -444,6 +471,28 @@ def launcher_argv(agent: str) -> tuple[list[str], str]:
             "produced by scripts/package-local-coding-agent.ps1."
         )
     return [agent], path.name
+
+
+def prepare_launcher_environment(agent: str) -> list[str]:
+    """Create the data directories and export the defaults the packaged launcher would set.
+
+    Bypassing the batch launcher must not change where the run stores its database, transcripts
+    and logs (see the launcher written by scripts/package-local-coding-agent.py).
+    """
+    path = Path(agent)
+    if path.suffix.lower() not in BATCH_SUFFIXES:
+        return []
+    distribution = path.parent
+    data = distribution / "data"
+    (data / "transcripts").mkdir(parents=True, exist_ok=True)
+    (distribution / "logs").mkdir(parents=True, exist_ok=True)
+    defaults = {
+        "HAIFA_SQLITE_DATABASE_PATH": str(data / "runtime.db"),
+        "HAIFA_TRANSCRIPT_ROOT": str(data / "transcripts"),
+        "HAIFA_LOG_DIR": str(distribution / "logs"),
+    }
+    applied = [name for name, value in defaults.items() if os.environ.setdefault(name, value) == value]
+    return applied
 
 
 def agent_argv(settings: Settings, workspace: Path, prompt: str, budget_seconds: int) -> list[str]:
@@ -652,7 +701,9 @@ def agent_summary(agent: AgentOutcome | None) -> str:
     return f"agent {duration(agent.duration_seconds)} exit={exit_code} lines={agent.lines}"
 
 
-def print_case_result(prefix: str, outcome: CaseOutcome, tally: Counter, done: int, total: int, started: float) -> None:
+def print_case_result(
+    prefix: str, outcome: CaseOutcome, tally: Counter, accepted: int, done: int, total: int, started: float
+) -> None:
     indent = " " * len(prefix)
     changed = f"changed {len(outcome.changed_sources)}: {', '.join(outcome.changed_sources[:4])}" if outcome.changed_sources else "changed 0"
     say(
@@ -667,10 +718,9 @@ def print_case_result(prefix: str, outcome: CaseOutcome, tally: Counter, done: i
                 say(f"{indent}   {name}: {reason[:160]}")
     if outcome.detail:
         say(f"{indent} contract: {outcome.detail[:200]}")
-    passed = tally["PASSED"]
-    rate = f"{passed * 100 // done}%" if done else "-"
+    rate = f"{accepted * 100 // done}%" if done else "-"
     say(
-        f"  progress {done}/{total}  PASSED {passed} ({rate})  FAILED {tally['FAILED']}  "
+        f"  progress {done}/{total}  PASSED {accepted} ({rate})  FAILED {tally['FAILED']}  "
         f"INCOMPLETE_BUDGET {tally['INCOMPLETE_BUDGET']}  elapsed {duration(time.monotonic() - started)}"
     )
     say()
@@ -689,24 +739,33 @@ def write_reports(settings: Settings, records: list[dict], cases_root: Path) -> 
     return report_path
 
 
+def accepted_runs(records: list[dict]) -> int:
+    """A run counts only when the acceptance result itself is valid and passed."""
+    return sum(1 for record in records if record["accepted"])
+
+
 def print_summary(records: list[dict], report_path: Path, started: float) -> None:
     tally = Counter(record["status"] for record in records)
+    accepted = accepted_runs(records)
     levels: dict[str, list[int]] = {}
     for record in records:
         bucket = levels.setdefault(record["level"], [0, 0])
         bucket[0] += 1
-        bucket[1] += 1 if record["status"] == "PASSED" else 0
+        bucket[1] += 1 if record["accepted"] else 0
     say("LADDER_SUMMARY")
     say(
-        f"  runs={len(records)} passed={tally['PASSED']} failed={tally['FAILED']} "
+        f"  runs={len(records)} passed={accepted} failed={tally['FAILED']} "
         f"incompleteBudget={tally['INCOMPLETE_BUDGET']} wall={duration(time.monotonic() - started)}"
     )
     for level in sorted(levels):
         total, passed = levels[level]
         say(f"  {level}  {passed}/{total}  {passed * 100 // total if total else 0}%")
-    failed = [record["caseId"] for record in records if record["status"] != "PASSED"]
-    if failed:
-        say(f"  not passed: {', '.join(failed)}")
+    not_accepted = [record["caseId"] for record in records if not record["accepted"]]
+    if not_accepted:
+        say(f"  not passed: {', '.join(not_accepted)}")
+    contract = [record["caseId"] for record in records if record["contractProblems"]]
+    if contract:
+        say(f"  result contract violated by: {', '.join(contract)}")
     say(f"  report: {report_path}")
 
 
@@ -720,6 +779,10 @@ def evaluate(settings: Settings, checkout: Path, case_ids: list[str]) -> int:
     done = 0
 
     say(f"LADDER_RUN cases={len(case_ids)} repeat={settings.repeat} total={total}")
+    if not settings.rehearse and settings.agent:
+        applied = prepare_launcher_environment(settings.agent)
+        if applied:
+            say(f"  distribution data paths: {', '.join(applied)}")
     say()
     for case_id in case_ids:
         for attempt in range(1, settings.repeat + 1):
@@ -736,11 +799,11 @@ def evaluate(settings: Settings, checkout: Path, case_ids: list[str]) -> int:
             outcome, record = evaluate_case(settings, cases_root / case_id, attempt, prefix)
             tally[outcome.status] += 1
             records.append(record)
-            print_case_result(prefix, outcome, tally, done, total, started)
+            print_case_result(prefix, outcome, tally, accepted_runs(records), done, total, started)
 
     report_path = write_reports(settings, records, cases_root)
     print_summary(records, report_path, started)
-    return 0 if tally["PASSED"] == total else 1
+    return 0 if accepted_runs(records) == total else 1
 
 
 # ------------------------------------------------------------------------------------------- main
@@ -772,6 +835,11 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
         help="run the whole pipeline with the reference solution instead of the agent (no provider call)",
     )
     parser.add_argument("--keep-workdir", action="store_true", help="keep the workspace of passed cases")
+    parser.add_argument(
+        "--allow-unpinned-assets",
+        action="store_true",
+        help="accept an --assets-dir that does not match assets.lock.json (results are not comparable)",
+    )
     return parser.parse_args(argv)
 
 
