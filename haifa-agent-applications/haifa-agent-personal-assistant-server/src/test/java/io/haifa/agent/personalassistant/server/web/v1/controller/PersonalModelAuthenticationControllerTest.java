@@ -9,8 +9,9 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethodDescriptor;
 import io.haifa.agent.auth.localmodel.ExternalLoginMode;
-import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.InMemoryWindowsCredentialManagerClient;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
+import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.model.api.ModelCapability;
@@ -96,7 +97,7 @@ class PersonalModelAuthenticationControllerTest {
 
     @Test
     void projectsConfiguredEnvironmentReadinessWithoutExposingTheVariableNameOrLogout() {
-        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var store = new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
         var provider = new PersonalAssistantProperties.ModelProvider(
                 "deepseek",
                 "DeepSeek",
@@ -149,7 +150,7 @@ class PersonalModelAuthenticationControllerTest {
 
     @Test
     void rejectsApiKeyForExternalLoginProvidersAndClearsTheRequestBuffers() {
-        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var store = new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
         try (var service = new LocalModelAuthenticationService(
                 store,
                 Optional.empty(),
@@ -184,7 +185,7 @@ class PersonalModelAuthenticationControllerTest {
 
     @Test
     void savesListsAndDeletesWithoutReturningApiKey() {
-        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var store = new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
         try (var service = new LocalModelAuthenticationService(
                 store,
                 Optional.empty(),
@@ -237,7 +238,7 @@ class PersonalModelAuthenticationControllerTest {
 
     @Test
     void externalLoginFailsClosedWithoutApprovedRegistration() {
-        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var store = new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
         try (var service = new LocalModelAuthenticationService(
                 store,
                 Optional.empty(),

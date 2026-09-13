@@ -148,6 +148,52 @@ class LocalModelCredentialResolverTest {
                 .hasMessage("AUTH_REAUTH_REQUIRED");
     }
 
+    @Test
+    void resolvesOsCredentialFromOsStoreWithoutFallback() {
+        InMemoryStore store = new InMemoryStore();
+        Map<String, String> osSecrets = Map.of("MY_API_KEY", "os-secret-value");
+        LocalModelCredentialResolver resolver = new LocalModelCredentialResolver(
+                Map.of("MY_API_KEY", "env-secret-value")::get,
+                store,
+                new ExternalLoginRegistry(List.of()),
+                CLOCK,
+                Duration.ofSeconds(5),
+                name -> Optional.ofNullable(osSecrets.get(name)));
+
+        // os:// resolves from osStore, not environment
+        assertThat(resolver.resolve(new CredentialRef("os://MY_API_KEY")).value())
+                .isEqualTo("os-secret-value");
+        // env:// resolves from environment, not osStore
+        assertThat(resolver.resolve(new CredentialRef("env://MY_API_KEY")).value())
+                .isEqualTo("env-secret-value");
+
+        // Missing os item throws AUTH_CREDENTIAL_UNAVAILABLE and does NOT fallback to env
+        assertThatThrownBy(() -> resolver.resolve(new CredentialRef("os://NON_EXISTENT")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("AUTH_CREDENTIAL_UNAVAILABLE");
+
+        // Invalid os name format throws IllegalArgumentException
+        assertThatThrownBy(() -> resolver.resolve(new CredentialRef("os://invalid/name")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("os credential reference is invalid");
+    }
+
+    @Test
+    void unavailableOsStoreFailsClosed() {
+        InMemoryStore store = new InMemoryStore();
+        LocalModelCredentialResolver resolver = new LocalModelCredentialResolver(
+                name -> null,
+                store,
+                new ExternalLoginRegistry(List.of()),
+                CLOCK,
+                Duration.ofSeconds(5),
+                name -> UnavailableWindowsCredentialManagerClient.INSTANCE.read("haifa:os:" + name));
+
+        assertThatThrownBy(() -> resolver.resolve(new CredentialRef("os://TEST_KEY")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("OS_CREDENTIAL_STORE_UNAVAILABLE");
+    }
+
     private static LocalModelCredentialResolver resolver(
             InMemoryStore store, ExternalLoginRegistry registry, Map<String, String> environment) {
         return new LocalModelCredentialResolver(environment::get, store, registry, CLOCK, Duration.ofSeconds(5));

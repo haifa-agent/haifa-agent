@@ -1,6 +1,7 @@
 package io.haifa.agent.personalassistant.server.configuration.model;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -82,7 +83,22 @@ class PersonalModelFactoryTest {
                                 "deepseek-v4-flash",
                                 "openai-chat-completions"))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("env:// or model-auth://");
+                .hasMessageContaining("env://, os://, or model-auth://");
+
+        assertThatCode(() -> provider(
+                        "deepseek",
+                        "DeepSeek",
+                        false,
+                        URI.create("https://api.deepseek.com"),
+                        "os://DEEPSEEK_API_KEY",
+                        List.of(new PersonalAssistantProperties.ApiBinding(
+                                "openai-chat-completions", "deepseek-openai-chat", null)),
+                        List.of(model(
+                                "deepseek-v4-flash",
+                                "DeepSeek V4 Flash",
+                                "deepseek-v4-flash",
+                                "openai-chat-completions"))))
+                .doesNotThrowAnyException();
 
         assertThatThrownBy(() -> provider(
                         "openai-codex",

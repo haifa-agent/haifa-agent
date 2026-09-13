@@ -62,6 +62,28 @@ class LocalModelAuthenticationServiceTest {
     }
 
     @Test
+    void checksOsReferencesViaOsStore() {
+        var osMap = Map.of("STORED_KEY", "secret-value");
+        var service = new LocalModelAuthenticationService(
+                new InMemoryStore(),
+                Optional.empty(),
+                reference -> {
+                    throw new AssertionError("credential resolution is not expected");
+                },
+                name -> null,
+                name -> Optional.ofNullable(osMap.get(name)));
+
+        assertThat(service.connectionRequired(new CredentialRef("os://STORED_KEY")))
+                .isFalse();
+        assertThat(service.connectionRequired(new CredentialRef("os://MISSING_KEY")))
+                .isTrue();
+
+        assertThatThrownBy(() -> service.connectionRequired(new CredentialRef("os://invalid/name")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("AUTH_OS_CREDENTIAL_REFERENCE_INVALID");
+    }
+
+    @Test
     void findsCodexAccountIdForValidatedExternalCredential() {
         InMemoryStore store = new InMemoryStore();
         var service = service(store, Map.of());

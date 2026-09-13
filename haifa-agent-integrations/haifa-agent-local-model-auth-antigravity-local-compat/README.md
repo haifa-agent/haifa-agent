@@ -7,7 +7,7 @@
 - 实现 `ExternalLoginMethod`（方法 ID `google-antigravity`），提供浏览器 PKCE 授权流程；
 - 仅在 `HAIFA_ANTIGRAVITY_LOCAL_COMPAT_TEST=true` 且 Client ID/Secret 由环境注入时启用注册；
 - 支持安全的 CloudCode Project 发现与配额查询，缺失 Project 时默认返回 `AUTH_ONBOARDING_CONFIRMATION_REQUIRED`，只有显式配置 `HAIFA_ANTIGRAVITY_ALLOW_ONBOARDING=true` 时才允许自动开通；
-- 维护内存级 `AntigravityProjectRegistry`，同一 Token 签发版本仅恢复一次 Project 投影，Project ID 不落地写入 `auth.json`；
+- 维护内存级 `AntigravityProjectRegistry`，同一 Token 签发版本仅恢复一次 Project 投影，Project ID 不落地写入系统凭据管理器；
 - 仅作为外围驱动被最高层 Composition Root（如 `haifa-agent-cli`、`haifa-agent-personal-assistant-server`）显式装配，绝不被通用 Gemini 模型适配器反向依赖（Gemini Adapter 仅依赖 `AntigravityCloudCodeProjectResolver` 窄接口）。
 
 ## 架构约束与隔离

@@ -572,6 +572,8 @@ public final class ToolPipeline {
                     detail == null || detail.isBlank()
                             ? "tool provider invocation failed"
                             : "tool provider invocation failed: " + detail);
+        } finally {
+            resolvedCredentials.clear();
         }
     }
 

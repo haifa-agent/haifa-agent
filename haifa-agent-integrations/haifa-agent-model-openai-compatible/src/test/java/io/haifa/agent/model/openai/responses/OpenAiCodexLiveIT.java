@@ -4,9 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
-import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
+import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.codex.CodexDeviceLoginOperation;
 import io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.codex.CodexLocalCompatibilityRegistrationFactory;
@@ -25,8 +25,6 @@ import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.net.URI;
 import java.net.http.HttpClient;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
@@ -50,9 +48,6 @@ class OpenAiCodexLiveIT {
         Assumptions.assumeTrue(enabled(LIVE_SWITCH), LIVE_SWITCH + " must explicitly enable the real Codex call");
 
         Map<String, String> environment = System.getenv();
-        Path authFile = authFile(environment);
-        Assumptions.assumeTrue(Files.isRegularFile(authFile), "Haifa auth.json is unavailable");
-
         ObjectMapper json = new ObjectMapper();
         Clock clock = Clock.systemUTC();
         HttpClient http = HttpClient.newBuilder()
@@ -60,7 +55,7 @@ class OpenAiCodexLiveIT {
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .proxy(java.net.ProxySelector.getDefault())
                 .build();
-        FileLocalModelAuthStore store = new FileLocalModelAuthStore(authFile, json);
+        WindowsLocalModelAuthStore store = WindowsLocalModelAuthStore.defaultStore(json);
         var codexMethod = CodexLocalCompatibilityRegistrationFactory.create(environment)
                 .map(registration -> new CodexExternalLoginMethod(
                         registration,
@@ -147,16 +142,6 @@ class OpenAiCodexLiveIT {
                         OpenAiResponsesDialects.CODEX_USER_AGENT_OPTION,
                         userAgent),
                 Map.of());
-    }
-
-    private static Path authFile(Map<String, String> environment) {
-        String configured = environment.get("HAIFA_CODEX_AUTH_FILE");
-        if (configured != null && !configured.isBlank()) {
-            return Path.of(configured.trim()).toAbsolutePath().normalize();
-        }
-        String userHome = System.getProperty("user.home");
-        if (userHome == null || userHome.isBlank()) throw new IllegalStateException("user.home is unavailable");
-        return Path.of(userHome, ".haifa-agent", "auth.json").toAbsolutePath().normalize();
     }
 
     private static boolean enabled(String name) {

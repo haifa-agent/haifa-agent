@@ -67,11 +67,11 @@ IdeCodingAgentMain --workspace D:\repos\my-project -m "Fix the failing module te
 
 ## Model connection and Codex subscription login
 
-Interactive startup checks only the selected model's credential reference. If an `env://...` value is absent or a
+Interactive startup checks only the selected model's credential reference. If an `env://...` or `os://...` value is absent or a
 `model-auth://...` entry is missing, the Terminal opens a connection selector before the first prompt. `/login`,
 `/account`, and `/logout` manage the same product-private connection boundary. API keys use a masked, short-lived
-character buffer and may be saved to the current user's plaintext `~/.haifa-agent/auth.json`; the file is rejected
-unless the process can establish and verify user-only permissions/ACL. Credentials never belong in YAML.
+character buffer and are saved to the current OS user's secure system credential store (Windows Credential Manager);
+credentials never belong in plaintext files or YAML.
 
 The dedicated `openai-codex-responses` binding uses ChatGPT subscription authentication, not an OpenAI Platform API
 key and not a conversion of subscription quota into an API key. Browser callback and headless device-code login are
@@ -86,7 +86,7 @@ window appears. That URL is an ephemeral in-memory UI value: query parameters ar
 never enter the general attempt snapshot, and are removed from the one-time channel as soon as the CLI consumes them.
 Both login modes keep a persistent transcript card for `STARTING`, `WAITING_USER`, `EXCHANGING`, `STORING`, and the
 final result. A browser callback page only confirms that authorization reached Haifa; it does not claim that token
-exchange or `~/.haifa-agent/auth.json` persistence succeeded. Failures retain a stable reason code and a specific next
+exchange or system credential store persistence succeeded. Failures retain a stable reason code and a specific next
 action in the transcript, while safe application logs contain the Attempt ID, stage, HTTP status, and retryable flag.
 
 ```yaml

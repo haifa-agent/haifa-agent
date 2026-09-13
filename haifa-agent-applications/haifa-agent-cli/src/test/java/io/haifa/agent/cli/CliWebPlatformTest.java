@@ -68,6 +68,42 @@ class CliWebPlatformTest {
                 .containsExactly("web-search.tavily", "web-fetch.tavily");
     }
 
+    @Test
+    void assemblesWebProvidersWithOsStoreCredentials() {
+        var configuration = new CliConfiguration.Web(
+                new CliConfiguration.WebProvider(
+                        true,
+                        "brave",
+                        io.haifa.agent.web.provider.BraveWebSearchProvider.DEFAULT_ENDPOINT,
+                        "os://brave-key",
+                        java.time.Duration.ofSeconds(20),
+                        1024 * 1024),
+                new CliConfiguration.WebProvider(
+                        false,
+                        "browserless",
+                        io.haifa.agent.web.provider.BrowserlessFetchProvider.DEFAULT_ENDPOINT,
+                        "env://BROWSERLESS_TOKEN",
+                        java.time.Duration.ofSeconds(20),
+                        2 * 1024 * 1024));
+
+        var platform = CliWebPlatform.create(
+                configuration,
+                new PrincipalRef("local-user", "user"),
+                ignored -> null,
+                name -> name.equals("brave-key")
+                        ? java.util.Optional.of("os-brave-secret")
+                        : java.util.Optional.empty());
+
+        assertThat(platform.contributions()).hasSize(1);
+        var requirement = platform.contributions()
+                .getFirst()
+                .definition()
+                .credentialRequirements()
+                .getFirst();
+        assertThat(platform.credentialBroker().requireSecret(requirement.credentialId()))
+                .isEqualTo("os-brave-secret");
+    }
+
     private static CliConfiguration.Web enabledWeb() {
         return new CliConfiguration.Web(
                 new CliConfiguration.WebProvider(
