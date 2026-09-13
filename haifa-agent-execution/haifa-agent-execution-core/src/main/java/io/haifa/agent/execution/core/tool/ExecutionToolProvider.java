@@ -265,7 +265,7 @@ public final class ExecutionToolProvider implements ToolProvider {
                 || request.limits().timeout().compareTo(configuration.maximumTimeout()) > 0
                 || request.limits().maxStdoutBytes() != BROKER_OUTPUT_BYTES_PER_CHANNEL
                 || request.limits().maxStderrBytes() != BROKER_OUTPUT_BYTES_PER_CHANNEL
-                || request.limits().maxProcesses() != configuration.maximumProcesses()
+                || !Objects.equals(request.limits().maxProcesses(), configuration.maximumProcesses())
                 || request.limits().outputOverflowPolicy()
                         != io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.RETAIN_HEAD_TAIL) {
             throw new SecurityException("execution request drifted from the frozen Tool invocation");

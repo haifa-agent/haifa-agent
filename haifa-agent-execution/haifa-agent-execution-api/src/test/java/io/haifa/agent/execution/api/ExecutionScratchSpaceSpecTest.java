@@ -24,7 +24,6 @@ class ExecutionScratchSpaceSpecTest {
     void invocationIdentityChangesWithTheScratchContract() {
         var generic = ExecutionScratchSpaceSpec.genericRequired();
         var coding = new ExecutionScratchSpaceSpec(
-                true,
                 Set.of("TMPDIR", "TMP", "TEMP", "GOTMPDIR"),
                 List.of(new ExecutionScratchBinding("GOCACHE", "go-build")));
         String base = "a".repeat(64);
@@ -32,5 +31,20 @@ class ExecutionScratchSpaceSpecTest {
         assertThat(generic.canonicalDigest()).hasSize(64).isNotEqualTo(coding.canonicalDigest());
         assertThat(ExecutionRequest.digestWithScratch(base, generic))
                 .isNotEqualTo(ExecutionRequest.digestWithScratch(base, coding));
+    }
+
+    @Test
+    void noneSpecRepresentsEmptyScratchWithoutModifyingBaseDigest() {
+        var none = ExecutionScratchSpaceSpec.none();
+        assertThat(none.isPresent()).isFalse();
+        assertThat(none.isEmpty()).isTrue();
+        assertThat(none.rootEnvironmentNames()).isEmpty();
+        assertThat(none.childBindings()).isEmpty();
+        assertThat(none.canonicalDigest()).hasSize(64);
+
+        String base = "b".repeat(64);
+        assertThat(ExecutionRequest.digestWithScratch(base, none)).isEqualTo(base);
+        assertThatThrownBy(() -> ExecutionRequest.digestWithScratch(base, null))
+                .isInstanceOf(NullPointerException.class);
     }
 }

@@ -133,7 +133,7 @@ class ExecutionToolSchemaValidatorTest {
                 .containsEntry("x-haifa-configuration-identity", "sha256:configuration-a")
                 .containsEntry(
                         "x-haifa-scratch-spec-digest",
-                        io.haifa.agent.execution.api.ExecutionScratchSpaceSpec.genericRequired()
+                        io.haifa.agent.execution.api.ExecutionScratchSpaceSpec.none()
                                 .canonicalDigest());
     }
 }

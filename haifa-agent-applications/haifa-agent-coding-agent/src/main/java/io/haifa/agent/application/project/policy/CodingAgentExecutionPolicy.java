@@ -26,6 +26,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Product-owned final execution policy for Coding Agent Runtime, CLI, and exact internal Git reads. */
 public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
@@ -51,7 +52,44 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
     private final Duration defaultTimeout;
     private final Duration maximumTimeout;
     private final int maximumModelOutputBytes;
-    private final int maximumProcesses;
+    private final Optional<Integer> maximumProcesses;
+
+    public CodingAgentExecutionPolicy(
+            RuntimeToolExecutionVerifier runtime,
+            WorkspaceAccessStore workspaceAccess,
+            AuthorizedWorkspaceProvisioning provisioning,
+            TenantRef tenant,
+            PrincipalRef principal,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef profileRef,
+            ExecutionScratchSpaceSpec scratchSpace,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            Optional<Integer> maximumProcesses) {
+        this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
+        this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
+        this.provisioning = Objects.requireNonNull(provisioning, "provisioning must not be null");
+        this.tenant = Objects.requireNonNull(tenant, "tenant must not be null");
+        this.principal = Objects.requireNonNull(principal, "principal must not be null");
+        this.environmentRef = Objects.requireNonNull(environmentRef, "environmentRef must not be null");
+        this.profileRef = Objects.requireNonNull(profileRef, "profileRef must not be null");
+        this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
+        this.defaultTimeout = Objects.requireNonNull(defaultTimeout, "defaultTimeout must not be null");
+        this.maximumTimeout = Objects.requireNonNull(maximumTimeout, "maximumTimeout must not be null");
+        if (maximumModelOutputBytes < 1) {
+            throw new IllegalArgumentException("execution policy limits must be positive");
+        }
+        Objects.requireNonNull(maximumProcesses, "maximumProcesses must not be null");
+        if (maximumProcesses.isPresent()) {
+            int limit = maximumProcesses.get();
+            if (limit < 1 || limit > 64) {
+                throw new IllegalArgumentException("maximumProcesses is out of range");
+            }
+        }
+        this.maximumModelOutputBytes = maximumModelOutputBytes;
+        this.maximumProcesses = maximumProcesses;
+    }
 
     public CodingAgentExecutionPolicy(
             RuntimeToolExecutionVerifier runtime,
@@ -66,21 +104,45 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             int maximumProcesses) {
-        this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
-        this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
-        this.provisioning = Objects.requireNonNull(provisioning, "provisioning must not be null");
-        this.tenant = Objects.requireNonNull(tenant, "tenant must not be null");
-        this.principal = Objects.requireNonNull(principal, "principal must not be null");
-        this.environmentRef = Objects.requireNonNull(environmentRef, "environmentRef must not be null");
-        this.profileRef = Objects.requireNonNull(profileRef, "profileRef must not be null");
-        this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
-        this.defaultTimeout = Objects.requireNonNull(defaultTimeout, "defaultTimeout must not be null");
-        this.maximumTimeout = Objects.requireNonNull(maximumTimeout, "maximumTimeout must not be null");
-        if (maximumModelOutputBytes < 1 || maximumProcesses < 1) {
-            throw new IllegalArgumentException("execution policy limits must be positive");
-        }
-        this.maximumModelOutputBytes = maximumModelOutputBytes;
-        this.maximumProcesses = maximumProcesses;
+        this(
+                runtime,
+                workspaceAccess,
+                provisioning,
+                tenant,
+                principal,
+                environmentRef,
+                profileRef,
+                scratchSpace,
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                Optional.of(maximumProcesses));
+    }
+
+    public CodingAgentExecutionPolicy(
+            RuntimeToolExecutionVerifier runtime,
+            WorkspaceAccessStore workspaceAccess,
+            AuthorizedWorkspaceProvisioning provisioning,
+            TenantRef tenant,
+            PrincipalRef principal,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef profileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes) {
+        this(
+                runtime,
+                workspaceAccess,
+                provisioning,
+                tenant,
+                principal,
+                environmentRef,
+                profileRef,
+                ExecutionScratchSpaceSpec.none(),
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                Optional.empty());
     }
 
     @Override
@@ -134,7 +196,7 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
         }
         if (request.limits().maxStdoutBytes() != FULL_OUTPUT_BYTES_PER_CHANNEL
                 || request.limits().maxStderrBytes() != FULL_OUTPUT_BYTES_PER_CHANNEL
-                || request.limits().maxProcesses() != maximumProcesses
+                || !Objects.equals(request.limits().maxProcesses(), maximumProcesses)
                 || request.limits().outputOverflowPolicy() != ExecutionOutputOverflowPolicy.RETAIN_HEAD_TAIL
                 || request.limits().timeout().compareTo(maximumTimeout) > 0) {
             throw denied("CODING_USER_EXECUTION_LIMIT_DENIED", "CLI user execution limits changed");
@@ -154,8 +216,7 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             throw denied("CODING_INTERNAL_GIT_DENIED", "Internal Git origin is malformed");
         }
         requireWorkspace(request, WorkspaceAccessMode.READ);
-        requireFixedCommon(
-                request, ExecutionEnvironmentRef.empty(), profileRef, ExecutionScratchSpaceSpec.genericRequired());
+        requireFixedCommon(request, ExecutionEnvironmentRef.empty(), profileRef, ExecutionScratchSpaceSpec.none());
         List<String> argv = request.command().argv();
         if (argv.size() < 5
                 || !argv.subList(0, 3).equals(List.of("git", "-c", "credential.interactive=never"))
@@ -165,7 +226,7 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
         if (!request.limits().timeout().equals(Duration.ofSeconds(15))
                 || request.limits().maxStdoutBytes() != internalGitOutputBudget(argv.subList(3, argv.size()))
                 || request.limits().maxStderrBytes() != 64 * 1024
-                || request.limits().maxProcesses() != 4
+                || request.limits().maxProcesses().isPresent()
                 || request.limits().outputOverflowPolicy() != ExecutionOutputOverflowPolicy.RETAIN_HEAD_TAIL) {
             throw denied("CODING_INTERNAL_GIT_LIMIT_DENIED", "Internal Git fixed limits changed");
         }

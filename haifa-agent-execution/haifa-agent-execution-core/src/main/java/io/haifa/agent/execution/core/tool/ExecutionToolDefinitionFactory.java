@@ -32,7 +32,7 @@ public final class ExecutionToolDefinitionFactory {
         return create(
                 executionProfileIdentity,
                 executionProfileIdentity,
-                ExecutionScratchSpaceSpec.genericRequired().canonicalDigest(),
+                ExecutionScratchSpaceSpec.none().canonicalDigest(),
                 networkAllowed,
                 workingDirectoryAllowed,
                 scriptLanguages);
@@ -47,7 +47,7 @@ public final class ExecutionToolDefinitionFactory {
         return create(
                 executionProfileIdentity,
                 configurationIdentity,
-                ExecutionScratchSpaceSpec.genericRequired().canonicalDigest(),
+                ExecutionScratchSpaceSpec.none().canonicalDigest(),
                 networkAllowed,
                 workingDirectoryAllowed,
                 scriptLanguages);

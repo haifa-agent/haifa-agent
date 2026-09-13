@@ -8,6 +8,7 @@ import io.haifa.agent.policy.api.PolicyDigest;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.UnaryOperator;
 
 public record ExecutionToolConfiguration(
@@ -17,12 +18,40 @@ public record ExecutionToolConfiguration(
         Duration maximumTimeout,
         int maximumOutputBytes,
         int maximumOutputLines,
-        int maximumProcesses,
+        Optional<Integer> maximumProcesses,
         boolean workingDirectoryAllowed,
         ScriptRuntimeResolver runtimes,
         ExecutionOutputObserver outputObserver,
         UnaryOperator<String> outputSanitizer,
         ExecutionScratchSpaceSpec scratchSpace) {
+    public ExecutionToolConfiguration(
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumOutputBytes,
+            int maximumOutputLines,
+            int maximumProcesses,
+            boolean workingDirectoryAllowed,
+            ScriptRuntimeResolver runtimes,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer,
+            ExecutionScratchSpaceSpec scratchSpace) {
+        this(
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumOutputBytes,
+                maximumOutputLines,
+                Optional.of(maximumProcesses),
+                workingDirectoryAllowed,
+                runtimes,
+                outputObserver,
+                outputSanitizer,
+                scratchSpace);
+    }
+
     public ExecutionToolConfiguration(
             ExecutionEnvironmentRef environmentRef,
             SandboxProfileRef sandboxProfileRef,
@@ -42,12 +71,38 @@ public record ExecutionToolConfiguration(
                 maximumTimeout,
                 maximumOutputBytes,
                 maximumOutputLines,
-                maximumProcesses,
+                Optional.of(maximumProcesses),
                 workingDirectoryAllowed,
                 runtimes,
                 outputObserver,
                 outputSanitizer,
-                ExecutionScratchSpaceSpec.genericRequired());
+                ExecutionScratchSpaceSpec.none());
+    }
+
+    public ExecutionToolConfiguration(
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumOutputBytes,
+            int maximumOutputLines,
+            boolean workingDirectoryAllowed,
+            ScriptRuntimeResolver runtimes,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer) {
+        this(
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumOutputBytes,
+                maximumOutputLines,
+                Optional.empty(),
+                workingDirectoryAllowed,
+                runtimes,
+                outputObserver,
+                outputSanitizer,
+                ExecutionScratchSpaceSpec.none());
     }
 
     public ExecutionToolConfiguration {
@@ -64,8 +119,12 @@ public record ExecutionToolConfiguration(
         if (maximumOutputLines < 1 || maximumOutputLines > 10_000) {
             throw new IllegalArgumentException("maximumOutputLines is out of range");
         }
-        if (maximumProcesses < 1 || maximumProcesses > 64) {
-            throw new IllegalArgumentException("maximumProcesses is out of range");
+        Objects.requireNonNull(maximumProcesses, "maximumProcesses must not be null");
+        if (maximumProcesses.isPresent()) {
+            int limit = maximumProcesses.get();
+            if (limit < 1 || limit > 64) {
+                throw new IllegalArgumentException("maximumProcesses is out of range");
+            }
         }
         Objects.requireNonNull(runtimes, "runtimes must not be null");
         Objects.requireNonNull(outputObserver, "outputObserver must not be null");
@@ -83,7 +142,7 @@ public record ExecutionToolConfiguration(
         fields.add(Long.toString(maximumTimeout.toMillis()));
         fields.add(Integer.toString(maximumOutputBytes));
         fields.add(Integer.toString(maximumOutputLines));
-        fields.add(Integer.toString(maximumProcesses));
+        fields.add(maximumProcesses.map(Object::toString).orElse("unbounded"));
         fields.add(Boolean.toString(workingDirectoryAllowed));
         fields.add(runtimes.operatingSystem().name());
         runtimes.languages().stream().sorted().forEach(fields::add);

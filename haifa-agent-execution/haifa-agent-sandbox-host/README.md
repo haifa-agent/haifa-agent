@@ -18,10 +18,11 @@ Provider 约束 Workspace cwd、允许继承的非 secret 环境名称、超时�
 与已观察到的后代进程；Windows 使用 `taskkill /T /F` 完成树级终止，再以新 PID 查询复核，不把仅父进程
 退出误报为已收敛。无法确认整棵树消失时仍返回 `UNKNOWN`。
 
-Host Guarded 在 Coding Agent 三端默认的可信本地开发模式中，从装配提供的私有、Workspace/用户目录之外 Scratch Root
-创建 owner-only 会话目录，再解析 `TMPDIR/TMP/TEMP` 与逻辑子目录绑定。创建前校验 symlink、重叠和
-可写性；required Scratch 不满足即 fail closed。同步和 Managed Process 都在进程收敛后清理目录，并
-通过状态字段报告清理失败，绝不把宿主物理路径投影给模型。
+Host Guarded 支持按需提供受控 Scratch 目录，但 Coding Agent 与 Personal Assistant 在默认可信本地开发
+模式下统一采用 `ExecutionScratchSpaceSpec.none()`，直接继承宿主临时目录环境（`TEMP/TMP/TMPDIR`），
+不创建也不清理每会话临时目录。只有在调用方显式配置非空 Scratch 规范时，Provider 才会从私有、Workspace/用户目录
+之外的 Scratch Root 创建 owner-only 会话目录并解析子目录绑定；非空 Scratch 创建前校验 symlink、重叠和
+可写性（不满足即 fail closed），并在进程收敛后清理目录并报告清理状态，绝不把宿主物理路径投影给模型。
 
 本模块还提供 Git Worktree `COPY_ON_WRITE` Provider。释放操作必须校验 Provider 所有权；脏 Worktree 需要显式确认丢弃。
 

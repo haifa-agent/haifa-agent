@@ -290,10 +290,10 @@ Terminal 不是离线演示壳：普通消息进入真实 `CodingSessionService`
 `execution_run`、MCP、`web_search`/`web_fetch` 都走现有 Tool Pipeline、Policy、Approval 和
 ExecutionBroker。下面是 Windows 上“明确可信测试 Workspace”的联网配置要点：
 
-CLI 的 Coding Execution 装配默认请求 private required Scratch：`TMPDIR/TMP/TEMP/GOTMPDIR`
-指向本次执行根，`GOCACHE` 指向其 `go-build` 子目录。Local Native Control Directory 或显式
-Host Guarded Scratch Root 负责物理路径、权限和清理；配置、Prompt、Trace 与普通错误不披露该路径。
-无法安全创建 Scratch 时命令不会启动。
+CLI 的 Coding Execution 装配默认使用 `ExecutionScratchSpaceSpec.none()`，直接继承宿主
+`TEMP/TMP/TMPDIR` 环境，不为单次工具调用创建隔离 Scratch 目录；进程并发数默认不设硬性上限
+（`maxProcesses` 为空），由宿主操作系统自然调度。Timeout、用户取消、进程树终止和输出预算依然受控。
+仅在不可信、多租户或远程 Sandbox 场景下才显式配置隔离 Scratch 与进程数上限。
 
 ```yaml
 models:
@@ -525,7 +525,8 @@ execution:
   maxTimeoutMillis: 1800000
   maxOutputLines: 2000
   maxOutputBytes: 51200
-  maxProcesses: 8
+  # maxProcesses is optional (omitted by default so ordinary build tools like Maven/Surefire are not killed).
+  # maxProcesses: 8
   # "*" inherits ordinary host variables after secret-like names are removed.
   # An explicit list remains supported for stricter deployments.
   inheritEnvironment: ["*"]

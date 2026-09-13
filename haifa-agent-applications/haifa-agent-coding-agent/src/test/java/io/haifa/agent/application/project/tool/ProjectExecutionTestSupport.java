@@ -17,6 +17,7 @@ import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
@@ -65,10 +66,10 @@ final class ProjectExecutionTestSupport {
                 Duration.ofMinutes(30),
                 maximumOutputBytes,
                 maximumOutputLines,
-                8,
+                Optional.empty(),
                 ExecutionOutputObserver.noop(),
                 UnaryOperator.identity(),
-                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                ExecutionScratchSpaceSpec.none(),
                 ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
                 verificationProfiles);
     }
@@ -88,10 +89,10 @@ final class ProjectExecutionTestSupport {
                 Duration.ofMinutes(30),
                 maximumOutputBytes,
                 maximumOutputLines,
-                8,
+                Optional.empty(),
                 ExecutionOutputObserver.noop(),
                 outputSanitizer,
-                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                ExecutionScratchSpaceSpec.none(),
                 ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
                 CodingVerificationProfileProvider.empty());
     }
@@ -111,10 +112,10 @@ final class ProjectExecutionTestSupport {
                 Duration.ofMinutes(30),
                 maximumOutputBytes,
                 maximumOutputLines,
-                8,
+                Optional.empty(),
                 ExecutionOutputObserver.noop(),
                 UnaryOperator.identity(),
-                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                ExecutionScratchSpaceSpec.none(),
                 workspaceTargetResolver,
                 CodingVerificationProfileProvider.empty());
     }

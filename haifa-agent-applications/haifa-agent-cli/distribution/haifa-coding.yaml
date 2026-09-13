@@ -71,7 +71,6 @@ execution:
   maxTimeoutMillis: 1800000
   maxOutputLines: 2000
   maxOutputBytes: 51200
-  maxProcesses: 8
   inheritEnvironment: ["*"]
   extraPathPolicies: []
 runtime:

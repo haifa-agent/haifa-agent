@@ -240,7 +240,7 @@ class PersonalAssistantExecutionPolicyTest {
                 WorkspacePath.root(WORKSPACE),
                 ExecutionCommand.shell("echo safe"),
                 configuration.environmentRef(),
-                new ExecutionLimits(Duration.ofSeconds(5), 16 * 1024 * 1024, 16 * 1024 * 1024, 1),
+                new ExecutionLimits(Duration.ofSeconds(5), 16 * 1024 * 1024, 16 * 1024 * 1024),
                 configuration.sandboxProfileRef(),
                 ExecutionInput.none(),
                 ExecutionRequest.digestWithScratch(ToolArgumentsDigest.sha256(arguments), configuration.scratchSpace()),
@@ -258,7 +258,6 @@ class PersonalAssistantExecutionPolicyTest {
                 Duration.ofSeconds(10),
                 4096,
                 100,
-                1,
                 false,
                 runtimes,
                 ExecutionOutputObserver.noop(),
@@ -339,7 +338,7 @@ class PersonalAssistantExecutionPolicyTest {
                 WorkspacePath.root(WORKSPACE),
                 ExecutionCommand.shell("echo safe"),
                 ExecutionEnvironmentRef.empty(),
-                new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 1),
+                new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096),
                 new SandboxProfileRef("test", "1"));
     }
 

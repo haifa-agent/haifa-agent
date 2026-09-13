@@ -40,8 +40,8 @@ public record ExecutionRequest(
                 limits,
                 sandboxProfileRef,
                 input,
-                digestWithScratch(invocationDigest, ExecutionScratchSpaceSpec.genericRequired()),
-                ExecutionScratchSpaceSpec.genericRequired());
+                invocationDigest,
+                ExecutionScratchSpaceSpec.none());
     }
 
     public ExecutionRequest(
@@ -66,8 +66,8 @@ public record ExecutionRequest(
                 limits,
                 sandboxProfileRef,
                 input,
-                legacyInvocationDigest(command, workingDirectory, ExecutionScratchSpaceSpec.genericRequired()),
-                ExecutionScratchSpaceSpec.genericRequired());
+                legacyInvocationDigest(command, workingDirectory, ExecutionScratchSpaceSpec.none()),
+                ExecutionScratchSpaceSpec.none());
     }
 
     public ExecutionRequest(
@@ -91,8 +91,8 @@ public record ExecutionRequest(
                 limits,
                 sandboxProfileRef,
                 ExecutionInput.none(),
-                legacyInvocationDigest(command, workingDirectory, ExecutionScratchSpaceSpec.genericRequired()),
-                ExecutionScratchSpaceSpec.genericRequired());
+                legacyInvocationDigest(command, workingDirectory, ExecutionScratchSpaceSpec.none()),
+                ExecutionScratchSpaceSpec.none());
     }
 
     public ExecutionRequest(
@@ -150,6 +150,10 @@ public record ExecutionRequest(
         if (!base.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException("invocationDigest must be a lowercase SHA-256 digest");
         }
+        Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
+        if (scratchSpace.isEmpty()) {
+            return base;
+        }
         return sha256(base.length() + ":" + base + ";"
                 + scratchSpace.canonicalDigest().length() + ":" + scratchSpace.canonicalDigest() + ";");
     }
@@ -163,6 +167,10 @@ public record ExecutionRequest(
                 ? command.shellCommand()
                 : String.join("\u0000", command.argv());
         String workdir = workingDirectory.projectPath().toString();
+        if (scratchSpace.isEmpty()) {
+            String canonical = value.length() + ":" + value + ";" + workdir.length() + ":" + workdir + ";";
+            return sha256(canonical);
+        }
         String scratchDigest = scratchSpace.canonicalDigest();
         String canonical = value.length() + ":" + value + ";" + workdir.length() + ":" + workdir + ";"
                 + scratchDigest.length() + ":" + scratchDigest + ";";
