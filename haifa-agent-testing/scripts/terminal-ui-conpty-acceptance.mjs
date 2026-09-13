@@ -254,7 +254,6 @@ function writeConfiguration(file, databasePath, approvalMode, provider) {
       "  maxTimeoutMillis: 600000",
       "  maxOutputLines: 2000",
       "  maxOutputBytes: 51200",
-      "  maxProcesses: 8",
       "  inheritEnvironment:",
       "    - PATH",
       "    - PATHEXT",

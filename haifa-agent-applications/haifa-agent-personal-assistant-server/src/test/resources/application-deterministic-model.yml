@@ -110,7 +110,6 @@ haifa:
       maximum-timeout-millis: 30000
       maximum-output-bytes: 65536
       maximum-output-lines: 1000
-      maximum-processes: 4
       trusted-host-enabled: true
       python-path: ""
       power-shell-path: ""

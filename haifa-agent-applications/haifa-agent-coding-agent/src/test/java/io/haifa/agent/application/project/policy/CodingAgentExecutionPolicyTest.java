@@ -1,5 +1,6 @@
 package io.haifa.agent.application.project.policy;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -111,6 +112,29 @@ class CodingAgentExecutionPolicyTest {
     }
 
     @Test
+    void readAccessRejectsInternalGitWithProcessLimit() throws Exception {
+        Fixture fixture = fixture(WorkspaceAccessMode.READ);
+        var argv = new java.util.ArrayList<>(List.of("git", "-c", "credential.interactive=never", "rev-parse", "HEAD"));
+        var requestWithLimits = new ExecutionRequest(
+                new ExecutionId("internal"),
+                "internal-key",
+                context(ExecutionOrigin.PRODUCT_INTERNAL, Set.of("execution_run", "git.read"), Optional.empty()),
+                WORKSPACE,
+                WorkspacePath.root(WORKSPACE),
+                ExecutionCommand.direct(argv),
+                ExecutionEnvironmentRef.empty(),
+                new ExecutionLimits(Duration.ofSeconds(15), 4096, 64 * 1024, 4),
+                PROFILE);
+
+        assertThatThrownBy(
+                        () -> fixture.policy().authorize(requestWithLimits, ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                .isInstanceOfSatisfying(ExecutionRejectedException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("CODING_INTERNAL_GIT_LIMIT_DENIED");
+                    assertThat(ex.getMessage()).contains("Internal Git fixed limits changed");
+                });
+    }
+
+    @Test
     void developAllowsTheFixedCliRequestButManagedAndForgedRuntimeFailClosed() throws Exception {
         Fixture fixture = fixture(WorkspaceAccessMode.DEVELOP);
 
@@ -211,11 +235,11 @@ class CodingAgentExecutionPolicyTest {
                         PRINCIPAL,
                         ExecutionEnvironmentRef.empty(),
                         PROFILE,
-                        ExecutionScratchSpaceSpec.genericRequired(),
+                        ExecutionScratchSpaceSpec.none(),
                         Duration.ofSeconds(10),
                         Duration.ofSeconds(30),
                         4096,
-                        4),
+                        Optional.empty()),
                 access);
     }
 
@@ -230,7 +254,7 @@ class CodingAgentExecutionPolicyTest {
                 WorkspacePath.root(WORKSPACE),
                 ExecutionCommand.direct(argv),
                 ExecutionEnvironmentRef.empty(),
-                new ExecutionLimits(Duration.ofSeconds(15), internalGitOutputBudget(suffix), 64 * 1024, 4),
+                new ExecutionLimits(Duration.ofSeconds(15), internalGitOutputBudget(suffix), 64 * 1024),
                 PROFILE);
     }
 
@@ -266,7 +290,7 @@ class CodingAgentExecutionPolicyTest {
     private static ExecutionRequest userCommand(String command) {
         String digest = ExecutionRequest.digestWithScratch(
                 io.haifa.agent.policy.api.PolicyDigest.sha256Fields(List.of(command, ".")),
-                ExecutionScratchSpaceSpec.genericRequired());
+                ExecutionScratchSpaceSpec.none());
         return new ExecutionRequest(
                 new ExecutionId("user"),
                 "user-key",
@@ -275,11 +299,11 @@ class CodingAgentExecutionPolicyTest {
                 WorkspacePath.root(WORKSPACE),
                 ExecutionCommand.shell(command),
                 ExecutionEnvironmentRef.empty(),
-                new ExecutionLimits(Duration.ofSeconds(10), 16 * 1024 * 1024, 16 * 1024 * 1024, 4),
+                new ExecutionLimits(Duration.ofSeconds(10), 16 * 1024 * 1024, 16 * 1024 * 1024),
                 PROFILE,
                 io.haifa.agent.execution.api.ExecutionInput.none(),
                 digest,
-                ExecutionScratchSpaceSpec.genericRequired());
+                ExecutionScratchSpaceSpec.none());
     }
 
     private static ExecutionRequest runtimeRequest(ToolCallId source) {

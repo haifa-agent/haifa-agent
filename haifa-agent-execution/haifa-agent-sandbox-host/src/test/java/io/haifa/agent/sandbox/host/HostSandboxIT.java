@@ -507,7 +507,6 @@ class HostSandboxIT {
                 hostBaselineEnvironment().keySet(),
                 true);
         var scratch = new ExecutionScratchSpaceSpec(
-                true,
                 Set.of("TMPDIR", "TMP", "TEMP", "GOTMPDIR"),
                 List.of(new ExecutionScratchBinding("GOCACHE", "go-build")));
 
@@ -549,45 +548,56 @@ class HostSandboxIT {
                 hostBaselineEnvironment().keySet(),
                 true);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
-            String probeFile = "haifa-shared-tmp-probe-" + System.currentTimeMillis() + ".txt";
-            String writeCommand = isWindows()
-                    ? "[IO.File]::WriteAllText((Join-Path $env:TEMP '" + probeFile
-                            + "'), 'persisted-tmp'); [Console]::Out.Write('step-1-ok')"
-                    : "printf persisted-tmp > \"${TMPDIR:-/tmp}/" + probeFile + "\" && printf step-1-ok";
+        String probeFile = "haifa-shared-tmp-probe-" + System.currentTimeMillis() + ".txt";
+        Path hostTempDir = isWindows()
+                ? Path.of(System.getenv().getOrDefault("TEMP", System.getProperty("java.io.tmpdir")))
+                : Path.of(System.getenv().getOrDefault("TMPDIR", "/tmp"));
+        Path probePath = hostTempDir.resolve(probeFile);
+        try {
+            try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+                String writeCommand = isWindows()
+                        ? "[IO.File]::WriteAllText((Join-Path $env:TEMP '" + probeFile
+                                + "'), 'persisted-tmp'); [Console]::Out.Write('step-1-ok')"
+                        : "printf persisted-tmp > \"${TMPDIR:-/tmp}/" + probeFile + "\" && printf step-1-ok";
 
-            var step1 = session.execute(new SandboxExecution(
-                    ExecutionCommand.shell(writeCommand),
-                    WorkspacePath.root(fixture.workspaceId),
-                    hostBaselineEnvironment(),
-                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096),
-                    ExecutionInput.none(),
-                    ExecutionScratchSpaceSpec.none()));
+                var step1 = session.execute(new SandboxExecution(
+                        ExecutionCommand.shell(writeCommand),
+                        WorkspacePath.root(fixture.workspaceId),
+                        hostBaselineEnvironment(),
+                        new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096),
+                        ExecutionInput.none(),
+                        ExecutionScratchSpaceSpec.none()));
 
-            assertThat(step1.status()).isEqualTo(SandboxProcessStatus.EXITED);
-            assertThat(step1.exitCode()).isZero();
-            assertThat(step1.scratchProvisioned()).isFalse();
-            assertThat(step1.scratchCleanupFailed()).isFalse();
-            assertThat(new String(step1.stdout(), java.nio.charset.StandardCharsets.UTF_8))
-                    .isEqualTo("step-1-ok");
+                assertThat(step1.status()).isEqualTo(SandboxProcessStatus.EXITED);
+                assertThat(step1.exitCode()).isZero();
+                assertThat(step1.scratchProvisioned()).isFalse();
+                assertThat(step1.scratchCleanupFailed()).isFalse();
+                assertThat(new String(step1.stdout(), java.nio.charset.StandardCharsets.UTF_8))
+                        .isEqualTo("step-1-ok");
 
-            String readCommand = isWindows()
-                    ? "[IO.File]::ReadAllText((Join-Path $env:TEMP '" + probeFile + "'))"
-                    : "cat \"${TMPDIR:-/tmp}/" + probeFile + "\"";
+                String readCommand = isWindows()
+                        ? "[IO.File]::ReadAllText((Join-Path $env:TEMP '" + probeFile + "'))"
+                        : "cat \"${TMPDIR:-/tmp}/" + probeFile + "\"";
 
-            var step2 = session.execute(new SandboxExecution(
-                    ExecutionCommand.shell(readCommand),
-                    WorkspacePath.root(fixture.workspaceId),
-                    hostBaselineEnvironment(),
-                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096),
-                    ExecutionInput.none(),
-                    ExecutionScratchSpaceSpec.none()));
+                var step2 = session.execute(new SandboxExecution(
+                        ExecutionCommand.shell(readCommand),
+                        WorkspacePath.root(fixture.workspaceId),
+                        hostBaselineEnvironment(),
+                        new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096),
+                        ExecutionInput.none(),
+                        ExecutionScratchSpaceSpec.none()));
 
-            assertThat(step2.status()).isEqualTo(SandboxProcessStatus.EXITED);
-            assertThat(step2.exitCode()).isZero();
-            assertThat(step2.scratchProvisioned()).isFalse();
-            assertThat(new String(step2.stdout(), java.nio.charset.StandardCharsets.UTF_8).trim())
-                    .isEqualTo("persisted-tmp");
+                assertThat(step2.status()).isEqualTo(SandboxProcessStatus.EXITED);
+                assertThat(step2.exitCode()).isZero();
+                assertThat(step2.scratchProvisioned()).isFalse();
+                assertThat(new String(step2.stdout(), java.nio.charset.StandardCharsets.UTF_8).trim())
+                        .isEqualTo("persisted-tmp");
+            }
+        } finally {
+            try {
+                Files.deleteIfExists(probePath);
+            } catch (Exception ignored) {
+            }
         }
         assertThat(scratchRoot).doesNotExist();
     }

@@ -7,6 +7,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
@@ -139,11 +140,12 @@ public final class PersonalExecutionRuntime {
                 Duration.ofMillis(properties.maximumTimeoutMillis()),
                 properties.maximumOutputBytes(),
                 properties.maximumOutputLines(),
-                properties.maximumProcesses(),
+                java.util.Optional.empty(),
                 false,
                 runtimes,
                 ExecutionOutputObserver.noop(),
-                java.util.function.UnaryOperator.identity());
+                java.util.function.UnaryOperator.identity(),
+                ExecutionScratchSpaceSpec.none());
         var publicToolPolicy = new DefaultPublicToolPolicy(
                 new DefaultToolPolicyRequestAdapter("haifa-personal-assistant", ApprovalMode.ASK),
                 policy.evaluator(),

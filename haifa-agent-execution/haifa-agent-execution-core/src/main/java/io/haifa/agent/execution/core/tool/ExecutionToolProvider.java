@@ -87,6 +87,10 @@ public final class ExecutionToolProvider implements ToolProvider {
         return configuration.runtimes().languages();
     }
 
+    public ExecutionToolConfiguration configuration() {
+        return configuration;
+    }
+
     public String configurationIdentity() {
         return configuration.identityDigest();
     }

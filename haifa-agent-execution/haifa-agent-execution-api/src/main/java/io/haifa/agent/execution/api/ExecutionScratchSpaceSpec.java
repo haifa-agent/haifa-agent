@@ -14,18 +14,25 @@ import java.util.Set;
  * Product-neutral logical scratch request. Physical paths remain exclusively owned by the selected
  * Sandbox Provider.
  */
-public record ExecutionScratchSpaceSpec(
-        boolean required, Set<String> rootEnvironmentNames, List<ExecutionScratchBinding> childBindings) {
+public record ExecutionScratchSpaceSpec(Set<String> rootEnvironmentNames, List<ExecutionScratchBinding> childBindings) {
     private static final Set<String> FORBIDDEN_NAMES =
             Set.of("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "SSH_AUTH_SOCK", "DOCKER_HOST", "KUBECONFIG");
+
+    public ExecutionScratchSpaceSpec(
+            boolean required, Set<String> rootEnvironmentNames, List<ExecutionScratchBinding> childBindings) {
+        this(rootEnvironmentNames, childBindings);
+        if (!required && isPresent()) {
+            throw new IllegalArgumentException("non-empty scratch space cannot have required=false");
+        }
+        if (required && isEmpty()) {
+            throw new IllegalArgumentException("required scratch space cannot be empty");
+        }
+    }
 
     public ExecutionScratchSpaceSpec {
         Objects.requireNonNull(rootEnvironmentNames, "rootEnvironmentNames must not be null");
         Objects.requireNonNull(childBindings, "childBindings must not be null");
         if (rootEnvironmentNames.isEmpty() && childBindings.isEmpty()) {
-            if (required) {
-                throw new IllegalArgumentException("required scratch space cannot be empty");
-            }
             rootEnvironmentNames = Set.of();
             childBindings = List.of();
         } else {
@@ -52,7 +59,7 @@ public record ExecutionScratchSpaceSpec(
     }
 
     public static ExecutionScratchSpaceSpec none() {
-        return new ExecutionScratchSpaceSpec(false, Set.of(), List.of());
+        return new ExecutionScratchSpaceSpec(Set.of(), List.of());
     }
 
     public boolean isPresent() {
@@ -63,8 +70,12 @@ public record ExecutionScratchSpaceSpec(
         return !isPresent();
     }
 
+    public boolean required() {
+        return isPresent();
+    }
+
     public static ExecutionScratchSpaceSpec genericRequired() {
-        return new ExecutionScratchSpaceSpec(true, Set.of("TMPDIR", "TMP", "TEMP"), List.of());
+        return new ExecutionScratchSpaceSpec(Set.of("TMPDIR", "TMP", "TEMP"), List.of());
     }
 
     public Set<String> environmentNames() {
@@ -75,8 +86,7 @@ public record ExecutionScratchSpaceSpec(
 
     public String canonicalDigest() {
         List<String> fields = new ArrayList<>();
-        fields.add("execution-scratch-space-v1");
-        fields.add(Boolean.toString(required));
+        fields.add("execution-scratch-space-v2");
         rootEnvironmentNames.stream().sorted().forEach(name -> fields.add("root:" + name));
         childBindings.forEach(
                 binding -> fields.add("child:" + binding.environmentName() + ":" + binding.relativeDirectory()));

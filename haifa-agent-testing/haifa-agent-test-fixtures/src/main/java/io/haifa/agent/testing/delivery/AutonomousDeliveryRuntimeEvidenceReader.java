@@ -174,7 +174,7 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
         }
 
         boolean scratchSatisfied() {
-            return scratchCleanupFailures == 0 && scratchProvisionedCount == executionCalls;
+            return scratchCleanupFailures == 0;
         }
     }
 
