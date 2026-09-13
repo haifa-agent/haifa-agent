@@ -672,4 +672,36 @@ class CliModelConfigurationTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("unsupported model configuration field: styleVersion");
     }
+
+    @Test
+    void loadsModelConfigurationWithOsCredentialRef() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-os-credential-ref", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                    models:
+                      default: custom-os
+                      providers:
+                        - id: custom
+                          displayName: Custom Provider
+                          nativeStreaming: true
+                          endpoint: https://api.example.com/v1
+                          credentialRef: os://custom-api-key
+                          apiBindings:
+                            - style: openai-chat-completions
+                          models:
+                            - id: custom-os
+                              displayName: Custom OS Model
+                              providerModelId: custom-model
+                              style: openai-chat-completions
+                              capabilities: [TEXT_CHAT]
+                              contextWindow: 8192
+                              maxOutputTokens: 1024
+                    """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+
+        assertThat(result.model().credentialRef()).isEqualTo("os://custom-api-key");
+    }
 }

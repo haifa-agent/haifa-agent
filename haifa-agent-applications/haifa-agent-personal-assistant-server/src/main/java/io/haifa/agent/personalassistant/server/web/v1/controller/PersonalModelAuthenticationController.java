@@ -170,19 +170,26 @@ public final class PersonalModelAuthenticationController {
             }
             boolean ready = !authentication.connectionRequired(new CredentialRef(reference));
             boolean environment = reference.startsWith("env://");
+            boolean osReference = reference.startsWith("os://");
             ExternalLoginMethodId externalMethod = externalLoginMethod(provider).orElse(null);
             boolean externalLogin = externalMethod != null;
+            String accountLabel;
+            if (environment) {
+                accountLabel = ready ? "Environment credential" : "Environment credential unavailable";
+            } else if (osReference) {
+                accountLabel = ready ? "OS credential" : "OS credential unavailable";
+            } else {
+                accountLabel = "Not connected";
+            }
             result.add(withNetworkProxy(new PersonalApiDtos.ModelConnection(
                     "configured://" + provider.id() + "/default",
                     provider.id(),
                     externalLogin ? "EXTERNAL_LOGIN" : "API_KEY",
                     ready ? "AUTHENTICATED" : "REAUTH_REQUIRED",
-                    environment
-                            ? ready ? "Environment credential" : "Environment credential unavailable"
-                            : "Not connected",
+                    accountLabel,
                     null,
                     ready ? null : "AUTH_CREDENTIAL_REQUIRED",
-                    !environment && !externalLogin,
+                    !environment && !osReference && !externalLogin,
                     externalLogin && externalLoginSupported(externalMethod),
                     false,
                     externalLogin && externalLoginUnofficial(externalMethod),

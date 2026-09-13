@@ -329,6 +329,55 @@ class PersonalModelAuthenticationControllerTest {
                 .isEqualTo("SYSTEM");
     }
 
+    @Test
+    void projectsOsCredentialReferenceAsExternallyManaged() {
+        LocalModelAuthenticationService service = mock(LocalModelAuthenticationService.class);
+        when(service.connections()).thenReturn(java.util.List.of());
+        when(service.connectionRequired(new io.haifa.agent.model.api.CredentialRef("os://custom-key")))
+                .thenReturn(false);
+
+        var osProvider = new PersonalAssistantProperties.ModelProvider(
+                "custom-provider",
+                "Custom Provider",
+                "remote",
+                false,
+                true,
+                URI.create("https://api.example.com"),
+                "os://custom-key",
+                java.util.List.of(new PersonalAssistantProperties.ApiBinding("openai-chat-completions", null, null)),
+                java.util.List.of(new PersonalAssistantProperties.ProviderModel(
+                        "custom-model",
+                        "Custom Model",
+                        "Custom Model",
+                        "custom-model",
+                        "openai-chat-completions",
+                        java.util.Set.of(ModelCapability.TEXT_CHAT),
+                        ModelReasoningMode.DISABLED,
+                        8192,
+                        1024)),
+                null);
+
+        WebTestClient.bindToController(new PersonalModelAuthenticationController(
+                        service, new PersonalApiMapper(), () -> java.util.List.of(osProvider)))
+                .build()
+                .get()
+                .uri("/api/v1/model-connections")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].providerId")
+                .isEqualTo("custom-provider")
+                .jsonPath("$[0].status")
+                .isEqualTo("AUTHENTICATED")
+                .jsonPath("$[0].accountLabel")
+                .isEqualTo("OS credential")
+                .jsonPath("$[0].apiKeySupported")
+                .isEqualTo(false)
+                .jsonPath("$[0].externalLoginSupported")
+                .isEqualTo(false);
+    }
+
     private static PersonalAssistantProperties.ModelProvider antigravityProvider() {
         return new PersonalAssistantProperties.ModelProvider(
                 "google-antigravity",

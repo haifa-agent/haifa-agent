@@ -35,7 +35,20 @@ public final class WindowsLocalModelAuthStore implements LocalModelAuthStore {
 
     @Override
     public List<LocalModelConnectionView> listSafe() {
-        List<String> targets = client.listTargets(TARGET_PREFIX);
+        List<String> targets;
+        try {
+            targets = client.listTargets(TARGET_PREFIX);
+        } catch (WindowsCredentialManagerException e) {
+            if (e.reason() == WindowsCredentialManagerException.Reason.UNAVAILABLE) {
+                return List.of();
+            }
+            throw e;
+        } catch (IllegalStateException e) {
+            if (e.getMessage() != null && e.getMessage().contains("OS_CREDENTIAL_STORE_UNAVAILABLE")) {
+                return List.of();
+            }
+            throw e;
+        }
         List<LocalModelConnectionView> views = new ArrayList<>();
         for (String target : targets) {
             LocalModelAuthReference reference = fromTargetName(target);
