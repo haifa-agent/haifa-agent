@@ -72,6 +72,34 @@ python -m unittest discover -s haifa-agent-testing/haifa-agent-autonomous-delive
 Agent 耗时与退出码、改动的源文件；失败时列出失败检查名及其原因。每题之后打印总进度与累计通过率，
 结束时按 level 汇总，并写出 `ladder-report.json`、`run-records.jsonl` 与每题 Agent 日志；报告的 `mode` 区分 `agent` 与 `rehearse`，彩排结果不会被误读为真实评测；报告与每条运行记录还带`evaluation` 溯源信息（模式、模型、审批模式、题集版本与 manifest 摘要、是否为锁定题集），未锁定题集在汇总和报告里都会标为 `UNPINNED`。未显式指定 `--model` 时，体检与报告会解析发行包配置里的默认模型并记为 `modelSource: agent configuration`，不会留空。验收脚本以剥离了 Provider 凭据的环境运行。
 
+### 资源使用统计
+
+`stats` 离线读取一次已结束的评测，不需要任何 Provider 环境变量：
+
+```powershell
+# 最近一次评测
+.\haifa-agent-testing\haifa-agent-autonomous-delivery\tools\run-ladder.ps1 stats
+
+# 指定评测活动；--json 输出完整 JSON
+.\haifa-agent-testing\haifa-agent-autonomous-delivery\tools\run-ladder.ps1 stats --run local-tmp\autonomous-delivery-ladder\20260913T000609
+```
+
+每道题关联到 Agent 在 `runtime.db` 中持久化的根 run：取 Agent 执行时间窗内最早创建的那一个。新记录带精确的
+`agentStartedAtEpochMillis` / `agentEndedAtEpochMillis`；更早的记录退化为"日志修改时间减 Agent 耗时"。
+数据库路径默认读发行包 `haifa-coding.yaml` 的 `persistence.databasePath`，可用 `--runtime-db` 覆盖。
+评测期间若另有手工运行的 Agent，可能被误关联，统计时应避免并行使用同一个数据库。
+
+每题输出：验收结果、内部结束方式、Agent 墙钟时间、预算占用率、模型调用次数（其中失败、重试次数）、平均模型延迟、
+工具调用次数（其中失败/拒绝/取消）、成功的文件改动次数、token（总计 = 输入 + 输出，输入中的缓存部分单列）与缓存命中率。
+汇总输出：通过题数、内部结束方式分布、模型耗时与工具耗时占比、最大单次模型延迟、模型失败码分布、每道通过题的 token、
+预算占用 ≥85% 的题（险过）、找不到 Agent run 的题，以及按 level 的通过数与 token。结果同时写入评测目录的
+`usage-report.json`，不含题面、模型输出、原始 run id 或主机路径（run 只以 12 位 SHA-256 摘要引用）。
+
+内部结束方式：`COMPLETED` 正常完成；`DEADLINE` 为时限到期；`DEADLINE?` 为推断值——运行时尚未区分取消原因时，
+时限到期被记为 `USER_CANCELLED`，若 Agent 耗时达到自身时限则标为疑似超时；`CANCELLED` 为其它取消；
+`FAILED:<code>` 为带稳定错误码的失败；`NO_RUN` 表示 Agent 没有创建 run（例如模型 id 无效、启动即退出）。
+缓存 token 取决于 Provider 与适配器是否上报，为 0 不代表未命中。模型目录不含单价，因此不计算费用。
+
 Windows 上 `haifa-coding.cmd` 会自动替换为同目录的 `haifa-agent.jar`：批处理启动器经 cmd.exe 传参会把
 多行题面截断到第一行。控制台与报告不输出题面、凭据值或完整模型响应，日志中出现的凭据值会被替换为 `***`。
 
