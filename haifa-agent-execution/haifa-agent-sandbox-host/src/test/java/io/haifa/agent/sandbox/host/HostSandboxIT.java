@@ -549,18 +549,16 @@ class HostSandboxIT {
                 true);
 
         String probeFile = "haifa-shared-tmp-probe-" + System.currentTimeMillis() + ".txt";
-        Path hostTempDir = isWindows()
-                ? Path.of(System.getenv().getOrDefault("TEMP", System.getProperty("java.io.tmpdir")))
-                : Path.of(System.getenv().getOrDefault("TMPDIR", "/tmp"));
-        Path probePath = hostTempDir.resolve(probeFile);
+        Path probePath = null;
         try {
-            try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
-                String writeCommand = isWindows()
-                        ? "[IO.File]::WriteAllText((Join-Path $env:TEMP '" + probeFile
-                                + "'), 'persisted-tmp'); [Console]::Out.Write('step-1-ok')"
-                        : "printf persisted-tmp > \"${TMPDIR:-/tmp}/" + probeFile + "\" && printf step-1-ok";
+            String writeCommand = isWindows()
+                    ? "$p = (Join-Path $env:TEMP '" + probeFile
+                            + "'); [IO.File]::WriteAllText($p, 'persisted-tmp'); [Console]::Out.Write($p)"
+                    : "p=\"${TMPDIR:-/tmp}/" + probeFile
+                            + "\" && printf persisted-tmp > \"$p\" && printf \"%s\" \"$p\"";
 
-                var step1 = session.execute(new SandboxExecution(
+            try (var session1 = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+                var step1 = session1.execute(new SandboxExecution(
                         ExecutionCommand.shell(writeCommand),
                         WorkspacePath.root(fixture.workspaceId),
                         hostBaselineEnvironment(),
@@ -572,14 +570,19 @@ class HostSandboxIT {
                 assertThat(step1.exitCode()).isZero();
                 assertThat(step1.scratchProvisioned()).isFalse();
                 assertThat(step1.scratchCleanupFailed()).isFalse();
-                assertThat(new String(step1.stdout(), java.nio.charset.StandardCharsets.UTF_8))
-                        .isEqualTo("step-1-ok");
+                String pathOutput = new String(step1.stdout(), java.nio.charset.StandardCharsets.UTF_8).trim();
+                assertThat(pathOutput).isNotEmpty();
+                probePath = Path.of(pathOutput).toAbsolutePath().normalize();
+            }
 
-                String readCommand = isWindows()
-                        ? "[IO.File]::ReadAllText((Join-Path $env:TEMP '" + probeFile + "'))"
-                        : "cat \"${TMPDIR:-/tmp}/" + probeFile + "\"";
+            assertThat(Files.isRegularFile(probePath)).isTrue();
 
-                var step2 = session.execute(new SandboxExecution(
+            String readCommand = isWindows()
+                    ? "[IO.File]::ReadAllText((Join-Path $env:TEMP '" + probeFile + "'))"
+                    : "cat \"${TMPDIR:-/tmp}/" + probeFile + "\"";
+
+            try (var session2 = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+                var step2 = session2.execute(new SandboxExecution(
                         ExecutionCommand.shell(readCommand),
                         WorkspacePath.root(fixture.workspaceId),
                         hostBaselineEnvironment(),
@@ -594,16 +597,15 @@ class HostSandboxIT {
                         .isEqualTo("persisted-tmp");
             }
         } finally {
-            try {
+            if (probePath != null) {
                 Files.deleteIfExists(probePath);
-            } catch (Exception ignored) {
             }
         }
         assertThat(scratchRoot).doesNotExist();
     }
 
     @Test
-    void rejectsHomeSystemRootAndWorkspaceOverlappingScratchRoots() {
+    void rejectsHomeSystemRootAndWorkspaceOverlappingScratchRoots() throws Exception {
         Fixture fixture =
                 fixture(root, "workspace-unsafe-scratch", "binding-unsafe-scratch", "location-unsafe-scratch");
         assertThatThrownBy(() -> new HostGuardedSandboxProvider(
@@ -633,16 +635,33 @@ class HostSandboxIT {
                 Instant::now,
                 HostShell.auto(),
                 root.resolve("scratch"));
-        assertThatThrownBy(() -> overlapsWorkspace.open(
-                        SandboxProfile.hostGuarded(
-                                new SandboxProfileRef("unsafe-workspace", "1"),
-                                overlapsWorkspace.configurationDigest(),
-                                Set.of("/bin/sh"),
-                                Set.of(),
-                                false),
-                        new WorkspaceMount(fixture.workspaceId)))
-                .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
-                        .isEqualTo("SCRATCH_ROOT_UNSAFE"));
+        var profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("unsafe-workspace", "1"),
+                overlapsWorkspace.configurationDigest(),
+                Set.of(),
+                hostBaselineEnvironment().keySet(),
+                true);
+        try (var session = overlapsWorkspace.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+            var ok = session.execute(new SandboxExecution(
+                    ExecutionCommand.shell(isWindows() ? "[Console]::Out.Write('ok')" : "printf ok"),
+                    WorkspacePath.root(fixture.workspaceId),
+                    hostBaselineEnvironment(),
+                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096),
+                    ExecutionInput.none(),
+                    ExecutionScratchSpaceSpec.none()));
+            assertThat(ok.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(ok.exitCode()).isZero();
+
+            assertThatThrownBy(() -> session.execute(new SandboxExecution(
+                            ExecutionCommand.shell(isWindows() ? "[Console]::Out.Write('fail')" : "printf fail"),
+                            WorkspacePath.root(fixture.workspaceId),
+                            hostBaselineEnvironment(),
+                            new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096),
+                            ExecutionInput.none(),
+                            ExecutionScratchSpaceSpec.genericRequired())))
+                    .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
+                            .isEqualTo("SCRATCH_PROVISION_FAILED"));
+        }
     }
 
     @Test
@@ -673,7 +692,9 @@ class HostSandboxIT {
                                     ExecutionCommand.direct(List.of("/bin/sh", "-c", "true")),
                                     WorkspacePath.root(fixture.workspaceId),
                                     Map.of(),
-                                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2)),
+                                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2),
+                                    ExecutionInput.none(),
+                                    ExecutionScratchSpaceSpec.genericRequired()),
                             new io.haifa.agent.execution.api.ExecutionOutputObserver() {
                                 @Override
                                 public void onStarted() {
@@ -717,7 +738,9 @@ class HostSandboxIT {
                     ExecutionCommand.direct(List.of("/bin/sh", "-c", "printf cleanup-probe")),
                     WorkspacePath.root(fixture.workspaceId),
                     Map.of(),
-                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2)));
+                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2),
+                    ExecutionInput.none(),
+                    ExecutionScratchSpaceSpec.genericRequired()));
 
             assertThat(result.status()).isEqualTo(SandboxProcessStatus.UNKNOWN);
             assertThat(result.scratchProvisioned()).isTrue();

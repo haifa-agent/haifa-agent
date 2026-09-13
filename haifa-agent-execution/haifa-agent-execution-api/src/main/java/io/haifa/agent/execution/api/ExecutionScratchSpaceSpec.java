@@ -18,17 +18,6 @@ public record ExecutionScratchSpaceSpec(Set<String> rootEnvironmentNames, List<E
     private static final Set<String> FORBIDDEN_NAMES =
             Set.of("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "SSH_AUTH_SOCK", "DOCKER_HOST", "KUBECONFIG");
 
-    public ExecutionScratchSpaceSpec(
-            boolean required, Set<String> rootEnvironmentNames, List<ExecutionScratchBinding> childBindings) {
-        this(rootEnvironmentNames, childBindings);
-        if (!required && isPresent()) {
-            throw new IllegalArgumentException("non-empty scratch space cannot have required=false");
-        }
-        if (required && isEmpty()) {
-            throw new IllegalArgumentException("required scratch space cannot be empty");
-        }
-    }
-
     public ExecutionScratchSpaceSpec {
         Objects.requireNonNull(rootEnvironmentNames, "rootEnvironmentNames must not be null");
         Objects.requireNonNull(childBindings, "childBindings must not be null");
@@ -68,10 +57,6 @@ public record ExecutionScratchSpaceSpec(Set<String> rootEnvironmentNames, List<E
 
     public boolean isEmpty() {
         return !isPresent();
-    }
-
-    public boolean required() {
-        return isPresent();
     }
 
     public static ExecutionScratchSpaceSpec genericRequired() {

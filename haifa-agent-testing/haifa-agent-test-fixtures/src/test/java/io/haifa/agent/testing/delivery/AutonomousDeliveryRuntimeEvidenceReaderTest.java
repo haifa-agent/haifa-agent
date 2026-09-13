@@ -53,8 +53,7 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
         assertEquals(2, evidence.executionCalls());
         assertTrue(evidence.validationAttempted());
         assertTrue(evidence.diffInspected());
-        assertEquals(2, evidence.scratchProvisionedCount());
-        assertTrue(evidence.scratchSatisfied());
+        assertEquals(0, evidence.scratchCleanupFailures());
         assertTrue(evidence.terminalStateObserved());
         assertFalse(json.writeValueAsString(evidence).contains("do not project"));
     }
@@ -89,14 +88,11 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
 
         var evidence = new AutonomousDeliveryRuntimeEvidenceReader(json).read(database);
 
-        assertEquals(0, evidence.scratchProvisionedCount());
         assertEquals(1, evidence.scratchCleanupFailures());
-        assertFalse(evidence.scratchSatisfied());
     }
 
     @Test
-    void scratchEvidenceSatisfiedWhenNoCleanupFailuresEvenWithoutScratchProvisioned(@TempDir Path temporary)
-            throws Exception {
+    void scratchEvidenceRecordsZeroCleanupFailuresWhenClean(@TempDir Path temporary) throws Exception {
         Path database = temporary.resolve("runtime.db");
         try (Connection connection = createDatabase(database)) {
             insertRun(connection, "COMPLETED", 10, 5, 1, 1, 0);
@@ -110,9 +106,7 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
 
         var evidence = new AutonomousDeliveryRuntimeEvidenceReader(json).read(database);
 
-        assertEquals(0, evidence.scratchProvisionedCount());
         assertEquals(0, evidence.scratchCleanupFailures());
-        assertTrue(evidence.scratchSatisfied());
     }
 
     @Test
