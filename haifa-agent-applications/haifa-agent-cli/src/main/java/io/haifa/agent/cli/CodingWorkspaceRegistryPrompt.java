@@ -1,5 +1,6 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -8,10 +9,11 @@ import java.util.Objects;
 final class CodingWorkspaceRegistryPrompt {
     private CodingWorkspaceRegistryPrompt() {}
 
-    record Entry(String workspaceRef, String rootPath, boolean current) {
+    record Entry(String workspaceRef, String rootPath, WorkspaceAccessMode mode, boolean current) {
         public Entry {
             Objects.requireNonNull(workspaceRef, "workspaceRef must not be null");
             Objects.requireNonNull(rootPath, "rootPath must not be null");
+            Objects.requireNonNull(mode, "mode must not be null");
             if (workspaceRef.isBlank()) {
                 throw new IllegalArgumentException("workspaceRef must not be blank");
             }
@@ -37,6 +39,8 @@ final class CodingWorkspaceRegistryPrompt {
                     .append(xml(entry.workspaceRef()))
                     .append("\" rootPath=\"")
                     .append(xml(entry.rootPath()))
+                    .append("\" mode=\"")
+                    .append(entry.mode().name())
                     .append("\"");
             if (entry.current()) {
                 prompt.append(" current=\"true\"");

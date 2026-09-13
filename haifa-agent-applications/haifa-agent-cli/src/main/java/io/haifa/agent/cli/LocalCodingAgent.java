@@ -976,7 +976,8 @@ final class LocalCodingAgent implements AutoCloseable {
             if (!registryByRef.containsKey(workspaceId.value())) {
                 continue;
             }
-            if (workspaceAccess.find(tenant, principal, workspaceId).isEmpty()) {
+            Optional<WorkspaceAccess> access = workspaceAccess.find(tenant, principal, workspaceId);
+            if (access.isEmpty()) {
                 continue;
             }
             Path path = directory.realPath();
@@ -994,7 +995,10 @@ final class LocalCodingAgent implements AutoCloseable {
             }
             boolean current = workspaceId.equals(initialWorkspaceId);
             entries.add(new CodingWorkspaceRegistryPrompt.Entry(
-                    workspaceId.value(), realPath.normalize().toAbsolutePath().toString(), current));
+                    workspaceId.value(),
+                    realPath.normalize().toAbsolutePath().toString(),
+                    access.orElseThrow().mode(),
+                    current));
         }
         return entries;
     }

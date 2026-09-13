@@ -3,6 +3,7 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -11,10 +12,12 @@ import org.junit.jupiter.api.Test;
 class CodingWorkspaceRegistryPromptTest {
     @Test
     void rendersMinimalWorkspacePathsBlockWithCurrentFirst() {
-        var main = new CodingWorkspaceRegistryPrompt.Entry("workspace-main", "D:\\workspace\\project", true);
-        var docs = new CodingWorkspaceRegistryPrompt.Entry("workspace-docs", "D:\\workspace\\project\\docs", false);
-        var config =
-                new CodingWorkspaceRegistryPrompt.Entry("workspace-config", "D:\\workspace\\project\\config", false);
+        var main = new CodingWorkspaceRegistryPrompt.Entry(
+                "workspace-main", "D:\\workspace\\project", WorkspaceAccessMode.DEVELOP, true);
+        var docs = new CodingWorkspaceRegistryPrompt.Entry(
+                "workspace-docs", "D:\\workspace\\project\\docs", WorkspaceAccessMode.READ, false);
+        var config = new CodingWorkspaceRegistryPrompt.Entry(
+                "workspace-config", "D:\\workspace\\project\\config", WorkspaceAccessMode.DEVELOP, false);
 
         // Pass in non-sorted order to verify ordering
         String prompt = CodingWorkspaceRegistryPrompt.render(List.of(docs, config, main));
@@ -39,16 +42,15 @@ class CodingWorkspaceRegistryPromptTest {
 
         assertThat(prompt)
                 .contains(
-                        "<workspace workspaceRef=\"workspace-main\" rootPath=\"D:\\workspace\\project\" current=\"true\" />")
-                .contains("<workspace workspaceRef=\"workspace-config\" rootPath=\"D:\\workspace\\project\\config\" />")
-                .contains("<workspace workspaceRef=\"workspace-docs\" rootPath=\"D:\\workspace\\project\\docs\" />")
+                        "<workspace workspaceRef=\"workspace-main\" rootPath=\"D:\\workspace\\project\" mode=\"DEVELOP\" current=\"true\" />")
+                .contains(
+                        "<workspace workspaceRef=\"workspace-config\" rootPath=\"D:\\workspace\\project\\config\" mode=\"DEVELOP\" />")
+                .contains(
+                        "<workspace workspaceRef=\"workspace-docs\" rootPath=\"D:\\workspace\\project\\docs\" mode=\"READ\" />")
                 .doesNotContain(
                         "safeDisplayName",
-                        "mode",
                         "source",
                         "status",
-                        "READ",
-                        "DEVELOP",
                         "ACTIVE",
                         "APPROVED_ATTACH",
                         "locationRef",
@@ -57,8 +59,8 @@ class CodingWorkspaceRegistryPromptTest {
 
     @Test
     void escapesXmlSpecialCharactersInPaths() {
-        var entry =
-                new CodingWorkspaceRegistryPrompt.Entry("ws-special", "/home/user/path with & < > \" ' chars", false);
+        var entry = new CodingWorkspaceRegistryPrompt.Entry(
+                "ws-special", "/home/user/path with & < > \" ' chars", WorkspaceAccessMode.READ, false);
 
         String prompt = CodingWorkspaceRegistryPrompt.render(List.of(entry));
 
@@ -69,8 +71,8 @@ class CodingWorkspaceRegistryPromptTest {
 
     @Test
     void rendersByteForByteIdenticalOutputDeterministically() {
-        var main = new CodingWorkspaceRegistryPrompt.Entry("ws-1", "/path/1", true);
-        var second = new CodingWorkspaceRegistryPrompt.Entry("ws-2", "/path/2", false);
+        var main = new CodingWorkspaceRegistryPrompt.Entry("ws-1", "/path/1", WorkspaceAccessMode.DEVELOP, true);
+        var second = new CodingWorkspaceRegistryPrompt.Entry("ws-2", "/path/2", WorkspaceAccessMode.READ, false);
 
         String first = CodingWorkspaceRegistryPrompt.render(List.of(second, main));
         String again = CodingWorkspaceRegistryPrompt.render(List.of(main, second));
@@ -81,13 +83,15 @@ class CodingWorkspaceRegistryPromptTest {
 
     @Test
     void validatesEntryInvariants() {
-        assertThatThrownBy(() -> new CodingWorkspaceRegistryPrompt.Entry(null, "/path", true))
+        assertThatThrownBy(() -> new CodingWorkspaceRegistryPrompt.Entry(null, "/path", WorkspaceAccessMode.READ, true))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CodingWorkspaceRegistryPrompt.Entry("ws", null, true))
+        assertThatThrownBy(() -> new CodingWorkspaceRegistryPrompt.Entry("ws", null, WorkspaceAccessMode.READ, true))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CodingWorkspaceRegistryPrompt.Entry("  ", "/path", true))
+        assertThatThrownBy(() -> new CodingWorkspaceRegistryPrompt.Entry("ws", "/path", null, true))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new CodingWorkspaceRegistryPrompt.Entry("  ", "/path", WorkspaceAccessMode.READ, true))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new CodingWorkspaceRegistryPrompt.Entry("ws", "  ", true))
+        assertThatThrownBy(() -> new CodingWorkspaceRegistryPrompt.Entry("ws", "  ", WorkspaceAccessMode.READ, true))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
