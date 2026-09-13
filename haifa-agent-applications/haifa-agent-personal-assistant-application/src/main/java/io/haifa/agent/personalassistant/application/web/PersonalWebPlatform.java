@@ -67,12 +67,26 @@ public record PersonalWebPlatform(
             ProviderConfiguration fetch,
             ObjectMapper mapper,
             Clock clock) {
+        return create(tenant, principal, search, fetch, mapper, clock, System::getenv, name -> Optional.empty());
+    }
+
+    public static PersonalWebPlatform create(
+            TenantRef tenant,
+            PrincipalRef principal,
+            ProviderConfiguration search,
+            ProviderConfiguration fetch,
+            ObjectMapper mapper,
+            Clock clock,
+            java.util.function.Function<String, String> environment,
+            java.util.function.Function<String, Optional<String>> osStore) {
         java.util.Objects.requireNonNull(tenant);
         java.util.Objects.requireNonNull(principal);
         java.util.Objects.requireNonNull(search);
         java.util.Objects.requireNonNull(fetch);
         java.util.Objects.requireNonNull(mapper);
         java.util.Objects.requireNonNull(clock);
+        java.util.Objects.requireNonNull(environment);
+        java.util.Objects.requireNonNull(osStore);
         if (!search.enabled() && !fetch.enabled()) {
             return platform(List.of(), emptyBroker());
         }
@@ -94,7 +108,8 @@ public record PersonalWebPlatform(
                     .require(new WebProviderId(fetch.providerId()));
             contributions.add(catalog.fetch(provider, new DefaultWebUrlPolicy()));
         }
-        return platform(contributions, credentialBroker(tenant, principal, contributions, search, fetch));
+        return platform(
+                contributions, credentialBroker(tenant, principal, contributions, search, fetch, environment, osStore));
     }
 
     /** Deterministic, offline corpus for explicitly configured acceptance environments. */
@@ -232,17 +247,43 @@ public record PersonalWebPlatform(
             PrincipalRef principal,
             List<WebToolCatalogContribution> contributions,
             ProviderConfiguration search,
-            ProviderConfiguration fetch) {
-        Map<String, String> secrets = new HashMap<>();
+            ProviderConfiguration fetch,
+            java.util.function.Function<String, String> environment,
+            java.util.function.Function<String, Optional<String>> osStore) {
+        Map<String, String> credentialRefs = new HashMap<>();
         for (WebToolCatalogContribution contribution : contributions) {
             var requirement = contribution.definition().credentialRequirements().stream()
                     .findFirst()
                     .orElseThrow(() -> new IllegalStateException("Web provider credential requirement is missing"));
             String operation = contribution.definition().name().value();
             ProviderConfiguration configuration = operation.equals("web_search") ? search : fetch;
-            secrets.put(requirement.credentialId(), configuration.credential());
+            credentialRefs.put(requirement.credentialId(), configuration.credentialReference());
         }
-        return new DefaultCredentialBroker(secrets);
+        java.util.function.Function<String, Optional<String>> secretSupplier = credentialId -> {
+            String ref = credentialRefs.get(credentialId);
+            if (ref == null || ref.isBlank()) {
+                return Optional.empty();
+            }
+            if (ref.startsWith("env://")) {
+                String environmentName = ref.substring("env://".length());
+                String secret = environment.apply(environmentName);
+                if (secret == null || secret.isBlank()) {
+                    throw new IllegalArgumentException(
+                            "Personal Web Tool credential environment variable is unavailable: " + environmentName);
+                }
+                return Optional.of(secret);
+            } else if (ref.startsWith("os://")) {
+                String osName = ref.substring("os://".length());
+                Optional<String> secret = osStore.apply(osName);
+                if (secret.isEmpty() || secret.get().isBlank()) {
+                    throw new IllegalArgumentException(
+                            "Personal Web Tool credential OS secret is unavailable: " + osName);
+                }
+                return secret;
+            }
+            return Optional.of(ref);
+        };
+        return new DefaultCredentialBroker(secretSupplier);
     }
 
     private static WebSearchProvider searchProvider(
@@ -325,7 +366,7 @@ public record PersonalWebPlatform(
             boolean enabled,
             String providerId,
             URI endpoint,
-            String credential,
+            String credentialReference,
             Duration timeout,
             int maxResponseBytes) {
         public ProviderConfiguration {
@@ -334,15 +375,16 @@ public record PersonalWebPlatform(
                     .toLowerCase(java.util.Locale.ROOT);
             endpoint = java.util.Objects.requireNonNull(endpoint, "endpoint");
             timeout = java.util.Objects.requireNonNull(timeout, "timeout");
-            credential = credential == null ? "" : credential.trim();
+            credentialReference = credentialReference == null ? "" : credentialReference.trim();
             if (providerId.isBlank()) throw new IllegalArgumentException("providerId must not be blank");
             if (!endpoint.isAbsolute()
                     || endpoint.getHost() == null
                     || !endpoint.getScheme().equalsIgnoreCase("https")) {
                 throw new IllegalArgumentException("endpoint must be an absolute HTTPS URI");
             }
-            if (enabled && credential.isBlank()) {
-                throw new IllegalArgumentException("credential is required when a Personal Web provider is enabled");
+            if (enabled && credentialReference.isBlank()) {
+                throw new IllegalArgumentException(
+                        "credentialReference is required when a Personal Web provider is enabled");
             }
             if (timeout.isZero() || timeout.isNegative()) {
                 throw new IllegalArgumentException("timeout must be positive");

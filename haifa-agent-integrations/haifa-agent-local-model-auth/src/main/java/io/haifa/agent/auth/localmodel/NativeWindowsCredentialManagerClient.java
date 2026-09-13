@@ -96,7 +96,7 @@ public final class NativeWindowsCredentialManagerClient implements WindowsCreden
             if (error == WinError.ERROR_NOT_FOUND) {
                 return Optional.empty();
             }
-            throw new IllegalStateException("Windows CredRead failed with error " + error);
+            throw WindowsCredentialManagerException.fromErrorCode("CredRead", error);
         }
         try {
             CREDENTIAL cred = new CREDENTIAL(pCred.getValue());
@@ -116,6 +116,12 @@ public final class NativeWindowsCredentialManagerClient implements WindowsCreden
         Objects.requireNonNull(targetName, "targetName must not be null");
         Objects.requireNonNull(secret, "secret must not be null");
         byte[] bytes = secret.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length > MAX_CREDENTIAL_BLOB_SIZE) {
+            throw new WindowsCredentialManagerException(
+                    WindowsCredentialManagerException.Reason.ITEM_TOO_LARGE,
+                    "Credential blob size (" + bytes.length + " bytes) exceeds Windows Credential Manager limit ("
+                            + MAX_CREDENTIAL_BLOB_SIZE + " bytes)");
+        }
         CREDENTIAL cred = new CREDENTIAL();
         cred.Type = CRED_TYPE_GENERIC;
         cred.TargetName = new WString(targetName);
@@ -132,7 +138,7 @@ public final class NativeWindowsCredentialManagerClient implements WindowsCreden
         boolean success = advapi32.CredWriteW(cred, 0);
         if (!success) {
             int error = Kernel32.INSTANCE.GetLastError();
-            throw new IllegalStateException("Windows CredWrite failed with error " + error);
+            throw WindowsCredentialManagerException.fromErrorCode("CredWrite", error);
         }
     }
 
@@ -145,7 +151,7 @@ public final class NativeWindowsCredentialManagerClient implements WindowsCreden
             if (error == WinError.ERROR_NOT_FOUND) {
                 return false;
             }
-            throw new IllegalStateException("Windows CredDelete failed with error " + error);
+            throw WindowsCredentialManagerException.fromErrorCode("CredDelete", error);
         }
         return true;
     }
@@ -162,7 +168,7 @@ public final class NativeWindowsCredentialManagerClient implements WindowsCreden
             if (error == WinError.ERROR_NOT_FOUND) {
                 return List.of();
             }
-            throw new IllegalStateException("Windows CredEnumerate failed with error " + error);
+            throw WindowsCredentialManagerException.fromErrorCode("CredEnumerate", error);
         }
         try {
             int n = count.getValue();

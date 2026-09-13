@@ -23,4 +23,21 @@ class DefaultSecretRedactorTest {
         assertThat(redactor.redact("")).isEmpty();
         assertThat(redactor.redact("   ")).isEqualTo("   ");
     }
+
+    @Test
+    void scopedRegistrationRedactsAndUnregistersOnClose() throws Exception {
+        var redactor = new DefaultSecretRedactor();
+        String text = "message containing super-sensitive-temp-token-999 and other-temp-key-888";
+
+        assertThat(redactor.redact(text)).isEqualTo(text);
+
+        try (var scope = redactor.registerScoped(List.of("super-sensitive-temp-token-999", "other-temp-key-888"))) {
+            assertThat(redactor.redact(text))
+                    .doesNotContain("super-sensitive-temp-token-999", "other-temp-key-888")
+                    .isEqualTo("message containing [REDACTED] and [REDACTED]");
+        }
+
+        // After close, secrets are removed and no longer retained
+        assertThat(redactor.redact(text)).isEqualTo(text);
+    }
 }

@@ -48,13 +48,7 @@ public final class DefaultCredentialBroker implements CredentialBroker {
     @Override
     public Optional<String> getSecret(String credentialId) {
         Objects.requireNonNull(credentialId, "credentialId");
-        Optional<String> secret = secretSupplier.apply(credentialId);
-        secret.ifPresent(s -> {
-            if (redactor instanceof DefaultSecretRedactor defaultRedactor) {
-                defaultRedactor.registerSecret(s);
-            }
-        });
-        return secret;
+        return secretSupplier.apply(credentialId);
     }
 
     @Override

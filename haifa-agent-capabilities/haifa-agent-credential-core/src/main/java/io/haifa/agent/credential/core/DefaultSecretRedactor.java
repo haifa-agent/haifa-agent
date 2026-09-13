@@ -29,6 +29,29 @@ public final class DefaultSecretRedactor implements SecretRedactor {
                 .forEach(this.knownSecrets::add);
     }
 
+    @Override
+    public AutoCloseable registerScoped(String secret) {
+        if (secret == null || secret.isBlank()) {
+            return () -> {};
+        }
+        knownSecrets.add(secret);
+        return () -> knownSecrets.remove(secret);
+    }
+
+    @Override
+    public AutoCloseable registerScoped(Collection<String> secrets) {
+        if (secrets == null || secrets.isEmpty()) {
+            return () -> {};
+        }
+        List<String> validSecrets =
+                secrets.stream().filter(s -> s != null && !s.isBlank()).toList();
+        if (validSecrets.isEmpty()) {
+            return () -> {};
+        }
+        knownSecrets.addAll(validSecrets);
+        return () -> knownSecrets.removeAll(validSecrets);
+    }
+
     public void registerSecret(String secret) {
         if (secret != null && !secret.isBlank()) {
             knownSecrets.add(secret);

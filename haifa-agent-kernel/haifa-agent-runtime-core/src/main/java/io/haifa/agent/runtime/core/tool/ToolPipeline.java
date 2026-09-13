@@ -514,6 +514,9 @@ public final class ToolPipeline {
                         requirement.credentialId(), credentials.requireSecret(requirement.credentialId()));
             }
         }
+        AutoCloseable redactionScope = (credentials != null && !resolvedCredentials.isEmpty())
+                ? credentials.redactor().registerScoped(resolvedCredentials.values())
+                : () -> {};
         try {
             ToolResult result = invoker.invoke(new ToolInvocationRequest(
                     binding,
@@ -573,7 +576,12 @@ public final class ToolPipeline {
                             ? "tool provider invocation failed"
                             : "tool provider invocation failed: " + detail);
         } finally {
-            resolvedCredentials.clear();
+            try {
+                redactionScope.close();
+            } catch (Exception ignored) {
+            } finally {
+                resolvedCredentials.clear();
+            }
         }
     }
 

@@ -95,7 +95,7 @@ class PersonalWebPlatformTest {
                         new ObjectMapper(),
                         Clock.systemUTC()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("credential is required");
+                .hasMessageContaining("credentialReference is required");
     }
 
     @Test
@@ -121,10 +121,39 @@ class PersonalWebPlatformTest {
                 .containsExactly("web-search.tavily", "web-fetch.tavily");
     }
 
+    @Test
+    void resolvesCredentialsOnDemandFromEnvAndOsStore() {
+        Map<String, String> env = Map.of("MY_SEARCH_KEY", "resolved-env-secret");
+        Map<String, String> os = Map.of("my_fetch_key", "resolved-os-secret");
+
+        var platform = PersonalWebPlatform.create(
+                TENANT,
+                PRINCIPAL,
+                provider(
+                        true,
+                        "aliyun",
+                        io.haifa.agent.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT,
+                        "env://MY_SEARCH_KEY"),
+                provider(
+                        true,
+                        "browserless",
+                        io.haifa.agent.web.provider.BrowserlessFetchProvider.DEFAULT_ENDPOINT,
+                        "os://my_fetch_key"),
+                new ObjectMapper(),
+                Clock.systemUTC(),
+                env::get,
+                name -> java.util.Optional.ofNullable(os.get(name)));
+
+        assertThat(platform.credential().broker().requireSecret("web-search-aliyun"))
+                .isEqualTo("resolved-env-secret");
+        assertThat(platform.credential().broker().requireSecret("web-fetch-browserless"))
+                .isEqualTo("resolved-os-secret");
+    }
+
     private static PersonalWebPlatform.ProviderConfiguration provider(
-            boolean enabled, String providerId, java.net.URI endpoint, String credential) {
+            boolean enabled, String providerId, java.net.URI endpoint, String credentialReference) {
         return new PersonalWebPlatform.ProviderConfiguration(
-                enabled, providerId, endpoint, credential, Duration.ofSeconds(30), 2 * 1024 * 1024);
+                enabled, providerId, endpoint, credentialReference, Duration.ofSeconds(30), 2 * 1024 * 1024);
     }
 
     @SuppressWarnings("unchecked")
