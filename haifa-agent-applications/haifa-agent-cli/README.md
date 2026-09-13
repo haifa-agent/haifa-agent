@@ -24,6 +24,20 @@ Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-term
 `close()` 统一释放资源。需要为每次隔离运行注入不同 SQLite/Transcript 路径时，可使用接收显式环境
 Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case。
 
+## Workspace Path Contract and Dynamic Prompt Projection
+
+CLI 宿主保持严格且清晰的路径职责分离，避免模型混淆宿主物理路径与逻辑工作区引用：
+
+1. **动态 `<workspace_paths>` 注入与 Prompt Cache 友好**：
+   CLI 在所有稳定/静态提示词（产品基座 Prompt、执行沙箱环境说明、工作区说明及项目指令）的最尾部，动态注入当前活跃授权工作区的 `<workspace_paths>` 块。
+   该块仅包含当前 undrifted、授权活跃的真实目录投影，每条记录包含 `workspaceRef`、规范化宿主绝对路径 `rootPath`、当前 `READ` / `DEVELOP` Access mode，以及主工作区 `current="true"` 标记。由于置于系统提示词末尾，工作区动态变更（如挂载、注销）不会破坏此前较长静态前缀的 Prompt Cache 命中率。
+2. **`file_*` 工具契约**：
+   文件读写等工具严格要求宿主绝对路径（host absolute path），不支持相对路径（如 `.`）或 root alias。当模型误传相对路径时，系统返回清晰明确的引导错误，提示模型使用 `<workspace_paths>` 或工具成功结果中的 `rootPath`。
+3. **`execution_run` 工具契约**：
+   命令执行工具要求传入受控的 `workspaceRef` 以及规范化的 `relativeWorkdir`（根目录固定使用 `.`），在宿主受控沙箱或直接工作区执行。
+4. **工具结果回传规范**：
+   `workspace_attach` 与 `workspace_worktree_create` 成功时，结果中均包含规范化宿主绝对路径 `rootPath` 与脱敏 `workspaceRef`，使模型在挂载或新建隔离工作区后即可直接以绝对路径调用文件工具，消除路径盲猜。
+
 ## IDE 单步调试入口
 
 `IdeCodingAgentMain`（`io.haifa.agent.cli.IdeCodingAgentMain`）是面向 Coding Agent 开发的 IDE 装配
