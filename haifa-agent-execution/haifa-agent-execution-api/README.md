@@ -10,12 +10,13 @@ Provider-neutral 的执行契约，定义有界请求、可信调用上下文、
 
 请求只接受 Workspace 逻辑路径，以及 `ExecutionCommand.direct(argv)` 或 `ExecutionCommand.shell(command)` 两种明确命令形式，不接受宿主机工作目录、明文凭据或无界资源参数。SHELL 保存一个最大 32KB 的完整命令字符串，Shell 类型和路径由可信 Provider 配置决定。本模块保持纯 Java，不依赖 Sandbox 实现、Spring 或 Provider SDK。
 
-`ExecutionScratchSpaceSpec` 只描述是否 required、Scratch Root 环境名和安全的相对子目录绑定。通过
-`ExecutionScratchSpaceSpec.none()` 可显式声明不使用 scratch space（保持宿主临时目录语义）；默认旧
-构造方式获得 `TMPDIR/TMP/TEMP` 通用 required Scratch；产品可增加 `GOTMPDIR`、`GOCACHE` 等绑定，
-但物理路径始终由 Sandbox Provider 决定。环境名经过 allowlist/secret-name 校验，相对目录拒绝绝对路径、
-`.`、`..` 和越界；非空 Scratch canonical digest 进入 Invocation Digest，防止幂等请求混淆。
-`ExecutionLimits` 的 `maxProcesses` 为可选 `Optional<Integer>`；默认空表示不设通用进程硬上限，仅在
+`ExecutionScratchSpaceSpec` 描述 Scratch Root 环境名和安全的相对子目录绑定。通过
+`ExecutionScratchSpaceSpec.none()` 声明不使用 scratch space（保持宿主临时目录语义）；公共 Execution API
+默认构造路径统一为 `none()`。只有需要独立隔离的不可信执行环境或产品才显式配置通用 `genericRequired()`
+(`TMPDIR/TMP/TEMP`) 或自定义绑定（如 `GOTMPDIR`、`GOCACHE` 等），物理路径始终由 Sandbox Provider 决定。
+环境名经过 allowlist/secret-name 校验，相对目录拒绝绝对路径、`.`、`..` 和越界；非空 Scratch canonical digest
+进入 Invocation Digest，防止幂等请求混淆。
+`ExecutionLimits` 的 `maxProcesses` 为可选 `Optional<Integer>`；默认空表示进程数量上限 unbounded，仅在
 显式配置时校验 `1..64` 范围。
 
 `ExecutionResult` 只暴露 `scratchProvisioned` 与 `scratchCleanupFailed` 状态，不返回物理目录。

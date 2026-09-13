@@ -50,7 +50,7 @@ final class ExecutionBrokerGitReadClient {
                 workingDirectory,
                 new ExecutionCommand(ExecutionCommandMode.DIRECT, argv),
                 ExecutionEnvironmentRef.empty(),
-                new ExecutionLimits(Duration.ofSeconds(15), outputBudget, 64 * 1024, 4),
+                new ExecutionLimits(Duration.ofSeconds(15), outputBudget, 64 * 1024),
                 profile);
         return broker.execute(request);
     }

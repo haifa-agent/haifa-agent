@@ -46,10 +46,14 @@ class ExecutionScratchSpaceSpecTest {
 
         String base = "b".repeat(64);
         assertThat(ExecutionRequest.digestWithScratch(base, none)).isEqualTo(base);
-        assertThat(ExecutionRequest.digestWithScratch(base, null)).isEqualTo(base);
+        assertThatThrownBy(() -> ExecutionRequest.digestWithScratch(base, null))
+                .isInstanceOf(NullPointerException.class);
 
         assertThatThrownBy(() -> new ExecutionScratchSpaceSpec(true, Set.of(), List.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("required scratch space cannot be empty");
+        assertThatThrownBy(() -> new ExecutionScratchSpaceSpec(false, Set.of("TMP"), List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("non-empty scratch space cannot have required=false");
     }
 }

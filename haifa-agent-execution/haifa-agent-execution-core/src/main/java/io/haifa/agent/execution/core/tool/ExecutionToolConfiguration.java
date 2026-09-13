@@ -76,7 +76,33 @@ public record ExecutionToolConfiguration(
                 runtimes,
                 outputObserver,
                 outputSanitizer,
-                ExecutionScratchSpaceSpec.genericRequired());
+                ExecutionScratchSpaceSpec.none());
+    }
+
+    public ExecutionToolConfiguration(
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumOutputBytes,
+            int maximumOutputLines,
+            boolean workingDirectoryAllowed,
+            ScriptRuntimeResolver runtimes,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer) {
+        this(
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumOutputBytes,
+                maximumOutputLines,
+                Optional.empty(),
+                workingDirectoryAllowed,
+                runtimes,
+                outputObserver,
+                outputSanitizer,
+                ExecutionScratchSpaceSpec.none());
     }
 
     public ExecutionToolConfiguration {

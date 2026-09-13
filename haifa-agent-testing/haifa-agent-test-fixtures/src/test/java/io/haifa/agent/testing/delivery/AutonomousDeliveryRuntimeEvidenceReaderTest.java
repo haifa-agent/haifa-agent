@@ -74,7 +74,7 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
     }
 
     @Test
-    void scratchEvidenceFailsClosedOnMissingProvisionOrCleanupFailure(@TempDir Path temporary) throws Exception {
+    void scratchEvidenceFailsClosedOnCleanupFailure(@TempDir Path temporary) throws Exception {
         Path database = temporary.resolve("runtime.db");
         try (Connection connection = createDatabase(database)) {
             insertRun(connection, "FAILED", 10, 5, 1, 1, 0);
@@ -92,6 +92,27 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
         assertEquals(0, evidence.scratchProvisionedCount());
         assertEquals(1, evidence.scratchCleanupFailures());
         assertFalse(evidence.scratchSatisfied());
+    }
+
+    @Test
+    void scratchEvidenceSatisfiedWhenNoCleanupFailuresEvenWithoutScratchProvisioned(@TempDir Path temporary)
+            throws Exception {
+        Path database = temporary.resolve("runtime.db");
+        try (Connection connection = createDatabase(database)) {
+            insertRun(connection, "COMPLETED", 10, 5, 1, 1, 0);
+            insertTool(
+                    connection,
+                    "execution_run",
+                    "COMPLETED",
+                    "TEST",
+                    Map.of("status", "EXITED", "scratchProvisioned", false, "exitCode", 0));
+        }
+
+        var evidence = new AutonomousDeliveryRuntimeEvidenceReader(json).read(database);
+
+        assertEquals(0, evidence.scratchProvisionedCount());
+        assertEquals(0, evidence.scratchCleanupFailures());
+        assertTrue(evidence.scratchSatisfied());
     }
 
     @Test

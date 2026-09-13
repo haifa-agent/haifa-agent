@@ -150,7 +150,8 @@ public record ExecutionRequest(
         if (!base.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException("invocationDigest must be a lowercase SHA-256 digest");
         }
-        if (scratchSpace == null || scratchSpace.isEmpty()) {
+        Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
+        if (scratchSpace.isEmpty()) {
             return base;
         }
         return sha256(base.length() + ":" + base + ";"

@@ -226,7 +226,7 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
         if (!request.limits().timeout().equals(Duration.ofSeconds(15))
                 || request.limits().maxStdoutBytes() != internalGitOutputBudget(argv.subList(3, argv.size()))
                 || request.limits().maxStderrBytes() != 64 * 1024
-                || !request.limits().maxProcesses().equals(Optional.of(4))
+                || request.limits().maxProcesses().isPresent()
                 || request.limits().outputOverflowPolicy() != ExecutionOutputOverflowPolicy.RETAIN_HEAD_TAIL) {
             throw denied("CODING_INTERNAL_GIT_LIMIT_DENIED", "Internal Git fixed limits changed");
         }
