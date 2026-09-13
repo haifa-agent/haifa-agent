@@ -4,6 +4,7 @@
 Actions:
   check   run the preflight checks only (environment, toolchain, assets, runner tests, gates)
   run     run the preflight checks and then evaluate every selected case with the coding agent
+  stats   show the resource usage of one finished evaluation (offline, no provider setup needed)
 
 Environment variables (a flag of the same name always wins):
 
@@ -81,6 +82,7 @@ def load(module_name: str):
 
 run_case = load("run_case")
 fetch_assets = load("fetch_assets")
+ladder_usage = load("ladder_usage")
 
 
 @dataclass
@@ -856,6 +858,8 @@ def evaluate_case(
     run_case.copy_tree(case_dir / "base-workspace", workspace)
 
     started = time.monotonic()
+    agent_started_at: int | None = None
+    agent_ended_at: int | None = None
     outcome: AgentOutcome
     if settings.rehearse:
         apply_reference(case_dir, workspace)
@@ -866,7 +870,10 @@ def evaluate_case(
         log_path.parent.mkdir(parents=True, exist_ok=True)
         argv = agent_argv(settings, workspace, prompt, budget)
         say(f"{prefix} agent starts, budget {duration(budget)}, log {log_path.name}")
+        # Epoch milliseconds let `stats` match this case to the agent run in runtime.db exactly.
+        agent_started_at = int(time.time() * 1000)
         outcome = run_agent(settings, argv, workspace, log_path, budget, prefix)
+        agent_ended_at = int(time.time() * 1000)
 
     if outcome.timed_out:
         result = {
@@ -924,6 +931,9 @@ def evaluate_case(
         "agentDurationMillis": int(outcome.duration_seconds * 1000),
         "agentExitCode": outcome.exit_code,
         "agentOutputLines": outcome.lines,
+        "agentStartedAtEpochMillis": agent_started_at,
+        "agentEndedAtEpochMillis": agent_ended_at,
+        "budgetSeconds": budget,
         "checks": checks,
         "failures": failures,
         "contractProblems": contract_problems,
@@ -1079,6 +1089,7 @@ def evaluate(settings: Settings, checkout: Path, case_ids: list[str], provenance
 
     report_path = write_reports(settings, records, cases_root, provenance)
     print_summary(records, report_path, started, provenance)
+    say(f"  usage: run_ladder.py stats --run {settings.output_dir}")
     return 0 if accepted_runs(records) == total else 1
 
 
@@ -1092,7 +1103,9 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("action", choices=("check", "run"), help="check runs the preflight only")
+    parser.add_argument(
+        "action", choices=("check", "run", "stats"), help="check runs the preflight only; stats reads a finished run"
+    )
     parser.add_argument("--agent", default=None, help="coding agent launcher (HAIFA_LADDER_AGENT)")
     parser.add_argument("--model", default=None, help="model id (HAIFA_LADDER_MODEL)")
     parser.add_argument("--credential-env", default=None, help="credential variable to verify")
@@ -1116,11 +1129,32 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="accept an --assets-dir that does not match assets.lock.json (results are not comparable)",
     )
+    parser.add_argument("--run", default=None, help="stats: evaluation directory, or latest (default)")
+    parser.add_argument("--runtime-db", default=None, help="stats: runtime database of the agent distribution")
+    parser.add_argument("--json", action="store_true", help="stats: print the usage report as JSON")
     return parser.parse_args(argv)
 
 
+def run_stats(arguments: argparse.Namespace) -> int:
+    """Report the resource usage of a finished evaluation without any preflight or provider setup."""
+    agent = resolve_agent(arguments.agent or os.environ.get("HAIFA_LADDER_AGENT") or default_agent())
+    cache = arguments.cache_dir or os.environ.get("HAIFA_LADDER_CACHE_DIR")
+    return ladder_usage.main(
+        run_value=arguments.run,
+        runtime_db=arguments.runtime_db,
+        cache_dir=absolute(cache) if cache else REPOSITORY_ROOT / "local-tmp" / "autonomous-delivery-assets",
+        agent=agent,
+        self_limit_ratio=AGENT_SELF_LIMIT_RATIO,
+        as_json=arguments.json,
+        emit=say,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
-    settings = resolve_settings(parse_arguments(argv))
+    arguments = parse_arguments(argv)
+    if arguments.action == "stats":
+        return run_stats(arguments)
+    settings = resolve_settings(arguments)
     describe_settings(settings)
     ok, checkout, case_ids, provenance = preflight(settings)
     if not ok or checkout is None or provenance is None:
