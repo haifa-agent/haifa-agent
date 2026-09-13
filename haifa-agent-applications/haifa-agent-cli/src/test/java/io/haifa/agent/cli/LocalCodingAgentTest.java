@@ -164,7 +164,8 @@ class LocalCodingAgentTest {
                         "root_agents=\"PRESENT\"",
                         "Use the root project instruction once.")
                 .doesNotContain("Runtime execution guidance:")
-                .contains("<workspace_paths>", workspace.toRealPath().toString(), "current=\"true\"");
+                .contains(
+                        "<workspace_paths>", workspace.toRealPath().toString(), "mode=\"DEVELOP\"", "current=\"true\"");
         assertThat(prompt.split("<workspace_environment", -1)).hasSize(2);
         assertThat(prompt.split("Use the root project instruction once\\.", -1)).hasSize(2);
         assertThat(prompt.indexOf("<workspace_environment"))
@@ -467,7 +468,7 @@ class LocalCodingAgentTest {
     }
 
     @Test
-    void approvedWorkspaceAttachmentIsPathRedactedAndRestoredForAbsoluteFileTools() throws Exception {
+    void approvedWorkspaceAttachmentDisclosesRestoredAbsolutePathAndModeForFileTools() throws Exception {
         Path database = configuredSkillRoot.resolve("workspace-registry-recovery.db");
         Path attachedDirectory = Files.createDirectory(configuredSkillRoot.resolve("persistent-attached"));
         Path attachedFile = Files.writeString(attachedDirectory.resolve("restored.txt"), "restored-content");
@@ -540,15 +541,16 @@ class LocalCodingAgentTest {
 
         String expectedAttachedPath = attachedDirectory.toRealPath().toString();
         AtomicInteger readCalls = new AtomicInteger();
+        AtomicReference<String> restoredWorkspacePaths = new AtomicReference<>();
         var readModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
             if (readCalls.incrementAndGet() == 1) {
                 String system = request.messages().stream()
                         .filter(message -> message.role() == ModelMessageRole.SYSTEM)
                         .map(message -> message.content())
                         .collect(java.util.stream.Collectors.joining("\n"));
-                assertThat(system)
-                        .contains("<workspace_paths>", workspaceRef.get(), expectedAttachedPath)
-                        .doesNotContain("persistent-attached", "READ", "DEVELOP", "safeDisplayName", "status=");
+                restoredWorkspacePaths.set(system.substring(
+                        system.indexOf("<workspace_paths>"),
+                        system.indexOf("</workspace_paths>") + "</workspace_paths>".length()));
                 return toolResponse(
                         "persistent-read",
                         "file_read",
@@ -578,6 +580,10 @@ class LocalCodingAgentTest {
                             .status())
                     .isEqualTo(AgentRunStatus.COMPLETED);
         }
+        assertThat(restoredWorkspacePaths.get())
+                .contains("<workspace workspaceRef=\"" + workspaceRef.get() + "\" rootPath=\"" + expectedAttachedPath
+                        + "\" mode=\"READ\" />")
+                .doesNotContain("safeDisplayName", "status=");
         assertThat(attachCalls).hasValue(2);
         assertThat(readCalls).hasValue(2);
     }
@@ -618,6 +624,16 @@ class LocalCodingAgentTest {
                 new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
                 model)) {
             var firstRun = agent.start("attach directory");
+            var interaction = awaitPendingInteraction(agent, firstRun.runId(), Duration.ofSeconds(60));
+            agent.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId(agent.identifiers().nextValue()),
+                            interaction.id(),
+                            interaction.runId(),
+                            InteractionResponseType.APPROVE,
+                            List.of(),
+                            "approve-" + interaction.id().value(),
+                            agent.time().now()));
             assertThat(awaitTerminal(agent, firstRun.runId(), Duration.ofSeconds(60))
                             .status())
                     .isEqualTo(AgentRunStatus.COMPLETED);
@@ -634,7 +650,11 @@ class LocalCodingAgentTest {
 
             String systemPrompt = secondRunSystemPrompt.get();
             assertThat(systemPrompt)
-                    .contains("<workspace_paths>", workspace.toRealPath().toString(), "current=\"true\"")
+                    .contains(
+                            "<workspace_paths>",
+                            workspace.toRealPath().toString(),
+                            "mode=\"DEVELOP\"",
+                            "current=\"true\"")
                     .doesNotContain(workspaceRef.get(), extra.toRealPath().toString());
         }
     }
