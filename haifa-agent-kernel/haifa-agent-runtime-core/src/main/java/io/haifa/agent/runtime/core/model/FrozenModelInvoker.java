@@ -210,7 +210,12 @@ public final class FrozenModelInvoker {
                 return ModelStreamControl.CONTINUE;
             });
             RunControlSignal completedSignal = controls.signal(run.id());
-            if (completedSignal.stopsExecution()) throw new CancellationObservedException(completedSignal);
+            if (completedSignal.stopsExecution()) {
+                if (completedSignal == RunControlSignal.CANCEL || completedSignal == RunControlSignal.TIMEOUT) {
+                    throw new CancellationObservedException(controls.directive(run.id()));
+                }
+                throw new CancellationObservedException(completedSignal);
+            }
             var decision = responses.map(request, response, disclosedTools);
             var invocation = new ModelInvocationResult(
                     decision,
@@ -337,7 +342,12 @@ public final class FrozenModelInvoker {
                                             : "MODEL_CALL_FAILED",
                     elapsedMillis(startedAt),
                     failure instanceof ModelInvocationException modelFailure ? modelFailure : null);
-            if (cancelled) throw new CancellationObservedException(stopSignal);
+            if (cancelled) {
+                if (stopSignal == RunControlSignal.CANCEL || stopSignal == RunControlSignal.TIMEOUT) {
+                    throw new CancellationObservedException(controls.directive(run.id()));
+                }
+                throw new CancellationObservedException(stopSignal);
+            }
             throw failure;
         }
     }
@@ -381,6 +391,12 @@ public final class FrozenModelInvoker {
             }
             data.put("retryDecision", failure.retryDecision());
             failure.providerRequestId().ifPresent(id -> data.put("providerRequestId", id));
+            failure.responseLimit().ifPresent(limit -> {
+                data.put("limitKind", limit.limitKind().name());
+                data.put("limitBytes", limit.limitBytes());
+                data.put("observedBytes", limit.observedBytes());
+                data.put("attempt", limit.attempt());
+            });
         }
         events.append(run.id(), type, data, time.now());
     }

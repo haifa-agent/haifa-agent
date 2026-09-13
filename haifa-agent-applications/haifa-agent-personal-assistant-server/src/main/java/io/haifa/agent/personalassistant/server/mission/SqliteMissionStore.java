@@ -750,6 +750,22 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
     }
 
     @Override
+    public Optional<Instant> deadlineAt(String missionId) {
+        return execute(() -> {
+            try (var statement =
+                    current().prepareStatement("SELECT deadline_at_ms FROM personal_mission WHERE mission_id=?")) {
+                statement.setString(1, missionId);
+                try (var result = statement.executeQuery()) {
+                    if (!result.next()) return Optional.empty();
+                    return Optional.of(Instant.ofEpochMilli(result.getLong(1)));
+                }
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+        });
+    }
+
+    @Override
     public void expireForPartialSynthesis(String missionId, Instant now) {
         execute(() -> {
             try {

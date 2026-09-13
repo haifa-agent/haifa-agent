@@ -18,6 +18,8 @@ import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ModelResponseLimitDetails;
+import io.haifa.agent.model.api.ModelResponseLimitKind;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelStreamSink;
@@ -229,20 +231,34 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
             }
             StreamAggregate aggregate = new StreamAggregate(request.model().providerModelId());
             int totalBytes = 0;
+            int eventBytes = 0;
             try (InputStream stream = response.body();
                     BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    totalBytes += line.getBytes(StandardCharsets.UTF_8).length + 1;
-                    if (line.length() > MAX_SSE_LINE_CHARS || totalBytes > maxResponseBytes) {
-                        throw failure(
+                    int lineBytes = line.getBytes(StandardCharsets.UTF_8).length + 1;
+                    totalBytes = Math.addExact(totalBytes, lineBytes);
+                    eventBytes = Math.addExact(eventBytes, lineBytes);
+                    int eventLimit = Math.min(maxResponseBytes, MAX_SSE_LINE_CHARS);
+                    if (totalBytes > maxResponseBytes) {
+                        throw responseLimitFailure(
                                 request,
-                                ModelErrorCategory.MALFORMED_RESPONSE,
-                                false,
                                 response.statusCode(),
-                                "stream_too_large",
-                                "provider stream exceeds the configured size limit",
-                                null);
+                                ModelResponseLimitKind.TOTAL_STREAM,
+                                maxResponseBytes,
+                                totalBytes);
+                    }
+                    if (eventBytes > eventLimit) {
+                        throw responseLimitFailure(
+                                request,
+                                response.statusCode(),
+                                ModelResponseLimitKind.SINGLE_EVENT,
+                                eventLimit,
+                                eventBytes);
+                    }
+                    if (line.isEmpty()) {
+                        eventBytes = 0;
+                        continue;
                     }
                     if (!line.startsWith("data:")) continue;
                     String data = line.substring(5).trim();
@@ -307,7 +323,10 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                     null,
                     outputObserved);
         } catch (ModelInvocationException exception) {
-            throw outputObserved && !exception.outputObserved() ? exception.withOutputObserved() : exception;
+            if (!outputObserved || exception.outputObserved()) throw exception;
+            throw exception.category() == ModelErrorCategory.CANCELLED
+                    ? exception.withOutputObserved()
+                    : exception.asPartialResponse();
         } catch (IOException exception) {
             throw failure(
                     request,
@@ -1010,6 +1029,25 @@ public final class GeminiGenerateContentModel implements AgentChatModel {
                 retryAfter,
                 outputObserved,
                 providerRequestId);
+    }
+
+    private ModelInvocationException responseLimitFailure(
+            AgentChatRequest request, int status, ModelResponseLimitKind kind, long limitBytes, long observedBytes) {
+        String message = kind == ModelResponseLimitKind.TOTAL_STREAM
+                ? "provider stream exceeds the configured total size limit; increase model-max-response-bytes"
+                : "provider stream event exceeds the configured single-event size limit; increase model-max-response-bytes";
+        return new ModelInvocationException(
+                ModelErrorCategory.MALFORMED_RESPONSE,
+                true,
+                status,
+                "stream_response_too_large",
+                request.callId(),
+                message,
+                null,
+                null,
+                false,
+                null,
+                new ModelResponseLimitDetails(kind, limitBytes, observedBytes, request.attempt()));
     }
 
     private static String textOr(JsonNode node, String fallback) {
