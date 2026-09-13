@@ -655,8 +655,10 @@ record CliConfiguration(
                 throw new IllegalArgumentException("web endpoint must be an absolute HTTPS URI");
             }
             credentialRef = text(credentialRef, "web credentialRef");
-            if (!credentialRef.startsWith("env://") || credentialRef.length() == "env://".length()) {
-                throw new IllegalArgumentException("web credentialRef must use env://");
+            boolean validRef = (credentialRef.startsWith("env://") && credentialRef.length() > "env://".length())
+                    || (credentialRef.startsWith("os://") && credentialRef.length() > "os://".length());
+            if (!validRef) {
+                throw new IllegalArgumentException("web credentialRef must use env:// or os://");
             }
             Objects.requireNonNull(timeout, "web timeout must not be null");
             if (timeout.isZero() || timeout.isNegative() || timeout.compareTo(Duration.ofMinutes(2)) > 0) {

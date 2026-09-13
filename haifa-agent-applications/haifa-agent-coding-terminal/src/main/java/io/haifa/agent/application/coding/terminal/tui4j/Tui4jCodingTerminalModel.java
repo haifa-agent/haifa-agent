@@ -688,7 +688,7 @@ final class Tui4jCodingTerminalModel implements Model {
                 synchronizeEditor(mask, mask.length());
             }
             editor.setPrompt("API key ┃ ");
-            editor.setPlaceholder("Stored as plaintext in ~/.haifa-agent/auth.json");
+            editor.setPlaceholder("Stored in system credential store");
             secretPresentation = true;
         } else {
             if (secretPresentation) {

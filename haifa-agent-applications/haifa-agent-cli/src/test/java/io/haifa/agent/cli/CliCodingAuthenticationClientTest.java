@@ -5,8 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
 import io.haifa.agent.auth.localmodel.ExternalLoginAttemptState;
-import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
+import io.haifa.agent.auth.localmodel.InMemoryWindowsCredentialManagerClient;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
+import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
 import java.nio.file.Path;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -16,9 +17,13 @@ class CliCodingAuthenticationClientTest {
     @TempDir
     Path temp;
 
+    private WindowsLocalModelAuthStore createStore() {
+        return new WindowsLocalModelAuthStore(new InMemoryWindowsCredentialManagerClient(), new ObjectMapper());
+    }
+
     @Test
     void savedApiKeySatisfiesTheSelectedCodingAuthReference() {
-        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var store = createStore();
         var client = client(store, "model-auth://deepseek/default", "deepseek", Map.of());
 
         assertThat(client.connectionRequired()).isTrue();
@@ -35,7 +40,7 @@ class CliCodingAuthenticationClientTest {
 
     @Test
     void configuredEnvironmentReferenceDoesNotTriggerOnboarding() {
-        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var store = createStore();
 
         assertThat(client(store, "env://DEEPSEEK_API_KEY", "deepseek", Map.of("DEEPSEEK_API_KEY", "test-key"))
                         .connectionRequired())
@@ -46,7 +51,7 @@ class CliCodingAuthenticationClientTest {
 
     @Test
     void existingCodexConnectionSuppressesOnboardingWhenTheDefaultProviderIsUnconfigured() {
-        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var store = createStore();
         var service = new LocalModelAuthenticationService(
                 store,
                 java.util.Optional.empty(),
@@ -80,7 +85,7 @@ class CliCodingAuthenticationClientTest {
 
     @Test
     void exposesAntigravityOnlyWhenTheTrustedAssemblyRegisteredIt() {
-        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var store = createStore();
         var service = new LocalModelAuthenticationService(
                 store,
                 java.util.Optional.empty(),
@@ -117,7 +122,7 @@ class CliCodingAuthenticationClientTest {
 
     @Test
     void alwaysExposesCodexLogin() {
-        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var store = createStore();
         var service = new LocalModelAuthenticationService(
                 store,
                 java.util.Optional.empty(),
@@ -146,7 +151,7 @@ class CliCodingAuthenticationClientTest {
 
     @Test
     void apiKeyConnectionIsUnavailableForExternalLoginCredentials() {
-        var store = new FileLocalModelAuthStore(temp.resolve("auth.json"), new ObjectMapper());
+        var store = createStore();
 
         assertThat(client(store, "model-auth://deepseek/default", "deepseek", Map.of())
                         .apiKeyConnectionSupported())
@@ -160,7 +165,7 @@ class CliCodingAuthenticationClientTest {
     }
 
     private CliCodingAuthenticationClient client(
-            FileLocalModelAuthStore store,
+            WindowsLocalModelAuthStore store,
             String credentialReference,
             String providerId,
             Map<String, String> environment) {

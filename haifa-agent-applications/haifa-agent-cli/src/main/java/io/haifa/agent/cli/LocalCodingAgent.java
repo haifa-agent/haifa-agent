@@ -34,9 +34,9 @@ import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
-import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
+import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityLocalCompatibilityRegistrationFactory;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityProjectRegistry;
@@ -261,7 +261,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 .build();
         var json = new ObjectMapper();
         Clock authClock = Clock.systemUTC();
-        var authStore = FileLocalModelAuthStore.defaultStore(json);
+        var authStore = WindowsLocalModelAuthStore.defaultStore(json);
         var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(resolvedEnvironment);
         var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(resolvedEnvironment);
         var antigravityProjects = new AntigravityProjectRegistry();
@@ -583,7 +583,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             persistence.workspaceAccess(),
                             tenant,
                             principal,
-                            runtimeExecutionVerifier)
+                            runtimeExecutionVerifier,
+                            deniedEnvironmentNames(configuration))
                     : null;
             var operations = new LocalFileToolOperations(
                     workspaces,
@@ -1390,5 +1391,30 @@ final class LocalCodingAgent implements AutoCloseable {
                 definition.maxOutputTokens(),
                 Map.copyOf(providerOptions),
                 definition.options());
+    }
+
+    private static Set<String> deniedEnvironmentNames(CliConfiguration configuration) {
+        Set<String> denied = new java.util.LinkedHashSet<>();
+        if (configuration == null) return denied;
+        if (configuration.model() != null)
+            collectEnvRef(denied, configuration.model().credentialRef());
+        if (configuration.availableModels() != null) {
+            for (var model : configuration.availableModels()) {
+                collectEnvRef(denied, model.credentialRef());
+            }
+        }
+        if (configuration.web() != null) {
+            if (configuration.web().search() != null)
+                collectEnvRef(denied, configuration.web().search().credentialRef());
+            if (configuration.web().fetch() != null)
+                collectEnvRef(denied, configuration.web().fetch().credentialRef());
+        }
+        return Set.copyOf(denied);
+    }
+
+    private static void collectEnvRef(Set<String> target, String ref) {
+        if (ref != null && ref.startsWith("env://") && ref.length() > "env://".length()) {
+            target.add(ref.substring("env://".length()));
+        }
     }
 }
