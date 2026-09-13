@@ -34,8 +34,10 @@ record CliConfiguration(
         int maxIterations,
         long maxModelCalls,
         long maxToolCalls,
-        ProjectPersistenceConfiguration persistence) {
+        ProjectPersistenceConfiguration persistence,
+        int modelMaxResponseBytes) {
     private static final long DEFAULT_MAX_MODEL_CALLS = 64L;
+    static final int DEFAULT_MODEL_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private static final Set<String> DEFAULT_TOOLS = Set.of(
             "file_list",
             "file_stat",
@@ -86,6 +88,9 @@ record CliConfiguration(
         if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("timeout must be positive");
         if (maxIterations < 1 || maxToolCalls < 1 || maxModelCalls < 1)
             throw new IllegalArgumentException("runtime limits must be positive");
+        if (modelMaxResponseBytes < 1024 * 1024 || modelMaxResponseBytes > 32 * 1024 * 1024) {
+            throw new IllegalArgumentException("models.maxResponseBytes must be between 1048576 and 33554432");
+        }
     }
 
     static CliConfiguration defaults() {
@@ -171,7 +176,41 @@ record CliConfiguration(
                 50,
                 DEFAULT_MAX_MODEL_CALLS,
                 32,
-                ProjectPersistenceConfiguration.memory());
+                ProjectPersistenceConfiguration.memory(),
+                DEFAULT_MODEL_MAX_RESPONSE_BYTES);
+    }
+
+    CliConfiguration(
+            Model model,
+            List<Model> availableModels,
+            Set<String> enabledTools,
+            List<McpServer> mcpServers,
+            Web web,
+            Skills skills,
+            Execution execution,
+            ApprovalMode approval,
+            CodingApprovalThreshold approvalThreshold,
+            Duration timeout,
+            int maxIterations,
+            long maxModelCalls,
+            long maxToolCalls,
+            ProjectPersistenceConfiguration persistence) {
+        this(
+                model,
+                availableModels,
+                enabledTools,
+                mcpServers,
+                web,
+                skills,
+                execution,
+                approval,
+                approvalThreshold,
+                timeout,
+                maxIterations,
+                maxModelCalls,
+                maxToolCalls,
+                persistence,
+                DEFAULT_MODEL_MAX_RESPONSE_BYTES);
     }
 
     CliConfiguration(
@@ -202,7 +241,8 @@ record CliConfiguration(
                 maxIterations,
                 DEFAULT_MAX_MODEL_CALLS,
                 maxToolCalls,
-                persistence);
+                persistence,
+                DEFAULT_MODEL_MAX_RESPONSE_BYTES);
     }
 
     CliConfiguration(

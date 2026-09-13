@@ -128,8 +128,11 @@ public final class HaifaCliMain {
                         outputSubscription.close();
                         removeShutdownHook(shutdownHook);
                     }
-                    if (!completed.status().isTerminal()) {
-                        agent.cancel(accepted.runId());
+                    boolean deadlineExceeded = !completed.status().isTerminal();
+                    if (deadlineExceeded) {
+                        agent.cancel(
+                                accepted.runId(),
+                                io.haifa.agent.runtime.api.RunCancellation.deadlineExceeded(configuration.timeout()));
                         completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(3));
                     }
                     if (streamed.get()) output.println();
@@ -139,6 +142,9 @@ public final class HaifaCliMain {
                     if (completed.status().isTerminal()
                             && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
                         return 0;
+                    }
+                    if (deadlineExceeded) {
+                        return reportDeadlineExceeded(configuration.timeout(), error);
                     }
                     completed.error().ifPresent(value -> {
                         LOGGER.log(
@@ -154,8 +160,6 @@ public final class HaifaCliMain {
                         value.optionalDiagnosticId()
                                 .ifPresent(diagnosticId -> error.println("Diagnostic ID: " + diagnosticId));
                     });
-                    if (!completed.status().isTerminal())
-                        error.println("Task did not complete before the CLI timeout.");
                     return 2;
                 }
             }
@@ -195,6 +199,11 @@ public final class HaifaCliMain {
             output.flush();
         });
         return streamed;
+    }
+
+    static int reportDeadlineExceeded(Duration timeout, PrintStream error) {
+        error.println("[DEADLINE_EXCEEDED] Task exceeded the CLI timeout of " + timeout.toMillis() + " ms.");
+        return 124;
     }
 
     private static io.haifa.agent.runtime.api.AgentRunSnapshot await(

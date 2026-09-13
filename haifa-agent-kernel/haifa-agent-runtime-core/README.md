@@ -50,6 +50,11 @@ cancellation/deadline throughout backoff. Authentication, invalid request, conte
 are never replayed by the generic retry policy. Each empty occurrence adds only a safe `model.empty-response` event;
 exhaustion terminates through the existing stable model failure path.
 
+流式响应超过总量或单 Event 字节上限时，Adapter 统一分类为
+`MALFORMED_RESPONSE/stream_response_too_large`。尚未观察到 Assistant text 或 Tool Call 时，Runtime 最多执行
+两个物理 Attempt（即使通用重试配置更大）；一旦已有输出则按 partial response 终止，不自动重放。持久事件与
+诊断只携带 `limitKind`、`limitBytes`、`observedBytes` 和 `attempt`，不携带原始响应片段。
+
 ## 结构化完成纠偏
 
 `CompletionPolicy` 返回 Provider-neutral 的 `CompletionPolicyResult`：包括稳定

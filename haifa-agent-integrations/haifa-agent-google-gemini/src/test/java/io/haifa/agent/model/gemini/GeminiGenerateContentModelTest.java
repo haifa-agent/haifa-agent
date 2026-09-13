@@ -581,6 +581,61 @@ class GeminiGenerateContentModelTest {
     }
 
     @Test
+    void oversizedTotalStreamBeforeOutputIsRetryableAndCarriesSafeLimits() throws Exception {
+        String sse = ":" + "a".repeat(80) + "\n\n:" + "b".repeat(80) + "\n\n";
+        start(new AtomicReference<>(), new AtomicReference<>(), List.of(Response.sse(sse)));
+
+        assertThatThrownBy(() -> model(128)
+                        .invokeStreaming(
+                                request(
+                                        standardSnapshot(),
+                                        List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                                        List.of()),
+                                ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.MALFORMED_RESPONSE);
+                    assertThat(failure.providerCode()).isEqualTo("stream_response_too_large");
+                    assertThat(failure.retryable()).isTrue();
+                    assertThat(failure.outputObserved()).isFalse();
+                    assertThat(failure.retryDecision()).isEqualTo("RETRYABLE");
+                    assertThat(failure.responseLimit()).hasValueSatisfying(limit -> {
+                        assertThat(limit.limitKind().name()).isEqualTo("TOTAL_STREAM");
+                        assertThat(limit.limitBytes()).isEqualTo(128);
+                        assertThat(limit.observedBytes()).isGreaterThan(128);
+                        assertThat(limit.attempt()).isEqualTo(1);
+                    });
+                });
+    }
+
+    @Test
+    void oversizedSingleEventAfterOutputIsTerminal() throws Exception {
+        String first = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"first\"}]}}]}\n\n";
+        start(
+                new AtomicReference<>(),
+                new AtomicReference<>(),
+                List.of(Response.sse(first + "data: " + "x".repeat(1024 * 1024 + 1) + "\n\n")));
+
+        assertThatThrownBy(() -> model(2 * 1024 * 1024)
+                        .invokeStreaming(
+                                request(
+                                        standardSnapshot(),
+                                        List.of(ModelMessage.text(ModelMessageRole.USER, "hi")),
+                                        List.of()),
+                                ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOfSatisfying(ModelInvocationException.class, failure -> {
+                    assertThat(failure.providerCode()).isEqualTo("stream_response_too_large");
+                    assertThat(failure.retryable()).isFalse();
+                    assertThat(failure.outputObserved()).isTrue();
+                    assertThat(failure.retryDecision()).isEqualTo("TERMINAL");
+                    assertThat(failure.responseLimit()).hasValueSatisfying(limit -> {
+                        assertThat(limit.limitKind().name()).isEqualTo("SINGLE_EVENT");
+                        assertThat(limit.limitBytes()).isEqualTo(1024 * 1024);
+                        assertThat(limit.observedBytes()).isGreaterThan(1024 * 1024);
+                    });
+                });
+    }
+
+    @Test
     void antigravityDirectUnwrapsCloudCodeSseResponseFrames() throws Exception {
         String sse = "data: "
                 + directResponse(

@@ -32,6 +32,7 @@ import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.completion.CompletionGuard;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
+import io.haifa.agent.runtime.core.control.RunControlDirective;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
@@ -433,9 +434,7 @@ public final class DecisionExecutor {
                 AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
                 if (tools.isTrustedNotDispatched(run, call, failure)) {
 
-                    if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
-                        throw new CancellationObservedException();
-                    }
+                    checkCancellation(run);
                     return AgentLoopDirective.CONTINUE;
                 }
                 throw classified;
@@ -454,9 +453,7 @@ public final class DecisionExecutor {
             appendToolResult(run, call, result.summary());
             if (stopForTerminalToolOutcome(run, call)) return AgentLoopDirective.STOP;
 
-            if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
-                throw new CancellationObservedException();
-            }
+            checkCancellation(run);
             if (controls.signal(run.id()) == RunControlSignal.PAUSE) break;
         }
         return AgentLoopDirective.CONTINUE;
@@ -645,9 +642,7 @@ public final class DecisionExecutor {
                 AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
                 if (tools.isTrustedNotDispatched(run, call, failure)) {
 
-                    if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
-                        throw new CancellationObservedException();
-                    }
+                    checkCancellation(run);
                     return Optional.of(AgentLoopDirective.CONTINUE);
                 }
                 throw classified;
@@ -827,8 +822,15 @@ public final class DecisionExecutor {
                         "warnings", result.warnings()));
         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 0, 1, 0, 0));
 
-        if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
+        checkCancellation(run);
         return AgentLoopDirective.CONTINUE;
+    }
+
+    private void checkCancellation(AgentRun run) {
+        RunControlDirective directive = controls.directive(run.id());
+        if (directive.signal() == RunControlSignal.CANCEL || directive.signal() == RunControlSignal.TIMEOUT) {
+            throw new CancellationObservedException(directive);
+        }
     }
 
     private static String upperSnake(String value) {

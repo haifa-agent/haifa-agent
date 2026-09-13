@@ -19,6 +19,8 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderDefinition;
+import io.haifa.agent.model.api.ModelResponseLimitDetails;
+import io.haifa.agent.model.api.ModelResponseLimitKind;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelStreamSink;
@@ -419,15 +421,13 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 int lineBytes = line.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1;
                 totalBytes = Math.addExact(totalBytes, lineBytes);
                 eventBytes = Math.addExact(eventBytes, lineBytes);
-                if (totalBytes > maxResponseBytes || eventBytes > Math.min(maxResponseBytes, 1024 * 1024)) {
-                    throw failure(
-                            request,
-                            ModelErrorCategory.MALFORMED_RESPONSE,
-                            false,
-                            200,
-                            "stream_response_too_large",
-                            "provider stream exceeds the configured size limit",
-                            null);
+                int eventLimit = Math.min(maxResponseBytes, 1024 * 1024);
+                if (totalBytes > maxResponseBytes) {
+                    throw responseLimitFailure(
+                            request, ModelResponseLimitKind.TOTAL_STREAM, maxResponseBytes, totalBytes);
+                }
+                if (eventBytes > eventLimit) {
+                    throw responseLimitFailure(request, ModelResponseLimitKind.SINGLE_EVENT, eventLimit, eventBytes);
                 }
                 if (line.isEmpty()) {
                     if (!data.isEmpty()) {
@@ -1277,5 +1277,24 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 retryAfter,
                 outputObserved,
                 providerRequestId);
+    }
+
+    private ModelInvocationException responseLimitFailure(
+            AgentChatRequest request, ModelResponseLimitKind kind, long limitBytes, long observedBytes) {
+        String message = kind == ModelResponseLimitKind.TOTAL_STREAM
+                ? "provider stream exceeds the configured total size limit; increase models.maxResponseBytes"
+                : "provider stream event exceeds the configured single-event size limit; increase models.maxResponseBytes";
+        return new ModelInvocationException(
+                ModelErrorCategory.MALFORMED_RESPONSE,
+                true,
+                200,
+                "stream_response_too_large",
+                request.callId(),
+                message,
+                null,
+                null,
+                false,
+                null,
+                new ModelResponseLimitDetails(kind, limitBytes, observedBytes, request.attempt()));
     }
 }

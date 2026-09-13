@@ -77,14 +77,15 @@ final class CliConfigurationLoader {
         CliConfiguration defaults = CliConfiguration.defaults();
         List<CliConfiguration.Model> configuredModels;
         String defaultModelId;
+        Map<String, Object> modelsConfiguration = object(source, "models");
         if (source.containsKey("model")) {
             throw new IllegalArgumentException(
                     "configuration model is unsupported; use models.providers and models.default");
         }
         if (source.containsKey("models")) {
-            Map<String, Object> models = object(source, "models");
-            configuredModels = models(models);
-            defaultModelId = text(models, "default", configuredModels.getFirst().id());
+            configuredModels = models(modelsConfiguration);
+            defaultModelId = text(
+                    modelsConfiguration, "default", configuredModels.getFirst().id());
         } else {
             configuredModels = defaults.availableModels();
             defaultModelId = defaults.model().id();
@@ -147,7 +148,8 @@ final class CliConfigurationLoader {
                 Math.toIntExact(number(runtime, "maxIterations", defaults.maxIterations())),
                 number(runtime, "maxModelCalls", defaults.maxModelCalls()),
                 number(runtime, "maxToolCalls", defaults.maxToolCalls()),
-                persistence);
+                persistence,
+                Math.toIntExact(number(modelsConfiguration, "maxResponseBytes", defaults.modelMaxResponseBytes())));
     }
 
     private static CodingApprovalThreshold compatibleThreshold(ApprovalMode approval) {

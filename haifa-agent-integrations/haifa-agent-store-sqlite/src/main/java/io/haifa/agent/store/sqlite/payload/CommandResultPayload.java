@@ -29,7 +29,9 @@ public record CommandResultPayload(
         RunResultPayload result,
         AgentErrorPayload error,
         String output,
-        RunUsagePayload usage) {
+        RunUsagePayload usage,
+        String terminationReason,
+        String terminationDescription) {
 
     public static CommandResultPayload from(RuntimeCommandResult value) {
         RuntimeCommand command = value.command();
@@ -50,7 +52,9 @@ public record CommandResultPayload(
                 snapshot.result().map(RunResultPayload::from).orElse(null),
                 snapshot.error().map(AgentErrorPayload::from).orElse(null),
                 snapshot.output().orElse(null),
-                RunUsagePayload.from(snapshot.usage()));
+                RunUsagePayload.from(snapshot.usage()),
+                snapshot.terminationReason().map(reason -> reason.code()).orElse(null),
+                snapshot.terminationReason().map(reason -> reason.description()).orElse(null));
     }
 
     public RuntimeCommandResult toDomain() {
@@ -70,7 +74,11 @@ public record CommandResultPayload(
                 java.util.Optional.ofNullable(result).map(RunResultPayload::toDomain),
                 java.util.Optional.ofNullable(error).map(AgentErrorPayload::toDomain),
                 java.util.Optional.ofNullable(output),
-                usage == null ? io.haifa.agent.core.run.AgentRunUsage.ZERO : usage.toDomain());
+                usage == null ? io.haifa.agent.core.run.AgentRunUsage.ZERO : usage.toDomain(),
+                terminationReason == null
+                        ? java.util.Optional.empty()
+                        : java.util.Optional.of(new io.haifa.agent.core.run.RunTerminationReason(
+                                terminationReason, terminationDescription)));
         return new RuntimeCommandResult(command, RuntimeCommandStatus.valueOf(status), snapshot);
     }
 }

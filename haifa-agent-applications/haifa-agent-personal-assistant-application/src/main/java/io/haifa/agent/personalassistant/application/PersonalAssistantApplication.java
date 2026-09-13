@@ -388,6 +388,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                     snapshot.output(),
                     snapshot.result().map(result -> result.summary()),
                     snapshot.error().map(error -> error.code().wireCode()),
+                    snapshot.terminationReason().map(reason -> reason.code()),
+                    snapshot.terminationReason().map(reason -> reason.description()),
                     snapshot.error()
                             .map(error -> new ExecutionErrorView(
                                     error.code().wireCode(),
@@ -415,7 +417,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     public RunView cancel(String runId) {
         return run(agent.runs()
                         .handle(new AgentRunId(runId))
-                        .cancel()
+                        .cancel(io.haifa.agent.runtime.api.RunCancellation.userRequest())
                         .snapshot()
                         .runId()
                         .value())
@@ -1087,9 +1089,39 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             Optional<String> output,
             Optional<String> resultSummary,
             Optional<String> errorCode,
+            Optional<String> terminationReason,
+            Optional<String> terminationDescription,
             Optional<ExecutionErrorView> error,
             Optional<PlanView> plan,
-            UsageView usage) {}
+            UsageView usage) {
+        public RunView(
+                String id,
+                String conversationId,
+                String status,
+                long version,
+                Instant updatedAt,
+                Optional<String> output,
+                Optional<String> resultSummary,
+                Optional<String> errorCode,
+                Optional<ExecutionErrorView> error,
+                Optional<PlanView> plan,
+                UsageView usage) {
+            this(
+                    id,
+                    conversationId,
+                    status,
+                    version,
+                    updatedAt,
+                    output,
+                    resultSummary,
+                    errorCode,
+                    Optional.empty(),
+                    Optional.empty(),
+                    error,
+                    plan,
+                    usage);
+        }
+    }
 
     public record PlanView(String id, String objective, List<TodoView> items, long revision, Instant updatedAt) {}
 

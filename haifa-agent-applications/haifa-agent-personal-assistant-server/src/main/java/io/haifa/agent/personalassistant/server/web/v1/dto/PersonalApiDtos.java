@@ -324,9 +324,39 @@ public final class PersonalApiDtos {
             Optional<String> output,
             Optional<String> resultSummary,
             Optional<String> errorCode,
+            Optional<String> terminationReason,
+            Optional<String> terminationDescription,
             Optional<ExecutionError> error,
             Optional<Plan> plan,
-            Usage usage) {}
+            Usage usage) {
+        public Run(
+                String id,
+                String conversationId,
+                String status,
+                long version,
+                Instant updatedAt,
+                Optional<String> output,
+                Optional<String> resultSummary,
+                Optional<String> errorCode,
+                Optional<ExecutionError> error,
+                Optional<Plan> plan,
+                Usage usage) {
+            this(
+                    id,
+                    conversationId,
+                    status,
+                    version,
+                    updatedAt,
+                    output,
+                    resultSummary,
+                    errorCode,
+                    Optional.empty(),
+                    Optional.empty(),
+                    error,
+                    plan,
+                    usage);
+        }
+    }
 
     public record Plan(String id, String objective, List<Todo> items, long revision, Instant updatedAt) {}
 

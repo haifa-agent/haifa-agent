@@ -11,6 +11,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -117,6 +118,18 @@ class HaifaCliMainTest {
         assertThat(startup.get().mode()).isEqualTo(CodingTerminalStartup.Mode.SESSION);
         assertThat(startup.get().sessionId()).contains(new io.haifa.agent.core.session.AgentSessionId("session-1"));
         assertThat(startup.get().prompt()).contains("continue the work");
+    }
+
+    @Test
+    void deadlineIsAlwaysReportedToStderrWithTheStableExitCode() {
+        ByteArrayOutputStream error = new ByteArrayOutputStream();
+
+        int exit = HaifaCliMain.reportDeadlineExceeded(
+                Duration.ofSeconds(7), new PrintStream(error, true, StandardCharsets.UTF_8));
+
+        assertThat(exit).isEqualTo(124);
+        assertThat(error.toString(StandardCharsets.UTF_8))
+                .isEqualTo("[DEADLINE_EXCEEDED] Task exceeded the CLI timeout of 7000 ms." + System.lineSeparator());
     }
 
     private static PrintStream output() {

@@ -25,7 +25,6 @@ import io.haifa.agent.runtime.api.RunInputId;
 import io.haifa.agent.runtime.api.RunInputReceipt;
 import io.haifa.agent.runtime.api.RunInputSubmission;
 import io.haifa.agent.runtime.api.RuntimeCommand;
-import io.haifa.agent.runtime.api.RuntimeCommandArguments;
 import io.haifa.agent.runtime.api.RuntimeCommandId;
 import io.haifa.agent.runtime.api.RuntimeCommandResult;
 import io.haifa.agent.runtime.api.RuntimeCommandType;
@@ -546,7 +545,7 @@ public final class CodingSessionService {
                 new RuntimeCommandId(binding.dispatchKey()),
                 active.runId(),
                 RuntimeCommandType.CANCEL,
-                RuntimeCommandArguments.NONE,
+                io.haifa.agent.runtime.api.RunCancellation.userRequest().arguments(),
                 OptionalLong.of(active.version()),
                 binding.dispatchKey(),
                 now()));

@@ -242,6 +242,7 @@ public class PersonalAssistantConfiguration {
                     ref -> modelAuthentication
                             .findExternalAccountId(ref, CodexExternalLoginMethod.METHOD_ID)
                             .map(CodexAccountIdentity::new),
+                    properties.modelMaxResponseBytes(),
                     personalModelProxySelector);
             var modelPreferences = new SqlitePersonalModelPreferenceStore(
                     dataDirectory.resolve("personal-assistant.sqlite"),

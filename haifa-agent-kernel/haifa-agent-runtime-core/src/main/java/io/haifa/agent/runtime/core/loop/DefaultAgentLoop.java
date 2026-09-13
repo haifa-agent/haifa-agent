@@ -655,14 +655,15 @@ public final class DefaultAgentLoop implements AgentLoop {
     }
 
     private boolean applyControl(AgentRun run, AgentLoopContext progress, SafePoint safePoint, int completedIteration) {
-        RunControlSignal signal = controls.signal(run.id());
+        var directive = controls.directive(run.id());
+        RunControlSignal signal = directive.signal();
         if (signal == RunControlSignal.CANCEL) {
-            transitions.cancelled(run, new RunTerminationReason("USER_CANCELLED", "Cancellation requested"));
+            transitions.cancelled(run, directive.terminationReason().orElseThrow());
             controls.clear(run.id());
             return true;
         }
         if (signal == RunControlSignal.TIMEOUT) {
-            transitions.timedOut(run, new RunTerminationReason("CONTROL_TIMEOUT", "Runtime timeout signal observed"));
+            transitions.timedOut(run, directive.terminationReason().orElseThrow());
             controls.clear(run.id());
             return true;
         }
@@ -920,7 +921,10 @@ public final class DefaultAgentLoop implements AgentLoop {
     }
 
     private void checkModelRetryControl(AgentRun run) {
-        if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
+        RunControlSignal signal = controls.signal(run.id());
+        if (signal == RunControlSignal.CANCEL || signal == RunControlSignal.TIMEOUT) {
+            throw new CancellationObservedException(controls.directive(run.id()));
+        }
         long elapsed = run.activeElapsedMillis(time.now());
         if (elapsed >= run.limits().maxWallTimeMillis()) {
             throw new RuntimeLimitExceededException(
@@ -962,6 +966,12 @@ public final class DefaultAgentLoop implements AgentLoop {
                     data.put("providerCode", modelFailure.providerCode());
                     data.put("retryable", modelFailure.retryable());
                     data.put("outputObserved", modelFailure.outputObserved());
+                    modelFailure.responseLimit().ifPresent(limit -> {
+                        data.put("limitKind", limit.limitKind().name());
+                        data.put("limitBytes", limit.limitBytes());
+                        data.put("observedBytes", limit.observedBytes());
+                        data.put("attempt", limit.attempt());
+                    });
                     failureCategory = modelFailure.category().name();
                     retryable = modelFailure.retryable();
                 } else {
@@ -1028,6 +1038,12 @@ public final class DefaultAgentLoop implements AgentLoop {
             details.put("retryDecision", modelError.retryDecision());
             modelError.providerRequestId().ifPresent(id -> details.put("providerRequestId", id));
             details.put("providerMessage", modelError.getMessage());
+            modelError.responseLimit().ifPresent(limit -> {
+                details.put("limitKind", limit.limitKind().name());
+                details.put("limitBytes", limit.limitBytes());
+                details.put("observedBytes", limit.observedBytes());
+                details.put("attempt", limit.attempt());
+            });
         }
         return Map.copyOf(details);
     }
@@ -1089,6 +1105,12 @@ public final class DefaultAgentLoop implements AgentLoop {
             attributes.put("retryDecision", modelError.retryDecision());
             modelError.providerRequestId().ifPresent(id -> attributes.put("providerRequestId", id));
             attributes.put("providerMessage", modelError.getMessage());
+            modelError.responseLimit().ifPresent(limit -> {
+                attributes.put("limitKind", limit.limitKind().name());
+                attributes.put("limitBytes", limit.limitBytes());
+                attributes.put("observedBytes", limit.observedBytes());
+                attributes.put("attempt", limit.attempt());
+            });
         }
         return Map.copyOf(attributes);
     }

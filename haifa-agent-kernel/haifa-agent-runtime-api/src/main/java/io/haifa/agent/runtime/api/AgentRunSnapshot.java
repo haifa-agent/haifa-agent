@@ -6,6 +6,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunUsage;
+import io.haifa.agent.core.run.RunTerminationReason;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
@@ -19,7 +20,8 @@ public record AgentRunSnapshot(
         Optional<AgentRunResult> result,
         Optional<AgentError> error,
         Optional<String> output,
-        AgentRunUsage usage) {
+        AgentRunUsage usage,
+        Optional<RunTerminationReason> terminationReason) {
 
     public AgentRunSnapshot {
         runId = Objects.requireNonNull(runId, "runId must not be null");
@@ -37,6 +39,7 @@ public record AgentRunSnapshot(
                 .map(String::trim)
                 .filter(value -> !value.isEmpty());
         usage = Objects.requireNonNull(usage, "usage must not be null");
+        terminationReason = Objects.requireNonNull(terminationReason, "terminationReason must not be null");
     }
 
     /**
@@ -53,7 +56,19 @@ public record AgentRunSnapshot(
             Optional<AgentRunResult> result,
             Optional<AgentError> error,
             Optional<String> output) {
-        this(runId, status, version, updatedAt, result, error, output, AgentRunUsage.ZERO);
+        this(runId, status, version, updatedAt, result, error, output, AgentRunUsage.ZERO, Optional.empty());
+    }
+
+    public AgentRunSnapshot(
+            AgentRunId runId,
+            AgentRunStatus status,
+            long version,
+            Instant updatedAt,
+            Optional<AgentRunResult> result,
+            Optional<AgentError> error,
+            Optional<String> output,
+            AgentRunUsage usage) {
+        this(runId, status, version, updatedAt, result, error, output, usage, Optional.empty());
     }
 
     public static AgentRunSnapshot from(AgentRun run) {
@@ -63,6 +78,14 @@ public record AgentRunSnapshot(
     public static AgentRunSnapshot from(AgentRun run, Optional<String> output) {
         Objects.requireNonNull(run, "run must not be null");
         return new AgentRunSnapshot(
-                run.id(), run.status(), run.version(), run.updatedAt(), run.result(), run.error(), output, run.usage());
+                run.id(),
+                run.status(),
+                run.version(),
+                run.updatedAt(),
+                run.result(),
+                run.error(),
+                output,
+                run.usage(),
+                run.terminationReason());
     }
 }

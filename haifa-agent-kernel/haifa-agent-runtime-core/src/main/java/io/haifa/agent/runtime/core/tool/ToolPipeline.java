@@ -524,7 +524,8 @@ public final class ToolPipeline {
                     request.arguments(),
                     deadline,
                     java.util.Optional.of(request.idempotencyKey().value()),
-                    (ToolCancellation) () -> controls.signal(run.id()) == RunControlSignal.CANCEL,
+                    (ToolCancellation) () -> controls.signal(run.id()) == RunControlSignal.CANCEL
+                            || controls.signal(run.id()) == RunControlSignal.TIMEOUT,
                     java.util.Map.copyOf(resolvedCredentials),
                     new io.haifa.agent.tool.api.ToolInvocationObserver() {
                         @Override
@@ -916,6 +917,9 @@ public final class ToolPipeline {
     }
 
     private void checkCancellation(AgentRun run) {
-        if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
+        RunControlSignal signal = controls.signal(run.id());
+        if (signal == RunControlSignal.CANCEL || signal == RunControlSignal.TIMEOUT) {
+            throw new CancellationObservedException(controls.directive(run.id()));
+        }
     }
 }

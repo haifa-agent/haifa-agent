@@ -229,6 +229,22 @@ class PersonalModelFactoryTest {
     }
 
     @Test
+    void defaultApplicationConfigurationUsesTheReviewedModelResponseLimit() throws Exception {
+        var sources = new MutablePropertySources();
+        var resource = new ClassPathResource("application.yml");
+        for (var source : new YamlPropertySourceLoader().load("application", resource)) {
+            sources.addLast(source);
+        }
+
+        int maxResponseBytes = new Binder(
+                        ConfigurationPropertySources.from(sources), new PropertySourcesPlaceholdersResolver(sources))
+                .bind("haifa.personal.model-max-response-bytes", Integer.class)
+                .orElseThrow(() -> new AssertionError("default model response limit did not bind"));
+
+        assertThat(maxResponseBytes).isEqualTo(4 * 1024 * 1024);
+    }
+
+    @Test
     void bindsProviderWithItsAvailableModelList() {
         var source = new MapConfigurationPropertySource(Map.ofEntries(
                 Map.entry("provider.id", "deepseek"),

@@ -77,6 +77,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /** Creates either the production remote adapter or an explicitly enabled deterministic acceptance model. */
 public final class PersonalModelFactory {
+    private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private static final ModelCatalogManifest PACKAGED_CATALOG =
             PackagedModelCatalog.load(PersonalModelFactory.class.getClassLoader());
 
@@ -172,11 +173,38 @@ public final class PersonalModelFactory {
             AntigravityCloudCodeProjectResolver trustedProjectResolver,
             CodexAccountIdentityResolver codexAccountResolver,
             ProxySelector proxySelector) {
+        return createPlatform(
+                configured,
+                defaultModelId,
+                allowInsecureLoopbackModel,
+                mapper,
+                shell,
+                credentials,
+                trustedProjectResolver,
+                codexAccountResolver,
+                DEFAULT_MAX_RESPONSE_BYTES,
+                proxySelector);
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            ShellPlatformContribution shell,
+            CredentialResolver credentials,
+            AntigravityCloudCodeProjectResolver trustedProjectResolver,
+            CodexAccountIdentityResolver codexAccountResolver,
+            int maxResponseBytes,
+            ProxySelector proxySelector) {
         List<PersonalAssistantProperties.ModelProvider> configuredProviders = List.copyOf(configured);
         boolean catalogDeployment = isCatalogDeployment(configuredProviders);
         List<PersonalAssistantProperties.ModelProvider> providers = catalogized(configuredProviders);
         java.util.Objects.requireNonNull(credentials, "credentials must not be null");
         java.util.Objects.requireNonNull(proxySelector, "proxySelector must not be null");
+        if (maxResponseBytes < 1024 * 1024 || maxResponseBytes > 32 * 1024 * 1024) {
+            throw new IllegalArgumentException("maxResponseBytes must be between 1048576 and 33554432");
+        }
         if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
         validateEndpoints(providers, allowInsecureLoopbackModel);
         boolean deterministic = providers.stream().anyMatch(value -> "deterministic".equals(value.mode()));
@@ -213,6 +241,7 @@ public final class PersonalModelFactory {
                 credentials,
                 trustedProjectResolver,
                 codexAccountResolver,
+                maxResponseBytes,
                 proxySelector);
         ModelContribution contribution = new ModelContribution(
                 new SdkContributionMetadata(
@@ -723,6 +752,7 @@ public final class PersonalModelFactory {
             CredentialResolver credentials,
             AntigravityCloudCodeProjectResolver trustedProjectResolver,
             CodexAccountIdentityResolver codexAccountResolver,
+            int maxResponseBytes,
             ProxySelector proxySelector) {
         if (deterministic) {
             AgentChatModel model = new LoggingAgentChatModel(
@@ -746,25 +776,25 @@ public final class PersonalModelFactory {
                                     mapper,
                                     credentials,
                                     allowInsecureLoopbackModel,
-                                    4 * 1024 * 1024);
+                                    maxResponseBytes);
                         case ModelApiStyles.OPENAI_RESPONSES_ADAPTER ->
                             new OpenAiResponsesModel(
                                     http,
                                     mapper,
                                     credentials,
                                     allowInsecureLoopbackModel,
-                                    4 * 1024 * 1024,
+                                    maxResponseBytes,
                                     codexAccountResolver);
                         case ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER ->
                             new AnthropicMessagesModel(
-                                    http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
+                                    http, mapper, credentials, allowInsecureLoopbackModel, maxResponseBytes);
                         case ModelApiStyles.GOOGLE_GEMINI_ADAPTER ->
                             new GeminiGenerateContentModel(
                                     http,
                                     mapper,
                                     credentials,
                                     allowInsecureLoopbackModel,
-                                    4 * 1024 * 1024,
+                                    maxResponseBytes,
                                     false,
                                     trustedProjectResolver);
                         default ->

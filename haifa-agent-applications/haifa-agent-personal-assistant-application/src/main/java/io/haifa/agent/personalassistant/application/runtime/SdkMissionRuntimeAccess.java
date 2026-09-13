@@ -1173,10 +1173,10 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     }
 
     @Override
-    public void cancelTask(String runId) {
+    public void cancelTask(String runId, io.haifa.agent.runtime.api.RunCancellation cancellation) {
         var snapshot = agent.runs().find(new io.haifa.agent.core.run.AgentRunId(runId));
         if (snapshot.isPresent() && !snapshot.orElseThrow().status().isTerminal()) {
-            agent.runs().handle(new io.haifa.agent.core.run.AgentRunId(runId)).cancel();
+            agent.runs().handle(new io.haifa.agent.core.run.AgentRunId(runId)).cancel(cancellation);
         }
     }
 

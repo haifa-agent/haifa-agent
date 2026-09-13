@@ -112,7 +112,6 @@ import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
 import io.haifa.agent.runtime.api.RuntimeCommand;
-import io.haifa.agent.runtime.api.RuntimeCommandArguments;
 import io.haifa.agent.runtime.api.RuntimeCommandId;
 import io.haifa.agent.runtime.api.RuntimeCommandType;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
@@ -309,15 +308,33 @@ final class LocalCodingAgent implements AutoCloseable {
                         .toList(),
                 antigravityRegistration.isPresent());
         var chat = new OpenAiCompatibleChatModel(
-                "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
+                "openai-compatible",
+                "1.0.0",
+                http,
+                json,
+                credentials,
+                allowInsecureLoopback,
+                configuration.modelMaxResponseBytes());
         var responses = new OpenAiResponsesModel(
-                http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024, ref -> authenticationService
+                http,
+                json,
+                credentials,
+                allowInsecureLoopback,
+                configuration.modelMaxResponseBytes(),
+                ref -> authenticationService
                         .findExternalAccountId(
                                 ref, io.haifa.agent.auth.localmodel.codex.CodexExternalLoginMethod.METHOD_ID)
                         .map(io.haifa.agent.model.openai.responses.CodexAccountIdentity::new));
-        var anthropic = new AnthropicMessagesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
+        var anthropic = new AnthropicMessagesModel(
+                http, json, credentials, allowInsecureLoopback, configuration.modelMaxResponseBytes());
         var gemini = new GeminiGenerateContentModel(
-                http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024, false, antigravityProjects::resolve);
+                http,
+                json,
+                credentials,
+                allowInsecureLoopback,
+                configuration.modelMaxResponseBytes(),
+                false,
+                antigravityProjects::resolve);
         return create(
                 workspaceRoot,
                 configuration,
@@ -982,12 +999,16 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     void cancel(io.haifa.agent.core.run.AgentRunId runId) {
+        cancel(runId, io.haifa.agent.runtime.api.RunCancellation.userRequest());
+    }
+
+    void cancel(io.haifa.agent.core.run.AgentRunId runId, io.haifa.agent.runtime.api.RunCancellation cancellation) {
         runtime.command(new RuntimeCommand(
                 new RuntimeCommandId(identifiers.nextValue()),
                 runId,
                 RuntimeCommandType.CANCEL,
-                RuntimeCommandArguments.NONE,
-                "cli-cancel-" + runId.value(),
+                cancellation.arguments(),
+                "cli-cancel-" + cancellation.type().name().toLowerCase(java.util.Locale.ROOT) + "-" + runId.value(),
                 time.now()));
     }
 

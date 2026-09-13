@@ -33,6 +33,7 @@ import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.api.InteractionState;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
+import io.haifa.agent.runtime.api.RunCancellation;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventSubscription;
@@ -686,7 +687,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                     controls.requestPause(run);
                 }
             }
-            case CANCEL -> applyCancel(run);
+            case CANCEL -> applyCancel(run, RunCancellation.from(command.arguments()));
             case TERMINATE_CHILDREN -> delegations.terminateChildren(run);
         }
         var event = events.append(
@@ -887,16 +888,28 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         });
     }
 
-    private void applyCancel(AgentRun run) {
+    private void applyCancel(AgentRun run, RunCancellation cancellation) {
         if (run.status().isTerminal()) return;
         delegations.terminateChildren(run);
-        events.append(run.id(), "children.termination-requested", Map.of("reason", "PARENT_CANCELLED"), time.now());
+        events.append(
+                run.id(),
+                "children.termination-requested",
+                Map.of("reason", cancellation.type().name()),
+                time.now());
         if (run.status() == AgentRunStatus.RUNNING || run.status() == AgentRunStatus.SUSPENDING) {
-            controls.requestCancel(run);
+            if (cancellation.type() == RunCancellation.Type.DEADLINE_EXCEEDED) {
+                controls.requestTimeout(run, cancellation.terminationReason());
+            } else {
+                controls.requestCancel(run, cancellation.terminationReason());
+            }
             scheduler.cancel(run.id());
             return;
         }
-        transitions.cancelled(run, new RunTerminationReason("USER_CANCELLED", "Cancellation requested"));
+        if (cancellation.type() == RunCancellation.Type.DEADLINE_EXCEEDED) {
+            transitions.timedOut(run, cancellation.terminationReason());
+        } else {
+            transitions.cancelled(run, cancellation.terminationReason());
+        }
         attempts.activeFor(run.id()).ifPresent(attempt -> {
             long expected = attempt.version();
             attempt.finish(ExecutionAttemptStatus.CANCELLED, time.now(), Optional.empty());
@@ -1043,18 +1056,19 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         }
 
         @Override
-        public RuntimeCommandResult cancel() {
-            return command(RuntimeCommandType.CANCEL);
+        public RuntimeCommandResult cancel(RunCancellation cancellation) {
+            return command(
+                    RuntimeCommandType.CANCEL,
+                    Objects.requireNonNull(cancellation).arguments());
         }
 
         private RuntimeCommandResult command(RuntimeCommandType type) {
+            return command(type, RuntimeCommandArguments.NONE);
+        }
+
+        private RuntimeCommandResult command(RuntimeCommandType type, RuntimeCommandArguments arguments) {
             return DefaultAgentRuntime.this.command(new RuntimeCommand(
-                    new RuntimeCommandId(ids.nextValue()),
-                    runId,
-                    type,
-                    RuntimeCommandArguments.NONE,
-                    ids.nextValue(),
-                    time.now()));
+                    new RuntimeCommandId(ids.nextValue()), runId, type, arguments, ids.nextValue(), time.now()));
         }
     }
 }

@@ -46,7 +46,12 @@ Listener 失败不会中断 AgentLoop。
   Resume 与 Command 可携带 expected Run version，供 HTTP `If-Match` 映射；版本检查仍由
   Runtime 事实执行，Transport 不维护第二份版本。
 - `recover(runId)` 将失去执行者的旧 Run 收敛为中断／结果未知，不调度新的 Attempt，也不重放工具；当前仍被拥有的执行会被拒绝。正常暂停和批准仍通过 resume/respond 继续。
-- 公共命令只有 `PAUSE`、`CANCEL`、`TERMINATE_CHILDREN`；`InteractionResponse` 以 Request/Response ID 关联 Clarification 或 Approval，并从可信 Caller Context 获取操作者。Timeout/Lease Lost 等只属于 Runtime 内部 Control Signal。
+- 公共命令只有 `PAUSE`、`CANCEL`、`TERMINATE_CHILDREN`；`CANCEL` 的 `RunCancellation` 明确区分
+  `USER_REQUEST` 与 Host 已判定的 `DEADLINE_EXCEEDED`，并将实际时限写入终止说明。旧的空参数取消仍按
+  用户请求解释。`InteractionResponse` 以 Request/Response ID 关联 Clarification 或 Approval，并从可信
+  Caller Context 获取操作者；Lease Lost 等执行控制仍属于 Runtime 内部 Control Signal。
+- `AgentRunSnapshot.terminationReason` 以及终态 Event/Store 投影使用同一个稳定原因：用户取消为
+  `USER_CANCELLED`，Host deadline 为 `DEADLINE_EXCEEDED`；调用方不得从通用 `CANCEL` 命令名猜测原因。
 - 新的 `InteractionView`、`InteractionResponseSubmission/Receipt` 使用稳定 Kind/Action/Input、
   revision 和错误码；旧 `InteractionResponse`/Snapshot 返回路径暂时保留为单向兼容层。新增入口使用
   fail-fast default method，既有第三方 `AgentRuntime` 实现保持源码兼容，支持新能力时再显式覆盖。

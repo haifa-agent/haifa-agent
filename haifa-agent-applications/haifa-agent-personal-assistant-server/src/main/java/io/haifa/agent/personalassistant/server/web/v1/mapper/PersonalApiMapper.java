@@ -283,6 +283,8 @@ public final class PersonalApiMapper {
                 value.output(),
                 value.resultSummary(),
                 value.errorCode(),
+                value.terminationReason(),
+                value.terminationDescription(),
                 value.error()
                         .map(error -> new PersonalApiDtos.ExecutionError(
                                 error.code(),

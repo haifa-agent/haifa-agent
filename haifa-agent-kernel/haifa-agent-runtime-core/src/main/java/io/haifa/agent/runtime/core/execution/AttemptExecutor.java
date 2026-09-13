@@ -87,10 +87,13 @@ public final class AttemptExecutor {
             finish(attempt, statusFor(run.status()), terminalError);
         } catch (CancellationObservedException cancelled) {
             if (!run.status().isTerminal()) {
-                transitions.cancelled(
-                        run,
-                        new io.haifa.agent.core.run.RunTerminationReason(
-                                "USER_CANCELLED", "Cancellation observed at tool safe point"));
+                if (cancelled.directive().signal() == io.haifa.agent.runtime.core.control.RunControlSignal.TIMEOUT) {
+                    transitions.timedOut(
+                            run, cancelled.directive().terminationReason().orElseThrow());
+                } else {
+                    transitions.cancelled(
+                            run, cancelled.directive().terminationReason().orElseThrow());
+                }
             }
             recordRunTerminal(run, traceContext);
             finish(attempt, ExecutionAttemptStatus.CANCELLED, null);

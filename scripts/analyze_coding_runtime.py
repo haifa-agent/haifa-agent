@@ -19,10 +19,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-REPORT_SCHEMA_VERSION = "1.1.0"
+REPORT_SCHEMA_VERSION = "1.2.0"
 REQUIRED_COLUMNS = {
     "runtime_event": {"run_id", "type", "data_payload", "occurred_at"},
-    "run": {"run_id", "session_id", "status", "error_payload"},
+    "run": {"run_id", "session_id", "status", "error_payload", "termination_reason"},
     "tool_call": {
         "tool_call_id",
         "run_id",
@@ -296,6 +296,7 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
             "window": None,
             "scope": {"sessions": 0, "runs": 0, "toolCalls": 0},
             "runStatuses": {},
+            "runTerminationReasons": {},
             "runFailures": [],
             "toolStatuses": {},
             "toolMetrics": [],
@@ -315,7 +316,7 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
     run_rows = list(
         connection.execute(
             """
-            SELECT r.run_id, r.session_id, r.status, r.error_payload
+            SELECT r.run_id, r.session_id, r.status, r.error_payload, r.termination_reason
             FROM run r
             JOIN (
               SELECT DISTINCT run_id FROM runtime_event
@@ -514,6 +515,11 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
     failed_tools = sum(1 for row in tool_rows if _safe_text(row["status"]) == "FAILED")
     execution_total = sum(execution_counter.values())
     run_statuses = _status_counts(run_rows)
+    run_termination_reasons = dict(sorted(Counter(
+        reason
+        for row in run_rows
+        if (reason := _safe_text(row["termination_reason"], ""))
+    ).items()))
     first_change_metrics: dict[str, Any]
     if first_change_by_run:
         run_starts = {
@@ -650,6 +656,7 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
             "toolCalls": len(tool_rows),
         },
         "runStatuses": run_statuses,
+        "runTerminationReasons": run_termination_reasons,
         "runFailures": [
             {"code": code, "category": category, "count": count}
             for (code, category), count in sorted(run_failures.items())

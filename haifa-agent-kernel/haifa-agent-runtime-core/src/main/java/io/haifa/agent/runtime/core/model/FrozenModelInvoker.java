@@ -253,7 +253,8 @@ public final class FrozenModelInvoker {
                     null);
             return invocation;
         } catch (RuntimeException exception) {
-            boolean cancelled = controls.signal(run.id()) == RunControlSignal.CANCEL;
+            RunControlSignal signal = controls.signal(run.id());
+            boolean cancelled = signal == RunControlSignal.CANCEL || signal == RunControlSignal.TIMEOUT;
             output.failed(run.id(), callId.value(), physicalAttempt, iteration);
             if (exception instanceof ModelInvocationException modelFailure
                     && (modelFailure.category() == ModelErrorCategory.EMPTY_RESPONSE
@@ -301,7 +302,7 @@ public final class FrozenModelInvoker {
                                             : "MODEL_CALL_FAILED",
                     elapsedMillis(startedAt),
                     exception instanceof ModelInvocationException modelFailure ? modelFailure : null);
-            if (cancelled) throw new CancellationObservedException();
+            if (cancelled) throw new CancellationObservedException(controls.directive(run.id()));
             throw exception;
         }
     }
@@ -345,6 +346,12 @@ public final class FrozenModelInvoker {
             }
             data.put("retryDecision", failure.retryDecision());
             failure.providerRequestId().ifPresent(id -> data.put("providerRequestId", id));
+            failure.responseLimit().ifPresent(limit -> {
+                data.put("limitKind", limit.limitKind().name());
+                data.put("limitBytes", limit.limitBytes());
+                data.put("observedBytes", limit.observedBytes());
+                data.put("attempt", limit.attempt());
+            });
         }
         events.append(run.id(), type, data, time.now());
     }

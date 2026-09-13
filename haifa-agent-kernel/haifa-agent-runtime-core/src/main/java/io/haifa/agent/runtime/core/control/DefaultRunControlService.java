@@ -2,6 +2,7 @@ package io.haifa.agent.runtime.core.control;
 
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.RunTerminationReason;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -26,5 +27,15 @@ public final class DefaultRunControlService implements RunControlService {
     @Override
     public void requestCancel(AgentRun run) {
         controls.requestCancel(run.id());
+    }
+
+    @Override
+    public void requestCancel(AgentRun run, RunTerminationReason reason) {
+        controls.requestCancel(run.id(), reason);
+    }
+
+    @Override
+    public void requestTimeout(AgentRun run, RunTerminationReason reason) {
+        controls.requestTimeout(run.id(), reason);
     }
 }

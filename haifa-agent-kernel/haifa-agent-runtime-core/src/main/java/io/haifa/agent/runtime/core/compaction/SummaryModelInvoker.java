@@ -76,7 +76,11 @@ public final class SummaryModelInvoker {
         }
 
         // 2. Guard check: cancellation
-        if (controls.signal(run.id()) != RunControlSignal.NONE) {
+        RunControlSignal signal = controls.signal(run.id());
+        if (signal == RunControlSignal.CANCEL || signal == RunControlSignal.TIMEOUT) {
+            throw new CancellationObservedException(controls.directive(run.id()));
+        }
+        if (signal != RunControlSignal.NONE) {
             throw new CancellationObservedException();
         }
 

@@ -687,6 +687,38 @@ class RuntimeCoreTest {
         assertThat(fixture.runtime.command(command).status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.CANCELLED);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().terminationReason())
+                .hasValueSatisfying(reason -> assertThat(reason.code()).isEqualTo("USER_CANCELLED"));
+    }
+
+    @Test
+    void deadlineCancellationUsesTimeoutStateAndPersistsItsReasonInEvents() {
+        Fixture fixture = fixture(model(finalDecision("unused")));
+        var accepted = fixture.runtime.start(request("deadline"));
+        RuntimeCommand command = new RuntimeCommand(
+                new RuntimeCommandId("command-deadline"),
+                accepted.runId(),
+                RuntimeCommandType.CANCEL,
+                io.haifa.agent.runtime.api.RunCancellation.deadlineExceeded(Duration.ofSeconds(9))
+                        .arguments(),
+                "deadline-1",
+                Instant.parse("2026-07-21T00:00:00Z"));
+
+        var result = fixture.runtime.command(command);
+
+        assertThat(result.snapshot().status()).isEqualTo(AgentRunStatus.TIMEOUT);
+        assertThat(result.snapshot().terminationReason()).hasValueSatisfying(reason -> {
+            assertThat(reason.code()).isEqualTo("DEADLINE_EXCEEDED");
+            assertThat(reason.description()).contains("9000 ms");
+        });
+        assertThat(fixture.store
+                        .eventsAfter(accepted.runId(), 0, OptionalLong.empty(), 100)
+                        .events())
+                .filteredOn(event -> event.type().equals("run.timeout"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("terminationReason", "DEADLINE_EXCEEDED")
+                        .containsEntry("terminationDescription", "Run deadline of 9000 ms exceeded"));
     }
 
     @Test

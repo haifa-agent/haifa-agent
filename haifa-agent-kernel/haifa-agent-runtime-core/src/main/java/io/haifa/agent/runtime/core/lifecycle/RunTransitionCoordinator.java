@@ -218,6 +218,10 @@ public final class RunTransitionCoordinator {
             eventData.put("retryability", error.retryability().name());
             error.optionalDiagnosticId().ifPresent(diagnosticId -> eventData.put("diagnosticId", diagnosticId));
         });
+        run.terminationReason().ifPresent(reason -> {
+            eventData.put("terminationReason", reason.code());
+            eventData.put("terminationDescription", reason.description());
+        });
         return Map.copyOf(eventData);
     }
 

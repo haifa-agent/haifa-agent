@@ -43,12 +43,16 @@ public final class MissionExecutionCoordinator {
             if (attempt.state() != MissionTaskAttemptState.BOUND
                     || attempt.runId().isEmpty()) continue;
             if (store.missionState(attempt.missionId()).terminal()) {
-                runtime.cancelTask(attempt.runId().orElseThrow());
+                runtime.cancelTask(
+                        attempt.runId().orElseThrow(), io.haifa.agent.runtime.api.RunCancellation.userRequest());
                 store.settleCancelled(attempt, MissionUsage.NONE, now);
                 continue;
             }
             if (store.deadlineExceeded(attempt.missionId(), now)) {
-                runtime.cancelTask(attempt.runId().orElseThrow());
+                runtime.cancelTask(
+                        attempt.runId().orElseThrow(),
+                        io.haifa.agent.runtime.api.RunCancellation.deadlineExceededAt(
+                                store.deadlineAt(attempt.missionId()).orElse(now)));
                 store.settleCancelled(attempt, MissionUsage.NONE, now);
                 store.expireForPartialSynthesis(attempt.missionId(), now);
                 continue;

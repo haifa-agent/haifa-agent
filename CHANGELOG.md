@@ -1,5 +1,12 @@
 # Changelog
 
+- OpenAI-compatible Chat and Gemini streaming response limits now distinguish total-stream from single-event overflow,
+  expose only bounded byte diagnostics, retry at most once before any visible output, and never replay after text or a
+  Tool Call was observed. CLI and Personal Assistant share a validated 1 MiB–32 MiB host setting (4 MiB default) across
+  their model adapters. Runtime cancellation now distinguishes `USER_REQUEST` from `DEADLINE_EXCEEDED` in snapshots,
+  terminal events and storage; CLI deadline expiry writes a stable stderr message and exits with code 124, while
+  Personal Assistant exposes the termination reason and maps Mission deadlines explicitly.
+
 - Coding Agent prompt version 1.8.1 removes the obsolete requirement for deterministic Change Review evidence after the corresponding Review/Baseline pipeline was removed. Change/create work now relies on authoritative workspace/no-change facts plus any required validation, while read-only diff inspection remains available when it materially helps review.
 
 - Tool identity now uses one provider-safe underscore name from configuration and frozen bindings through model disclosure, persisted ToolCalls, policy, delivery evidence, and provider dispatch (for example, `file_write` and `execution_run`). Dotted tool names, implicit dot/hyphen-to-underscore alias conversion, and the Java SDK's configurable alias builder are removed; `ToolAlias` remains a separately typed frozen field but must equal `ToolName`. This is a clean, source- and data-incompatible cutover with no migration or compatibility reader.

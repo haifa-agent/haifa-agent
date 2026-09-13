@@ -15,6 +15,7 @@ public final class ModelInvocationException extends RuntimeException {
     private final Duration retryAfter;
     private final boolean outputObserved;
     private final String providerRequestId;
+    private final ModelResponseLimitDetails responseLimit;
 
     public ModelInvocationException(
             ModelErrorCategory category,
@@ -24,7 +25,7 @@ public final class ModelInvocationException extends RuntimeException {
             ModelCallId callId,
             String safeMessage,
             Throwable cause) {
-        this(category, retryable, httpStatus, providerCode, callId, safeMessage, cause, null, false, null);
+        this(category, retryable, httpStatus, providerCode, callId, safeMessage, cause, null, false, null, null);
     }
 
     public ModelInvocationException(
@@ -47,6 +48,7 @@ public final class ModelInvocationException extends RuntimeException {
                 cause,
                 retryAfter,
                 outputObserved,
+                null,
                 null);
     }
 
@@ -61,6 +63,32 @@ public final class ModelInvocationException extends RuntimeException {
             Duration retryAfter,
             boolean outputObserved,
             String providerRequestId) {
+        this(
+                category,
+                retryable,
+                httpStatus,
+                providerCode,
+                callId,
+                safeMessage,
+                cause,
+                retryAfter,
+                outputObserved,
+                providerRequestId,
+                null);
+    }
+
+    public ModelInvocationException(
+            ModelErrorCategory category,
+            boolean retryable,
+            int httpStatus,
+            String providerCode,
+            ModelCallId callId,
+            String safeMessage,
+            Throwable cause,
+            Duration retryAfter,
+            boolean outputObserved,
+            String providerRequestId,
+            ModelResponseLimitDetails responseLimit) {
         super(ModelValues.text(safeMessage, "safeMessage"), cause);
         this.category = Objects.requireNonNull(category, "category must not be null");
         this.retryable = retryable;
@@ -75,6 +103,7 @@ public final class ModelInvocationException extends RuntimeException {
         this.outputObserved = outputObserved;
         this.providerRequestId =
                 providerRequestId != null && !providerRequestId.isBlank() ? providerRequestId.trim() : null;
+        this.responseLimit = responseLimit;
     }
 
     public ModelErrorCategory category() {
@@ -103,6 +132,10 @@ public final class ModelInvocationException extends RuntimeException {
 
     public Optional<String> providerRequestId() {
         return Optional.ofNullable(providerRequestId);
+    }
+
+    public Optional<ModelResponseLimitDetails> responseLimit() {
+        return Optional.ofNullable(responseLimit);
     }
 
     public String retryDecision() {
@@ -135,7 +168,8 @@ public final class ModelInvocationException extends RuntimeException {
                 this,
                 retryAfter,
                 true,
-                providerRequestId);
+                providerRequestId,
+                responseLimit);
     }
 
     public ModelInvocationException asPartialResponse() {
@@ -150,6 +184,7 @@ public final class ModelInvocationException extends RuntimeException {
                 this,
                 retryAfter,
                 true,
-                providerRequestId);
+                providerRequestId,
+                responseLimit);
     }
 }

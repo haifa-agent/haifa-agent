@@ -25,6 +25,7 @@ class CliModelConfigurationTest {
                 """
                     models:
                       default: codex
+                      maxResponseBytes: 8388608
                       providers:
                         - id: openai-codex
                           displayName: ChatGPT Codex
@@ -52,6 +53,7 @@ class CliModelConfigurationTest {
 
         assertThat(result.model().dialect()).isEqualTo("openai-codex-responses");
         assertThat(result.model().credentialRef()).isEqualTo("model-auth://openai-codex/default");
+        assertThat(result.modelMaxResponseBytes()).isEqualTo(8 * 1024 * 1024);
         assertThat(snapshot.endpoint()).hasToString("https://chatgpt.com/backend-api/codex");
         assertThat(snapshot.providerOptions())
                 .containsEntry("codex_originator", "haifa")
@@ -622,6 +624,40 @@ class CliModelConfigurationTest {
                         .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of(".")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("models.providers");
+    }
+
+    @Test
+    void validatesModelResponseByteBoundaries() {
+        assertThat(withModelMaxResponseBytes(1024 * 1024).modelMaxResponseBytes())
+                .isEqualTo(1024 * 1024);
+        assertThat(withModelMaxResponseBytes(32 * 1024 * 1024).modelMaxResponseBytes())
+                .isEqualTo(32 * 1024 * 1024);
+        assertThatThrownBy(() -> withModelMaxResponseBytes(1024 * 1024 - 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("models.maxResponseBytes");
+        assertThatThrownBy(() -> withModelMaxResponseBytes(32 * 1024 * 1024 + 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("models.maxResponseBytes");
+    }
+
+    private static CliConfiguration withModelMaxResponseBytes(int value) {
+        CliConfiguration defaults = CliConfiguration.defaults();
+        return new CliConfiguration(
+                defaults.model(),
+                defaults.availableModels(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                defaults.web(),
+                defaults.skills(),
+                defaults.execution(),
+                defaults.approval(),
+                defaults.approvalThreshold(),
+                defaults.timeout(),
+                defaults.maxIterations(),
+                defaults.maxModelCalls(),
+                defaults.maxToolCalls(),
+                defaults.persistence(),
+                value);
     }
 
     @Test
