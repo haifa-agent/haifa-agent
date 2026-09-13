@@ -1,35 +1,49 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 
-/** Renders the path-redacted CA workspace registry into the frozen instructions of a new Run. */
+/** Renders the minimal workspace path mapping into the frozen instructions of a new Run. */
 final class CodingWorkspaceRegistryPrompt {
     private CodingWorkspaceRegistryPrompt() {}
 
-    static String render(List<CodingWorkspaceView> entries) {
-        List<CodingWorkspaceView> ordered =
-                List.copyOf(Objects.requireNonNull(entries, "entries must not be null")).stream()
-                        .sorted(Comparator.comparing(CodingWorkspaceView::workspaceRef))
-                        .toList();
-        StringBuilder prompt = new StringBuilder("\n\n<workspace_registry path_contract=\"host-absolute-file-paths\""
-                + " execution_target_contract=\"workspace-ref-plus-relative-workdir\">\n");
-        for (CodingWorkspaceView entry : ordered) {
-            prompt.append("  <workspace ref=\"")
-                    .append(xml(entry.workspaceRef()))
-                    .append("\" name=\"")
-                    .append(xml(entry.safeDisplayName()))
-                    .append("\" mode=\"")
-                    .append(xml(entry.mode()))
-                    .append("\" source=\"")
-                    .append(xml(entry.source()))
-                    .append("\" status=\"")
-                    .append(xml(entry.status()))
-                    .append("\" />\n");
+    record Entry(String workspaceRef, String rootPath, boolean current) {
+        public Entry {
+            Objects.requireNonNull(workspaceRef, "workspaceRef must not be null");
+            Objects.requireNonNull(rootPath, "rootPath must not be null");
+            if (workspaceRef.isBlank()) {
+                throw new IllegalArgumentException("workspaceRef must not be blank");
+            }
+            if (rootPath.isBlank()) {
+                throw new IllegalArgumentException("rootPath must not be blank");
+            }
         }
-        return prompt.append("</workspace_registry>").toString();
+    }
+
+    static String render(List<Entry> entries) {
+        Objects.requireNonNull(entries, "entries must not be null");
+        List<Entry> ordered = entries.stream()
+                .sorted(Comparator.comparing((Entry entry) -> !entry.current()).thenComparing(Entry::workspaceRef))
+                .toList();
+        StringBuilder prompt =
+                new StringBuilder("\n\nUse rootPath and its descendants as host absolute paths for file tools.\n"
+                        + "Use the matching workspaceRef with a normalized relativeWorkdir for execution_run;\n"
+                        + "use \".\" as relativeWorkdir for that workspace root.\n"
+                        + "Paths not listed here are not available unless workspace_attach succeeds.\n\n"
+                        + "<workspace_paths>\n");
+        for (Entry entry : ordered) {
+            prompt.append("  <workspace workspaceRef=\"")
+                    .append(xml(entry.workspaceRef()))
+                    .append("\" rootPath=\"")
+                    .append(xml(entry.rootPath()))
+                    .append("\"");
+            if (entry.current()) {
+                prompt.append(" current=\"true\"");
+            }
+            prompt.append(" />\n");
+        }
+        return prompt.append("</workspace_paths>").toString();
     }
 
     private static String xml(String value) {

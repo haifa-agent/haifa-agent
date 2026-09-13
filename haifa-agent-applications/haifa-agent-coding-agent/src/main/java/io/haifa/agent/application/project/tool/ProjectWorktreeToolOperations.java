@@ -88,19 +88,27 @@ public final class ProjectWorktreeToolOperations {
                     WorkspaceAccessMode.DEVELOP));
             invocation.observer().acknowledged();
             var view = registered.registryView();
+            String rootPath = registered
+                    .directory()
+                    .realPath()
+                    .normalize()
+                    .toAbsolutePath()
+                    .toString();
+            Map<String, Object> data = new java.util.LinkedHashMap<>();
+            data.put("workspaceRef", view.workspaceRef());
+            data.put("rootPath", rootPath);
+            data.put("safeDisplayName", view.safeDisplayName());
+            data.put("sourceWorkspaceRef", parent.value());
+            data.put("baseCommit", baseCommit);
+            data.put("branchName", branchName);
+            data.put("mode", WorkspaceAccessMode.DEVELOP.name());
+            data.put("deliveryIntent", deliveryIntent);
+            data.put("source", view.source().name());
+            data.put("status", view.status().name());
             return new ToolResult(
                     true,
                     "Created controlled worktree " + view.safeDisplayName(),
-                    Map.of(
-                            "workspaceRef", view.workspaceRef(),
-                            "safeDisplayName", view.safeDisplayName(),
-                            "sourceWorkspaceRef", parent.value(),
-                            "baseCommit", baseCommit,
-                            "branchName", branchName,
-                            "mode", WorkspaceAccessMode.DEVELOP.name(),
-                            "deliveryIntent", deliveryIntent,
-                            "source", view.source().name(),
-                            "status", view.status().name()),
+                    Map.copyOf(data),
                     List.of(),
                     List.of(),
                     false);

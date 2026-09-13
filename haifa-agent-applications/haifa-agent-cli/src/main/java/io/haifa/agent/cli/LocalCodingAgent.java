@@ -94,9 +94,11 @@ import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceMutationService;
+import io.haifa.agent.project.hostworkspace.HostWorkspacePathSafety;
 import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistrySource;
 import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStatus;
+import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryView;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
@@ -138,6 +140,8 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -737,14 +741,14 @@ final class LocalCodingAgent implements AutoCloseable {
                             Set.of(),
                             CodingAgentPrompt.forWorkspaceAttachment(workspaceAttachmentDisclosed)
                                             .text()
-                                    + CodingWorkspaceRegistryPrompt.render(workspaceViews(
-                                            provisioning, persistence.workspaceAccess(), tenant, principal))
                                     + executionEnvironmentPrompt(
                                             executionPlatform == null ? "" : executionPlatform.shellDisplayName())
                                     + workspaceEnvironment
                                             .snapshot(resources.snapshot())
                                             .promptBlock()
-                                    + resources.snapshot().instructionBlock(),
+                                    + resources.snapshot().instructionBlock()
+                                    + CodingWorkspaceRegistryPrompt.render(workspacePathEntries(
+                                            provisioning, persistence.workspaceAccess(), tenant, principal)),
                             List.of()))
                     .profiles((profileId, overrides) -> new ResolvedProfile(
                             profileId,
@@ -952,6 +956,47 @@ final class LocalCodingAgent implements AutoCloseable {
                                 view.source() != HostWorkspaceRegistrySource.INITIAL
                                         && view.status() == HostWorkspaceRegistryStatus.ACTIVE)))
                 .toList();
+    }
+
+    static List<CodingWorkspaceRegistryPrompt.Entry> workspacePathEntries(
+            AuthorizedWorkspaceProvisioning provisioning,
+            WorkspaceAccessStore workspaceAccess,
+            TenantRef tenant,
+            PrincipalRef principal) {
+        HostWorkspaceScope scope = provisioning.scope();
+        WorkspaceId initialWorkspaceId = provisioning.initialWorkspaceId();
+        Map<String, HostWorkspaceRegistryView> registryByRef = provisioning.registryViews().stream()
+                .filter(view -> view.status() == HostWorkspaceRegistryStatus.ACTIVE)
+                .collect(java.util.stream.Collectors.toMap(
+                        HostWorkspaceRegistryView::workspaceRef, Function.identity(), (first, second) -> first));
+
+        List<CodingWorkspaceRegistryPrompt.Entry> entries = new ArrayList<>();
+        for (AuthorizedHostDirectory directory : scope.allowedDirectories()) {
+            WorkspaceId workspaceId = directory.workspaceId();
+            if (!registryByRef.containsKey(workspaceId.value())) {
+                continue;
+            }
+            if (workspaceAccess.find(tenant, principal, workspaceId).isEmpty()) {
+                continue;
+            }
+            Path path = directory.realPath();
+            if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS) || HostWorkspacePathSafety.isUnsafeNode(path)) {
+                continue;
+            }
+            Path realPath;
+            try {
+                realPath = path.toRealPath();
+            } catch (IOException exception) {
+                continue;
+            }
+            if (!realPath.equals(path) || HostWorkspacePathSafety.isUnsafeNode(realPath)) {
+                continue;
+            }
+            boolean current = workspaceId.equals(initialWorkspaceId);
+            entries.add(new CodingWorkspaceRegistryPrompt.Entry(
+                    workspaceId.value(), realPath.normalize().toAbsolutePath().toString(), current));
+        }
+        return entries;
     }
 
     void revokeWorkspace(String workspaceRef) {

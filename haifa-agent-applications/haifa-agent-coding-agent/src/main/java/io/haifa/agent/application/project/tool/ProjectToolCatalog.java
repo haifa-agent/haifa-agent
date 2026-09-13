@@ -376,7 +376,7 @@ public final class ProjectToolCatalog {
             return "Request one additional existing local directory for this Coding Agent registry. Supply an "
                     + "absolute host path and explicit read or develop mode. The user "
                     + "must approve the exact directory and mode before it becomes available in the scope; "
-                    + "successful attachments are revalidated before restoration and returned as a path-redacted workspaceRef.";
+                    + "successful attachments are revalidated before restoration and returned with their workspaceRef and rootPath.";
         }
         if (name.equals(ProjectWorktreeToolOperations.TOOL_NAME)) {
             return "Create one managed Git worktree from an active executable workspace after exact user approval. "

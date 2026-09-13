@@ -137,7 +137,7 @@ class ProjectWorktreeToolOperationsTest {
     }
 
     @Test
-    void activatesOnlyTheApprovedProviderCreatedWorktreeAndReturnsNoHostPath() {
+    void activatesOnlyTheApprovedProviderCreatedWorktreeAndReturnsRootPath() {
         AtomicReference<GitWorktreeRequest> captured = new AtomicReference<>();
         AtomicInteger dispatched = new AtomicInteger();
         AtomicInteger acknowledged = new AtomicInteger();
@@ -168,9 +168,9 @@ class ProjectWorktreeToolOperationsTest {
                 .containsEntry("baseCommit", "0123456789abcdef")
                 .containsEntry("branchName", "feat/controlled-worktree")
                 .containsEntry("safeDisplayName", "feature-target")
+                .containsEntry("rootPath", childRoot.toString())
                 .containsEntry("source", HostWorkspaceRegistrySource.APPROVED_WORKTREE_CREATE.name())
                 .containsEntry("status", "ACTIVE");
-        assertThat(result.structuredData().toString()).doesNotContain(childRoot.toString());
         WorkspaceId child =
                 new WorkspaceId(result.structuredData().get("workspaceRef").toString());
         assertThat(provisioning.scope().resolveExecutionDirectory(child, ".").workspaceId())
