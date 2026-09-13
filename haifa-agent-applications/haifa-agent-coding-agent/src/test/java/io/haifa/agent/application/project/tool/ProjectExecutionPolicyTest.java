@@ -268,4 +268,49 @@ class ProjectExecutionPolicyTest {
                 .contains("<workspace>\\src\\Main.java")
                 .doesNotContain("D:\\private\\workspace");
     }
+
+    @Test
+    void defaultCodingAssemblyChainPropagatesNoneScratchAndUnboundedProcessesToBroker() {
+        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
+        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                captured.set(request);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        var catalog = new ProjectToolCatalog()
+                .freeze(
+                        java.util.Set.of("execution_run"),
+                        java.util.Set.of("execution_run"),
+                        true,
+                        ProjectExecutionTestSupport.provider(),
+                        ProjectExecutionTestSupport.executionProfile());
+        var toolDef = catalog.findByAlias(new io.haifa.agent.tool.api.ToolAlias("execution_run"))
+                .orElseThrow()
+                .definition();
+        assertThat(toolDef.inputSchema().document())
+                .containsEntry(
+                        "x-haifa-scratch-spec-digest",
+                        io.haifa.agent.execution.api.ExecutionScratchSpaceSpec.none()
+                                .canonicalDigest());
+
+        var operations = operations(broker, 4096, 2000);
+        var result = operations.execute(
+                invocation(
+                        Map.of(
+                                "command", "git status",
+                                "relativeWorkdir", ".",
+                                "timeoutMillis", 5000,
+                                "operationFamily", "TEST"),
+                        () -> false),
+                access());
+
+        assertThat(result.successful()).isTrue();
+        ExecutionRequest request = captured.get();
+        assertThat(request).isNotNull();
+        assertThat(request.scratchSpace().isEmpty()).isTrue();
+        assertThat(request.limits().maxProcesses()).isEmpty();
+    }
 }

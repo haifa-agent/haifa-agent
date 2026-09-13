@@ -7,6 +7,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
@@ -131,19 +132,7 @@ public final class PersonalExecutionRuntime {
                 environmentNames,
                 true);
         host.preflight(profile);
-        var configuration = new ExecutionToolConfiguration(
-                new ExecutionEnvironmentRef(
-                        List.of("personal-execution-" + profile.contentDigest().value())),
-                profile.ref(),
-                Duration.ofMillis(properties.defaultTimeoutMillis()),
-                Duration.ofMillis(properties.maximumTimeoutMillis()),
-                properties.maximumOutputBytes(),
-                properties.maximumOutputLines(),
-                properties.maximumProcesses(),
-                false,
-                runtimes,
-                ExecutionOutputObserver.noop(),
-                java.util.function.UnaryOperator.identity());
+        var configuration = createToolConfiguration(profile, properties, runtimes);
         var publicToolPolicy = new DefaultPublicToolPolicy(
                 new DefaultToolPolicyRequestAdapter("haifa-personal-assistant", ApprovalMode.ASK),
                 policy.evaluator(),
@@ -178,6 +167,24 @@ public final class PersonalExecutionRuntime {
             return new ApprovalVerification(
                     samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
         });
+    }
+
+    static ExecutionToolConfiguration createToolConfiguration(
+            SandboxProfile profile, PersonalAssistantProperties.Execution properties, ScriptRuntimeResolver runtimes) {
+        return new ExecutionToolConfiguration(
+                new ExecutionEnvironmentRef(
+                        List.of("personal-execution-" + profile.contentDigest().value())),
+                profile.ref(),
+                Duration.ofMillis(properties.defaultTimeoutMillis()),
+                Duration.ofMillis(properties.maximumTimeoutMillis()),
+                properties.maximumOutputBytes(),
+                properties.maximumOutputLines(),
+                Optional.empty(),
+                false,
+                runtimes,
+                ExecutionOutputObserver.noop(),
+                java.util.function.UnaryOperator.identity(),
+                ExecutionScratchSpaceSpec.none());
     }
 
     private static Optional<Path> configuredPath(String value) {

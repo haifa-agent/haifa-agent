@@ -126,8 +126,11 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
 
     private static String executionScratchSpecDigest(Map<String, Object> schema) {
         Object value = schema.get("x-haifa-scratch-spec-digest");
-        if (!(value instanceof String digest) || !digest.matches("[0-9a-f]{64}")) {
+        if (value == null) {
             throw new IllegalArgumentException("execution_run requires a frozen scratch specification");
+        }
+        if (!(value instanceof String digest) || !digest.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("execution_run has invalid scratch specification digest");
         }
         return digest;
     }

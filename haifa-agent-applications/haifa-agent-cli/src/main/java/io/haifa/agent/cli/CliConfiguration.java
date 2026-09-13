@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 record CliConfiguration(
@@ -163,7 +164,7 @@ record CliConfiguration(
                         Duration.ofMinutes(30),
                         50 * 1024,
                         2000,
-                        8,
+                        Optional.empty(),
                         DEFAULT_ENVIRONMENT),
                 ApprovalMode.ASK,
                 CodingApprovalThreshold.LOW,
@@ -512,10 +513,32 @@ record CliConfiguration(
             Duration maximumTimeout,
             int maxOutputBytes,
             int maxOutputLines,
-            int maxProcesses,
+            Optional<Integer> maxProcesses,
             Set<String> inheritEnvironment) {
         private static final Set<String> PROVIDERS = Set.of("host-guarded");
         private static final Set<String> SHELLS = Set.of("auto", "bash", "powershell");
+
+        Execution(
+                String provider,
+                String shell,
+                Path shellPath,
+                Duration defaultTimeout,
+                Duration maximumTimeout,
+                int maxOutputBytes,
+                int maxOutputLines,
+                int maxProcesses,
+                Set<String> inheritEnvironment) {
+            this(
+                    provider,
+                    shell,
+                    shellPath,
+                    defaultTimeout,
+                    maximumTimeout,
+                    maxOutputBytes,
+                    maxOutputLines,
+                    Optional.of(maxProcesses),
+                    inheritEnvironment);
+        }
 
         Execution {
             provider = text(provider, "execution.provider").toLowerCase(java.util.Locale.ROOT);
@@ -541,8 +564,14 @@ record CliConfiguration(
             if (maxOutputLines < 1 || maxOutputLines > 10_000) {
                 throw new IllegalArgumentException("execution.maxOutputLines is out of range");
             }
-            if (maxProcesses < 1 || maxProcesses > 64) {
-                throw new IllegalArgumentException("execution.maxProcesses is out of range");
+            if (maxProcesses == null) {
+                maxProcesses = Optional.empty();
+            }
+            if (maxProcesses.isPresent()) {
+                int limit = maxProcesses.get();
+                if (limit < 1 || limit > 64) {
+                    throw new IllegalArgumentException("execution.maxProcesses is out of range");
+                }
             }
             inheritEnvironment = Set.copyOf(
                     Objects.requireNonNull(inheritEnvironment, "execution.inheritEnvironment must not be null"));

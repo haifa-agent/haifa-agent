@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -205,9 +206,6 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             if (!HostWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint()) || isLink(root)) {
                 throw failure("ROOT_CHANGED", "workspace root identity changed");
             }
-            if (overlaps(root, scratchRoot)) {
-                throw failure("SCRATCH_ROOT_UNSAFE", "host scratch root overlaps the workspace");
-            }
             return new Session(new SandboxSessionId(identifiers.nextValue()), profile, workspace.id(), root);
         } catch (IOException exception) {
             throw failure("ROOT_UNAVAILABLE", "workspace root is unavailable");
@@ -253,7 +251,8 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             }
             validateCommand(execution);
             Path cwd = resolveDirectory(execution.workingDirectory());
-            Path scratch = createScratchDirectory(execution.scratchSpace());
+            Path scratch =
+                    execution.scratchSpace().isPresent() ? createScratchDirectory(execution.scratchSpace()) : null;
             Map<String, String> environment;
             try {
                 environment = validateEnvironment(execution.environment(), execution.scratchSpace(), scratch);
@@ -333,7 +332,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         err.truncated(),
                         treeTerminated,
                         safeObservedProcesses(process),
-                        true,
+                        scratch != null,
                         false);
             } catch (HostSandboxException exception) {
                 cleanupScratchDirectory(scratch);
@@ -350,7 +349,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         false,
                         current == null || !current.isAlive(),
                         current == null ? 0 : safeObservedProcesses(current),
-                        true,
+                        scratch != null,
                         false);
             } finally {
                 current = null;
@@ -369,7 +368,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         result.stderrTruncated(),
                         result.processTreeTerminated(),
                         result.observedProcessCount(),
-                        true,
+                        scratch != null,
                         true);
             }
             return result;
@@ -390,7 +389,8 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             }
             validateCommand(execution);
             Path cwd = resolveDirectory(execution.workingDirectory());
-            Path scratch = createScratchDirectory(execution.scratchSpace());
+            Path scratch =
+                    execution.scratchSpace().isPresent() ? createScratchDirectory(execution.scratchSpace()) : null;
             Map<String, String> environment;
             try {
                 environment = validateEnvironment(execution.environment(), execution.scratchSpace(), scratch);
@@ -423,14 +423,16 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         private WaitOutcome waitFor(
                 Process process,
                 Duration timeout,
-                int maxProcesses,
+                Optional<Integer> maxProcesses,
                 java.util.concurrent.atomic.AtomicBoolean outputLimitExceeded)
                 throws InterruptedException {
             long deadlineMillis = System.currentTimeMillis() + timeout.toMillis();
             while (process.isAlive()) {
                 if (cancelRequested) return WaitOutcome.CANCELLED;
                 if (outputLimitExceeded.get()) return WaitOutcome.OUTPUT_LIMIT_EXCEEDED;
-                if (observedProcesses(process) > maxProcesses) return WaitOutcome.PROCESS_LIMIT_EXCEEDED;
+                if (maxProcesses.isPresent() && observedProcesses(process) > maxProcesses.get()) {
+                    return WaitOutcome.PROCESS_LIMIT_EXCEEDED;
+                }
                 long remainingMillis = deadlineMillis - System.currentTimeMillis();
                 if (remainingMillis <= 0) return WaitOutcome.TIMED_OUT;
                 long waitMillis = Math.max(1, Math.min(20, remainingMillis));
@@ -584,7 +586,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
             @Override
             public boolean scratchProvisioned() {
-                return true;
+                return scratch != null;
             }
 
             @Override
@@ -627,7 +629,9 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     byte[] buffer = new byte[8192];
                     int count;
                     while ((count = input.read(buffer)) >= 0) {
-                        if (observedProcessCount() > execution.limits().maxProcesses()) {
+                        if (execution.limits().maxProcesses().isPresent()
+                                && observedProcessCount()
+                                        > execution.limits().maxProcesses().get()) {
                             truncated = true;
                             cancel();
                             break;
@@ -670,12 +674,14 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 }
                 safe.put(name, value);
             });
-            scratchSpace.rootEnvironmentNames().forEach(name -> safe.put(name, scratch.toString()));
-            scratchSpace
-                    .childBindings()
-                    .forEach(binding -> safe.put(
-                            binding.environmentName(),
-                            scratch.resolve(binding.relativeDirectory()).toString()));
+            if (scratch != null) {
+                scratchSpace.rootEnvironmentNames().forEach(name -> safe.put(name, scratch.toString()));
+                scratchSpace
+                        .childBindings()
+                        .forEach(binding -> safe.put(
+                                binding.environmentName(),
+                                scratch.resolve(binding.relativeDirectory()).toString()));
+            }
             return Map.copyOf(safe);
         }
 

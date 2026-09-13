@@ -59,7 +59,7 @@ public final class ProjectToolCatalog {
                 List.of(),
                 List.of(),
                 null,
-                ExecutionScratchSpaceSpec.genericRequired());
+                ExecutionScratchSpaceSpec.none());
     }
 
     public DefaultToolCatalog freeze(
@@ -77,7 +77,7 @@ public final class ProjectToolCatalog {
                 List.of(),
                 List.of(),
                 Objects.requireNonNull(executionProfile, "executionProfile"),
-                ExecutionScratchSpaceSpec.genericRequired());
+                ExecutionScratchSpaceSpec.none());
     }
 
     /** Coding profile assembly path for locally reviewed MCP imports and built-in project tools. */
@@ -155,7 +155,7 @@ public final class ProjectToolCatalog {
                 webTools,
                 skillTools,
                 executionProfile,
-                ExecutionScratchSpaceSpec.genericRequired());
+                ExecutionScratchSpaceSpec.none());
     }
 
     public DefaultToolCatalog freeze(

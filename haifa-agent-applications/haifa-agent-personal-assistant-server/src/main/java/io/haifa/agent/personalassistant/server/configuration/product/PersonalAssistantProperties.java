@@ -199,7 +199,6 @@ public record PersonalAssistantProperties(
             long maximumTimeoutMillis,
             int maximumOutputBytes,
             int maximumOutputLines,
-            int maximumProcesses,
             boolean trustedHostEnabled,
             String pythonPath,
             String powerShellPath) {
@@ -214,9 +213,6 @@ public record PersonalAssistantProperties(
             }
             if (maximumOutputLines < 1 || maximumOutputLines > 10_000) {
                 throw new IllegalArgumentException("execution.maximumOutputLines is out of range");
-            }
-            if (maximumProcesses < 1 || maximumProcesses > 64) {
-                throw new IllegalArgumentException("execution.maximumProcesses is out of range");
             }
             if (!trustedHostEnabled) {
                 throw new IllegalArgumentException(

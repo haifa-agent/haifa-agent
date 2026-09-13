@@ -37,6 +37,6 @@ haifa:
     mission: {planner-mode: runtime, max-tasks: 8, max-dependency-depth: 4, max-acceptance-criteria: 20, global-active-task-runs: 1, max-auto-attempts-per-task: 1, max-wall-clock-millis: 7200000, max-model-tokens: 3000000, max-tool-calls: 360, max-artifacts: 8, max-total-artifact-bytes: 4194304, dispatcher-poll-millis: 500, dispatcher-shutdown-timeout-millis: 20000, recovery-batch-size: 100, db-warning-bytes: 536870912, db-stop-bytes: 1073741824, artifact-warning-bytes: 1073741824, artifact-stop-bytes: 2147483648}
     research: {max-sources: 24, max-source-content-bytes: 262144, max-total-content-bytes: 2097152}
     mcp: {mode: embedded-echo, address: 127.0.0.1, port: 20002, endpoint: http://127.0.0.1:20002/mcp, allowed-tools: [echo], alias-namespace: personal_mcp, server-id: personal-local, display-name: Personal local utility}
-    execution: {default-timeout-millis: 15000, maximum-timeout-millis: 30000, maximum-output-bytes: 65536, maximum-output-lines: 1000, maximum-processes: 4, trusted-host-enabled: false, python-path: '', power-shell-path: ''}
+    execution: {default-timeout-millis: 15000, maximum-timeout-millis: 30000, maximum-output-bytes: 65536, maximum-output-lines: 1000, trusted-host-enabled: false, python-path: '', power-shell-path: ''}
     local-skill-root: ''
     trusted-script-manifest: ''
