@@ -389,7 +389,9 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("path", notePath, "content", "authorized")));
 
         assertThat(authorization.successful()).isTrue();
-        assertThat(authorization.structuredData()).containsEntry("mode", "DEVELOP");
+        assertThat(authorization.structuredData())
+                .containsEntry("mode", "DEVELOP")
+                .containsEntry("rootPath", extraDir.toRealPath().toString());
         WorkspaceId attachedWorkspace = new WorkspaceId(
                 authorization.structuredData().get("workspaceRef").toString());
         assertThat(workspaceAccess.find(tenant, owner, attachedWorkspace))
@@ -519,7 +521,11 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("path", nested.toString(), "mode", "read")));
 
         assertThat(narrowerRequest.successful()).isTrue();
-        assertThat(narrowerRequest.structuredData()).containsEntry("mode", "DEVELOP");
+        assertThat(narrowerRequest.structuredData())
+                .containsEntry("mode", "DEVELOP")
+                .containsEntry("rootPath", docsDir.toRealPath().toString());
+        assertThat(narrowerRequest.structuredData().get("rootPath"))
+                .isNotEqualTo(nested.toRealPath().toString());
         assertThat(workspaceAccess.find(tenant, owner, docsWorkspaceId))
                 .get()
                 .extracting(WorkspaceAccess::mode)
@@ -789,6 +795,38 @@ class LocalFileToolOperationsMultiRootTest {
                 .containsEntry("errorCode", "ACCESS_DENIED")
                 .containsEntry("failureCategory", "WORKSPACE_SCOPE_DENIED")
                 .containsEntry("failureActionCode", "REQUEST_DIRECTORY_AUTHORIZATION");
+    }
+
+    @ParameterizedTest(name = "rejects relative path: {0}")
+    @ValueSource(strings = {".", "./App.java", "src/main/java", "sub/file.txt"})
+    void rejectsDotAndRelativePathsWithClearHostAbsolutePathGuidance(String relativePath) {
+        var res = operations.execute(
+                "file_list",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of("path", relativePath)));
+        assertThat(res.successful()).isFalse();
+        assertThat(res.structuredData())
+                .containsEntry("errorCode", "INVALID_ARGUMENT")
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("failureActionCode", "USE_ABSOLUTE_HOST_PATH");
+        assertThat(res.summary())
+                .contains(
+                        "File tools require a host absolute path. Use a rootPath from workspace_paths or from a successful workspace_attach/workspace_worktree_create result.");
+    }
+
+    @Test
+    void listsFilesUsingHostAbsolutePathOfRoot() throws IOException {
+        Files.writeString(workspaceDir.resolve("sample.txt"), "hello");
+        var res = operations.execute(
+                "file_list",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of("path", workspaceDir.toRealPath().toString())));
+        assertThat(res.successful()).isTrue();
+        assertThat(res.structuredData()).containsKey("entries");
     }
 
     private static ToolArguments arguments(Map<String, Object> values) {

@@ -87,7 +87,9 @@ public record HostWorkspaceScope(List<AuthorizedHostDirectory> allowedDirectorie
         }
         if (!candidate.isAbsolute()) {
             throw HostWorkspaceScopeException.invalidArgument(
-                    trimmed, "Relative paths are not accepted; pass a host absolute path");
+                    trimmed,
+                    "File tools require a host absolute path. Use a rootPath from workspace_paths or"
+                            + " from a successful workspace_attach/workspace_worktree_create result.");
         }
         Path normalized = candidate.normalize();
         AuthorizedHostDirectory directory = findEnclosingDirectory(normalized);

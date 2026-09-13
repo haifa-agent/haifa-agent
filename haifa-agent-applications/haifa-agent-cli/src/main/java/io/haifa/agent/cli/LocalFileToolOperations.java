@@ -156,7 +156,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         } catch (HostWorkspaceScopeException exception) {
             Map<String, Object> data = workspaceScopeFailure(toolName, exception);
             String summary = "Workspace scope error: " + exception.code().name()
-                    + (exception.path() == null ? "" : " (path=" + exception.path() + ")");
+                    + (exception.path() == null ? "" : " (path=" + exception.path() + ")")
+                    + (exception.getMessage() == null ? "" : ": " + exception.getMessage());
             return failure(summary, data);
         } catch (WorkspaceFileException exception) {
             Map<String, Object> data = workspaceFileFailure(toolName, exception.code());
@@ -882,10 +883,13 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                     .orElseThrow(() -> new SecurityException("WORKSPACE_ACCESS_UNAVAILABLE"))
                     .mode();
             var view = result.registryView();
+            String rootPath =
+                    result.directory().realPath().normalize().toAbsolutePath().toString();
             return success(
                     "Authorized workspace " + view.safeDisplayName() + " as " + activatedMode.name(),
                     Map.of(
                             "workspaceRef", view.workspaceRef(),
+                            "rootPath", rootPath,
                             "safeDisplayName", view.safeDisplayName(),
                             "mode", activatedMode.name(),
                             "source", view.source().name(),
