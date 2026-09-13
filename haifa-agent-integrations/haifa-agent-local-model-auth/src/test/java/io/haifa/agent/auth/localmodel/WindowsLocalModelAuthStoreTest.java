@@ -113,4 +113,49 @@ class WindowsLocalModelAuthStoreTest {
         assertThat(target).isEqualTo("haifa:model-auth:google-antigravity/default");
         assertThat(WindowsLocalModelAuthStore.fromTargetName(target)).isEqualTo(ref);
     }
+
+    @Test
+    void payloadNearBlobLimitSucceeds() {
+        var ref = LocalModelAuthReference.parse("model-auth://openai/large");
+        // Create an API key that results in a total payload near 2500 bytes (limit is 2560)
+        String largeKey = "k".repeat(2450);
+        var credential = new StoredApiKeyCredential(ref, largeKey);
+
+        store.save(credential);
+
+        var found = store.find(ref);
+        assertThat(found).isPresent();
+        assertThat(((StoredApiKeyCredential) found.get()).apiKey()).isEqualTo(largeKey);
+    }
+
+    @Test
+    void payloadExceedingBlobLimitThrowsItemTooLargeException() {
+        var ref = LocalModelAuthReference.parse("model-auth://openai/oversized");
+        // Create an API key that exceeds 2560 bytes
+        String oversizedKey = "k".repeat(3000);
+        var credential = new StoredApiKeyCredential(ref, oversizedKey);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> store.save(credential))
+                .isInstanceOf(WindowsCredentialManagerException.class)
+                .satisfies(exception -> {
+                    var winEx = (WindowsCredentialManagerException) exception;
+                    assertThat(winEx.reason()).isEqualTo(WindowsCredentialManagerException.Reason.ITEM_TOO_LARGE);
+                });
+    }
+
+    @Test
+    void mapsWindowsErrorCodesToStableProductReasons() {
+        assertThat(WindowsCredentialManagerException.mapErrorCode(1168))
+                .isEqualTo(WindowsCredentialManagerException.Reason.MISSING);
+        assertThat(WindowsCredentialManagerException.mapErrorCode(5))
+                .isEqualTo(WindowsCredentialManagerException.Reason.ACCESS_DENIED);
+        assertThat(WindowsCredentialManagerException.mapErrorCode(87))
+                .isEqualTo(WindowsCredentialManagerException.Reason.ITEM_TOO_LARGE);
+        assertThat(WindowsCredentialManagerException.mapErrorCode(111))
+                .isEqualTo(WindowsCredentialManagerException.Reason.ITEM_TOO_LARGE);
+        assertThat(WindowsCredentialManagerException.mapErrorCode(1312))
+                .isEqualTo(WindowsCredentialManagerException.Reason.UNAVAILABLE);
+        assertThat(WindowsCredentialManagerException.mapErrorCode(99999))
+                .isEqualTo(WindowsCredentialManagerException.Reason.STORE_FAILURE);
+    }
 }

@@ -20,6 +20,13 @@ public final class InMemoryWindowsCredentialManagerClient implements WindowsCred
     public void write(String targetName, String secret) {
         Objects.requireNonNull(targetName, "targetName must not be null");
         Objects.requireNonNull(secret, "secret must not be null");
+        byte[] bytes = secret.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (bytes.length > MAX_CREDENTIAL_BLOB_SIZE) {
+            throw new WindowsCredentialManagerException(
+                    WindowsCredentialManagerException.Reason.ITEM_TOO_LARGE,
+                    "Credential blob size (" + bytes.length + " bytes) exceeds Windows Credential Manager limit ("
+                            + MAX_CREDENTIAL_BLOB_SIZE + " bytes)");
+        }
         storage.put(targetName, secret);
     }
 

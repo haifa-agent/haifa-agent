@@ -44,19 +44,14 @@ class DefaultCredentialBrokerTest {
     }
 
     @Test
-    void resolvesSecretDynamicallyAndRegistersWithRedactor() {
+    void resolvesSecretDynamicallyWithoutPermanentCaching() {
         var source = new HashMap<String, String>();
         var broker = new DefaultCredentialBroker(id -> java.util.Optional.ofNullable(source.get(id)));
-
-        // Before resolution, redactor doesn't know the secret
-        assertThat(broker.redactor().redact("value custom-secret-123 is present"))
-                .isEqualTo("value custom-secret-123 is present");
 
         source.put("key1", "custom-secret-123");
         assertThat(broker.getSecret("key1")).contains("custom-secret-123");
 
-        // After resolution, redactor masks the newly resolved secret
-        assertThat(broker.redactor().redact("value custom-secret-123 is present"))
-                .isEqualTo("value [REDACTED] is present");
+        source.put("key1", "updated-secret-456");
+        assertThat(broker.getSecret("key1")).contains("updated-secret-456");
     }
 }

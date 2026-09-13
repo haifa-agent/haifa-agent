@@ -233,7 +233,10 @@ public class PersonalAssistantConfiguration {
                             providerConfiguration(properties.web().search()),
                             providerConfiguration(properties.web().fetch()),
                             mapper,
-                            personalClock);
+                            personalClock,
+                            System::getenv,
+                            name -> WindowsCredentialManagerClient.defaultClient()
+                                    .read("haifa:os:" + name));
             var models = PersonalModelFactory.createPlatform(
                     properties.modelProviders(),
                     properties.defaultModelId(),
@@ -394,7 +397,7 @@ public class PersonalAssistantConfiguration {
                 provider.enabled(),
                 provider.providerId(),
                 provider.endpoint(),
-                resolveCredential(provider),
+                provider.credentialReference(),
                 Duration.ofMillis(provider.timeoutMillis()),
                 provider.maximumResponseBytes());
     }
@@ -407,30 +410,6 @@ public class PersonalAssistantConfiguration {
         } catch (IOException | SecurityException exception) {
             return false;
         }
-    }
-
-    private static String resolveCredential(PersonalAssistantProperties.WebProvider provider) {
-        if (!provider.enabled()) return "";
-        String ref = provider.credentialReference();
-        if (ref.startsWith("env://")) {
-            String variable = ref.substring("env://".length());
-            String value = System.getenv(variable);
-            if (value == null || value.isBlank()) {
-                throw new IllegalArgumentException(
-                        "Personal Web Tool credential environment variable is unavailable: " + variable);
-            }
-            return value;
-        }
-        if (ref.startsWith("os://")) {
-            String target = ref.substring("os://".length());
-            var client = WindowsCredentialManagerClient.defaultClient();
-            var value = client.read("haifa:os:" + target);
-            if (value.isEmpty() || value.get().isBlank()) {
-                throw new IllegalArgumentException("Personal Web Tool credential OS secret is unavailable: " + target);
-            }
-            return value.get();
-        }
-        throw new IllegalArgumentException("Unsupported web credential reference: " + ref);
     }
 
     private static Set<String> deniedEnvironmentNames(PersonalAssistantProperties properties) {

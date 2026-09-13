@@ -9,7 +9,7 @@ import java.util.Optional;
 
 /** Serializes and deserializes individual stored model credentials into typed JSON payloads for the OS store. */
 final class StoredModelCredentialPayloadCodec {
-    private static final int MAX_PAYLOAD_BYTES = 64 * 1024;
+    static final int MAX_PAYLOAD_BYTES = WindowsCredentialManagerClient.MAX_CREDENTIAL_BLOB_SIZE;
     private final ObjectMapper json;
 
     StoredModelCredentialPayloadCodec(ObjectMapper json) {
@@ -37,7 +37,15 @@ final class StoredModelCredentialPayloadCodec {
                     "Unsupported credential type: " + credential.getClass().getName());
         }
         try {
-            return json.writeValueAsString(node);
+            String encoded = json.writeValueAsString(node);
+            byte[] bytes = encoded.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            if (bytes.length > MAX_PAYLOAD_BYTES) {
+                throw new WindowsCredentialManagerException(
+                        WindowsCredentialManagerException.Reason.ITEM_TOO_LARGE,
+                        "Encoded credential payload size (" + bytes.length + " bytes) exceeds maximum allowed size ("
+                                + MAX_PAYLOAD_BYTES + " bytes)");
+            }
+            return encoded;
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to encode credential payload", exception);
         }
@@ -46,7 +54,8 @@ final class StoredModelCredentialPayloadCodec {
     StoredModelCredential decode(LocalModelAuthReference reference, String payload) {
         Objects.requireNonNull(reference, "reference must not be null");
         Objects.requireNonNull(payload, "payload must not be null");
-        if (payload.isBlank() || payload.length() > MAX_PAYLOAD_BYTES) {
+        byte[] bytes = payload.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (payload.isBlank() || bytes.length > MAX_PAYLOAD_BYTES) {
             throw new IllegalStateException("Stored credential payload is invalid or exceeds size limit");
         }
         try {

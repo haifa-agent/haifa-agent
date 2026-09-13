@@ -6,6 +6,9 @@ import java.util.Optional;
 
 /** Low-level boundary for Windows Credential Manager target operations. */
 public interface WindowsCredentialManagerClient {
+    /** Maximum credential blob size in bytes defined by Windows Credential Manager (5 * 512). */
+    int MAX_CREDENTIAL_BLOB_SIZE = 5 * 512;
+
     Optional<String> read(String targetName);
 
     void write(String targetName, String secret);

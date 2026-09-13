@@ -243,7 +243,7 @@ final class LocalCodingAgent implements AutoCloseable {
             CliConfiguration configuration,
             PrintStream output,
             Consumer<RuntimeTraceEvent> traceObserver) {
-        return createWithTrace(workspaceRoot, configuration, output, traceObserver, System.getenv());
+        return createWithTrace(workspaceRoot, configuration, output, traceObserver, System::getenv, System.getenv());
     }
 
     static LocalCodingAgent createWithTrace(
@@ -252,18 +252,28 @@ final class LocalCodingAgent implements AutoCloseable {
             PrintStream output,
             Consumer<RuntimeTraceEvent> traceObserver,
             Map<String, String> environment) {
-        Map<String, String> resolvedEnvironment =
-                Map.copyOf(Objects.requireNonNull(environment, "environment must not be null"));
+        Objects.requireNonNull(environment, "environment must not be null");
+        return createWithTrace(workspaceRoot, configuration, output, traceObserver, environment::get, environment);
+    }
+
+    static LocalCodingAgent createWithTrace(
+            Path workspaceRoot,
+            CliConfiguration configuration,
+            PrintStream output,
+            Consumer<RuntimeTraceEvent> traceObserver,
+            Function<String, String> environmentResolver,
+            Map<String, String> executionEnvironment) {
+        Objects.requireNonNull(environmentResolver, "environmentResolver must not be null");
         boolean allowInsecureLoopback =
-                allowInsecureLoopback(configuration, resolvedEnvironment.get("HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL"));
+                allowInsecureLoopback(configuration, environmentResolver.apply("HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL"));
         var http = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         var json = new ObjectMapper();
         Clock authClock = Clock.systemUTC();
         var authStore = WindowsLocalModelAuthStore.defaultStore(json);
-        var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(resolvedEnvironment);
-        var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(resolvedEnvironment);
+        var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(environmentResolver);
+        var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(environmentResolver);
         var antigravityProjects = new AntigravityProjectRegistry();
         List<ExternalLoginMethod> authMethods = new ArrayList<>();
         codexRegistration.ifPresent(registration -> authMethods.add(new CodexExternalLoginMethod(
@@ -285,7 +295,7 @@ final class LocalCodingAgent implements AutoCloseable {
                         new CredentialRef("model-auth://google-antigravity/default"), projection))));
         var authRegistry = new ExternalLoginRegistry(authMethods);
         var credentials = new LocalModelCredentialResolver(
-                resolvedEnvironment::get, authStore, authRegistry, authClock, Duration.ofMinutes(5));
+                environmentResolver, authStore, authRegistry, authClock, Duration.ofMinutes(5));
         var authIdentifiers = new UuidV7IdentifierGenerator();
         var authCoordinator = authMethods.isEmpty()
                 ? Optional.<ExternalLoginCoordinator>empty()
@@ -302,7 +312,7 @@ final class LocalCodingAgent implements AutoCloseable {
                         LocalCodingAgent::openBrowser,
                         8));
         var authenticationService =
-                new LocalModelAuthenticationService(authStore, authCoordinator, credentials, resolvedEnvironment::get);
+                new LocalModelAuthenticationService(authStore, authCoordinator, credentials, environmentResolver);
         var authentication = new CliCodingAuthenticationClient(
                 authenticationService,
                 configuration.model().credentialRef(),
@@ -331,8 +341,9 @@ final class LocalCodingAgent implements AutoCloseable {
                         new ModelAdapterKey(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER, "1.0.0"), anthropic,
                         new ModelAdapterKey(ModelApiStyles.GOOGLE_GEMINI_ADAPTER, "1.0.0"), gemini),
                 traceObserver,
-                resolveContinuationProtector(configuration, resolvedEnvironment),
-                resolvedEnvironment,
+                resolveContinuationProtector(configuration, environmentResolver),
+                environmentResolver,
+                executionEnvironment,
                 authentication,
                 model -> connectionState(authenticationService, model));
     }
@@ -380,7 +391,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 output,
                 model,
                 traceObserver,
-                resolveContinuationProtector(configuration, System.getenv()));
+                resolveContinuationProtector(configuration, System::getenv));
     }
 
     static LocalCodingAgent create(
@@ -398,6 +409,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 Map.of(new ModelAdapterKey(selected.adapterType(), selected.adapterVersion()), model),
                 traceObserver,
                 continuationProtector,
+                System::getenv,
                 System.getenv(),
                 CodingAuthenticationClient.unavailable(),
                 ignored -> CodingModelState.Connection.CONNECTED);
@@ -410,11 +422,11 @@ final class LocalCodingAgent implements AutoCloseable {
             Map<ModelAdapterKey, AgentChatModel> modelAdapters,
             Consumer<RuntimeTraceEvent> traceObserver,
             ModelContinuationProtector continuationProtector,
-            Map<String, String> environment,
+            Function<String, String> environmentResolver,
+            Map<String, String> executionEnvironment,
             CodingAuthenticationClient authentication,
             Function<CliConfiguration.Model, CodingModelState.Connection> connectionState) {
-        Map<String, String> resolvedEnvironment =
-                Map.copyOf(Objects.requireNonNull(environment, "environment must not be null"));
+        Objects.requireNonNull(environmentResolver, "environmentResolver must not be null");
         LocalWorkspaceIdentity workspaceIdentity = LocalWorkspaceIdentity.resolve(workspaceRoot);
         workspaceRoot = workspaceIdentity.providerRoot();
         TrustedProjectResourceCatalog resources = new TrustedProjectResourceCatalog(workspaceRoot);
@@ -441,8 +453,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     tenant, principal, Optional.empty(), false, skillDirectories);
             validateAllowedSkills(configuration.skills(), skillPlatform);
             CliMcpPlatform mcpPlatform = CliMcpPlatform.connect(configuration.mcpServers(), principal);
-            CliWebPlatform webPlatform =
-                    CliWebPlatform.create(configuration.web(), principal, resolvedEnvironment::get);
+            CliWebPlatform webPlatform = CliWebPlatform.create(configuration.web(), principal, environmentResolver);
             var projects = new InMemoryProjectStore();
             var workspaces = new InMemoryWorkspaceStore();
             var bindings = new InMemoryWorkspaceBindingStore();
@@ -577,7 +588,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             time,
                             workspaceRoot,
                             output,
-                            resolvedEnvironment,
+                            executionEnvironment != null ? executionEnvironment : System.getenv(),
                             verificationProfiles,
                             provisioning,
                             persistence.workspaceAccess(),
@@ -1254,7 +1265,7 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     private static ModelContinuationProtector resolveContinuationProtector(
-            CliConfiguration configuration, Map<String, String> environment) {
+            CliConfiguration configuration, Function<String, String> environment) {
         if (configuration.persistence().mode() == ProjectPersistenceMode.MEMORY
                 || configuration.persistence().protection() == ProjectPersistenceProtection.NONE) {
             return null;
@@ -1264,7 +1275,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 .protectorReference()
                 .orElseThrow(() -> new IllegalArgumentException("durable continuation protector is not configured"));
         String environmentName = reference.substring("env://".length());
-        String encoded = environment.get(environmentName);
+        String encoded = environment.apply(environmentName);
         if (encoded == null || encoded.isBlank()) {
             throw new IllegalArgumentException("durable continuation protector secret is unavailable");
         }

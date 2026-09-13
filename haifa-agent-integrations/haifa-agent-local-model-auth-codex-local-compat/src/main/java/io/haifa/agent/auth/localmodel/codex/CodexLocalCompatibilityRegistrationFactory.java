@@ -11,13 +11,21 @@ public final class CodexLocalCompatibilityRegistrationFactory {
 
     public static Optional<CodexOAuthClientRegistration> create(Map<String, String> environment) {
         Objects.requireNonNull(environment, "environment must not be null");
-        if (!"true".equalsIgnoreCase(trim(environment.get("HAIFA_CODEX_LOCAL_COMPAT_TEST")))) {
+        return create(environment::get);
+    }
+
+    public static Optional<CodexOAuthClientRegistration> create(
+            java.util.function.Function<String, String> environment) {
+        Objects.requireNonNull(environment, "environment must not be null");
+        if (!"true".equalsIgnoreCase(trim(environment.apply("HAIFA_CODEX_LOCAL_COMPAT_TEST")))) {
             return Optional.empty();
         }
         String clientId = required(environment, "HAIFA_CODEX_OAUTH_CLIENT_ID");
         String originator = required(environment, "HAIFA_CODEX_ORIGINATOR");
-        String redirect = environment.getOrDefault("HAIFA_CODEX_REDIRECT_URI", "http://localhost:1455/auth/callback");
-        String userAgent = environment.getOrDefault("HAIFA_CODEX_USER_AGENT", "haifa-agent-local-compat/1");
+        String redirect = Optional.ofNullable(environment.apply("HAIFA_CODEX_REDIRECT_URI"))
+                .orElse("http://localhost:1455/auth/callback");
+        String userAgent =
+                Optional.ofNullable(environment.apply("HAIFA_CODEX_USER_AGENT")).orElse("haifa-agent-local-compat/1");
         return Optional.of(new CodexOAuthClientRegistration(
                 "openai-codex-local-compat",
                 clientId,
@@ -31,8 +39,8 @@ public final class CodexLocalCompatibilityRegistrationFactory {
                 false));
     }
 
-    private static String required(Map<String, String> environment, String name) {
-        String value = trim(environment.get(name));
+    private static String required(java.util.function.Function<String, String> environment, String name) {
+        String value = trim(environment.apply(name));
         if (value == null || value.isEmpty()) {
             throw new IllegalArgumentException(name + " is required for local compatibility testing");
         }
