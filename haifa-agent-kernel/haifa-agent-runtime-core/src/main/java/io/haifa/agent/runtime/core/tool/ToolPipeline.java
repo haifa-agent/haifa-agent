@@ -946,6 +946,9 @@ public final class ToolPipeline {
 
     private void checkCancellation(AgentRun run) {
         RunControlSignal signal = controls.signal(run.id());
+        if (signal == RunControlSignal.CANCEL || signal == RunControlSignal.TIMEOUT) {
+            throw new CancellationObservedException(controls.directive(run.id()));
+        }
         if (signal.stopsExecution()) throw new CancellationObservedException(signal);
     }
 }

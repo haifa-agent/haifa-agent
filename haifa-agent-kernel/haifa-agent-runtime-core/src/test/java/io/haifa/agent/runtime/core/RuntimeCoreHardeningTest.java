@@ -1358,6 +1358,60 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
+    void deadlineInterruptsABlockedModelAndPreservesTheTerminationReason() throws Exception {
+        CountDownLatch modelStarted = new CountDownLatch(1);
+        CountDownLatch neverReleased = new CountDownLatch(1);
+        AgentChatModel blockedModel = request -> {
+            modelStarted.countDown();
+            try {
+                neverReleased.await();
+                throw new AssertionError("blocked model should be interrupted by the deadline");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("model invocation interrupted", interrupted);
+            }
+        };
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger sequence = new AtomicInteger();
+        try (LocalExecutionScheduler scheduler = new LocalExecutionScheduler()) {
+            DefaultAgentRuntime runtime = new RuntimeCoreBuilder()
+                    .registerChatModel("openai-compatible", "1.0.0", blockedModel)
+                    .scheduler(scheduler)
+                    .persistence(RuntimePersistencePorts.inMemory(store))
+                    .identifierGenerator(() -> "deadline-blocked-id-" + sequence.incrementAndGet())
+                    .timeProvider(() -> NOW)
+                    .build();
+
+            AgentRunId runId = runtime.start(request("deadline-blocked-model")).runId();
+            assertThat(modelStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            runtime.command(new RuntimeCommand(
+                    new RuntimeCommandId("deadline-blocked-model"),
+                    runId,
+                    RuntimeCommandType.CANCEL,
+                    io.haifa.agent.runtime.api.RunCancellation.deadlineExceeded(java.time.Duration.ofSeconds(5))
+                            .arguments(),
+                    "deadline-blocked-model",
+                    NOW));
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (!runtime.find(runId).orElseThrow().status().isTerminal() && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            var snapshot = runtime.find(runId).orElseThrow();
+            assertThat(snapshot.status()).isEqualTo(AgentRunStatus.TIMEOUT);
+            assertThat(snapshot.terminationReason()).get().satisfies(reason -> {
+                assertThat(reason.code()).isEqualTo("DEADLINE_EXCEEDED");
+                assertThat(reason.description()).contains("5000 ms");
+            });
+            assertThat(store.eventsFor(runId).stream()
+                            .filter(event -> event.type().equals("model.call.failed"))
+                            .map(event -> event.data().get("status")))
+                    .containsExactly("CANCELLED");
+        }
+    }
+
+    @Test
     void storeAllowsOnlyOneActiveExecutorPerRun() {
         Fixture fixture = fixture(model(finalDecision("unused")));
         var accepted = fixture.runtime.start(request("single-executor"));

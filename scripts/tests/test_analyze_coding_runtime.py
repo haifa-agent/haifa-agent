@@ -45,7 +45,8 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
                   run_id TEXT PRIMARY KEY,
                   session_id TEXT NOT NULL,
                   status TEXT NOT NULL,
-                  error_payload BLOB
+                  error_payload BLOB,
+                  termination_reason TEXT
                 );
                 CREATE TABLE tool_call (
                   tool_call_id TEXT PRIMARY KEY,
@@ -174,6 +175,25 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
         self.assertEqual(report["scope"], {"sessions": 0, "runs": 0, "toolCalls": 0})
         self.assertEqual(len(report["requiredMetrics"]), 12)
         self.assertEqual(report["requiredMetrics"]["costKnownUnknown"]["status"], "UNKNOWN")
+        self.assertEqual(report["runTerminationReasons"], {})
+
+    def test_distinguishes_deadline_from_user_cancellation(self):
+        self._insert_window()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                "UPDATE run SET status='CANCELLED', termination_reason='USER_CANCELLED' WHERE run_id='run-a'"
+            )
+            connection.execute(
+                "UPDATE run SET status='TIMEOUT', termination_reason='DEADLINE_EXCEEDED' WHERE run_id='run-b'"
+            )
+            connection.commit()
+        with closing(connect_read_only(self.database)) as connection:
+            report = analyze(connection, 4)
+
+        self.assertEqual(
+            report["runTerminationReasons"],
+            {"DEADLINE_EXCEEDED": 1, "USER_CANCELLED": 1},
+        )
 
     def test_rejects_non_finite_or_out_of_range_windows(self):
         with closing(connect_read_only(self.database)) as connection:

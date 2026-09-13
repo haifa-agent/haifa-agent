@@ -98,6 +98,28 @@ class ModelRetryPolicyTest {
     }
 
     @Test
+    void streamResponseSizeFailuresAreCappedAtTwoAttempts() {
+        ModelInvocationException tooLarge = new ModelInvocationException(
+                ModelErrorCategory.MALFORMED_RESPONSE,
+                true,
+                200,
+                "stream_response_too_large",
+                new ModelCallId("call-limit"),
+                "safe failure",
+                null);
+        ModelInvocationException otherMalformed = failure(ModelErrorCategory.MALFORMED_RESPONSE, true, false, null);
+        ModelRetryPolicy policy = new ModelRetryPolicy(
+                new RetryPolicy(7, ignored -> true, BackoffStrategy.none()),
+                Duration.ofSeconds(1),
+                5,
+                java.util.List.of());
+
+        assertThat(policy.maxAttempts(tooLarge)).isEqualTo(2);
+        assertThat(policy.maxAttempts(otherMalformed)).isEqualTo(5);
+        assertThat(policy.policy().retryable().test(tooLarge)).isTrue();
+    }
+
+    @Test
     void genericRuntimeFailuresRequireAnExplicitHostPredicate() {
         assertThat(ModelRetryPolicy.defaults().policy().retryable().test(new IllegalStateException("software failure")))
                 .isFalse();

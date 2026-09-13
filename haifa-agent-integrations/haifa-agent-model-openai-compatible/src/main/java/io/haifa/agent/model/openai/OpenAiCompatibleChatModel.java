@@ -19,6 +19,8 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderDefinition;
+import io.haifa.agent.model.api.ModelResponseLimitDetails;
+import io.haifa.agent.model.api.ModelResponseLimitKind;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelStreamSink;
@@ -407,6 +409,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         long[] eventIndex = {1};
         emit(request, sink, new ModelStreamEvent.Started(request.callId(), eventIndex[0]++));
         StreamAccumulator accumulator = new StreamAccumulator(request);
+        int totalBytes = 0;
         int eventBytes = 0;
         StringBuilder data = new StringBuilder();
         boolean done = false;
@@ -414,22 +417,22 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             Utf8SseLineReader.Line decoded;
             while ((decoded = reader.readLine(MAX_TRANSPORT_EVENT_BYTES)) != null) {
                 String line = decoded.value();
-                eventBytes = Math.addExact(eventBytes, decoded.transportBytes());
-                if (eventBytes > MAX_TRANSPORT_EVENT_BYTES) {
-                    throw failure(
-                            request,
-                            ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
-                            false,
-                            200,
-                            "transport_event_limit_exceeded",
-                            "provider SSE event exceeds the transport safety limit",
-                            null);
+                int lineBytes = decoded.transportBytes();
+                totalBytes = Math.addExact(totalBytes, lineBytes);
+                eventBytes = Math.addExact(eventBytes, lineBytes);
+                int eventLimit = MAX_TRANSPORT_EVENT_BYTES;
+                if (eventBytes > eventLimit) {
+                    throw responseLimitFailure(request, ModelResponseLimitKind.SINGLE_EVENT, eventLimit, eventBytes);
                 }
                 if (line.isEmpty()) {
                     if (!data.isEmpty()) {
                         done = dispatchStreamEvent(request, data.toString(), accumulator, sink, eventIndex);
                         data.setLength(0);
                         if (done) break;
+                    }
+                    if (totalBytes > maxResponseBytes && !accumulator.semanticOutputObserved()) {
+                        throw responseLimitFailure(
+                                request, ModelResponseLimitKind.TOTAL_STREAM, maxResponseBytes, totalBytes);
                     }
                     eventBytes = 0;
                     continue;
@@ -443,17 +446,17 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 }
             }
         } catch (Utf8SseLineReader.LineLimitExceededException exception) {
-            throw failure(
+            throw responseLimitFailure(
                     request,
-                    ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
-                    false,
-                    200,
-                    "transport_event_limit_exceeded",
-                    "provider SSE event exceeds the transport safety limit",
-                    exception);
+                    ModelResponseLimitKind.SINGLE_EVENT,
+                    Math.min(maxResponseBytes, exception.limit()),
+                    Math.min(maxResponseBytes, exception.limit()) + 1L);
         }
         if (!done && !data.isEmpty()) {
             done = dispatchStreamEvent(request, data.toString(), accumulator, sink, eventIndex);
+        }
+        if (totalBytes > maxResponseBytes && !accumulator.semanticOutputObserved()) {
+            throw responseLimitFailure(request, ModelResponseLimitKind.TOTAL_STREAM, maxResponseBytes, totalBytes);
         }
         if (!done) {
             throw failure(
@@ -1158,6 +1161,10 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             }
         }
 
+        private boolean semanticOutputObserved() {
+            return semanticBytes > 0;
+        }
+
         private void malformed(String code, String message) {
             throw failure(request, ModelErrorCategory.MALFORMED_RESPONSE, false, 200, code, message, null);
         }
@@ -1296,5 +1303,24 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 retryAfter,
                 outputObserved,
                 providerRequestId);
+    }
+
+    private ModelInvocationException responseLimitFailure(
+            AgentChatRequest request, ModelResponseLimitKind kind, long limitBytes, long observedBytes) {
+        String message = kind == ModelResponseLimitKind.TOTAL_STREAM
+                ? "provider stream exceeds the configured total size limit; increase models.maxResponseBytes"
+                : "provider stream event exceeds the configured single-event size limit; increase models.maxResponseBytes";
+        return new ModelInvocationException(
+                ModelErrorCategory.MALFORMED_RESPONSE,
+                true,
+                200,
+                "stream_response_too_large",
+                request.callId(),
+                message,
+                null,
+                null,
+                false,
+                null,
+                new ModelResponseLimitDetails(kind, limitBytes, observedBytes, request.attempt()));
     }
 }

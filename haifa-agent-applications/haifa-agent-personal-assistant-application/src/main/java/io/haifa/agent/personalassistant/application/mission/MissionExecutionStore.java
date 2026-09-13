@@ -20,6 +20,10 @@ public interface MissionExecutionStore {
         return false;
     }
 
+    default Optional<Instant> deadlineAt(String missionId) {
+        return Optional.empty();
+    }
+
     default void expireForPartialSynthesis(String missionId, Instant now) {}
 
     void waitingForUser(MissionTaskAttempt attempt, Instant now);
