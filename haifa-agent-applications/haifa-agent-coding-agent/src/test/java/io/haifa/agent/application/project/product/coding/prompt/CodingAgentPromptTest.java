@@ -77,10 +77,17 @@ class CodingAgentPromptTest {
         CodingAgentPrompt.Snapshot withAttachment = CodingAgentPrompt.forWorkspaceAttachment(true);
 
         assertThat(withoutAttachment.text())
-                .contains("does not expose a workspace attachment tool")
+                .contains(
+                        "does not expose a workspace attachment tool",
+                        "Use host absolute paths for file tools; relative paths and root aliases are invalid.",
+                        "Use the matching workspaceRef with a normalized relativeWorkdir (use \".\" for the workspace root) for execution_run.")
                 .doesNotContain("request workspace_attach");
         assertThat(withAttachment.text())
-                .contains("request workspace_attach", "least access mode needed")
+                .contains(
+                        "request workspace_attach",
+                        "least access mode needed",
+                        "Use host absolute paths for file tools; relative paths and root aliases are invalid.",
+                        "Use the matching workspaceRef with a normalized relativeWorkdir (use \".\" for the workspace root) for execution_run.")
                 .doesNotContain("does not expose a workspace attachment tool");
         assertThat(withAttachment.identity()).isNotEqualTo(withoutAttachment.identity());
     }

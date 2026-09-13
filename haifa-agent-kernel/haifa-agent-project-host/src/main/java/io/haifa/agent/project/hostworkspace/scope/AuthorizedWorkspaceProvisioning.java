@@ -111,6 +111,11 @@ public final class AuthorizedWorkspaceProvisioning {
         return scope.get();
     }
 
+    /** Initial workspace identifier for this provisioning instance. */
+    public WorkspaceId initialWorkspaceId() {
+        return initialWorkspaceId;
+    }
+
     /** Safe product/model projection. Physical paths never appear in this view. */
     public List<HostWorkspaceRegistryView> registryViews() {
         return registry.list(projectId).stream()

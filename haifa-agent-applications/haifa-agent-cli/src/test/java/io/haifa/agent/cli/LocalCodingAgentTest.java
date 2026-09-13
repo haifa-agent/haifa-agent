@@ -13,6 +13,7 @@ import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelInvocationException;
+import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
@@ -162,11 +163,15 @@ class LocalCodingAgentTest {
                         "<project_signals>pom.xml</project_signals>",
                         "root_agents=\"PRESENT\"",
                         "Use the root project instruction once.")
-                .doesNotContain(workspace.toString(), "Runtime execution guidance:");
+                .doesNotContain("Runtime execution guidance:")
+                .contains(
+                        "<workspace_paths>", workspace.toRealPath().toString(), "mode=\"DEVELOP\"", "current=\"true\"");
         assertThat(prompt.split("<workspace_environment", -1)).hasSize(2);
         assertThat(prompt.split("Use the root project instruction once\\.", -1)).hasSize(2);
         assertThat(prompt.indexOf("<workspace_environment"))
                 .isLessThan(prompt.indexOf("Use the root project instruction once."));
+        assertThat(prompt.indexOf("Use the root project instruction once."))
+                .isLessThan(prompt.indexOf("<workspace_paths>"));
     }
 
     @Test
@@ -463,7 +468,7 @@ class LocalCodingAgentTest {
     }
 
     @Test
-    void approvedWorkspaceAttachmentIsPathRedactedAndRestoredForAbsoluteFileTools() throws Exception {
+    void approvedWorkspaceAttachmentDisclosesRestoredAbsolutePathAndModeForFileTools() throws Exception {
         Path database = configuredSkillRoot.resolve("workspace-registry-recovery.db");
         Path attachedDirectory = Files.createDirectory(configuredSkillRoot.resolve("persistent-attached"));
         Path attachedFile = Files.writeString(attachedDirectory.resolve("restored.txt"), "restored-content");
@@ -534,16 +539,18 @@ class LocalCodingAgentTest {
                     });
         }
 
+        String expectedAttachedPath = attachedDirectory.toRealPath().toString();
         AtomicInteger readCalls = new AtomicInteger();
+        AtomicReference<String> restoredWorkspacePaths = new AtomicReference<>();
         var readModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
             if (readCalls.incrementAndGet() == 1) {
                 String system = request.messages().stream()
                         .filter(message -> message.role() == ModelMessageRole.SYSTEM)
                         .map(message -> message.content())
                         .collect(java.util.stream.Collectors.joining("\n"));
-                assertThat(system)
-                        .contains("<workspace_registry", workspaceRef.get(), "persistent-attached", "READ")
-                        .doesNotContain(attachedDirectory.toString());
+                restoredWorkspacePaths.set(system.substring(
+                        system.indexOf("<workspace_paths>"),
+                        system.indexOf("</workspace_paths>") + "</workspace_paths>".length()));
                 return toolResponse(
                         "persistent-read",
                         "file_read",
@@ -573,8 +580,83 @@ class LocalCodingAgentTest {
                             .status())
                     .isEqualTo(AgentRunStatus.COMPLETED);
         }
+        assertThat(restoredWorkspacePaths.get())
+                .contains("<workspace workspaceRef=\"" + workspaceRef.get() + "\" rootPath=\"" + expectedAttachedPath
+                        + "\" mode=\"READ\" />")
+                .doesNotContain("safeDisplayName", "status=");
         assertThat(attachCalls).hasValue(2);
         assertThat(readCalls).hasValue(2);
+    }
+
+    @Test
+    void revokedWorkspaceIsOmittedFromNextRunWorkspacePaths(@TempDir Path temp) throws Exception {
+        Path extra = Files.createDirectory(temp.resolve("revocation-test-extra"));
+        CliConfiguration configuration = CliConfiguration.defaults();
+        AtomicReference<String> workspaceRef = new AtomicReference<>();
+        AtomicReference<String> secondRunSystemPrompt = new AtomicReference<>();
+        AtomicInteger callCount = new AtomicInteger();
+
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            int call = callCount.incrementAndGet();
+            if (call == 1) {
+                return toolResponse(
+                        "attach-call", "workspace_attach", Map.of("path", extra.toString(), "mode", "read"));
+            }
+            if (call == 2) {
+                var toolMsg = request.messages().stream()
+                        .filter(m -> m.role() == ModelMessageRole.TOOL)
+                        .findFirst()
+                        .orElseThrow();
+                workspaceRef.set((String) toolMsg.toolResultData().get("workspaceRef"));
+                return answer("attach-done", "attached successfully");
+            }
+            // Third call belongs to the second run after revocation
+            secondRunSystemPrompt.set(request.messages().stream()
+                    .filter(m -> m.role() == ModelMessageRole.SYSTEM)
+                    .map(ModelMessage::content)
+                    .collect(java.util.stream.Collectors.joining("\n")));
+            return answer("second-run-done", "completed");
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            var firstRun = agent.start("attach directory");
+            var interaction = awaitPendingInteraction(agent, firstRun.runId(), Duration.ofSeconds(60));
+            agent.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId(agent.identifiers().nextValue()),
+                            interaction.id(),
+                            interaction.runId(),
+                            InteractionResponseType.APPROVE,
+                            List.of(),
+                            "approve-" + interaction.id().value(),
+                            agent.time().now()));
+            assertThat(awaitTerminal(agent, firstRun.runId(), Duration.ofSeconds(60))
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(workspaceRef.get()).isNotNull();
+
+            // Revoke the attached workspace
+            agent.revokeWorkspace(workspaceRef.get());
+
+            // Start a second run on the same agent
+            var secondRun = agent.start("second run after revoke");
+            assertThat(awaitTerminal(agent, secondRun.runId(), Duration.ofSeconds(60))
+                            .status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+
+            String systemPrompt = secondRunSystemPrompt.get();
+            assertThat(systemPrompt)
+                    .contains(
+                            "<workspace_paths>",
+                            workspace.toRealPath().toString(),
+                            "mode=\"DEVELOP\"",
+                            "current=\"true\"")
+                    .doesNotContain(workspaceRef.get(), extra.toRealPath().toString());
+        }
     }
 
     @Test
