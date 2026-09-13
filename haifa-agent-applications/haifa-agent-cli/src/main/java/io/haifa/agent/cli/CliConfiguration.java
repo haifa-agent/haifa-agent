@@ -455,8 +455,10 @@ record CliConfiguration(
             if (contextWindow < 1 || maxOutputTokens < 1 || maxOutputTokens > contextWindow) {
                 throw new IllegalArgumentException("model token limits are invalid");
             }
-            if (!credentialRef.startsWith("env://") && !credentialRef.startsWith("model-auth://")) {
-                throw new IllegalArgumentException("model.credentialRef must use env:// or model-auth://");
+            if (!credentialRef.startsWith("env://")
+                    && !credentialRef.startsWith("model-auth://")
+                    && !credentialRef.startsWith("os://")) {
+                throw new IllegalArgumentException("model.credentialRef must use env://, os://, or model-auth://");
             }
             providerEndpoint = normalizeEndpoint(
                     Objects.requireNonNull(providerEndpoint, "model.providerEndpoint must not be null"));

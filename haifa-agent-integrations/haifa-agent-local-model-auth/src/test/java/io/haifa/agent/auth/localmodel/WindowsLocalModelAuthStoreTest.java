@@ -158,4 +158,11 @@ class WindowsLocalModelAuthStoreTest {
         assertThat(WindowsCredentialManagerException.mapErrorCode(99999))
                 .isEqualTo(WindowsCredentialManagerException.Reason.STORE_FAILURE);
     }
+
+    @Test
+    void listSafeReturnsEmptyWhenStoreUnavailable() {
+        var unavailableStore =
+                new WindowsLocalModelAuthStore(UnavailableWindowsCredentialManagerClient.INSTANCE, new ObjectMapper());
+        assertThat(unavailableStore.listSafe()).isEmpty();
+    }
 }

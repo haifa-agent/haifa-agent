@@ -30,8 +30,9 @@ public final class UnavailableWindowsCredentialManagerClient implements WindowsC
         throw unavailable();
     }
 
-    private IllegalStateException unavailable() {
-        return new IllegalStateException(
+    private WindowsCredentialManagerException unavailable() {
+        return new WindowsCredentialManagerException(
+                WindowsCredentialManagerException.Reason.UNAVAILABLE,
                 "OS_CREDENTIAL_STORE_UNAVAILABLE: system credential store is unavailable on this operating system");
     }
 }

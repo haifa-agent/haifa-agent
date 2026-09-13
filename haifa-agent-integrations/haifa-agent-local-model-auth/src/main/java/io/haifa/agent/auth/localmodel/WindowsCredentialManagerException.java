@@ -3,7 +3,7 @@ package io.haifa.agent.auth.localmodel;
 import java.util.Objects;
 
 /** Structured product exception for Windows Credential Manager failures. */
-public class WindowsCredentialManagerException extends RuntimeException {
+public class WindowsCredentialManagerException extends IllegalStateException {
     public enum Reason {
         MISSING,
         ACCESS_DENIED,
