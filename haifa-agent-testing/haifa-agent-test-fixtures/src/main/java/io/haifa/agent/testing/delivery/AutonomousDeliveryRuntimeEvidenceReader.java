@@ -41,7 +41,6 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                     tools.executionCalls(),
                     tools.validationAttempted(),
                     tools.diffInspected(),
-                    tools.scratchProvisionedCount(),
                     tools.scratchCleanupFailures(),
                     events.terminalStateObserved() || terminal(run.status()));
         } catch (SQLException exception) {
@@ -88,7 +87,6 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
     private ToolFacts readTools(Connection connection) throws SQLException, IOException {
         int failures = 0;
         int executionCalls = 0;
-        int scratchProvisioned = 0;
         int scratchCleanupFailures = 0;
         boolean validationAttempted = false;
         boolean diffInspected = false;
@@ -110,17 +108,10 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                                 || result.has("exitCode")
                                 || !result.path("executionId").asText().isBlank());
                 if (enteredSandbox) executionCalls++;
-                if (result.path("scratchProvisioned").asBoolean(false)) scratchProvisioned++;
                 if (result.path("scratchCleanupFailed").asBoolean(false)) scratchCleanupFailures++;
             }
         }
-        return new ToolFacts(
-                failures,
-                executionCalls,
-                validationAttempted,
-                diffInspected,
-                scratchProvisioned,
-                scratchCleanupFailures);
+        return new ToolFacts(failures, executionCalls, validationAttempted, diffInspected, scratchCleanupFailures);
     }
 
     private EventFacts readEvents(Connection connection) throws SQLException, IOException {
@@ -166,15 +157,10 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
             int executionCalls,
             boolean validationAttempted,
             boolean diffInspected,
-            int scratchProvisionedCount,
             int scratchCleanupFailures,
             boolean terminalStateObserved) {
         static Evidence unavailable() {
-            return new Evidence("NOT_STARTED", 0, 0, 0, 0, 0, 0, 0, false, false, 0, 0, false);
-        }
-
-        boolean scratchSatisfied() {
-            return scratchCleanupFailures == 0;
+            return new Evidence("NOT_STARTED", 0, 0, 0, 0, 0, 0, 0, false, false, 0, false);
         }
     }
 
@@ -186,7 +172,6 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
             int executionCalls,
             boolean validationAttempted,
             boolean diffInspected,
-            int scratchProvisionedCount,
             int scratchCleanupFailures) {}
 
     private record EventFacts(boolean terminalStateObserved) {}

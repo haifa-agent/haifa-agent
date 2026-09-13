@@ -24,7 +24,6 @@ class ExecutionScratchSpaceSpecTest {
     void invocationIdentityChangesWithTheScratchContract() {
         var generic = ExecutionScratchSpaceSpec.genericRequired();
         var coding = new ExecutionScratchSpaceSpec(
-                true,
                 Set.of("TMPDIR", "TMP", "TEMP", "GOTMPDIR"),
                 List.of(new ExecutionScratchBinding("GOCACHE", "go-build")));
         String base = "a".repeat(64);
@@ -37,7 +36,6 @@ class ExecutionScratchSpaceSpecTest {
     @Test
     void noneSpecRepresentsEmptyScratchWithoutModifyingBaseDigest() {
         var none = ExecutionScratchSpaceSpec.none();
-        assertThat(none.required()).isFalse();
         assertThat(none.isPresent()).isFalse();
         assertThat(none.isEmpty()).isTrue();
         assertThat(none.rootEnvironmentNames()).isEmpty();
@@ -48,12 +46,5 @@ class ExecutionScratchSpaceSpecTest {
         assertThat(ExecutionRequest.digestWithScratch(base, none)).isEqualTo(base);
         assertThatThrownBy(() -> ExecutionRequest.digestWithScratch(base, null))
                 .isInstanceOf(NullPointerException.class);
-
-        assertThatThrownBy(() -> new ExecutionScratchSpaceSpec(true, Set.of(), List.of()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("required scratch space cannot be empty");
-        assertThatThrownBy(() -> new ExecutionScratchSpaceSpec(false, Set.of("TMP"), List.of()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("non-empty scratch space cannot have required=false");
     }
 }

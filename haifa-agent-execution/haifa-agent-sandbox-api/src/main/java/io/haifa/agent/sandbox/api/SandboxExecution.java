@@ -21,7 +21,7 @@ public record SandboxExecution(
             Map<String, String> environment,
             ExecutionLimits limits,
             ExecutionInput input) {
-        this(command, workingDirectory, environment, limits, input, ExecutionScratchSpaceSpec.genericRequired());
+        this(command, workingDirectory, environment, limits, input, ExecutionScratchSpaceSpec.none());
     }
 
     public SandboxExecution(
@@ -29,13 +29,7 @@ public record SandboxExecution(
             WorkspacePath workingDirectory,
             Map<String, String> environment,
             ExecutionLimits limits) {
-        this(
-                command,
-                workingDirectory,
-                environment,
-                limits,
-                ExecutionInput.none(),
-                ExecutionScratchSpaceSpec.genericRequired());
+        this(command, workingDirectory, environment, limits, ExecutionInput.none(), ExecutionScratchSpaceSpec.none());
     }
 
     public SandboxExecution {

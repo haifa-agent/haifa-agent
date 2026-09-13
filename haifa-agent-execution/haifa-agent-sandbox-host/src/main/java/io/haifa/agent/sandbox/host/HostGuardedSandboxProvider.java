@@ -206,9 +206,6 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             if (!HostWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint()) || isLink(root)) {
                 throw failure("ROOT_CHANGED", "workspace root identity changed");
             }
-            if (overlaps(root, scratchRoot)) {
-                throw failure("SCRATCH_ROOT_UNSAFE", "host scratch root overlaps the workspace");
-            }
             return new Session(new SandboxSessionId(identifiers.nextValue()), profile, workspace.id(), root);
         } catch (IOException exception) {
             throw failure("ROOT_UNAVAILABLE", "workspace root is unavailable");

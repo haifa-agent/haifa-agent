@@ -5,10 +5,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
+import io.haifa.agent.execution.api.SandboxProfileRef;
+import io.haifa.agent.execution.core.tool.ExecutionOperatingSystem;
+import io.haifa.agent.execution.core.tool.ScriptRuntimeResolver;
 import io.haifa.agent.personalassistant.application.policy.PersonalAssistantPolicyRules;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
+import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.product.ProductCapabilities;
@@ -17,6 +22,7 @@ import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -53,7 +59,18 @@ class PersonalExecutionRuntimeTest {
                         "x-haifa-scratch-spec-digest",
                         ExecutionScratchSpaceSpec.none().canonicalDigest());
 
-        var config = platform.provider().configuration();
+        assertThat(platform.provider().scratchSpecDigest())
+                .isEqualTo(ExecutionScratchSpaceSpec.none().canonicalDigest());
+
+        var testProfile = new SandboxProfile(
+                new SandboxProfileRef("host-user", "1.0.0"),
+                "host",
+                new SandboxConfigurationDigest("sha256:" + "0".repeat(64)),
+                java.util.Set.of(),
+                java.util.Set.of(),
+                false);
+        var testRuntimes = new ScriptRuntimeResolver(ExecutionOperatingSystem.LINUX, List.of());
+        var config = PersonalExecutionRuntime.createToolConfiguration(testProfile, executionProps, testRuntimes);
         assertThat(config.scratchSpace().isEmpty()).isTrue();
         assertThat(config.maximumProcesses()).isEmpty();
     }
