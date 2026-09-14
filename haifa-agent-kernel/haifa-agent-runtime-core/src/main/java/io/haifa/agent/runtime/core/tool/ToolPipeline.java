@@ -25,6 +25,8 @@ import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
+import io.haifa.agent.runtime.core.retry.RetryListener;
+import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.ToolRetryPolicy;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
@@ -338,8 +340,9 @@ public final class ToolPipeline {
                         "definitionHash", binding.coordinate().definitionHash().value()),
                 time.now()));
         try (var permit = environment.acquire(run, binding)) {
+            RetryPolicy toolRetry = retryPolicy.forTool(binding);
             ToolResult rawResult = retries.execute(
-                    () -> {
+                    ignored -> {
                         if (run.usage().toolCalls() >= run.limits().maxToolCalls()) {
                             throw new RuntimeLimitExceededException(
                                     "toolCalls",
@@ -347,16 +350,12 @@ public final class ToolPipeline {
                                     run.usage().toolCalls());
                         }
                         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 1, 0, 0, 0));
-                        try {
-                            ToolResult result = invokeProvider(run, call, request, binding);
-                            checkCancellation(run);
-                            return result;
-                        } catch (RuntimeException failure) {
-                            checkCancellation(run);
-                            throw failure;
-                        }
+                        return invokeProvider(run, call, request, binding);
                     },
-                    retryPolicy.forTool(binding));
+                    toolRetry,
+                    (attempt, ignored) -> toolRetry.backoff().delay(attempt),
+                    () -> checkCancellation(run),
+                    RetryListener.noop());
             if (rawResult.successful()) {
                 ToolSchemaValidationResult outputValidation =
                         schemaValidator.validate(definition.outputSchema(), rawResult.structuredData());
@@ -395,7 +394,6 @@ public final class ToolPipeline {
             return new ToolPipelineOutcome.Completed(
                     persistResult(run, call, request, rawResult, iteration, traceContext));
         } catch (CancellationObservedException cancelled) {
-            appendToolEvent(run, call, "tool.cancelled", "CANCELLED", "RUN_CANCELLED", "");
             throw cancelled;
         } catch (AgentExecutionFailureException classified) {
             throw classified;

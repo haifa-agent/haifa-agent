@@ -431,6 +431,49 @@ class OpenAiResponsesModelTest {
     }
 
     @Test
+    void interruptedStreamAfterPrivateReasoningRemainsRetryable() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"type":"response.created","response":{"id":"resp-reasoning-cut","status":"in_progress"}}
+
+                data: {"type":"response.reasoning_text.delta","item_id":"reasoning-1","output_index":0,"content_index":0,"delta":"private reasoning"}
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(
+                                simpleRequest(standardSnapshot(true)), event -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.TRANSPORT_ERROR);
+                    assertThat(failure.outputObserved()).isFalse();
+                    assertThat(failure.retryable()).isTrue();
+                });
+    }
+
+    @Test
+    void acceptsTerminalReasoningLanesWhoseSerializationOrderDiffersFromStreamArrival() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"type":"response.created","response":{"id":"resp-reasoning-order","status":"in_progress"}}
+
+                data: {"type":"response.reasoning_text.delta","item_id":"reasoning-1","output_index":0,"content_index":0,"delta":"content"}
+
+                data: {"type":"response.reasoning_summary_text.delta","item_id":"reasoning-1","output_index":0,"content_index":0,"delta":"summary"}
+
+                data: {"type":"response.completed","response":{"id":"resp-reasoning-order","status":"completed","model":"gpt-test","output":[{"id":"reasoning-1","type":"reasoning","summary":[{"type":"summary_text","text":"summary"}],"content":[{"type":"reasoning_text","text":"content"}]},{"id":"msg-1","type":"message","content":[{"type":"output_text","text":"ready"}]}],"usage":{"input_tokens":2,"output_tokens":1}}}
+
+                """));
+
+        var actual =
+                model().invokeStreaming(simpleRequest(standardSnapshot(true)), ignored -> ModelStreamControl.CONTINUE);
+
+        assertThat(actual.content()).isEqualTo("ready");
+    }
+
+    @Test
     void acceptsEmptyTextAndReasoningDeltasFromCompatibleStreams() {
         response.set(
                 Response.sse(
