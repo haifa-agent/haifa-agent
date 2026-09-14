@@ -1290,7 +1290,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         RuntimeOverrides.NONE));
         try {
             var terminal = agent.runs()
-                    .await(started.runId(), Duration.ofSeconds(120))
+                    .await(started.runId(), Duration.ofSeconds(180))
                     .orElseThrow(
                             () -> new MissionException("MISSION_SYNTHESIS_TIMEOUT", "Mission Synthesis timed out"));
             if (terminal.status() != AgentRunStatus.COMPLETED) {

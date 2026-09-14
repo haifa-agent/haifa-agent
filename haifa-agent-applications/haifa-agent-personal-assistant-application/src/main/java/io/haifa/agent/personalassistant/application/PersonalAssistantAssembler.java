@@ -195,8 +195,8 @@ public final class PersonalAssistantAssembler {
                             "1.0.0",
                             dependencies.modelCatalog().defaultModelId(),
                             AgentRunType.CHAT,
-                            new AgentRunBudget(128_000, 32_000, 128_000, 0, 2, 0, "USD", 0),
-                            new AgentRunLimits(4, 0, 1, 120_000, 120_000, 2, 0, 0),
+                            new AgentRunBudget(256_000, 32_000, 256_000, 0, 2, 0, "USD", 0),
+                            new AgentRunLimits(4, 0, 1, 180_000, 180_000, 2, 0, 0),
                             Map.of("response_format", Map.of("type", "json_object")),
                             java.util.Optional.of(Set.of())))
                     .runProfile(new ProductRunProfile(
@@ -204,8 +204,8 @@ public final class PersonalAssistantAssembler {
                             "1.0.0",
                             dependencies.modelCatalog().defaultModelId(),
                             AgentRunType.CHAT,
-                            new AgentRunBudget(128_000, 32_000, 128_000, 0, 2, 0, "USD", 0),
-                            new AgentRunLimits(4, 0, 1, 120_000, 120_000, 2, 0, 0),
+                            new AgentRunBudget(256_000, 32_000, 256_000, 0, 2, 0, "USD", 0),
+                            new AgentRunLimits(4, 0, 1, 180_000, 180_000, 2, 0, 0),
                             Map.of(),
                             java.util.Optional.of(Set.of())));
             dependencies
@@ -364,8 +364,8 @@ public final class PersonalAssistantAssembler {
                         "1.0.0",
                         model.id(),
                         AgentRunType.CHAT,
-                        new AgentRunBudget(128_000, 32_000, 128_000, 0, 2, 0, "USD", 0),
-                        new AgentRunLimits(4, 0, 1, 120_000, 120_000, 2, 0, 0),
+                        new AgentRunBudget(256_000, 32_000, 256_000, 0, 2, 0, "USD", 0),
+                        new AgentRunLimits(4, 0, 1, 180_000, 180_000, 2, 0, 0),
                         structuredOptions,
                         Optional.of(Set.of())),
                 new ProductRunProfile(
@@ -374,8 +374,8 @@ public final class PersonalAssistantAssembler {
                         "1.0.0",
                         model.id(),
                         AgentRunType.CHAT,
-                        new AgentRunBudget(128_000, 32_000, 128_000, 0, 2, 0, "USD", 0),
-                        new AgentRunLimits(4, 0, 1, 120_000, 120_000, 2, 0, 0),
+                        new AgentRunBudget(256_000, 32_000, 256_000, 0, 2, 0, "USD", 0),
+                        new AgentRunLimits(4, 0, 1, 180_000, 180_000, 2, 0, 0),
                         Map.of(),
                         Optional.of(Set.of())));
     }
