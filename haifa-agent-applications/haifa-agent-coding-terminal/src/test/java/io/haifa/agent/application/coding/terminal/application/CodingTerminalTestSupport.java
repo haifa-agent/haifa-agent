@@ -80,11 +80,15 @@ final class CodingTerminalTestSupport {
     }
 
     static CodingModelOption model(String id, String displayName) {
+        return model(id, displayName, "provider", "Provider");
+    }
+
+    static CodingModelOption model(String id, String displayName, String providerId, String providerDisplayName) {
         return new CodingModelOption(
                 id,
                 displayName,
-                "provider",
-                "Provider",
+                providerId,
+                providerDisplayName,
                 Set.of("TEXT_CHAT", "TOOL_CALLING", "REASONING"),
                 128_000,
                 16_000,

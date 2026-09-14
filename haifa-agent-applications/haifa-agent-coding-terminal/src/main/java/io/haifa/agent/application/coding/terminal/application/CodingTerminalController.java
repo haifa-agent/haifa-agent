@@ -90,7 +90,9 @@ public final class CodingTerminalController implements AutoCloseable {
     private List<CodingSessionSummary> resumeOptions = List.of();
     private List<CodingQueuedMessage> restoreOptions = List.of();
     private List<CodingModelOption> modelOptions = List.of();
+    private List<CodingModelOption> modelSelectionOptions = List.of();
     private CodingModelOption inspectedModel;
+    private List<CodingModelProviderGroup> modelProviderGroups = List.of();
     private List<CodingAuthenticationView> authenticationOptions = List.of();
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
@@ -1492,7 +1494,9 @@ public final class CodingTerminalController implements AutoCloseable {
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case "session", "workspace-trust" -> apply(new TerminalUiAction.SelectorClosed());
-            case "model" -> openModelDetails(modelOptions.get(selected));
+            case "model-provider" ->
+                openProviderModelList(modelProviderGroups.get(selected).providerId());
+            case "model" -> openModelDetails(modelSelectionOptions.get(selected));
             case "model-detail" -> selectModelDetailAction(selected);
             case "model-settings" -> selectModelSettingsAction(selected);
             case "auth-login" -> {
@@ -1765,6 +1769,8 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
+    private record CodingModelProviderGroup(String providerId, String providerDisplayName, int modelCount) {}
+
     private void openModelSettings(CodingModelOption option) {
         var response = option.controls().responseMode();
         var effort = option.controls().reasoningEffort();
@@ -1807,18 +1813,88 @@ public final class CodingTerminalController implements AutoCloseable {
             apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
             return;
         }
-        int selected = java.util.stream.IntStream.range(0, modelOptions.size())
-                .filter(index -> modelOptions
-                        .get(index)
-                        .id()
-                        .equals(requireInspectedModel().id()))
+        CodingModelOption selectedModel = requireInspectedModel();
+        if (modelProviderGroups(modelOptions).size() > 1) {
+            openProviderModelList(selectedModel.providerId());
+            return;
+        }
+        openModelOptions(modelOptions, selectedModel.id(), modelListTitle());
+    }
+
+    private void openModelChooser(String selectedModelId) {
+        if (modelOptions.isEmpty()) {
+            apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
+            return;
+        }
+        modelProviderGroups = modelProviderGroups(modelOptions);
+        if (modelProviderGroups.size() > 1) {
+            String selectedProviderId = modelOptions.stream()
+                    .filter(option -> option.id().equals(selectedModelId))
+                    .map(CodingModelOption::providerId)
+                    .findFirst()
+                    .orElse(null);
+            int selectedProvider = java.util.stream.IntStream.range(0, modelProviderGroups.size())
+                    .filter(index -> modelProviderGroups.get(index).providerId().equals(selectedProviderId))
+                    .findFirst()
+                    .orElse(0);
+            apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                    "model-provider",
+                    "Choose model provider",
+                    modelProviderGroups.stream()
+                            .map(group -> group.providerDisplayName()
+                                    + " · "
+                                    + group.modelCount()
+                                    + " model"
+                                    + (group.modelCount() == 1 ? "" : "s"))
+                            .toList(),
+                    selectedProvider)));
+            return;
+        }
+        openModelOptions(modelOptions, selectedModelId, modelListTitle());
+    }
+
+    private void openProviderModelList(String providerId) {
+        List<CodingModelOption> providerModels = modelOptions.stream()
+                .filter(value -> value.providerId().equals(providerId))
+                .toList();
+        if (providerModels.isEmpty()) {
+            apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
+            return;
+        }
+        String selectedModelId =
+                inspectedModel != null && inspectedModel.providerId().equals(providerId) ? inspectedModel.id() : null;
+        openModelOptions(
+                providerModels,
+                selectedModelId,
+                "Models from " + providerModels.getFirst().providerDisplayName());
+    }
+
+    private void openModelOptions(List<CodingModelOption> options, String selectedModelId, String title) {
+        int selected = java.util.stream.IntStream.range(0, options.size())
+                .filter(index -> options.get(index).id().equals(selectedModelId))
                 .findFirst()
                 .orElse(0);
+        modelSelectionOptions = List.copyOf(options);
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
-                "model",
-                state.session().isPresent() ? "Model for future new Runs" : "Model for next session",
-                modelOptions.stream().map(this::modelListOption).toList(),
-                selected)));
+                "model", title, options.stream().map(this::modelListOption).toList(), selected)));
+    }
+
+    private String modelListTitle() {
+        return state.session().isPresent() ? "Model for future new Runs" : "Model for next session";
+    }
+
+    private static List<CodingModelProviderGroup> modelProviderGroups(List<CodingModelOption> options) {
+        java.util.LinkedHashMap<String, CodingModelProviderGroup> grouped = new java.util.LinkedHashMap<>();
+        for (CodingModelOption option : options) {
+            CodingModelProviderGroup existing = grouped.get(option.providerId());
+            grouped.put(
+                    option.providerId(),
+                    existing == null
+                            ? new CodingModelProviderGroup(option.providerId(), option.providerDisplayName(), 1)
+                            : new CodingModelProviderGroup(
+                                    existing.providerId(), existing.providerDisplayName(), existing.modelCount() + 1));
+        }
+        return List.copyOf(grouped.values());
     }
 
     private void confirmModelSelection(CodingModelOption option) {
@@ -1888,15 +1964,11 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             String selectedModelId =
                     reconciled.map(value -> value.model().model().id()).orElse(pendingNewSessionModelId);
-            int selected = java.util.stream.IntStream.range(0, modelOptions.size())
-                    .filter(index -> modelOptions.get(index).id().equals(selectedModelId))
+            inspectedModel = modelOptions.stream()
+                    .filter(option -> option.id().equals(selectedModelId))
                     .findFirst()
-                    .orElse(0);
-            apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
-                    "model",
-                    reconciled.isPresent() ? "Model for future new Runs" : "Model for next session",
-                    modelOptions.stream().map(this::modelListOption).toList(),
-                    selected)));
+                    .orElse(null);
+            openModelChooser(selectedModelId);
         };
     }
 
