@@ -438,6 +438,31 @@ class CliModelConfigurationTest {
     }
 
     @Test
+    void rejectsEffortWithoutExplicitModeWhenOptionalReasoningDefaultsToDisabled() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-optional-reasoning-effort", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                    models:
+                      default: deepseek-responses-flash
+                      providers:
+                        - id: deepseek
+                          endpoint: https://api.deepseek.com
+                          credentialRef: env://DEEPSEEK_API_KEY
+                          nativeStreaming: true
+                          allowedBindings: [deepseek-responses-flash]
+                          reasoningEffort: HIGH
+                    """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+
+        assertThatThrownBy(() -> LocalCodingAgent.modelSnapshot(result))
+                .isInstanceOf(io.haifa.agent.model.api.ModelParameterResolutionException.class)
+                .hasMessageContaining("reasoningMode must be explicit");
+    }
+
+    @Test
     void catalogAlwaysReasoningDefaultsToEnabledAndItsLowestAllowedEffort() throws Exception {
         Path configuration = Files.createTempFile("haifa-cli-zhipu-reasoning", ".yaml");
         Files.writeString(

@@ -17,6 +17,7 @@ import java.util.function.LongSupplier;
 final class CliActivityOutput implements AutoCloseable {
     static final Duration NON_TTY_INITIAL_DELAY = Duration.ofSeconds(30);
     static final Duration NON_TTY_INTERVAL = Duration.ofSeconds(60);
+    static final Duration TTY_INTERVAL = Duration.ofSeconds(1);
     private static final int STATUS_CLEAR_WIDTH = 96;
 
     private final PrintStream output;
@@ -29,6 +30,7 @@ final class CliActivityOutput implements AutoCloseable {
     private final AtomicBoolean streamed = new AtomicBoolean();
     private State state = State.IDLE;
     private long startedNanos;
+    private boolean contentLineOpen;
     private boolean closed;
 
     static CliActivityOutput attach(
@@ -54,7 +56,7 @@ final class CliActivityOutput implements AutoCloseable {
         this.statusEnabled = statusEnabled;
         this.tty = tty;
         this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime must not be null");
-        if (statusEnabled && !tty && schedulePeriodicStatus) {
+        if (statusEnabled && schedulePeriodicStatus) {
             scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "haifa-cli-activity");
                 thread.setDaemon(true);
@@ -74,10 +76,11 @@ final class CliActivityOutput implements AutoCloseable {
         Objects.requireNonNull(event, "event must not be null");
         switch (event.type()) {
             case RUN_OUTPUT_STARTED -> {
+                finishContentLine();
                 state = State.WAITING;
                 startedNanos = nanoTime.getAsLong();
                 if (statusEnabled && tty) renderTtyStatus();
-                scheduleNonTtyStatus();
+                scheduleStatus();
             }
             case MODEL_ACTIVITY -> {
                 if (state == State.WAITING || state == State.THINKING) {
@@ -96,6 +99,11 @@ final class CliActivityOutput implements AutoCloseable {
         error.flush();
     }
 
+    synchronized void emitTtyStatus() {
+        if (closed || !statusEnabled || !tty || (state != State.WAITING && state != State.THINKING)) return;
+        renderTtyStatus();
+    }
+
     private void renderContent(String delta) {
         if (delta.isEmpty()) return;
         if (statusEnabled && tty && (state == State.WAITING || state == State.THINKING)) clearTtyStatus();
@@ -103,6 +111,7 @@ final class CliActivityOutput implements AutoCloseable {
         if (streamed.compareAndSet(false, true)) output.print("[stream] ");
         output.print(delta);
         output.flush();
+        contentLineOpen = !delta.endsWith("\n") && !delta.endsWith("\r");
     }
 
     private void renderTtyStatus() {
@@ -125,14 +134,23 @@ final class CliActivityOutput implements AutoCloseable {
         periodicStatus = null;
     }
 
-    private void scheduleNonTtyStatus() {
+    private void scheduleStatus() {
         if (scheduler == null) return;
         if (periodicStatus != null) periodicStatus.cancel(false);
+        Duration initialDelay = tty ? TTY_INTERVAL : NON_TTY_INITIAL_DELAY;
+        Duration interval = tty ? TTY_INTERVAL : NON_TTY_INTERVAL;
         periodicStatus = scheduler.scheduleAtFixedRate(
-                this::emitNonTtyStatus,
-                NON_TTY_INITIAL_DELAY.toMillis(),
-                NON_TTY_INTERVAL.toMillis(),
+                tty ? this::emitTtyStatus : this::emitNonTtyStatus,
+                initialDelay.toMillis(),
+                interval.toMillis(),
                 TimeUnit.MILLISECONDS);
+    }
+
+    private void finishContentLine() {
+        if (!contentLineOpen) return;
+        output.println();
+        output.flush();
+        contentLineOpen = false;
     }
 
     private void clearTtyStatus() {
@@ -144,6 +162,7 @@ final class CliActivityOutput implements AutoCloseable {
     public synchronized void close() {
         if (closed) return;
         finishStatus();
+        finishContentLine();
         closed = true;
         if (scheduler != null) scheduler.shutdownNow();
     }

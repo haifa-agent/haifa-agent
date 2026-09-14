@@ -133,8 +133,7 @@ public final class HaifaCliMain {
                         agent.timeout(accepted.runId());
                         completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(3));
                     }
-                    if (activityOutput.streamed().get()) output.println();
-                    else completed.output().ifPresent(output::println);
+                    if (!activityOutput.streamed().get()) completed.output().ifPresent(output::println);
                     if (parsed.verbose())
                         output.println("Reasoning tokens: " + agent.reasoningTokens(accepted.runId()));
                     if (completed.status().isTerminal()

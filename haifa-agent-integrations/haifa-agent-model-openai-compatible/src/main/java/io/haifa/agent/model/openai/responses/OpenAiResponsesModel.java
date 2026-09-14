@@ -886,11 +886,10 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             }
             if (reasoning.isEmpty()) {
                 addSemantic(terminalReasoning.toString(), "reasoning");
-            } else if (!terminalReasoning.isEmpty()
-                    && terminalReasoning.toString().startsWith(reasoning.toString())) {
-                addSemantic(terminalReasoning.substring(reasoning.length()), "reasoning");
             } else if (!terminalReasoning.isEmpty()) {
-                throw malformed(request, "terminal reasoning conflicts with streamed deltas");
+                int streamedBytes = reasoning.toString().getBytes(StandardCharsets.UTF_8).length;
+                int terminalBytes = terminalReasoning.toString().getBytes(StandardCharsets.UTF_8).length;
+                if (terminalBytes > streamedBytes) addSemanticBytes(terminalBytes - streamedBytes, "reasoning");
             }
             List<ModelToolCall> terminalCalls = terminalCalls(response);
             if (functions.isEmpty()) {
@@ -937,7 +936,11 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         }
 
         private void addSemantic(String value, String lane) {
-            semanticBytes = Math.addExact(semanticBytes, value.getBytes(StandardCharsets.UTF_8).length);
+            addSemanticBytes(value.getBytes(StandardCharsets.UTF_8).length, lane);
+        }
+
+        private void addSemanticBytes(long bytes, String lane) {
+            semanticBytes = Math.addExact(semanticBytes, bytes);
             if (semanticBytes > maxResponseBytes) {
                 throw failure(
                         request,
