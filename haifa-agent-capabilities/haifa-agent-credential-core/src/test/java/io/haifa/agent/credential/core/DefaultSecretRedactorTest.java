@@ -40,4 +40,70 @@ class DefaultSecretRedactorTest {
         // After close, secrets are removed and no longer retained
         assertThat(redactor.redact(text)).isEqualTo(text);
     }
+
+    @Test
+    void overlappingConcurrentScopesKeepSecretRedactedUntilLastScopeCloses() throws Exception {
+        var redactor = new DefaultSecretRedactor();
+        String text = "output with sensitive-concurrent-token-xyz";
+
+        assertThat(redactor.redact(text)).isEqualTo(text);
+
+        AutoCloseable scope1 = redactor.registerScoped("sensitive-concurrent-token-xyz");
+        assertThat(redactor.redact(text)).isEqualTo("output with [REDACTED]");
+
+        AutoCloseable scope2 = redactor.registerScoped("sensitive-concurrent-token-xyz");
+        assertThat(redactor.redact(text)).isEqualTo("output with [REDACTED]");
+
+        // First scope closes, but scope 2 is still active -> must remain redacted
+        scope1.close();
+        assertThat(redactor.redact(text)).isEqualTo("output with [REDACTED]");
+
+        // Closing scope1 again is idempotent and does not prematurely decrement
+        scope1.close();
+        assertThat(redactor.redact(text)).isEqualTo("output with [REDACTED]");
+
+        // Final scope closes -> secret removed
+        scope2.close();
+        assertThat(redactor.redact(text)).isEqualTo(text);
+    }
+
+    @Test
+    void concurrentOverlappingScopesAreThreadSafe() throws Exception {
+        var redactor = new DefaultSecretRedactor();
+        String secret = "multithreaded-shared-secret";
+        int threads = 10;
+        var startGate = new java.util.concurrent.CountDownLatch(1);
+        var doneGate = new java.util.concurrent.CountDownLatch(threads);
+        var scopes = new java.util.concurrent.CopyOnWriteArrayList<AutoCloseable>();
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        try {
+            for (int i = 0; i < threads; i++) {
+                executor.submit(() -> {
+                    try {
+                        startGate.await();
+                        scopes.add(redactor.registerScoped(secret));
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        doneGate.countDown();
+                    }
+                });
+            }
+            startGate.countDown();
+            doneGate.await();
+
+            assertThat(scopes).hasSize(threads);
+            assertThat(redactor.redact("payload: " + secret)).isEqualTo("payload: [REDACTED]");
+
+            for (int i = 0; i < threads - 1; i++) {
+                scopes.get(i).close();
+                assertThat(redactor.redact("payload: " + secret)).isEqualTo("payload: [REDACTED]");
+            }
+
+            scopes.get(threads - 1).close();
+            assertThat(redactor.redact("payload: " + secret)).isEqualTo("payload: " + secret);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
 }
