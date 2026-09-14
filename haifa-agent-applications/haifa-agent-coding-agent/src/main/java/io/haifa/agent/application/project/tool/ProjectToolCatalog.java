@@ -486,10 +486,7 @@ public final class ProjectToolCatalog {
                 properties.put("baseCommit", Map.of("type", "string", "minLength", 7, "maxLength", 64));
                 properties.put("branchName", Map.of("type", "string", "minLength", 1, "maxLength", 240));
                 properties.put("targetName", Map.of("type", "string", "minLength", 1, "maxLength", 80));
-                properties.put(
-                        "deliveryIntent", Map.of("type", "string", "enum", List.of("local-change", "pull-request")));
-                required.addAll(
-                        List.of("sourceWorkspaceRef", "baseCommit", "branchName", "targetName", "deliveryIntent"));
+                required.addAll(List.of("sourceWorkspaceRef", "baseCommit", "branchName", "targetName"));
             }
             case "execution_run" -> {
                 properties.put(

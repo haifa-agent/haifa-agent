@@ -1,7 +1,5 @@
 package io.haifa.agent.application.project.policy;
 
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntentResolver;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
 import io.haifa.agent.policy.api.ApprovalMode;
@@ -17,7 +15,6 @@ import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
@@ -28,56 +25,16 @@ public final class CodingExecutionPolicyRequestAdapter implements ToolPolicyRequ
     private static final Pattern GIT_DIRECTORY_OVERRIDE = Pattern.compile("(?:^|\\s)[\\\"']?-C[\\\"']?(?:\\s|=)");
 
     private final DefaultToolPolicyRequestAdapter delegate;
-    private final CodingDeliveryIntentResolver deliveryIntents;
 
-    public CodingExecutionPolicyRequestAdapter(
-            ApprovalMode approvalMode, CodingDeliveryIntentResolver deliveryIntents) {
+    public CodingExecutionPolicyRequestAdapter(ApprovalMode approvalMode) {
         delegate = new DefaultToolPolicyRequestAdapter(PRODUCT_ID, approvalMode);
-        this.deliveryIntents = Objects.requireNonNull(deliveryIntents, "deliveryIntents must not be null");
     }
 
     @Override
     public PolicyRequest adapt(AgentRun run, FrozenToolBinding binding, ToolRequest request) {
         PolicyRequest baseline = delegate.adapt(run, binding, request);
         String definitionName = binding.definition().name().value();
-        PolicyRequest effective = withEffectiveExecutionRisk(baseline, definitionName, request);
-        enforceDeliveryIntent(definitionName, request, deliveryIntents.resolve(run));
-        return effective;
-    }
-
-    static void enforceDeliveryIntent(
-            String definitionName, ToolRequest request, CodingDeliveryIntent permittedIntent) {
-        if (!EXECUTION_RUN.equals(definitionName)) return;
-        Object value = request.arguments().values().get("command");
-        if (!(value instanceof String command)) return;
-        var classification = SystemGitCliCommandClassifier.classify(command);
-        Optional<CodingDeliveryIntent> required = requiredDeliveryIntent(classification);
-        if (required.isPresent()
-                && !Objects.requireNonNull(permittedIntent, "permittedIntent must not be null")
-                        .allows(required.orElseThrow())) {
-            String explanation = classification.risk() == SystemGitCliCommandClassifier.Risk.UNKNOWN
-                    ? "The command cannot be proven to stay within the frozen repository delivery boundary; split it "
-                            + "into direct git or gh commands."
-                    : "The command exceeds the repository delivery side-effect boundary frozen for this Coding Run.";
-            throw new ToolAuthorizationProtocolException("DELIVERY_INTENT_EXCEEDED", explanation);
-        }
-    }
-
-    private static Optional<CodingDeliveryIntent> requiredDeliveryIntent(
-            SystemGitCliCommandClassifier.Classification classification) {
-        CodingDeliveryIntent explicit =
-                switch (classification.reasonCode()) {
-                    case "GIT_STAGE", "GIT_COMMIT" -> CodingDeliveryIntent.LOCAL_COMMIT;
-                    case "GIT_PUSH" -> CodingDeliveryIntent.REMOTE_PUSH;
-                    case "GH_PR_CREATE", "GH_PR_UPDATE" -> CodingDeliveryIntent.PULL_REQUEST;
-                    default -> null;
-                };
-        if (explicit != null) return Optional.of(explicit);
-        if (classification.target() != SystemGitCliCommandClassifier.Target.OTHER
-                && classification.risk() == SystemGitCliCommandClassifier.Risk.UNKNOWN) {
-            return Optional.of(CodingDeliveryIntent.PULL_REQUEST);
-        }
-        return Optional.empty();
+        return withEffectiveExecutionRisk(baseline, definitionName, request);
     }
 
     static PolicyRequest withEffectiveExecutionRisk(
