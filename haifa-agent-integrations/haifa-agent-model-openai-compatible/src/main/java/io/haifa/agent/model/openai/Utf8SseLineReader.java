@@ -10,6 +10,7 @@ import java.util.Objects;
 /** Reads UTF-8 SSE lines with a byte bound enforced before constructing a String. */
 public final class Utf8SseLineReader implements AutoCloseable {
     private final InputStream input;
+    private int pending = -1;
 
     public Utf8SseLineReader(InputStream input) {
         this.input = new BufferedInputStream(Objects.requireNonNull(input, "input must not be null"));
@@ -19,24 +20,37 @@ public final class Utf8SseLineReader implements AutoCloseable {
         if (maximumBytes < 1) throw new IllegalArgumentException("maximumBytes must be positive");
         ByteArrayOutputStream bytes = new ByteArrayOutputStream(Math.min(maximumBytes, 8 * 1024));
         boolean observed = false;
-        boolean terminated = false;
+        int terminatorBytes = 0;
         while (true) {
-            int next = input.read();
+            int next = readByte();
             if (next < 0) {
                 if (!observed) return null;
                 break;
             }
             observed = true;
             if (next == '\n') {
-                terminated = true;
+                terminatorBytes = 1;
+                break;
+            }
+            if (next == '\r') {
+                terminatorBytes = 1;
+                int following = input.read();
+                if (following == '\n') terminatorBytes = 2;
+                else pending = following;
                 break;
             }
             if (bytes.size() >= maximumBytes) throw new LineLimitExceededException(maximumBytes);
             bytes.write(next);
         }
         byte[] raw = bytes.toByteArray();
-        int textLength = raw.length > 0 && raw[raw.length - 1] == '\r' ? raw.length - 1 : raw.length;
-        return new Line(new String(raw, 0, textLength, StandardCharsets.UTF_8), raw.length + (terminated ? 1 : 0));
+        return new Line(new String(raw, StandardCharsets.UTF_8), raw.length + terminatorBytes);
+    }
+
+    private int readByte() throws IOException {
+        if (pending < 0) return input.read();
+        int next = pending;
+        pending = -1;
+        return next;
     }
 
     @Override

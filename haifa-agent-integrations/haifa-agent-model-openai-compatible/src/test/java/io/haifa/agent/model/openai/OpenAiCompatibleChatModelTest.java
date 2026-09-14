@@ -529,6 +529,46 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void streamEndingAfterOnlyPrivateReasoningRemainsRetryableTransportFailure() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"reasoning-cut","model":"glm-test","choices":[{"index":0,"delta":{"reasoning_content":"private reasoning"},"finish_reason":null}]}
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.TRANSPORT_ERROR);
+                    assertThat(failure.outputObserved()).isFalse();
+                    assertThat(failure.retryable()).isTrue();
+                });
+    }
+
+    @Test
+    void reasoningSemanticLimitRemainsObservedAndNonRetryable() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"reasoning-limit","model":"glm-test","choices":[{"index":0,"delta":{"reasoning_content":"a"},"finish_reason":null}]}
+
+                data: {"id":"reasoning-limit","model":"glm-test","choices":[{"index":0,"delta":{"reasoning_content":"你你"},"finish_reason":null}]}
+
+                """));
+
+        assertThatThrownBy(() -> model(5).invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED);
+                    assertThat(failure.outputObserved()).isTrue();
+                    assertThat(failure.retryable()).isFalse();
+                });
+    }
+
+    @Test
     void preservesAssistantToolCallsAndToolResultCorrelation() throws Exception {
         response.set(
                 Response.json(

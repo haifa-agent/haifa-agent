@@ -1397,6 +1397,13 @@ final class LocalCodingAgent implements AutoCloseable {
         ModelBindingProfile profile = configuredProfile.orElseThrow();
         ModelReasoningMode mode =
                 model.reasoningModeConfigured() ? model.reasoningMode() : defaultReasoningMode(profile);
+        if (!model.reasoningModeConfigured()
+                && model.reasoningEffort() != null
+                && mode == ModelReasoningMode.DISABLED) {
+            throw new io.haifa.agent.model.api.ModelParameterResolutionException(
+                    io.haifa.agent.model.api.ModelParameterResolutionFailure.REASONING_MODE_UNSUPPORTED,
+                    "model.reasoningMode must be explicit when reasoningEffort is configured and reasoning defaults to disabled");
+        }
         Optional<ModelReasoningEffort> effort = mode == ModelReasoningMode.DISABLED
                 ? Optional.empty()
                 : Optional.ofNullable(model.reasoningEffort()).or(() -> recommendedEffort(profile));

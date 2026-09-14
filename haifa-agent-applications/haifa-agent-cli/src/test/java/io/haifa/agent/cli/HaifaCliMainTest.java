@@ -64,11 +64,50 @@ class HaifaCliMainTest {
         renderer.onOutput(event(3, AgentRunOutputEventType.ASSISTANT_TEXT_DELTA, "answer"));
         renderer.close();
 
-        assertThat(stdout.toString(StandardCharsets.UTF_8)).isEqualTo("[stream] answer");
+        assertThat(stdout.toString(StandardCharsets.UTF_8)).isEqualTo("[stream] answer" + System.lineSeparator());
         assertThat(stderr.toString(StandardCharsets.UTF_8))
                 .contains("Waiting for model...")
                 .contains("Model is thinking... elapsed=12s")
                 .doesNotContain("answer");
+    }
+
+    @Test
+    void ttyStatusStartsOnANewLineAfterAnUnterminatedStreamedAnswer() {
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        AtomicLong nanos = new AtomicLong();
+        CliActivityOutput renderer = new CliActivityOutput(
+                new PrintStream(stdout, true, StandardCharsets.UTF_8),
+                new PrintStream(stderr, true, StandardCharsets.UTF_8),
+                true,
+                true,
+                nanos::get,
+                false);
+
+        renderer.onOutput(event(1, AgentRunOutputEventType.RUN_OUTPUT_STARTED, ""));
+        renderer.onOutput(event(2, AgentRunOutputEventType.ASSISTANT_TEXT_DELTA, "first answer"));
+        renderer.onOutput(event(3, AgentRunOutputEventType.RUN_OUTPUT_STARTED, ""));
+        renderer.onOutput(event(4, AgentRunOutputEventType.ASSISTANT_TEXT_DELTA, "second answer"));
+        renderer.close();
+
+        assertThat(stdout.toString(StandardCharsets.UTF_8))
+                .isEqualTo("[stream] first answer" + System.lineSeparator() + "second answer" + System.lineSeparator());
+        assertThat(stderr.toString(StandardCharsets.UTF_8)).contains("Waiting for model...");
+    }
+
+    @Test
+    void ttyActivityRefreshesElapsedTimeWithoutWaitingForAnotherRuntimeEvent() {
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        AtomicLong nanos = new AtomicLong();
+        CliActivityOutput renderer = new CliActivityOutput(
+                output(), new PrintStream(stderr, true, StandardCharsets.UTF_8), true, true, nanos::get, false);
+        renderer.onOutput(event(1, AgentRunOutputEventType.RUN_OUTPUT_STARTED, ""));
+        nanos.set(java.time.Duration.ofSeconds(7).toNanos());
+
+        renderer.emitTtyStatus();
+        renderer.close();
+
+        assertThat(stderr.toString(StandardCharsets.UTF_8)).contains("Waiting for model... elapsed=7s");
     }
 
     @Test
