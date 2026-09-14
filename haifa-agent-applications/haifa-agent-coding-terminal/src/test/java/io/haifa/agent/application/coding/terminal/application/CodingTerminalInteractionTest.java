@@ -279,14 +279,21 @@ class CodingTerminalInteractionTest {
     @Test
     void modelCanBeSelectedBeforeTheFirstSessionAndIsAppliedAtCreation() {
         FakeClient client = new FakeClient(view(Optional.empty()));
-        client.models = List.of(model("default-model", "Default"), model("codex-model", "Codex"));
+        client.models = List.of(
+                model("default-model", "Default", "deepseek", "DeepSeek"),
+                model("codex-model", "Codex", "openai-codex", "ChatGPT Codex"));
         var controller = controller(client);
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, "/model"));
 
         assertThat(controller.state().selector()).isPresent();
-        assertThat(controller.state().selector().orElseThrow().title()).isEqualTo("Model for next session");
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-provider");
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly("DeepSeek · 1 model", "ChatGPT Codex · 1 model");
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model");
+        assertThat(controller.state().selector().orElseThrow().title()).isEqualTo("Models from ChatGPT Codex");
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
         assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-detail");
         assertThat(controller.state().selector().orElseThrow().title()).contains("Codex", "128K context");
@@ -295,6 +302,63 @@ class CodingTerminalInteractionTest {
 
         assertThat(client.createOptions.initialModelId()).contains("codex-model");
         assertThat(controller.state().session()).isPresent();
+    }
+
+    @Test
+    void providerModelListKeepsThePreferredModelAndDetailBackPosition() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.models = List.of(
+                model("deepseek-fast", "DeepSeek Fast", "deepseek", "DeepSeek"),
+                model("deepseek-deep", "DeepSeek Deep", "deepseek", "DeepSeek"),
+                model("codex-model", "Codex", "openai-codex", "ChatGPT Codex"));
+        var controller = controller(client);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/model deepseek-deep"));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/model"));
+
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-provider");
+        assertThat(controller.state().selector().orElseThrow().selected()).isZero();
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly("DeepSeek · 2 models", "ChatGPT Codex · 1 model");
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model");
+        assertThat(controller.state().selector().orElseThrow().selected()).isEqualTo(1);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-detail");
+        assertThat(controller.state().selector().orElseThrow().title()).contains("DeepSeek Deep");
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model");
+        assertThat(controller.state().selector().orElseThrow().selected()).isEqualTo(1);
+    }
+
+    @Test
+    void emptyAndUnavailableModelCatalogsRemainExplicit() {
+        FakeClient emptyClient = new FakeClient(view(Optional.empty()));
+        var emptyController = controller(emptyClient);
+
+        emptyController.accept(input(TerminalInput.Kind.SUBMIT, "/model"));
+        assertThat(emptyController.state().recoverableError()).contains("MODEL_LIST_EMPTY");
+
+        FakeClient unavailableClient = new FakeClient(view(Optional.empty()));
+        unavailableClient.models = List.of(unavailableModel("unavailable-model", "Unavailable"));
+        var unavailableController = controller(unavailableClient);
+
+        unavailableController.accept(input(TerminalInput.Kind.SUBMIT, "/model"));
+        unavailableController.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(unavailableController.state().selector().orElseThrow().kind())
+                .isEqualTo("model-detail");
+        assertThat(unavailableController
+                        .state()
+                        .selector()
+                        .orElseThrow()
+                        .options()
+                        .getFirst())
+                .startsWith("Unavailable:");
     }
 
     @Test
