@@ -31,6 +31,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.mission.MissionUsage;
+import io.haifa.agent.personalassistant.application.mission.PriorResearchContext;
 import io.haifa.agent.personalassistant.application.mission.ReportQualityGate;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.personalassistant.application.mission.SourceReference;
@@ -463,6 +464,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
 
                 Treat completed dependency results as authoritative prior work. Do not repeat searches already covered
                 by them. Use research Tools only to close an explicit evidence gap in this Task's acceptance criteria.
+                %s
 
                 This Run has a hard safety ceiling of %d research Tool calls. At %d completed Tool calls, Runtime
                 switches the next model turn to FINALIZE_ONLY and removes all Tool definitions. Immediately return
@@ -487,6 +489,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         intent.resultSchemaVersion(),
                         frozenResearchBrief(intent.runInput().researchBrief()),
                         dependencyContext,
+                        formatPriorContextForTask(intent.runInput().researchBrief()),
                         intent.runInput().researchToolCallHardLimit(),
                         intent.runInput().researchToolCallStopTarget(),
                         intent.runInput().fetchMaxCharacters(),
@@ -1855,7 +1858,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     %s
                     Mission objective: %s
                     Acceptance criteria: %s
-                    Frozen research brief: %s
+                    Frozen research brief: %s%s
                     """
                     .formatted(
                             request.constraints().maxTasks(),
@@ -1864,7 +1867,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                             referenceTime,
                             request.objective(),
                             request.acceptanceCriteria(),
-                            request.researchBrief().orElseThrow());
+                            request.researchBrief().orElseThrow(),
+                            formatPriorContextForPlanner(request.researchBrief()));
         }
         return """
                 Produce only one JSON object matching schema pa.mission-plan/v1. Do not use Markdown fences.
@@ -1977,5 +1981,54 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 """
                 .formatted(referenceDate, referenceDate.minusYears(3), referenceDate)
                 .strip();
+    }
+
+    static String formatPriorContextForPlanner(Optional<ResearchBrief> brief) {
+        if (brief.isEmpty() || brief.orElseThrow().optionalPriorContext().isEmpty()) {
+            return "";
+        }
+        PriorResearchContext ctx = brief.orElseThrow().optionalPriorContext().orElseThrow();
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n\nPrior Research Context and Gaps (inherited from Mission: ")
+                .append(ctx.previousMissionId())
+                .append("):\n");
+        if (!ctx.directAnswer().isBlank()) {
+            sb.append("- Prior Confirmed Findings Summary: ")
+                    .append(ctx.directAnswer())
+                    .append("\n");
+        }
+        if (!ctx.unresolvedQuestions().isEmpty()) {
+            sb.append("- Specific Unresolved Questions to Resolve:\n");
+            for (String q : ctx.unresolvedQuestions()) {
+                sb.append("  * ").append(q).append("\n");
+            }
+        }
+        if (!ctx.unverifiedClaims().isEmpty()) {
+            sb.append("- Specific Unverified Claims to Verify:\n");
+            for (String c : ctx.unverifiedClaims()) {
+                sb.append("  * ").append(c).append("\n");
+            }
+        }
+        sb.append(
+                "Planning Directive: Plan tasks specifically to address the unresolved questions and verify the unverified claims above. Do not plan duplicate tasks for findings already confirmed.");
+        return sb.toString();
+    }
+
+    static String formatPriorContextForTask(Optional<ResearchBrief> brief) {
+        if (brief.isEmpty() || brief.orElseThrow().optionalPriorContext().isEmpty()) {
+            return "";
+        }
+        PriorResearchContext ctx = brief.orElseThrow().optionalPriorContext().orElseThrow();
+        StringBuilder sb = new StringBuilder();
+        sb.append(
+                "If prior research context is present in Frozen Research Brief, treat confirmed findings as established prior work.\n");
+        if (!ctx.directAnswer().isBlank()) {
+            sb.append("- Prior Confirmed Findings Summary: ")
+                    .append(ctx.directAnswer())
+                    .append("\n");
+        }
+        sb.append(
+                "Focus your investigation specifically on resolving unresolved questions and verifying unverified claims without repeating searches for confirmed facts.");
+        return sb.toString();
     }
 }

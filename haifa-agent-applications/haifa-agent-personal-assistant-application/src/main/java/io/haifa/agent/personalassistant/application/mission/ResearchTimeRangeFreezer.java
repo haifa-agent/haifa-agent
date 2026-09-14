@@ -30,7 +30,8 @@ final class ResearchTimeRangeFreezer {
                 brief.audience(),
                 brief.sourcePreferences(),
                 brief.exclusions(),
-                brief.deliveryFormat());
+                brief.deliveryFormat(),
+                brief.priorContext());
     }
 
     static String freezeRange(String range, Instant createdAt) {
