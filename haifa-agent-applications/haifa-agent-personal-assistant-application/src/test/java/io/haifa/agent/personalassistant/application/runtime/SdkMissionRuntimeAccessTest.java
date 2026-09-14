@@ -287,6 +287,7 @@ class SdkMissionRuntimeAccessTest {
 
         assertThat(prompt)
                 .contains("If prior research context is present in Frozen Research Brief, treat confirmed findings as established prior work.")
+                .contains("- Prior Confirmed Findings Summary: Baseline answer about quantum computing progress")
                 .contains("Focus your investigation specifically on resolving unresolved questions and verifying unverified claims without repeating searches for confirmed facts.");
     }
 

@@ -338,10 +338,17 @@ public final class PersonalMissionController {
             String directAnswer = resultJson.path("directAnswer").asText("");
             if (directAnswer.isBlank()) {
                 directAnswer = resultJson.path("answerMarkdown").asText("");
-                if (directAnswer.length() > 1_000) {
-                    directAnswer = directAnswer.substring(0, 1_000);
+            }
+
+            JsonNode reportRef = resultJson.path("reportArtifactRef");
+            if (directAnswer.isBlank() && reportRef.isObject() && reportRef.has("artifactId")) {
+                String artifactId = reportRef.path("artifactId").asText();
+                byte[] bytes = loadArtifactBytes(previous.missionId(), artifactId);
+                if (bytes != null) {
+                    directAnswer = extractExecutiveSummary(new String(bytes, StandardCharsets.UTF_8), 3_000);
                 }
             }
+
             List<String> unresolvedQuestions = new ArrayList<>();
             if (resultJson.has("unresolvedQuestions") && resultJson.path("unresolvedQuestions").isArray()) {
                 for (JsonNode item : resultJson.path("unresolvedQuestions")) {
@@ -367,6 +374,7 @@ public final class PersonalMissionController {
             }
 
             List<String> unverifiedClaims = new ArrayList<>();
+            List<String> verifiedKeyClaims = new ArrayList<>();
             if (resultJson.has("unverifiedClaims") && resultJson.path("unverifiedClaims").isArray()) {
                 for (JsonNode item : resultJson.path("unverifiedClaims")) {
                     if (item.isTextual() && !item.asText().isBlank()) {
@@ -375,22 +383,38 @@ public final class PersonalMissionController {
                 }
             }
             JsonNode claimRef = resultJson.path("claimEvidenceArtifactRef");
-            if (unverifiedClaims.isEmpty() && claimRef.isObject() && claimRef.has("artifactId")) {
+            if (claimRef.isObject() && claimRef.has("artifactId")) {
                 String artifactId = claimRef.path("artifactId").asText();
                 byte[] bytes = loadArtifactBytes(previous.missionId(), artifactId);
                 if (bytes != null) {
                     JsonNode doc = objectMapper.readTree(bytes);
                     if (doc.has("claims") && doc.path("claims").isArray()) {
                         for (JsonNode claimNode : doc.path("claims")) {
-                            if (claimNode.path("unverified").asBoolean(false)) {
-                                String claimText = claimNode.path("claim").asText("");
-                                if (!claimText.isBlank()) {
+                            boolean isUnverified = claimNode.path("unverified").asBoolean(false);
+                            String claimText = claimNode.path("claim").asText("");
+                            if (!claimText.isBlank()) {
+                                if (isUnverified && unverifiedClaims.size() < 50) {
                                     unverifiedClaims.add(claimText.trim());
+                                } else if (!isUnverified && verifiedKeyClaims.size() < 10) {
+                                    verifiedKeyClaims.add(claimText.trim());
                                 }
                             }
                         }
                     }
                 }
+            }
+
+            if (!verifiedKeyClaims.isEmpty()) {
+                String claimsSummary = "核心已证实结论：\n- " + String.join("\n- ", verifiedKeyClaims);
+                if (directAnswer.isBlank()) {
+                    directAnswer = claimsSummary;
+                } else if (directAnswer.length() < 2_500) {
+                    directAnswer = directAnswer + "\n\n" + claimsSummary;
+                }
+            }
+
+            if (directAnswer.length() > 4_000) {
+                directAnswer = directAnswer.substring(0, 4_000).trim() + "...";
             }
 
             return Optional.of(new PriorResearchContext(
@@ -405,6 +429,65 @@ public final class PersonalMissionController {
                     List.of(),
                     List.of()));
         }
+    }
+
+    static String extractExecutiveSummary(String markdown, int maxChars) {
+        if (markdown == null || markdown.isBlank()) {
+            return "";
+        }
+        String lower = markdown.toLowerCase(java.util.Locale.ROOT);
+        String[] markers = {
+            "<!-- haifa-section: executive-summary -->",
+            "## 执行摘要",
+            "## 核心结论",
+            "## 结论摘要",
+            "## 综合结论",
+            "## executive summary",
+            "## summary"
+        };
+        int markerIdx = -1;
+        for (String marker : markers) {
+            int idx = lower.indexOf(marker.toLowerCase(java.util.Locale.ROOT));
+            if (idx != -1) {
+                markerIdx = idx;
+                break;
+            }
+        }
+        String candidate;
+        if (markerIdx != -1) {
+            int lineEnd = markdown.indexOf('\n', markerIdx);
+            String remaining = lineEnd != -1 ? markdown.substring(lineEnd).stripLeading() : markdown.substring(markerIdx).stripLeading();
+            if (remaining.startsWith("## ")) {
+                int nextLine = remaining.indexOf('\n');
+                remaining = nextLine != -1 ? remaining.substring(nextLine).stripLeading() : remaining;
+            }
+            int nextSectionIdx = -1;
+            int nextComment = remaining.indexOf("<!-- haifa-section:");
+            int nextH2 = remaining.indexOf("\n## ");
+            if (nextComment != -1 && nextH2 != -1) {
+                nextSectionIdx = Math.min(nextComment, nextH2);
+            } else if (nextComment != -1) {
+                nextSectionIdx = nextComment;
+            } else {
+                nextSectionIdx = nextH2;
+            }
+            candidate = nextSectionIdx != -1 ? remaining.substring(0, nextSectionIdx).trim() : remaining.trim();
+        } else {
+            String cleaned = markdown.replaceAll("<!--[\\s\\S]*?-->", "").trim();
+            if (cleaned.startsWith("# ")) {
+                int firstNewline = cleaned.indexOf('\n');
+                if (firstNewline != -1) {
+                    cleaned = cleaned.substring(firstNewline).trim();
+                }
+            }
+            int nextH2 = cleaned.indexOf("\n## ");
+            candidate = nextH2 != -1 ? cleaned.substring(0, nextH2).trim() : cleaned;
+        }
+        candidate = candidate.replaceAll("<!--[\\s\\S]*?-->", "").trim();
+        if (candidate.length() > maxChars) {
+            candidate = candidate.substring(0, maxChars).trim() + "...";
+        }
+        return candidate;
     }
 
     private byte[] loadArtifactBytes(String missionId, String artifactId) {

@@ -963,7 +963,8 @@
           "constraints": {"$ref": "#/components/schemas/MissionConstraints"},
           "mode": {"type": "string", "enum": ["STANDARD", "DEEP_RESEARCH"], "default": "STANDARD"},
           "selectedSkillId": {"type": "string"},
-          "researchBrief": {"$ref": "#/components/schemas/ResearchBrief"}
+          "researchBrief": {"$ref": "#/components/schemas/ResearchBrief"},
+          "previousMissionId": {"type": "string", "maxLength": 64}
         }
       },
       "ResearchBrief": {
@@ -977,7 +978,18 @@
           "audience": {"type": "string", "maxLength": 256},
           "sourcePreferences": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 256}},
           "exclusions": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 256}},
-          "deliveryFormat": {"type": "string", "maxLength": 256}
+          "deliveryFormat": {"type": "string", "maxLength": 256},
+          "priorContext": {"$ref": "#/components/schemas/PriorResearchContext"}
+        }
+      },
+      "PriorResearchContext": {
+        "type": "object",
+        "required": ["previousMissionId"],
+        "properties": {
+          "previousMissionId": {"type": "string", "maxLength": 256},
+          "directAnswer": {"type": "string", "maxLength": 8000},
+          "unresolvedQuestions": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 1000}},
+          "unverifiedClaims": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 1000}}
         }
       },
       "MissionConstraints": {
