@@ -717,6 +717,47 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void timeoutDuringSuccessfulToolPersistsItsResultAndCancelsUnstartedSibling() {
+        AtomicReference<DefaultAgentRuntime> runtime = new AtomicReference<>();
+        AtomicReference<AgentRunId> runId = new AtomicReference<>();
+        AtomicInteger invocations = new AtomicInteger();
+        ToolRequest first =
+                toolRequest("timeout-first", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        ToolRequest second =
+                toolRequest("timeout-second", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(first, second))),
+                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
+                    invocations.incrementAndGet();
+                    runtime.get().command(command(runId.get().value(), RuntimeCommandType.TIMEOUT, "tool-timeout"));
+                    return new ToolResult(
+                            true, "write completed", Map.of("written", true), List.of(), List.of(), false);
+                }));
+        runtime.set(fixture.runtime);
+        var accepted = fixture.runtime.start(request("timeout-during-tool"));
+        runId.set(accepted.runId());
+
+        fixture.scheduler.runAll();
+
+        assertThat(invocations).hasValue(1);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.TIMEOUT);
+        assertThat(fixture.store.toolCalls(accepted.runId()))
+                .extracting(call -> call.status().name())
+                .containsExactly("COMPLETED", "CANCELLED");
+        assertThat(fixture.store.toolCalls(accepted.runId()).getFirst().result())
+                .hasValueSatisfying(result -> assertThat(result.summary()).isEqualTo("write completed"));
+        assertThat(fixture.store.steps(accepted.runId()))
+                .filteredOn(step -> step.type() == AgentStepType.TOOL_EXECUTION)
+                .extracting(step -> step.status().name())
+                .containsExactly("COMPLETED", "CANCELLED");
+        assertThat(fixture.store.eventsFor(accepted.runId())).anySatisfy(event -> {
+            assertThat(event.type()).isEqualTo("tool.cancelled");
+            assertThat(event.data()).containsEntry("reasonCode", "WALL_TIME_EXCEEDED");
+        });
+    }
+
+    @Test
     void concurrentStartUsesOneLogicalRunAndOneAttempt() throws Exception {
         Fixture fixture = fixture(model(finalDecision("done")));
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {

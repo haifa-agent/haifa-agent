@@ -430,6 +430,7 @@ public final class DecisionExecutor {
                         "Tool request rejected; repair the arguments or choose another capability.");
                 continue;
             } catch (CancellationObservedException stopped) {
+                cancelCurrentToolAndPendingSiblings(run, call, step, stopped.signal());
                 throw stopped;
             } catch (RuntimeException failure) {
                 AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
@@ -453,7 +454,7 @@ public final class DecisionExecutor {
             appendToolResult(run, call, result.summary());
             if (stopForTerminalToolOutcome(run, call)) return AgentLoopDirective.STOP;
 
-            throwIfStopped(run);
+            throwIfStoppedAndCancelPendingSiblings(run, call);
             if (controls.signal(run.id()) == RunControlSignal.PAUSE) break;
         }
         return AgentLoopDirective.CONTINUE;
@@ -639,6 +640,7 @@ public final class DecisionExecutor {
             try {
                 outcome = tools.execute(run, call, request, loopContext.iteration(), loopContext.traceContext());
             } catch (CancellationObservedException stopped) {
+                cancelCurrentToolAndPendingSiblings(run, call, step, stopped.signal());
                 throw stopped;
             } catch (RuntimeException failure) {
                 AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
@@ -661,6 +663,7 @@ public final class DecisionExecutor {
             state.appendStep(step);
             appendToolResult(run, call, result.summary());
             if (stopForTerminalToolOutcome(run, call)) return Optional.of(AgentLoopDirective.STOP);
+            throwIfStoppedAndCancelPendingSiblings(run, call);
         }
         return Optional.of(AgentLoopDirective.CONTINUE);
     }
@@ -689,6 +692,38 @@ public final class DecisionExecutor {
         return new AgentExecutionFailureException(toolError, failure);
     }
 
+    private void cancelCurrentToolAndPendingSiblings(
+            AgentRun run, ToolCall call, AgentStep step, RunControlSignal signal) {
+        if (!terminal(call.status())) {
+            if (signal == RunControlSignal.TIMEOUT) call.timeout(time.now());
+            else call.cancel(time.now());
+            state.appendToolCall(call);
+            appendToolResult(run, call, "Tool call was cancelled because run execution stopped.");
+            events.append(
+                    run.id(),
+                    "tool.cancelled",
+                    Map.of(
+                            "toolCallId",
+                            call.id().value(),
+                            "displayName",
+                            call.toolName(),
+                            "status",
+                            call.status().name(),
+                            "reasonCode",
+                            stopReasonCode(signal),
+                            "targetSummary",
+                            call.toolName(),
+                            "resultRef",
+                            ""),
+                    time.now());
+        }
+        if (!terminal(step.status())) {
+            step.cancel(time.now());
+            state.appendStep(step);
+        }
+        cancelPendingSiblingTools(run, call, stopReasonCode(signal));
+    }
+
     private static String toolFailureMessage(AgentError toolError) {
         Object failureCode = toolError.details().get("failureCode");
         Object dispatchState = toolError.details().get("dispatchState");
@@ -699,6 +734,10 @@ public final class DecisionExecutor {
     }
 
     private void cancelPendingSiblingTools(AgentRun run, ToolCall failedCall) {
+        cancelPendingSiblingTools(run, failedCall, "SIBLING_TOOL_FAILED");
+    }
+
+    private void cancelPendingSiblingTools(AgentRun run, ToolCall failedCall, String reasonCode) {
         for (ToolCall sibling : state.toolCalls(run.id())) {
             if (sibling.id().equals(failedCall.id()) || sibling.startedAt().isPresent() || terminal(sibling.status()))
                 continue;
@@ -712,7 +751,12 @@ public final class DecisionExecutor {
                         step.cancel(time.now());
                         state.appendStep(step);
                     });
-            appendToolResult(run, sibling, "Tool call was cancelled because another call in the same batch failed.");
+            appendToolResult(
+                    run,
+                    sibling,
+                    reasonCode.equals("SIBLING_TOOL_FAILED")
+                            ? "Tool call was cancelled because another call in the same batch failed."
+                            : "Tool call was cancelled because run execution stopped.");
             events.append(
                     run.id(),
                     "tool.cancelled",
@@ -724,13 +768,24 @@ public final class DecisionExecutor {
                             "status",
                             "CANCELLED",
                             "reasonCode",
-                            "SIBLING_TOOL_FAILED",
+                            reasonCode,
                             "targetSummary",
                             sibling.toolName(),
                             "resultRef",
                             ""),
                     time.now());
         }
+    }
+
+    private void throwIfStoppedAndCancelPendingSiblings(AgentRun run, ToolCall completedCall) {
+        RunControlSignal signal = controls.signal(run.id());
+        if (!signal.stopsExecution()) return;
+        cancelPendingSiblingTools(run, completedCall, stopReasonCode(signal));
+        throw new CancellationObservedException(signal);
+    }
+
+    private static String stopReasonCode(RunControlSignal signal) {
+        return signal == RunControlSignal.TIMEOUT ? "WALL_TIME_EXCEEDED" : signal.name();
     }
 
     private static boolean terminal(ToolCallStatus status) {
