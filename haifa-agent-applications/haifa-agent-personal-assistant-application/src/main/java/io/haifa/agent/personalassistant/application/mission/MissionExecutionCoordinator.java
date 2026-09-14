@@ -7,6 +7,8 @@ import java.util.Objects;
 
 /** Single-dispatcher orchestration for the product UoW -> Runtime -> product UoW Saga. */
 public final class MissionExecutionCoordinator {
+    private static final System.Logger LOGGER = System.getLogger(MissionExecutionCoordinator.class.getName());
+
     private final MissionExecutionStore store;
     private final MissionRuntimeAccess runtime;
     private final Clock clock;
@@ -80,6 +82,10 @@ public final class MissionExecutionCoordinator {
                         try {
                             binding = runtime.startTask(intent);
                         } catch (RuntimeException failure) {
+                            LOGGER.log(
+                                    System.Logger.Level.WARNING,
+                                    "Starting task failed for mission " + intent.missionId() + " task "
+                                            + intent.taskId() + " with code " + safeCode(failure));
                             store.failDispatch(intent, safeCode(failure), false, now());
                             return;
                         }
@@ -99,16 +105,34 @@ public final class MissionExecutionCoordinator {
                 synthesis = delivery.synthesis();
                 published = delivery.published();
             } catch (MissionException failure) {
-                if (recoverableSynthesisFailure(failure.code())) return;
+                if (recoverableSynthesisFailure(failure.code())) {
+                    LOGGER.log(
+                            System.Logger.Level.WARNING,
+                            "Synthesis run failed with recoverable code " + failure.code()
+                                    + " for mission " + intent.missionId());
+                    return;
+                }
+                LOGGER.log(
+                        System.Logger.Level.WARNING,
+                        "Synthesis publication failed for mission " + intent.missionId() + " with code "
+                                + failure.code());
                 store.failSynthesis(intent, failure.code(), now());
                 return;
             } catch (RuntimeException transientFailure) {
+                LOGGER.log(
+                        System.Logger.Level.WARNING,
+                        "Synthesis execution failed unexpectedly for mission " + intent.missionId()
+                                + " with code " + safeCode(transientFailure));
                 return;
             }
             try {
                 runtime.appendFinalMessage(
                         intent.conversationId(), intent.missionId(), synthesis.runId(), published.finalMessage());
             } catch (RuntimeException transientFailure) {
+                LOGGER.log(
+                        System.Logger.Level.WARNING,
+                        "Appending final message failed for mission " + intent.missionId()
+                                + " with code " + safeCode(transientFailure));
                 return;
             }
             try {
@@ -116,6 +140,10 @@ public final class MissionExecutionCoordinator {
             } catch (RuntimeException transientFailure) {
                 // The transaction outcome may be unknown. Reclaiming SYNTHESIZING and replaying stable Runtime,
                 // Artifact, and final-message keys is safe; a committed settlement is no longer claimable.
+                LOGGER.log(
+                        System.Logger.Level.WARNING,
+                        "Settling synthesis failed for mission " + intent.missionId()
+                                + " with code " + safeCode(transientFailure));
             }
         });
     }

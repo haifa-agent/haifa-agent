@@ -618,7 +618,8 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             unresolved.addAll(textArray(task, "unresolvedQuestions", 20));
             taskObjects.add(new NormalizedTask(task, taskAliases, taskSourceIndex));
         }
-        if (sources.size() > maxSources) invalid("Research evidence exceeds the Mission source limit");
+        if (sources.size() > maxSources * MAX_TASK_RESULTS)
+            invalid("Research evidence exceeds the Mission source limit");
 
         Map<String, JsonNode> claims = new LinkedHashMap<>();
         LinkedHashSet<String> requiredUnverified = new LinkedHashSet<>();
