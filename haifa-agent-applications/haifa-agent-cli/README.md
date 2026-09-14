@@ -700,22 +700,20 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
 
-风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会将原 ToolCall 标记为终态 FAILED，将失败事实（`failureCode` 与 `NOT_DISPATCHED`）回传给模型并继续标准对话循环；模型可据此向用户报告阻塞或在标准策略下发起全新的普通工具调用，Runtime 不再维护双 Profile、专用 `execution-recovery` Interaction 或后继工具调用协议。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run` 与 `workspace_worktree_create`，模型不可见，底层授权仍 fail closed。
+风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会将原 ToolCall 标记为终态 FAILED，将失败事实（`failureCode` 与 `NOT_DISPATCHED`）回传给模型并继续标准对话循环；模型可据此向用户报告阻塞或在标准策略下发起全新的普通工具调用，Runtime 不再维护双 Profile、专用 `execution-recovery` Interaction 或后继工具调用协议。`--approval auto` 映射为 `NEVER`，会自动执行仍处于冻结 `CodingDeliveryIntent` 上界内、且可信分类为 LOW/MEDIUM/HIGH 的普通命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。交付意图越界、可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run` 与 `workspace_worktree_create`，模型不可见，底层授权仍 fail closed。
 
 `workspace_worktree_create` 只接受具有当前 `DEVELOP` Access 的 source `workspaceRef`、不可变 base commit、新分支名、受控 target name 和交付意图；模型不能传入目标主机路径或权限。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验、Registry 登记和新 workspace 的 `DEVELOP` Access 写入全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
 
-系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。Tool Result 保留原始退出码，并单独投影命令语义：
-当前本地 Terminal 的 Coding Session 仍默认冻结 `WORKTREE_ONLY`，但该值只作为完成目标和投影元数据，
-不再构成 Commit、Push 或 PR 的命令权限上限。系统 `git`/`gh` 与其他命令一样统一经过风险分类、
-Policy/Approval、Workspace、Sandbox、网络权限和审计；`--approval auto` 只改变普通审批阈值，不绕过这些
-通用边界。可信宿主显式传入 `LOCAL_COMMIT`、`REMOTE_PUSH` 或 `PULL_REQUEST` 时，完成策略仍要求相应的
-Stage、Commit、Push 或 PR 权威结果证据，但不在 Broker Dispatch 前增加 Coding 产品专用交付拦截。
+系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。当前本地 Terminal 的 Coding Session 默认冻结
+`WORKTREE_ONLY`；Policy Adapter 在 evaluator/approval 前把它作为仓库副作用上界：Stage/Commit 要求
+`LOCAL_COMMIT`，Push 要求 `REMOTE_PUSH`，PR 写操作要求 `PULL_REQUEST`。可信的直接只读 Git/GH 不受该上界
+影响；无法证明只读的 compound/wrapper 必须拆成直接命令，或由可信调用方预先冻结最高所需意图。
+批准不能把当前 Run 升级到更高交付意图。generic Shell 只返回命令事实，完成策略不要求或生成 Stage、Commit、
+Push、PR 成功证据。
 
-`execution_run` 默认只接受退出码 0。只有命令文档明确把非零退出定义为正常观察结果时，调用方才可通过
-同时包含 0 和该值的 `expectedExitCodes` 显式声明；例如 `git diff --exit-code` / `--no-index`、
-`git grep` 或 `rg` 可在预期退出 1 时使用 `[0, 1]`，结果投影为
-`EXPECTED_VARIANT/DECLARED_EXPECTED_EXIT_CODE`。无效 revision、未声明的构建或测试非零退出仍是失败，
-Timeout、Cancel 和未知终止不能通过该字段改写为成功。复合命令风险提升返回
+`execution_run` 对每个正常终止的进程返回 `processState=EXITED`、原始 exit code 和 bounded 输出。
+Runtime 和 Coding 产品不判断退出码的业务含义，也不将非零退出归入平台失败或自动恢复；模型依据命令与
+输出决定下一步。Timeout、Cancel、资源限制和未知终止继续保持独立边界。复合命令风险提升返回
 `COMMAND_RISK_ESCALATED`，未知 Git 子命令返回 `GIT_COMMAND_UNKNOWN_HIGH_RISK`，不可信
 `operationFamily` 返回 `OPERATION_HINT_IGNORED` 或 `UNVERIFIED`。认证环境覆盖硬拒绝使用
 `AUTHENTICATION_OVERRIDE_DENIED`，受限网络失败使用 `NETWORK_PERMISSION_REQUIRED`，二者分别引导移除
@@ -744,7 +742,7 @@ CLI 还会从 Workspace 根的 `pom.xml`、Gradle 文件、`pyproject.toml`/`pyt
 `Cargo.toml`、`go.mod`、`.sln`/`.csproj` 生成有界的最终门禁候选，并优先选择仓库 Wrapper。它只识别
 构建入口，不解析自然语言 README、猜测用户意图或建立语言插件注册表。候选在 Coding Session 创建时
 冻结到可信 Session metadata；重启后以冻结摘要和精确命令匹配恢复 scope。runner 输出不再用于推断
-discovered/selected/ignored 或完整覆盖，当前统一保留 `COUNTS_UNAVAILABLE`，成功退出也不等于完整测试覆盖。
+discovered/selected/ignored 或完整覆盖，Attempt 不保存测试计数字段，正常退出也不等于验证通过。
 
 CLI 不再为 OS 执行建立 Workspace Change Observer，也不在产品内维护扫描算法或为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。`execution_run` 的可信事实是授权、Sandbox、进程 dispatch、退出状态、有界输出、超时、取消和结果未知；它不自动扫描 Workspace 推导文件变更，也不因文件观察失败进入
 `WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` / `WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED`（两个错误码已删除）。
