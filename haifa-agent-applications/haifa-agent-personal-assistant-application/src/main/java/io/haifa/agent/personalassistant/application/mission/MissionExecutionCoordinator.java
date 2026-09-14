@@ -108,8 +108,8 @@ public final class MissionExecutionCoordinator {
                 if (recoverableSynthesisFailure(failure.code())) {
                     LOGGER.log(
                             System.Logger.Level.WARNING,
-                            "Synthesis run failed with recoverable code " + failure.code()
-                                    + " for mission " + intent.missionId());
+                            "Synthesis run failed with recoverable code " + failure.code() + " for mission "
+                                    + intent.missionId());
                     return;
                 }
                 LOGGER.log(
@@ -121,8 +121,8 @@ public final class MissionExecutionCoordinator {
             } catch (RuntimeException transientFailure) {
                 LOGGER.log(
                         System.Logger.Level.WARNING,
-                        "Synthesis execution failed unexpectedly for mission " + intent.missionId()
-                                + " with code " + safeCode(transientFailure));
+                        "Synthesis execution failed unexpectedly for mission " + intent.missionId() + " with code "
+                                + safeCode(transientFailure));
                 return;
             }
             try {
@@ -131,8 +131,8 @@ public final class MissionExecutionCoordinator {
             } catch (RuntimeException transientFailure) {
                 LOGGER.log(
                         System.Logger.Level.WARNING,
-                        "Appending final message failed for mission " + intent.missionId()
-                                + " with code " + safeCode(transientFailure));
+                        "Appending final message failed for mission " + intent.missionId() + " with code "
+                                + safeCode(transientFailure));
                 return;
             }
             try {
@@ -142,8 +142,8 @@ public final class MissionExecutionCoordinator {
                 // Artifact, and final-message keys is safe; a committed settlement is no longer claimable.
                 LOGGER.log(
                         System.Logger.Level.WARNING,
-                        "Settling synthesis failed for mission " + intent.missionId()
-                                + " with code " + safeCode(transientFailure));
+                        "Settling synthesis failed for mission " + intent.missionId() + " with code "
+                                + safeCode(transientFailure));
             }
         });
     }

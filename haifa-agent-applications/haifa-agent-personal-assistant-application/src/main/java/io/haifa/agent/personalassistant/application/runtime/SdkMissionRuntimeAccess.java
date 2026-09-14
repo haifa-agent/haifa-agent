@@ -1338,9 +1338,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     }
 
     private AgentSessionId synthesisSession(
-            MissionSynthesisIntent intent,
-            String protocolVersion,
-            int revisionAttempt) {
+            MissionSynthesisIntent intent, String protocolVersion, int revisionAttempt) {
         String stable = revisionAttempt == 0
                 ? digest(intent.missionId(), "synthesis", protocolVersion)
                 : digest(intent.missionId(), "synthesis", protocolVersion, String.valueOf(revisionAttempt));
