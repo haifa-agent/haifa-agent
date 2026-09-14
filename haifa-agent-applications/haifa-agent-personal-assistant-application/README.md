@@ -92,7 +92,7 @@ immutable input across claim recovery and retry.
 Research evidence IDs are namespaced by the frozen Task ID at the trusted normalization boundary. Unicode model IDs
 are normalized to lower-case ASCII kebab IDs there, and Claim source references are rewritten to the same identity.
 Final publication canonicalizes and deduplicates those Task-local aliases by public locator before enforcing the
-Mission-wide 24-source limit. The bounded final unverified-claim index supports the existing eight-Task by
+Mission-wide 192-source limit (aligned with the 24 max sources per Task across 8 Tasks). The bounded final unverified-claim index supports the existing eight-Task by
 forty-claims-per-Task ceiling, so
 strict citation closure never requires dropping an unverified claim merely to satisfy a smaller synthesis array.
 Only completed journal evidence with an exact case-sensitive canonical URL and canonical `sha256:` content digest
@@ -101,12 +101,13 @@ Retrieval status does not establish factual support: v2 findings retain an expli
 conservative model judgments. A normative or first-party fact may be verified from one fetched authoritative primary
 source; empirical or interpretive claims require at least two genuinely independent fetched sources.
 Synthesis uses stable initial,
-revision-1 and revision-2 Runtime idempotency keys. The product checks marked Markdown before publication, then
+revision-1 and revision-2 Runtime idempotency keys and isolates synthesis sessions per revision attempt. The product checks marked Markdown before publication, then
 checks the four published Artifact refs before publishing `research-delivery.json` last; the model never supplies
 Artifact references or the delivery manifest.
 
 Research Task Runs use a 10-minute wall-clock limit and a 4-minute idle limit so a long final structured response can
-complete after multi-round evidence collection. Planner and Synthesis retain their narrower stage-specific limits.
+complete after multi-round evidence collection. Planner and Synthesis retain their narrower stage-specific limits
+(Synthesis provides a 256,000 input/cached token budget and a 180s wall-time limit).
 The Mission-wide deadline defaults to two hours and remains a hard upper bound; individual Task limits, Mission token
 and Tool budgets, cancellation, and capacity admission continue to bound resource use.
 
