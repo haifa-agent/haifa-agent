@@ -106,7 +106,14 @@ public final class PersonalApiMapper {
                                 brief.audience(),
                                 brief.sourcePreferences(),
                                 brief.exclusions(),
-                                brief.deliveryFormat())),
+                                brief.deliveryFormat(),
+                                brief.optionalPriorContext()
+                                        .map(ctx -> new PersonalApiDtos.PriorResearchContext(
+                                                ctx.previousMissionId(),
+                                                ctx.directAnswer(),
+                                                ctx.unresolvedQuestions(),
+                                                ctx.unverifiedClaims()))
+                                        .orElse(null))),
                 value.selectedSkillId(),
                 value.selectedSkillBinding(),
                 value.state().name(),
