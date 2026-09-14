@@ -230,4 +230,52 @@ class CodingTerminalExecutionTest {
         assertThat(client.shellDiscarded).isTrue();
         assertThat(controller.state().selector()).isEmpty();
     }
+
+    @Test
+    void modelAuthenticationRequiredOpensModelReadinessSelectorAndPreservesDraft() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.submitFailure =
+                new ProjectProductException("MODEL_AUTHENTICATION_REQUIRED", "Model credentials are not ready");
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "draft to preserve"));
+
+        assertThat(controller.state().recoverableError()).contains("MODEL_AUTHENTICATION_REQUIRED");
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve");
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly(
+                        "Connect / Log in to model (/login)", "Switch model (/model)", "Keep draft and dismiss");
+
+        // Choosing index 2 dismisses selector and keeps draft
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve");
+    }
+
+    @Test
+    void modelReadinessSelectorOptionLoginOpensLoginSelector() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        FakeAuthenticationClient authentication = new FakeAuthenticationClient();
+        client.submitFailure =
+                new ProjectProductException("MODEL_AUTHENTICATION_REQUIRED", "Model credentials are not ready");
+        var controller = controller(client, authentication);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "draft to preserve"));
+
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
+
+        // Select option 0: 登录当前 Provider (/login)
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("auth-login");
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve");
+    }
 }

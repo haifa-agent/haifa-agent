@@ -16,6 +16,15 @@ class TerminalRecoveryTest {
     }
 
     @Test
+    void modelAuthenticationRequiredMapsToUserActionRequiredWithLoginOrSwitchPrompt() {
+        TerminalRecovery recovery = TerminalRecovery.fromCode("MODEL_AUTHENTICATION_REQUIRED");
+
+        assertThat(recovery.category()).isEqualTo(TerminalRecovery.Category.USER_ACTION_REQUIRED);
+        assertThat(recovery.code()).isEqualTo("MODEL_AUTHENTICATION_REQUIRED");
+        assertThat(recovery.action()).isEqualTo("未登录/凭据不可用；运行 /login 登录，或运行 /model 切换可用模型后继续原草稿。");
+    }
+
+    @Test
     void knownErrorCodesPreserveActionablePresentation() {
         TerminalRecovery rateLimited = TerminalRecovery.fromCode("MODEL_RATE_LIMITED");
         assertThat(rateLimited.category()).isEqualTo(TerminalRecovery.Category.RETRYABLE);

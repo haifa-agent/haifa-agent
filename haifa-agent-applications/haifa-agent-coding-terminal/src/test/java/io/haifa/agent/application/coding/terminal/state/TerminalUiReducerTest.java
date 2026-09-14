@@ -3,6 +3,11 @@ package io.haifa.agent.application.coding.terminal.state;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.project.product.coding.CodingModelControls;
+import io.haifa.agent.application.project.product.coding.CodingModelOption;
+import io.haifa.agent.application.project.product.coding.CodingModelPreferences;
+import io.haifa.agent.application.project.product.coding.CodingModelSelection;
+import io.haifa.agent.application.project.product.coding.CodingModelState;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryItem;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
@@ -29,6 +34,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class TerminalUiReducerTest {
@@ -679,6 +685,53 @@ class TerminalUiReducerTest {
                 Instant.parse("2026-07-27T00:00:00Z"),
                 Instant.parse("2026-07-27T00:01:00Z"),
                 new InteractionConsequenceView("Write file", "Skip tool", "Expire request"));
+    }
+
+    @Test
+    void modelFooterSummaryIndicatesUnauthenticatedModel() {
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        CodingSessionSummary summary = new CodingSessionSummary(
+                sessionId,
+                new ProjectId("project-1"),
+                "session",
+                AgentSessionStatus.ACTIVE,
+                Optional.empty(),
+                Optional.empty(),
+                0,
+                Instant.EPOCH,
+                0);
+        CodingModelOption unreadyOption = new CodingModelOption(
+                "claude-3-7-sonnet",
+                "Claude 3.7 Sonnet",
+                "anthropic",
+                "Anthropic",
+                Set.of("TEXT_CHAT", "TOOL_CALLING"),
+                200_000,
+                16_000,
+                new CodingModelState(
+                        CodingModelState.Connection.LOGIN_REQUIRED,
+                        CodingModelState.BindingAvailability.AVAILABLE,
+                        CodingModelState.RuntimeStatus.NORMAL,
+                        CodingModelState.RunScope.IDLE),
+                "",
+                CodingModelControls.unavailable(),
+                CodingModelPreferences.recommended(),
+                Optional.empty());
+        CodingSessionView sessionView = new CodingSessionView(
+                summary,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                "sha256:test",
+                "cli-coding@1.0.0",
+                new CodingModelSelection(unreadyOption, 0, true),
+                Optional.empty());
+
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40), new TerminalUiAction.SessionLoaded(sessionView, List.of()));
+
+        assertThat(state.footer().model()).contains("Claude 3.7 Sonnet");
+        assertThat(state.footer().model()).endsWith(" · [未登录/凭据不可用]");
     }
 
     private static AgentRunEvent event(long sequence, String id, AgentRunEvent.Payload payload) {
