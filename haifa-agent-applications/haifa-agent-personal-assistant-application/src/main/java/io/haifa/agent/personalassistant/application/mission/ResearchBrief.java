@@ -24,7 +24,16 @@ public record ResearchBrief(
             List<String> sourcePreferences,
             List<String> exclusions,
             String deliveryFormat) {
-        this(question, scope, timeRange, region, audience, sourcePreferences, exclusions, deliveryFormat, (PriorResearchContext) null);
+        this(
+                question,
+                scope,
+                timeRange,
+                region,
+                audience,
+                sourcePreferences,
+                exclusions,
+                deliveryFormat,
+                (PriorResearchContext) null);
     }
 
     public ResearchBrief(

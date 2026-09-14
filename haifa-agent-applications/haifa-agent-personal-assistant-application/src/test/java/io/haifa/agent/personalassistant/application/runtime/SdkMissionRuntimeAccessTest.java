@@ -236,7 +236,8 @@ class SdkMissionRuntimeAccessTest {
                 .contains("* What is the exact qubit count in 2026?")
                 .contains("* How is error mitigation scaled?")
                 .contains("* Claim: Commercial advantage reached by Acme Corp")
-                .contains("Planning Directive: Plan tasks specifically to address the unresolved questions and verify the unverified claims above.");
+                .contains(
+                        "Planning Directive: Plan tasks specifically to address the unresolved questions and verify the unverified claims above.");
     }
 
     @Test
@@ -286,9 +287,11 @@ class SdkMissionRuntimeAccessTest {
         String prompt = SdkMissionRuntimeAccess.taskPrompt(intent, skill);
 
         assertThat(prompt)
-                .contains("If prior research context is present in Frozen Research Brief, treat confirmed findings as established prior work.")
+                .contains(
+                        "If prior research context is present in Frozen Research Brief, treat confirmed findings as established prior work.")
                 .contains("- Prior Confirmed Findings Summary: Baseline answer about quantum computing progress")
-                .contains("Focus your investigation specifically on resolving unresolved questions and verifying unverified claims without repeating searches for confirmed facts.");
+                .contains(
+                        "Focus your investigation specifically on resolving unresolved questions and verifying unverified claims without repeating searches for confirmed facts.");
     }
 
     @Test
