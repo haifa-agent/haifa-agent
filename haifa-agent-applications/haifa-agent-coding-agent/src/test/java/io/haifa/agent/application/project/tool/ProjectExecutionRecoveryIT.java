@@ -330,7 +330,6 @@ class ProjectExecutionRecoveryIT {
                 new ExecutionEnvironmentRef(List.of("test-environment")),
                 normalProfile().ref(),
                 ExecutionScratchSpaceSpec.genericRequired(),
-                Duration.ofMinutes(1),
                 Duration.ofMinutes(2),
                 8_192,
                 4);
@@ -377,7 +376,6 @@ class ProjectExecutionRecoveryIT {
                 TIME,
                 new ExecutionEnvironmentRef(List.of("test-environment")),
                 profile,
-                Duration.ofMinutes(1),
                 Duration.ofMinutes(2),
                 8_192,
                 2_000,

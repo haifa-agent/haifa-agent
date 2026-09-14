@@ -43,6 +43,7 @@ import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolInvoker;
 import io.haifa.agent.tool.api.ToolSchemaValidationResult;
 import io.haifa.agent.tool.api.ToolSchemaValidator;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -508,7 +509,10 @@ public final class ToolPipeline {
     private ToolResult invokeProvider(AgentRun run, ToolCall call, ToolRequest request, FrozenToolBinding binding) {
         var definition = binding.definition();
         var now = time.now();
-        var deadline = now.plus(definition.timeout());
+        long activeElapsedMillis = run.activeElapsedMillis(now);
+        Duration invocationWindow =
+                invocationWindow(definition.timeout(), run.limits().maxWallTimeMillis(), activeElapsedMillis);
+        var deadline = now.plus(invocationWindow);
         java.util.Map<String, String> resolvedCredentials = new java.util.LinkedHashMap<>();
         if (!definition.credentialRequirements().isEmpty()) {
             if (credentials == null) {
@@ -588,6 +592,16 @@ public final class ToolPipeline {
                 resolvedCredentials.clear();
             }
         }
+    }
+
+    static Duration invocationWindow(Duration toolTimeout, long maximumWallTimeMillis, long activeElapsedMillis) {
+        Objects.requireNonNull(toolTimeout, "toolTimeout must not be null");
+        long remainingWallTimeMillis = maximumWallTimeMillis - activeElapsedMillis;
+        if (remainingWallTimeMillis <= 0) {
+            throw new RuntimeLimitExceededException("wallTimeMillis", maximumWallTimeMillis, activeElapsedMillis);
+        }
+        Duration remainingWallTime = Duration.ofMillis(remainingWallTimeMillis);
+        return toolTimeout.compareTo(remainingWallTime) <= 0 ? toolTimeout : remainingWallTime;
     }
 
     static ToolResult redactResult(ToolResult result, io.haifa.agent.credential.api.SecretRedactor redactor) {

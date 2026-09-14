@@ -17,7 +17,39 @@ public record ExecutionResult(
         ExecutionFailure failure,
         boolean replayed,
         boolean scratchProvisioned,
-        boolean scratchCleanupFailed) {
+        boolean scratchCleanupFailed,
+        boolean outputIncomplete) {
+    public ExecutionResult(
+            ExecutionId id,
+            ExecutionStatus status,
+            Integer exitCode,
+            Instant startedAt,
+            Instant endedAt,
+            ExecutionOutput stdout,
+            ExecutionOutput stderr,
+            String sandboxSessionRef,
+            ResourceUsageSummary resourceUsage,
+            ExecutionFailure failure,
+            boolean replayed,
+            boolean scratchProvisioned,
+            boolean scratchCleanupFailed) {
+        this(
+                id,
+                status,
+                exitCode,
+                startedAt,
+                endedAt,
+                stdout,
+                stderr,
+                sandboxSessionRef,
+                resourceUsage,
+                failure,
+                replayed,
+                scratchProvisioned,
+                scratchCleanupFailed,
+                false);
+    }
+
     public ExecutionResult(
             ExecutionId id,
             ExecutionStatus status,
@@ -42,6 +74,7 @@ public record ExecutionResult(
                 resourceUsage,
                 failure,
                 replayed,
+                false,
                 false,
                 false);
     }
@@ -84,6 +117,7 @@ public record ExecutionResult(
                 failure,
                 true,
                 scratchProvisioned,
-                scratchCleanupFailed);
+                scratchCleanupFailed,
+                outputIncomplete);
     }
 }

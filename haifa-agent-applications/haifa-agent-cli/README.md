@@ -535,7 +535,6 @@ approval:
 execution:
   provider: host-guarded
   shell: auto
-  defaultTimeoutMillis: 120000
   maxTimeoutMillis: 1800000
   maxOutputLines: 2000
   maxOutputBytes: 51200
@@ -552,6 +551,10 @@ runtime:
 persistence:
   mode: MEMORY
 ```
+
+`execution_run` 省略 `timeoutMillis` 时使用 `maxTimeoutMillis`；最终值还会被当前 Run 剩余 wall-time
+收紧。显式的较短 `timeoutMillis` 继续生效。
+旧 `execution.defaultTimeoutMillis` 已删除，继续配置会在启动时明确失败，避免把固定缺省误认为仍有效。
 
 `persistence.mode` 只允许 `MEMORY`、`SQLITE` 和 `SQLITE_WITH_JSONL`；CLI 内置配置默认
 `MEMORY`，由打包脚本生成的 Haifa Coding Agent 发行配置默认 `SQLITE_WITH_JSONL`。持久模式示例：

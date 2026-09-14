@@ -100,7 +100,6 @@ class CliFeatureConfigurationTest {
                       mode: deny
                     execution:
                       shell: auto
-                      defaultTimeoutMillis: 45000
                       maxTimeoutMillis: 600000
                       maxOutputBytes: 32768
                       maxOutputLines: 900
@@ -132,7 +131,6 @@ class CliFeatureConfigurationTest {
         assertThat(result.approval()).isEqualTo(ApprovalMode.DENY);
         assertThat(result.timeout()).isEqualTo(java.time.Duration.ofMillis(120000));
         assertThat(result.maxModelCalls()).isEqualTo(5);
-        assertThat(result.execution().defaultTimeout()).isEqualTo(java.time.Duration.ofMillis(45000));
         assertThat(result.execution().provider()).isEqualTo("host-guarded");
         assertThat(result.execution().maximumTimeout()).isEqualTo(java.time.Duration.ofMillis(600000));
         assertThat(result.execution().maxOutputBytes()).isEqualTo(32768);
@@ -180,6 +178,26 @@ class CliFeatureConfigurationTest {
         assertThat(result.persistence().protectorReference()).contains("env://HAIFA_TEST_CONTINUATION_KEY");
         assertThat(result.persistence().busyTimeoutMillis()).isEqualTo(750);
         assertThat(result.persistence().maximumPayloadBytes()).isEqualTo(1_048_576);
+    }
+
+    @Test
+    void rejectsRemovedExecutionDefaultTimeoutInsteadOfSilentlyIgnoringIt() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-retired-timeout", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                    execution:
+                      defaultTimeoutMillis: 120000
+                      maxTimeoutMillis: 600000
+                    """);
+
+        assertThatThrownBy(() -> new CliConfigurationLoader()
+                        .load(
+                                CliArguments.parse(
+                                        new String[] {"-m", "retired-timeout", "--config", configuration.toString()}),
+                                Path.of(".")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("execution.defaultTimeoutMillis was removed");
     }
 
     @Test
@@ -274,7 +292,6 @@ class CliFeatureConfigurationTest {
                         defaults.provider(),
                         defaults.shell(),
                         defaults.shellPath(),
-                        defaults.defaultTimeout(),
                         defaults.maximumTimeout(),
                         defaults.maxOutputBytes(),
                         defaults.maxOutputLines(),
@@ -286,7 +303,6 @@ class CliFeatureConfigurationTest {
                         defaults.provider(),
                         "cmd",
                         null,
-                        defaults.defaultTimeout(),
                         defaults.maximumTimeout(),
                         defaults.maxOutputBytes(),
                         defaults.maxOutputLines(),
@@ -330,7 +346,6 @@ class CliFeatureConfigurationTest {
                         "local-native",
                         defaults.shell(),
                         defaults.shellPath(),
-                        defaults.defaultTimeout(),
                         defaults.maximumTimeout(),
                         defaults.maxOutputBytes(),
                         defaults.maxOutputLines(),

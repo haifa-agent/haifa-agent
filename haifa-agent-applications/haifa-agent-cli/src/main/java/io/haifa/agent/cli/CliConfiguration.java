@@ -161,7 +161,6 @@ record CliConfiguration(
                         "host-guarded",
                         "auto",
                         null,
-                        Duration.ofMinutes(2),
                         Duration.ofMinutes(30),
                         50 * 1024,
                         2000,
@@ -565,7 +564,6 @@ record CliConfiguration(
             String provider,
             String shell,
             Path shellPath,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maxOutputBytes,
             int maxOutputLines,
@@ -578,7 +576,6 @@ record CliConfiguration(
                 String provider,
                 String shell,
                 Path shellPath,
-                Duration defaultTimeout,
                 Duration maximumTimeout,
                 int maxOutputBytes,
                 int maxOutputLines,
@@ -588,7 +585,6 @@ record CliConfiguration(
                     provider,
                     shell,
                     shellPath,
-                    defaultTimeout,
                     maximumTimeout,
                     maxOutputBytes,
                     maxOutputLines,
@@ -609,9 +605,8 @@ record CliConfiguration(
                     throw new IllegalArgumentException("execution.shellPath requires bash or powershell");
                 }
             }
-            positive(defaultTimeout, "execution.defaultTimeout");
             positive(maximumTimeout, "execution.maximumTimeout");
-            if (defaultTimeout.compareTo(maximumTimeout) > 0 || maximumTimeout.compareTo(Duration.ofMinutes(30)) > 0) {
+            if (maximumTimeout.compareTo(Duration.ofMinutes(30)) > 0) {
                 throw new IllegalArgumentException("execution timeout configuration is out of range");
             }
             if (maxOutputBytes < 1024 || maxOutputBytes > 1024 * 1024) {

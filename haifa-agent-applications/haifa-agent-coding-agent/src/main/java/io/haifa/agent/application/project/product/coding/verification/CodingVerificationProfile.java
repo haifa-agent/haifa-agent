@@ -55,8 +55,6 @@ public record CodingVerificationProfile(List<CodingVerificationCandidate> candid
                     .append('|')
                     .append(candidate.cost())
                     .append('|')
-                    .append(candidate.timeout().toMillis())
-                    .append("ms|")
                     .append(candidate.source())
                     .append('|')
                     .append(candidate.sourceReference())

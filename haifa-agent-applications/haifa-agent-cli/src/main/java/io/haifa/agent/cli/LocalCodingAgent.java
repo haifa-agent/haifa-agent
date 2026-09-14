@@ -624,7 +624,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName(),
                             executionPlatform != null,
                             executionPlatform == null ? "UNAVAILABLE" : "ALLOW",
-                            configuration.execution().defaultTimeout(),
                             configuration.execution().maximumTimeout()));
             var interactions = persistence.ports().interactions();
             var worktreeOperations = executionPlatform == null
@@ -667,7 +666,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     configuration.skills().allowedAliases().isEmpty()
                             ? List.of()
                             : new SkillToolProvider(skillService).contributions();
-            var catalog = new ProjectToolCatalog()
+            var catalog = new ProjectToolCatalog(configuration.execution().maximumTimeout())
                     .freeze(
                             Set.copyOf(configuredTools),
                             effectiveCapabilities,
@@ -733,14 +732,19 @@ final class LocalCodingAgent implements AutoCloseable {
                         String command = String.valueOf(arguments.get("command"));
                         String workspaceRef = String.valueOf(arguments.get("workspaceRef"));
                         String relativeWorkdir = String.valueOf(arguments.get("relativeWorkdir"));
-                        Object timeout = arguments.getOrDefault(
-                                "timeoutMillis",
-                                configuration.execution().defaultTimeout().toMillis());
+                        String timeout = arguments.containsKey("timeoutMillis")
+                                ? arguments.get("timeoutMillis") + " ms"
+                                : "product maximum "
+                                        + configuration
+                                                .execution()
+                                                .maximumTimeout()
+                                                .toMillis()
+                                        + " ms (capped by the Run deadline)";
                         String description = safeApprovalText(
                                 String.valueOf(arguments.getOrDefault("description", "Run shell command")));
                         return description + "\nCommand: " + safeApprovalText(command) + "\nWorkspace: "
                                 + safeApprovalText(workspaceRef) + "\nRelative workdir: "
-                                + safeApprovalText(relativeWorkdir) + "\nTimeout: " + timeout + " ms\nShell: "
+                                + safeApprovalText(relativeWorkdir) + "\nTimeout: " + timeout + "\nShell: "
                                 + (executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName())
                                 + "\nSecurity: "
                                 + (executionPlatform == null
@@ -838,7 +842,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             principal,
                             projectId,
                             workspaceId,
-                            configuration.execution().defaultTimeout(),
+                            configuration.execution().maximumTimeout(),
                             executionPlatform.profileDigest());
             var agent = new LocalCodingAgent(
                     identifiers,

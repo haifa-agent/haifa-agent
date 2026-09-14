@@ -175,6 +175,36 @@ class ExecutionCoreTest {
     }
 
     @Test
+    void brokerPreservesTheReasonForAnUnknownTimeoutTree() {
+        Fixture fixture = fixture();
+        SandboxProvider provider = fakeProvider(
+                () -> {}, new byte[0], SandboxProcessStatus.UNKNOWN, null, "TIMEOUT_TREE_UNCONFIRMED", true);
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
+
+        var result = broker.execute(
+                fixture.request("timeout-tree", "timeout-tree-key", Set.of("execution_run"), List.of("fake")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.UNKNOWN);
+        assertThat(result.outputIncomplete()).isTrue();
+        assertThat(result.optionalFailure())
+                .hasValueSatisfying(failure -> assertThat(failure.code()).isEqualTo("TIMEOUT_TREE_UNCONFIRMED"));
+    }
+
+    @Test
+    void brokerPreservesOutputIncompleteWithoutChangingExitedStatus() {
+        Fixture fixture = fixture();
+        SandboxProvider provider = fakeProvider(() -> {}, new byte[0], SandboxProcessStatus.EXITED, 0, null, true);
+        DefaultExecutionBroker broker = fixture.broker(provider, (request, entryPoint) -> {});
+
+        var result = broker.execute(fixture.request(
+                "incomplete-output", "incomplete-output-key", Set.of("execution_run"), List.of("fake")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
+        assertThat(result.optionalFailure()).isEmpty();
+        assertThat(result.outputIncomplete()).isTrue();
+    }
+
+    @Test
     void streamingObserverRedactsSecretsSplitAcrossChunks() {
         Fixture fixture = fixture();
         SandboxProvider provider = new SandboxProvider() {
@@ -628,6 +658,16 @@ class ExecutionCoreTest {
 
     private static SandboxProvider fakeProvider(
             Runnable effect, byte[] stdout, SandboxProcessStatus processStatus, Integer exitCode) {
+        return fakeProvider(effect, stdout, processStatus, exitCode, null, false);
+    }
+
+    private static SandboxProvider fakeProvider(
+            Runnable effect,
+            byte[] stdout,
+            SandboxProcessStatus processStatus,
+            Integer exitCode,
+            String failureCode,
+            boolean outputIncomplete) {
         return new SandboxProvider() {
             @Override
             public String providerId() {
@@ -660,7 +700,11 @@ class ExecutionCoreTest {
                                 false,
                                 false,
                                 true,
-                                1);
+                                1,
+                                false,
+                                false,
+                                failureCode,
+                                outputIncomplete);
                     }
 
                     @Override

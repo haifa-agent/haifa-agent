@@ -49,7 +49,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
     private final ExecutionEnvironmentRef environmentRef;
     private final SandboxProfileRef profileRef;
     private final ExecutionScratchSpaceSpec scratchSpace;
-    private final Duration defaultTimeout;
     private final Duration maximumTimeout;
     private final int maximumModelOutputBytes;
     private final Optional<Integer> maximumProcesses;
@@ -63,7 +62,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             ExecutionEnvironmentRef environmentRef,
             SandboxProfileRef profileRef,
             ExecutionScratchSpaceSpec scratchSpace,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             Optional<Integer> maximumProcesses) {
@@ -75,7 +73,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
         this.environmentRef = Objects.requireNonNull(environmentRef, "environmentRef must not be null");
         this.profileRef = Objects.requireNonNull(profileRef, "profileRef must not be null");
         this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
-        this.defaultTimeout = Objects.requireNonNull(defaultTimeout, "defaultTimeout must not be null");
         this.maximumTimeout = Objects.requireNonNull(maximumTimeout, "maximumTimeout must not be null");
         if (maximumModelOutputBytes < 1) {
             throw new IllegalArgumentException("execution policy limits must be positive");
@@ -100,7 +97,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             ExecutionEnvironmentRef environmentRef,
             SandboxProfileRef profileRef,
             ExecutionScratchSpaceSpec scratchSpace,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             int maximumProcesses) {
@@ -113,7 +109,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
                 environmentRef,
                 profileRef,
                 scratchSpace,
-                defaultTimeout,
                 maximumTimeout,
                 maximumModelOutputBytes,
                 Optional.of(maximumProcesses));
@@ -127,7 +122,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             PrincipalRef principal,
             ExecutionEnvironmentRef environmentRef,
             SandboxProfileRef profileRef,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes) {
         this(
@@ -139,7 +133,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
                 environmentRef,
                 profileRef,
                 ExecutionScratchSpaceSpec.none(),
-                defaultTimeout,
                 maximumTimeout,
                 maximumModelOutputBytes,
                 Optional.empty());
@@ -268,7 +261,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
                 environmentRef,
                 profileRef,
                 scratchSpace,
-                defaultTimeout,
                 maximumTimeout,
                 maximumModelOutputBytes,
                 maximumProcesses);
