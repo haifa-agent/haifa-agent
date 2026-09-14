@@ -79,11 +79,49 @@ final class CodingTerminalTestSupport {
                 Runnable::run);
     }
 
+    static class FakeAuthenticationClient implements CodingAuthenticationClient {
+        boolean apiKeyConnectionSupported = true;
+
+        @Override
+        public boolean apiKeyConnectionSupported() {
+            return apiKeyConnectionSupported;
+        }
+
+        @Override
+        public List<CodingAuthenticationView> connections() {
+            return List.of();
+        }
+
+        @Override
+        public CodingAuthenticationView loginCodexBrowser() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean logout(String connectionId) {
+            return false;
+        }
+    }
+
     static CodingModelOption model(String id, String displayName) {
         return model(id, displayName, "provider", "Provider");
     }
 
     static CodingModelOption model(String id, String displayName, String providerId, String providerDisplayName) {
+        return model(id, displayName, providerId, providerDisplayName, CodingModelState.Connection.CONNECTED);
+    }
+
+    static CodingModelOption model(
+            String id,
+            String displayName,
+            String providerId,
+            String providerDisplayName,
+            CodingModelState.Connection connection) {
         return new CodingModelOption(
                 id,
                 displayName,
@@ -93,7 +131,7 @@ final class CodingTerminalTestSupport {
                 128_000,
                 16_000,
                 new CodingModelState(
-                        CodingModelState.Connection.CONNECTED,
+                        connection,
                         CodingModelState.BindingAvailability.AVAILABLE,
                         CodingModelState.RuntimeStatus.NORMAL,
                         CodingModelState.RunScope.IDLE),
@@ -301,6 +339,12 @@ final class CodingTerminalTestSupport {
         @Override
         public CodingSessionView create(
                 ProjectId projectId, String firstTurn, String idempotencyKey, CodingSessionCreateOptions options) {
+            submitAttempts++;
+            if (submitFailure != null) {
+                ProjectProductException failure = submitFailure;
+                submitFailure = null;
+                throw failure;
+            }
             createOptions = options;
             return view;
         }
