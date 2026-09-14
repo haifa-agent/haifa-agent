@@ -1993,7 +1993,9 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 .append(ctx.previousMissionId())
                 .append("):\n");
         if (!ctx.directAnswer().isBlank()) {
-            sb.append("- Prior Confirmed Findings Summary: ").append(ctx.directAnswer()).append("\n");
+            sb.append("- Prior Confirmed Findings Summary: ")
+                    .append(ctx.directAnswer())
+                    .append("\n");
         }
         if (!ctx.unresolvedQuestions().isEmpty()) {
             sb.append("- Specific Unresolved Questions to Resolve:\n");
@@ -2007,7 +2009,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 sb.append("  * ").append(c).append("\n");
             }
         }
-        sb.append("Planning Directive: Plan tasks specifically to address the unresolved questions and verify the unverified claims above. Do not plan duplicate tasks for findings already confirmed.");
+        sb.append(
+                "Planning Directive: Plan tasks specifically to address the unresolved questions and verify the unverified claims above. Do not plan duplicate tasks for findings already confirmed.");
         return sb.toString();
     }
 
@@ -2017,11 +2020,15 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         }
         PriorResearchContext ctx = brief.orElseThrow().optionalPriorContext().orElseThrow();
         StringBuilder sb = new StringBuilder();
-        sb.append("If prior research context is present in Frozen Research Brief, treat confirmed findings as established prior work.\n");
+        sb.append(
+                "If prior research context is present in Frozen Research Brief, treat confirmed findings as established prior work.\n");
         if (!ctx.directAnswer().isBlank()) {
-            sb.append("- Prior Confirmed Findings Summary: ").append(ctx.directAnswer()).append("\n");
+            sb.append("- Prior Confirmed Findings Summary: ")
+                    .append(ctx.directAnswer())
+                    .append("\n");
         }
-        sb.append("Focus your investigation specifically on resolving unresolved questions and verifying unverified claims without repeating searches for confirmed facts.");
+        sb.append(
+                "Focus your investigation specifically on resolving unresolved questions and verifying unverified claims without repeating searches for confirmed facts.");
         return sb.toString();
     }
 }

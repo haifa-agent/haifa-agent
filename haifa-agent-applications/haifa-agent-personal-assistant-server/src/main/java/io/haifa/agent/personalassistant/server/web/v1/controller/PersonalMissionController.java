@@ -88,8 +88,8 @@ public final class PersonalMissionController {
         MissionMode mode =
                 request.mode() == null || request.mode().isBlank() ? MissionMode.STANDARD : parseMode(request.mode());
         if (mode == MissionMode.STANDARD
-            && request.selectedSkillId() != null
-            && !request.selectedSkillId().isBlank()) {
+                && request.selectedSkillId() != null
+                && !request.selectedSkillId().isBlank()) {
             throw new MissionException(
                     "MISSION_SKILL_SELECTION_FORBIDDEN", "Browser-selected Mission Skills are not accepted");
         }
@@ -295,9 +295,7 @@ public final class PersonalMissionController {
     }
 
     private static Optional<ResearchBrief> researchBrief(
-            MissionMode mode,
-            PersonalApiDtos.ResearchBrief value,
-            Optional<PriorResearchContext> priorContext) {
+            MissionMode mode, PersonalApiDtos.ResearchBrief value, Optional<PriorResearchContext> priorContext) {
         if (mode == MissionMode.STANDARD) {
             if (value != null) {
                 throw new MissionException("MISSION_RESEARCH_BRIEF_FORBIDDEN", "Standard Mission cannot carry a brief");
@@ -350,7 +348,8 @@ public final class PersonalMissionController {
             }
 
             List<String> unresolvedQuestions = new ArrayList<>();
-            if (resultJson.has("unresolvedQuestions") && resultJson.path("unresolvedQuestions").isArray()) {
+            if (resultJson.has("unresolvedQuestions")
+                    && resultJson.path("unresolvedQuestions").isArray()) {
                 for (JsonNode item : resultJson.path("unresolvedQuestions")) {
                     if (item.isTextual() && !item.asText().isBlank()) {
                         unresolvedQuestions.add(item.asText().trim());
@@ -363,7 +362,8 @@ public final class PersonalMissionController {
                 byte[] bytes = loadArtifactBytes(previous.missionId(), artifactId);
                 if (bytes != null) {
                     JsonNode doc = objectMapper.readTree(bytes);
-                    if (doc.has("unresolvedQuestions") && doc.path("unresolvedQuestions").isArray()) {
+                    if (doc.has("unresolvedQuestions")
+                            && doc.path("unresolvedQuestions").isArray()) {
                         for (JsonNode item : doc.path("unresolvedQuestions")) {
                             if (item.isTextual() && !item.asText().isBlank()) {
                                 unresolvedQuestions.add(item.asText().trim());
@@ -375,7 +375,8 @@ public final class PersonalMissionController {
 
             List<String> unverifiedClaims = new ArrayList<>();
             List<String> verifiedKeyClaims = new ArrayList<>();
-            if (resultJson.has("unverifiedClaims") && resultJson.path("unverifiedClaims").isArray()) {
+            if (resultJson.has("unverifiedClaims")
+                    && resultJson.path("unverifiedClaims").isArray()) {
                 for (JsonNode item : resultJson.path("unverifiedClaims")) {
                     if (item.isTextual() && !item.asText().isBlank()) {
                         unverifiedClaims.add(item.asText().trim());
@@ -418,16 +419,9 @@ public final class PersonalMissionController {
             }
 
             return Optional.of(new PriorResearchContext(
-                    previous.missionId(),
-                    directAnswer,
-                    unresolvedQuestions,
-                    unverifiedClaims));
+                    previous.missionId(), directAnswer, unresolvedQuestions, unverifiedClaims));
         } catch (Exception ignored) {
-            return Optional.of(new PriorResearchContext(
-                    previous.missionId(),
-                    "",
-                    List.of(),
-                    List.of()));
+            return Optional.of(new PriorResearchContext(previous.missionId(), "", List.of(), List.of()));
         }
     }
 
@@ -456,7 +450,9 @@ public final class PersonalMissionController {
         String candidate;
         if (markerIdx != -1) {
             int lineEnd = markdown.indexOf('\n', markerIdx);
-            String remaining = lineEnd != -1 ? markdown.substring(lineEnd).stripLeading() : markdown.substring(markerIdx).stripLeading();
+            String remaining = lineEnd != -1
+                    ? markdown.substring(lineEnd).stripLeading()
+                    : markdown.substring(markerIdx).stripLeading();
             if (remaining.startsWith("## ")) {
                 int nextLine = remaining.indexOf('\n');
                 remaining = nextLine != -1 ? remaining.substring(nextLine).stripLeading() : remaining;
@@ -471,7 +467,9 @@ public final class PersonalMissionController {
             } else {
                 nextSectionIdx = nextH2;
             }
-            candidate = nextSectionIdx != -1 ? remaining.substring(0, nextSectionIdx).trim() : remaining.trim();
+            candidate = nextSectionIdx != -1
+                    ? remaining.substring(0, nextSectionIdx).trim()
+                    : remaining.trim();
         } else {
             String cleaned = markdown.replaceAll("<!--[\\s\\S]*?-->", "").trim();
             if (cleaned.startsWith("# ")) {

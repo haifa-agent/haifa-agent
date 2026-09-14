@@ -193,7 +193,15 @@ public final class PersonalApiDtos {
                 String mode,
                 String selectedSkillId,
                 ResearchBrief researchBrief) {
-            this(conversationId, objective, acceptanceCriteria, constraints, mode, selectedSkillId, researchBrief, null);
+            this(
+                    conversationId,
+                    objective,
+                    acceptanceCriteria,
+                    constraints,
+                    mode,
+                    selectedSkillId,
+                    researchBrief,
+                    null);
         }
     }
 
