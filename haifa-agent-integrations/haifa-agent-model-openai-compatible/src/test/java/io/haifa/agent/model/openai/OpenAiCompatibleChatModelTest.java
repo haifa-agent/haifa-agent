@@ -369,6 +369,51 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void limitsStreamByDecodedSemanticUtf8BytesRatherThanSseEnvelopeBytes() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-semantic","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"reasoning_content":"secret thought"},"finish_reason":null}]}
+
+                data: {"id":"stream-semantic","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"stop"}]}
+
+                data: {"id":"stream-semantic","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1}}
+
+                data: [DONE]
+
+                """));
+
+        var result = model(19).invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE);
+
+        assertThat(result.content()).isEqualTo("hello");
+        assertThat(result.metadata()).containsEntry("reasoningCharacters", 14);
+    }
+
+    @Test
+    void reportsExactUtf8SemanticLimitAfterPreviouslyObservedOutput() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-utf8","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"a"},"finish_reason":null}]}
+
+                data: {"id":"stream-utf8","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"你"},"finish_reason":"stop"}]}
+
+                data: [DONE]
+
+                """));
+
+        assertThatThrownBy(() -> model(3).invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED);
+                    assertThat(failure.providerCode()).isEqualTo("semantic_response_limit_exceeded");
+                    assertThat(failure.outputObserved()).isTrue();
+                    assertThat(failure.retryable()).isFalse();
+                });
+    }
+
+    @Test
     void assemblesStreamedToolCallFragmentsByStableIndex() {
         response.set(
                 Response.sse(
@@ -619,7 +664,7 @@ class OpenAiCompatibleChatModelTest {
         assertThatThrownBy(() -> model(128).invoke(simpleRequest()))
                 .isInstanceOf(ModelInvocationException.class)
                 .satisfies(error -> assertThat(((ModelInvocationException) error).providerCode())
-                        .isEqualTo("response_too_large"));
+                        .isEqualTo("transport_response_limit_exceeded"));
     }
 
     @Test

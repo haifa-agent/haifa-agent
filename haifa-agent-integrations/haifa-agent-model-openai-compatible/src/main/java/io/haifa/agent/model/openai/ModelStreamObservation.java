@@ -13,7 +13,9 @@ public final class ModelStreamObservation {
     public ModelStreamSink observe(ModelStreamSink delegate) {
         Objects.requireNonNull(delegate, "delegate must not be null");
         return event -> {
-            if (event instanceof ModelStreamEvent.ContentDelta || event instanceof ModelStreamEvent.ToolCallDelta) {
+            if (event instanceof ModelStreamEvent.ContentDelta
+                    || event instanceof ModelStreamEvent.ReasoningDelta
+                    || event instanceof ModelStreamEvent.ToolCallDelta) {
                 outputObserved.set(true);
             }
             return delegate.emit(event);
@@ -27,6 +29,7 @@ public final class ModelStreamObservation {
     public ModelInvocationException annotate(ModelInvocationException failure) {
         if (!outputObserved()) return failure;
         return failure.category() == io.haifa.agent.model.api.ModelErrorCategory.CANCELLED
+                        || failure.category() == io.haifa.agent.model.api.ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED
                 ? failure.withOutputObserved()
                 : failure.asPartialResponse();
     }

@@ -10,5 +10,7 @@ public interface RunControlService {
 
     void requestPause(AgentRun run);
 
+    void requestTimeout(AgentRun run);
+
     void requestCancel(AgentRun run);
 }

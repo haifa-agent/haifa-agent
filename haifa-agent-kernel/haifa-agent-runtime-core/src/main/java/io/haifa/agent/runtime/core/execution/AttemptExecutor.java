@@ -10,6 +10,7 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
+import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.guard.RuntimeQuotaExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
@@ -87,13 +88,10 @@ public final class AttemptExecutor {
             finish(attempt, statusFor(run.status()), terminalError);
         } catch (CancellationObservedException cancelled) {
             if (!run.status().isTerminal()) {
-                transitions.cancelled(
-                        run,
-                        new io.haifa.agent.core.run.RunTerminationReason(
-                                "USER_CANCELLED", "Cancellation observed at tool safe point"));
+                applyStopSignal(run, cancelled.signal());
             }
             recordRunTerminal(run, traceContext);
-            finish(attempt, ExecutionAttemptStatus.CANCELLED, null);
+            finish(attempt, statusFor(run.status()), null);
         } catch (RuntimeException error) {
             AgentError attemptError = safeError(error);
             recordFailure(run, attempt, traceContext, attemptError, error);
@@ -101,6 +99,19 @@ public final class AttemptExecutor {
             recordRunTerminal(run, traceContext);
             finish(attempt, ExecutionAttemptStatus.FAILED, attemptError);
         }
+    }
+
+    private void applyStopSignal(AgentRun run, RunControlSignal signal) {
+        if (signal == RunControlSignal.TIMEOUT) {
+            transitions.timedOut(
+                    run,
+                    new io.haifa.agent.core.run.RunTerminationReason(
+                            "WALL_TIME_EXCEEDED", "Run wall-time limit exceeded"));
+            return;
+        }
+        String reasonCode = signal == RunControlSignal.CANCEL ? "USER_CANCELLED" : signal.name();
+        transitions.cancelled(
+                run, new io.haifa.agent.core.run.RunTerminationReason(reasonCode, "Runtime stop signal observed"));
     }
 
     private void recordAttemptStarted(AgentRun run, RuntimeTraceContext context) {

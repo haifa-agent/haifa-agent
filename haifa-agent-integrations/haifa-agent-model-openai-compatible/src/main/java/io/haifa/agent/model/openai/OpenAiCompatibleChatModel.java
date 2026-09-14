@@ -27,10 +27,8 @@ import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
@@ -49,6 +47,7 @@ import java.util.Objects;
 
 /** Bounded synchronous and SSE OpenAI Chat Completions adapter. */
 public final class OpenAiCompatibleChatModel implements AgentChatModel {
+    private static final int MAX_TRANSPORT_EVENT_BYTES = 1024 * 1024;
     private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private final String adapterType;
     private final String adapterVersion;
@@ -134,10 +133,10 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             if (responseBody.length > maxResponseBytes) {
                 throw failure(
                         request,
-                        ModelErrorCategory.MALFORMED_RESPONSE,
+                        ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
                         false,
                         response.statusCode(),
-                        "response_too_large",
+                        "transport_response_limit_exceeded",
                         "provider response exceeds the configured size limit",
                         null);
             }
@@ -408,25 +407,22 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         long[] eventIndex = {1};
         emit(request, sink, new ModelStreamEvent.Started(request.callId(), eventIndex[0]++));
         StreamAccumulator accumulator = new StreamAccumulator(request);
-        int totalBytes = 0;
         int eventBytes = 0;
         StringBuilder data = new StringBuilder();
         boolean done = false;
-        try (BufferedReader reader =
-                new BufferedReader(new InputStreamReader(stream, java.nio.charset.StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                int lineBytes = line.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1;
-                totalBytes = Math.addExact(totalBytes, lineBytes);
-                eventBytes = Math.addExact(eventBytes, lineBytes);
-                if (totalBytes > maxResponseBytes || eventBytes > Math.min(maxResponseBytes, 1024 * 1024)) {
+        try (Utf8SseLineReader reader = new Utf8SseLineReader(stream)) {
+            Utf8SseLineReader.Line decoded;
+            while ((decoded = reader.readLine(MAX_TRANSPORT_EVENT_BYTES)) != null) {
+                String line = decoded.value();
+                eventBytes = Math.addExact(eventBytes, decoded.transportBytes());
+                if (eventBytes > MAX_TRANSPORT_EVENT_BYTES) {
                     throw failure(
                             request,
-                            ModelErrorCategory.MALFORMED_RESPONSE,
+                            ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
                             false,
                             200,
-                            "stream_response_too_large",
-                            "provider stream exceeds the configured size limit",
+                            "transport_event_limit_exceeded",
+                            "provider SSE event exceeds the transport safety limit",
                             null);
                 }
                 if (line.isEmpty()) {
@@ -446,6 +442,15 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     data.append(value);
                 }
             }
+        } catch (Utf8SseLineReader.LineLimitExceededException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
+                    false,
+                    200,
+                    "transport_event_limit_exceeded",
+                    "provider SSE event exceeds the transport safety limit",
+                    exception);
         }
         if (!done && !data.isEmpty()) {
             done = dispatchStreamEvent(request, data.toString(), accumulator, sink, eventIndex);
@@ -911,6 +916,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         private ModelFinishReason finalReason;
         private ModelUsage usage;
         private int chunks;
+        private long semanticBytes;
 
         private StreamAccumulator(AgentChatRequest request) {
             this.request = request;
@@ -1008,14 +1014,14 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             if (!delta.isObject()) return;
             String text = nullableText(delta.path("content"));
             if (!text.isEmpty()) {
+                addSemantic(text, "content");
                 content.append(text);
-                if (content.length() > maxResponseBytes) tooLarge("stream content");
                 emit(request, sink, new ModelStreamEvent.ContentDelta(request.callId(), eventIndex[0]++, text));
             }
             String thought = nullableText(delta.path("reasoning_content"));
             if (!thought.isEmpty()) {
+                addSemantic(thought, "reasoning");
                 reasoning.append(thought);
-                if (reasoning.length() > maxResponseBytes) tooLarge("stream reasoning");
                 emit(request, sink, new ModelStreamEvent.ReasoningDelta(request.callId(), eventIndex[0]++, thought));
             }
             JsonNode toolDeltas = delta.path("tool_calls");
@@ -1037,13 +1043,15 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             }
             JsonNode function = node.path("function");
             String name = function.path("name").asText("");
-            if (!name.isEmpty()) tool.name = consistent("tool name", tool.name, name);
+            if (!name.isEmpty()) {
+                boolean firstName = tool.name.isEmpty();
+                tool.name = consistent("tool name", tool.name, name);
+                if (firstName) addSemantic(name, "tool_name");
+            }
             String arguments = nullableText(function.path("arguments"));
             if (!arguments.isEmpty()) {
+                addSemantic(arguments, "tool_arguments");
                 tool.arguments.append(arguments);
-                if (tool.arguments.length() > Math.min(maxResponseBytes, 1024 * 1024)) {
-                    tooLarge("stream tool arguments");
-                }
             }
             emit(
                     request,
@@ -1135,8 +1143,19 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             return value.isMissingNode() || value.isNull() ? "" : value.asText("");
         }
 
-        private void tooLarge(String field) {
-            malformed("stream_field_too_large", field + " exceeds the configured size limit");
+        private void addSemantic(String value, String lane) {
+            semanticBytes =
+                    Math.addExact(semanticBytes, value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+            if (semanticBytes > maxResponseBytes) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
+                        false,
+                        200,
+                        "semantic_response_limit_exceeded",
+                        "provider semantic response exceeds the configured byte limit in " + lane,
+                        null);
+            }
         }
 
         private void malformed(String code, String message) {

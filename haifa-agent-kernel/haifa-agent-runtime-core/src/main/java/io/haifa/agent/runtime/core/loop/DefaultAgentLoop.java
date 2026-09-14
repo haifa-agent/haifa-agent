@@ -662,7 +662,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             return true;
         }
         if (signal == RunControlSignal.TIMEOUT) {
-            transitions.timedOut(run, new RunTerminationReason("CONTROL_TIMEOUT", "Runtime timeout signal observed"));
+            transitions.timedOut(run, new RunTerminationReason("WALL_TIME_EXCEEDED", "Run wall-time limit exceeded"));
             controls.clear(run.id());
             return true;
         }
@@ -778,7 +778,8 @@ public final class DefaultAgentLoop implements AgentLoop {
             case MODEL_NOT_FOUND -> AgentErrorCode.MODEL_NOT_FOUND;
             case CONTEXT_TOO_LONG -> AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
             case CONTENT_REJECTED -> AgentErrorCode.MODEL_CONTENT_REJECTED;
-            case EMPTY_RESPONSE, PARTIAL_RESPONSE, MALFORMED_RESPONSE -> AgentErrorCode.MODEL_RESPONSE_INVALID;
+            case EMPTY_RESPONSE, PARTIAL_RESPONSE, MALFORMED_RESPONSE, OUTPUT_LIMIT_EXCEEDED ->
+                AgentErrorCode.MODEL_RESPONSE_INVALID;
             case CANCELLED -> AgentErrorCode.MODEL_CANCELLED;
             case UNKNOWN_PROVIDER_ERROR -> AgentErrorCode.MODEL_CALL_FAILED;
         };
@@ -920,7 +921,8 @@ public final class DefaultAgentLoop implements AgentLoop {
     }
 
     private void checkModelRetryControl(AgentRun run) {
-        if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
+        RunControlSignal signal = controls.signal(run.id());
+        if (signal.stopsExecution()) throw new CancellationObservedException(signal);
         long elapsed = run.activeElapsedMillis(time.now());
         if (elapsed >= run.limits().maxWallTimeMillis()) {
             throw new RuntimeLimitExceededException(

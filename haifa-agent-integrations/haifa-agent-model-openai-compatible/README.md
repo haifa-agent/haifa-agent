@@ -196,9 +196,13 @@ monotonically cumulative usage snapshots, rejects any token field decrease as `n
 publishes exactly one final `UsageReported` event after `[DONE]`. The first release accepts only
 `https://api.siliconflow.cn/v1`; insecure HTTP remains restricted to explicitly enabled loopback stubs.
 
-The parser bounds each SSE event, the total response, delta count, content, reasoning, and tool arguments.
-Consumer cancellation closes the response body and maps to standard `CANCELLED`; synchronous behavior remains
-compatible.
+The parser bounds each raw SSE event to 1 MiB before UTF-8 decoding. The configured response limit applies to
+decoded semantic UTF-8 bytes only: content, reasoning, each tool name once, and tool-argument deltas. SSE/JSON
+envelopes and usage metadata do not consume that semantic budget. Responses `*.done` values are cumulative; when
+incremental deltas already exist they must preserve that prefix, and only an unobserved suffix is counted. A `*.done`
+suffix is also emitted as a delta; terminal-response fallback retains its existing bridge behavior. Semantic or transport limit
+failures use non-retryable `OUTPUT_LIMIT_EXCEEDED`; consumer cancellation closes the response body and maps to
+standard `CANCELLED`.
 
 使用 Java 21 `HttpClient` 与 Jackson 实现 OpenAI Chat Completions 协议适配器。
 

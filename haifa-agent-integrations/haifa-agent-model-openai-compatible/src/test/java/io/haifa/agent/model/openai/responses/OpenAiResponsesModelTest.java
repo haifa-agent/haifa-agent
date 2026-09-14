@@ -114,6 +114,33 @@ class OpenAiResponsesModelTest {
     }
 
     @Test
+    void deepSeekResponsesHonorsTheFrozenReasoningMode() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-1","object":"response","status":"completed","model":"deepseek-v4-flash",
+                 "output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed",
+                   "content":[{"type":"output_text","text":"ready","annotations":[]}]}],
+                 "usage":{"input_tokens":2,"output_tokens":1}}
+                """));
+        var disabled = snapshot(
+                "deepseek",
+                "deepseek-v4-flash",
+                OpenAiResponsesDialects.DEEPSEEK,
+                true,
+                Map.of("thinking", "disabled"));
+
+        model().invoke(simpleRequest(disabled));
+
+        assertThat(json.readTree(requestBody.get())
+                        .path("thinking")
+                        .path("type")
+                        .asText())
+                .isEqualTo("disabled");
+    }
+
+    @Test
     void mapsFunctionCallOutputWithExactCallId() {
         response.set(
                 Response.json(
@@ -291,6 +318,97 @@ class OpenAiResponsesModelTest {
     }
 
     @Test
+    void limitsStreamByDecodedSemanticUtf8BytesRatherThanSseEnvelopeBytes() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"type":"response.created","response":{"id":"resp-semantic","status":"in_progress"}}
+
+                data: {"type":"response.output_text.delta","item_id":"msg-1","output_index":0,"content_index":0,"delta":"ready"}
+
+                data: {"type":"response.completed","response":{"id":"resp-semantic","status":"completed","model":"gpt-test","output":[{"id":"msg-1","type":"message","content":[{"type":"output_text","text":"ready"}]}]}}
+
+                """));
+
+        var actual =
+                model(5).invokeStreaming(simpleRequest(standardSnapshot(true)), ignored -> ModelStreamControl.CONTINUE);
+
+        assertThat(actual.content()).isEqualTo("ready");
+    }
+
+    @Test
+    void reportsExactUtf8SemanticLimitAfterPreviouslyObservedOutput() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"type":"response.created","response":{"id":"resp-utf8","status":"in_progress"}}
+
+                data: {"type":"response.output_text.delta","item_id":"msg-1","output_index":0,"content_index":0,"delta":"a"}
+
+                data: {"type":"response.output_text.delta","item_id":"msg-1","output_index":0,"content_index":0,"delta":"你"}
+
+                """));
+
+        assertThatThrownBy(() -> model(3).invokeStreaming(
+                                simpleRequest(standardSnapshot(true)), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED);
+                    assertThat(failure.providerCode()).isEqualTo("semantic_response_limit_exceeded");
+                    assertThat(failure.outputObserved()).isTrue();
+                    assertThat(failure.retryable()).isFalse();
+                });
+    }
+
+    @Test
+    void rejectsCumulativeDoneTextThatDoesNotMatchIncrementalDeltas() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"type":"response.created","response":{"id":"resp-mismatch","status":"in_progress"}}
+
+                data: {"type":"response.output_text.delta","item_id":"msg-1","output_index":0,"content_index":0,"delta":"ready"}
+
+                data: {"type":"response.output_text.done","item_id":"msg-1","output_index":0,"content_index":0,"text":"different"}
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(
+                                simpleRequest(standardSnapshot(true)), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.PARTIAL_RESPONSE);
+                    assertThat(failure.providerCode()).isEqualTo("malformed_response");
+                    assertThat(failure.outputObserved()).isTrue();
+                });
+    }
+
+    @Test
+    void rejectsTerminalResponseTextThatDoesNotMatchIncrementalDeltas() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"type":"response.created","response":{"id":"resp-terminal-mismatch","status":"in_progress"}}
+
+                data: {"type":"response.output_text.delta","item_id":"msg-1","output_index":0,"content_index":0,"delta":"ready"}
+
+                data: {"type":"response.completed","response":{"id":"resp-terminal-mismatch","status":"completed","model":"gpt-test","output":[{"id":"msg-1","type":"message","content":[{"type":"output_text","text":"different"}]}]}}
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(
+                                simpleRequest(standardSnapshot(true)), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.PARTIAL_RESPONSE);
+                    assertThat(failure.outputObserved()).isTrue();
+                });
+    }
+
+    @Test
     void interruptedStreamAfterTextIsANonRetryablePartialResponse() {
         response.set(
                 Response.sse(
@@ -432,8 +550,8 @@ class OpenAiResponsesModelTest {
                 .isInstanceOf(ModelInvocationException.class)
                 .satisfies(error -> {
                     ModelInvocationException failure = (ModelInvocationException) error;
-                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.MALFORMED_RESPONSE);
-                    assertThat(failure.providerCode()).isEqualTo("response_too_large");
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED);
+                    assertThat(failure.providerCode()).isEqualTo("transport_response_limit_exceeded");
                     assertThat(failure.getMessage()).doesNotContain("xxxx");
                 });
     }

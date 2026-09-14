@@ -76,8 +76,9 @@ public final class SummaryModelInvoker {
         }
 
         // 2. Guard check: cancellation
-        if (controls.signal(run.id()) != RunControlSignal.NONE) {
-            throw new CancellationObservedException();
+        RunControlSignal signal = controls.signal(run.id());
+        if (signal.stopsExecution()) {
+            throw new CancellationObservedException(signal);
         }
 
         // 3. Guard check: model call limit
