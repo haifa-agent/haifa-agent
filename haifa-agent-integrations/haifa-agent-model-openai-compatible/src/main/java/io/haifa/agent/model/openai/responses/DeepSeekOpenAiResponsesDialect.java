@@ -56,7 +56,11 @@ final class DeepSeekOpenAiResponsesDialect implements OpenAiResponsesDialect {
     @Override
     public void customizeRequestBody(AgentChatRequest request, Map<String, Object> body) {
         body.put("max_output_tokens", request.maxOutputTokens());
-        body.put("thinking", Map.of("type", "enabled"));
+        String thinking = String.valueOf(request.model().invocationOptions().getOrDefault("thinking", "disabled"));
+        if (!thinking.equals("disabled") && !thinking.equals("enabled")) {
+            throw new IllegalArgumentException("DeepSeek Responses thinking must be enabled or disabled");
+        }
+        body.put("thinking", Map.of("type", thinking));
     }
 
     @Override

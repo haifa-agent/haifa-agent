@@ -24,6 +24,11 @@ public final class DefaultRunControlService implements RunControlService {
     }
 
     @Override
+    public void requestTimeout(AgentRun run) {
+        controls.requestTimeout(run.id());
+    }
+
+    @Override
     public void requestCancel(AgentRun run) {
         controls.requestCancel(run.id());
     }

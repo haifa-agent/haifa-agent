@@ -61,6 +61,7 @@ public final class StandaloneCodingAgents {
                 Optional.empty(),
                 false,
                 false,
+                false,
                 false);
         CliConfiguration resolved = new CliConfigurationLoader(environment::get).load(arguments, workspace);
         return assemble(

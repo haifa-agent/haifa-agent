@@ -26,10 +26,9 @@ import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
 import io.haifa.agent.model.openai.ModelStreamObservation;
-import java.io.BufferedReader;
+import io.haifa.agent.model.openai.Utf8SseLineReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -244,10 +243,10 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         } catch (ResponseTooLargeException exception) {
             throw failure(
                     request,
-                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
                     false,
                     response.statusCode(),
-                    "response_too_large",
+                    "transport_response_limit_exceeded",
                     "provider response exceeds the configured size limit",
                     exception);
         }
@@ -645,26 +644,31 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             AgentChatRequest request, OpenAiResponsesDialect dialect, InputStream stream, ModelStreamSink sink)
             throws IOException {
         StreamState state = new StreamState(request, dialect, sink);
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+        try (Utf8SseLineReader reader = new Utf8SseLineReader(stream)) {
             StringBuilder data = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                state.addBytes(line.getBytes(StandardCharsets.UTF_8).length + 1);
+            int eventBytes = 0;
+            Utf8SseLineReader.Line decoded;
+            while ((decoded = reader.readLine(MAX_EVENT_BYTES)) != null) {
+                String line = decoded.value();
+                eventBytes = Math.addExact(eventBytes, decoded.transportBytes());
+                if (eventBytes > MAX_EVENT_BYTES) throw transportEventLimit(request, null);
                 if (line.isEmpty()) {
                     if (!data.isEmpty()) {
                         state.accept(data.toString());
                         data.setLength(0);
                     }
+                    eventBytes = 0;
                     continue;
                 }
                 if (line.startsWith("data:")) {
                     String fragment = line.substring(5).stripLeading();
                     if (!data.isEmpty()) data.append('\n');
                     data.append(fragment);
-                    if (data.length() > MAX_EVENT_BYTES) throw malformed(request, "Responses SSE event is too large");
                 }
             }
             if (!data.isEmpty()) state.accept(data.toString());
+        } catch (Utf8SseLineReader.LineLimitExceededException exception) {
+            throw transportEventLimit(request, exception);
         }
         return state.finish();
     }
@@ -675,23 +679,19 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         private final ModelStreamSink sink;
         private long emittedIndex;
         private long eventCount;
-        private long bytes;
+        private long semanticBytes;
         private long sequence = Long.MIN_VALUE;
         private boolean started;
         private boolean terminal;
         private AgentChatResponse completed;
         private final StringBuilder content = new StringBuilder();
+        private final StringBuilder reasoning = new StringBuilder();
         private final Map<Integer, FunctionItem> functions = new LinkedHashMap<>();
 
         private StreamState(AgentChatRequest request, OpenAiResponsesDialect dialect, ModelStreamSink sink) {
             this.request = request;
             this.dialect = dialect;
             this.sink = sink;
-        }
-
-        private void addBytes(long value) {
-            bytes += value;
-            if (bytes > maxResponseBytes) throw malformed(request, "Responses SSE stream is too large");
         }
 
         private void accept(String data) {
@@ -753,20 +753,28 @@ public final class OpenAiResponsesModel implements AgentChatModel {
 
         private void emitContent(String delta) {
             if (delta.isEmpty()) return;
+            addSemantic(delta, "content");
             content.append(delta);
-            if (content.length() > maxResponseBytes) throw malformed(request, "Responses text output is too large");
             emit(new ModelStreamEvent.ContentDelta(request.callId(), ++emittedIndex, delta));
         }
 
         private void emitReasoning(String delta) {
-            if (!delta.isEmpty()) emit(new ModelStreamEvent.ReasoningDelta(request.callId(), ++emittedIndex, delta));
+            if (delta.isEmpty()) return;
+            addSemantic(delta, "reasoning");
+            reasoning.append(delta);
+            emit(new ModelStreamEvent.ReasoningDelta(request.callId(), ++emittedIndex, delta));
         }
 
         private void contentDone(JsonNode event) {
             String value = text(event, "text", true);
-            content.setLength(0);
-            content.append(value);
-            if (content.length() > maxResponseBytes) throw malformed(request, "Responses text output is too large");
+            if (content.isEmpty()) {
+                addSemantic(value, "content");
+                content.append(value);
+            } else if (value.startsWith(content.toString())) {
+                emitContent(value.substring(content.length()));
+            } else {
+                throw malformed(request, "Responses text done event conflicts with streamed deltas");
+            }
         }
 
         private void addItem(JsonNode event) {
@@ -774,8 +782,12 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             if (!"function_call".equals(item.path("type").asText())) return;
             int outputIndex = nonNegativeInt(request, event, "output_index");
             FunctionItem function = new FunctionItem(text(item, "call_id", true), text(item, "name", true));
+            addSemantic(function.name, "tool_name");
             String initialArguments = optionalText(item, "arguments", "");
-            if (!initialArguments.isEmpty()) function.arguments.append(initialArguments);
+            if (!initialArguments.isEmpty()) {
+                addSemantic(initialArguments, "tool_arguments");
+                function.arguments.append(initialArguments);
+            }
             if (functions.putIfAbsent(outputIndex, function) != null) {
                 throw malformed(request, "duplicate Responses function output index");
             }
@@ -788,9 +800,8 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             FunctionItem item = functions.get(outputIndex);
             if (item == null) throw malformed(request, "function arguments arrived before function item");
             String delta = textDelta(event);
+            addSemantic(delta, "tool_arguments");
             item.arguments.append(delta);
-            if (item.arguments.length() > maxResponseBytes)
-                throw malformed(request, "function arguments are too large");
             emit(new ModelStreamEvent.ToolCallDelta(
                     request.callId(), ++emittedIndex, 0, outputIndex, item.callId, item.name, delta));
         }
@@ -809,14 +820,26 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             int outputIndex = nonNegativeInt(request, event, "output_index");
             FunctionItem item = functions.get(outputIndex);
             if (item == null) throw malformed(request, "function arguments completed before function item");
-            if (value.length() > maxResponseBytes) throw malformed(request, "function arguments are too large");
-            item.arguments.setLength(0);
-            item.arguments.append(value);
+            if (item.arguments.isEmpty()) {
+                addSemantic(value, "tool_arguments");
+                item.arguments.append(value);
+            } else if (value.startsWith(item.arguments.toString())) {
+                String suffix = value.substring(item.arguments.length());
+                if (!suffix.isEmpty()) {
+                    addSemantic(suffix, "tool_arguments");
+                    item.arguments.append(suffix);
+                    emit(new ModelStreamEvent.ToolCallDelta(
+                            request.callId(), ++emittedIndex, 0, outputIndex, item.callId, item.name, suffix));
+                }
+            } else {
+                throw malformed(request, "function arguments done event conflicts with streamed deltas");
+            }
         }
 
         private void complete(JsonNode event) {
             JsonNode response = event.path("response");
             if (!response.isObject()) throw malformed(request, "terminal Responses event is missing response");
+            validateTerminalSemantic(response);
             completed = parseResponse(request, response, content.toString(), streamedCalls());
             terminal = true;
             emit(new ModelStreamEvent.UsageReported(request.callId(), ++emittedIndex, completed.usage()));
@@ -841,6 +864,88 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                         0,
                         "stream_cancelled",
                         "model stream was cancelled",
+                        null);
+            }
+        }
+
+        private void validateTerminalSemantic(JsonNode response) {
+            String terminalContent = terminalContent(response);
+            if (content.isEmpty()) {
+                addSemantic(terminalContent, "content");
+            } else if (!terminalContent.isEmpty() && terminalContent.startsWith(content.toString())) {
+                addSemantic(terminalContent.substring(content.length()), "content");
+            } else if (!terminalContent.isEmpty()) {
+                throw malformed(request, "terminal content conflicts with streamed deltas");
+            }
+            StringBuilder terminalReasoning = new StringBuilder();
+            JsonNode output = response.path("output");
+            if (output.isArray()) {
+                for (JsonNode item : output) {
+                    if ("reasoning".equals(item.path("type").asText())) appendReasoning(item, terminalReasoning);
+                }
+            }
+            if (reasoning.isEmpty()) {
+                addSemantic(terminalReasoning.toString(), "reasoning");
+            } else if (!terminalReasoning.isEmpty()
+                    && terminalReasoning.toString().startsWith(reasoning.toString())) {
+                addSemantic(terminalReasoning.substring(reasoning.length()), "reasoning");
+            } else if (!terminalReasoning.isEmpty()) {
+                throw malformed(request, "terminal reasoning conflicts with streamed deltas");
+            }
+            List<ModelToolCall> terminalCalls = terminalCalls(response);
+            if (functions.isEmpty()) {
+                for (ModelToolCall call : terminalCalls) {
+                    addSemantic(call.name(), "tool_name");
+                    addSemantic(writeJson(call.arguments()), "tool_arguments");
+                }
+            } else if (!terminalCalls.isEmpty() && !streamedCalls().equals(terminalCalls)) {
+                throw malformed(request, "terminal function calls conflict with streamed deltas");
+            }
+        }
+
+        private String terminalContent(JsonNode response) {
+            StringBuilder terminalContent = new StringBuilder();
+            JsonNode output = response.path("output");
+            if (!output.isArray()) return "";
+            for (JsonNode item : output) {
+                if (!"message".equals(item.path("type").asText())) continue;
+                JsonNode parts = item.path("content");
+                if (!parts.isArray()) continue;
+                for (JsonNode part : parts) {
+                    String type = part.path("type").asText();
+                    if ("output_text".equals(type))
+                        terminalContent.append(part.path("text").asText(""));
+                    if ("refusal".equals(type))
+                        terminalContent.append(part.path("refusal").asText(""));
+                }
+            }
+            return terminalContent.toString();
+        }
+
+        private List<ModelToolCall> terminalCalls(JsonNode response) {
+            List<ModelToolCall> calls = new ArrayList<>();
+            JsonNode output = response.path("output");
+            if (!output.isArray()) return calls;
+            for (JsonNode item : output) {
+                if (!"function_call".equals(item.path("type").asText())) continue;
+                calls.add(new ModelToolCall(
+                        new ProviderToolCallCorrelationId(text(item, "call_id", true)),
+                        text(item, "name", true),
+                        arguments(request, text(item, "arguments", true))));
+            }
+            return calls;
+        }
+
+        private void addSemantic(String value, String lane) {
+            semanticBytes = Math.addExact(semanticBytes, value.getBytes(StandardCharsets.UTF_8).length);
+            if (semanticBytes > maxResponseBytes) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
+                        false,
+                        0,
+                        "semantic_response_limit_exceeded",
+                        "provider semantic response exceeds the configured byte limit in " + lane,
                         null);
             }
         }
@@ -1004,6 +1109,17 @@ public final class OpenAiResponsesModel implements AgentChatModel {
 
     private static ModelInvocationException malformed(AgentChatRequest request, String message) {
         return failure(request, ModelErrorCategory.MALFORMED_RESPONSE, false, 0, "malformed_response", message, null);
+    }
+
+    private static ModelInvocationException transportEventLimit(AgentChatRequest request, Throwable cause) {
+        return failure(
+                request,
+                ModelErrorCategory.OUTPUT_LIMIT_EXCEEDED,
+                false,
+                200,
+                "transport_event_limit_exceeded",
+                "provider SSE event exceeds the transport safety limit",
+                cause);
     }
 
     private static ModelInvocationException emptyResponse(AgentChatRequest request, String message) {

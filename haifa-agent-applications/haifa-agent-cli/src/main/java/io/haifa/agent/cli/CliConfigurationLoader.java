@@ -13,6 +13,7 @@ import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.core.ModelCatalogDeployment;
 import io.haifa.agent.model.core.PackagedModelCatalog;
@@ -220,6 +221,13 @@ final class CliConfigurationLoader {
                                 ModelReasoningMode.class,
                                 text(model, "reasoningMode", ModelReasoningMode.DISABLED.name()),
                                 "model reasoning mode"),
+                        model.containsKey("reasoningEffort")
+                                ? enumValue(
+                                        ModelReasoningEffort.class,
+                                        text(model, "reasoningEffort", ""),
+                                        "model reasoning effort")
+                                : null,
+                        model.containsKey("reasoningMode"),
                         expandedNullable(provider, "originator"),
                         expandedNullable(provider, "userAgent")));
             }
@@ -297,6 +305,12 @@ final class CliConfigurationLoader {
                             ModelReasoningMode.class,
                             text(source, "reasoningMode", ModelReasoningMode.DISABLED.name()),
                             "model reasoning mode");
+                    ModelReasoningEffort configuredReasoningEffort = source.containsKey("reasoningEffort")
+                            ? enumValue(
+                                    ModelReasoningEffort.class,
+                                    text(source, "reasoningEffort", ""),
+                                    "model reasoning effort")
+                            : null;
                     return new CliConfiguration.Model(
                             provider.id().value(),
                             provider.displayName(),
@@ -317,6 +331,10 @@ final class CliConfigurationLoader {
                             definition.capabilities().contains(ModelCapability.REASONING)
                                     ? configuredReasoningMode
                                     : ModelReasoningMode.DISABLED,
+                            definition.capabilities().contains(ModelCapability.REASONING)
+                                    ? configuredReasoningEffort
+                                    : null,
+                            source.containsKey("reasoningMode"),
                             expandedNullable(source, "originator"),
                             expandedNullable(source, "userAgent"));
                 })

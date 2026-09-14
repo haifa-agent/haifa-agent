@@ -177,7 +177,11 @@ validation. Checkpoints no longer duplicate continuation references; the continu
 `FrozenModelInvoker` 消费 Provider-neutral `ModelStreamEvent`。Assistant content delta 只发送到
 `RuntimeModelOutputPublisher` 的进程内通道，不调用 `RuntimeEventAppender`，也不进入 SQLite、Outbox、
 Checkpoint 或 JSONL。通道按 Run 维护有界缓冲和 source-local cursor；订阅可关闭，Listener 失败不影响
-AgentLoop，Run 终态后清理。有效模型决策仍由 `DecisionExecutor` 按 Final、Continue 或 Tool Call 的既有
+AgentLoop，Run 终态后清理。Reasoning delta 只触发按物理调用每 10 秒节流的 content-free
+`MODEL_ACTIVITY`；冻结配置可通过 `haifa.runtime.max_reasoning_bytes` 和
+`haifa.runtime.max_reasoning_duration_millis` 限制 reasoning，二者分别按 UTF-8 字节和第一段非空 delta
+起算的持续时间计量，任一超限都会取消当前调用并以不可重试 `OUTPUT_LIMIT_EXCEEDED` 结束。诊断只包含
+字节、时长、事件数和阈值。有效模型决策仍由 `DecisionExecutor` 按 Final、Continue 或 Tool Call 的既有
 领域语义写入 `session_message`；完整正文不复制到 `runtime_event`。Provider 要求 Tool reasoning 连续性时，
 只有冻结 profile 显式声明后 adapter 才把 Tool Call reasoning 交给受保护 continuation。
 
@@ -187,8 +191,8 @@ start 记录以 `IDEMPOTENCY_CONFLICT` fail closed。产品 Dispatcher 可据此
 binding 尚未提交”的 Saga 窗口。
 
 Runtime 配置快照还可冻结 provider-neutral `modelRequestOptions`。该结构会递归复制并规范化 Map/List，
-参与配置内容摘要，并由 `FrozenModelInvoker` 原样传给 `AgentChatRequest`；Run 启动后外部可变对象或后续
-产品配置变化都不能改变该 Run 的结构化输出等模型调用语义。
+参与配置内容摘要；`haifa.runtime.*` 由 Runtime 消费并从 Provider 请求中移除，其余选项传给
+`AgentChatRequest`。Run 启动后外部可变对象或后续产品配置变化都不能改变该 Run 的模型调用语义。
 
 纯 Java 的 Agent 执行内核，负责 Bootstrap、`AgentRunExecutionAttempt`、AgentLoop、工具管线、完成门禁、检查点、恢复、控制命令以及线程安全的内存存储实现。
 

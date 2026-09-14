@@ -429,13 +429,12 @@ public final class DecisionExecutor {
                         repairable,
                         "Tool request rejected; repair the arguments or choose another capability.");
                 continue;
+            } catch (CancellationObservedException stopped) {
+                throw stopped;
             } catch (RuntimeException failure) {
                 AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
                 if (tools.isTrustedNotDispatched(run, call, failure)) {
-
-                    if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
-                        throw new CancellationObservedException();
-                    }
+                    throwIfStopped(run);
                     return AgentLoopDirective.CONTINUE;
                 }
                 throw classified;
@@ -454,9 +453,7 @@ public final class DecisionExecutor {
             appendToolResult(run, call, result.summary());
             if (stopForTerminalToolOutcome(run, call)) return AgentLoopDirective.STOP;
 
-            if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
-                throw new CancellationObservedException();
-            }
+            throwIfStopped(run);
             if (controls.signal(run.id()) == RunControlSignal.PAUSE) break;
         }
         return AgentLoopDirective.CONTINUE;
@@ -641,13 +638,12 @@ public final class DecisionExecutor {
             ToolPipelineOutcome outcome;
             try {
                 outcome = tools.execute(run, call, request, loopContext.iteration(), loopContext.traceContext());
+            } catch (CancellationObservedException stopped) {
+                throw stopped;
             } catch (RuntimeException failure) {
                 AgentExecutionFailureException classified = failToolAndCancelPendingSiblings(run, call, step, failure);
                 if (tools.isTrustedNotDispatched(run, call, failure)) {
-
-                    if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
-                        throw new CancellationObservedException();
-                    }
+                    throwIfStopped(run);
                     return Optional.of(AgentLoopDirective.CONTINUE);
                 }
                 throw classified;
@@ -827,8 +823,13 @@ public final class DecisionExecutor {
                         "warnings", result.warnings()));
         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 0, 1, 0, 0));
 
-        if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
+        throwIfStopped(run);
         return AgentLoopDirective.CONTINUE;
+    }
+
+    private void throwIfStopped(AgentRun run) {
+        RunControlSignal signal = controls.signal(run.id());
+        if (signal.stopsExecution()) throw new CancellationObservedException(signal);
     }
 
     private static String upperSnake(String value) {
