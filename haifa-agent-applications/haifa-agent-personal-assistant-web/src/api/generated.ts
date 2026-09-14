@@ -361,6 +361,13 @@ export interface InvalidateMemory {
   reason: string;
 }
 
+export interface PriorResearchContext {
+  previousMissionId: string;
+  directAnswer?: string;
+  unresolvedQuestions?: Array<string>;
+  unverifiedClaims?: Array<string>;
+}
+
 export interface CreateMission {
   conversationId: string;
   objective: string;
@@ -369,6 +376,7 @@ export interface CreateMission {
   mode?: "STANDARD" | "DEEP_RESEARCH";
   selectedSkillId?: string;
   researchBrief?: ResearchBrief;
+  previousMissionId?: string;
 }
 
 export interface ResearchBrief {
@@ -380,6 +388,7 @@ export interface ResearchBrief {
   sourcePreferences: Array<string>;
   exclusions: Array<string>;
   deliveryFormat?: string;
+  priorContext?: PriorResearchContext;
 }
 
 export interface MissionConstraints {

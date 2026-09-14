@@ -1,5 +1,7 @@
 package io.haifa.agent.personalassistant.server.web.v1.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.mission.MissionApplicationService;
 import io.haifa.agent.personalassistant.application.mission.MissionConstraints;
@@ -8,6 +10,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionListCursor;
 import io.haifa.agent.personalassistant.application.mission.MissionMode;
 import io.haifa.agent.personalassistant.application.mission.MissionTask;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskState;
+import io.haifa.agent.personalassistant.application.mission.PriorResearchContext;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
@@ -16,10 +19,13 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -43,6 +49,7 @@ public final class PersonalMissionController {
     private final PersonalAssistantProperties properties;
     private final PersonalApiMapper mapper;
     private final Clock clock;
+    private final ObjectMapper objectMapper;
 
     public PersonalMissionController(
             MissionApplicationService missions,
@@ -50,11 +57,23 @@ public final class PersonalMissionController {
             PersonalAssistantProperties properties,
             PersonalApiMapper mapper,
             Clock clock) {
+        this(missions, application, properties, mapper, clock, new ObjectMapper());
+    }
+
+    @Autowired
+    public PersonalMissionController(
+            MissionApplicationService missions,
+            PersonalAssistantApplication application,
+            PersonalAssistantProperties properties,
+            PersonalApiMapper mapper,
+            Clock clock,
+            ObjectMapper objectMapper) {
         this.missions = missions;
         this.application = application;
         this.properties = properties;
         this.mapper = mapper;
         this.clock = clock;
+        this.objectMapper = Objects.requireNonNull(objectMapper);
     }
 
     @PostMapping
@@ -69,8 +88,8 @@ public final class PersonalMissionController {
         MissionMode mode =
                 request.mode() == null || request.mode().isBlank() ? MissionMode.STANDARD : parseMode(request.mode());
         if (mode == MissionMode.STANDARD
-                && request.selectedSkillId() != null
-                && !request.selectedSkillId().isBlank()) {
+            && request.selectedSkillId() != null
+            && !request.selectedSkillId().isBlank()) {
             throw new MissionException(
                     "MISSION_SKILL_SELECTION_FORBIDDEN", "Browser-selected Mission Skills are not accepted");
         }
@@ -78,7 +97,24 @@ public final class PersonalMissionController {
             throw new MissionException(
                     "MISSION_SKILL_SELECTION_REQUIRED", "Deep Research requires the deep-research Skill");
         }
-        Optional<ResearchBrief> brief = researchBrief(mode, request.researchBrief());
+        Optional<PriorResearchContext> priorContext = Optional.empty();
+        if (request.previousMissionId() != null && !request.previousMissionId().isBlank()) {
+            String previousMissionId = text(request.previousMissionId(), "previousMissionId", 64);
+            var previous = missions.find(ownerScope(), previousMissionId)
+                    .orElseThrow(() -> new MissionException("MISSION_NOT_FOUND", "Previous mission not found"));
+            if (!previous.conversationId().equals(conversationId)) {
+                throw new MissionException(
+                        "MISSION_REQUEST_INVALID", "Previous mission belongs to a different conversation");
+            }
+            if (previous.state() != io.haifa.agent.personalassistant.application.mission.MissionState.COMPLETED
+                    && previous.state()
+                            != io.haifa.agent.personalassistant.application.mission.MissionState.PARTIALLY_COMPLETED) {
+                throw new MissionException(
+                        "MISSION_REQUEST_INVALID", "Previous mission is not completed or partially completed");
+            }
+            priorContext = extractPriorResearchContext(previous);
+        }
+        Optional<ResearchBrief> brief = researchBrief(mode, request.researchBrief(), priorContext);
         List<String> criteria = request.acceptanceCriteria() == null ? List.of() : request.acceptanceCriteria();
         if (criteria.size() > properties.mission().maxAcceptanceCriteria()) {
             throw new MissionException("MISSION_LIMIT_EXCEEDED", "acceptanceCriteria exceeds the product limit");
@@ -258,7 +294,10 @@ public final class PersonalMissionController {
         }
     }
 
-    private static Optional<ResearchBrief> researchBrief(MissionMode mode, PersonalApiDtos.ResearchBrief value) {
+    private static Optional<ResearchBrief> researchBrief(
+            MissionMode mode,
+            PersonalApiDtos.ResearchBrief value,
+            Optional<PriorResearchContext> priorContext) {
         if (mode == MissionMode.STANDARD) {
             if (value != null) {
                 throw new MissionException("MISSION_RESEARCH_BRIEF_FORBIDDEN", "Standard Mission cannot carry a brief");
@@ -268,6 +307,14 @@ public final class PersonalMissionController {
         if (value == null) {
             throw new MissionException("MISSION_RESEARCH_BRIEF_REQUIRED", "Deep Research requires a brief");
         }
+        Optional<PriorResearchContext> effectivePriorContext = priorContext;
+        if (effectivePriorContext.isEmpty() && value.priorContext() != null) {
+            effectivePriorContext = Optional.of(new PriorResearchContext(
+                    value.priorContext().previousMissionId(),
+                    value.priorContext().directAnswer(),
+                    value.priorContext().unresolvedQuestions(),
+                    value.priorContext().unverifiedClaims()));
+        }
         return Optional.of(new ResearchBrief(
                 value.question(),
                 value.scope(),
@@ -276,7 +323,100 @@ public final class PersonalMissionController {
                 value.audience(),
                 value.sourcePreferences() == null ? List.of() : value.sourcePreferences(),
                 value.exclusions() == null ? List.of() : value.exclusions(),
-                value.deliveryFormat()));
+                value.deliveryFormat(),
+                effectivePriorContext));
+    }
+
+    private Optional<PriorResearchContext> extractPriorResearchContext(
+            io.haifa.agent.personalassistant.application.mission.MissionSnapshot previous) {
+        if (previous.execution().finalResult().isEmpty()) {
+            return Optional.empty();
+        }
+        String resultStr = previous.execution().finalResult().orElseThrow();
+        try {
+            JsonNode resultJson = objectMapper.readTree(resultStr);
+            String directAnswer = resultJson.path("directAnswer").asText("");
+            if (directAnswer.isBlank()) {
+                directAnswer = resultJson.path("answerMarkdown").asText("");
+                if (directAnswer.length() > 1_000) {
+                    directAnswer = directAnswer.substring(0, 1_000);
+                }
+            }
+            List<String> unresolvedQuestions = new ArrayList<>();
+            if (resultJson.has("unresolvedQuestions") && resultJson.path("unresolvedQuestions").isArray()) {
+                for (JsonNode item : resultJson.path("unresolvedQuestions")) {
+                    if (item.isTextual() && !item.asText().isBlank()) {
+                        unresolvedQuestions.add(item.asText().trim());
+                    }
+                }
+            }
+            JsonNode unresolvedRef = resultJson.path("unresolvedArtifactRef");
+            if (unresolvedQuestions.isEmpty() && unresolvedRef.isObject() && unresolvedRef.has("artifactId")) {
+                String artifactId = unresolvedRef.path("artifactId").asText();
+                byte[] bytes = loadArtifactBytes(previous.missionId(), artifactId);
+                if (bytes != null) {
+                    JsonNode doc = objectMapper.readTree(bytes);
+                    if (doc.has("unresolvedQuestions") && doc.path("unresolvedQuestions").isArray()) {
+                        for (JsonNode item : doc.path("unresolvedQuestions")) {
+                            if (item.isTextual() && !item.asText().isBlank()) {
+                                unresolvedQuestions.add(item.asText().trim());
+                            }
+                        }
+                    }
+                }
+            }
+
+            List<String> unverifiedClaims = new ArrayList<>();
+            if (resultJson.has("unverifiedClaims") && resultJson.path("unverifiedClaims").isArray()) {
+                for (JsonNode item : resultJson.path("unverifiedClaims")) {
+                    if (item.isTextual() && !item.asText().isBlank()) {
+                        unverifiedClaims.add(item.asText().trim());
+                    }
+                }
+            }
+            JsonNode claimRef = resultJson.path("claimEvidenceArtifactRef");
+            if (unverifiedClaims.isEmpty() && claimRef.isObject() && claimRef.has("artifactId")) {
+                String artifactId = claimRef.path("artifactId").asText();
+                byte[] bytes = loadArtifactBytes(previous.missionId(), artifactId);
+                if (bytes != null) {
+                    JsonNode doc = objectMapper.readTree(bytes);
+                    if (doc.has("claims") && doc.path("claims").isArray()) {
+                        for (JsonNode claimNode : doc.path("claims")) {
+                            if (claimNode.path("unverified").asBoolean(false)) {
+                                String claimText = claimNode.path("claim").asText("");
+                                if (!claimText.isBlank()) {
+                                    unverifiedClaims.add(claimText.trim());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return Optional.of(new PriorResearchContext(
+                    previous.missionId(),
+                    directAnswer,
+                    unresolvedQuestions,
+                    unverifiedClaims));
+        } catch (Exception ignored) {
+            return Optional.of(new PriorResearchContext(
+                    previous.missionId(),
+                    "",
+                    List.of(),
+                    List.of()));
+        }
+    }
+
+    private byte[] loadArtifactBytes(String missionId, String artifactId) {
+        try {
+            return application.artifacts().findByProject("mission-" + missionId).stream()
+                    .filter(value -> value.id().value().equals(artifactId))
+                    .findFirst()
+                    .map(application.artifacts()::load)
+                    .orElse(null);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private MissionTask task(PersonalApiDtos.MissionTask value) {
