@@ -19,7 +19,7 @@
     "unresolvedArtifactRef": { "$ref": "#/$defs/artifactRef" },
     "coveredTaskIds": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
     "affectedTaskIds": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
-    "sourceCount": { "type": "integer", "minimum": 0, "maximum": 24 },
+    "sourceCount": { "type": "integer", "minimum": 0, "maximum": 192 },
     "unverifiedClaimCount": { "type": "integer", "minimum": 0, "maximum": 320 },
     "unresolvedQuestionCount": { "type": "integer", "minimum": 0, "maximum": 160 },
     "evidenceSummary": {
