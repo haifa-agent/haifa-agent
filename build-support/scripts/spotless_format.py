@@ -5,13 +5,25 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
 SPOTLESS_EXTENSIONS = {".java", ".xml", ".md", ".yml", ".yaml"}
-IGNORED_DIRS = {".git", "docs", "test-config", "local-tmp", "target", "node_modules", ".idea", ".vscode", "examples"}
+IGNORED_DIRS = {
+    ".git",
+    "docs",
+    "test-config",
+    "local-tmp",
+    "target",
+    "node_modules",
+    ".idea",
+    ".vscode",
+    "examples",
+    "sdk-consumer-smoke",
+}
 
 
 def repository_root() -> Path:
@@ -69,22 +81,149 @@ def is_spotless_target(path: str) -> bool:
     return posix_path.suffix.lower() in SPOTLESS_EXTENSIONS
 
 
-def get_git_files_for_push(root: Path) -> list[str]:
+def file_to_spotless_pattern(root: Path, rel_path: str) -> str:
+    """Convert repository-relative path to regex matching the file's absolute path in Spotless."""
+    posix_path = PurePosixPath(rel_path.replace("\\", "/"))
+    parts = [root.name] + list(posix_path.parts) if root.name else list(posix_path.parts)
+    return ".*[\\\\/]" + "[\\\\/]".join(re.escape(p) for p in parts)
+
+
+def parse_pre_push_stdin(stdin_text: str) -> list[tuple[str, str, str, str]]:
+    """Parse git pre-push hook standard input lines: <local_ref> <local_sha> <remote_ref> <remote_sha>."""
+    entries: list[tuple[str, str, str, str]] = []
+    for line in stdin_text.strip().splitlines():
+        parts = line.strip().split()
+        if len(parts) == 4:
+            entries.append((parts[0], parts[1], parts[2], parts[3]))
+    return entries
+
+
+def get_git_files_for_push(
+    root: Path,
+    stdin_text: str | None = None,
+    is_git_hook: bool = False,
+) -> list[str]:
     """Inspect files modified in commits being pushed."""
-    # 1. If upstream tracking branch exists, diff only the unpushed commits
+    # 1. If standard input from git pre-push hook is available, use exact ref/sha pairs
+    if stdin_text is None and is_git_hook and not sys.stdin.isatty():
+        try:
+            stdin_text = sys.stdin.read()
+        except OSError:
+            stdin_text = ""
+
+    if stdin_text:
+        push_entries = parse_pre_push_stdin(stdin_text)
+        if push_entries:
+            all_files: set[str] = set()
+            zero_sha = "0" * 40
+            for _local_ref, local_sha, _remote_ref, remote_sha in push_entries:
+                if not local_sha or local_sha == zero_sha or set(local_sha) == {"0"}:
+                    # Deleting remote branch, no files to format
+                    continue
+
+                if not remote_sha or remote_sha == zero_sha or set(remote_sha) == {"0"}:
+                    # New remote branch: inspect commits ahead of base branch
+                    for base in ("origin/dev", "origin/main", "HEAD~1"):
+                        try:
+                            res = subprocess.run(
+                                ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z", f"{base}...{local_sha}"],
+                                cwd=root,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL,
+                                check=True,
+                            )
+                            diff_files = [p for p in res.stdout.decode("utf-8", errors="replace").split("\0") if p]
+                            if diff_files:
+                                all_files.update(diff_files)
+                                break
+                        except (subprocess.SubprocessError, OSError):
+                            continue
+                else:
+                    # Existing remote branch: check whether push is fast-forward or force/rebase
+                    try:
+                        ancestor_check = subprocess.run(
+                            ["git", "merge-base", "--is-ancestor", remote_sha, local_sha],
+                            cwd=root,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+                        if ancestor_check.returncode == 0:
+                            # Fast-forward push: diff only unpushed commits
+                            res = subprocess.run(
+                                ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z", f"{remote_sha}..{local_sha}"],
+                                cwd=root,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL,
+                                check=True,
+                            )
+                            all_files.update(p for p in res.stdout.decode("utf-8", errors="replace").split("\0") if p)
+                        else:
+                            # Non-fast-forward / rebased force push:
+                            # Compare against base branch to prevent diff explosion from diverged ancestors
+                            matched_base = False
+                            for base in ("origin/dev", "origin/main"):
+                                try:
+                                    res = subprocess.run(
+                                        ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z", f"{base}...{local_sha}"],
+                                        cwd=root,
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL,
+                                        check=True,
+                                    )
+                                    diff_files = [p for p in res.stdout.decode("utf-8", errors="replace").split("\0") if p]
+                                    if diff_files:
+                                        all_files.update(diff_files)
+                                        matched_base = True
+                                        break
+                                except (subprocess.SubprocessError, OSError):
+                                    continue
+                            if not matched_base:
+                                res = subprocess.run(
+                                    ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z", f"{remote_sha}..{local_sha}"],
+                                    cwd=root,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL,
+                                    check=True,
+                                )
+                                all_files.update(p for p in res.stdout.decode("utf-8", errors="replace").split("\0") if p)
+                    except (subprocess.SubprocessError, OSError):
+                        pass
+
+            return sorted(all_files)
+
+    # 2. Fallback if no stdin or stdin yielded no files (e.g. manual invocation)
+    # Check upstream tracking branch if ancestor of HEAD
     try:
-        res = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z", "@{u}...HEAD"],
+        upstream_res = subprocess.run(
+            ["git", "rev-parse", "--symbolic-full-name", "@{u}"],
             cwd=root,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=True,
         )
-        return sorted(set(p for p in res.stdout.decode("utf-8", errors="replace").split("\0") if p))
+        upstream = upstream_res.stdout.decode("utf-8", errors="replace").strip()
+        if upstream:
+            ancestor_check = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", "@{u}", "HEAD"],
+                cwd=root,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if ancestor_check.returncode == 0:
+                res = subprocess.run(
+                    ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z", "@{u}..HEAD"],
+                    cwd=root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    check=True,
+                )
+                return sorted(set(p for p in res.stdout.decode("utf-8", errors="replace").split("\0") if p))
     except (subprocess.SubprocessError, OSError):
         pass
 
-    # 2. If new branch without upstream, compare against base branch
+    # 3. If new branch without upstream or diverged from upstream, compare against base branch
     for base in ("origin/dev", "origin/main", "HEAD~1"):
         try:
             res = subprocess.run(
@@ -167,7 +306,7 @@ def main() -> int:
     root = repository_root()
 
     if args.push:
-        changed_files = get_git_files_for_push(root)
+        changed_files = get_git_files_for_push(root, is_git_hook=bool(args.git_args))
     elif args.staged:
         changed_files = get_git_files_staged(root)
     else:
@@ -218,7 +357,8 @@ def main() -> int:
         selectors = ",".join(f":{mod}" for mod in sorted(chunk_modules))
         maven_args = [str(maven_cmd), "-o", "--batch-mode", "--no-transfer-progress"]
         maven_args.extend(["-pl", selectors, goal])
-        maven_args.append(f"-DspotlessFiles={','.join(chunk_files)}")
+        patterns = [file_to_spotless_pattern(root, f) for f in chunk_files]
+        maven_args.append(f"-DspotlessFiles={','.join(patterns)}")
         if (root / ".git").is_file():
             maven_args.append("-Dspotless.ratchetFrom=")
 
