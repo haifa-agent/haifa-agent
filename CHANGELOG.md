@@ -2,6 +2,8 @@
 
 - User model credentials and secret storage cut over to the native OS credential store (Windows Credential Manager via JNA Advapi32) and scoped point-of-use delivery. Legacy plaintext `~/.haifa-agent/auth.json` is completely decommissioned without migration; existing stored credentials are not automatically transferred. Upgrading users must reauthenticate (`/login` or web UI) or configure explicit references (`env://NAME` or `os://NAME`). Credentials are now resolved on-demand and redacted strictly within tool execution scopes, while configured `env://` secrets are stripped from child execution process environments.
 
+- Execution API and generic Execution now expose every normally terminated process only as `EXITED` with its raw exit code. Runtime no longer interprets command exit codes, Coding `execution_run` 3.0.0 removes the exit-code allowlist and duplicate semantic/result fields, validation records only a trusted attempt, and generic shell execution no longer manufactures stage/commit/push/PR completion evidence. Frozen Coding delivery intent remains a pre-approval authorization ceiling for stage/commit/push/PR writes, without becoming a completion inference. Infrastructure, timeout, cancellation, resource-limit, and unknown-outcome safety remain unchanged. This is a clean schema cutover with no compatibility reader or migration.
+
 - Execution API, Coding Agent (CA), and Personal Assistant (PA) unify on `ExecutionScratchSpaceSpec.none()` and unbounded process limits (`Optional.empty()`) as the global defaults. Tool execution by default inherits the host's temporary directories (`TEMP`/`TMP`/`TMPDIR`) without creating ephemeral per-tool scratch trees, while timeouts, process tree termination, cancellation, and stdout/stderr byte/line limits remain strictly enforced. `ExecutionScratchSpaceSpec` simplifies its record structure by removing the redundant `required` component and updates its canonical digest prefix to `execution-scratch-space-v2`. PA configurations, internal Git clients, and test fixtures drop hardcoded process limits, and `execution_run` input schemas consistently publish the canonical digest for policy validation.
 
 - Coding Agent prompt version 1.8.1 removes the obsolete requirement for deterministic Change Review evidence after the corresponding Review/Baseline pipeline was removed. Change/create work now relies on authoritative workspace/no-change facts plus any required validation, while read-only diff inspection remains available when it materially helps review.
@@ -130,9 +132,8 @@
 - Coding Agent 默认不再向模型披露 Java `file.search`；仓库级文件发现和内容搜索改走通用
   `execution_run` OS CLI 主路径，优先使用当前 Shell `PATH` 中的 `rg --files` / `rg`，不可用时由模型
   选择平台适配的替代命令。`file.search` 仍可显式启用以兼容既有配置，产品代码不拼接搜索命令选项。
-- Coding `execution.run` 1.8.0 默认只接受退出码 0，并通过显式 `expectedExitCodes` 冻结有文档依据的
-  正常非零结果；生产 Broker 的 `NON_ZERO_EXIT` 与 Tool 语义解释保持一致，Timeout、Cancel 和未知终止
-  不会被该契约改写为成功。
+- Coding `execution.run` 1.8.0 曾引入显式的退出码 allowlist；该过渡契约现已由 `execution_run` 3.0.0
+  的事实化进程结果替代。Timeout、Cancel、资源限制和未知终止继续保持独立失败语义。
 - Haifa Coding Agent 本地发行包默认改为 `SQLITE_WITH_JSONL + protection=NONE`：数据位于发行目录
   `data/`，无需 continuation key；可显式切换 `AES_GCM + env://HAIFA_CONTINUATION_KEY`。
 - Personal Assistant 真实环境的 PowerShell、POSIX、Python 生命周期脚本及单测统一迁移至根目录

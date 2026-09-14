@@ -58,8 +58,9 @@ class ProjectExecutionNormalizationTest {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 captured.set(request);
+                observer.onStarted(new ExecutionProcessIdentity(990));
                 observer.onOutput(chunk("\u001B[31mfirst\u001B[0m\nsecond\nthird\n"));
-                return result(request.id(), ExecutionStatus.FAILED, 7);
+                return result(request.id(), ExecutionStatus.EXITED, 7);
             }
         };
         var operations = operations(broker, 1024, 2);
@@ -81,31 +82,22 @@ class ProjectExecutionNormalizationTest {
         assertThat(captured.get().limits().timeout()).isEqualTo(Duration.ofSeconds(5));
         assertThat(captured.get().context().frozenCapabilities()).contains("execution_run");
         assertThat(captured.get().scratchSpace().isEmpty()).isTrue();
-        assertThat(result.successful()).isFalse();
+        assertThat(result.successful()).isTrue();
         assertThat(result.summary())
-                .contains("Command failed (exit 7)", "first", "1 lines omitted", "third")
+                .contains("Command exited (exit 7)", "first", "1 lines omitted", "third")
                 .doesNotContain("second");
         assertThat(result.structuredData())
                 .containsEntry("toolCallId", "tool-call-1")
-                .containsEntry("status", "FAILED")
+                .containsEntry("processState", "EXITED")
                 .containsEntry("exitCode", 7)
                 .containsEntry("truncated", true)
                 .containsEntry("outputRef", "stdout-asset")
-                .containsEntry("failureCode", "NON_ZERO_EXIT")
                 .containsEntry("operationFamily", "TEST")
-                .containsEntry("failureCategory", "COMMAND_FAILED")
-                .containsEntry("stableFailureCode", "NON_ZERO_EXIT")
-                .containsEntry("resourceClass", "COMMAND")
+                .doesNotContainKeys("failureCategory", "stableFailureCode", "failureCode")
                 .doesNotContainKey("scratchSpecDigest")
                 .doesNotContainKey("scratchProvisioned")
                 .doesNotContainKey("scratchCleanupFailed");
-        assertThat(result.structuredData().get("validationEvidence"))
-                .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
-                        .containsEntry("status", "FAILED")
-                        .containsEntry("scope", "UNKNOWN")
-                        .containsEntry("countSource", "COUNTS_UNAVAILABLE")
-                        .containsEntry("claimCode", "COMMAND_NOT_IN_FROZEN_PROFILE"));
-        assertThat(result.structuredData()).doesNotContainKey("validationAttemptRef");
+        assertThat(result.structuredData()).doesNotContainKeys("validationEvidence", "validationAttemptRef");
         assertThat(result.assets()).extracting(AssetRef::assetId).containsExactly("stdout-asset");
     }
 
@@ -153,7 +145,7 @@ class ProjectExecutionNormalizationTest {
         assertThat(executions).hasValue(1);
         assertThat(observed.structuredData()).doesNotContainKey("runtimeOutcome");
         assertThat(observed.structuredData())
-                .containsEntry("status", "TIMED_OUT")
+                .containsEntry("processState", "TIMED_OUT")
                 .containsEntry("durationMillis", 1000L)
                 .containsEntry("failureCategory", "TIMEOUT")
                 .containsEntry("stableFailureCode", "TIMEOUT")
@@ -164,7 +156,7 @@ class ProjectExecutionNormalizationTest {
         assertThat(reconciled.result()).hasValueSatisfying(result -> {
             assertThat(result.successful()).isFalse();
             assertThat(result.structuredData())
-                    .containsEntry("status", "TIMED_OUT")
+                    .containsEntry("processState", "TIMED_OUT")
                     .containsEntry("reconcileStatus", "RESOLVED")
                     .containsEntry("replayAllowed", false);
         });
@@ -180,14 +172,10 @@ class ProjectExecutionNormalizationTest {
         };
 
         var result = operations(broker, 1024, 2000)
-                .execute(
-                        invocation(Map.of("command", "go test ./...", "expectedExitCodes", List.of(0, 1)), () -> false),
-                        access());
+                .execute(invocation(Map.of("command", "go test ./..."), () -> false), access());
 
         assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData().get("status")).isEqualTo("TIMED_OUT");
-        assertThat(result.structuredData().get("semanticOutcome")).isEqualTo("COMMAND_FAILED");
-        assertThat(result.structuredData()).containsEntry("expectedExitCodes", List.of(0, 1));
+        assertThat(result.structuredData().get("processState")).isEqualTo("TIMED_OUT");
         assertThat(result.summary()).contains("Command timed out");
         assertThat(result.structuredData().get("output").toString()).contains("Command timed out");
     }
@@ -216,13 +204,13 @@ class ProjectExecutionNormalizationTest {
                 invocation(Map.of("command", "side-effecting", "operationFamily", "MUTATE"), () -> false), access());
 
         assertThat(cancelled.structuredData())
-                .containsEntry("status", "CANCELLED")
+                .containsEntry("processState", "CANCELLED")
                 .containsEntry("failureCategory", "CANCELLED")
                 .containsEntry("stableFailureCode", "CANCELLED")
                 .containsEntry("failureActionCode", "DO_NOT_AUTOMATICALLY_RETRY")
                 .doesNotContainKey("exitCode");
         assertThat(unknown.structuredData())
-                .containsEntry("status", "UNKNOWN")
+                .containsEntry("processState", "UNKNOWN")
                 .containsEntry("runtimeOutcome", "OUTCOME_UNKNOWN")
                 .containsEntry("failureCategory", "OUTCOME_UNKNOWN")
                 .containsEntry("stableFailureCode", "OUTCOME_UNKNOWN")
@@ -247,9 +235,7 @@ class ProjectExecutionNormalizationTest {
 
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData())
-                .containsEntry("status", "PROCESS_LIMIT_EXCEEDED")
-                .containsEntry("semanticOutcome", "COMMAND_FAILED")
-                .containsEntry("semanticReasonCode", "PROCESS_LIMIT_EXCEEDED")
+                .containsEntry("processState", "PROCESS_LIMIT_EXCEEDED")
                 .containsEntry("failureCategory", "PROCESS_LIMIT")
                 .containsEntry("stableFailureCode", "PROCESS_LIMIT_EXCEEDED")
                 .containsEntry("observedProcessCount", 1)
@@ -275,7 +261,7 @@ class ProjectExecutionNormalizationTest {
 
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData())
-                .containsEntry("status", "OUTPUT_LIMIT_EXCEEDED")
+                .containsEntry("processState", "OUTPUT_LIMIT_EXCEEDED")
                 .containsEntry("failureCategory", "OUTPUT_LIMIT")
                 .containsEntry("stableFailureCode", "OUTPUT_LIMIT_EXCEEDED")
                 .containsEntry("resourceClass", "OUTPUT")
@@ -285,7 +271,7 @@ class ProjectExecutionNormalizationTest {
     }
 
     @Test
-    void treatsExplicitlyDeclaredNormalNonzeroExitCodesAsSuccessfulToolResults() {
+    void deliversNormalNonzeroExitCodesWithoutADeclaration() {
         AtomicInteger calls = new AtomicInteger();
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override
@@ -299,41 +285,20 @@ class ProjectExecutionNormalizationTest {
 
         var differences = operations(broker, 4096, 100)
                 .execute(
-                        invocation(
-                                Map.of(
-                                        "command",
-                                        "git diff --exit-code",
-                                        "operationFamily",
-                                        "DIFF",
-                                        "expectedExitCodes",
-                                        List.of(0, 1)),
-                                () -> false),
+                        invocation(Map.of("command", "git diff --exit-code", "operationFamily", "DIFF"), () -> false),
                         access());
         var noMatches = operations(broker, 4096, 100)
                 .execute(
-                        invocation(
-                                Map.of(
-                                        "command",
-                                        "git grep missing",
-                                        "operationFamily",
-                                        "INSPECT",
-                                        "expectedExitCodes",
-                                        List.of(0, 1)),
-                                () -> false),
+                        invocation(Map.of("command", "git grep missing", "operationFamily", "INSPECT"), () -> false),
                         access());
 
         assertThat(differences.successful()).isTrue();
         assertThat(differences.summary())
-                .contains("expected result variant", "exit 1", "observedFiles=1", "observedHunks=1")
+                .contains("Command exited (exit 1)", "observedFiles=1", "observedHunks=1")
                 .doesNotContain("diff --git", "@@ -1 +1 @@");
         assertThat(differences.structuredData())
-                .containsEntry("status", "EXITED")
                 .containsEntry("processState", "EXITED")
-                .containsEntry("semanticOutcome", "EXPECTED_VARIANT")
-                .containsEntry("semanticReasonCode", "DECLARED_EXPECTED_EXIT_CODE")
-                .containsEntry("semanticInterpreterVersion", "3")
-                .containsEntry("commandOutcomeCode", "COMMAND_EXIT_EXPECTED_VARIANT")
-                .containsEntry("expectedExitCodes", List.of(0, 1))
+                .containsEntry("exitCode", 1)
                 .containsEntry("outputBudgetFamily", "DIFF")
                 .containsEntry("outputBudgetBytesPerChannel", 16_384)
                 .containsEntry("modelOutputBudgetBytes", 4096)
@@ -346,8 +311,8 @@ class ProjectExecutionNormalizationTest {
                         "failureCategory", "stableFailureCode", "failureCode", "runtimeOutcome", "reconcileStatus");
         assertThat(noMatches.successful()).isTrue();
         assertThat(noMatches.structuredData())
-                .containsEntry("semanticOutcome", "EXPECTED_VARIANT")
-                .containsEntry("semanticReasonCode", "DECLARED_EXPECTED_EXIT_CODE");
+                .containsEntry("processState", "EXITED")
+                .containsEntry("exitCode", 1);
     }
 
     @Test
@@ -373,14 +338,9 @@ class ProjectExecutionNormalizationTest {
         assertThat(noMatches.successful()).isTrue();
         assertThat(noMatches.summary()).contains("Command exited (exit 1)");
         assertThat(noMatches.structuredData())
-                .containsEntry("status", "EXITED")
                 .containsEntry("processState", "EXITED")
                 .containsEntry("exitCode", 1)
-                .containsEntry("semanticOutcome", "SUCCEEDED")
-                .containsEntry("semanticReasonCode", "COMMAND_EXITED")
-                .containsEntry("semanticInterpreterVersion", "3")
-                .containsEntry("expectedExitCodes", List.of(0))
-                .doesNotContainKeys("failureCategory", "stableFailureCode", "failureCode");
+                .doesNotContainKeys("status", "failureCategory", "stableFailureCode", "failureCode");
     }
 
     @ParameterizedTest(name = "{0}")
@@ -427,28 +387,6 @@ class ProjectExecutionNormalizationTest {
     static Stream<Arguments> classifiedCommandFailures() {
         return Stream.of(
                 Arguments.of(
-                        "missing git revision",
-                        "git show missing-ref",
-                        "fatal: bad revision 'missing-ref'\n",
-                        ExecutionStatus.FAILED,
-                        128,
-                        null,
-                        null,
-                        "GIT_REVISION_NOT_FOUND",
-                        "REPOSITORY_REF",
-                        "authoritative repository refs"),
-                Arguments.of(
-                        "missing file output",
-                        "fast-search needle",
-                        "Traceback: no such file or directory: app.py\n",
-                        ExecutionStatus.FAILED,
-                        1,
-                        null,
-                        "COMMAND_FAILED",
-                        "NON_ZERO_EXIT",
-                        "COMMAND",
-                        null),
-                Arguments.of(
                         "executable not found launcher evidence",
                         "fast-search needle",
                         "bounded launcher diagnostic\n",
@@ -460,17 +398,6 @@ class ProjectExecutionNormalizationTest {
                         "TOOLCHAIN",
                         null),
                 Arguments.of(
-                        "isolated git publickey authentication failure",
-                        "git ls-remote origin",
-                        "git@github.com: Permission denied (publickey).\n",
-                        ExecutionStatus.FAILED,
-                        128,
-                        null,
-                        "AUTHENTICATION_UNAVAILABLE",
-                        "GIT_AUTHENTICATION_UNAVAILABLE",
-                        "AUTHENTICATION",
-                        "Verify the current OS user's Git credential helper"),
-                Arguments.of(
                         "github cli command not found",
                         "gh pr list --repo owner/repo",
                         "gh: command not found\n",
@@ -480,40 +407,18 @@ class ProjectExecutionNormalizationTest {
                         null,
                         "GH_CLI_UNAVAILABLE",
                         null,
-                        "Install GitHub CLI"),
-                Arguments.of(
-                        "github cli logged out",
-                        "gh auth status",
-                        "You are not logged into any GitHub hosts.\n",
-                        ExecutionStatus.FAILED,
-                        1,
-                        null,
-                        null,
-                        "GH_AUTHENTICATION_UNAVAILABLE",
-                        null,
-                        "Run gh auth login in your system terminal"),
-                Arguments.of(
-                        "network host unresolvable",
-                        "git ls-remote origin",
-                        "fatal: unable to access remote: Could not resolve host\n",
-                        ExecutionStatus.FAILED,
-                        128,
-                        null,
-                        null,
-                        "NETWORK_PERMISSION_REQUIRED",
-                        null,
-                        null));
+                        "Install GitHub CLI"));
     }
 
     @Test
-    void reportsRiskEscalationAndNetworkPermissionAsActionsInsteadOfParserFailures() {
+    void reportsRiskEscalationWithoutInterpretingNormalNetworkCommandExit() {
         AtomicInteger calls = new AtomicInteger();
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                if (calls.getAndIncrement() < 2) return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                if (calls.getAndIncrement() < 2) return result(request.id(), ExecutionStatus.EXITED, 0);
                 observer.onOutput(chunk("fatal: unable to access remote: Could not resolve host\n"));
-                return result(request.id(), ExecutionStatus.FAILED, 128);
+                return result(request.id(), ExecutionStatus.EXITED, 128);
             }
         };
         var operations = operations(broker, 4096, 100);
@@ -536,9 +441,11 @@ class ProjectExecutionNormalizationTest {
         assertThat(unknownGit.structuredData())
                 .containsEntry("effectiveRisk", "HIGH")
                 .containsEntry("riskResolutionCode", "GIT_COMMAND_UNKNOWN_HIGH_RISK");
+        assertThat(network.successful()).isTrue();
         assertThat(network.structuredData())
-                .containsEntry("stableFailureCode", "NETWORK_PERMISSION_REQUIRED")
-                .containsEntry("failureActionCode", "REQUEST_EXACT_PERMISSION_ONCE");
+                .containsEntry("processState", "EXITED")
+                .containsEntry("exitCode", 128)
+                .doesNotContainKeys("stableFailureCode", "failureActionCode", "failureCategory");
     }
 
     @Test
@@ -548,7 +455,7 @@ class ProjectExecutionNormalizationTest {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 captured.set(request);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -571,7 +478,7 @@ class ProjectExecutionNormalizationTest {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 captured.set(request);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -630,7 +537,7 @@ class ProjectExecutionNormalizationTest {
         assertThat(executing.await(1, TimeUnit.SECONDS)).isTrue();
         cancellation.set(true);
 
-        assertThat(future.get(3, TimeUnit.SECONDS).structuredData()).containsEntry("status", "CANCELLED");
+        assertThat(future.get(3, TimeUnit.SECONDS).structuredData()).containsEntry("processState", "CANCELLED");
         assertThat(cancelled.getCount()).isZero();
     }
 
@@ -646,7 +553,7 @@ class ProjectExecutionNormalizationTest {
                 observer.onStarted();
                 assertThat(dispatches).hasValue(1);
                 assertThat(acknowledgements).hasValue(0);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -762,7 +669,7 @@ class ProjectExecutionNormalizationTest {
                 .execute(invocation(Map.of("command", "git status --short"), () -> false), access());
 
         assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData().get("status")).isEqualTo("FAILED");
+        assertThat(result.structuredData().get("processState")).isEqualTo("FAILED");
         assertThat(result.structuredData().get("failureCode")).isEqualTo("SANDBOX_PROVISION_FAILED");
         assertThat(result.structuredData().get("output").toString()).contains("sandbox setup failed");
     }

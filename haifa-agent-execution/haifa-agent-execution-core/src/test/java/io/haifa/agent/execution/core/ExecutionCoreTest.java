@@ -99,7 +99,6 @@ class ExecutionCoreTest {
 
         assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
         assertThat(result.isExited()).isTrue();
-        assertThat(result.isZeroExit()).isTrue();
         assertThat(result.optionalFailure()).isEmpty();
         assertThat(result.stdout().summary()).doesNotContain("secret-token", "remote-secret");
         assertThat(result.stdout().optionalAssetRef()).isPresent();
@@ -615,7 +614,6 @@ class ExecutionCoreTest {
         assertThat(result.status()).isEqualTo(ExecutionStatus.EXITED);
         assertThat(result.exitCode()).isEqualTo(1);
         assertThat(result.isExited()).isTrue();
-        assertThat(result.isZeroExit()).isFalse();
         assertThat(result.optionalFailure()).isEmpty();
         assertThat(result.stdout().summary()).isEqualTo("diff output\n");
     }

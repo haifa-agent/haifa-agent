@@ -1,7 +1,6 @@
 package io.haifa.agent.execution.api;
 
 public enum ExecutionStatus {
-    SUCCEEDED,
     EXITED,
     FAILED,
     OUTPUT_LIMIT_EXCEEDED,

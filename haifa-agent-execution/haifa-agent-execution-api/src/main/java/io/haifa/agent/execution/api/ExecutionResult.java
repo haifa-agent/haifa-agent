@@ -66,12 +66,6 @@ public record ExecutionResult(
         return status == ExecutionStatus.EXITED;
     }
 
-    public boolean isZeroExit() {
-        return (status == ExecutionStatus.EXITED || status == ExecutionStatus.SUCCEEDED)
-                && exitCode != null
-                && exitCode == 0;
-    }
-
     public Optional<ExecutionFailure> optionalFailure() {
         return Optional.ofNullable(failure);
     }

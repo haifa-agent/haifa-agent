@@ -17,7 +17,6 @@ import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntentResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionService;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
 import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
@@ -560,7 +559,11 @@ final class LocalCodingAgent implements AutoCloseable {
             PublicToolPolicy publicToolPolicy = workspaceAccessPolicy(
                     new DefaultPublicToolPolicy(
                             new io.haifa.agent.application.project.policy.CodingExecutionPolicyRequestAdapter(
-                                    policyMode(configuration.approval())),
+                                    policyMode(configuration.approval()),
+                                    new io.haifa.agent.application.project.product.coding.delivery
+                                            .CodingDeliveryIntentResolver(
+                                            persistence.codingSessions(),
+                                            persistence.ports().runs())),
                             policy.evaluator(),
                             policy.rules()),
                     persistence.workspaceAccess(),
@@ -581,8 +584,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     new InMemoryWorkspaceWriteLeaseManager(),
                     identifiers,
                     time);
-            var deliveryIntents = new CodingDeliveryIntentResolver(
-                    persistence.codingSessions(), persistence.ports().runs());
             CliExecutionPlatform executionPlatform = executionEnabled
                     ? CliExecutionPlatform.create(
                             configuration.execution(),
@@ -688,8 +689,7 @@ final class LocalCodingAgent implements AutoCloseable {
             var taskModes = new CodingTaskModeResolver(persistence.ports().state());
             var deliveryEvidence =
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
-            var completionPolicy =
-                    new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryIntents, verificationProfiles);
+            var completionPolicy = new CodingCompletionPolicy(taskModes, deliveryEvidence, verificationProfiles);
             var outcomeProjection = new CodingRunOutcomeProjectionService(
                     completionPolicy,
                     persistence.ports().events(),
@@ -898,10 +898,9 @@ final class LocalCodingAgent implements AutoCloseable {
                 + "discovery and rg for text search because they are fast; if rg is unavailable, use an appropriate "
                 + "alternative for the configured shell. Choose the exact command and options for the task rather than "
                 + "expecting a dedicated search wrapper.\n"
-                + "- execution_run delivers command output and captured process exit codes directly for reasoning. "
-                + "A non-zero exit code (e.g. rg exit 1 for no matches, git diff --exit-code 1 for differences, or test runner exit codes) "
-                + "is delivered as a completed command result with the exit code and output rather than a platform failure. "
-                + "expectedExitCodes may still be provided when declaring expected variants, but normal process exit is always completed. "
+                + "- execution_run returns a completed result for every normal process exit. "
+                + "Inspect the exit code and bounded output to decide what it means for the current command. "
+                + "Do not treat a non-zero exit as a platform failure or repeat the same command without a new diagnostic hypothesis. "
                 + "For literal rg searches, prefer rg -F -- <text>; use regex only when intended.\n"
                 + "- Keep command output bounded and relevant. Narrow an overly broad query before repeating it.\n"
                 + "- A trusted pre-dispatch network or host-authentication failure may pause for one exact Runtime-owned "

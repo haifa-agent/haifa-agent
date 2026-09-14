@@ -146,7 +146,7 @@ final class CliCodingShellService implements CodingShellService {
                 ".",
                 timeout,
                 "terminal-shell-" + value.token());
-        String status = String.valueOf(result.structuredData().getOrDefault("status", "UNKNOWN"));
+        String processState = String.valueOf(result.structuredData().getOrDefault("processState", "UNKNOWN"));
         Optional<Integer> exitCode = Optional.ofNullable(result.structuredData().get("exitCode"))
                 .filter(Number.class::isInstance)
                 .map(Number.class::cast)
@@ -171,15 +171,20 @@ final class CliCodingShellService implements CodingShellService {
                             Map.of(
                                     "origin",
                                     "terminal-shell",
-                                    "status",
-                                    status,
+                                    "processState",
+                                    processState,
                                     "includedInContext",
                                     value.includeInContext()),
                             time.now()));
             return null;
         });
         return new CodingShellResult(
-                status, exitCode, displaySummary(result), outputRef, result.truncated(), value.includeInContext());
+                processState,
+                exitCode,
+                displaySummary(result),
+                outputRef,
+                result.truncated(),
+                value.includeInContext());
     }
 
     @Override

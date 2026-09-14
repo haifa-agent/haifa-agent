@@ -7,7 +7,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
 import java.util.Objects;
 
-/** Resolves the product-owned intent frozen before Runtime dispatch, including the pre-bind Saga window. */
+/** Resolves the repository side-effect upper bound frozen before Runtime dispatch. */
 public final class CodingDeliveryIntentResolver {
     private final CodingSessionStore codingSessions;
     private final RunStateRepository runs;
@@ -18,15 +18,19 @@ public final class CodingDeliveryIntentResolver {
     }
 
     public CodingDeliveryIntent resolve(AgentRun run) {
-        Objects.requireNonNull(run, "run must not be null");
-        return resolve(run.id());
+        AgentRun current = Objects.requireNonNull(run, "run must not be null");
+        return codingSessions
+                .findCommandByRunId(current.id())
+                .or(() -> codingSessions.findPendingCommand(current.sessionId()))
+                .map(CodingCommandBinding::deliveryIntent)
+                .orElse(CodingDeliveryIntent.WORKTREE_ONLY);
     }
 
     public CodingDeliveryIntent resolve(AgentRunId runId) {
-        Objects.requireNonNull(runId, "runId must not be null");
+        AgentRunId current = Objects.requireNonNull(runId, "runId must not be null");
         return codingSessions
-                .findCommandByRunId(runId)
-                .or(() -> runs.find(runId).flatMap(run -> codingSessions.findPendingCommand(run.sessionId())))
+                .findCommandByRunId(current)
+                .or(() -> runs.find(current).flatMap(run -> codingSessions.findPendingCommand(run.sessionId())))
                 .map(CodingCommandBinding::deliveryIntent)
                 .orElse(CodingDeliveryIntent.WORKTREE_ONLY);
     }

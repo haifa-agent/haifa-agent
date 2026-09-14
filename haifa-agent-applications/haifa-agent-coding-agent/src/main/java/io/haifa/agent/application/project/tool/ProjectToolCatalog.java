@@ -265,7 +265,7 @@ public final class ProjectToolCatalog {
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         String version =
                 switch (name) {
-                    case "execution_run" -> "2.0.0";
+                    case "execution_run" -> "3.0.0";
                     case "file_patch" -> "2.1.0";
                     case "file_list",
                             "file_read",
@@ -515,22 +515,6 @@ public final class ProjectToolCatalog {
                 required.add("workspaceRef");
                 required.add("relativeWorkdir");
                 properties.put("timeoutMillis", Map.of("type", "integer", "minimum", 1, "maximum", 1800000));
-                properties.put(
-                        "expectedExitCodes",
-                        Map.of(
-                                "type",
-                                "array",
-                                "minItems",
-                                1,
-                                "maxItems",
-                                8,
-                                "uniqueItems",
-                                true,
-                                "items",
-                                Map.of("type", "integer", "minimum", 0, "maximum", 255),
-                                "description",
-                                "Allowed normal process exit codes. Defaults to [0]; when supplied it must include 0. "
-                                        + "Never use this for timeouts, cancellation, or an unknown outcome."));
                 properties.put("description", Map.of("type", "string", "minLength", 1, "maxLength", 256));
                 properties.put(
                         "operationFamily",
@@ -595,14 +579,8 @@ public final class ProjectToolCatalog {
             var properties = new LinkedHashMap<String, Object>();
             properties.put("toolCallId", Map.of("type", "string"));
             properties.put("executionId", Map.of("type", "string"));
-            properties.put("status", Map.of("type", "string"));
             properties.put("processState", Map.of("type", "string"));
             properties.put("exitCode", Map.of("type", "integer"));
-            properties.put("expectedExitCodes", Map.of("type", "array", "items", Map.of("type", "integer")));
-            properties.put("semanticOutcome", Map.of("type", "string"));
-            properties.put("semanticReasonCode", Map.of("type", "string"));
-            properties.put("semanticInterpreterVersion", Map.of("type", "string"));
-            properties.put("commandOutcomeCode", Map.of("type", "string"));
             properties.put("runtimeOutcome", Map.of("type", "string", "enum", List.of("OUTCOME_UNKNOWN")));
             properties.put("reconcileStatus", Map.of("type", "string"));
             properties.put("reconcileReason", Map.of("type", "string"));
@@ -631,11 +609,6 @@ public final class ProjectToolCatalog {
             properties.put("riskResolutionCode", Map.of("type", "string"));
             properties.put("riskAction", Map.of("type", "string"));
             properties.put("operationHintCode", Map.of("type", "string"));
-            properties.put("deliveryAction", Map.of("type", "string"));
-            properties.put("deliveryVerification", Map.of("type", "string"));
-            properties.put("deliveryRepositoryScopeDigest", Map.of("type", "string"));
-            properties.put("deliveryEvidenceCode", Map.of("type", "string"));
-            properties.put("deliveryEvidenceRef", Map.of("type", "string"));
             properties.put("outputBudgetFamily", Map.of("type", "string"));
             properties.put("outputBudgetBytesPerChannel", Map.of("type", "integer", "minimum", 1));
             properties.put("modelOutputBudgetBytes", Map.of("type", "integer", "minimum", 1));
@@ -645,7 +618,29 @@ public final class ProjectToolCatalog {
             properties.put("diffCountsComplete", Map.of("type", "boolean"));
             properties.put("diffSummary", Map.of("type", "string"));
             properties.put("diffArtifactRef", Map.of("type", "string"));
-            properties.put("validationEvidence", Map.of("type", "object", "additionalProperties", true));
+            properties.put(
+                    "validationEvidence",
+                    Map.of(
+                            "type",
+                            "object",
+                            "properties",
+                            Map.of(
+                                    "schemaVersion", Map.of("type", "string", "const", "coding-validation-attempt/3"),
+                                    "scope", Map.of("type", "string", "enum", List.of("FULL", "SELECTED", "UNKNOWN")),
+                                    "verificationSource", Map.of("type", "string"),
+                                    "claimCode", Map.of("type", "string"),
+                                    "verificationProfileDigest", Map.of("type", "string"),
+                                    "verificationCandidateDigest", Map.of("type", "string")),
+                            "required",
+                            List.of(
+                                    "schemaVersion",
+                                    "scope",
+                                    "verificationSource",
+                                    "claimCode",
+                                    "verificationProfileDigest",
+                                    "verificationCandidateDigest"),
+                            "additionalProperties",
+                            false));
             properties.put("validationAttemptRef", Map.of("type", "string"));
             properties.put("sandboxProfileDigest", Map.of("type", "string"));
             properties.put("scratchSpecDigest", Map.of("type", "string"));
@@ -659,7 +654,7 @@ public final class ProjectToolCatalog {
                     "properties",
                     Map.copyOf(properties),
                     "required",
-                    List.of("executionId", "status", "processState", "output", "truncated", "durationMillis"),
+                    List.of("executionId", "processState", "output", "truncated", "durationMillis"),
                     "additionalProperties",
                     false);
         }

@@ -195,7 +195,7 @@ class Tui4jCodingTerminalModelTest {
     @Test
     void mapsTraditionalCtrlOToExpansionWithoutEditingTheDraft() {
         var fixture = fixture();
-        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "Command succeeded\nD:/workspace", "SUCCEEDED"));
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "Command exited\nD:/workspace", "EXITED"));
         fixture.model.update(new WindowSizeMessage(100, 30));
         assertThat(fixture.controller.state().transcript().getLast().expanded()).isTrue();
 
@@ -281,7 +281,7 @@ class Tui4jCodingTerminalModelTest {
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("current draft");
         assertThat(fixture.model.view()).contains("history-28").doesNotContain("history-30");
 
-        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "LATEST_OUTPUT", "SUCCEEDED"));
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "LATEST_OUTPUT", "EXITED"));
         fixture.model.update(new WindowSizeMessage(80, 24));
         assertThat(fixture.model.view()).contains("new output below").doesNotContain("LATEST_OUTPUT");
 
@@ -321,7 +321,7 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(key(KeyType.KeyPgUp));
         assertThat(fixture.model.view()).contains("history-24").doesNotContain("history-30");
 
-        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "LATEST_OUTPUT", "SUCCEEDED"));
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "LATEST_OUTPUT", "EXITED"));
         fixture.model.update(new WindowSizeMessage(80, 24));
         assertThat(fixture.model.view()).contains("new output below").doesNotContain("LATEST_OUTPUT");
 
@@ -341,13 +341,13 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(new WindowSizeMessage(80, 24));
         fixture.model.update(key(KeyType.KeyPgUp));
 
-        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "HIDDEN_BEFORE_SUBMIT", "SUCCEEDED"));
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "HIDDEN_BEFORE_SUBMIT", "EXITED"));
         fixture.model.update(new WindowSizeMessage(80, 24));
         assertThat(fixture.model.view()).contains("new output below");
 
         fixture.model.update(new PasteMessage("start a new turn"));
         commitPlainEnter(fixture);
-        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "VISIBLE_AFTER_SUBMIT", "SUCCEEDED"));
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "VISIBLE_AFTER_SUBMIT", "EXITED"));
         fixture.model.update(new WindowSizeMessage(80, 24));
 
         assertThat(fixture.model.view()).contains("VISIBLE_AFTER_SUBMIT").doesNotContain("new output below");

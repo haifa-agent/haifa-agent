@@ -109,7 +109,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                     request.id(), ExecutionOutputChannel.STDOUT, stdoutBytes, 4096, process.stdoutTruncated());
             var stderr = outputs.store(
                     request.id(), ExecutionOutputChannel.STDERR, stderrBytes, 4096, process.stderrTruncated());
-            ExecutionStatus status = map(process.status(), process.exitCode());
+            ExecutionStatus status = map(process.status());
             ExecutionFailure failure = failure(status, process.processTreeTerminated());
             ExecutionResult result = new ExecutionResult(
                     request.id(),
@@ -369,7 +369,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                 && first.invocationDigest().equals(second.invocationDigest());
     }
 
-    private static ExecutionStatus map(SandboxProcessStatus status, Integer exitCode) {
+    private static ExecutionStatus map(SandboxProcessStatus status) {
         return switch (status) {
             case EXITED -> ExecutionStatus.EXITED;
             case OUTPUT_LIMIT_EXCEEDED -> ExecutionStatus.OUTPUT_LIMIT_EXCEEDED;
@@ -382,7 +382,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
 
     private static ExecutionFailure failure(ExecutionStatus status, boolean treeTerminated) {
         return switch (status) {
-            case SUCCEEDED, EXITED -> null;
+            case EXITED -> null;
             case FAILED -> new ExecutionFailure("EXECUTION_FAILED", "process execution failed");
             case OUTPUT_LIMIT_EXCEEDED ->
                 new ExecutionFailure(

@@ -113,9 +113,10 @@ class LocalCodingAgentTest {
                         "rg --files for file discovery",
                         "rg for text search",
                         "dedicated search wrapper",
-                        "expectedExitCodes",
-                        "rg exit 1 means no matches",
-                        "git diff --no-index exit 1 means differences",
+                        "completed result for every normal process exit",
+                        "Inspect the exit code and bounded output",
+                        "Do not treat a non-zero exit as a platform failure",
+                        "without a new diagnostic hypothesis",
                         "rg -F -- <text>",
                         "Runtime-owned recovery interaction",
                         "Do not copy or resubmit the command",
@@ -779,7 +780,7 @@ class LocalCodingAgentTest {
             if (call == 2) {
                 assertThat(request.messages())
                         .anyMatch(message -> message.role() == ModelMessageRole.TOOL
-                                && "SUCCEEDED".equals(message.toolResultData().get("status"))
+                                && "EXITED".equals(message.toolResultData().get("processState"))
                                 && !message.toolResultData().containsKey("fileChangeSetId"));
                 return toolResponse(
                         "shell-test",
@@ -903,7 +904,7 @@ class LocalCodingAgentTest {
                         "approved execution model messages: %s",
                         resumedRequest.get().messages())
                 .anyMatch(message -> message.role() == ModelMessageRole.TOOL
-                        && "SUCCEEDED".equals(message.toolResultData().get("status"))
+                        && "EXITED".equals(message.toolResultData().get("processState"))
                         && String.valueOf(message.toolResultData().get("output"))
                                 .contains("APPROVED-EXECUTION"));
         assertThat(traces).noneMatch(event -> event.operation().equals("runtime.error"));
@@ -949,7 +950,7 @@ class LocalCodingAgentTest {
             }
             assertThat(request.messages())
                     .anyMatch(message -> message.role() == ModelMessageRole.TOOL
-                            && "SUCCEEDED".equals(message.toolResultData().get("status"))
+                            && "EXITED".equals(message.toolResultData().get("processState"))
                             && message.toolResultData().containsKey("validationEvidence")
                             && message.toolResultData().containsKey("validationAttemptRef")
                             && !message.toolResultData().containsKey("fileChangeSetId"));

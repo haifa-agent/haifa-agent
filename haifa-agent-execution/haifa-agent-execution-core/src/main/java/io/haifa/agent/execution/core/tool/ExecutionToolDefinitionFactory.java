@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Canonical v2 model-visible definition for command and script execution. */
+/** Canonical v3 model-visible definition for command and script execution. */
 public final class ExecutionToolDefinitionFactory {
     public static final ToolAlias ALIAS = new ToolAlias("execution_run");
 
@@ -65,19 +65,20 @@ public final class ExecutionToolDefinitionFactory {
                 : Set.of(ToolSideEffect.PROCESS_EXECUTION);
         return new ToolDefinition(
                 new ToolName("execution_run"),
-                new SemanticVersion("2.0.0"),
+                new SemanticVersion("3.0.0"),
                 ExecutionToolProvider.PROVIDER_ID,
                 "Run an approved command or script",
                 "Run complete command text or script source through the frozen execution profile. "
                         + "Use COMMAND without language or args to invoke the configured host shell. "
                         + "Use SCRIPT with an explicit configured language and optional args. "
+                        + "Every normal process exit is returned as EXITED with the raw exit code; the caller interprets its business meaning. "
                         + "The host operating system and runtime executables are trusted configuration.",
                 new ToolSchema(
                         "haifa.execution.run.input",
-                        "2.0.0",
+                        "3.0.0",
                         inputSchema(
                                 configurationIdentity, scratchSpecDigest, workingDirectoryAllowed, scriptLanguages)),
-                new ToolSchema("haifa.execution.run.output", "2.0.0", outputSchema()),
+                new ToolSchema("haifa.execution.run.output", "3.0.0", outputSchema()),
                 ToolExecutionMode.HOST_PROCESS,
                 true,
                 Duration.ofSeconds(30),
@@ -212,7 +213,6 @@ public final class ExecutionToolDefinitionFactory {
                 "object",
                 "properties",
                 Map.ofEntries(
-                        Map.entry("status", Map.of("type", "string")),
                         Map.entry("processState", Map.of("type", "string")),
                         Map.entry("mode", Map.of("type", "string")),
                         Map.entry("language", Map.of("type", "string")),
@@ -228,7 +228,6 @@ public final class ExecutionToolDefinitionFactory {
                         Map.entry("scratchCleanupFailed", Map.of("type", "boolean"))),
                 "required",
                 List.of(
-                        "status",
                         "processState",
                         "mode",
                         "timedOut",

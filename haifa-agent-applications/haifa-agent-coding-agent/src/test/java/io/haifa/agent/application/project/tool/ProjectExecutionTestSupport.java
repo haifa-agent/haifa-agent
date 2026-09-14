@@ -138,7 +138,7 @@ final class ProjectExecutionTestSupport {
                 new AgentRunId("run-1"),
                 new TenantRef("tenant-1"),
                 new PrincipalRef("operator", "user"),
-                new ToolArguments("haifa.execution.run.input", "1.0.0", arguments),
+                new ToolArguments("haifa.execution.run.input", "3.0.0", arguments),
                 NOW.plusSeconds(30),
                 Optional.of("execution-key"),
                 cancellation,
@@ -203,7 +203,7 @@ final class ProjectExecutionTestSupport {
                 "session-1",
                 new ResourceUsageSummary(Duration.ofSeconds(1), 1),
                 status == ExecutionStatus.FAILED
-                        ? new ExecutionFailure("NON_ZERO_EXIT", "process exited with a non-zero code")
+                        ? new ExecutionFailure("PROCESS_START_FAILED", "process could not be started")
                         : null,
                 false);
     }

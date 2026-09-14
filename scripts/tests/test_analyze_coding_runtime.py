@@ -177,7 +177,7 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
         self.assertEqual(report["toolStatuses"], {"COMPLETED": 1, "FAILED": 1})
         self.assertEqual(report["failureClasses"], {"POLICY_OR_CLASSIFICATION": 1})
         self.assertEqual(report["recovery"]["maximumAttempts"], 2)
-        self.assertEqual(report["schemaVersion"], "1.1.0")
+        self.assertEqual(report["schemaVersion"], "1.2.0")
         self.assertEqual(report["requiredMetrics"]["rawToolFailureRate"]["ratePercent"], 50.0)
         self.assertEqual(report["requiredMetrics"]["policyDenialRate"]["denied"], 1)
         self.assertEqual(
@@ -205,7 +205,7 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
             report = analyze(connection, 4)
         self.assertIsNone(report["window"])
         self.assertEqual(report["scope"], {"sessions": 0, "runs": 0, "toolCalls": 0})
-        self.assertEqual(len(report["requiredMetrics"]), 18)
+        self.assertEqual(len(report["requiredMetrics"]), 15)
         self.assertEqual(report["requiredMetrics"]["costKnownUnknown"]["status"], "UNKNOWN")
 
     def test_rejects_non_finite_or_out_of_range_windows(self):
