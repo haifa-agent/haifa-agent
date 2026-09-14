@@ -968,18 +968,41 @@ export function MissionWorkspaceModal({
     setObjective(targetObjective);
 
     const followUpCriteria: string[] = [];
-    unresolvedQuestions.forEach((q) => {
-      followUpCriteria.push(`核实未决问题：${q}`);
-    });
-    unverifiedClaims.forEach((c) => {
-      followUpCriteria.push(`核实待定结论：${c}`);
-    });
+    const MAX_GAP_ITEMS = 17;
+    const totalGaps = unresolvedQuestions.length + unverifiedClaims.length;
+
+    if (totalGaps <= 18) {
+      unresolvedQuestions.forEach((q) => {
+        followUpCriteria.push(`核实未决问题：${q}`);
+      });
+      unverifiedClaims.forEach((c) => {
+        followUpCriteria.push(`核实待定结论：${c}`);
+      });
+    } else {
+      const questionBudget = Math.min(unresolvedQuestions.length, 10);
+      const claimBudget = Math.min(unverifiedClaims.length, MAX_GAP_ITEMS - questionBudget);
+      const questionsToInclude = unresolvedQuestions.slice(0, questionBudget);
+      const claimsToInclude = unverifiedClaims.slice(0, claimBudget);
+
+      questionsToInclude.forEach((q) => {
+        followUpCriteria.push(`核实未决问题：${q}`);
+      });
+      claimsToInclude.forEach((c) => {
+        followUpCriteria.push(`核实待定结论：${c}`);
+      });
+
+      const remaining = totalGaps - (questionsToInclude.length + claimsToInclude.length);
+      if (remaining > 0) {
+        followUpCriteria.push(`核实其余 ${remaining} 项遗留未决问题与存疑事实（完整清单已随任务上下文注入模型）`);
+      }
+    }
+
     followUpCriteria.push("新增结论必须提供可追溯来源");
     followUpCriteria.push("说明相对上一份报告发生的结论变化");
     setCriteria(followUpCriteria.join("\n"));
 
     if (unresolvedQuestions.length > 0 || unverifiedClaims.length > 0) {
-      setFollowUpSummary(`已继承前序报告中的 ${unresolvedQuestions.length} 个未决问题和 ${unverifiedClaims.length} 个待核实结论。`);
+      setFollowUpSummary(`已继承前序报告中的 ${unresolvedQuestions.length} 个未决问题和 ${unverifiedClaims.length} 个待核实结论（已按优先级装载至验收标准，完整上下文已同步至 Planner）。`);
     } else {
       setFollowUpSummary(`已关联前序 Mission（ID: ${previousId}），重点核实遗留问题。`);
     }
