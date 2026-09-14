@@ -1268,7 +1268,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         String protocolVersion = intent.mode() == MissionMode.DEEP_RESEARCH
                 ? SYNTHESIS_PROTOCOL_VERSION
                 : STANDARD_SYNTHESIS_PROTOCOL_VERSION;
-        AgentSessionId sessionId = synthesisSession(intent, protocolVersion);
+        AgentSessionId sessionId = synthesisSession(intent, protocolVersion, revisionAttempt);
         String dispatchKey = intent.mode() == MissionMode.DEEP_RESEARCH
                 ? synthesisDispatchKey(intent.missionId(), revisionAttempt)
                 : standardSynthesisDispatchKey(intent.missionId());
@@ -1334,7 +1334,16 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     }
 
     private AgentSessionId synthesisSession(MissionSynthesisIntent intent, String protocolVersion) {
-        String stable = digest(intent.missionId(), "synthesis", protocolVersion);
+        return synthesisSession(intent, protocolVersion, 0);
+    }
+
+    private AgentSessionId synthesisSession(
+            MissionSynthesisIntent intent,
+            String protocolVersion,
+            int revisionAttempt) {
+        String stable = revisionAttempt == 0
+                ? digest(intent.missionId(), "synthesis", protocolVersion)
+                : digest(intent.missionId(), "synthesis", protocolVersion, String.valueOf(revisionAttempt));
         AgentSessionId sessionId = new AgentSessionId("mission-synthesis-" + stable.substring("sha256:".length(), 38));
         String modelId = modelId(intent.modelBinding());
         persistence.inTransaction(() -> {
