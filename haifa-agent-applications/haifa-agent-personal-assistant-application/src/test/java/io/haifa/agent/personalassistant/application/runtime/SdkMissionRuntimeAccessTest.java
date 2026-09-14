@@ -12,6 +12,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionMode;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanner;
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
+import io.haifa.agent.personalassistant.application.mission.PriorResearchContext;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.personalassistant.application.mission.SourceReference;
 import io.haifa.agent.personalassistant.application.research.ResearchFetchEvidence;
@@ -199,6 +200,94 @@ class SdkMissionRuntimeAccessTest {
                         "Merge closely related research",
                         "dimensions until the limit is met",
                         "Returning the same number of Tasks is invalid");
+    }
+
+    @Test
+    void plannerPromptInjectsPriorResearchContextWhenPresent() {
+        var priorContext = new PriorResearchContext(
+                "mission-prev-123",
+                "Baseline answer about quantum computing progress",
+                List.of("What is the exact qubit count in 2026?", "How is error mitigation scaled?"),
+                List.of("Claim: Commercial advantage reached by Acme Corp"));
+        var brief = new ResearchBrief(
+                "Verify quantum computing claims",
+                "quantum supremacy, error correction",
+                "2026",
+                "Global",
+                "Researcher",
+                List.of("primary sources"),
+                List.of("social media claims"),
+                "Markdown",
+                Optional.of(priorContext));
+        var request = new MissionPlanner.PlanningRequest(
+                "mission-2",
+                "Deep dive into unresolved quantum questions",
+                List.of("Verify qubit count", "Verify commercial advantage"),
+                new MissionConstraints(4, 2, Optional.empty()),
+                1,
+                MissionMode.DEEP_RESEARCH,
+                Optional.of(brief));
+
+        String prompt = SdkMissionRuntimeAccess.plannerPrompt(request, LocalDate.of(2026, 8, 10));
+
+        assertThat(prompt)
+                .contains("Prior Research Context and Gaps (inherited from Mission: mission-prev-123):")
+                .contains("- Prior Confirmed Findings Summary: Baseline answer about quantum computing progress")
+                .contains("* What is the exact qubit count in 2026?")
+                .contains("* How is error mitigation scaled?")
+                .contains("* Claim: Commercial advantage reached by Acme Corp")
+                .contains("Planning Directive: Plan tasks specifically to address the unresolved questions and verify the unverified claims above.");
+    }
+
+    @Test
+    void taskPromptInjectsPriorResearchContextWhenPresent() {
+        var priorContext = new PriorResearchContext(
+                "mission-prev-123",
+                "Baseline answer about quantum computing progress",
+                List.of("What is the exact qubit count in 2026?"),
+                List.of("Claim: Commercial advantage reached"));
+        var brief = new ResearchBrief(
+                "Verify quantum computing claims",
+                "quantum supremacy",
+                "2026",
+                "Global",
+                "Researcher",
+                List.of("primary sources"),
+                List.of("social media claims"),
+                "Markdown",
+                Optional.of(priorContext));
+
+        var tenant = new TenantRef("local");
+        var principal = new PrincipalRef("personal-user", "user");
+        var skill = PersonalSkillPlatform.create(tenant, principal, Optional.empty(), List.of())
+                .load("deep-research", tenant, principal);
+        var input = MissionTaskRunInput.create(
+                "Research quantum qubit count",
+                List.of("Cite peer-reviewed papers"),
+                "Research quantum qubit count",
+                List.of("Cite peer-reviewed papers"),
+                "RESEARCH",
+                List.of("deep-research"),
+                "pa.research-task-result",
+                "v2",
+                Optional.of(brief),
+                List.of());
+        var intent = new MissionDispatchIntent(
+                "outbox-1",
+                "mission-2",
+                "owner-1",
+                "task-1",
+                1,
+                "dispatch-1",
+                "sha256:" + "2".repeat(64),
+                input,
+                Instant.parse("2026-08-09T00:00:00Z"));
+
+        String prompt = SdkMissionRuntimeAccess.taskPrompt(intent, skill);
+
+        assertThat(prompt)
+                .contains("If prior research context is present in Frozen Research Brief, treat confirmed findings as established prior work.")
+                .contains("Focus your investigation specifically on resolving unresolved questions and verifying unverified claims without repeating searches for confirmed facts.");
     }
 
     @Test

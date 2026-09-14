@@ -485,6 +485,8 @@ export function MissionWorkspaceModal({
   const [researchExclusions, setResearchExclusions] = useState("");
   const [researchDelivery, setResearchDelivery] = useState("");
   const [creationSettingsOpen, setCreationSettingsOpen] = useState(false);
+  const [previousMissionId, setPreviousMissionId] = useState<string | null>(null);
+  const [followUpSummary, setFollowUpSummary] = useState<string | null>(null);
   const [editingPlan, setEditingPlan] = useState(false);
   const [planDraft, setPlanDraft] = useState<MissionPlanTask[]>([]);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -875,6 +877,7 @@ export function MissionWorkspaceModal({
       acceptanceCriteria,
       mode,
       selectedSkillId: deepResearch ? "deep-research" : undefined,
+      previousMissionId: previousMissionId ?? undefined,
       researchBrief: deepResearch ? {
         question: researchQuestion.trim() || objective.trim(),
         scope: effectiveResearchScope,
@@ -893,6 +896,8 @@ export function MissionWorkspaceModal({
       if (succeeded) {
         onDraftCreated();
         setCreatingMission(false);
+        setPreviousMissionId(null);
+        setFollowUpSummary(null);
         setObjective("");
         setCriteria("");
         setResearchQuestion("");
@@ -908,19 +913,77 @@ export function MissionWorkspaceModal({
     });
   };
 
-  const beginFollowUp = () => {
+  const beginFollowUp = async () => {
     if (!selected || !conversation) return;
     if (missions.some((mission) => mission.conversationId === conversation.id && !missionTerminalStates.has(mission.state))) {
       setError("当前会话已有进行中的 Mission，请先完成或取消后再继续研究。");
       return;
     }
+
+    const previousId = selected.missionId;
+    setPreviousMissionId(previousId);
     setMode(selected.mode);
-    setObjective(`继续研究：${selected.objective}，重点解决报告中的未决问题与待核实结论。`);
-    setCriteria([
-      "逐项核实上一份报告中的未决问题与待核实结论",
-      "新增结论必须提供可追溯来源",
-      "说明相对上一份报告发生的结论变化",
-    ].join("\n"));
+
+    let unresolvedQuestions: string[] = [];
+    let unverifiedClaims: string[] = [];
+    if (selected.finalResult) {
+      const parsed = parseMissionFinalResult(selected.finalResult);
+      if (parsed) {
+        if (parsed.unresolvedQuestions && parsed.unresolvedQuestions.length > 0) {
+          unresolvedQuestions = [...parsed.unresolvedQuestions];
+        } else if (parsed.unresolvedArtifactRef && client.missionArtifact) {
+          try {
+            const raw = await client.missionArtifact(previousId, parsed.unresolvedArtifactRef.artifactId);
+            const doc = JSON.parse(raw) as Record<string, unknown>;
+            if (Array.isArray(doc.unresolvedQuestions)) {
+              unresolvedQuestions = doc.unresolvedQuestions.filter((item): item is string => typeof item === "string");
+            }
+          } catch {
+            // artifact load failed, keep empty
+          }
+        }
+
+        if (parsed.unverifiedClaims && parsed.unverifiedClaims.length > 0) {
+          unverifiedClaims = [...parsed.unverifiedClaims];
+        } else if (parsed.claimEvidenceArtifactRef && client.missionArtifact) {
+          try {
+            const raw = await client.missionArtifact(previousId, parsed.claimEvidenceArtifactRef.artifactId);
+            const doc = JSON.parse(raw) as Record<string, unknown>;
+            if (Array.isArray(doc.claims)) {
+              unverifiedClaims = doc.claims
+                .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null && item.unverified === true)
+                .map((item) => typeof item.claim === "string" ? item.claim : "")
+                .filter(Boolean);
+            }
+          } catch {
+            // artifact load failed, keep empty
+          }
+        }
+      }
+    }
+
+    const targetObjective = unresolvedQuestions.length > 0
+      ? `继续研究：${selected.objective}（重点解决上一期未决问题：${unresolvedQuestions.slice(0, 2).join("；")}等）`
+      : `继续研究：${selected.objective}，重点解决报告中的未决问题与待核实结论。`;
+    setObjective(targetObjective);
+
+    const followUpCriteria: string[] = [];
+    unresolvedQuestions.forEach((q) => {
+      followUpCriteria.push(`核实未决问题：${q}`);
+    });
+    unverifiedClaims.forEach((c) => {
+      followUpCriteria.push(`核实待定结论：${c}`);
+    });
+    followUpCriteria.push("新增结论必须提供可追溯来源");
+    followUpCriteria.push("说明相对上一份报告发生的结论变化");
+    setCriteria(followUpCriteria.join("\n"));
+
+    if (unresolvedQuestions.length > 0 || unverifiedClaims.length > 0) {
+      setFollowUpSummary(`已继承前序报告中的 ${unresolvedQuestions.length} 个未决问题和 ${unverifiedClaims.length} 个待核实结论。`);
+    } else {
+      setFollowUpSummary(`已关联前序 Mission（ID: ${previousId}），重点核实遗留问题。`);
+    }
+
     setResearchQuestion(selected.researchBrief?.question ?? selected.objective);
     setResearchScope(selected.researchBrief?.scope ?? "");
     setResearchTimeRange(selected.researchBrief?.timeRange ?? "");
@@ -1133,7 +1196,11 @@ export function MissionWorkspaceModal({
         </nav>
         <div className={`mission-layout ${detailPanelOpen ? "" : "detail-closed"}`} data-mobile-view={mobileView}>
           <aside className="mission-list" aria-label="Mission 列表">
-            <div className="mission-list-heading"><div><span className="eyebrow">工作空间</span><strong>Mission 列表</strong></div><button type="button" disabled={!canCreateMission} title={canCreateMission ? "创建 Mission" : "当前会话已有进行中的 Mission"} onClick={() => setCreatingMission(true)}><Plus size={13} />新建</button></div>
+            <div className="mission-list-heading"><div><span className="eyebrow">工作空间</span><strong>Mission 列表</strong></div><button type="button" disabled={!canCreateMission} title={canCreateMission ? "创建 Mission" : "当前会话已有进行中的 Mission"} onClick={() => {
+              setPreviousMissionId(null);
+              setFollowUpSummary(null);
+              setCreatingMission(true);
+            }}><Plus size={13} />新建</button></div>
             <label className="mission-list-search"><Search size={14} aria-hidden="true" /><input value={missionQuery} onChange={(event) => setMissionQuery(event.target.value)} placeholder="搜索 Mission" aria-label="搜索 Mission" /></label>
             <div className="mission-list-controls"><label>状态<select aria-label="按状态筛选 Mission" value={missionFilter} onChange={(event) => setMissionFilter(event.target.value as typeof missionFilter)}><option value="ALL">全部</option><option value="ACTIVE">进行中</option><option value="ACTION">需要我处理</option><option value="COMPLETED">已交付</option><option value="FAILED">失败或取消</option></select></label><label>排序<select aria-label="Mission 排序" value={missionSort} onChange={(event) => setMissionSort(event.target.value as typeof missionSort)}><option value="UPDATED">最近更新</option><option value="PROGRESS">完成进度</option></select></label></div>
             {missions.length === 0 && !busy && <p>还没有 Mission。</p>}
@@ -1166,6 +1233,11 @@ export function MissionWorkspaceModal({
                   <div><span className="eyebrow">新建任务</span><h3>你希望 Mission 最终交付什么？</h3><small>先描述结果；系统会准备通用默认值，需要时再调整。</small></div>
                   <p><span>所属会话</span><strong title={conversation.displayName}>{conversation.displayName}</strong></p>
                 </div>
+                {followUpSummary && (
+                  <div className="mission-followup-banner" style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", padding: "10px 14px", borderRadius: "8px", marginBottom: "16px", fontSize: "13px", lineHeight: "1.5" }}>
+                    <strong>继承先验研究：</strong>{followUpSummary}
+                  </div>
+                )}
                 <div className="mission-create-field">
                   <span>任务模式</span>
                   <div className="mission-mode-options" role="radiogroup" aria-label="任务模式">

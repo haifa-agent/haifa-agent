@@ -1,6 +1,7 @@
 package io.haifa.agent.personalassistant.application.mission;
 
 import java.util.List;
+import java.util.Optional;
 
 /** Frozen, bounded Deep Research input captured before planning. */
 public record ResearchBrief(
@@ -11,7 +12,47 @@ public record ResearchBrief(
         String audience,
         List<String> sourcePreferences,
         List<String> exclusions,
-        String deliveryFormat) {
+        String deliveryFormat,
+        PriorResearchContext priorContext) {
+
+    public ResearchBrief(
+            String question,
+            String scope,
+            String timeRange,
+            String region,
+            String audience,
+            List<String> sourcePreferences,
+            List<String> exclusions,
+            String deliveryFormat) {
+        this(question, scope, timeRange, region, audience, sourcePreferences, exclusions, deliveryFormat, (PriorResearchContext) null);
+    }
+
+    public ResearchBrief(
+            String question,
+            String scope,
+            String timeRange,
+            String region,
+            String audience,
+            List<String> sourcePreferences,
+            List<String> exclusions,
+            String deliveryFormat,
+            Optional<PriorResearchContext> priorContext) {
+        this(
+                question,
+                scope,
+                timeRange,
+                region,
+                audience,
+                sourcePreferences,
+                exclusions,
+                deliveryFormat,
+                priorContext == null ? null : priorContext.orElse(null));
+    }
+
+    public Optional<PriorResearchContext> optionalPriorContext() {
+        return Optional.ofNullable(priorContext);
+    }
+
     public ResearchBrief {
         question = MissionValues.text(question, "research question", 8_000);
         scope = optional(scope, 2_000);

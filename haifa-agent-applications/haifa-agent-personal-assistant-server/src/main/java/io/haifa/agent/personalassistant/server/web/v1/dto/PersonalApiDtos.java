@@ -170,6 +170,12 @@ public final class PersonalApiDtos {
             long revision,
             ModelSelection model) {}
 
+    public record PriorResearchContext(
+            String previousMissionId,
+            String directAnswer,
+            List<String> unresolvedQuestions,
+            List<String> unverifiedClaims) {}
+
     public record CreateMission(
             String conversationId,
             String objective,
@@ -177,7 +183,19 @@ public final class PersonalApiDtos {
             MissionConstraints constraints,
             String mode,
             String selectedSkillId,
-            ResearchBrief researchBrief) {}
+            ResearchBrief researchBrief,
+            String previousMissionId) {
+        public CreateMission(
+                String conversationId,
+                String objective,
+                List<String> acceptanceCriteria,
+                MissionConstraints constraints,
+                String mode,
+                String selectedSkillId,
+                ResearchBrief researchBrief) {
+            this(conversationId, objective, acceptanceCriteria, constraints, mode, selectedSkillId, researchBrief, null);
+        }
+    }
 
     public record ResearchBrief(
             String question,
@@ -187,7 +205,20 @@ public final class PersonalApiDtos {
             String audience,
             List<String> sourcePreferences,
             List<String> exclusions,
-            String deliveryFormat) {}
+            String deliveryFormat,
+            PriorResearchContext priorContext) {
+        public ResearchBrief(
+                String question,
+                String scope,
+                String timeRange,
+                String region,
+                String audience,
+                List<String> sourcePreferences,
+                List<String> exclusions,
+                String deliveryFormat) {
+            this(question, scope, timeRange, region, audience, sourcePreferences, exclusions, deliveryFormat, null);
+        }
+    }
 
     public record MissionConstraints(Integer maxTasks, Integer maxDependencyDepth, Instant deadlineAt) {}
 
