@@ -962,9 +962,26 @@ export function MissionWorkspaceModal({
       }
     }
 
-    const targetObjective = unresolvedQuestions.length > 0
-      ? `继续研究：${selected.objective}（重点解决上一期未决问题：${unresolvedQuestions.slice(0, 2).join("；")}等）`
-      : `继续研究：${selected.objective}，重点解决报告中的未决问题与待核实结论。`;
+    function formatCriterion(prefix: string, content: string, maxLength = 1000): string {
+      const trimmed = content.trim().replace(/\s+/g, " ");
+      const maxContentLen = maxLength - prefix.length;
+      if (trimmed.length <= maxContentLen) {
+        return `${prefix}${trimmed}`;
+      }
+      return `${prefix}${trimmed.slice(0, Math.max(0, maxContentLen - 3))}...`;
+    }
+
+    let targetObjective = `继续研究：${selected.objective}，重点解决报告中的未决问题与待核实结论。`;
+    if (unresolvedQuestions.length > 0) {
+      const previewSnippets = unresolvedQuestions.slice(0, 2).map((q) => {
+        const clean = q.trim().replace(/\s+/g, " ");
+        return clean.length > 60 ? `${clean.slice(0, 57)}...` : clean;
+      });
+      targetObjective = `继续研究：${selected.objective}（重点解决上一期未决问题：${previewSnippets.join("；")}等）`;
+    }
+    if (targetObjective.length > 1000) {
+      targetObjective = `${targetObjective.slice(0, 997)}...`;
+    }
     setObjective(targetObjective);
 
     const followUpCriteria: string[] = [];
@@ -973,10 +990,10 @@ export function MissionWorkspaceModal({
 
     if (totalGaps <= 18) {
       unresolvedQuestions.forEach((q) => {
-        followUpCriteria.push(`核实未决问题：${q}`);
+        followUpCriteria.push(formatCriterion("核实未决问题：", q));
       });
       unverifiedClaims.forEach((c) => {
-        followUpCriteria.push(`核实待定结论：${c}`);
+        followUpCriteria.push(formatCriterion("核实待定结论：", c));
       });
     } else {
       const questionBudget = Math.min(unresolvedQuestions.length, 10);
@@ -985,15 +1002,17 @@ export function MissionWorkspaceModal({
       const claimsToInclude = unverifiedClaims.slice(0, claimBudget);
 
       questionsToInclude.forEach((q) => {
-        followUpCriteria.push(`核实未决问题：${q}`);
+        followUpCriteria.push(formatCriterion("核实未决问题：", q));
       });
       claimsToInclude.forEach((c) => {
-        followUpCriteria.push(`核实待定结论：${c}`);
+        followUpCriteria.push(formatCriterion("核实待定结论：", c));
       });
 
       const remaining = totalGaps - (questionsToInclude.length + claimsToInclude.length);
       if (remaining > 0) {
-        followUpCriteria.push(`核实其余 ${remaining} 项遗留未决问题与存疑事实（完整清单已随任务上下文注入模型）`);
+        followUpCriteria.push(
+          formatCriterion("核实遗留存疑：", `其余 ${remaining} 项未决问题与待核实结论（参考前序报告交付物）`)
+        );
       }
     }
 
@@ -1001,10 +1020,24 @@ export function MissionWorkspaceModal({
     followUpCriteria.push("说明相对上一份报告发生的结论变化");
     setCriteria(followUpCriteria.join("\n"));
 
-    if (unresolvedQuestions.length > 0 || unverifiedClaims.length > 0) {
-      setFollowUpSummary(`已继承前序报告中的 ${unresolvedQuestions.length} 个未决问题和 ${unverifiedClaims.length} 个待核实结论（已按优先级装载至验收标准，完整上下文已同步至 Planner）。`);
+    const totalQuestions = unresolvedQuestions.length;
+    const totalClaims = unverifiedClaims.length;
+    const maxPromptInjected = 50;
+    const injectedQuestions = Math.min(totalQuestions, maxPromptInjected);
+    const injectedClaims = Math.min(totalClaims, maxPromptInjected);
+
+    if (totalQuestions > 0 || totalClaims > 0) {
+      if (totalQuestions > maxPromptInjected || totalClaims > maxPromptInjected) {
+        setFollowUpSummary(
+          `已继承前序报告上下文 (Mission: ${previousId.slice(0, 8)}...) · 包含 ${totalQuestions} 个未决问题（前 ${injectedQuestions} 项已注入模型）、${totalClaims} 条待核实结论（前 ${injectedClaims} 项已注入模型，其余详见历史报告）。`
+        );
+      } else {
+        setFollowUpSummary(
+          `已继承前序报告上下文 (Mission: ${previousId.slice(0, 8)}...) · 包含 ${totalQuestions} 个未决问题与 ${totalClaims} 条待核实结论（已载入模型上下文与验收标准）。`
+        );
+      }
     } else {
-      setFollowUpSummary(`已关联前序 Mission（ID: ${previousId}），重点核实遗留问题。`);
+      setFollowUpSummary(`已关联前序 Mission（ID: ${previousId.slice(0, 8)}...），重点核实遗留问题。`);
     }
 
     setResearchQuestion(selected.researchBrief?.question ?? selected.objective);
