@@ -92,7 +92,6 @@ class TrustedWorkspaceEnvironmentCatalogTest {
                 "PowerShell & safe",
                 true,
                 TrustedWorkspaceEnvironmentCatalog.NetworkPolicyFact.ALLOW,
-                "1000",
                 "2000",
                 TrustedWorkspaceEnvironmentCatalog.TemporarySpaceFact.SANDBOX_MANAGED);
 
@@ -155,12 +154,12 @@ class TrustedWorkspaceEnvironmentCatalogTest {
 
     private static TrustedWorkspaceEnvironmentCatalog.EnvironmentFacts disabledEnvironment() {
         return TrustedWorkspaceEnvironmentCatalog.EnvironmentFacts.capture(
-                "unavailable", false, "UNAVAILABLE", Duration.ofSeconds(30), Duration.ofMinutes(10));
+                "unavailable", false, "UNAVAILABLE", Duration.ofMinutes(10));
     }
 
     private static TrustedWorkspaceEnvironmentCatalog.EnvironmentFacts enabledEnvironment() {
         return TrustedWorkspaceEnvironmentCatalog.EnvironmentFacts.capture(
-                "PowerShell", true, "DENY", Duration.ofSeconds(30), Duration.ofMinutes(10));
+                "PowerShell", true, "DENY", Duration.ofMinutes(10));
     }
 
     private static void createSymbolicLinkOrSkip(Path link, Path target) throws Exception {

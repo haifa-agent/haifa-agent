@@ -71,7 +71,6 @@ class ProjectExecutionPolicyTest {
         CodingVerificationCandidate candidate = new CodingVerificationCandidate(
                 command,
                 CodingVerificationCost.LOW,
-                Duration.ofMinutes(2),
                 CodingVerificationTrigger.ADJACENT_CHANGE,
                 CodingVerificationSource.USER_EXPLICIT,
                 "trusted-host",
@@ -138,7 +137,6 @@ class ProjectExecutionPolicyTest {
         CodingVerificationCandidate candidate = new CodingVerificationCandidate(
                 command,
                 CodingVerificationCost.LOW,
-                Duration.ofMinutes(2),
                 CodingVerificationTrigger.ADJACENT_CHANGE,
                 CodingVerificationSource.USER_EXPLICIT,
                 "trusted-host",
@@ -179,7 +177,6 @@ class ProjectExecutionPolicyTest {
         CodingVerificationCandidate candidate = new CodingVerificationCandidate(
                 command,
                 CodingVerificationCost.LOW,
-                Duration.ofMinutes(2),
                 CodingVerificationTrigger.ADJACENT_CHANGE,
                 CodingVerificationSource.USER_EXPLICIT,
                 "trusted-host",

@@ -53,7 +53,6 @@ class CliExecutionPlatformTest {
                         "local-native",
                         defaults.shell(),
                         defaults.shellPath(),
-                        defaults.defaultTimeout(),
                         defaults.maximumTimeout(),
                         defaults.maxOutputBytes(),
                         defaults.maxOutputLines(),

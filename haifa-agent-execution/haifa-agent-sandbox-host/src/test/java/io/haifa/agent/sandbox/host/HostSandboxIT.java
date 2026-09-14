@@ -30,6 +30,7 @@ import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.sandbox.api.GitWorktreeRequest;
 import io.haifa.agent.sandbox.api.SandboxExecution;
+import io.haifa.agent.sandbox.api.SandboxProcessResult;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.WorkspaceMount;
@@ -711,6 +712,73 @@ class HostSandboxIT {
     }
 
     @Test
+    void keepsProcessStartFailureUnknownWithoutDispatch() throws Exception {
+        Fixture fixture = fixture(root, "workspace-start-failure", "binding-start-failure", "location-start-failure");
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces, fixture.bindings, fixture.locations, () -> "process-start-failure", Instant::now);
+        String missingExecutable = "haifa-definitely-missing-executable";
+        var profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("process-start-failure", "1"),
+                provider.configurationDigest(),
+                Set.of(missingExecutable),
+                Set.of(),
+                false);
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+            AtomicInteger dispatches = new AtomicInteger();
+            SandboxProcessResult result = session.execute(
+                    new SandboxExecution(
+                            ExecutionCommand.direct(List.of(missingExecutable)),
+                            WorkspacePath.root(fixture.workspaceId),
+                            Map.of(),
+                            new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2)),
+                    new io.haifa.agent.execution.api.ExecutionOutputObserver() {
+                        @Override
+                        public void onStarted() {
+                            dispatches.incrementAndGet();
+                        }
+
+                        @Override
+                        public void onOutput(io.haifa.agent.execution.api.ProcessOutputChunk ignored) {}
+                    });
+
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.UNKNOWN);
+            assertThat(result.outputIncomplete()).isTrue();
+            assertThat(dispatches).hasValue(0);
+        }
+    }
+
+    @Test
+    void keepsTimedOutTreeTerminationUnconfirmed() {
+        assertThat(HostGuardedSandboxProvider.settledStatus(HostGuardedSandboxProvider.WaitOutcome.TIMED_OUT, false))
+                .isEqualTo(SandboxProcessStatus.UNKNOWN);
+        assertThat(HostGuardedSandboxProvider.settlementFailureCode(
+                        HostGuardedSandboxProvider.WaitOutcome.TIMED_OUT, false))
+                .isEqualTo("TIMEOUT_TREE_UNCONFIRMED");
+    }
+
+    @Test
+    void recordsOutputReadFailureAsIncompleteDrain() {
+        InputStream failedInput = new InputStream() {
+            @Override
+            public int read() throws IOException {
+                throw new IOException("simulated output read failure");
+            }
+        };
+
+        var output = HostGuardedSandboxProvider.read(
+                failedInput,
+                4096,
+                io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                io.haifa.agent.execution.api.ExecutionOutputObserver.noop(),
+                io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.RETAIN_HEAD_TAIL,
+                new java.util.concurrent.atomic.AtomicBoolean());
+
+        assertThat(output.truncated()).isTrue();
+        assertThat(output.complete()).isFalse();
+    }
+
+    @Test
     void reportsScratchCleanupFailureWithoutExposingItsPhysicalPath() throws Exception {
         Fixture fixture =
                 fixture(root, "workspace-cleanup-failure", "binding-cleanup-failure", "location-cleanup-failure");
@@ -729,15 +797,16 @@ class HostSandboxIT {
         var profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("scratch-cleanup-failure", "1"),
                 provider.configurationDigest(),
-                Set.of("/bin/sh"),
                 Set.of(),
-                false);
+                hostBaselineEnvironment().keySet(),
+                true);
 
         try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
             var result = session.execute(new SandboxExecution(
-                    ExecutionCommand.direct(List.of("/bin/sh", "-c", "printf cleanup-probe")),
+                    ExecutionCommand.shell(
+                            isWindows() ? "[Console]::Out.Write('cleanup-probe')" : "printf cleanup-probe"),
                     WorkspacePath.root(fixture.workspaceId),
-                    Map.of(),
+                    hostBaselineEnvironment(),
                     new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2),
                     ExecutionInput.none(),
                     ExecutionScratchSpaceSpec.genericRequired()));

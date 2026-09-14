@@ -15,6 +15,11 @@ COMPLETED is only a marker and clears the pending payload. Recovery reads ToolCa
 facts can be repaired from an already saved result without dispatching a tool. Unknown outcomes terminate with
 TOOL_OUTCOME_UNKNOWN. Runtime does not invoke a reconciliation provider or schedule a retry for them.
 
+`ToolPipeline` computes each invocation deadline as the smaller of the frozen Tool Definition timeout and the Run's
+remaining active `maxWallTimeMillis`. Exhausted Run time is rejected before Provider dispatch. Providers may use a
+small bounded settlement window after the deadline to terminate process trees, drain output and clean resources; the
+Runtime deadline remains a hard execution budget and does not become command-success interpretation.
+
 ## Intentional continuation and interrupted execution
 
 Checkpoint stores only Run ID, next iteration and forced-context-rebuild count at intentional pause/interaction

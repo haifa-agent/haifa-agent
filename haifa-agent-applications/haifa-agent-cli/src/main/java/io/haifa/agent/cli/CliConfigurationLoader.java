@@ -552,6 +552,10 @@ final class CliConfigurationLoader {
 
     private static CliConfiguration.Execution execution(
             Map<String, Object> source, CliConfiguration.Execution defaults) {
+        if (source.containsKey("defaultTimeoutMillis")) {
+            throw new IllegalArgumentException(
+                    "execution.defaultTimeoutMillis was removed; use per-call timeoutMillis or maxTimeoutMillis");
+        }
         String shell = text(source, "shell", defaults.shell());
         String shellPathValue = nullableText(source, "shellPath");
         java.nio.file.Path shellPath = shellPathValue == null ? null : java.nio.file.Path.of(shellPathValue);
@@ -559,10 +563,6 @@ final class CliConfigurationLoader {
                 text(source, "provider", defaults.provider()),
                 shell,
                 shellPath,
-                Duration.ofMillis(number(
-                        source,
-                        "defaultTimeoutMillis",
-                        defaults.defaultTimeout().toMillis())),
                 Duration.ofMillis(number(
                         source, "maxTimeoutMillis", defaults.maximumTimeout().toMillis())),
                 Math.toIntExact(number(source, "maxOutputBytes", defaults.maxOutputBytes())),
