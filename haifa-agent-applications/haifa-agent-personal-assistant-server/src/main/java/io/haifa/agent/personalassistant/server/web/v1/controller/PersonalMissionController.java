@@ -100,7 +100,7 @@ public final class PersonalMissionController {
         Optional<PriorResearchContext> priorContext = Optional.empty();
         if (request.previousMissionId() != null && !request.previousMissionId().isBlank()) {
             String previousMissionId = text(request.previousMissionId(), "previousMissionId", 64);
-            var previous = missions.find(ownerScope(), previousMissionId)
+            var previous = missions.find(previousMissionId, ownerScope())
                     .orElseThrow(() -> new MissionException("MISSION_NOT_FOUND", "Previous mission not found"));
             if (!previous.conversationId().equals(conversationId)) {
                 throw new MissionException(
