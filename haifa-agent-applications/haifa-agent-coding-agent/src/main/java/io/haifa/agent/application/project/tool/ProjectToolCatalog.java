@@ -537,7 +537,7 @@ public final class ProjectToolCatalog {
                                 "minimum",
                                 1,
                                 "maximum",
-                                maximumExecutionTimeout.toMillis(),
+                                Math.toIntExact(maximumExecutionTimeout.toMillis()),
                                 "description",
                                 "Optional explicit limit. When omitted, the product maximum is used; the Run "
                                         + "deadline may further reduce the effective timeout."));
