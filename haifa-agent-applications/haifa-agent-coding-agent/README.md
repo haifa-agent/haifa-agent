@@ -51,23 +51,22 @@ Coding Agent 不再向模型上下文注入 `ORIENT/PLAN/CHANGE/VERIFY/REVIEW/DE
 未解决的确定性阻塞、硬预算限制以及提交/推送/PR 意图），不满足要求时阻止任务完成，满足时中性放行。
 ANALYZE/REVIEW 任务保持只读约束；修改工作区不会隐式产生 commit、push 或 PR 意图。
 
-`execution_run` 2.0.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
+`execution_run` 3.0.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
 可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
-失败结果同样保留执行状态、可选退出码、墙钟耗时、截断标记、bounded 合并输出和稳定失败/动作码，
-并通过权威 `ToolResult` 进入后续模型上下文。默认只接受退出码 0；调用方只有在命令文档明确把某个
-非零退出定义为正常观察结果时，才可通过同时包含 0 和该值的 `expectedExitCodes` 显式声明。普通未声明
-非零退出保持 `COMMAND_FAILED`；只有执行器明确报告可执行文件或工具链缺失时才使用
-`DEPENDENCY_UNAVAILABLE`，不会从普通命令输出关键词推断。
+任何正常退出都以唯一 `processState=EXITED` 和原始 exit code 通过权威 `ToolResult` 进入后续模型上下文；
+`ToolResult.successful=true` 只表示执行结果已可靠交付，不表示命令业务成功。模型读取 bounded 输出和
+退出码判断下一步。进程无法启动、Timeout、Cancel、资源限制和未知终止继续保留稳定失败/动作码；只有
+执行器明确报告可执行文件或工具链缺失时才使用 `DEPENDENCY_UNAVAILABLE`，不会从普通输出关键词推断。
 
 ## 自主交付模式与完成证据
 
 Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/REVIEW` 模式；没有可信模式时保持
 `UNKNOWN`，不从普通用户文本的关键词推断意图。模型消息不能改变模式，也不能制造交付证据。
 
-`CodingDeliveryEvidenceLedger` 只从当前 canonical ToolCall 的结构化结果重建工作区修改、验证、只读检查、
-阻塞和有证据的 No-change 事实；不回退读取 AgentStep 结果，也不兼容旧 dotted Tool identity 或旧验证
-schema。模型自由文本不构成修改或验证通过证据。文件变更事实来自成功的 Mutation ToolCall；Coding 产品
+`CodingDeliveryEvidenceLedger` 只从当前 canonical ToolCall 的结构化结果重建工作区修改、验证尝试、只读检查
+和阻塞事实；不回退读取 AgentStep 结果，也不兼容旧 dotted Tool identity 或旧验证 schema。模型自由文本
+不构成修改或验证通过证据。文件变更事实来自成功的 Mutation ToolCall；Coding 产品
 不维护仓库基线或 Git/Plain Change Review 链，也不会为此执行隐藏的 Git 探测。
 
 `CodingCompletionPolicy` 对 CHANGE/CREATE 始终要求权威修改或受限 No-change 事实；验证 blocker 只在
@@ -75,20 +74,20 @@ Session 冻结配置的显式 `requiresValidationEvidence` 事实为真时产生
 `CodingSessionVerificationConfiguration.freeze` 一次性推导并随 digest 冻结：来源为用户显式
 （`USER_EXPLICIT`）或仓库指令（`REPOSITORY_INSTRUCTIONS`）的候选构成必须完成的验证要求；
 `BUILD_CONFIGURATION`、`ADJACENT_TEST`、`ECOSYSTEM_DEFAULT` 候选只是推荐，环境恰好存在 Maven/pytest
-不构成验证承诺，普通文档或配置写入不会被强制送入 Build/Test 补救循环。最新一次权威验证失败始终阻塞完成，
-即使失败类别已经确认也不能绕过。`DIFF_INSPECTION` 不再作为修改任务
+不构成验证承诺，普通文档或配置写入不会被强制送入 Build/Test 补救循环。需要验证时只要求最新 Workspace
+修改之后实际尝试了匹配冻结候选的命令，不从 Tool 交付状态或 exit code 推断通过/失败。`DIFF_INSPECTION` 不再作为修改任务
 完成门禁的兼容 fallback，但 DIFF 命令、只读审阅能力和对应诊断事实继续保留。ANALYZE/REVIEW 要求只读证据
 且拒绝意外修改。UNKNOWN 用于普通交互：没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；
-观察到 Workspace 修改时仍要求修改事实，验证要求同样只取决于冻结验证要求。明确承诺 commit/push/PR 的交付
-继续按冻结 `CodingDeliveryIntent` 要求有序的 stage/commit/push/PR 证据，不能以普通回复代替。需要硬性交付
-保证的调用方必须提供可信任务模式。
+观察到 Workspace 修改时仍要求修改事实，验证要求同样只取决于冻结验证要求。冻结 `CodingDeliveryIntent`
+继续限制 commit/push/PR 的授权上界，但 generic Shell 不推断这些操作是否完成；模型必须依据原始命令结果和
+必要的只读对账判断并报告。需要硬性交付保证时应使用具有独立 typed contract 的专用领域 Tool。
 
 轻量 `CodingVerificationProfile` 只保存有界候选、来源、成本、超时与触发层级，按“用户显式配置 →
 仓库指令/构建配置 → 相邻测试 → 生态默认”在每个触发层级独立选择，不引入语言插件框架。验证阶梯仍由
 Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影响模块和最终门禁。TEST/BUILD Tool Result
 保留每次结构化 Validation Attempt；候选在 Coding Session 创建时由可信 Host 冻结到 Session metadata，
-重启后按摘要与精确命令匹配恢复来源和 scope。runner stdout/stderr 不作为数量或 scope 的可信来源，当前
-统一报告 `COUNTS_UNAVAILABLE`，也不会扩展 runner 专用解析器来制造虚假的完整覆盖。CLI Host 会把根目录
+重启后按摘要与精确命令匹配恢复来源和 scope。runner stdout/stderr 不作为数量或 scope 的可信来源，Attempt
+中不保存测试计数字段，也不会扩展 runner 专用解析器来制造虚假的完整覆盖。CLI Host 会把根目录
 现存且非符号链接的 `verify.ps1` 或 `verify.sh` 作为当前 OS 的平台验证候选冻结；精确命中该候选的执行即使
 没有模型提供的可选 operation-family hint，也可产生验证证据，其他未知命令不能据此冒充验证。
 
@@ -103,12 +102,12 @@ candidate。该投影不是公共 `WorkspaceSnapshot`、Capability Detector 或�
 `coding.task-outcome` 事件，也不是 Benchmark Verifier 结果，不增加新的 Core Run 状态。
 
 可信宿主还可在创建 Session 或提交新 Turn 时冻结 `WORKTREE_ONLY/LOCAL_COMMIT/REMOTE_PUSH/PULL_REQUEST`
-交付意图；默认仍是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。交付意图只表达完成目标和投影
-元数据，不授权或拦截 Git 命令。Commit、Push、PR 与其他命令一样通过唯一的 `execution_run` 进入通用
-风险分类、Policy/Approval、Workspace、Sandbox、网络权限和审计边界，不再经过 Coding 产品专用的
-Broker 前置交付门禁。系统仍从 Tool 结果投影有界交付证据；显式选择更高交付目标时，完成策略仍按顺序
-检查相应结果。证据绑定脱敏的 workspace-relative Repository Scope Digest，因此根仓、`docs/`、
-`test-config/` 等独立仓库不能互相复用拓扑、Diff、验证或结果确认事实。
+交付意图；默认仍是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。交付意图作为受信产品调用方冻结的
+授权上界保留。Coding Policy Adapter 在 evaluator/approval 前按该上界限制 Stage/Commit、Push 和 PR 写操作，
+审批不能升级当前 Run 的意图；可信的直接只读 Git/GH 不受影响，无法证明只读的 compound/wrapper 必须拆为
+直接命令或预先冻结最高所需意图。命令仍通过唯一的 `execution_run` 进入通用风险分类、Policy/Approval、
+Workspace、Sandbox、网络权限和审计边界。generic Shell 结果不投影 stage/commit/push/PR 完成或核验结论，完成策略也不据此建立
+顺序门禁；模型读取命令事实并按需执行只读对账后报告。
 
 默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为控制面事实，
 其中 Wall Time 与 Runtime 一致地排除人工交互/审批等待；预留不增加 Runtime 的总预算或时限，也不逐轮进入模型 Prompt。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
@@ -235,8 +234,8 @@ Provider、网络或受信配置变化会改变 Definition/Binding 的安全身�
 并把 Resolver 结果冻结进安全配置摘要。复合命令、未知 wrapper/alias 至少为 HIGH，但继续交给系统 Shell；
 认证环境覆盖、Credential 命令/配置和仓库路径逃逸在 Policy 与执行边界硬拒绝。模型自报的操作族不能覆盖
 可信分类、风险、审批或输出预算；直接 Git/GH 和复合形式都不因 Hint 缺失或不匹配被拒绝。结果通过
-稳定的 `riskResolutionCode`、`operationHintCode`、`failureActionCode` 和 `commandOutcomeCode` 区分
-风险提升、Hint 被忽略、可恢复失败和预期非零退出，恢复逻辑不解析 stderr 或依赖自然语言描述。
+稳定的 `riskResolutionCode`、`operationHintCode` 和 `failureActionCode` 区分风险提升、Hint 被忽略与
+基础设施/资源失败，恢复逻辑不解析 stderr 或依赖自然语言描述。
 
 Coding 审批使用 `LOW/MEDIUM/HIGH/NEVER` 阈值；风险事实先由可信解析器写入调用级 Policy Request，
 再由用户配置的阈值决定是否 ASK。兼容 `ask` 映射 LOW，`auto` 映射 NEVER，`deny` 移除通用执行能力。
@@ -283,13 +282,12 @@ scratch 空间，保持宿主 `TEMP/TMP/TMPDIR` 的普通 OS 语义以支持多�
 显式配置进程数预算且进程树超限收敛时返回 `PROCESS_LIMIT_EXCEEDED`，不会伪装成 `OUTCOME_UNKNOWN`。已持久化的
 ExecutionResult 是权威执行事实。Coding 产品不再维护 Change Review Artifact 或 Repository Baseline；
 需要检查当前变更时，模型通过已披露的只读文件/Diff 能力或 `execution_run` 按需读取，不制造完成证据。
-命中冻结验证候选时生成的 `validationAttemptRef` 同样属于严格 Schema 契约，并在直接返回与只读
-reconcile 路径使用同一份冻结定义校验。
-Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版本。普通命令默认只接受退出码 0；
-例如只有调用方为 `git diff --exit-code`、`git diff --no-index`、`git grep` 或 `rg` 显式声明
-`expectedExitCodes: [0, 1]` 时，退出 1 才作为 `EXPECTED_VARIANT/DECLARED_EXPECTED_EXIT_CODE` 进入证据。
-无效 revision 的 128 和未声明的 Build/Test 非零退出仍是失败，Timeout/Cancel/未知终止不能通过该字段
-改写为成功，也不得自动重放。
+已实际 dispatch 且精确命中冻结验证候选时生成的 `validationAttemptRef` 同样属于严格 Schema 契约，并在
+直接返回与只读 reconcile 路径使用同一份冻结定义校验；`operationFamily` 标签不能制造验证尝试，正常退出、
+超时或基础执行失败都只保留“已尝试”事实，不推断验证通过或失败。
+Tool Result 不增加第二套命令语义字段；正常进程只返回 `processState=EXITED`、原始 exit code、bounded 输出
+和关联引用。Coding/Runtime 不维护命令或退出码白名单，也不据此生成验证通过或交付完成事实。
+Timeout、Cancel、资源限制与未知终止不能改写为正常退出，未知副作用不得自动重放。
 执行命令已经从受控 Workspace 启动。模型必须从安全 Registry 投影选择 `workspaceRef`，并以 `relativeWorkdir`
 表达该活动根下的目录；Host Adapter 再解析为 `WorkspacePath` 与受保护物理目录。绝对 workdir、UNC/盘符、遍历、
 链接逃逸、失效或撤销的 root 都在进入 Broker 前结构化拒绝。直接 `git -C` 返回不产生 Policy Decision 的
