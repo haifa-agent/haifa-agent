@@ -776,8 +776,10 @@ public final class TerminalUiReducer {
                         : String.valueOf(model.contextWindow());
         String summary = model.displayName() + " · "
                 + model.recommendedPreferences().responseMode().name() + " · " + context;
-        if (model.state().connection() != CodingModelState.Connection.CONNECTED) {
-            return summary + " · [未登录/凭据不可用]";
+        if (model.state().connection() == CodingModelState.Connection.LOGIN_REQUIRED) {
+            return summary + " · [需要登录]";
+        } else if (model.state().connection() == CodingModelState.Connection.REAUTH_REQUIRED) {
+            return summary + " · [登录已失效，请重新认证]";
         }
         return summary;
     }

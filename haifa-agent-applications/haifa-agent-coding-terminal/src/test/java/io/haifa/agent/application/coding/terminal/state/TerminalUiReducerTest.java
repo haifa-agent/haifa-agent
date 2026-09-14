@@ -731,7 +731,54 @@ class TerminalUiReducerTest {
                 TerminalUiState.initial(120, 40), new TerminalUiAction.SessionLoaded(sessionView, List.of()));
 
         assertThat(state.footer().model()).contains("Claude 3.7 Sonnet");
-        assertThat(state.footer().model()).endsWith(" · [未登录/凭据不可用]");
+        assertThat(state.footer().model()).endsWith(" · [需要登录]");
+    }
+
+    @Test
+    void modelFooterSummaryIndicatesReauthRequiredModel() {
+        TerminalUiReducer reducer = new TerminalUiReducer();
+        CodingSessionSummary summary = new CodingSessionSummary(
+                new AgentSessionId("session-1"),
+                new ProjectId("project-1"),
+                "session",
+                AgentSessionStatus.ACTIVE,
+                Optional.empty(),
+                Optional.empty(),
+                0,
+                Instant.EPOCH,
+                0);
+        CodingModelOption reauthOption = new CodingModelOption(
+                "claude-3-7-sonnet",
+                "Claude 3.7 Sonnet",
+                "anthropic",
+                "Anthropic",
+                Set.of("TEXT_CHAT", "TOOL_CALLING"),
+                200_000,
+                16_000,
+                new CodingModelState(
+                        CodingModelState.Connection.REAUTH_REQUIRED,
+                        CodingModelState.BindingAvailability.AVAILABLE,
+                        CodingModelState.RuntimeStatus.NORMAL,
+                        CodingModelState.RunScope.IDLE),
+                "",
+                CodingModelControls.unavailable(),
+                CodingModelPreferences.recommended(),
+                Optional.empty());
+        CodingSessionView sessionView = new CodingSessionView(
+                summary,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                "sha256:test",
+                "cli-coding@1.0.0",
+                new CodingModelSelection(reauthOption, 0, true),
+                Optional.empty());
+
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40), new TerminalUiAction.SessionLoaded(sessionView, List.of()));
+
+        assertThat(state.footer().model()).contains("Claude 3.7 Sonnet");
+        assertThat(state.footer().model()).endsWith(" · [登录已失效，请重新认证]");
     }
 
     private static AgentRunEvent event(long sequence, String id, AgentRunEvent.Payload payload) {

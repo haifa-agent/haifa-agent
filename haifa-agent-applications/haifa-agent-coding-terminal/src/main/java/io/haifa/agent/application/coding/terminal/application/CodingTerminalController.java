@@ -334,8 +334,8 @@ public final class CodingTerminalController implements AutoCloseable {
                         "model-readiness",
                         "Model credential unavailable",
                         List.of(
-                                "Connect / Log in to model (/login)",
                                 "Switch model (/model)",
+                                "Connect / Log in to model (/login)",
                                 "Keep draft and dismiss"),
                         0)));
             }
@@ -1329,8 +1329,10 @@ public final class CodingTerminalController implements AutoCloseable {
                 Runnable completion;
                 try {
                     CodingAuthenticationView connected = authentication.saveApiKey(providerId, owned);
-                    completion = () -> apply(
-                            new TerminalUiAction.StatusChanged("API key connected for " + connected.accountLabel()));
+                    completion = () -> {
+                        apply(new TerminalUiAction.StatusChanged("API key connected for " + connected.accountLabel()));
+                        scheduleReconcile();
+                    };
                 } catch (ProjectProductException exception) {
                     completion = () -> apply(new TerminalUiAction.RecoverableFailure(exception.code()));
                 } catch (IllegalArgumentException
@@ -1514,8 +1516,8 @@ public final class CodingTerminalController implements AutoCloseable {
             case "model-readiness" -> {
                 apply(new TerminalUiAction.SelectorClosed());
                 switch (selected) {
-                    case 0 -> openAuthenticationLoginSelector();
-                    case 1 -> openModelSelector("");
+                    case 0 -> openModelSelector("");
+                    case 1 -> openAuthenticationLoginSelector();
                     default -> {}
                 }
             }
@@ -2047,6 +2049,9 @@ public final class CodingTerminalController implements AutoCloseable {
             outputCursor = new RunOutputCursor(received.event().sequence());
         }
         state = reducer.reduce(state, action);
+        if (action instanceof TerminalUiAction.AuthenticationCompleted) {
+            scheduleReconcile();
+        }
         if (action instanceof TerminalUiAction.RunEventReceived received
                 && received.event().payload() instanceof RunEventPayloads.InteractionLifecycle lifecycle
                 && !lifecycle.state().equals("PENDING")
