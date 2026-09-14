@@ -18,6 +18,7 @@ record CliArguments(
         Optional<CliTraceMode> trace,
         Optional<Path> traceFile,
         boolean terminal,
+        boolean quiet,
         boolean verbose,
         boolean help) {
 
@@ -32,6 +33,7 @@ record CliArguments(
         CliTraceMode trace = null;
         Path traceFile = null;
         boolean terminal = false;
+        boolean quiet = false;
         boolean verbose = false;
         boolean help = false;
         boolean resumeCommand = false;
@@ -48,6 +50,7 @@ record CliArguments(
             switch (value) {
                 case "-h", "--help" -> help = true;
                 case "--terminal" -> terminal = true;
+                case "--quiet" -> quiet = true;
                 case "--verbose" -> verbose = true;
                 case "-m", "--message" -> message = requireValue(values, ++index, value);
                 case "--workspace" -> workspace = Path.of(requireValue(values, ++index, value));
@@ -104,6 +107,7 @@ record CliArguments(
                 Optional.ofNullable(trace),
                 Optional.ofNullable(traceFile),
                 terminal,
+                quiet,
                 verbose,
                 help);
     }

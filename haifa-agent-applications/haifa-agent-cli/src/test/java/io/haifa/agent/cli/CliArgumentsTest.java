@@ -45,6 +45,7 @@ class CliArgumentsTest {
             "jsonl",
             "--trace-file",
             "logs/trace.jsonl",
+            "--quiet",
             "--verbose"
         });
 
@@ -56,6 +57,7 @@ class CliArgumentsTest {
         assertThat(values.trace()).contains(CliTraceMode.JSONL);
         assertThat(values.traceFile()).contains(Path.of("logs", "trace.jsonl"));
         assertThat(values.terminal()).isFalse();
+        assertThat(values.quiet()).isTrue();
         assertThat(values.verbose()).isTrue();
     }
 

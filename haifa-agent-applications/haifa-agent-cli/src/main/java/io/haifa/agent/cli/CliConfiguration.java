@@ -6,6 +6,7 @@ import io.haifa.agent.model.anthropic.AnthropicMessagesDialects;
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
@@ -356,8 +357,54 @@ record CliConfiguration(
             int contextWindow,
             int maxOutputTokens,
             ModelReasoningMode reasoningMode,
+            ModelReasoningEffort reasoningEffort,
+            boolean reasoningModeConfigured,
             String originator,
             String userAgent) {
+        Model(
+                String providerId,
+                String providerDisplayName,
+                String modelId,
+                URI providerEndpoint,
+                URI endpoint,
+                String credentialRef,
+                ApiStyleId style,
+                String dialect,
+                boolean nativeStreaming,
+                String workspaceId,
+                String region,
+                String id,
+                String displayName,
+                Set<ModelCapability> capabilities,
+                int contextWindow,
+                int maxOutputTokens,
+                ModelReasoningMode reasoningMode,
+                String originator,
+                String userAgent) {
+            this(
+                    providerId,
+                    providerDisplayName,
+                    modelId,
+                    providerEndpoint,
+                    endpoint,
+                    credentialRef,
+                    style,
+                    dialect,
+                    nativeStreaming,
+                    workspaceId,
+                    region,
+                    id,
+                    displayName,
+                    capabilities,
+                    contextWindow,
+                    maxOutputTokens,
+                    reasoningMode,
+                    null,
+                    true,
+                    originator,
+                    userAgent);
+        }
+
         Model(
                 String providerId,
                 String providerDisplayName,
@@ -393,6 +440,8 @@ record CliConfiguration(
                     contextWindow,
                     maxOutputTokens,
                     ModelReasoningMode.DISABLED,
+                    null,
+                    false,
                     null,
                     null);
         }
@@ -434,6 +483,8 @@ record CliConfiguration(
                     maxOutputTokens,
                     reasoningMode,
                     null,
+                    true,
+                    null,
                     null);
         }
 
@@ -448,6 +499,9 @@ record CliConfiguration(
             dialect = text(dialect, "model.dialect");
             capabilities = Set.copyOf(Objects.requireNonNull(capabilities, "model.capabilities must not be null"));
             reasoningMode = Objects.requireNonNull(reasoningMode, "model.reasoningMode must not be null");
+            if (reasoningEffort != null && reasoningModeConfigured && reasoningMode == ModelReasoningMode.DISABLED) {
+                throw new IllegalArgumentException("model.reasoningEffort requires enabled reasoning");
+            }
             if (capabilities.isEmpty()) throw new IllegalArgumentException("model.capabilities must not be empty");
             if (reasoningMode != ModelReasoningMode.DISABLED && !capabilities.contains(ModelCapability.REASONING)) {
                 throw new IllegalArgumentException("enabled model reasoning requires REASONING capability");

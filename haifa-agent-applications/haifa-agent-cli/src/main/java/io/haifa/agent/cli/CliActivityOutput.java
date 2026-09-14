@@ -1,0 +1,157 @@
+package io.haifa.agent.cli;
+
+import io.haifa.agent.runtime.api.AgentRunOutputEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputListener;
+import java.io.PrintStream;
+import java.time.Duration;
+import java.util.Objects;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import java.util.function.LongSupplier;
+
+/** Renders content-free one-shot CLI activity without exposing private reasoning. */
+final class CliActivityOutput implements AutoCloseable {
+    static final Duration NON_TTY_INITIAL_DELAY = Duration.ofSeconds(30);
+    static final Duration NON_TTY_INTERVAL = Duration.ofSeconds(60);
+    private static final int STATUS_CLEAR_WIDTH = 96;
+
+    private final PrintStream output;
+    private final PrintStream error;
+    private final boolean statusEnabled;
+    private final boolean tty;
+    private final LongSupplier nanoTime;
+    private final ScheduledExecutorService scheduler;
+    private ScheduledFuture<?> periodicStatus;
+    private final AtomicBoolean streamed = new AtomicBoolean();
+    private State state = State.IDLE;
+    private long startedNanos;
+    private boolean closed;
+
+    static CliActivityOutput attach(
+            Consumer<AgentRunOutputListener> registrar,
+            PrintStream output,
+            PrintStream error,
+            boolean statusEnabled,
+            boolean tty) {
+        CliActivityOutput renderer = new CliActivityOutput(output, error, statusEnabled, tty, System::nanoTime, true);
+        registrar.accept(renderer::onOutput);
+        return renderer;
+    }
+
+    CliActivityOutput(
+            PrintStream output,
+            PrintStream error,
+            boolean statusEnabled,
+            boolean tty,
+            LongSupplier nanoTime,
+            boolean schedulePeriodicStatus) {
+        this.output = Objects.requireNonNull(output, "output must not be null");
+        this.error = Objects.requireNonNull(error, "error must not be null");
+        this.statusEnabled = statusEnabled;
+        this.tty = tty;
+        this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime must not be null");
+        if (statusEnabled && !tty && schedulePeriodicStatus) {
+            scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "haifa-cli-activity");
+                thread.setDaemon(true);
+                return thread;
+            });
+        } else {
+            scheduler = null;
+        }
+    }
+
+    AtomicBoolean streamed() {
+        return streamed;
+    }
+
+    synchronized void onOutput(AgentRunOutputEvent event) {
+        if (closed) return;
+        Objects.requireNonNull(event, "event must not be null");
+        switch (event.type()) {
+            case RUN_OUTPUT_STARTED -> {
+                state = State.WAITING;
+                startedNanos = nanoTime.getAsLong();
+                if (statusEnabled && tty) renderTtyStatus();
+                scheduleNonTtyStatus();
+            }
+            case MODEL_ACTIVITY -> {
+                if (state == State.WAITING || state == State.THINKING) {
+                    state = State.THINKING;
+                    if (statusEnabled && tty) renderTtyStatus();
+                }
+            }
+            case ASSISTANT_TEXT_DELTA -> renderContent(event.textDelta());
+            case ASSISTANT_TEXT_COMMITTED, RUN_OUTPUT_FAILED, RUN_OUTPUT_SUPERSEDED -> finishStatus();
+        }
+    }
+
+    synchronized void emitNonTtyStatus() {
+        if (closed || !statusEnabled || tty || (state != State.WAITING && state != State.THINKING)) return;
+        error.printf("[status] %s elapsed=%ds%n", statusText(), elapsedSeconds());
+        error.flush();
+    }
+
+    private void renderContent(String delta) {
+        if (delta.isEmpty()) return;
+        if (statusEnabled && tty && (state == State.WAITING || state == State.THINKING)) clearTtyStatus();
+        state = State.CONTENT;
+        if (streamed.compareAndSet(false, true)) output.print("[stream] ");
+        output.print(delta);
+        output.flush();
+    }
+
+    private void renderTtyStatus() {
+        error.printf("\r%s elapsed=%ds", statusText(), elapsedSeconds());
+        error.flush();
+    }
+
+    private String statusText() {
+        return state == State.THINKING ? "Model is thinking..." : "Waiting for model...";
+    }
+
+    private long elapsedSeconds() {
+        return TimeUnit.NANOSECONDS.toSeconds(Math.max(0, nanoTime.getAsLong() - startedNanos));
+    }
+
+    private void finishStatus() {
+        if (statusEnabled && tty && (state == State.WAITING || state == State.THINKING)) clearTtyStatus();
+        state = State.IDLE;
+        if (periodicStatus != null) periodicStatus.cancel(false);
+        periodicStatus = null;
+    }
+
+    private void scheduleNonTtyStatus() {
+        if (scheduler == null) return;
+        if (periodicStatus != null) periodicStatus.cancel(false);
+        periodicStatus = scheduler.scheduleAtFixedRate(
+                this::emitNonTtyStatus,
+                NON_TTY_INITIAL_DELAY.toMillis(),
+                NON_TTY_INTERVAL.toMillis(),
+                TimeUnit.MILLISECONDS);
+    }
+
+    private void clearTtyStatus() {
+        error.print("\r" + " ".repeat(STATUS_CLEAR_WIDTH) + "\r");
+        error.flush();
+    }
+
+    @Override
+    public synchronized void close() {
+        if (closed) return;
+        finishStatus();
+        closed = true;
+        if (scheduler != null) scheduler.shutdownNow();
+    }
+
+    private enum State {
+        IDLE,
+        WAITING,
+        THINKING,
+        CONTENT
+    }
+}

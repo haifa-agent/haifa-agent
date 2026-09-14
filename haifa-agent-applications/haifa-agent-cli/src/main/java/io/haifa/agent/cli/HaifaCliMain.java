@@ -3,7 +3,6 @@ package io.haifa.agent.cli;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jCodingTerminal;
 import io.haifa.agent.core.run.AgentRunStatus;
-import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
@@ -105,9 +104,10 @@ public final class HaifaCliMain {
                     LocalCodingAgent agent = standalone.localAgent();
                     java.util.concurrent.atomic.AtomicReference<AgentRunOutputListener> outputListener =
                             new java.util.concurrent.atomic.AtomicReference<>();
-                    AtomicBoolean streamed = attachStreamingOutput(outputListener::set, output);
+                    CliActivityOutput activityOutput = CliActivityOutput.attach(
+                            outputListener::set, output, error, !parsed.quiet(), System.console() != null);
                     if (parsed.verbose()) output.println("Submitting coding task in " + workspace.getFileName());
-                    if (parsed.verbose()) output.println("DeepSeek thinking disabled. Waiting for stream...");
+                    if (parsed.verbose()) output.println(LocalCodingAgent.reasoningSummary(configuration));
                     var accepted = agent.start(parsed.message().orElseThrow());
                     var outputSubscription = agent.runtime()
                             .subscribeOutput(
@@ -126,19 +126,25 @@ public final class HaifaCliMain {
                                 agent, accepted.runId(), configuration.timeout(), configuration.approval(), output);
                     } finally {
                         outputSubscription.close();
+                        activityOutput.close();
                         removeShutdownHook(shutdownHook);
                     }
                     if (!completed.status().isTerminal()) {
-                        agent.cancel(accepted.runId());
+                        agent.timeout(accepted.runId());
                         completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(3));
                     }
-                    if (streamed.get()) output.println();
+                    if (activityOutput.streamed().get()) output.println();
                     else completed.output().ifPresent(output::println);
                     if (parsed.verbose())
                         output.println("Reasoning tokens: " + agent.reasoningTokens(accepted.runId()));
                     if (completed.status().isTerminal()
                             && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
                         return 0;
+                    }
+                    if (completed.status() == AgentRunStatus.TIMEOUT
+                            || !completed.status().isTerminal()) {
+                        error.println("Task exceeded the CLI timeout of " + configuration.timeout() + ".");
+                        return 124;
                     }
                     completed.error().ifPresent(value -> {
                         LOGGER.log(
@@ -154,8 +160,6 @@ public final class HaifaCliMain {
                         value.optionalDiagnosticId()
                                 .ifPresent(diagnosticId -> error.println("Diagnostic ID: " + diagnosticId));
                     });
-                    if (!completed.status().isTerminal())
-                        error.println("Task did not complete before the CLI timeout.");
                     return 2;
                 }
             }
@@ -186,15 +190,7 @@ public final class HaifaCliMain {
     }
 
     static AtomicBoolean attachStreamingOutput(Consumer<AgentRunOutputListener> registrar, PrintStream output) {
-        AtomicBoolean streamed = new AtomicBoolean();
-        registrar.accept(event -> {
-            if (event.type() != AgentRunOutputEventType.ASSISTANT_TEXT_DELTA
-                    || event.textDelta().isEmpty()) return;
-            if (streamed.compareAndSet(false, true)) output.print("[stream] ");
-            output.print(event.textDelta());
-            output.flush();
-        });
-        return streamed;
+        return CliActivityOutput.attach(registrar, output, output, false, false).streamed();
     }
 
     private static io.haifa.agent.runtime.api.AgentRunSnapshot await(
@@ -316,6 +312,7 @@ public final class HaifaCliMain {
                       --timeout <duration>   ISO-8601 duration, e.g. PT5M
                       --trace <mode>         summary, detail, or jsonl
                       --trace-file <path>    Write trace to a file (required for Terminal trace)
+                      --quiet                Suppress one-shot model activity status
                       --verbose              Print lifecycle details
                   -h, --help                 Show this help
                 """;

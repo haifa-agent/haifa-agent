@@ -58,15 +58,20 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
-import io.haifa.agent.model.anthropic.AnthropicMessagesDialects;
 import io.haifa.agent.model.anthropic.AnthropicMessagesModel;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelDefinitionId;
+import io.haifa.agent.model.api.ModelParameterResolutionRequest;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
+import io.haifa.agent.model.api.ModelReasoningPolicy;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.core.DefaultModelParameterResolver;
+import io.haifa.agent.model.core.PackagedModelCatalog;
 import io.haifa.agent.model.gemini.GeminiGenerateContentModel;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
@@ -120,6 +125,7 @@ import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.model.ModelAdapterKey;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
@@ -780,7 +786,15 @@ final class LocalCodingAgent implements AutoCloseable {
                                                     configuration.model().id()))
                                             : Optional.empty())
                                     .orElseThrow(() -> new IllegalArgumentException(
-                                            "MODEL_SELECTION_REQUIRED: configured model is unavailable"))))
+                                            "MODEL_SELECTION_REQUIRED: configured model is unavailable")),
+                            Map.of(),
+                            Map.of(
+                                    RuntimeControlOptions.MAX_REASONING_BYTES,
+                                    512 * 1024,
+                                    RuntimeControlOptions.MAX_REASONING_DURATION_MILLIS,
+                                    Math.min(
+                                            Duration.ofMinutes(5).toMillis(),
+                                            configuration.timeout().toMillis()))))
                     .build();
             persistence.attachProjection(runtime);
             TrustedProductCallerProvider callers = () -> new TrustedProductCaller(tenant, principal);
@@ -1050,6 +1064,16 @@ final class LocalCodingAgent implements AutoCloseable {
                 time.now()));
     }
 
+    void timeout(io.haifa.agent.core.run.AgentRunId runId) {
+        runtime.command(new RuntimeCommand(
+                new RuntimeCommandId(identifiers.nextValue()),
+                runId,
+                RuntimeCommandType.TIMEOUT,
+                RuntimeCommandArguments.NONE,
+                "cli-timeout-" + runId.value(),
+                time.now()));
+    }
+
     InteractionPort interactions() {
         return interactions;
     }
@@ -1297,6 +1321,13 @@ final class LocalCodingAgent implements AutoCloseable {
         return modelSnapshot(configuration.model());
     }
 
+    static String reasoningSummary(CliConfiguration configuration) {
+        Map<String, Object> options = modelSnapshot(configuration).invocationOptions();
+        String mode = String.valueOf(options.getOrDefault("thinking", "disabled"));
+        Object effort = options.get("reasoning_effort");
+        return effort == null ? "Reasoning: mode=" + mode : "Reasoning: mode=" + mode + ", effort=" + effort;
+    }
+
     private static CodingModelState.Connection connectionState(
             LocalModelAuthenticationService authenticationService, CliConfiguration.Model model) {
         CredentialRef credentialRef = new CredentialRef(model.credentialRef());
@@ -1315,26 +1346,28 @@ final class LocalCodingAgent implements AutoCloseable {
 
     static ResolvedModelSnapshot modelSnapshot(CliConfiguration.Model model) {
         if (OpenAiCompatibleDialects.ALIYUN_BAILIAN.equals(model.dialect())) {
-            return bailianModelSnapshot(model);
+            return resolveCatalogParameters(model, bailianModelSnapshot(model));
         }
         Map<String, Object> providerOptions = new java.util.LinkedHashMap<>();
         if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(model.style())) {
             providerOptions.putAll(OpenAiCompatibleDialects.configuredOptions(model.dialect(), model.endpoint()));
         }
-        boolean deepSeek = OpenAiCompatibleDialects.DEEPSEEK.equals(model.dialect())
-                || AnthropicMessagesDialects.DEEPSEEK.equals(model.dialect());
-        if (deepSeek) providerOptions.put("thinking", "disabled");
         Map<String, Object> invocationOptions = new java.util.LinkedHashMap<>();
-        if (deepSeek) invocationOptions.put("thinking", "disabled");
-        if (OpenAiResponsesDialects.ALIYUN_BAILIAN.equals(model.dialect())
-                && model.reasoningMode() == ModelReasoningMode.ENABLED) {
-            invocationOptions.put("reasoning_effort", "high");
+        if (model.capabilities().contains(io.haifa.agent.model.api.ModelCapability.REASONING)) {
+            invocationOptions.put("thinking", model.reasoningMode().name().toLowerCase(Locale.ROOT));
+            if (model.reasoningEffort() != null) {
+                invocationOptions.put(
+                        "reasoning_effort", model.reasoningEffort().name().toLowerCase(Locale.ROOT));
+            } else if (OpenAiResponsesDialects.ALIYUN_BAILIAN.equals(model.dialect())
+                    && model.reasoningMode() != ModelReasoningMode.DISABLED) {
+                invocationOptions.put("reasoning_effort", "high");
+            }
         }
         if (OpenAiResponsesDialects.OPENAI_CODEX.equals(model.dialect())) {
             providerOptions.put("codex_originator", model.originator());
             providerOptions.put("codex_user_agent", model.userAgent());
         }
-        return ResolvedModelSnapshot.create(
+        ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),
                 "cli-v1",
                 new ModelDefinitionId(model.id()),
@@ -1352,6 +1385,51 @@ final class LocalCodingAgent implements AutoCloseable {
                 model.maxOutputTokens(),
                 Map.copyOf(providerOptions),
                 Map.copyOf(invocationOptions));
+        return resolveCatalogParameters(model, snapshot);
+    }
+
+    private static ResolvedModelSnapshot resolveCatalogParameters(
+            CliConfiguration.Model model, ResolvedModelSnapshot snapshot) {
+        Optional<ModelBindingProfile> configuredProfile = PackagedModelCatalog.load(
+                        LocalCodingAgent.class.getClassLoader())
+                .profileFor(snapshot);
+        if (configuredProfile.isEmpty()) return snapshot;
+        ModelBindingProfile profile = configuredProfile.orElseThrow();
+        ModelReasoningMode mode =
+                model.reasoningModeConfigured() ? model.reasoningMode() : defaultReasoningMode(profile);
+        Optional<ModelReasoningEffort> effort = mode == ModelReasoningMode.DISABLED
+                ? Optional.empty()
+                : Optional.ofNullable(model.reasoningEffort()).or(() -> recommendedEffort(profile));
+        ModelReasoningPolicy reasoning = new ModelReasoningPolicy(mode, effort, java.util.OptionalLong.empty());
+        var parameters = new DefaultModelParameterResolver()
+                .resolve(
+                        profile,
+                        new ModelParameterResolutionRequest(
+                                profile.bindingId(),
+                                profile.version(),
+                                profile.digest(),
+                                reasoning,
+                                model.maxOutputTokens()));
+        return snapshot.withEffectiveParameters(parameters);
+    }
+
+    private static ModelReasoningMode defaultReasoningMode(ModelBindingProfile profile) {
+        return switch (profile.reasoningBehavior()) {
+            case NONE, OPTIONAL -> ModelReasoningMode.DISABLED;
+            case ALWAYS -> ModelReasoningMode.ENABLED;
+            case ADAPTIVE ->
+                profile.allowedReasoningModes().contains(ModelReasoningMode.ADAPTIVE)
+                        ? ModelReasoningMode.ADAPTIVE
+                        : ModelReasoningMode.ENABLED;
+        };
+    }
+
+    private static Optional<ModelReasoningEffort> recommendedEffort(ModelBindingProfile profile) {
+        if (profile.allowedReasoningEfforts().isEmpty()) return Optional.empty();
+        if (profile.allowedReasoningEfforts().contains(ModelReasoningEffort.MEDIUM)) {
+            return Optional.of(ModelReasoningEffort.MEDIUM);
+        }
+        return profile.allowedReasoningEfforts().stream().sorted().findFirst();
     }
 
     private static PublicToolPolicy workspaceAccessPolicy(
@@ -1370,6 +1448,12 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     private static ResolvedModelSnapshot bailianModelSnapshot(CliConfiguration.Model model) {
+        Map<String, Object> invocationOptions = new java.util.LinkedHashMap<>(
+                OpenAiCompatibleDialects.configuredInvocationOptions(model.dialect(), model.reasoningMode()));
+        if (model.reasoningEffort() != null) {
+            invocationOptions.put(
+                    "reasoning_effort", model.reasoningEffort().name().toLowerCase(Locale.ROOT));
+        }
         var provider = AliyunBailianProviderFactory.provider(
                 new AliyunBailianProviderFactory.ProviderConfiguration(
                         "cli-v1", model.workspaceId(), model.region(), new CredentialRef(model.credentialRef())),
@@ -1381,7 +1465,7 @@ final class LocalCodingAgent implements AutoCloseable {
                         model.capabilities(),
                         model.contextWindow(),
                         model.maxOutputTokens(),
-                        OpenAiCompatibleDialects.configuredInvocationOptions(model.dialect(), model.reasoningMode()))));
+                        Map.copyOf(invocationOptions))));
         var definition = provider.models().getFirst();
         Map<String, Object> providerOptions = new java.util.LinkedHashMap<>(provider.options());
         return ResolvedModelSnapshot.create(

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class RuntimeModelOutputPublisherTest {
@@ -34,6 +35,28 @@ class RuntimeModelOutputPublisherTest {
                 .extracting(AgentRunOutputEvent::textDelta)
                 .containsExactly("first ", "\n", "third");
         assertThat(received).extracting(AgentRunOutputEvent::sequence).containsExactly(1L, 2L, 3L, 4L, 5L);
+        subscription.close();
+    }
+
+    @Test
+    void emitsContentFreeReasoningActivityAtMostOncePerTenSecondsPerGeneration() {
+        AtomicReference<Instant> now = new AtomicReference<>(NOW);
+        RuntimeModelOutputPublisher publisher = new RuntimeModelOutputPublisher(now::get);
+        AgentRunId runId = new AgentRunId("run-activity");
+        List<AgentRunOutputEvent> received = new CopyOnWriteArrayList<>();
+        var subscription = publisher.subscribe(runId, RunOutputCursor.BEFORE_FIRST, received::add);
+
+        publisher.started(runId, "call-1", 1, 1);
+        publisher.modelActivity(runId, "call-1", 1);
+        now.set(NOW.plusSeconds(9));
+        publisher.modelActivity(runId, "call-1", 1);
+        now.set(NOW.plusSeconds(10));
+        publisher.modelActivity(runId, "call-1", 1);
+
+        assertThat(received)
+                .filteredOn(event -> event.type() == AgentRunOutputEventType.MODEL_ACTIVITY)
+                .hasSize(2)
+                .allSatisfy(event -> assertThat(event.textDelta()).isEmpty());
         subscription.close();
     }
 
