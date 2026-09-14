@@ -1621,7 +1621,6 @@ class LocalCodingAgentTest {
                 "host-guarded",
                 execution.shell(),
                 execution.shellPath(),
-                execution.defaultTimeout(),
                 execution.maximumTimeout(),
                 execution.maxOutputBytes(),
                 execution.maxOutputLines(),

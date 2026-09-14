@@ -13,7 +13,6 @@ import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -99,7 +98,6 @@ final class CliVerificationProfileDiscovery {
         target.add(new CodingVerificationCandidate(
                 command,
                 CodingVerificationCost.HIGH,
-                Duration.ofMinutes(10),
                 CodingVerificationTrigger.FINAL_GATE,
                 CodingVerificationSource.BUILD_CONFIGURATION,
                 sourceReference,
