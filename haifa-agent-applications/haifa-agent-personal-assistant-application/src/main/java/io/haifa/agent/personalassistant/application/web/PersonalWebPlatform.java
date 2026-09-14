@@ -281,7 +281,8 @@ public record PersonalWebPlatform(
                 }
                 return secret;
             }
-            return Optional.of(ref);
+            throw new IllegalArgumentException(
+                    "Personal Web Tool credential reference must use env:// or os://: " + ref);
         };
         return new DefaultCredentialBroker(secretSupplier);
     }
@@ -385,6 +386,14 @@ public record PersonalWebPlatform(
             if (enabled && credentialReference.isBlank()) {
                 throw new IllegalArgumentException(
                         "credentialReference is required when a Personal Web provider is enabled");
+            }
+            if (!credentialReference.isBlank()) {
+                boolean validRef = (credentialReference.startsWith("env://")
+                                && credentialReference.length() > "env://".length())
+                        || (credentialReference.startsWith("os://") && credentialReference.length() > "os://".length());
+                if (!validRef) {
+                    throw new IllegalArgumentException("credentialReference must use env:// or os://");
+                }
             }
             if (timeout.isZero() || timeout.isNegative()) {
                 throw new IllegalArgumentException("timeout must be positive");

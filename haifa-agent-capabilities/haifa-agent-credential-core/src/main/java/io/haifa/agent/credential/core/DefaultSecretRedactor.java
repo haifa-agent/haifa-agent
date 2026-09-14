@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 public final class DefaultSecretRedactor implements SecretRedactor {
@@ -17,7 +18,8 @@ public final class DefaultSecretRedactor implements SecretRedactor {
             Pattern.MULTILINE);
     private static final Pattern URI_USER_INFO = Pattern.compile("(?i)(https?://)[^/@\\s]+@", Pattern.MULTILINE);
 
-    private final Set<String> knownSecrets = ConcurrentHashMap.newKeySet();
+    private final Set<String> persistentSecrets = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<String, Integer> scopedSecrets = new ConcurrentHashMap<>();
 
     public DefaultSecretRedactor() {
         this(List.of());
@@ -26,7 +28,7 @@ public final class DefaultSecretRedactor implements SecretRedactor {
     public DefaultSecretRedactor(Collection<String> secrets) {
         Objects.requireNonNull(secrets, "secrets").stream()
                 .filter(s -> s != null && !s.isBlank())
-                .forEach(this.knownSecrets::add);
+                .forEach(this.persistentSecrets::add);
     }
 
     @Override
@@ -34,8 +36,13 @@ public final class DefaultSecretRedactor implements SecretRedactor {
         if (secret == null || secret.isBlank()) {
             return () -> {};
         }
-        knownSecrets.add(secret);
-        return () -> knownSecrets.remove(secret);
+        scopedSecrets.compute(secret, (k, count) -> count == null ? 1 : count + 1);
+        AtomicBoolean closed = new AtomicBoolean(false);
+        return () -> {
+            if (closed.compareAndSet(false, true)) {
+                scopedSecrets.compute(secret, (k, count) -> (count == null || count <= 1) ? null : count - 1);
+            }
+        };
     }
 
     @Override
@@ -43,18 +50,29 @@ public final class DefaultSecretRedactor implements SecretRedactor {
         if (secrets == null || secrets.isEmpty()) {
             return () -> {};
         }
-        List<String> validSecrets =
-                secrets.stream().filter(s -> s != null && !s.isBlank()).toList();
+        List<String> validSecrets = secrets.stream()
+                .filter(s -> s != null && !s.isBlank())
+                .distinct()
+                .toList();
         if (validSecrets.isEmpty()) {
             return () -> {};
         }
-        knownSecrets.addAll(validSecrets);
-        return () -> knownSecrets.removeAll(validSecrets);
+        for (String secret : validSecrets) {
+            scopedSecrets.compute(secret, (k, count) -> count == null ? 1 : count + 1);
+        }
+        AtomicBoolean closed = new AtomicBoolean(false);
+        return () -> {
+            if (closed.compareAndSet(false, true)) {
+                for (String secret : validSecrets) {
+                    scopedSecrets.compute(secret, (k, count) -> (count == null || count <= 1) ? null : count - 1);
+                }
+            }
+        };
     }
 
     public void registerSecret(String secret) {
         if (secret != null && !secret.isBlank()) {
-            knownSecrets.add(secret);
+            persistentSecrets.add(secret);
         }
     }
 
@@ -64,7 +82,12 @@ public final class DefaultSecretRedactor implements SecretRedactor {
             return text;
         }
         String redacted = text;
-        for (String secret : knownSecrets) {
+        for (String secret : persistentSecrets) {
+            if (!secret.isBlank()) {
+                redacted = redacted.replace(secret, REDACTED);
+            }
+        }
+        for (String secret : scopedSecrets.keySet()) {
             if (!secret.isBlank()) {
                 redacted = redacted.replace(secret, REDACTED);
             }
