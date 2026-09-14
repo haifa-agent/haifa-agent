@@ -209,7 +209,7 @@ class CodingTerminalLifecycleTest {
         });
         assertThat(controller.state().transcript()).anySatisfy(item -> {
             assertThat(item.title()).isEqualTo("ChatGPT Codex connection");
-            assertThat(item.body()).contains("Credentials were saved to ~/.haifa-agent/auth.json");
+            assertThat(item.body()).contains("Credentials were saved to system credential store");
             assertThat(item.status()).isEqualTo("CONNECTED");
         });
         assertThat(controller.state().status()).isEqualTo("Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)");
@@ -277,7 +277,7 @@ class CodingTerminalLifecycleTest {
         assertThat(controller.state().transcript()).anySatisfy(item -> {
             assertThat(item.title()).isEqualTo("ChatGPT Codex connection");
             assertThat(item.body())
-                    .contains("Credentials were saved to ~/.haifa-agent/auth.json", "UNOFFICIAL_LOCAL_COMPAT");
+                    .contains("Credentials were saved to system credential store", "UNOFFICIAL_LOCAL_COMPAT");
             assertThat(item.status()).isEqualTo("CONNECTED");
         });
         assertThat(controller.state().toString()).doesNotContain("client_id=test", "state=state");

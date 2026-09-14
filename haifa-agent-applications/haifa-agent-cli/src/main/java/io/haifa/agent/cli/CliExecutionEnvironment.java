@@ -29,6 +29,26 @@ final class CliExecutionEnvironment {
             Path applicationDataRoot,
             Path workspaceRoot,
             Path scratchRoot) {
+        return resolve(
+                configuration,
+                hostEnvironment,
+                operatingSystem,
+                jvmUserHome,
+                applicationDataRoot,
+                workspaceRoot,
+                scratchRoot,
+                java.util.Set.of());
+    }
+
+    static ResolvedHostEnvironment resolve(
+            CliConfiguration.Execution configuration,
+            Map<String, String> hostEnvironment,
+            String operatingSystem,
+            Path jvmUserHome,
+            Path applicationDataRoot,
+            Path workspaceRoot,
+            Path scratchRoot,
+            java.util.Set<String> deniedEnvironmentNames) {
         return HostExecutionEnvironmentResolver.resolveHostUser(
                 hostEnvironment,
                 operatingSystem,
@@ -36,6 +56,7 @@ final class CliExecutionEnvironment {
                 applicationDataRoot,
                 workspaceRoot,
                 scratchRoot,
-                configuration.inheritEnvironment());
+                configuration.inheritEnvironment(),
+                deniedEnvironmentNames);
     }
 }

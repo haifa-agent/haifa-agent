@@ -245,7 +245,7 @@ public final class TerminalUiReducer {
                             "auth-external-progress",
                             TranscriptItem.Kind.RESOURCE,
                             completed.connectionName() + " connection",
-                            "Connected. Credentials were saved to ~/.haifa-agent/auth.json." + compatibility,
+                            "Connected. Credentials were saved to system credential store." + compatibility,
                             "CONNECTED",
                             false));
             return copyWithStatus(
@@ -840,7 +840,7 @@ public final class TerminalUiReducer {
             case STARTING -> "Starting the local callback and browser sign-in flow.";
             case WAITING_USER -> "Waiting for authorization in the browser.";
             case EXCHANGING -> "Authorization received. Exchanging it for Codex credentials.";
-            case STORING -> "Codex credentials received. Saving them to ~/.haifa-agent/auth.json.";
+            case STORING -> "Codex credentials received. Saving them to system credential store.";
         };
     }
 
@@ -863,7 +863,7 @@ public final class TerminalUiReducer {
                     case "AUTH_TOKEN_RESPONSE_INVALID", "AUTH_TOKEN_ACCOUNT_INVALID" ->
                         "The token response could not be accepted. Verify the client registration and retry /login.";
                     case "AUTH_STORE_FAILED" ->
-                        "Token exchange completed, but ~/.haifa-agent/auth.json could not be written. Check its permissions and lock file.";
+                        "Token exchange completed, but credentials could not be written to the system credential store.";
                     case "AUTH_CALLBACK_TIMEOUT" ->
                         "The local callback did not arrive before the login attempt expired. Retry /login.";
                     default ->

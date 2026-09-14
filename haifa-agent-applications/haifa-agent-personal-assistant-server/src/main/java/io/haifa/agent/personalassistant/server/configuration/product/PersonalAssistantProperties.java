@@ -182,8 +182,11 @@ public record PersonalAssistantProperties(
                 throw new IllegalArgumentException("web.endpoint must be an absolute HTTPS URI");
             }
             credentialReference = text(credentialReference, "web.credentialReference");
-            if (!credentialReference.startsWith("env://") || credentialReference.length() == "env://".length()) {
-                throw new IllegalArgumentException("web.credentialReference must use env://");
+            boolean validRef = (credentialReference.startsWith("env://")
+                            && credentialReference.length() > "env://".length())
+                    || (credentialReference.startsWith("os://") && credentialReference.length() > "os://".length());
+            if (!validRef) {
+                throw new IllegalArgumentException("web.credentialReference must use env:// or os://");
             }
             if (timeoutMillis < 1000 || timeoutMillis > 120_000) {
                 throw new IllegalArgumentException("web.timeoutMillis must be between 1000 and 120000");
@@ -319,11 +322,14 @@ public record PersonalAssistantProperties(
             }
             validateModelProxy(proxy);
             credentialReference = text(credentialReference, "modelProvider.credentialReference");
-            if ((!credentialReference.startsWith("env://") || credentialReference.length() == "env://".length())
-                    && (!credentialReference.startsWith("model-auth://")
-                            || credentialReference.length() == "model-auth://".length())) {
+            boolean validRef = (credentialReference.startsWith("env://")
+                            && credentialReference.length() > "env://".length())
+                    || (credentialReference.startsWith("os://") && credentialReference.length() > "os://".length())
+                    || (credentialReference.startsWith("model-auth://")
+                            && credentialReference.length() > "model-auth://".length());
+            if (!validRef) {
                 throw new IllegalArgumentException(
-                        "modelProvider.credentialReference must use env:// or model-auth://");
+                        "modelProvider.credentialReference must use env://, os://, or model-auth://");
             }
             apiBindings = List.copyOf(apiBindings == null ? List.of() : apiBindings);
             if (apiBindings.stream().map(ApiBinding::style).distinct().count() != apiBindings.size()) {

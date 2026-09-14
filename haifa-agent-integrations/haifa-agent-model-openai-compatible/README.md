@@ -281,9 +281,8 @@ OPENAI_MODEL_ID=<model-id>
 HAIFA_OPENAI_RESPONSES_TOOL_LIVE_TEST=true
 ```
 
-ChatGPT Codex 订阅凭据冒烟由 `OpenAiCodexLiveIT` 覆盖。它默认读取当前用户的
-`~/.haifa-agent/auth.json`（可用 `HAIFA_CODEX_AUTH_FILE` 覆盖），只解析
-`model-auth://openai-codex/default`，并要求显式启用后才进行一次真实调用：
+ChatGPT Codex 订阅凭据冒烟由 `OpenAiCodexLiveIT` 覆盖。它默认从操作系统凭据管理器
+读取 `model-auth://openai-codex/default`，并要求显式启用后才进行一次真实调用：
 
 ```powershell
 $env:HAIFA_CODEX_LIVE_TEST = 'true'

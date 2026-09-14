@@ -18,16 +18,28 @@ public final class LocalModelAuthenticationService implements AutoCloseable {
     private final Optional<ExternalLoginCoordinator> coordinator;
     private final CredentialResolver credentialResolver;
     private final Function<String, String> environment;
+    private final Function<String, Optional<String>> osStore;
 
     public LocalModelAuthenticationService(
             LocalModelAuthStore store,
             Optional<ExternalLoginCoordinator> coordinator,
             CredentialResolver credentialResolver,
             Function<String, String> environment) {
+        this(store, coordinator, credentialResolver, environment, name -> WindowsCredentialManagerClient.defaultClient()
+                .read("haifa:os:" + name));
+    }
+
+    public LocalModelAuthenticationService(
+            LocalModelAuthStore store,
+            Optional<ExternalLoginCoordinator> coordinator,
+            CredentialResolver credentialResolver,
+            Function<String, String> environment,
+            Function<String, Optional<String>> osStore) {
         this.store = Objects.requireNonNull(store, "store must not be null");
         this.coordinator = Objects.requireNonNull(coordinator, "coordinator must not be null");
         this.credentialResolver = Objects.requireNonNull(credentialResolver, "credentialResolver must not be null");
         this.environment = Objects.requireNonNull(environment, "environment must not be null");
+        this.osStore = Objects.requireNonNull(osStore, "osStore must not be null");
     }
 
     public List<LocalModelConnectionView> connections() {
@@ -48,6 +60,17 @@ public final class LocalModelAuthenticationService implements AutoCloseable {
             }
             String secret = environment.apply(name);
             return secret == null || secret.isBlank();
+        }
+        if (value.startsWith("os://")) {
+            String name = value.substring("os://".length());
+            if (!name.matches("[A-Za-z_][A-Za-z0-9_-]*")) {
+                throw new IllegalArgumentException("AUTH_OS_CREDENTIAL_REFERENCE_INVALID");
+            }
+            try {
+                return osStore.apply(name).filter(s -> !s.isBlank()).isEmpty();
+            } catch (RuntimeException exception) {
+                return true;
+            }
         }
         if (value.startsWith("model-auth://")) {
             return store.find(LocalModelAuthReference.parse(value)).isEmpty();
@@ -139,5 +162,33 @@ public final class LocalModelAuthenticationService implements AutoCloseable {
             throw new IllegalArgumentException("AUTH_PROVIDER_INVALID");
         }
         return provider;
+    }
+
+    public static Optional<String> legacyAuthFileNotice() {
+        String userHome = System.getProperty("user.home");
+        if (userHome != null && !userHome.isBlank()) {
+            java.nio.file.Path legacy = java.nio.file.Path.of(userHome, ".haifa-agent", "auth.json");
+            if (java.nio.file.Files.isRegularFile(legacy)) {
+                return Optional.of(
+                        "Legacy ~/.haifa-agent/auth.json was not migrated and can be safely deleted manually.");
+            }
+        }
+        return Optional.empty();
+    }
+
+    public void saveOsSecret(String name, char[] secret) {
+        Objects.requireNonNull(name, "name must not be null");
+        char[] callerSecret = Objects.requireNonNull(secret, "secret must not be null");
+        try {
+            if (!name.matches("[A-Za-z_][A-Za-z0-9_-]*")) {
+                throw new IllegalArgumentException("AUTH_OS_CREDENTIAL_REFERENCE_INVALID");
+            }
+            if (callerSecret.length < 1 || callerSecret.length > MAX_SECRET_LENGTH) {
+                throw new IllegalArgumentException("AUTH_SECRET_INVALID");
+            }
+            WindowsCredentialManagerClient.defaultClient().write("haifa:os:" + name, new String(callerSecret));
+        } finally {
+            Arrays.fill(callerSecret, '\0');
+        }
     }
 }

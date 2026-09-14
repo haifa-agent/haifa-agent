@@ -42,4 +42,16 @@ class DefaultCredentialBrokerTest {
         map.put("key2", "secret2");
         assertThat(broker.getSecret("key2")).isEmpty();
     }
+
+    @Test
+    void resolvesSecretDynamicallyWithoutPermanentCaching() {
+        var source = new HashMap<String, String>();
+        var broker = new DefaultCredentialBroker(id -> java.util.Optional.ofNullable(source.get(id)));
+
+        source.put("key1", "custom-secret-123");
+        assertThat(broker.getSecret("key1")).contains("custom-secret-123");
+
+        source.put("key1", "updated-secret-456");
+        assertThat(broker.getSecret("key1")).contains("updated-secret-456");
+    }
 }

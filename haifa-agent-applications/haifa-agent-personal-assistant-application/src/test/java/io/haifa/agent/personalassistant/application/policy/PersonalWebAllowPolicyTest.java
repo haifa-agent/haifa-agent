@@ -107,18 +107,20 @@ class PersonalWebAllowPolicyTest {
                         true,
                         "aliyun",
                         io.haifa.agent.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT,
-                        "test-secret",
+                        "env://TEST_SECRET",
                         Duration.ofSeconds(5),
                         1024 * 1024),
                 new PersonalWebPlatform.ProviderConfiguration(
                         true,
                         "browserless",
                         io.haifa.agent.web.provider.BrowserlessFetchProvider.DEFAULT_ENDPOINT,
-                        "test-secret",
+                        "env://TEST_SECRET",
                         Duration.ofSeconds(5),
                         2 * 1024 * 1024),
                 new ObjectMapper(),
-                CLOCK);
+                CLOCK,
+                Map.of("TEST_SECRET", "test-secret")::get,
+                name -> java.util.Optional.empty());
         var builder = new ToolCatalogBuilder();
         var checklist = new PersonalChecklistTool();
         builder.register(

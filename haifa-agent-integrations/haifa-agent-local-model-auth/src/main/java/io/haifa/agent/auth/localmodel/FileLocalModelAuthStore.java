@@ -19,7 +19,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
 
-/** Plaintext current-user auth store with strict permissions, locking, and atomic replacement. */
+/**
+ * Linux Headless Server auth store with strict current-user permissions (0600), locking, and atomic replacement.
+ * Designated exclusively for headless server environments where OS keyrings/Secret Service D-Bus are unavailable.
+ * Must NEVER be used as a desktop fallback or silent degradation.
+ */
 public final class FileLocalModelAuthStore implements LocalModelAuthStore {
     private final Path file;
     private final Path directory;

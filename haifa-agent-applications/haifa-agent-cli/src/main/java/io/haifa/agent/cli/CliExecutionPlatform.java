@@ -75,6 +75,44 @@ final class CliExecutionPlatform {
             TenantRef tenant,
             PrincipalRef principal,
             RuntimeToolExecutionVerifier runtimeExecutionVerifier) {
+        return create(
+                configuration,
+                workspaces,
+                bindings,
+                locations,
+                files,
+                identifiers,
+                time,
+                workspaceRoot,
+                output,
+                hostEnvironment,
+                verificationProfiles,
+                provisioning,
+                workspaceAccess,
+                tenant,
+                principal,
+                runtimeExecutionVerifier,
+                Set.of());
+    }
+
+    static CliExecutionPlatform create(
+            CliConfiguration.Execution configuration,
+            WorkspaceStore workspaces,
+            WorkspaceBindingStore bindings,
+            HostWorkspaceLocationStore locations,
+            HostWorkspaceFileService files,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            Path workspaceRoot,
+            PrintStream output,
+            Map<String, String> hostEnvironment,
+            CodingVerificationProfileProvider verificationProfiles,
+            AuthorizedWorkspaceProvisioning provisioning,
+            WorkspaceAccessStore workspaceAccess,
+            TenantRef tenant,
+            PrincipalRef principal,
+            RuntimeToolExecutionVerifier runtimeExecutionVerifier,
+            Set<String> deniedEnvironmentNames) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
         Objects.requireNonNull(provisioning, "provisioning must not be null");
@@ -82,6 +120,7 @@ final class CliExecutionPlatform {
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
         Objects.requireNonNull(runtimeExecutionVerifier, "runtimeExecutionVerifier must not be null");
+        Objects.requireNonNull(deniedEnvironmentNames, "deniedEnvironmentNames must not be null");
         HostShell shell = shell(configuration);
         Path controlRoot = controlRoot();
         Path scratchRoot = controlRoot.resolve("host-scratch");
@@ -98,7 +137,8 @@ final class CliExecutionPlatform {
                 Path.of(System.getProperty("user.home", ".")),
                 controlRoot,
                 workspaceRoot,
-                scratchRoot);
+                scratchRoot,
+                deniedEnvironmentNames);
         Map<String, String> environment = resolvedEnvironment.environment();
         SandboxProfile profile = profile(configuration, host, resolvedEnvironment.allowedEnvironmentNames());
         var profileRegistry = new ImmutableSandboxProfileRegistry(List.of(profile));

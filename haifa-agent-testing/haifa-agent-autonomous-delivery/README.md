@@ -48,7 +48,7 @@ python -m unittest discover -s haifa-agent-testing/haifa-agent-autonomous-delive
 | --- | --- |
 | `HAIFA_LADDER_ALLOW_REAL_PROVIDER` | 必须为 `true`：评测调用真实 Provider 并产生费用 |
 | `HAIFA_LADDER_AGENT` | Coding Agent 启动器；未设置时自动发现 `~/.haifa-agent/coding/haifa-coding(.cmd)` |
-| 凭据 | 由生效模型推断：`glm-*` → `BIGMODEL_API_KEY`、`kimi-*` → `KIMI_API_KEY` 等；`deepseek`/`gpt-*`/`antigravity` 经 `~/.haifa-agent/auth.json` 认证，体检会检查该 Provider 的连接是否已存在 |
+| 凭据 | 由生效模型推断：`glm-*` → `BIGMODEL_API_KEY`、`kimi-*` → `KIMI_API_KEY` 等；`deepseek`/`gpt-*`/`antigravity` 经系统凭据管理器（Windows Credential Manager 等）认证，体检会检查该 Provider 的连接是否已存在 |
 
 可选：`HAIFA_LADDER_MODEL`、`HAIFA_LADDER_APPROVAL`（默认 `auto`，只接受 `auto` 或 `deny`：评测以关闭的 stdin 运行 Agent，`ask` 会让每次审批被拒，体检阶段直接拒绝）、`HAIFA_LADDER_CASES`、
 `HAIFA_LADDER_REPEAT`、`HAIFA_LADDER_TIMEOUT_SCALE`、`HAIFA_LADDER_OUTPUT`、`HAIFA_LADDER_CACHE_DIR`、

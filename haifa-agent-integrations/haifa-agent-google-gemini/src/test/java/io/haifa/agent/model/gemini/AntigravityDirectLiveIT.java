@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
-import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
+import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityLocalCompatibilityRegistrationFactory;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityProjectAndQuota;
@@ -28,8 +28,6 @@ import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.net.URI;
 import java.net.http.HttpClient;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
@@ -48,8 +46,8 @@ import org.junit.jupiter.api.Test;
  * <p>Requirements:
  * <ul>
  *   <li>Set {@code HAIFA_ANTIGRAVITY_LIVE_TEST=true}</li>
- *   <li>An authenticated {@code auth.json} file containing {@code model-auth://google-antigravity/default}
- *       (or set {@code HAIFA_ANTIGRAVITY_AUTH_FILE} / {@code HAIFA_ANTIGRAVITY_PROJECT_ID})</li>
+ *   <li>An authenticated system credential store containing {@code model-auth://google-antigravity/default}
+ *       (or set {@code HAIFA_ANTIGRAVITY_PROJECT_ID})</li>
  * </ul>
  */
 @Tag("live")
@@ -63,9 +61,6 @@ class AntigravityDirectLiveIT {
         Assumptions.assumeTrue(enabled(LIVE_SWITCH), LIVE_SWITCH + " must explicitly enable the real Antigravity call");
 
         Map<String, String> environment = System.getenv();
-        Path authFile = authFile(environment);
-        Assumptions.assumeTrue(Files.isRegularFile(authFile), "Haifa auth.json is unavailable: " + authFile);
-
         ObjectMapper json = new ObjectMapper();
         Clock clock = Clock.systemUTC();
         HttpClient http = HttpClient.newBuilder()
@@ -73,7 +68,7 @@ class AntigravityDirectLiveIT {
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .proxy(java.net.ProxySelector.getDefault())
                 .build();
-        FileLocalModelAuthStore store = new FileLocalModelAuthStore(authFile, json);
+        WindowsLocalModelAuthStore store = WindowsLocalModelAuthStore.defaultStore(json);
         AntigravityProjectRegistry projectRegistry = new AntigravityProjectRegistry();
 
         var antigravityMethod = AntigravityLocalCompatibilityRegistrationFactory.create(environment)
@@ -124,9 +119,6 @@ class AntigravityDirectLiveIT {
         Assumptions.assumeTrue(enabled(LIVE_SWITCH), LIVE_SWITCH + " must explicitly enable the real Antigravity call");
 
         Map<String, String> environment = System.getenv();
-        Path authFile = authFile(environment);
-        Assumptions.assumeTrue(Files.isRegularFile(authFile), "Haifa auth.json is unavailable: " + authFile);
-
         ObjectMapper json = new ObjectMapper();
         Clock clock = Clock.systemUTC();
         HttpClient http = HttpClient.newBuilder()
@@ -134,7 +126,7 @@ class AntigravityDirectLiveIT {
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .proxy(java.net.ProxySelector.getDefault())
                 .build();
-        FileLocalModelAuthStore store = new FileLocalModelAuthStore(authFile, json);
+        WindowsLocalModelAuthStore store = WindowsLocalModelAuthStore.defaultStore(json);
         AntigravityProjectRegistry projectRegistry = new AntigravityProjectRegistry();
 
         var antigravityMethod = AntigravityLocalCompatibilityRegistrationFactory.create(environment)
@@ -227,16 +219,6 @@ class AntigravityDirectLiveIT {
                 65_536,
                 Map.of(),
                 Map.of());
-    }
-
-    private static Path authFile(Map<String, String> environment) {
-        String configured = environment.get("HAIFA_ANTIGRAVITY_AUTH_FILE");
-        if (configured != null && !configured.isBlank()) {
-            return Path.of(configured.trim()).toAbsolutePath().normalize();
-        }
-        String userHome = System.getProperty("user.home");
-        if (userHome == null || userHome.isBlank()) throw new IllegalStateException("user.home is unavailable");
-        return Path.of(userHome, ".haifa-agent", "auth.json").toAbsolutePath().normalize();
     }
 
     private static boolean enabled(String name) {
