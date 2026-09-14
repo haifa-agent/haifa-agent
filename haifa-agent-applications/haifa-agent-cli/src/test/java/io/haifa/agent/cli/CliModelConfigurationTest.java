@@ -433,7 +433,84 @@ class CliModelConfigurationTest {
         assertThat(snapshot.providerOptions())
                 .doesNotContainKeys("thinking", "reasoning_effort", "requires_reasoning_continuation");
         assertThat(snapshot.invocationOptions())
-                .doesNotContainKeys("thinking", "reasoning_effort", "requires_reasoning_continuation");
+                .containsEntry("thinking", "disabled")
+                .doesNotContainKeys("reasoning_effort", "requires_reasoning_continuation");
+    }
+
+    @Test
+    void catalogAlwaysReasoningDefaultsToEnabledAndItsLowestAllowedEffort() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-zhipu-reasoning", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                    models:
+                      default: glm-5.3-flash
+                      providers:
+                        - id: zhipu
+                          endpoint: https://open.bigmodel.cn/api/paas/v4
+                          credentialRef: env://BIGMODEL_API_KEY
+                          nativeStreaming: true
+                          allowedBindings: [glm-5.3-flash]
+                    """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+        var snapshot = LocalCodingAgent.modelSnapshot(result);
+
+        assertThat(snapshot.invocationOptions())
+                .containsEntry("thinking", "enabled")
+                .containsEntry("reasoning_effort", "low");
+        assertThat(LocalCodingAgent.reasoningSummary(result)).isEqualTo("Reasoning: mode=enabled, effort=low");
+    }
+
+    @Test
+    void catalogAlwaysReasoningHonorsExplicitEffort() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-zhipu-reasoning-effort", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                    models:
+                      default: glm-5.3-flash
+                      providers:
+                        - id: zhipu
+                          endpoint: https://open.bigmodel.cn/api/paas/v4
+                          credentialRef: env://BIGMODEL_API_KEY
+                          nativeStreaming: true
+                          allowedBindings: [glm-5.3-flash]
+                          reasoningEffort: HIGH
+                    """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+
+        assertThat(LocalCodingAgent.modelSnapshot(result).invocationOptions())
+                .containsEntry("thinking", "enabled")
+                .containsEntry("reasoning_effort", "high");
+    }
+
+    @Test
+    void catalogRejectsDisablingAnAlwaysReasoningModel() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-zhipu-reasoning-invalid", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                    models:
+                      default: glm-5.3-flash
+                      providers:
+                        - id: zhipu
+                          endpoint: https://open.bigmodel.cn/api/paas/v4
+                          credentialRef: env://BIGMODEL_API_KEY
+                          nativeStreaming: true
+                          allowedBindings: [glm-5.3-flash]
+                          reasoningMode: DISABLED
+                    """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+
+        assertThatThrownBy(() -> LocalCodingAgent.modelSnapshot(result))
+                .isInstanceOf(io.haifa.agent.model.api.ModelParameterResolutionException.class)
+                .hasMessageContaining("REASONING_MODE_UNSUPPORTED");
     }
 
     @Test

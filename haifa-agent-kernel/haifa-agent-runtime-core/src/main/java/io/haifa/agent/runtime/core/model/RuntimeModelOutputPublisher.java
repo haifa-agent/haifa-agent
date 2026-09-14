@@ -7,6 +7,8 @@ import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -27,6 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class RuntimeModelOutputPublisher {
     static final int DEFAULT_MAXIMUM_BUFFERED_EVENTS = 2_048;
     static final int DEFAULT_MAXIMUM_BUFFERED_TEXT_CHARACTERS = 262_144;
+    static final Duration MODEL_ACTIVITY_INTERVAL = Duration.ofSeconds(10);
 
     private final TimeProvider time;
     private final int maximumBufferedEvents;
@@ -73,6 +76,23 @@ public final class RuntimeModelOutputPublisher {
                 attempt,
                 AgentRunOutputEventType.ASSISTANT_TEXT_DELTA,
                 Objects.requireNonNull(delta, "delta must not be null"));
+    }
+
+    /** Emits a content-free indication that the provider is still producing private reasoning. */
+    public void modelActivity(AgentRunId runId, String callId, int attempt) {
+        RunChannel channel = channel(runId);
+        Instant occurredAt = time.now();
+        Generation generation = new Generation(callId, attempt);
+        if (!channel.recordActivity(generation, occurredAt, MODEL_ACTIVITY_INTERVAL)) return;
+        channel.emit(sequence -> new AgentRunOutputEvent(
+                channel.runId(),
+                callId,
+                callId,
+                attempt,
+                sequence,
+                AgentRunOutputEventType.MODEL_ACTIVITY,
+                "",
+                occurredAt));
     }
 
     public void committed(AgentRunId runId, String callId, int attempt, int iteration) {
@@ -200,6 +220,7 @@ public final class RuntimeModelOutputPublisher {
         private final List<Subscriber> subscribers = new ArrayList<>();
         private final Map<Integer, Generation> failedGenerations = new HashMap<>();
         private final java.util.Set<Generation> activeGenerations = new java.util.HashSet<>();
+        private final Map<Generation, Instant> lastActivities = new HashMap<>();
         private long nextSequence = 1;
         private int bufferedTextCharacters;
         private boolean dispatching;
@@ -263,7 +284,18 @@ public final class RuntimeModelOutputPublisher {
         }
 
         synchronized void started(Generation generation) {
-            if (!closed) activeGenerations.add(generation);
+            if (!closed) {
+                activeGenerations.add(generation);
+                lastActivities.remove(generation);
+            }
+        }
+
+        synchronized boolean recordActivity(Generation generation, Instant occurredAt, Duration interval) {
+            if (closed || !activeGenerations.contains(generation)) return false;
+            Instant previous = lastActivities.get(generation);
+            if (previous != null && occurredAt.isBefore(previous.plus(interval))) return false;
+            lastActivities.put(generation, occurredAt);
+            return true;
         }
 
         synchronized Generation removeFailed(int iteration) {
@@ -277,6 +309,7 @@ public final class RuntimeModelOutputPublisher {
 
         synchronized boolean finished(Generation generation) {
             activeGenerations.remove(generation);
+            lastActivities.remove(generation);
             return terminal && activeGenerations.isEmpty();
         }
 
@@ -287,6 +320,7 @@ public final class RuntimeModelOutputPublisher {
             subscribers.clear();
             failedGenerations.clear();
             activeGenerations.clear();
+            lastActivities.clear();
             buffer.clear();
             pendingDeliveries.clear();
             bufferedTextCharacters = 0;

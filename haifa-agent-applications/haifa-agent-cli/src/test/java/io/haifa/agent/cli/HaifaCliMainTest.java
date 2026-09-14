@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -41,6 +42,60 @@ class HaifaCliMainTest {
                 .contains("summary, detail, or jsonl")
                 .contains("--trace-file <path>")
                 .contains("required for Terminal trace");
+        assertThat(HaifaCliMain.usage()).contains("--quiet");
+    }
+
+    @Test
+    void ttyActivityUsesStderrWithoutExposingReasoningAndClearsBeforeContent() {
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        AtomicLong nanos = new AtomicLong();
+        CliActivityOutput renderer = new CliActivityOutput(
+                new PrintStream(stdout, true, StandardCharsets.UTF_8),
+                new PrintStream(stderr, true, StandardCharsets.UTF_8),
+                true,
+                true,
+                nanos::get,
+                false);
+
+        renderer.onOutput(event(1, AgentRunOutputEventType.RUN_OUTPUT_STARTED, ""));
+        nanos.set(java.time.Duration.ofSeconds(12).toNanos());
+        renderer.onOutput(event(2, AgentRunOutputEventType.MODEL_ACTIVITY, ""));
+        renderer.onOutput(event(3, AgentRunOutputEventType.ASSISTANT_TEXT_DELTA, "answer"));
+        renderer.close();
+
+        assertThat(stdout.toString(StandardCharsets.UTF_8)).isEqualTo("[stream] answer");
+        assertThat(stderr.toString(StandardCharsets.UTF_8))
+                .contains("Waiting for model...")
+                .contains("Model is thinking... elapsed=12s")
+                .doesNotContain("answer");
+    }
+
+    @Test
+    void nonTtyActivityIsPeriodicAndQuietSuppressesIt() {
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        AtomicLong nanos = new AtomicLong(java.time.Duration.ofSeconds(30).toNanos());
+        CliActivityOutput renderer = new CliActivityOutput(
+                output(), new PrintStream(stderr, true, StandardCharsets.UTF_8), true, false, nanos::get, false);
+        renderer.onOutput(event(1, AgentRunOutputEventType.RUN_OUTPUT_STARTED, ""));
+        renderer.emitNonTtyStatus();
+        renderer.onOutput(event(2, AgentRunOutputEventType.MODEL_ACTIVITY, ""));
+        nanos.set(java.time.Duration.ofSeconds(90).toNanos());
+        renderer.emitNonTtyStatus();
+        renderer.close();
+
+        ByteArrayOutputStream quietError = new ByteArrayOutputStream();
+        CliActivityOutput quiet = new CliActivityOutput(
+                output(), new PrintStream(quietError, true, StandardCharsets.UTF_8), false, false, nanos::get, false);
+        quiet.onOutput(event(1, AgentRunOutputEventType.RUN_OUTPUT_STARTED, ""));
+        quiet.onOutput(event(2, AgentRunOutputEventType.MODEL_ACTIVITY, ""));
+        quiet.emitNonTtyStatus();
+        quiet.close();
+
+        assertThat(stderr.toString(StandardCharsets.UTF_8))
+                .contains("[status] Waiting for model... elapsed=0s")
+                .contains("[status] Model is thinking... elapsed=60s");
+        assertThat(quietError.toString(StandardCharsets.UTF_8)).isEmpty();
     }
 
     @Test

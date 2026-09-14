@@ -19,6 +19,7 @@ import io.haifa.agent.core.plan.TodoItem;
 import io.haifa.agent.core.plan.TodoItemId;
 import io.haifa.agent.core.plan.TodoPriority;
 import io.haifa.agent.core.run.AgentRunBudget;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunStatus;
@@ -41,6 +42,8 @@ import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ModelStreamControl;
+import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
@@ -690,6 +693,30 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void timeoutCommandInterruptsAnActiveModelCallWithWallTimeTermination() {
+        AtomicReference<DefaultAgentRuntime> runtime = new AtomicReference<>();
+        AtomicReference<AgentRunId> runId = new AtomicReference<>();
+        AgentChatModel model = request -> {
+            runtime.get().command(command(runId.get().value(), RuntimeCommandType.TIMEOUT, "timeout-1"));
+            return response(finalDecision("must not complete"));
+        };
+        Fixture fixture = fixture(model);
+        runtime.set(fixture.runtime);
+        var accepted = fixture.runtime.start(request("timeout-during-model"));
+        runId.set(accepted.runId());
+
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.TIMEOUT);
+        assertThat(fixture.store.find(accepted.runId()).orElseThrow().terminationReason())
+                .hasValueSatisfying(reason -> assertThat(reason.code()).isEqualTo("WALL_TIME_EXCEEDED"));
+        assertThat(fixture.store.attemptsFor(accepted.runId()))
+                .singleElement()
+                .satisfies(attempt -> assertThat(attempt.status().name()).isEqualTo("FAILED"));
+    }
+
+    @Test
     void concurrentStartUsesOneLogicalRunAndOneAttempt() throws Exception {
         Fixture fixture = fixture(model(finalDecision("done")));
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -912,6 +939,75 @@ class RuntimeCoreTest {
                                 "modelRequestId",
                                 requests.getFirst().requestId().value())
                         .doesNotContainKeys("response", "reasoning", "prompt"));
+    }
+
+    @Test
+    void reasoningBudgetCancelsThePhysicalCallWithoutRetryOrSensitivePayloads() {
+        AtomicInteger calls = new AtomicInteger();
+        AgentChatModel model = new AgentChatModel() {
+            @Override
+            public AgentChatResponse invoke(AgentChatRequest request) {
+                throw new AssertionError("streaming path expected");
+            }
+
+            @Override
+            public AgentChatResponse invokeStreaming(
+                    AgentChatRequest request, io.haifa.agent.model.api.ModelStreamSink sink) {
+                calls.incrementAndGet();
+                assertThat(sink.emit(new ModelStreamEvent.ReasoningDelta(request.callId(), 1, "a")))
+                        .isEqualTo(ModelStreamControl.CONTINUE);
+                assertThat(sink.emit(new ModelStreamEvent.ReasoningDelta(request.callId(), 2, "你")))
+                        .isEqualTo(ModelStreamControl.CONTINUE);
+                assertThat(sink.emit(new ModelStreamEvent.ReasoningDelta(request.callId(), 3, "b")))
+                        .isEqualTo(ModelStreamControl.CANCEL);
+                throw new ModelInvocationException(
+                        ModelErrorCategory.CANCELLED,
+                        false,
+                        0,
+                        "stream_cancelled",
+                        request.callId(),
+                        "stream cancelled",
+                        null,
+                        null,
+                        true);
+            }
+        };
+        Fixture fixture = fixture(model, builder -> builder.modelRetry(
+                        new ModelRetryPolicy(new RetryPolicy(4, ignored -> true, BackoffStrategy.none())))
+                .profiles((id, overrides) -> new ResolvedProfile(
+                        id,
+                        "1.0.0",
+                        AgentRunType.CHAT,
+                        AgentRunBudget.disabled(),
+                        new AgentRunLimits(4, 0, 1, 60_000, 60_000),
+                        DefaultResolvedModelSnapshots.deepSeekV4Pro(),
+                        Map.of(),
+                        Map.of(RuntimeControlOptions.MAX_REASONING_BYTES, 4))));
+
+        var accepted = fixture.runtime.start(request("reasoning-budget"));
+        fixture.scheduler.runAll();
+
+        assertThat(calls).hasValue(1);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_RESPONSE_INVALID);
+        });
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.reasoning-budget-exceeded"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("reasoningBytes", 5L)
+                        .containsEntry("reasoningEvents", 3L)
+                        .containsEntry("maxReasoningBytes", 4L)
+                        .doesNotContainKeys("reasoning", "content", "delta"));
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.call.failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("reasonCode", "OUTPUT_LIMIT_EXCEEDED")
+                        .containsEntry("providerCode", "reasoning_budget_exceeded")
+                        .containsEntry("retryable", false)
+                        .containsEntry("outputObserved", true));
     }
 
     @Test

@@ -508,11 +508,11 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             if (safe != null) listener.onEvent(safe);
         });
         try {
-            var output = agent.runs()
-                    .subscribeOutput(
-                            id,
-                            new RunOutputCursor(after.transientSequence()),
-                            event -> listener.onEvent(streamEvent(event)));
+            var output = agent.runs().subscribeOutput(id, new RunOutputCursor(after.transientSequence()), event -> {
+                if (event.type() != AgentRunOutputEventType.MODEL_ACTIVITY) {
+                    listener.onEvent(streamEvent(event));
+                }
+            });
             return new CompositeStreamSubscription(durable, output);
         } catch (RuntimeException failure) {
             durable.close();
@@ -994,6 +994,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         String type =
                 switch (event.type()) {
                     case RUN_OUTPUT_STARTED -> "answer.started";
+                    case MODEL_ACTIVITY -> throw new IllegalStateException("model activity is not a PA stream event");
                     case ASSISTANT_TEXT_DELTA -> "answer.delta";
                     case ASSISTANT_TEXT_COMMITTED -> "answer.committed";
                     case RUN_OUTPUT_SUPERSEDED -> "answer.superseded";

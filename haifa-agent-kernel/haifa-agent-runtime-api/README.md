@@ -22,8 +22,9 @@ Journal maps or provider messages.
 ## Transient model output
 
 `subscribeOutput(runId, cursor, listener)` 和 `outputEvents` 暴露 provider-neutral 的进程内模型输出通道。
-它只包含 Assistant text delta 和 started/committed/failed/superseded 生命周期，不包含 reasoning、未校验
-Tool 参数、Prompt、凭据或 Provider 原始响应。`RunOutputSubscription` 必须关闭；订阅按 Run 隔离，
+它只包含 Assistant text delta、content-free `MODEL_ACTIVITY` 和 started/committed/failed/superseded 生命周期，
+不包含 reasoning、未校验 Tool 参数、Prompt、凭据或 Provider 原始响应。`MODEL_ACTIVITY` 仅表示一次模型调用仍
+有内部进展，不能据此重建 reasoning。`RunOutputSubscription` 必须关闭；订阅按 Run 隔离，
 Listener 失败不会中断 AgentLoop。
 
 `RunOutputCursor` 只在当前进程、当前活动 Run 的有界内存缓冲内单调有效；它不是持久化 Cursor，不能在

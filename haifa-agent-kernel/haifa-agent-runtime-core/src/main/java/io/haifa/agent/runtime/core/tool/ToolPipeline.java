@@ -347,7 +347,14 @@ public final class ToolPipeline {
                                     run.usage().toolCalls());
                         }
                         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 1, 0, 0, 0));
-                        return invokeProvider(run, call, request, binding);
+                        try {
+                            ToolResult result = invokeProvider(run, call, request, binding);
+                            checkCancellation(run);
+                            return result;
+                        } catch (RuntimeException failure) {
+                            checkCancellation(run);
+                            throw failure;
+                        }
                     },
                     retryPolicy.forTool(binding));
             if (rawResult.successful()) {
@@ -527,7 +534,7 @@ public final class ToolPipeline {
                     request.arguments(),
                     deadline,
                     java.util.Optional.of(request.idempotencyKey().value()),
-                    (ToolCancellation) () -> controls.signal(run.id()) == RunControlSignal.CANCEL,
+                    (ToolCancellation) () -> controls.signal(run.id()).stopsExecution(),
                     java.util.Map.copyOf(resolvedCredentials),
                     new io.haifa.agent.tool.api.ToolInvocationObserver() {
                         @Override
@@ -926,6 +933,7 @@ public final class ToolPipeline {
     }
 
     private void checkCancellation(AgentRun run) {
-        if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
+        RunControlSignal signal = controls.signal(run.id());
+        if (signal.stopsExecution()) throw new CancellationObservedException(signal);
     }
 }

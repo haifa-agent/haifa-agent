@@ -686,6 +686,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                     controls.requestPause(run);
                 }
             }
+            case TIMEOUT -> applyTimeout(run);
             case CANCEL -> applyCancel(run);
             case TERMINATE_CHILDREN -> delegations.terminateChildren(run);
         }
@@ -900,6 +901,23 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         attempts.activeFor(run.id()).ifPresent(attempt -> {
             long expected = attempt.version();
             attempt.finish(ExecutionAttemptStatus.CANCELLED, time.now(), Optional.empty());
+            attempts.save(attempt, expected);
+        });
+    }
+
+    private void applyTimeout(AgentRun run) {
+        if (run.status().isTerminal()) return;
+        delegations.terminateChildren(run);
+        events.append(run.id(), "children.termination-requested", Map.of("reason", "WALL_TIME_EXCEEDED"), time.now());
+        if (run.status() == AgentRunStatus.RUNNING || run.status() == AgentRunStatus.SUSPENDING) {
+            controls.requestTimeout(run);
+            scheduler.cancel(run.id());
+            return;
+        }
+        transitions.timedOut(run, new RunTerminationReason("WALL_TIME_EXCEEDED", "Run wall-time limit exceeded"));
+        attempts.activeFor(run.id()).ifPresent(attempt -> {
+            long expected = attempt.version();
+            attempt.finish(ExecutionAttemptStatus.FAILED, time.now(), Optional.empty());
             attempts.save(attempt, expected);
         });
     }

@@ -54,7 +54,7 @@ CLI 宿主保持严格且清晰的路径职责分离，避免模型混淆宿主�
    而不是与用户/Workspace 配置合并。配置覆盖 `models.providers`、`tools.enabled`、`web`、`mcp`、
    `skills`、`execution`、`approval`、`runtime`、`persistence`。
 3. **RUNTIME（每次运行传入）**：`--workspace`、`-m/--message`、`--model`（或 `HAIFA_MODEL_ID`）、
-   `--approval`、`--timeout`、`--trace`/`--trace-file`、`--verbose`。
+   `--approval`、`--timeout`、`--trace`/`--trace-file`、`--verbose`、`--quiet`。
 
 示例：
 
@@ -685,9 +685,11 @@ Tavily Search 与 Fetch 可分别选择，也可同时使用 `env://TAVILY_API_K
 `https://api.tavily.com/extract` 并返回 Markdown 或纯文本；Provider 仍为两个 Tool 建立独立、精确的
 Credential Binding。
 
-CLI 的 DeepSeek 和百炼冻结配置均强制关闭 thinking，并通过 Runtime output listener 实时打印安全的 answer delta；
-reasoning 原文不会进入终端。使用 `--verbose` 时只会打印供应商报告的 reasoning token 计数，不记录或展示
-reasoning 内容。
+CLI 根据冻结模型目录解析 reasoning：`NONE/OPTIONAL` 缺省关闭，`ALWAYS` 缺省开启，`ADAPTIVE` 优先使用
+adaptive（目录不允许时退为 enabled）；显式 mode/effort 必须通过目录校验后才进入请求。CLI 为每个模型调用
+冻结 `512 KiB / 最长 5 分钟` reasoning 预算（更短的 Run wall timeout 优先），任一超限即不可重试失败。
+Runtime output listener 只实时打印安全的
+answer delta；reasoning 原文不会进入终端，`--verbose` 只显示最终有效 mode/effort 和供应商报告的 token 数。
 
 百炼 Provider 配置必须提供 `workspaceId`，`region` 缺省为 `cn-beijing`。CLI 不接受任意百炼主机，
 而是固定推导 `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1`。Provider、
@@ -719,7 +721,11 @@ Timeout、Cancel 和未知终止不能通过该字段改写为成功。复合命
 `AUTHENTICATION_OVERRIDE_DENIED`，受限网络失败使用 `NETWORK_PERMISSION_REQUIRED`，二者分别引导移除
 覆盖或通过托管的一次性权限请求处理，而不是重复执行原命令。
 
-`execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
+`execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI wall timeout 发送 Runtime `TIMEOUT` 并以 `WALL_TIME_EXCEEDED`/退出码 124 结束；Ctrl+C 和关闭钩子仍发送 `CANCEL`。
+
+one-shot 模式将 answer delta 保持在 stdout，将活动提示保持在 stderr。TTY 从等待模型起立即显示单行
+`Waiting/Thinking` 状态；非 TTY 在 30 秒后首次提示并每 60 秒重复。reasoning 活动事件不带内容，第一段
+answer 输出前会清理 TTY 状态；`--quiet` 只关闭这些状态，不影响 answer、错误或 Trace。
 
 CLI 在冻结 Definition 时把可信配置解析后的 Shell 显示名加入模型指令，要求 `execution_run` 只生成该
 Shell 支持的命令语法，避免在 Windows PowerShell 中混入 POSIX 命令；Shell 的实际路径、审批、能力与
