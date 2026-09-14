@@ -110,7 +110,10 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             var stderr = outputs.store(
                     request.id(), ExecutionOutputChannel.STDERR, stderrBytes, 4096, process.stderrTruncated());
             ExecutionStatus status = map(process.status());
-            ExecutionFailure failure = failure(status, process.processTreeTerminated());
+            ExecutionFailure failure = failure(
+                    status,
+                    process.processTreeTerminated(),
+                    process.optionalFailureCode().orElse(null));
             ExecutionResult result = new ExecutionResult(
                     request.id(),
                     status,
@@ -125,7 +128,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                     failure,
                     false,
                     process.scratchProvisioned(),
-                    process.scratchCleanupFailed());
+                    process.scratchCleanupFailed(),
+                    process.outputIncomplete());
             executions.complete(request, result);
             return result;
         } finally {
@@ -403,6 +407,13 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             case CANCELLED -> new ExecutionFailure("CANCELLED", "execution was cancelled");
             case UNKNOWN -> new ExecutionFailure("OUTCOME_UNKNOWN", "execution outcome could not be determined");
         };
+    }
+
+    private static ExecutionFailure failure(ExecutionStatus status, boolean treeTerminated, String failureCode) {
+        if (status == ExecutionStatus.UNKNOWN && "TIMEOUT_TREE_UNCONFIRMED".equals(failureCode)) {
+            return new ExecutionFailure(failureCode, "timed out process tree termination could not be confirmed");
+        }
+        return failure(status, treeTerminated);
     }
 
     private static ExecutionRejectedException reject(String code, String message) {

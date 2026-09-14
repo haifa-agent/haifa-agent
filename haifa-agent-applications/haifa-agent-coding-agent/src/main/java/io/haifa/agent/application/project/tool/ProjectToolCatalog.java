@@ -28,6 +28,7 @@ import java.util.Set;
 
 /** Builds the project product's model-visible tools through the platform Tool catalog. */
 public final class ProjectToolCatalog {
+    private final Duration maximumExecutionTimeout;
     private static final Map<String, String> REQUIRED_CAPABILITY = Map.ofEntries(
             Map.entry("file_list", "file_read"),
             Map.entry("file_stat", "file_read"),
@@ -44,6 +45,20 @@ public final class ProjectToolCatalog {
             Map.entry("execution_run", "execution_run"));
     private static final Set<String> WRITES =
             Set.of("file_create", "file_write", "file_delete", "file_move", "file_patch");
+
+    public ProjectToolCatalog() {
+        this(Duration.ofMinutes(30));
+    }
+
+    public ProjectToolCatalog(Duration maximumExecutionTimeout) {
+        this.maximumExecutionTimeout =
+                Objects.requireNonNull(maximumExecutionTimeout, "maximumExecutionTimeout must not be null");
+        if (maximumExecutionTimeout.isZero()
+                || maximumExecutionTimeout.isNegative()
+                || maximumExecutionTimeout.compareTo(Duration.ofMinutes(30)) > 0) {
+            throw new IllegalArgumentException("maximumExecutionTimeout is out of range");
+        }
+    }
 
     public DefaultToolCatalog freeze(
             Set<String> configuredTools,
@@ -236,7 +251,7 @@ public final class ProjectToolCatalog {
         return REQUIRED_CAPABILITY.keySet();
     }
 
-    private static ToolDefinition definition(
+    private ToolDefinition definition(
             String name, SandboxProfile executionProfile, ExecutionScratchSpaceSpec scratchSpace) {
         boolean execution = name.equals("execution_run");
         if (execution && executionProfile == null) {
@@ -265,7 +280,7 @@ public final class ProjectToolCatalog {
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         String version =
                 switch (name) {
-                    case "execution_run" -> "3.0.0";
+                    case "execution_run" -> "4.0.0";
                     case "file_patch" -> "2.1.0";
                     case "file_list",
                             "file_read",
@@ -395,7 +410,7 @@ public final class ProjectToolCatalog {
         return profile.ref().value() + "@" + profile.ref().version();
     }
 
-    private static Map<String, Object> inputSchema(String name, String scratchSpecDigest) {
+    private Map<String, Object> inputSchema(String name, String scratchSpecDigest) {
         var properties = new LinkedHashMap<String, Object>();
         var required = new java.util.ArrayList<String>();
         switch (name) {
@@ -514,7 +529,18 @@ public final class ProjectToolCatalog {
                                 "Canonical directory below workspaceRef. Use . for the root; absolute paths, UNC paths, drive paths, and traversal are forbidden."));
                 required.add("workspaceRef");
                 required.add("relativeWorkdir");
-                properties.put("timeoutMillis", Map.of("type", "integer", "minimum", 1, "maximum", 1800000));
+                properties.put(
+                        "timeoutMillis",
+                        Map.of(
+                                "type",
+                                "integer",
+                                "minimum",
+                                1,
+                                "maximum",
+                                Math.toIntExact(maximumExecutionTimeout.toMillis()),
+                                "description",
+                                "Optional explicit limit. When omitted, the product maximum is used; the Run "
+                                        + "deadline may further reduce the effective timeout."));
                 properties.put("description", Map.of("type", "string", "minLength", 1, "maxLength", 256));
                 properties.put(
                         "operationFamily",
@@ -587,6 +613,7 @@ public final class ProjectToolCatalog {
             properties.put("replayAllowed", Map.of("type", "boolean"));
             properties.put("output", Map.of("type", "string"));
             properties.put("truncated", Map.of("type", "boolean"));
+            properties.put("outputIncomplete", Map.of("type", "boolean"));
             properties.put("outputRef", Map.of("type", "string"));
             properties.put("outputRefs", Map.of("type", "array", "items", Map.of("type", "string")));
             properties.put("durationMillis", Map.of("type", "integer", "minimum", 0));

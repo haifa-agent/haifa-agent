@@ -74,7 +74,6 @@ public final class ProjectExecutionToolOperations {
     private final TimeProvider time;
     private final ExecutionEnvironmentRef environmentRef;
     private final SandboxProfileRef sandboxProfileRef;
-    private final Duration defaultTimeout;
     private final Duration maximumTimeout;
     private final int maximumModelOutputBytes;
     private final int maximumModelOutputLines;
@@ -91,7 +90,6 @@ public final class ProjectExecutionToolOperations {
             TimeProvider time,
             ExecutionEnvironmentRef environmentRef,
             SandboxProfileRef sandboxProfileRef,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             int maximumModelOutputLines,
@@ -103,7 +101,6 @@ public final class ProjectExecutionToolOperations {
                 time,
                 environmentRef,
                 sandboxProfileRef,
-                defaultTimeout,
                 maximumTimeout,
                 maximumModelOutputBytes,
                 maximumModelOutputLines,
@@ -121,7 +118,6 @@ public final class ProjectExecutionToolOperations {
             TimeProvider time,
             ExecutionEnvironmentRef environmentRef,
             SandboxProfileRef sandboxProfileRef,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             int maximumModelOutputLines,
@@ -134,7 +130,6 @@ public final class ProjectExecutionToolOperations {
                 time,
                 environmentRef,
                 sandboxProfileRef,
-                defaultTimeout,
                 maximumTimeout,
                 maximumModelOutputBytes,
                 maximumModelOutputLines,
@@ -152,7 +147,6 @@ public final class ProjectExecutionToolOperations {
             TimeProvider time,
             ExecutionEnvironmentRef environmentRef,
             SandboxProfileRef sandboxProfileRef,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             int maximumModelOutputLines,
@@ -166,7 +160,6 @@ public final class ProjectExecutionToolOperations {
                 time,
                 environmentRef,
                 sandboxProfileRef,
-                defaultTimeout,
                 maximumTimeout,
                 maximumModelOutputBytes,
                 maximumModelOutputLines,
@@ -184,7 +177,6 @@ public final class ProjectExecutionToolOperations {
             TimeProvider time,
             ExecutionEnvironmentRef environmentRef,
             SandboxProfileRef sandboxProfileRef,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             int maximumModelOutputLines,
@@ -199,7 +191,6 @@ public final class ProjectExecutionToolOperations {
                 time,
                 environmentRef,
                 sandboxProfileRef,
-                defaultTimeout,
                 maximumTimeout,
                 maximumModelOutputBytes,
                 maximumModelOutputLines,
@@ -217,7 +208,6 @@ public final class ProjectExecutionToolOperations {
             TimeProvider time,
             ExecutionEnvironmentRef environmentRef,
             SandboxProfileRef sandboxProfileRef,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             int maximumModelOutputLines,
@@ -233,7 +223,6 @@ public final class ProjectExecutionToolOperations {
                 time,
                 environmentRef,
                 sandboxProfileRef,
-                defaultTimeout,
                 maximumTimeout,
                 maximumModelOutputBytes,
                 maximumModelOutputLines,
@@ -251,7 +240,6 @@ public final class ProjectExecutionToolOperations {
             TimeProvider time,
             ExecutionEnvironmentRef environmentRef,
             SandboxProfileRef sandboxProfileRef,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             int maximumModelOutputLines,
@@ -266,11 +254,7 @@ public final class ProjectExecutionToolOperations {
         this.time = Objects.requireNonNull(time, "time must not be null");
         this.environmentRef = Objects.requireNonNull(environmentRef, "environmentRef must not be null");
         this.sandboxProfileRef = Objects.requireNonNull(sandboxProfileRef, "sandboxProfileRef must not be null");
-        this.defaultTimeout = positive(defaultTimeout, "defaultTimeout");
         this.maximumTimeout = positive(maximumTimeout, "maximumTimeout");
-        if (defaultTimeout.compareTo(maximumTimeout) > 0) {
-            throw new IllegalArgumentException("defaultTimeout exceeds maximumTimeout");
-        }
         if (maximumTimeout.compareTo(Duration.ofMinutes(30)) > 0) {
             throw new IllegalArgumentException("maximumTimeout exceeds the execution API limit");
         }
@@ -321,13 +305,13 @@ public final class ProjectExecutionToolOperations {
         if (isAbsoluteDirectoryPath(relativeWorkdir)) {
             return withToolCallId(invocation, rejectedWorkdir(operationFamily, "ABSOLUTE_WORKDIR_FORBIDDEN"));
         }
-        Duration requestedTimeout = Duration.ofMillis(
-                optionalLong(arguments, "timeoutMillis", defaultTimeout.toMillis(), 1, maximumTimeout.toMillis()));
+        Duration selectedTimeout = Duration.ofMillis(
+                optionalLong(arguments, "timeoutMillis", maximumTimeout.toMillis(), 1, maximumTimeout.toMillis()));
         Duration remaining = Duration.between(time.now(), invocation.deadline());
-        if (remaining.isZero() || remaining.isNegative()) {
+        if (remaining.isZero() || remaining.isNegative() || remaining.toMillis() < 1) {
             throw new IllegalStateException("tool invocation deadline has expired");
         }
-        Duration timeout = requestedTimeout.compareTo(remaining) <= 0 ? requestedTimeout : remaining;
+        Duration timeout = selectedTimeout.compareTo(remaining) <= 0 ? selectedTimeout : remaining;
         ExecutionId executionId = new ExecutionId(identifiers.nextValue());
         WorkspacePath workingDirectory;
         try {
@@ -497,7 +481,6 @@ public final class ProjectExecutionToolOperations {
             ExecutionEnvironmentRef environment,
             SandboxProfileRef profile,
             ExecutionScratchSpaceSpec scratchSpace,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             int maximumProcesses) {
@@ -507,7 +490,6 @@ public final class ProjectExecutionToolOperations {
                 environment,
                 profile,
                 scratchSpace,
-                defaultTimeout,
                 maximumTimeout,
                 maximumModelOutputBytes,
                 Optional.of(maximumProcesses));
@@ -520,13 +502,11 @@ public final class ProjectExecutionToolOperations {
             ExecutionEnvironmentRef environment,
             SandboxProfileRef profile,
             ExecutionScratchSpaceSpec scratchSpace,
-            Duration defaultTimeout,
             Duration maximumTimeout,
             int maximumModelOutputBytes,
             Optional<Integer> maximumProcesses) {
         Objects.requireNonNull(arguments, "arguments must not be null");
         Objects.requireNonNull(request, "request must not be null");
-        Objects.requireNonNull(defaultTimeout, "defaultTimeout must not be null");
         Objects.requireNonNull(maximumTimeout, "maximumTimeout must not be null");
         Map<String, Object> values = arguments.values();
         String command = requiredText(values, "command");
@@ -540,7 +520,7 @@ public final class ProjectExecutionToolOperations {
             throw new SecurityException("canonical execution command or workdir is denied");
         }
         Duration requestedTimeout = Duration.ofMillis(
-                optionalLong(values, "timeoutMillis", defaultTimeout.toMillis(), 1, maximumTimeout.toMillis()));
+                optionalLong(values, "timeoutMillis", maximumTimeout.toMillis(), 1, maximumTimeout.toMillis()));
         String budgetFamily = outputBudgetFamily(declaredOperationFamily, classification);
         boolean boundedInspection = "INSPECT".equals(budgetFamily);
         int channelBudget = outputChannelBudget(budgetFamily, maximumModelOutputBytes);
@@ -813,6 +793,7 @@ public final class ProjectExecutionToolOperations {
         }
         data.put("output", output);
         data.put("truncated", truncated);
+        data.put("outputIncomplete", result.outputIncomplete());
         data.put("durationMillis", result.resourceUsage().wallTime().toMillis());
         data.put("observedProcessCount", result.resourceUsage().observedProcessCount());
         data.put("operationFamily", operationFamily);
@@ -1120,6 +1101,7 @@ public final class ProjectExecutionToolOperations {
                 switch (category) {
                     case "DEPENDENCY_UNAVAILABLE" -> "RESTORE_TOOLCHAIN_OR_USE_EQUIVALENT";
                     case "COMMAND_FAILED" -> "CONTINUE_WITH_DIAGNOSTIC";
+                    case "OUTCOME_UNKNOWN" -> "VERIFY_OUTCOME_BEFORE_RETRY";
                     default -> "REVIEW_BOUNDED_FAILURE";
                 };
         };

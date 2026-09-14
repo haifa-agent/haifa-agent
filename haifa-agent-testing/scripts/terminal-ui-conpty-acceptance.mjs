@@ -250,7 +250,6 @@ function writeConfiguration(file, databasePath, approvalMode, provider) {
       "execution:",
       "  provider: host-guarded",
       `  shell: ${process.platform === "win32" ? "powershell" : "auto"}`,
-      "  defaultTimeoutMillis: 120000",
       "  maxTimeoutMillis: 600000",
       "  maxOutputLines: 2000",
       "  maxOutputBytes: 51200",

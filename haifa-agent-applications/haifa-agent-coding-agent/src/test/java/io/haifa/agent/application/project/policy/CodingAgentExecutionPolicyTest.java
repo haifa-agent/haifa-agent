@@ -236,7 +236,6 @@ class CodingAgentExecutionPolicyTest {
                         ExecutionEnvironmentRef.empty(),
                         PROFILE,
                         ExecutionScratchSpaceSpec.none(),
-                        Duration.ofSeconds(10),
                         Duration.ofSeconds(30),
                         4096,
                         Optional.empty()),

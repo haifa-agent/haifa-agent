@@ -11,6 +11,13 @@ import static io.haifa.agent.application.project.tool.ProjectExecutionTestSuppor
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
+import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCost;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationSource;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationTrigger;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.ExecutionBroker;
@@ -91,6 +98,7 @@ class ProjectExecutionNormalizationTest {
                 .containsEntry("processState", "EXITED")
                 .containsEntry("exitCode", 7)
                 .containsEntry("truncated", true)
+                .containsEntry("outputIncomplete", false)
                 .containsEntry("outputRef", "stdout-asset")
                 .containsEntry("operationFamily", "TEST")
                 .doesNotContainKeys("failureCategory", "stableFailureCode", "failureCode")
@@ -99,6 +107,35 @@ class ProjectExecutionNormalizationTest {
                 .doesNotContainKey("scratchCleanupFailed");
         assertThat(result.structuredData()).doesNotContainKeys("validationEvidence", "validationAttemptRef");
         assertThat(result.assets()).extracting(AssetRef::assetId).containsExactly("stdout-asset");
+    }
+
+    @Test
+    void usesProductMaximumCappedByInvocationDeadlineWhenTimeoutIsOmitted() {
+        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
+        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                captured.set(request);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
+            }
+        };
+        String command = "mvn -pl :module test";
+        var candidate = new CodingVerificationCandidate(
+                command,
+                CodingVerificationCost.MEDIUM,
+                CodingVerificationTrigger.MODULE_CHANGE,
+                CodingVerificationSource.REPOSITORY_INSTRUCTIONS,
+                "AGENTS.md",
+                CodingValidationScope.SELECTED);
+        var frozen = CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
+
+        ToolResult result = operations(broker, 1024, 100, ignored -> frozen)
+                .execute(invocation(Map.of("command", command), () -> false), access());
+
+        assertThat(captured.get().limits().timeout()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(result.structuredData())
+                .doesNotContainKeys(
+                        "timeoutSelection", "selectedTimeoutMillis", "effectiveTimeoutMillis", "deadlineCapped");
     }
 
     @Test
@@ -178,6 +215,80 @@ class ProjectExecutionNormalizationTest {
         assertThat(result.structuredData().get("processState")).isEqualTo("TIMED_OUT");
         assertThat(result.summary()).contains("Command timed out");
         assertThat(result.structuredData().get("output").toString()).contains("Command timed out");
+    }
+
+    @Test
+    void preservesKnownExitWhenOutputDrainIsIncomplete() {
+        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                ExecutionResult base = result(request.id(), ExecutionStatus.EXITED, 9);
+                return new ExecutionResult(
+                        base.id(),
+                        base.status(),
+                        base.exitCode(),
+                        base.startedAt(),
+                        base.endedAt(),
+                        base.stdout(),
+                        base.stderr(),
+                        base.sandboxSessionRef(),
+                        base.resourceUsage(),
+                        base.failure(),
+                        base.replayed(),
+                        base.scratchProvisioned(),
+                        base.scratchCleanupFailed(),
+                        true);
+            }
+        };
+
+        ToolResult result = operations(broker, 4096, 100)
+                .execute(invocation(Map.of("command", "bounded-output"), () -> false), access());
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("processState", "EXITED")
+                .containsEntry("exitCode", 9)
+                .containsEntry("outputIncomplete", true)
+                .doesNotContainKey("runtimeOutcome");
+    }
+
+    @Test
+    void exposesTimeoutTreeUnconfirmedWithoutMakingItReplayable() {
+        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                ExecutionResult base = resultWithFailure(
+                        request.id(),
+                        ExecutionStatus.UNKNOWN,
+                        new ExecutionFailure("TIMEOUT_TREE_UNCONFIRMED", "process tree termination was not confirmed"));
+                return new ExecutionResult(
+                        base.id(),
+                        base.status(),
+                        base.exitCode(),
+                        base.startedAt(),
+                        base.endedAt(),
+                        base.stdout(),
+                        base.stderr(),
+                        base.sandboxSessionRef(),
+                        base.resourceUsage(),
+                        base.failure(),
+                        base.replayed(),
+                        base.scratchProvisioned(),
+                        base.scratchCleanupFailed(),
+                        true);
+            }
+        };
+
+        ToolResult result = operations(broker, 4096, 100)
+                .execute(invocation(Map.of("command", "side-effecting"), () -> false), access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("processState", "UNKNOWN")
+                .containsEntry("runtimeOutcome", "OUTCOME_UNKNOWN")
+                .containsEntry("outputIncomplete", true)
+                .containsEntry("stableFailureCode", "TIMEOUT_TREE_UNCONFIRMED")
+                .containsEntry("failureActionCode", "VERIFY_OUTCOME_BEFORE_RETRY");
     }
 
     @Test

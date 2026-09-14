@@ -34,9 +34,12 @@ final class CodingExecutionFailureClassifier {
                     "Use a narrower test target or reduce command concurrency before retrying.");
         }
         if (result.status() == ExecutionStatus.UNKNOWN) {
+            String stableCode = result.optionalFailure()
+                    .map(value -> value.code().toUpperCase(Locale.ROOT))
+                    .orElse("OUTCOME_UNKNOWN");
             return new Classification(
                     "OUTCOME_UNKNOWN",
-                    "OUTCOME_UNKNOWN",
+                    stableCode,
                     "PROCESS",
                     "Query the smallest read-only local or remote fact before considering a retry.");
         }

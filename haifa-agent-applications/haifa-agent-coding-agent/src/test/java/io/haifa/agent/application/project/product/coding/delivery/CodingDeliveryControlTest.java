@@ -48,7 +48,6 @@ import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -698,12 +697,7 @@ class CodingDeliveryControlTest {
 
     private static CodingVerificationCandidate candidate(CodingVerificationSource source, String reference) {
         return new CodingVerificationCandidate(
-                "mvn test",
-                CodingVerificationCost.HIGH,
-                Duration.ofMinutes(10),
-                CodingVerificationTrigger.FINAL_GATE,
-                source,
-                reference);
+                "mvn test", CodingVerificationCost.HIGH, CodingVerificationTrigger.FINAL_GATE, source, reference);
     }
 
     private static void tool(

@@ -51,13 +51,16 @@ Coding Agent 不再向模型上下文注入 `ORIENT/PLAN/CHANGE/VERIFY/REVIEW/DE
 未解决的确定性阻塞、硬预算限制以及提交/推送/PR 意图），不满足要求时阻止任务完成，满足时中性放行。
 ANALYZE/REVIEW 任务保持只读约束；修改工作区不会隐式产生 commit、push 或 PR 意图。
 
-`execution_run` 3.0.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
+`execution_run` 4.0.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
 可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
 任何正常退出都以唯一 `processState=EXITED` 和原始 exit code 通过权威 `ToolResult` 进入后续模型上下文；
 `ToolResult.successful=true` 只表示执行结果已可靠交付，不表示命令业务成功。模型读取 bounded 输出和
 退出码判断下一步。进程无法启动、Timeout、Cancel、资源限制和未知终止继续保留稳定失败/动作码；只有
 执行器明确报告可执行文件或工具链缺失时才使用 `DEPENDENCY_UNAVAILABLE`，不会从普通输出关键词推断。
+省略 `timeoutMillis` 时使用产品 maximum，显式值优先；最终值仍受 Runtime 提供的 Run 剩余 deadline
+裁剪。结果只额外暴露 `outputIncomplete`；超时且进程树终止未确认时返回
+`TIMEOUT_TREE_UNCONFIRMED`，保持 unknown 且禁止自动重放。
 
 ## 自主交付模式与完成证据
 
@@ -82,7 +85,7 @@ Session 冻结配置的显式 `requiresValidationEvidence` 事实为真时产生
 继续限制 commit/push/PR 的授权上界，但 generic Shell 不推断这些操作是否完成；模型必须依据原始命令结果和
 必要的只读对账判断并报告。需要硬性交付保证时应使用具有独立 typed contract 的专用领域 Tool。
 
-轻量 `CodingVerificationProfile` 只保存有界候选、来源、成本、超时与触发层级，按“用户显式配置 →
+轻量 `CodingVerificationProfile` 只保存有界候选、来源、成本与触发层级，按“用户显式配置 →
 仓库指令/构建配置 → 相邻测试 → 生态默认”在每个触发层级独立选择，不引入语言插件框架。验证阶梯仍由
 Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影响模块和最终门禁。TEST/BUILD Tool Result
 保留每次结构化 Validation Attempt；候选在 Coding Session 创建时由可信 Host 冻结到 Session metadata，

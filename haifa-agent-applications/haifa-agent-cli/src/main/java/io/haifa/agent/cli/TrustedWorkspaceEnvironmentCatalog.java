@@ -157,9 +157,7 @@ final class TrustedWorkspaceEnvironmentCatalog {
                 + environment.executionEnabled()
                 + "\" network=\""
                 + environment.networkPolicy()
-                + "\" target=\"workspace-ref-plus-relative-workdir\" default_timeout_millis=\""
-                + environment.defaultTimeoutMillis()
-                + "\" maximum_timeout_millis=\""
+                + "\" target=\"workspace-ref-plus-relative-workdir\" timeout_policy=\"explicit-or-maximum-capped-by-run\" maximum_timeout_millis=\""
                 + environment.maximumTimeoutMillis()
                 + "\" />\n"
                 + "  <permissions read=\"workspace\" write=\"workspace\" />\n"
@@ -247,7 +245,6 @@ final class TrustedWorkspaceEnvironmentCatalog {
             String shell,
             boolean executionEnabled,
             NetworkPolicyFact networkPolicy,
-            String defaultTimeoutMillis,
             String maximumTimeoutMillis,
             TemporarySpaceFact temporarySpace) {
         EnvironmentFacts {
@@ -257,7 +254,6 @@ final class TrustedWorkspaceEnvironmentCatalog {
             javaVersion = bounded(javaVersion, MAXIMUM_FACT_CHARACTERS);
             shell = bounded(shell, MAXIMUM_FACT_CHARACTERS);
             networkPolicy = Objects.requireNonNull(networkPolicy, "networkPolicy must not be null");
-            defaultTimeoutMillis = bounded(defaultTimeoutMillis, MAXIMUM_FACT_CHARACTERS);
             maximumTimeoutMillis = bounded(maximumTimeoutMillis, MAXIMUM_FACT_CHARACTERS);
             temporarySpace = Objects.requireNonNull(temporarySpace, "temporarySpace must not be null");
             if (!executionEnabled
@@ -268,11 +264,7 @@ final class TrustedWorkspaceEnvironmentCatalog {
         }
 
         static EnvironmentFacts capture(
-                String shell,
-                boolean executionEnabled,
-                String networkPolicy,
-                Duration defaultTimeout,
-                Duration maximumTimeout) {
+                String shell, boolean executionEnabled, String networkPolicy, Duration maximumTimeout) {
             return new EnvironmentFacts(
                     System.getProperty("os.name", "unknown"),
                     System.getProperty("os.version", "unknown"),
@@ -283,7 +275,6 @@ final class TrustedWorkspaceEnvironmentCatalog {
                     executionEnabled
                             ? NetworkPolicyFact.valueOf(networkPolicy.toUpperCase(Locale.ROOT))
                             : NetworkPolicyFact.UNAVAILABLE,
-                    executionEnabled ? Long.toString(defaultTimeout.toMillis()) : "UNAVAILABLE",
                     executionEnabled ? Long.toString(maximumTimeout.toMillis()) : "UNAVAILABLE",
                     executionEnabled ? TemporarySpaceFact.SANDBOX_MANAGED : TemporarySpaceFact.UNAVAILABLE);
         }

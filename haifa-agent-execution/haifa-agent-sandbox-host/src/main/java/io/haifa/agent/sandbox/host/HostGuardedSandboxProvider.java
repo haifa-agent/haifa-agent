@@ -299,20 +299,14 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 Integer exitCode = null;
                 if (outcome == WaitOutcome.CANCELLED) {
                     treeTerminated = terminateTree(process);
-                    status = treeTerminated ? SandboxProcessStatus.CANCELLED : SandboxProcessStatus.UNKNOWN;
                 } else if (outcome == WaitOutcome.FINISHED) {
                     exitCode = process.exitValue();
-                    status = SandboxProcessStatus.EXITED;
                 } else {
                     treeTerminated = terminateTree(process);
-                    status = outcome == WaitOutcome.OUTPUT_LIMIT_EXCEEDED && treeTerminated
-                            ? SandboxProcessStatus.OUTPUT_LIMIT_EXCEEDED
-                            : outcome == WaitOutcome.PROCESS_LIMIT_EXCEEDED && treeTerminated
-                                    ? SandboxProcessStatus.PROCESS_LIMIT_EXCEEDED
-                                    : treeTerminated ? SandboxProcessStatus.TIMED_OUT : SandboxProcessStatus.UNKNOWN;
                 }
-                BoundedBytes out = stdout.get(5, TimeUnit.SECONDS);
-                BoundedBytes err = stderr.get(5, TimeUnit.SECONDS);
+                status = settledStatus(outcome, treeTerminated);
+                BoundedBytes out = collectOutput(stdout, process.getInputStream());
+                BoundedBytes err = collectOutput(stderr, process.getErrorStream());
                 if (outputLimitExceeded.get()
                         && execution.limits().outputOverflowPolicy()
                                 == io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE
@@ -333,11 +327,17 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         treeTerminated,
                         safeObservedProcesses(process),
                         scratch != null,
-                        false);
+                        false,
+                        settlementFailureCode(outcome, treeTerminated),
+                        !out.complete() || !err.complete());
             } catch (HostSandboxException exception) {
                 cleanupScratchDirectory(scratch);
                 throw exception;
             } catch (Exception exception) {
+                if (exception instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                boolean treeTerminated = current == null || terminateTree(current);
                 result = new SandboxProcessResult(
                         SandboxProcessStatus.UNKNOWN,
                         null,
@@ -347,10 +347,12 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         time.now(),
                         false,
                         false,
-                        current == null || !current.isAlive(),
+                        treeTerminated,
                         current == null ? 0 : safeObservedProcesses(current),
                         scratch != null,
-                        false);
+                        false,
+                        null,
+                        true);
             } finally {
                 current = null;
                 cancelRequested = false;
@@ -369,7 +371,9 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         result.processTreeTerminated(),
                         result.observedProcessCount(),
                         scratch != null,
-                        true);
+                        true,
+                        result.failureCode(),
+                        result.outputIncomplete());
             }
             return result;
         }
@@ -756,7 +760,39 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         }
     }
 
-    private static BoundedBytes read(
+    private static BoundedBytes collectOutput(CompletableFuture<BoundedBytes> collector, InputStream stream) {
+        try {
+            return collector.get(5, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        } catch (Exception exception) {
+            // The process outcome remains valid even when output collection is incomplete.
+        }
+        try {
+            stream.close();
+        } catch (IOException ignored) {
+            // The incomplete output fact is sufficient and safe to expose.
+        }
+        return BoundedBytes.incomplete();
+    }
+
+    static SandboxProcessStatus settledStatus(WaitOutcome outcome, boolean treeTerminated) {
+        return switch (outcome) {
+            case FINISHED -> SandboxProcessStatus.EXITED;
+            case CANCELLED -> treeTerminated ? SandboxProcessStatus.CANCELLED : SandboxProcessStatus.UNKNOWN;
+            case OUTPUT_LIMIT_EXCEEDED ->
+                treeTerminated ? SandboxProcessStatus.OUTPUT_LIMIT_EXCEEDED : SandboxProcessStatus.UNKNOWN;
+            case PROCESS_LIMIT_EXCEEDED ->
+                treeTerminated ? SandboxProcessStatus.PROCESS_LIMIT_EXCEEDED : SandboxProcessStatus.UNKNOWN;
+            case TIMED_OUT -> treeTerminated ? SandboxProcessStatus.TIMED_OUT : SandboxProcessStatus.UNKNOWN;
+        };
+    }
+
+    static String settlementFailureCode(WaitOutcome outcome, boolean treeTerminated) {
+        return outcome == WaitOutcome.TIMED_OUT && !treeTerminated ? "TIMEOUT_TREE_UNCONFIRMED" : null;
+    }
+
+    static BoundedBytes read(
             InputStream input,
             int maximum,
             io.haifa.agent.execution.api.ExecutionOutputChannel channel,
@@ -781,11 +817,11 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     observer,
                     new io.haifa.agent.execution.api.ProcessOutputChunk(
                             channel, new byte[0], true, output.truncated()));
-            return new BoundedBytes(output.bytes(), output.truncated());
+            return new BoundedBytes(output.bytes(), output.truncated(), true);
         } catch (IOException exception) {
             notifyObserver(
                     observer, new io.haifa.agent.execution.api.ProcessOutputChunk(channel, new byte[0], true, true));
-            return new BoundedBytes(output.bytes(), true);
+            return new BoundedBytes(output.bytes(), true, false);
         }
     }
 
@@ -916,9 +952,13 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         return new HostSandboxException(code, message, cause);
     }
 
-    private record BoundedBytes(byte[] bytes, boolean truncated) {}
+    record BoundedBytes(byte[] bytes, boolean truncated, boolean complete) {
+        private static BoundedBytes incomplete() {
+            return new BoundedBytes(new byte[0], true, false);
+        }
+    }
 
-    private enum WaitOutcome {
+    enum WaitOutcome {
         FINISHED,
         OUTPUT_LIMIT_EXCEEDED,
         TIMED_OUT,

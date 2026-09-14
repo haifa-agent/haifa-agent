@@ -2,7 +2,6 @@ package io.haifa.agent.application.project.product.coding.verification;
 
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
 import io.haifa.agent.policy.api.PolicyDigest;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,7 +17,7 @@ import java.util.Optional;
 public record CodingSessionVerificationConfiguration(
         String schemaVersion, CodingVerificationProfile profile, boolean requiresValidationEvidence, String digest) {
     public static final String METADATA_KEY = "codingVerification";
-    public static final String SCHEMA_VERSION = "coding-session-verification/2";
+    public static final String SCHEMA_VERSION = "coding-session-verification/3";
 
     public CodingSessionVerificationConfiguration {
         if (!SCHEMA_VERSION.equals(schemaVersion)) {
@@ -86,7 +85,6 @@ public record CodingSessionVerificationConfiguration(
         return List.of(
                 candidate.command(),
                 candidate.cost().name(),
-                Long.toString(candidate.timeout().toMillis()),
                 candidate.trigger().name(),
                 candidate.source().name(),
                 candidate.sourceReference(),
@@ -99,7 +97,6 @@ public record CodingSessionVerificationConfiguration(
                     Map<String, Object> value = new LinkedHashMap<>();
                     value.put("command", candidate.command());
                     value.put("cost", candidate.cost().name());
-                    value.put("timeoutMillis", candidate.timeout().toMillis());
                     value.put("trigger", candidate.trigger().name());
                     value.put("source", candidate.source().name());
                     value.put("sourceReference", candidate.sourceReference());
@@ -119,12 +116,9 @@ public record CodingSessionVerificationConfiguration(
         for (Object item : values) {
             if (!(item instanceof Map<?, ?> map))
                 throw new IllegalArgumentException("verification candidate is invalid");
-            Object timeout = map.get("timeoutMillis");
-            if (!(timeout instanceof Number number)) throw new IllegalArgumentException("timeoutMillis is invalid");
             result.add(new CodingVerificationCandidate(
                     text(map, "command"),
                     CodingVerificationCost.valueOf(text(map, "cost")),
-                    Duration.ofMillis(number.longValue()),
                     CodingVerificationTrigger.valueOf(text(map, "trigger")),
                     CodingVerificationSource.valueOf(text(map, "source")),
                     text(map, "sourceReference"),

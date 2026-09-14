@@ -8,7 +8,6 @@ import io.haifa.agent.application.project.product.coding.verification.CodingVeri
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationSource;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationTrigger;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -19,7 +18,6 @@ class CodingValidationEvidenceTest {
         CodingVerificationCandidate candidate = new CodingVerificationCandidate(
                 "python -m pytest tests/test_exact.py",
                 CodingVerificationCost.LOW,
-                Duration.ofMinutes(2),
                 CodingVerificationTrigger.ADJACENT_CHANGE,
                 CodingVerificationSource.USER_EXPLICIT,
                 "coding-client",
@@ -47,7 +45,6 @@ class CodingValidationEvidenceTest {
         CodingVerificationCandidate candidate = new CodingVerificationCandidate(
                 "./mvnw test",
                 CodingVerificationCost.HIGH,
-                Duration.ofMinutes(10),
                 CodingVerificationTrigger.FINAL_GATE,
                 CodingVerificationSource.BUILD_CONFIGURATION,
                 "pom.xml",
@@ -64,7 +61,6 @@ class CodingValidationEvidenceTest {
         CodingVerificationCandidate candidate = new CodingVerificationCandidate(
                 "powershell -NoProfile -File verify.ps1",
                 CodingVerificationCost.HIGH,
-                Duration.ofMinutes(10),
                 CodingVerificationTrigger.FINAL_GATE,
                 CodingVerificationSource.BUILD_CONFIGURATION,
                 "verify.ps1",

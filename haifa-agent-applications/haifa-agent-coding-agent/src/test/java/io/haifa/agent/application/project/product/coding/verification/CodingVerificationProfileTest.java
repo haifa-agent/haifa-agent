@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
-import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -35,15 +35,21 @@ class CodingVerificationProfileTest {
                 .contains(
                         "sourcePriority=USER_EXPLICIT>REPOSITORY_INSTRUCTIONS>BUILD_CONFIGURATION>ADJACENT_TEST>ECOSYSTEM_DEFAULT")
                 .contains("./mvnw -Dtest=FocusedTest test", "./mvnw -pl :module test")
-                .doesNotContain("./mvnw verify", "./mvnw test");
+                .doesNotContain("./mvnw verify", "./mvnw test", "ms|");
 
         CodingSessionVerificationConfiguration frozen = CodingSessionVerificationConfiguration.freeze(profile);
         assertThat(CodingSessionVerificationConfiguration.fromSessionMetadata(frozen.sessionMetadata()))
                 .contains(frozen);
         assertThat(frozen.digest()).hasSize(64);
         assertThat(frozen.toStructuredData())
-                .containsEntry("schemaVersion", "coding-session-verification/2")
+                .containsEntry("schemaVersion", "coding-session-verification/3")
                 .doesNotContainKey("ignoredCandidates");
+        assertThat(frozen.toStructuredData().toString()).doesNotContain("timeoutMillis");
+        Map<String, Object> obsolete = new LinkedHashMap<>(frozen.toStructuredData());
+        obsolete.put("schemaVersion", "coding-session-verification/2");
+        assertThat(CodingSessionVerificationConfiguration.fromSessionMetadata(
+                        Map.of(CodingSessionVerificationConfiguration.METADATA_KEY, Map.copyOf(obsolete))))
+                .isEmpty();
     }
 
     @Test
@@ -125,7 +131,6 @@ class CodingVerificationProfileTest {
         return new CodingVerificationCandidate(
                 command,
                 CodingVerificationCost.MEDIUM,
-                Duration.ofMinutes(5),
                 trigger,
                 source,
                 source.name(),

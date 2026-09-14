@@ -125,7 +125,6 @@ class ProjectPersistenceAssemblyTest {
         CodingVerificationCandidate candidate = new CodingVerificationCandidate(
                 "python -m pytest tests/test_api.py",
                 CodingVerificationCost.LOW,
-                Duration.ofMinutes(3),
                 CodingVerificationTrigger.ADJACENT_CHANGE,
                 CodingVerificationSource.USER_EXPLICIT,
                 "trusted-coding-host",
@@ -516,7 +515,6 @@ class ProjectPersistenceAssemblyTest {
         CodingVerificationProfile cliDefaults = new CodingVerificationProfile(List.of(new CodingVerificationCandidate(
                 "mvn test",
                 CodingVerificationCost.HIGH,
-                Duration.ofMinutes(10),
                 CodingVerificationTrigger.FINAL_GATE,
                 CodingVerificationSource.BUILD_CONFIGURATION,
                 "pom.xml",
@@ -526,7 +524,6 @@ class ProjectPersistenceAssemblyTest {
                 List.of(new CodingVerificationCandidate(
                         "python -m pytest tests/test_api.py",
                         CodingVerificationCost.LOW,
-                        Duration.ofMinutes(3),
                         CodingVerificationTrigger.ADJACENT_CHANGE,
                         CodingVerificationSource.USER_EXPLICIT,
                         "trusted-coding-host",

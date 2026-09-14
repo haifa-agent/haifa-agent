@@ -20,6 +20,10 @@ CLI 和 MCP 均通过 `ExecutionBroker`。
 只有无法可靠启动或交付结果的执行基础设施故障才进入 Tool failure。命令专用适配器可以在上层解释退出码，
 但不能改写这一共享进程事实。
 
+输出收集不完整不会覆盖已经确认的进程状态，只以 `outputIncomplete` 标记；超时且进程树终止无法确认时
+返回 `TIMEOUT_TREE_UNCONFIRMED` 并保持 unknown。启动进程前无法可靠形成结果时沿用 fail-closed unknown，
+且不会伪装成已 dispatch；这些事实不包含命令、PID、宿主路径或原始异常。
+
 Sandbox Profile 精确冻结 Provider、Provider 配置摘要、允许的可执行文件与环境名。Execution Core 在取得
 环境租约和打开 Session 前完成 Profile、Provider 与预检结果匹配；未知或冲突绑定 fail closed，
 不做 Provider 轮询或回退。网络断网与文件挂载隔离不再属于 Profile 契约，宿主进程一律使用宿主网络。
