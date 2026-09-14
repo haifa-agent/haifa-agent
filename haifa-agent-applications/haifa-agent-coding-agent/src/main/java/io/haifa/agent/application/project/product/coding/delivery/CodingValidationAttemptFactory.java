@@ -10,36 +10,25 @@ public final class CodingValidationAttemptFactory {
     private CodingValidationAttemptFactory() {}
 
     public static Optional<CodingValidationAttemptEvidence> create(
-            String operationFamily,
-            String command,
-            boolean successful,
-            CodingSessionVerificationConfiguration configuration) {
+            String command, CodingSessionVerificationConfiguration configuration) {
         CodingSessionVerificationConfiguration frozen =
                 Objects.requireNonNull(configuration, "configuration must not be null");
         Optional<CodingVerificationCandidate> matched = frozen.profile().exactCandidate(command);
-        boolean declaredValidation = "TEST".equals(operationFamily) || "BUILD".equals(operationFamily);
-        if (!declaredValidation && !("UNKNOWN".equals(operationFamily) && matched.isPresent())) {
-            return Optional.empty();
-        }
-        CodingValidationScope scope =
-                matched.map(CodingVerificationCandidate::claimedScope).orElse(CodingValidationScope.UNKNOWN);
+        if (matched.isEmpty()) return Optional.empty();
+        CodingVerificationCandidate candidate = matched.orElseThrow();
+        CodingValidationScope scope = candidate.claimedScope();
         String claimCode =
                 switch (scope) {
                     case FULL -> "TRUSTED_FULL_SCOPE";
                     case SELECTED -> "TRUSTED_SELECTED_SCOPE";
-                    case UNKNOWN -> matched.isPresent() ? "SCOPE_UNAVAILABLE" : "COMMAND_NOT_IN_FROZEN_PROFILE";
+                    case UNKNOWN -> "SCOPE_UNAVAILABLE";
                 };
         return Optional.of(new CodingValidationAttemptEvidence(
                 CodingValidationAttemptEvidence.SCHEMA_VERSION,
-                successful ? CodingValidationStatus.PASSED : CodingValidationStatus.FAILED,
-                null,
-                null,
-                null,
                 scope,
-                "COUNTS_UNAVAILABLE",
-                matched.map(candidate -> candidate.source().name()).orElse("UNMATCHED"),
+                candidate.source().name(),
                 claimCode,
                 frozen.digest(),
-                matched.map(frozen::candidateDigest).orElse("UNMATCHED")));
+                frozen.candidateDigest(candidate)));
     }
 }

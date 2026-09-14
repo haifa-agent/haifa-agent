@@ -428,7 +428,7 @@ final class CodingTerminalTestSupport {
         public CodingShellResult executeShell(String token, boolean approved) {
             shellApproved = approved;
             return new CodingShellResult(
-                    "SUCCEEDED",
+                    "EXITED",
                     Optional.of(0),
                     "safe shell output",
                     Optional.of("output-ref"),

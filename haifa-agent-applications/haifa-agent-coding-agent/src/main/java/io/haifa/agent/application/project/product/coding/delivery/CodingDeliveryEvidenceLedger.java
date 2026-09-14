@@ -13,8 +13,6 @@ import java.util.Set;
 
 /** Reconstructs the minimal delivery facts used by Coding completion and context. */
 public final class CodingDeliveryEvidenceLedger {
-    private static final Set<String> NO_CHANGE_CODES =
-            Set.of("ALREADY_SATISFIED", "ARCHITECTURE_STOP", "SECURITY_STOP", "DETERMINISTIC_BLOCKER");
     private static final Set<String> MUTATION_TOOLS =
             Set.of("file_create", "file_write", "file_delete", "file_move", "file_patch");
     private static final Set<String> READ_TOOLS = Set.of(
@@ -71,35 +69,22 @@ public final class CodingDeliveryEvidenceLedger {
         }
         if (!EXECUTION_TOOL.equals(call.toolName()) || data.isEmpty()) return;
 
-        Object deliveryEvidenceCode = data.get("deliveryEvidenceCode");
-        if (deliveryEvidenceCode instanceof String code) {
-            try {
-                facts.add(CodingDeliveryEvidenceKind.valueOf(code));
-            } catch (IllegalArgumentException ignored) {
-                // Frozen or future executions may carry evidence unknown to this Runtime version.
-            }
-        }
-
         String declaredFamily = String.valueOf(data.getOrDefault("operationFamily", "UNKNOWN"));
         String effectiveFamily = String.valueOf(data.getOrDefault(
                 "effectiveOperationFamily",
                 data.containsKey("commandOperation") ? data.get("commandOperation") : declaredFamily));
         String evidenceFamily = "UNKNOWN".equals(effectiveFamily) ? declaredFamily : effectiveFamily;
-        String status = String.valueOf(data.getOrDefault("status", "UNKNOWN"));
-        String semanticOutcome = String.valueOf(data.getOrDefault("semanticOutcome", "UNKNOWN"));
+        String processState = String.valueOf(data.getOrDefault("processState", "UNKNOWN"));
+        boolean exited = "EXITED".equals(processState);
         boolean trustedReadOnly = trustedReadOnlyClassification(data);
         if (("INSPECT".equals(evidenceFamily) || "DIFF".equals(evidenceFamily))
+                && exited
                 && trustedReadOnly
                 && trustedOperationFamily(data, evidenceFamily)) {
             facts.add(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION);
         }
-        boolean diffSuccess = "SUCCEEDED".equals(status)
-                || "EXPECTED_VARIANT".equals(semanticOutcome)
-                || ("EXITED".equals(status)
-                        && ("SUCCEEDED".equals(semanticOutcome)
-                                || Integer.valueOf(0).equals(data.get("exitCode"))));
         if ("DIFF".equals(evidenceFamily)
-                && diffSuccess
+                && exited
                 && trustedReadOnly
                 && trustedOperationFamily(data, evidenceFamily)) {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
@@ -110,20 +95,9 @@ public final class CodingDeliveryEvidenceLedger {
             CodingValidationAttemptEvidence validation = structuredValidation.orElseThrow();
             validationAttempts.add(validation);
             facts.add(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT);
-            facts.add(
-                    validation.status() == CodingValidationStatus.PASSED
-                            ? CodingDeliveryEvidenceKind.VALIDATION_PASSED
-                            : CodingDeliveryEvidenceKind.VALIDATION_FAILED);
         }
-        if (data.containsKey("failureCategory") && !"SUCCEEDED".equals(status)) {
+        if (data.containsKey("failureCategory") && !exited) {
             facts.add(CodingDeliveryEvidenceKind.BLOCKER_CONFIRMED);
-        }
-        Object noChangeCode = data.get("noChangeJustificationCode");
-        if (noChangeCode instanceof String code
-                && NO_CHANGE_CODES.contains(code)
-                && (("SUCCEEDED".equals(status) && ("BUILD".equals(declaredFamily) || "TEST".equals(declaredFamily)))
-                        || (data.containsKey("failureCategory") && !"SUCCEEDED".equals(status)))) {
-            facts.add(CodingDeliveryEvidenceKind.NO_CHANGE_JUSTIFICATION);
         }
     }
 
@@ -141,7 +115,7 @@ public final class CodingDeliveryEvidenceLedger {
         if ("OTHER".equals(String.valueOf(data.getOrDefault("commandTarget", "OTHER")))
                 && ("NOT_APPLICABLE".equals(String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN")))
                         || "UNKNOWN".equals(String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN"))))) {
-            return true; // Generic commands retain the declared delivery intent, never authorization or risk.
+            return true; // Generic commands retain the operation hint, never authorization or risk.
         }
         String operation = String.valueOf(data.getOrDefault("commandOperation", "UNKNOWN"));
         return switch (family) {
@@ -183,27 +157,11 @@ public final class CodingDeliveryEvidenceLedger {
             return position != null && previous != null && position > previous;
         }
 
-        public boolean hasAtOrAfter(CodingDeliveryEvidenceKind kind, CodingDeliveryEvidenceKind predecessor) {
-            Integer position = latestDeliveryEvidence.get(kind);
-            Integer previous = latestDeliveryEvidence.get(predecessor);
-            return position != null && previous != null && position >= previous;
-        }
-
         public List<String> codes() {
             return kinds.stream()
                     .sorted(Comparator.comparing(Enum::name))
                     .map(Enum::name)
                     .toList();
-        }
-
-        public boolean latestValidationPassed() {
-            return !validationAttempts.isEmpty()
-                    && validationAttempts.getLast().status() == CodingValidationStatus.PASSED;
-        }
-
-        public boolean latestValidationFailed() {
-            return !validationAttempts.isEmpty()
-                    && validationAttempts.getLast().status() == CodingValidationStatus.FAILED;
         }
     }
 }

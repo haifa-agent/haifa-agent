@@ -53,7 +53,7 @@ class ScriptRuntimeResolverTest {
         var definition =
                 ExecutionToolDefinitionFactory.create("profile@1", true, false, java.util.Set.of("powershell"));
 
-        assertThat(definition.version().value()).isEqualTo("2.0.0");
+        assertThat(definition.version().value()).isEqualTo("3.0.0");
         assertThat(definition.approvalRequirement()).isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.ALWAYS);
         assertThat(definition.inputSchema().document().toString())
                 .contains("mode", "content", "language", "args", "purpose")

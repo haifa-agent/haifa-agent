@@ -98,30 +98,32 @@ class TrustedScriptExecutionToolProviderTest {
     }
 
     @Test
-    void reportsNormallyExitedNonZeroProcessAsSuccessfulToolResultWithSchemaValidFacts() {
-        ExecutionToolProvider provider = provider(
-                new AtomicReference<>(),
-                Set.of("execution_run"),
-                TrustedWorkspacePathValidator.rejectWorkspaceInputs(),
-                1);
+    void reportsEveryNormallyExitedProcessAsSuccessfulToolResultWithSchemaValidFacts() {
+        for (int exitCode : List.of(0, 1, 2, 4, 128, 255)) {
+            ExecutionToolProvider provider = provider(
+                    new AtomicReference<>(),
+                    Set.of("execution_run"),
+                    TrustedWorkspacePathValidator.rejectWorkspaceInputs(),
+                    exitCode);
 
-        var result = provider.invokeTrustedScript(
-                invocation(),
-                "fixture-runtime",
-                "safe",
-                List.of(),
-                "fixed transform",
-                ".",
-                Duration.ofSeconds(5),
-                Set.of("execution_run"),
-                List.of());
+            var result = provider.invokeTrustedScript(
+                    invocation(),
+                    "fixture-runtime",
+                    "safe",
+                    List.of(),
+                    "fixed transform",
+                    ".",
+                    Duration.ofSeconds(5),
+                    Set.of("execution_run"),
+                    List.of());
 
-        assertThat(result.successful()).isTrue();
-        assertThat(result.summary()).contains("Script exited (exit 1)");
-        assertThat(result.structuredData())
-                .containsEntry("status", "EXITED")
-                .containsEntry("processState", "EXITED")
-                .containsEntry("exitCode", 1);
+            assertThat(result.successful()).isTrue();
+            assertThat(result.summary()).contains("Script exited (exit " + exitCode + ")");
+            assertThat(result.structuredData())
+                    .containsEntry("processState", "EXITED")
+                    .containsEntry("exitCode", exitCode)
+                    .doesNotContainKey("status");
+        }
     }
 
     @Test

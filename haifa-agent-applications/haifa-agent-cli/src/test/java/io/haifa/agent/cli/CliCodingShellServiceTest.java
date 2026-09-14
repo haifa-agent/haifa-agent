@@ -21,27 +21,27 @@ class CliCodingShellServiceTest {
     void includesSanitizedStructuredOutputWhenTheToolHeadlineOmitsIt() {
         ToolResult result = new ToolResult(
                 true,
-                "Command succeeded (exit 0)",
+                "Command exited (exit 1)",
                 Map.of("output", "D:/workspace/haifa-agent\n"),
                 List.of(),
                 List.of(),
                 false);
 
         assertThat(CliCodingShellService.displaySummary(result))
-                .isEqualTo("Command succeeded (exit 0)\nD:/workspace/haifa-agent");
+                .isEqualTo("Command exited (exit 1)\nD:/workspace/haifa-agent");
     }
 
     @Test
     void doesNotDuplicateOutputAlreadyPresentInTheSafeSummary() {
         ToolResult result = new ToolResult(
                 true,
-                "Command succeeded (exit 0)\nD:/workspace/haifa-agent",
+                "Command exited (exit 1)\nD:/workspace/haifa-agent",
                 Map.of("output", "D:/workspace/haifa-agent"),
                 List.of(),
                 List.of(),
                 false);
 
         assertThat(CliCodingShellService.displaySummary(result))
-                .isEqualTo("Command succeeded (exit 0)\nD:/workspace/haifa-agent");
+                .isEqualTo("Command exited (exit 1)\nD:/workspace/haifa-agent");
     }
 }

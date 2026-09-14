@@ -22,7 +22,7 @@ public sealed interface TerminalUiAction {
 
     record ContextChanged(String indicator) implements TerminalUiAction {}
 
-    record ShellCompleted(String command, String summary, String status) implements TerminalUiAction {}
+    record ShellCompleted(String command, String summary, String processState) implements TerminalUiAction {}
 
     record ExportCompleted(String logicalPath, int messageCount) implements TerminalUiAction {}
 

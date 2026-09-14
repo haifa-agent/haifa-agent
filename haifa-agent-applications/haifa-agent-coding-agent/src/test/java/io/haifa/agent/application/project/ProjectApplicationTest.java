@@ -99,19 +99,17 @@ class ProjectApplicationTest {
                 .containsExactly("execution_run", "file_read");
         var execution = disclosed.snapshot().bindings().getFirst();
         var fileRead = disclosed.snapshot().bindings().get(1);
-        assertThat(execution.definition().version().value()).isEqualTo("2.0.0");
+        assertThat(execution.definition().version().value()).isEqualTo("3.0.0");
         assertThat(fileRead.definition().version().value()).isEqualTo("2.0.0");
         @SuppressWarnings("unchecked")
         var properties = (java.util.Map<String, Object>)
                 execution.definition().inputSchema().document().get("properties");
-        assertThat(properties).containsKey("expectedExitCodes");
         assertThat(properties)
                 .containsOnlyKeys(
                         "command",
                         "workspaceRef",
                         "relativeWorkdir",
                         "timeoutMillis",
-                        "expectedExitCodes",
                         "description",
                         "operationFamily");
         assertThat(execution.definition().inputSchema().document())
@@ -121,14 +119,13 @@ class ProjectApplicationTest {
         @SuppressWarnings("unchecked")
         var outputProperties = (java.util.Map<String, Object>)
                 execution.definition().outputSchema().document().get("properties");
-        assertThat(outputProperties)
-                .containsKeys("deliveryRepositoryScopeDigest", "validationEvidence", "validationAttemptRef")
-                .doesNotContainKeys(
-                        "changeReviewArtifact",
-                        "changeReviewArtifactRef",
-                        "artifactRef",
-                        "changeReviewStatus",
-                        "changeReviewReasonCode");
+        assertThat(outputProperties).containsKeys("processState", "validationEvidence", "validationAttemptRef");
+        assertThat(outputProperties.keySet())
+                .noneMatch(key -> key.startsWith("semantic")
+                        || key.startsWith("expectedExit")
+                        || key.startsWith("commandOutcome")
+                        || key.startsWith("delivery")
+                        || key.startsWith("changeReview"));
         assertThat(execution.definition().resources().executionProfiles())
                 .singleElement()
                 .asString()

@@ -303,23 +303,22 @@ class ModelMessageAssemblerTest {
                 correlationId,
                 new RuntimeIdempotencyKey("idempotency-failed"),
                 "execution_run",
-                "1.7.2",
-                new ToolArguments("haifa.execution.run.input", "1.7.2", Map.of("command", "mvn test")),
+                "3.0.0",
+                new ToolArguments("haifa.execution.run.input", "3.0.0", Map.of("command", "mvn test")),
                 Instant.parse("2026-07-21T00:00:00Z"));
         call.beginValidation();
         call.beginPolicyCheck();
         call.start(Instant.parse("2026-07-21T00:00:01Z"));
         var canonicalResult = new io.haifa.agent.core.tool.ToolResult(
                 false,
-                "Command failed (exit 1)\nbounded stderr tail",
+                "Process could not start\nbounded stderr tail",
                 Map.ofEntries(
-                        Map.entry("status", "FAILED"),
-                        Map.entry("exitCode", 1),
+                        Map.entry("processState", "FAILED"),
                         Map.entry("durationMillis", 1240L),
                         Map.entry("truncated", true),
                         Map.entry("output", "bounded stderr tail"),
-                        Map.entry("failureCategory", "COMMAND_FAILED"),
-                        Map.entry("stableFailureCode", "NON_ZERO_EXIT"),
+                        Map.entry("failureCategory", "INFRASTRUCTURE"),
+                        Map.entry("stableFailureCode", "PROCESS_START_FAILED"),
                         Map.entry("failureActionCode", "CONTINUE_WITH_DIAGNOSTIC")),
                 List.of(),
                 List.of(),
@@ -327,7 +326,7 @@ class ModelMessageAssemblerTest {
         call.fail(
                 new ToolExecutionError(new AgentError(
                         AgentErrorCode.TOOL_BUSINESS_FAILURE,
-                        Map.of("failureCategory", "COMMAND_FAILED", "stableFailureCode", "NON_ZERO_EXIT"),
+                        Map.of("failureCategory", "INFRASTRUCTURE", "stableFailureCode", "PROCESS_START_FAILED"),
                         "diagnostic-failed",
                         Instant.parse("2026-07-21T00:00:02Z"))),
                 canonicalResult,

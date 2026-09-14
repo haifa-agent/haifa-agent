@@ -289,6 +289,9 @@ class ProjectExecutionRecoveryIT {
                     .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
                     .containsEntry("dispatchState", "NOT_DISPATCHED");
             assertThat(completedCall.status()).isEqualTo(ToolCallStatus.COMPLETED);
+            assertThat(completedCall.result().orElseThrow().structuredData())
+                    .containsEntry("processState", "EXITED")
+                    .containsEntry("exitCode", 128);
 
             assertThat(modelCalls).hasValue(3);
             assertThat(brokerCalls).hasValue(2);
@@ -400,7 +403,7 @@ class ProjectExecutionRecoveryIT {
                             "NETWORK_PERMISSION_REQUIRED", "network access requires operator approval", null);
                 }
                 observer.onStarted();
-                return completed(request.id());
+                return completed(request.id(), 128);
             }
 
             @Override
@@ -484,12 +487,12 @@ class ProjectExecutionRecoveryIT {
         }
     }
 
-    private static ExecutionResult completed(ExecutionId id) {
+    private static ExecutionResult completed(ExecutionId id, int exitCode) {
         ExecutionOutput empty = new ExecutionOutput("", null, 0, "0".repeat(64), false, false);
         return new ExecutionResult(
                 id,
-                ExecutionStatus.SUCCEEDED,
-                0,
+                ExecutionStatus.EXITED,
+                exitCode,
                 NOW,
                 NOW,
                 empty,

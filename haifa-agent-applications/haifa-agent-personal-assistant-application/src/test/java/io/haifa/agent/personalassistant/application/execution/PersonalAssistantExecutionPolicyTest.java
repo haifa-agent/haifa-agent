@@ -159,7 +159,7 @@ class PersonalAssistantExecutionPolicyTest {
         ExecutionToolConfiguration configuration = configuration();
         ToolArguments arguments = new ToolArguments(
                 "haifa.execution.run.input",
-                "2.0.0",
+                "3.0.0",
                 Map.of("mode", "COMMAND", "content", "echo safe", "purpose", "test"));
         FrozenToolBinding binding = binding();
         RunConfigurationSnapshotRef reference =
@@ -269,12 +269,12 @@ class PersonalAssistantExecutionPolicyTest {
                 Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
         var definition = new ToolDefinition(
                 new ToolName("execution_run"),
-                new SemanticVersion("2.0.0"),
+                new SemanticVersion("3.0.0"),
                 new ToolProviderId("haifa-execution"),
                 "Run execution",
                 "Run a bounded execution",
-                new ToolSchema("haifa.execution.run.input", "2.0.0", schema),
-                new ToolSchema("haifa.execution.run.output", "2.0.0", schema),
+                new ToolSchema("haifa.execution.run.input", "3.0.0", schema),
+                new ToolSchema("haifa.execution.run.output", "3.0.0", schema),
                 ToolExecutionMode.HOST_PROCESS,
                 true,
                 Duration.ofSeconds(30),
