@@ -1,6 +1,7 @@
 package io.haifa.agent.personalassistant.application.mission;
 
 import java.util.List;
+import java.util.Objects;
 
 /** Frozen, bounded prior research findings and unresolved gaps from an earlier Mission. */
 public record PriorResearchContext(
@@ -14,7 +15,20 @@ public record PriorResearchContext(
         if (directAnswer.length() > 8_000) {
             directAnswer = directAnswer.substring(0, 8_000);
         }
-        unresolvedQuestions = MissionValues.texts(unresolvedQuestions, "unresolvedQuestions", 40, 1_000);
-        unverifiedClaims = MissionValues.texts(unverifiedClaims, "unverifiedClaims", 40, 1_000);
+        unresolvedQuestions = boundTexts(unresolvedQuestions, 50, 1_000);
+        unverifiedClaims = boundTexts(unverifiedClaims, 50, 1_000);
+    }
+
+    private static List<String> boundTexts(List<String> values, int maxItems, int maxChars) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        return values.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(s -> s.length() > maxChars ? s.substring(0, maxChars) : s)
+                .limit(maxItems)
+                .toList();
     }
 }
