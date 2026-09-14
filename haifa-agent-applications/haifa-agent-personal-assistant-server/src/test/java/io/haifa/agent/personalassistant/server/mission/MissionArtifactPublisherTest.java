@@ -683,6 +683,90 @@ class MissionArtifactPublisherTest {
     }
 
     @Test
+    void allowsMultipleTasksWithAggregatedSourcesExceedingSingleTaskLimit() throws Exception {
+        ObjectNode task1 = taskWithSources("task-1", 1, 12);
+        ObjectNode task2 = taskWithSources("task-2", 13, 12);
+        ObjectNode task3 = taskWithSources("task-3", 25, 12);
+        ObjectNode task4 = taskWithSources("task-4", 37, 11);
+        List<JsonNode> tasks = List.of(task1, task2, task3, task4);
+        List<String> taskIds = List.of("task-1", "task-2", "task-3", "task-4");
+
+        var metadata = new InMemoryArtifactStore();
+        var payloads = new InMemoryArtifactPayloadStore();
+        var publisher = new MissionArtifactPublisher(artifactService(metadata, payloads, newIds()), MAPPER);
+
+        String report =
+                """
+                # AI 能力主张证据审查
+                <!-- haifa-section: executive-summary -->
+                ## 执行摘要
+                宣传主张得到部分证据支持，但真实能力受场景和技术限制约束，商业结论仍需谨慎。
+                <!-- haifa-section: scope-method -->
+                ## 范围、假设与方法
+                调查比较官方资料与独立来源，区分已验证事实、反证、推断和未知信息。
+                <!-- haifa-section: task-findings -->
+                ## 分项研究发现
+                <!-- haifa-task: task-1 -->
+                ### 任务一
+                分项任务详细审查结果表明，宣传主张在此任务范围内得到了独立来源与官方文档的充分支持与比对分析，关键事实由 [[source-1]] 支持。
+                <!-- haifa-task: task-2 -->
+                ### 任务二
+                分项任务详细审查结果表明，宣传主张在此任务范围内得到了独立来源与官方文档的充分支持与比对分析，关键事实由 [[source-13]] 支持。
+                <!-- haifa-task: task-3 -->
+                ### 任务三
+                分项任务详细审查结果表明，宣传主张在此任务范围内得到了独立来源与官方文档的充分支持与比对分析，关键事实由 [[source-25]] 支持。
+                <!-- haifa-task: task-4 -->
+                ### 任务四
+                分项任务详细审查结果表明，宣传主张在此任务范围内得到了独立来源与官方文档的充分支持与比对分析，关键事实由 [[source-37]] 支持。
+                <!-- haifa-section: synthesis -->
+                ## 综合分析
+                证据与反证共同表明，产品具有真实能力，但宣传把限定场景外推成了普遍能力。
+                <!-- haifa-section: conclusions -->
+                ## 结论与建议
+                在获得可复现实测和完整定价前，不应把宣传指标直接当成采购或投资依据。
+                <!-- haifa-section: risks-unknowns -->
+                ## 风险、未知与待确认问题
+                未公开训练数据、推理成本、客户留存和最新版本变化仍会影响最终判断。
+                <!-- haifa-section: sources -->
+                ## 来源
+                - [[source-1]] Source 1
+                - [[source-13]] Source 13
+                - [[source-25]] Source 25
+                - [[source-37]] Source 37
+                """;
+
+        MissionSynthesisIntent intent = new MissionSynthesisIntent(
+                "mission-multi-source",
+                "conversation-1",
+                "local/public-user",
+                MissionMode.DEEP_RESEARCH,
+                "Multi-task research objective",
+                tasks.stream().map(JsonNode::toString).toList(),
+                List.of(),
+                taskIds,
+                2,
+                Long.MAX_VALUE,
+                Optional.empty(),
+                Optional.of(researchBrief()));
+
+        var published = publisher.publish(intent, synthesis(report));
+        JsonNode manifest = MAPPER.readTree(published.structuredResult());
+
+        assertThat(manifest.path("schemaVersion").asText()).isEqualTo("pa.research-delivery/v2");
+        assertThat(manifest.path("completionKind").asText()).isEqualTo("COMPLETE");
+        assertThat(manifest.path("degraded").asBoolean()).isFalse();
+        assertThat(manifest.path("sourceCount").asInt()).isEqualTo(47);
+
+        Artifact sourcesArtifact = metadata.findByProject("mission-mission-multi-source").stream()
+                .filter(artifact -> artifact.title().equals("sources.json"))
+                .findFirst()
+                .orElseThrow();
+        JsonNode sourcesDoc = MAPPER.readTree(
+                new String(payloads.load(sourcesArtifact.payload()).orElseThrow(), StandardCharsets.UTF_8));
+        assertThat(sourcesDoc.path("sources")).hasSize(47);
+    }
+
+    @Test
     void rejectsStandardV2WithoutAnswerMarkdown() {
         var publisher = publisher(new InMemoryArtifactStore(), newIds());
         var intent = new MissionSynthesisIntent(
@@ -819,6 +903,65 @@ class MissionArtifactPublisherTest {
                 "unresolvedQuestions":["External freshness"],"stopReason":"SUFFICIENT_EVIDENCE","limitsUsed":{"searchCalls":1,"fetchCalls":2,"sources":2,"contentBytes":128}}
                 """
                         .formatted("a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64)));
+    }
+
+    private static ObjectNode taskWithSources(String taskId, int sourceStartIndex, int count) throws Exception {
+        ObjectNode task = MAPPER.createObjectNode();
+        task.put("schemaVersion", "pa.research-task-result/v2");
+        task.put("taskSummary", "Task summary for " + taskId);
+
+        ArrayNode queries = task.putArray("queries");
+        ObjectNode query = queries.addObject();
+        query.put("query", "query for " + taskId);
+        query.put("phase", "DISCOVER");
+
+        ArrayNode sources = task.putArray("sources");
+        ArrayNode supportingSourceIds = MAPPER.createArrayNode();
+        for (int i = 0; i < count; i++) {
+            int sourceNum = sourceStartIndex + i;
+            String sourceId = "source-" + sourceNum;
+            supportingSourceIds.add(sourceId);
+            ObjectNode source = sources.addObject();
+            source.put("sourceId", sourceId);
+            source.put("locator", "https://research.stub/source-" + sourceNum);
+            source.put("normalizedLocator", "https://research.stub/source-" + sourceNum);
+            String digest = "sha256:" + String.format("%064d", sourceNum);
+            source.put("locatorDigest", digest);
+            source.put("title", "Source " + sourceNum);
+            source.put("safetyType", "DEVELOPMENT_STUB");
+            source.put("fetchedAt", "2026-08-08T00:00:00Z");
+            source.put("publishedAt", "2026-01-15T00:00:00Z");
+            source.put("status", "FETCHED");
+            source.put("excerpt", "Evidence from source " + sourceNum);
+            source.put("contentDigest", digest);
+        }
+
+        ArrayNode findings = task.putArray("findings");
+        ObjectNode finding = findings.addObject();
+        finding.put("findingId", "finding-" + taskId);
+        finding.put("title", "Finding for " + taskId);
+        finding.put("mechanism", "Mechanism for " + taskId);
+        ArrayNode params = finding.putArray("keyParameters");
+        params.add("param: 1");
+        finding.put("evidenceSummary", "Evidence summary for " + taskId);
+        finding.put("implications", "Implications for " + taskId);
+        finding.put("limitations", "Limitations for " + taskId);
+        finding.set("supportingSourceIds", supportingSourceIds);
+        finding.putArray("opposingSourceIds");
+        finding.put("evidenceAssessment", "SUPPORTED");
+        finding.put("unverified", false);
+
+        ArrayNode unresolved = task.putArray("unresolvedQuestions");
+        unresolved.add("Unresolved for " + taskId);
+
+        task.put("stopReason", "SUFFICIENT_EVIDENCE");
+        ObjectNode limits = task.putObject("limitsUsed");
+        limits.put("searchCalls", 1);
+        limits.put("fetchCalls", count);
+        limits.put("sources", count);
+        limits.put("contentBytes", 128 * count);
+
+        return task;
     }
 
     @FunctionalInterface
