@@ -8,14 +8,16 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
-/** Resolves env:// and model-auth:// credentials with per-process refresh single-flight. */
+/** Resolves env://, os://, and model-auth:// credentials with per-process refresh single-flight. */
 public final class LocalModelCredentialResolver implements CredentialResolver {
     private static final String ENV_PREFIX = "env://";
+    private static final String OS_PREFIX = "os://";
     private static final String MODEL_AUTH_PREFIX = "model-auth://";
 
     private final Function<String, String> environment;
@@ -23,6 +25,7 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
     private final ExternalLoginRegistry registry;
     private final Clock clock;
     private final Duration refreshSafetyWindow;
+    private final Function<String, Optional<String>> osStore;
     private final Map<LocalModelAuthReference, CompletableFuture<StoredExternalCredential>> refreshes =
             new ConcurrentHashMap<>();
 
@@ -32,11 +35,28 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
             ExternalLoginRegistry registry,
             Clock clock,
             Duration refreshSafetyWindow) {
+        this(
+                environment,
+                store,
+                registry,
+                clock,
+                refreshSafetyWindow,
+                name -> WindowsCredentialManagerClient.defaultClient().read("haifa:os:" + name));
+    }
+
+    public LocalModelCredentialResolver(
+            Function<String, String> environment,
+            LocalModelAuthStore store,
+            ExternalLoginRegistry registry,
+            Clock clock,
+            Duration refreshSafetyWindow,
+            Function<String, Optional<String>> osStore) {
         this.environment = Objects.requireNonNull(environment, "environment must not be null");
         this.store = Objects.requireNonNull(store, "store must not be null");
         this.registry = Objects.requireNonNull(registry, "registry must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.refreshSafetyWindow = Objects.requireNonNull(refreshSafetyWindow, "refreshSafetyWindow must not be null");
+        this.osStore = Objects.requireNonNull(osStore, "osStore must not be null");
         if (refreshSafetyWindow.isNegative() || refreshSafetyWindow.compareTo(Duration.ofHours(1)) > 0) {
             throw new IllegalArgumentException("refreshSafetyWindow is invalid");
         }
@@ -47,6 +67,7 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
         String value =
                 Objects.requireNonNull(reference, "reference must not be null").value();
         if (value.startsWith(ENV_PREFIX)) return resolveEnvironment(value.substring(ENV_PREFIX.length()));
+        if (value.startsWith(OS_PREFIX)) return resolveOsStore(value.substring(OS_PREFIX.length()));
         if (!value.startsWith(MODEL_AUTH_PREFIX)) {
             throw new IllegalArgumentException("AUTH_CREDENTIAL_SCHEME_UNSUPPORTED");
         }
@@ -74,6 +95,7 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
         String value =
                 Objects.requireNonNull(reference, "reference must not be null").value();
         if (value.startsWith(ENV_PREFIX)) return resolveEnvironment(value.substring(ENV_PREFIX.length()));
+        if (value.startsWith(OS_PREFIX)) return resolveOsStore(value.substring(OS_PREFIX.length()));
         if (!value.startsWith(MODEL_AUTH_PREFIX)) {
             throw new IllegalArgumentException("AUTH_CREDENTIAL_SCHEME_UNSUPPORTED");
         }
@@ -85,6 +107,24 @@ public final class LocalModelCredentialResolver implements CredentialResolver {
         StoredExternalCredential refreshed = refreshSingleFlight(external, Instant.MAX, true);
         registry.prepareIfRegistered(refreshed);
         return new ResolvedCredential(refreshed.accessToken());
+    }
+
+    private ResolvedCredential resolveOsStore(String name) {
+        if (!name.matches("[A-Za-z_][A-Za-z0-9_-]*")) {
+            throw new IllegalArgumentException("os credential reference is invalid");
+        }
+        Optional<String> secret;
+        try {
+            secret = osStore.apply(name);
+        } catch (IllegalStateException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new IllegalStateException("OS credential lookup failed: " + name, exception);
+        }
+        if (secret.isEmpty() || secret.get().isBlank()) {
+            throw new IllegalStateException("AUTH_CREDENTIAL_UNAVAILABLE");
+        }
+        return new ResolvedCredential(secret.get().trim());
     }
 
     private ResolvedCredential resolveEnvironment(String name) {

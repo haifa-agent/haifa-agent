@@ -5,9 +5,10 @@ import io.haifa.agent.auth.localmodel.ExternalLoginAttemptId;
 import io.haifa.agent.auth.localmodel.ExternalLoginCoordinator;
 import io.haifa.agent.auth.localmodel.ExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.ExternalLoginRegistry;
-import io.haifa.agent.auth.localmodel.FileLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.LocalModelAuthenticationService;
 import io.haifa.agent.auth.localmodel.LocalModelCredentialResolver;
+import io.haifa.agent.auth.localmodel.WindowsCredentialManagerClient;
+import io.haifa.agent.auth.localmodel.WindowsLocalModelAuthStore;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityExternalLoginMethod;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityLocalCompatibilityRegistrationFactory;
 import io.haifa.agent.auth.localmodel.antigravity.AntigravityProjectRegistry;
@@ -115,7 +116,7 @@ public class PersonalAssistantConfiguration {
             AntigravityProjectRegistry antigravityProjects,
             PersonalModelProxySettings proxySettings) {
         Map<String, String> environment = System.getenv();
-        var store = FileLocalModelAuthStore.defaultStore(mapper);
+        var store = WindowsLocalModelAuthStore.defaultStore(mapper);
         var codexRegistration = CodexLocalCompatibilityRegistrationFactory.create(environment);
         var antigravityRegistration = AntigravityLocalCompatibilityRegistrationFactory.create(environment);
         List<ExternalLoginMethod> methods = new java.util.ArrayList<>();
@@ -213,6 +214,7 @@ public class PersonalAssistantConfiguration {
                                 .normalize());
         PersonalExecutionPlatform execution;
         try {
+            Set<String> deniedEnv = deniedEnvironmentNames(properties);
             execution = PersonalExecutionRuntime.create(
                     dataDirectory,
                     tenant,
@@ -220,7 +222,8 @@ public class PersonalAssistantConfiguration {
                     properties.execution(),
                     personalClock,
                     sqlite.persistence().runtimePersistence(),
-                    sharedPolicy);
+                    sharedPolicy,
+                    deniedEnv);
             var web = "deterministic-stub".equals(properties.mission().plannerMode())
                             && !properties.web().enabled()
                     ? PersonalWebPlatform.deterministicStub()
@@ -230,7 +233,10 @@ public class PersonalAssistantConfiguration {
                             providerConfiguration(properties.web().search()),
                             providerConfiguration(properties.web().fetch()),
                             mapper,
-                            personalClock);
+                            personalClock,
+                            System::getenv,
+                            name -> WindowsCredentialManagerClient.defaultClient()
+                                    .read("haifa:os:" + name));
             var models = PersonalModelFactory.createPlatform(
                     properties.modelProviders(),
                     properties.defaultModelId(),
@@ -391,7 +397,7 @@ public class PersonalAssistantConfiguration {
                 provider.enabled(),
                 provider.providerId(),
                 provider.endpoint(),
-                resolveCredential(provider),
+                provider.credentialReference(),
                 Duration.ofMillis(provider.timeoutMillis()),
                 provider.maximumResponseBytes());
     }
@@ -406,15 +412,27 @@ public class PersonalAssistantConfiguration {
         }
     }
 
-    private static String resolveCredential(PersonalAssistantProperties.WebProvider provider) {
-        if (!provider.enabled()) return "";
-        String variable = provider.credentialReference().substring("env://".length());
-        String value = System.getenv(variable);
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(
-                    "Personal Web Tool credential environment variable is unavailable: " + variable);
+    private static Set<String> deniedEnvironmentNames(PersonalAssistantProperties properties) {
+        Set<String> denied = new java.util.LinkedHashSet<>();
+        if (properties == null) return denied;
+        if (properties.web() != null) {
+            if (properties.web().search() != null)
+                collectEnvRef(denied, properties.web().search().credentialReference());
+            if (properties.web().fetch() != null)
+                collectEnvRef(denied, properties.web().fetch().credentialReference());
         }
-        return value;
+        if (properties.modelProviders() != null) {
+            for (var provider : properties.modelProviders()) {
+                collectEnvRef(denied, provider.credentialReference());
+            }
+        }
+        return Set.copyOf(denied);
+    }
+
+    private static void collectEnvRef(Set<String> target, String ref) {
+        if (ref != null && ref.startsWith("env://") && ref.length() > "env://".length()) {
+            target.add(ref.substring("env://".length()));
+        }
     }
 
     private static SdkContributionMetadata metadata(

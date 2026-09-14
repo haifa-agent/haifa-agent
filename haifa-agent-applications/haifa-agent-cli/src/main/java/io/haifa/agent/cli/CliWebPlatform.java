@@ -36,11 +36,29 @@ final class CliWebPlatform {
     }
 
     static CliWebPlatform create(CliConfiguration.Web configuration, PrincipalRef principal) {
-        return create(configuration, principal, System::getenv);
+        return create(
+                configuration,
+                principal,
+                System::getenv,
+                name -> io.haifa.agent.auth.localmodel.WindowsCredentialManagerClient.defaultClient()
+                        .read("haifa:os:" + name));
     }
 
     static CliWebPlatform create(
             CliConfiguration.Web configuration, PrincipalRef principal, Function<String, String> environment) {
+        return create(
+                configuration,
+                principal,
+                environment,
+                name -> io.haifa.agent.auth.localmodel.WindowsCredentialManagerClient.defaultClient()
+                        .read("haifa:os:" + name));
+    }
+
+    static CliWebPlatform create(
+            CliConfiguration.Web configuration,
+            PrincipalRef principal,
+            Function<String, String> environment,
+            Function<String, java.util.Optional<String>> osStore) {
         var client = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
@@ -62,10 +80,10 @@ final class CliWebPlatform {
             contributions.add(toolCatalog.fetch(selected, new DefaultWebUrlPolicy()));
         }
         if (contributions.isEmpty()) {
-            return new CliWebPlatform(List.of(), new DefaultCredentialBroker(Map.of()));
+            return new CliWebPlatform(List.of(), new DefaultCredentialBroker(id -> java.util.Optional.empty()));
         }
 
-        Map<String, String> secrets = new HashMap<>();
+        Map<String, String> credentialRefs = new HashMap<>();
         for (WebToolCatalogContribution contribution : contributions) {
             var requirement = contribution.definition().credentialRequirements().stream()
                     .findFirst()
@@ -73,15 +91,49 @@ final class CliWebPlatform {
             String operation = contribution.definition().name().value();
             CliConfiguration.WebProvider providerConfiguration =
                     operation.equals("web_search") ? configuration.search() : configuration.fetch();
-            String environmentName = providerConfiguration.credentialRef().substring("env://".length());
-            String secret = environment.apply(environmentName);
-            if (secret == null || secret.isBlank()) {
-                throw new IllegalArgumentException(
-                        "Web credential environment variable is unavailable: " + environmentName);
+            String ref = providerConfiguration.credentialRef();
+            if (ref.startsWith("env://")) {
+                String environmentName = ref.substring("env://".length());
+                String secret = environment.apply(environmentName);
+                if (secret == null || secret.isBlank()) {
+                    throw new IllegalArgumentException(
+                            "Web credential environment variable is unavailable: " + environmentName);
+                }
+            } else if (ref.startsWith("os://")) {
+                String osName = ref.substring("os://".length());
+                java.util.Optional<String> secret = osStore.apply(osName);
+                if (secret.isEmpty() || secret.get().isBlank()) {
+                    throw new IllegalArgumentException("Web credential OS secret is unavailable: " + osName);
+                }
+            } else {
+                throw new IllegalArgumentException("Unsupported web credential reference: " + ref);
             }
-            secrets.put(requirement.credentialId(), secret);
+            credentialRefs.put(requirement.credentialId(), ref);
         }
-        var broker = new DefaultCredentialBroker(secrets);
+        Function<String, java.util.Optional<String>> secretSupplier = credentialId -> {
+            String ref = credentialRefs.get(credentialId);
+            if (ref == null) {
+                return java.util.Optional.empty();
+            }
+            if (ref.startsWith("env://")) {
+                String environmentName = ref.substring("env://".length());
+                String secret = environment.apply(environmentName);
+                if (secret == null || secret.isBlank()) {
+                    throw new IllegalArgumentException(
+                            "Web credential environment variable is unavailable: " + environmentName);
+                }
+                return java.util.Optional.of(secret);
+            } else if (ref.startsWith("os://")) {
+                String osName = ref.substring("os://".length());
+                java.util.Optional<String> secret = osStore.apply(osName);
+                if (secret.isEmpty() || secret.get().isBlank()) {
+                    throw new IllegalArgumentException("Web credential OS secret is unavailable: " + osName);
+                }
+                return secret;
+            }
+            return java.util.Optional.empty();
+        };
+        var broker = new DefaultCredentialBroker(secretSupplier);
         return new CliWebPlatform(contributions, broker);
     }
 

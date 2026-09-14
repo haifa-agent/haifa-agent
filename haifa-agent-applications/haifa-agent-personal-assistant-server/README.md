@@ -21,7 +21,7 @@ ordinary Conversation Run still blocks the change until that Run reaches a termi
 credential is missing. Credential readiness is exposed separately through `GET /api/v1/model-connections`; the adjacent
 mutation endpoints save a one-shot API Key, start/query/cancel an allowlisted Codex or Antigravity browser attempt,
 and delete a Haifa-managed
-connection. All products use `~/.haifa-agent/auth.json` and the shared Local Model Auth Store/Resolver. A Codex binding
+connection. All products use the system credential store (Windows Credential Manager on Windows) and the shared Local Model Auth Store/Resolver. A Codex binding
 must use `openai-codex-responses`, the approved endpoint, and `model-auth://openai-codex/...`.
 
 ChatGPT subscription login is disabled unless local compatibility testing explicitly supplies
@@ -170,7 +170,7 @@ Responses reasoning 控件当前保持只读。本地中转当前只声明 `TEXT
 `TEXT_CHAT + TOOL_CALLING` 的可选列表中；Snapshot 仍按 `standard` Responses 冻结真实能力边界。
 
 真实环境启动脚本固定发布 `openai-codex` 模型目录，并通过共享的
-`model-auth://openai-codex/default` 读取 `~/.haifa-agent/auth.json`；模型目录与认证就绪状态保持分离。
+`model-auth://openai-codex/default` 读取系统凭据管理器；模型目录与认证就绪状态保持分离。
 浏览器重新登录仍必须显式提供本地兼容测试所需的 OAuth Client 配置。脚本还可选装配
 `aliyun-bailian`、`kimi`、`zhipu` 与 `siliconflow` Provider。百炼完整配置要求 API Key、
 Workspace ID 和 region；Kimi、智谱与硅基流动分别使用 `env://KIMI_API_KEY`、`env://BIGMODEL_API_KEY`、

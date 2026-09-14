@@ -74,6 +74,18 @@ public final class PersonalExecutionRuntime {
             Clock clock,
             RuntimePersistencePorts persistence,
             io.haifa.agent.sdk.contribution.PolicyPlatformContribution policy) {
+        return create(dataDirectory, tenant, principal, properties, clock, persistence, policy, Set.of());
+    }
+
+    public static PersonalExecutionPlatform create(
+            Path dataDirectory,
+            TenantRef tenant,
+            PrincipalRef principal,
+            PersonalAssistantProperties.Execution properties,
+            Clock clock,
+            RuntimePersistencePorts persistence,
+            io.haifa.agent.sdk.contribution.PolicyPlatformContribution policy,
+            Set<String> deniedEnvironmentNames) {
         Path workspaceRoot = prepare(dataDirectory.resolve("execution-workspace"));
         Path scratchRoot = Path.of(System.getProperty("java.io.tmpdir"), "haifa-agent-host-scratch")
                 .toAbsolutePath()
@@ -117,7 +129,8 @@ public final class PersonalExecutionRuntime {
                 Path.of(System.getProperty("user.home", ".")),
                 dataDirectory,
                 workspaceRoot,
-                scratchRoot);
+                scratchRoot,
+                deniedEnvironmentNames);
         Map<String, String> environment = resolvedEnvironment.environment();
         Set<String> environmentNames = resolvedEnvironment.allowedEnvironmentNames();
         String profileVersion = "3-"
@@ -203,7 +216,7 @@ public final class PersonalExecutionRuntime {
             Path applicationDataRoot,
             Path workspaceRoot,
             Path scratchRoot) {
-        return HostExecutionEnvironmentResolver.resolveHostUser(
+        return resolveHostEnvironment(
                 hostEnvironment,
                 operatingSystem,
                 jvmUserHome,
@@ -211,6 +224,25 @@ public final class PersonalExecutionRuntime {
                 workspaceRoot,
                 scratchRoot,
                 Set.of());
+    }
+
+    static ResolvedHostEnvironment resolveHostEnvironment(
+            Map<String, String> hostEnvironment,
+            String operatingSystem,
+            Path jvmUserHome,
+            Path applicationDataRoot,
+            Path workspaceRoot,
+            Path scratchRoot,
+            Set<String> deniedEnvironmentNames) {
+        return HostExecutionEnvironmentResolver.resolveHostUser(
+                hostEnvironment,
+                operatingSystem,
+                jvmUserHome,
+                applicationDataRoot,
+                workspaceRoot,
+                scratchRoot,
+                Set.of(),
+                deniedEnvironmentNames);
     }
 
     private static Path prepare(Path value) {

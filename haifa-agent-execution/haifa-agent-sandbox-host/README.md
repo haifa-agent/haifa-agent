@@ -44,7 +44,9 @@ HOME（Windows 按 `HOME`、`USERPROFILE`、`HOMEDRIVE + HOMEPATH`、JVM `user.h
 解析与 Known Folder 变量，Linux/macOS 保留最小 POSIX 环境，Linux XDG 目录仅接受宿主已提供的安全绝对目录。
 
 解析会过滤凭据、代理凭据和会改变解释器依赖边界的 `PYTHONHOME`、`PYTHONPATH`、
-`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等变量。环境值不进入 Tool
+`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等变量。此外，所有当前产品配置为
+`env://NAME` 的凭据变量名均会被作为 `deniedEnvironmentNames` 从子进程执行环境中彻底剔除（无论其环境继承策略如何），
+防止普通命令、脚本、测试或不受信子进程泄露宿主凭据。环境值不进入 Tool
 Schema、Approval 文案或普通诊断输出。
 
 Host Guarded 还显式继承可信宿主的 `SSH_AUTH_SOCK`，使系统 `git`/`gh` 复用当前 OS 用户已有认证；

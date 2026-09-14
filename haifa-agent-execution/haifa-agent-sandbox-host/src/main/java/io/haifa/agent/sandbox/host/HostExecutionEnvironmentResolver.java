@@ -58,13 +58,39 @@ public final class HostExecutionEnvironmentResolver {
             Path workspaceRoot,
             Path scratchRoot,
             Set<String> approvedInheritedNames) {
+        return resolveHostUser(
+                hostEnvironment,
+                operatingSystem,
+                jvmUserHome,
+                applicationDataRoot,
+                workspaceRoot,
+                scratchRoot,
+                approvedInheritedNames,
+                Set.of());
+    }
+
+    public static ResolvedHostEnvironment resolveHostUser(
+            Map<String, String> hostEnvironment,
+            String operatingSystem,
+            Path jvmUserHome,
+            Path applicationDataRoot,
+            Path workspaceRoot,
+            Path scratchRoot,
+            Set<String> approvedInheritedNames,
+            Set<String> deniedEnvironmentNames) {
         Objects.requireNonNull(hostEnvironment, "hostEnvironment must not be null");
         Objects.requireNonNull(approvedInheritedNames, "approvedInheritedNames must not be null");
+        Objects.requireNonNull(deniedEnvironmentNames, "deniedEnvironmentNames must not be null");
         Os os = Os.parse(operatingSystem);
         List<Path> forbidden = normalizedRoots(applicationDataRoot, workspaceRoot, scratchRoot);
-        LinkedHashMap<String, String> resolved = selected(hostEnvironment, approvedInheritedNames, os.windows());
+        LinkedHashMap<String, String> resolved =
+                selected(hostEnvironment, approvedInheritedNames, deniedEnvironmentNames, os.windows());
         Set<String> baseline = os.windows() ? WINDOWS_BASELINE : POSIX_BASELINE;
-        baseline.stream().sorted().forEach(name -> inherit(resolved, hostEnvironment, name, os.windows()));
+        baseline.stream().sorted().forEach(name -> {
+            if (!isDenied(name, deniedEnvironmentNames, os.windows())) {
+                inherit(resolved, hostEnvironment, name, os.windows());
+            }
+        });
         if (os.windows()) {
             List.of("USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SYSTEMROOT", "WINDIR")
                     .forEach(name -> normalizeSafePath(resolved, name, true, forbidden));
@@ -74,7 +100,9 @@ public final class HostExecutionEnvironmentResolver {
         if (os.linux()) {
             LINUX_XDG.stream().sorted().forEach(name -> {
                 remove(resolved, name, false);
-                inheritSafePath(resolved, hostEnvironment, name, false, forbidden);
+                if (!isDenied(name, deniedEnvironmentNames, false)) {
+                    inheritSafePath(resolved, hostEnvironment, name, false, forbidden);
+                }
             });
         }
 
@@ -82,7 +110,9 @@ public final class HostExecutionEnvironmentResolver {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "HOST_USER_HOME_UNAVAILABLE: no safe host user home is available"));
         putCanonical(resolved, "HOME", home.toString(), os.windows());
-        inherit(resolved, hostEnvironment, "SSH_AUTH_SOCK", os.windows());
+        if (!isDenied("SSH_AUTH_SOCK", deniedEnvironmentNames, os.windows())) {
+            inherit(resolved, hostEnvironment, "SSH_AUTH_SOCK", os.windows());
+        }
         putCanonical(resolved, "GIT_TERMINAL_PROMPT", "0", os.windows());
         putCanonical(resolved, "GCM_INTERACTIVE", "Never", os.windows());
         putCanonical(resolved, "GH_PROMPT_DISABLED", "1", os.windows());
@@ -114,24 +144,43 @@ public final class HostExecutionEnvironmentResolver {
                     false);
             putIfMissing(resolved, "SHELL", os.mac() ? "/bin/zsh" : "/bin/sh", false);
         }
+        for (String denied : deniedEnvironmentNames) {
+            remove(resolved, denied, os.windows());
+        }
         validateBudget(resolved);
         return new ResolvedHostEnvironment(resolved, resolved.keySet(), HOST_USER_RESOLVED);
     }
 
     private static LinkedHashMap<String, String> selected(
-            Map<String, String> source, Set<String> approved, boolean ignoreCase) {
+            Map<String, String> source, Set<String> approved, Set<String> denied, boolean ignoreCase) {
         LinkedHashMap<String, String> result = new LinkedHashMap<>();
         if (approved.contains("*")) {
             source.entrySet().stream()
                     .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
-                    .filter(entry -> allowed(entry.getKey()))
+                    .filter(entry -> allowed(entry.getKey()) && !isDenied(entry.getKey(), denied, ignoreCase))
                     .forEach(entry -> put(result, entry.getKey(), entry.getValue(), ignoreCase));
         } else {
-            approved.stream().sorted().forEach(name -> find(source, name, ignoreCase)
-                    .filter(entry -> allowed(entry.getKey()))
-                    .ifPresent(entry -> put(result, entry.getKey(), entry.getValue(), ignoreCase)));
+            approved.stream().sorted().forEach(name -> {
+                if (!isDenied(name, denied, ignoreCase)) {
+                    find(source, name, ignoreCase)
+                            .filter(entry -> allowed(entry.getKey()))
+                            .ifPresent(entry -> put(result, entry.getKey(), entry.getValue(), ignoreCase));
+                }
+            });
         }
         return result;
+    }
+
+    private static boolean isDenied(String name, Set<String> denied, boolean ignoreCase) {
+        if (denied == null || denied.isEmpty() || name == null) {
+            return false;
+        }
+        for (String item : denied) {
+            if (ignoreCase ? name.equalsIgnoreCase(item) : name.equals(item)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Optional<Path> resolveHome(
@@ -255,7 +304,7 @@ public final class HostExecutionEnvironmentResolver {
     }
 
     private static void remove(Map<String, String> values, String name, boolean ignoreCase) {
-        find(values, name, ignoreCase).map(Map.Entry::getKey).ifPresent(values::remove);
+        values.keySet().removeIf(key -> ignoreCase ? key.equalsIgnoreCase(name) : key.equals(name));
     }
 
     private static void put(Map<String, String> values, String name, String value, boolean ignoreCase) {

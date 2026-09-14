@@ -241,4 +241,44 @@ class HostExecutionEnvironmentResolverTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("HOST_USER_HOME_UNAVAILABLE");
     }
+
+    @Test
+    void stripsDeniedEnvironmentNamesEvenWhenApprovedWithWildcard() throws Exception {
+        var result = HostExecutionEnvironmentResolver.resolveHostUser(
+                Map.of(
+                        "HOME", home.toString(),
+                        "SAFE_BENIGN_VAR", "visible-value",
+                        "OPENAI_API_KEY", "sk-secret-123",
+                        "CUSTOM_SECRET_ENV", "my-secret-val"),
+                "Windows 11",
+                home,
+                applicationData,
+                workspace,
+                scratch,
+                Set.of("*"),
+                Set.of("OPENAI_API_KEY", "CUSTOM_SECRET_ENV"));
+
+        assertThat(result.environment())
+                .containsEntry("SAFE_BENIGN_VAR", "visible-value")
+                .doesNotContainKeys("OPENAI_API_KEY", "CUSTOM_SECRET_ENV");
+    }
+
+    @Test
+    void stripsDeniedEnvironmentNamesCaseInsensitivelyOnWindows() throws Exception {
+        var result = HostExecutionEnvironmentResolver.resolveHostUser(
+                Map.of(
+                        "HOME", home.toString(),
+                        "MY_SPECIAL_TOKEN", "token-xyz",
+                        "ANOTHER_SECRET", "secret-abc"),
+                "Windows 11",
+                home,
+                applicationData,
+                workspace,
+                scratch,
+                Set.of("*"),
+                Set.of("my_special_token", "Another_Secret"));
+
+        assertThat(result.environment())
+                .doesNotContainKeys("MY_SPECIAL_TOKEN", "my_special_token", "ANOTHER_SECRET", "Another_Secret");
+    }
 }

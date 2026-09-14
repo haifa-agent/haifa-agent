@@ -17,6 +17,9 @@ class PersonalWebPlatformTest {
 
     @Test
     void enablesAliyunSearchAndBrowserlessFetchWithSeparateProviderBindings() {
+        Map<String, String> env = Map.of(
+                "ALIYUN_KEY", "aliyun-secret",
+                "BROWSERLESS_KEY", "browserless-secret");
         var platform = PersonalWebPlatform.create(
                 TENANT,
                 PRINCIPAL,
@@ -24,14 +27,16 @@ class PersonalWebPlatformTest {
                         true,
                         "aliyun",
                         io.haifa.agent.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT,
-                        "aliyun-secret"),
+                        "env://ALIYUN_KEY"),
                 provider(
                         true,
                         "browserless",
                         io.haifa.agent.web.provider.BrowserlessFetchProvider.DEFAULT_ENDPOINT,
-                        "browserless-secret"),
+                        "env://BROWSERLESS_KEY"),
                 new ObjectMapper(),
-                Clock.systemUTC());
+                Clock.systemUTC(),
+                env::get,
+                name -> java.util.Optional.empty());
 
         assertThat(platform.aliases()).containsExactlyInAnyOrder("web_search", "web_fetch");
         assertThat(platform.contributions())
@@ -86,7 +91,7 @@ class PersonalWebPlatformTest {
                                 true,
                                 "aliyun",
                                 io.haifa.agent.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT,
-                                "aliyun-secret"),
+                                "env://ALIYUN_KEY"),
                         provider(
                                 true,
                                 "browserless",
@@ -95,11 +100,23 @@ class PersonalWebPlatformTest {
                         new ObjectMapper(),
                         Clock.systemUTC()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("credential is required");
+                .hasMessageContaining("credentialReference is required");
+    }
+
+    @Test
+    void enabledProviderRejectsPlaintextCredentialReference() {
+        assertThatThrownBy(() -> provider(
+                        true,
+                        "aliyun",
+                        io.haifa.agent.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT,
+                        "aliyun-secret"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("credentialReference must use env:// or os://");
     }
 
     @Test
     void supportsTavilyForBothSearchAndFetch() {
+        Map<String, String> env = Map.of("TAVILY_KEY", "tavily-secret");
         var platform = PersonalWebPlatform.create(
                 TENANT,
                 PRINCIPAL,
@@ -107,24 +124,55 @@ class PersonalWebPlatformTest {
                         true,
                         "tavily",
                         io.haifa.agent.web.provider.TavilyWebSearchProvider.DEFAULT_ENDPOINT,
-                        "tavily-secret"),
+                        "env://TAVILY_KEY"),
                 provider(
                         true,
                         "tavily",
                         io.haifa.agent.web.provider.TavilyFetchProvider.DEFAULT_ENDPOINT,
-                        "tavily-secret"),
+                        "env://TAVILY_KEY"),
                 new ObjectMapper(),
-                Clock.systemUTC());
+                Clock.systemUTC(),
+                env::get,
+                name -> java.util.Optional.empty());
 
         assertThat(platform.contributions())
                 .extracting(item -> item.definition().providerId().value())
                 .containsExactly("web-search.tavily", "web-fetch.tavily");
     }
 
+    @Test
+    void resolvesCredentialsOnDemandFromEnvAndOsStore() {
+        Map<String, String> env = Map.of("MY_SEARCH_KEY", "resolved-env-secret");
+        Map<String, String> os = Map.of("my_fetch_key", "resolved-os-secret");
+
+        var platform = PersonalWebPlatform.create(
+                TENANT,
+                PRINCIPAL,
+                provider(
+                        true,
+                        "aliyun",
+                        io.haifa.agent.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT,
+                        "env://MY_SEARCH_KEY"),
+                provider(
+                        true,
+                        "browserless",
+                        io.haifa.agent.web.provider.BrowserlessFetchProvider.DEFAULT_ENDPOINT,
+                        "os://my_fetch_key"),
+                new ObjectMapper(),
+                Clock.systemUTC(),
+                env::get,
+                name -> java.util.Optional.ofNullable(os.get(name)));
+
+        assertThat(platform.credential().broker().requireSecret("web-search-aliyun"))
+                .isEqualTo("resolved-env-secret");
+        assertThat(platform.credential().broker().requireSecret("web-fetch-browserless"))
+                .isEqualTo("resolved-os-secret");
+    }
+
     private static PersonalWebPlatform.ProviderConfiguration provider(
-            boolean enabled, String providerId, java.net.URI endpoint, String credential) {
+            boolean enabled, String providerId, java.net.URI endpoint, String credentialReference) {
         return new PersonalWebPlatform.ProviderConfiguration(
-                enabled, providerId, endpoint, credential, Duration.ofSeconds(30), 2 * 1024 * 1024);
+                enabled, providerId, endpoint, credentialReference, Duration.ofSeconds(30), 2 * 1024 * 1024);
     }
 
     @SuppressWarnings("unchecked")
