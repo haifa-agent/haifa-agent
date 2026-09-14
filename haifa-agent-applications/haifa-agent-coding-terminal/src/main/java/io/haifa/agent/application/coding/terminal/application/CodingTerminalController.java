@@ -762,7 +762,8 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private void completeShell(CodingShellPlan plan, CodingShellResult result) {
         String prefix = plan.includeInContext() ? "!" : "!!";
-        apply(new TerminalUiAction.ShellCompleted(prefix + plan.safeCommand(), result.safeSummary(), result.status()));
+        apply(new TerminalUiAction.ShellCompleted(
+                prefix + plan.safeCommand(), result.safeSummary(), result.processState()));
         apply(new TerminalUiAction.StatusChanged(
                 result.includedInContext()
                         ? "Shell result added to Session context"

@@ -555,7 +555,6 @@ class ProjectPersistenceAssemblyTest {
             var policy = new CodingCompletionPolicy(
                     new CodingTaskModeResolver(assembly.ports().state()),
                     new CodingDeliveryEvidenceLedger(assembly.ports().state()),
-                    null,
                     profiles);
 
             assertThat(policy.evaluateEvidence(assembly.ports()

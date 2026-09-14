@@ -23,6 +23,7 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
@@ -45,14 +46,17 @@ import org.junit.jupiter.api.Test;
 
 class ProjectExecutionPolicyTest {
 
+    private record KnownResult(ExecutionStatus status, Integer exitCode) {}
+
     @Test
     void validatesExactFrozenCandidateScopeAcrossDirectAndReconciledResults() {
         AtomicReference<ExecutionResult> completed = new AtomicReference<>();
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(991));
                 observer.onOutput(chunk("1 passed, 7 deselected in 0.25s\n"));
-                ExecutionResult result = result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                ExecutionResult result = result(request.id(), ExecutionStatus.EXITED, 0);
                 completed.set(result);
                 return result;
             }
@@ -79,20 +83,17 @@ class ProjectExecutionPolicyTest {
         var operations = operations(broker, 4096, 100, ignored -> configuration);
         ToolResult result = operations.execute(invocation, access());
         String expectedValidationAttemptRef = PolicyDigest.sha256Fields(List.of(
-                "coding-validation-evidence/2",
-                "PASSED",
+                "coding-validation-attempt/3",
                 configuration.digest(),
                 configuration.candidateDigest(candidate),
                 "TRUSTED_SELECTED_SCOPE"));
 
         assertThat(result.structuredData().get("validationEvidence"))
                 .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
-                        .containsEntry("status", "PASSED")
                         .containsEntry("scope", "SELECTED")
-                        .containsEntry("countSource", "COUNTS_UNAVAILABLE")
                         .containsEntry("verificationSource", "USER_EXPLICIT")
                         .containsEntry("claimCode", "TRUSTED_SELECTED_SCOPE")
-                        .doesNotContainKeys("discoveredTestCount", "selectedTestCount", "ignoredTestCount"));
+                        .hasSize(6));
         assertThat(result.structuredData()).containsEntry("validationAttemptRef", expectedValidationAttemptRef);
         var validator = new JsonSchema202012Validator();
         assertThat(validator
@@ -132,13 +133,82 @@ class ProjectExecutionPolicyTest {
     }
 
     @Test
-    void projectsTrustedDeliveryActionAndVerificationEvidence() {
+    void recordsOnlyAnAttemptForEveryKnownResultOfADispatchedExactCandidate() {
+        String command = "python -m pytest focused.py";
+        CodingVerificationCandidate candidate = new CodingVerificationCandidate(
+                command,
+                CodingVerificationCost.LOW,
+                Duration.ofMinutes(2),
+                CodingVerificationTrigger.ADJACENT_CHANGE,
+                CodingVerificationSource.USER_EXPLICIT,
+                "trusted-host",
+                CodingValidationScope.SELECTED);
+        CodingSessionVerificationConfiguration configuration =
+                CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
+
+        for (KnownResult fact : List.of(
+                new KnownResult(ExecutionStatus.EXITED, 0),
+                new KnownResult(ExecutionStatus.EXITED, 1),
+                new KnownResult(ExecutionStatus.TIMED_OUT, null))) {
+            ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
+                @Override
+                public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                    observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(992));
+                    return result(request.id(), fact.status(), fact.exitCode());
+                }
+            };
+
+            ToolResult result = operations(broker, 4096, 100, ignored -> configuration)
+                    .execute(
+                            invocation(Map.of("command", command, "operationFamily", "INSPECT"), () -> false),
+                            access());
+
+            assertThat(result.structuredData())
+                    .containsKeys("validationEvidence", "validationAttemptRef")
+                    .doesNotContainKeys("validationStatus", "status", "passed", "failed");
+            assertThat(result.structuredData().get("validationEvidence"))
+                    .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
+                            .containsEntry("claimCode", "TRUSTED_SELECTED_SCOPE")
+                            .doesNotContainKeys("status", "passed", "failed"));
+        }
+    }
+
+    @Test
+    void doesNotRecordAnAttemptWhenTheExactCandidateWasRejectedBeforeDispatch() {
+        String command = "python -m pytest focused.py";
+        CodingVerificationCandidate candidate = new CodingVerificationCandidate(
+                command,
+                CodingVerificationCost.LOW,
+                Duration.ofMinutes(2),
+                CodingVerificationTrigger.ADJACENT_CHANGE,
+                CodingVerificationSource.USER_EXPLICIT,
+                "trusted-host",
+                CodingValidationScope.SELECTED);
+        CodingSessionVerificationConfiguration configuration =
+                CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
+        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new ExecutionPreflightException("SANDBOX_UNAVAILABLE", "sandbox unavailable", null);
+            }
+        };
+
+        ToolResult result = operations(broker, 4096, 100, ignored -> configuration)
+                .execute(invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false), access());
+
+        assertThat(result.structuredData())
+                .containsEntry("processState", "FAILED")
+                .doesNotContainKeys("validationEvidence", "validationAttemptRef");
+    }
+
+    @Test
+    void genericGitCommandsDoNotProjectDeliveryCompletionEvidence() {
         AtomicInteger calls = new AtomicInteger();
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 if (calls.getAndIncrement() == 0) observer.onOutput(chunk("D:/workspace/project\n"));
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -155,21 +225,9 @@ class ProjectExecutionPolicyTest {
         ToolResult staged = operations(broker, 4096, 100)
                 .execute(invocation(Map.of("command", "git add src/Main.java"), () -> false), access());
 
-        assertThat(root.structuredData())
-                .containsEntry("deliveryAction", "NONE")
-                .containsEntry("deliveryVerification", "REPOSITORY_ROOT")
-                .containsEntry("deliveryEvidenceCode", "REPOSITORY_ROOT_VERIFIED")
-                .containsKey("deliveryRepositoryScopeDigest")
-                .containsKey("deliveryEvidenceRef");
-        assertThat(upstream.structuredData())
-                .containsEntry("deliveryVerification", "UPSTREAM")
-                .containsEntry("deliveryEvidenceCode", "UPSTREAM_INSPECTED")
-                .containsKey("deliveryRepositoryScopeDigest");
-        assertThat(staged.structuredData())
-                .containsEntry("deliveryAction", "STAGE")
-                .containsEntry("deliveryVerification", "NONE")
-                .containsEntry("deliveryEvidenceCode", "STAGE_COMPLETED")
-                .containsKey("deliveryEvidenceRef");
+        assertThat(root.structuredData().keySet()).noneMatch(key -> key.startsWith("delivery"));
+        assertThat(upstream.structuredData().keySet()).noneMatch(key -> key.startsWith("delivery"));
+        assertThat(staged.structuredData().keySet()).noneMatch(key -> key.startsWith("delivery"));
     }
 
     @Test
@@ -180,7 +238,7 @@ class ProjectExecutionPolicyTest {
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 invoked.set(true);
                 observer.onStarted();
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -193,7 +251,7 @@ class ProjectExecutionPolicyTest {
 
         assertThat(invoked).isTrue();
         assertThat(result.successful()).isTrue();
-        assertThat(result.structuredData()).containsEntry("deliveryAction", "PUSH");
+        assertThat(result.structuredData().keySet()).noneMatch(key -> key.startsWith("delivery"));
     }
 
     @Test
@@ -204,7 +262,7 @@ class ProjectExecutionPolicyTest {
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 captured.set(request);
                 observer.onOutput(chunk("terminal output"));
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -223,7 +281,7 @@ class ProjectExecutionPolicyTest {
         assertThat(captured.get().context().sourceToolCallId()).isEmpty();
         assertThat(captured.get().context().runRef()).isEqualTo("terminal-audit-1");
         assertThat(captured.get().workingDirectory().projectPath().isRoot()).isTrue();
-        assertThat(result.summary()).contains("Command succeeded", "terminal output");
+        assertThat(result.summary()).contains("Command exited (exit 0)", "terminal output");
     }
 
     @Test
@@ -235,7 +293,7 @@ class ProjectExecutionPolicyTest {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 observer.onOutput(chunk("built " + realPath + "\n"));
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -276,7 +334,7 @@ class ProjectExecutionPolicyTest {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 captured.set(request);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 

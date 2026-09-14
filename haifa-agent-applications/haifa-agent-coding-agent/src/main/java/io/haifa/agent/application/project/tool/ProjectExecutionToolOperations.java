@@ -1,7 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
 import io.haifa.agent.application.project.policy.CodingExecutionRiskResolver;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandSemantics;
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationAttemptFactory;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.common.id.IdentifierGenerator;
@@ -31,8 +30,6 @@ import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
-import io.haifa.agent.execution.core.command.CommandSemanticOutcome;
-import io.haifa.agent.execution.core.command.CommandSemanticOutcomeInterpreter;
 import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.policy.api.PolicyRiskLevel;
@@ -307,7 +304,6 @@ public final class ProjectExecutionToolOperations {
         Map<String, Object> arguments = invocation.arguments().values();
         String command = requiredText(arguments, "command");
         String operationFamily = operationFamily(arguments.get("operationFamily"));
-        List<Integer> expectedExitCodes = expectedExitCodes(arguments);
         var commandClassification = SystemGitCliCommandClassifier.classify(command);
         if (commandClassification.target() == SystemGitCliCommandClassifier.Target.GIT
                 && commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED
@@ -325,7 +321,6 @@ public final class ProjectExecutionToolOperations {
         if (isAbsoluteDirectoryPath(relativeWorkdir)) {
             return withToolCallId(invocation, rejectedWorkdir(operationFamily, "ABSOLUTE_WORKDIR_FORBIDDEN"));
         }
-        String repositoryScopeDigest = repositoryScopeDigest(workspaceRef, relativeWorkdir);
         Duration requestedTimeout = Duration.ofMillis(
                 optionalLong(arguments, "timeoutMillis", defaultTimeout.toMillis(), 1, maximumTimeout.toMillis()));
         Duration remaining = Duration.between(time.now(), invocation.deadline());
@@ -360,7 +355,7 @@ public final class ProjectExecutionToolOperations {
                 executionLimits(timeout, operationFamily, commandClassification),
                 sandboxProfileRef,
                 ExecutionInput.none(),
-                invocationDigest(invocation, command, workspaceRef, relativeWorkdir, expectedExitCodes, scratchSpace),
+                invocationDigest(command, workspaceRef, relativeWorkdir, scratchSpace),
                 scratchSpace);
         return withToolCallId(
                 invocation,
@@ -370,10 +365,7 @@ public final class ProjectExecutionToolOperations {
                         invocation.observer(),
                         command,
                         operationFamily,
-                        expectedExitCodes,
-                        commandClassification,
-                        repositoryScopeDigest,
-                        invocation.toolCallId().value()));
+                        commandClassification));
     }
 
     /** Read-only reconciliation for a previously dispatched local execution. */
@@ -383,7 +375,6 @@ public final class ProjectExecutionToolOperations {
         Map<String, Object> arguments = invocation.arguments().values();
         String command = requiredText(arguments, "command");
         String operationFamily = operationFamily(arguments.get("operationFamily"));
-        List<Integer> expectedExitCodes = expectedExitCodes(arguments);
         String workspaceRef = requiredText(arguments, "workspaceRef");
         String relativeWorkdir = requiredText(arguments, "relativeWorkdir");
         WorkspacePath resolved;
@@ -411,25 +402,28 @@ public final class ProjectExecutionToolOperations {
             return ToolReconciliation.stillUnknown("EXECUTION_ID_EVIDENCE_MISMATCH");
         }
         ToolResult observed = persistedExecution
-                .map(result -> toToolResult(
-                        result,
-                        new MergedTailObserver(
-                                ExecutionOutputObserver.noop(),
-                                ToolInvocationObserver.noop(),
-                                maximumModelOutputBytes,
-                                maximumModelOutputLines,
-                                result.id().value(),
-                                expectedWorkingDirectoryDigest),
-                        outputSanitizer,
-                        command,
-                        operationFamily,
-                        expectedExitCodes,
-                        classification,
-                        sandboxProfileRef,
-                        scratchSpace,
-                        repositoryScopeDigest(workspaceRef, relativeWorkdir),
-                        invocation.runId().value(),
-                        invocation.toolCallId().value()))
+                .map(result -> {
+                    MergedTailObserver reconciliationObserver = new MergedTailObserver(
+                            ExecutionOutputObserver.noop(),
+                            ToolInvocationObserver.noop(),
+                            maximumModelOutputBytes,
+                            maximumModelOutputLines,
+                            result.id().value(),
+                            expectedWorkingDirectoryDigest);
+                    if (invocation.dispatchEvidence().isPresent()) {
+                        reconciliationObserver.confirmDispatched();
+                    }
+                    return toToolResult(
+                            result,
+                            reconciliationObserver,
+                            outputSanitizer,
+                            command,
+                            operationFamily,
+                            classification,
+                            sandboxProfileRef,
+                            scratchSpace,
+                            invocation.runId().value());
+                })
                 .or(() -> invocation.observedResult())
                 .orElse(null);
         if (observed == null) return ToolReconciliation.stillUnknown("EXECUTION_RESULT_MISSING");
@@ -441,8 +435,8 @@ public final class ProjectExecutionToolOperations {
                 .isPresent()) {
             return ToolReconciliation.stillUnknown("EXECUTION_ID_EVIDENCE_MISMATCH");
         }
-        String status = String.valueOf(data.getOrDefault("status", "UNKNOWN"));
-        if (!status.equals("UNKNOWN")) {
+        String processState = String.valueOf(data.getOrDefault("processState", "UNKNOWN"));
+        if (!processState.equals("UNKNOWN")) {
             return ToolReconciliation.resolved(
                     reconciledResult(observed, "EXECUTION_TERMINAL_AND_WORKSPACE_OBSERVATION_CONFIRMED"),
                     "EXECUTION_TERMINAL_AND_WORKSPACE_OBSERVATION_CONFIRMED");
@@ -491,15 +485,9 @@ public final class ProjectExecutionToolOperations {
     }
 
     private static String invocationDigest(
-            ToolInvocationRequest invocation,
-            String command,
-            String workspaceRef,
-            String relativeWorkdir,
-            List<Integer> expectedExitCodes,
-            ExecutionScratchSpaceSpec scratchSpace) {
-        List<String> fields;
-        fields = List.of(command, workspaceRef, relativeWorkdir, expectedExitCodes.toString());
-        return ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(fields), scratchSpace);
+            String command, String workspaceRef, String relativeWorkdir, ExecutionScratchSpaceSpec scratchSpace) {
+        return ExecutionRequest.digestWithScratch(
+                PolicyDigest.sha256Fields(List.of(command, workspaceRef, relativeWorkdir)), scratchSpace);
     }
 
     /** Reconstructs the security-relevant request fields produced by this adapter without dispatching. */
@@ -545,7 +533,6 @@ public final class ProjectExecutionToolOperations {
         String workspaceRef = requiredText(values, "workspaceRef");
         String relativeWorkdir = requiredText(values, "relativeWorkdir");
         String declaredOperationFamily = operationFamily(values.get("operationFamily"));
-        List<Integer> exitCodes = expectedExitCodes(values);
         var classification = SystemGitCliCommandClassifier.classify(command);
         if (classification.risk() == SystemGitCliCommandClassifier.Risk.DENIED
                 || hasLeadingAbsoluteDirectoryChange(command)
@@ -558,8 +545,7 @@ public final class ProjectExecutionToolOperations {
         boolean boundedInspection = "INSPECT".equals(budgetFamily);
         int channelBudget = outputChannelBudget(budgetFamily, maximumModelOutputBytes);
         String expectedDigest = ExecutionRequest.digestWithScratch(
-                PolicyDigest.sha256Fields(List.of(command, workspaceRef, relativeWorkdir, exitCodes.toString())),
-                scratchSpace);
+                PolicyDigest.sha256Fields(List.of(command, workspaceRef, relativeWorkdir)), scratchSpace);
         if (!request.workspaceId().value().equals(workspaceRef)
                 || !request.workingDirectory().projectPath().toString().equals(relativeWorkdir)
                 || !request.command().equals(ExecutionCommand.shell(command))
@@ -630,15 +616,7 @@ public final class ProjectExecutionToolOperations {
                 ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
                 scratchSpace);
         return executeRequest(
-                request,
-                () -> false,
-                ToolInvocationObserver.noop(),
-                command,
-                "UNKNOWN",
-                List.of(0),
-                commandClassification,
-                repositoryScopeDigest(access.workspaceId().value(), workdir),
-                null);
+                request, () -> false, ToolInvocationObserver.noop(), command, "UNKNOWN", commandClassification);
     }
 
     private ToolResult executeRequest(
@@ -647,10 +625,7 @@ public final class ProjectExecutionToolOperations {
             ToolInvocationObserver invocationObserver,
             String command,
             String operationFamily,
-            List<Integer> expectedExitCodes,
-            SystemGitCliCommandClassifier.Classification commandClassification,
-            String repositoryScopeDigest,
-            String reviewToolCallRef) {
+            SystemGitCliCommandClassifier.Classification commandClassification) {
         MergedTailObserver merged = new MergedTailObserver(
                 outputObserver,
                 invocationObserver,
@@ -684,13 +659,10 @@ public final class ProjectExecutionToolOperations {
                     outputSanitizer,
                     command,
                     operationFamily,
-                    expectedExitCodes,
                     commandClassification,
                     sandboxProfileRef,
                     scratchSpace,
-                    repositoryScopeDigest,
-                    request.context().runRef(),
-                    reviewToolCallRef);
+                    request.context().runRef());
         } catch (ExecutionPreflightException exception) {
             return preflightFailure(
                     request,
@@ -699,10 +671,7 @@ public final class ProjectExecutionToolOperations {
                     exception.getMessage(),
                     command,
                     operationFamily,
-                    expectedExitCodes,
-                    commandClassification,
-                    repositoryScopeDigest,
-                    reviewToolCallRef);
+                    commandClassification);
         } catch (io.haifa.agent.execution.core.ExecutionRejectedException exception) {
             return preflightFailure(
                     request,
@@ -711,10 +680,7 @@ public final class ProjectExecutionToolOperations {
                     exception.getMessage(),
                     command,
                     operationFamily,
-                    expectedExitCodes,
-                    commandClassification,
-                    repositoryScopeDigest,
-                    reviewToolCallRef);
+                    commandClassification);
         } catch (io.haifa.agent.sandbox.api.SandboxException exception) {
             return preflightFailure(
                     request,
@@ -723,10 +689,7 @@ public final class ProjectExecutionToolOperations {
                     exception.getMessage(),
                     command,
                     operationFamily,
-                    expectedExitCodes,
-                    commandClassification,
-                    repositoryScopeDigest,
-                    reviewToolCallRef);
+                    commandClassification);
         } catch (RuntimeException exception) {
             return toFailedToolResult(
                     request,
@@ -735,10 +698,7 @@ public final class ProjectExecutionToolOperations {
                     exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage(),
                     command,
                     operationFamily,
-                    expectedExitCodes,
-                    commandClassification,
-                    repositoryScopeDigest,
-                    reviewToolCallRef);
+                    commandClassification);
         } finally {
             complete.set(true);
             cancellation.interrupt();
@@ -752,10 +712,7 @@ public final class ProjectExecutionToolOperations {
             String errorMessage,
             String command,
             String operationFamily,
-            List<Integer> expectedExitCodes,
-            SystemGitCliCommandClassifier.Classification commandClassification,
-            String repositoryScopeDigest,
-            String reviewToolCallRef) {
+            SystemGitCliCommandClassifier.Classification commandClassification) {
         String safeError = errorMessage == null || errorMessage.isBlank() ? "execution failed" : errorMessage;
         byte[] errBytes = safeError.getBytes(StandardCharsets.UTF_8);
         String safeDigestError = safeError.length() > 16_000 ? safeError.substring(0, 16_000) : safeError;
@@ -766,7 +723,7 @@ public final class ProjectExecutionToolOperations {
         ExecutionResult failureResult = new ExecutionResult(
                 request.id(),
                 ExecutionStatus.FAILED,
-                1,
+                null,
                 now,
                 now,
                 outOutput,
@@ -783,13 +740,10 @@ public final class ProjectExecutionToolOperations {
                 outputSanitizer,
                 command,
                 operationFamily,
-                expectedExitCodes,
                 commandClassification,
                 sandboxProfileRef,
                 scratchSpace,
-                repositoryScopeDigest,
-                request.context().runRef(),
-                reviewToolCallRef);
+                request.context().runRef());
     }
 
     private ToolResult preflightFailure(
@@ -799,21 +753,9 @@ public final class ProjectExecutionToolOperations {
             String errorMessage,
             String command,
             String operationFamily,
-            List<Integer> expectedExitCodes,
-            SystemGitCliCommandClassifier.Classification commandClassification,
-            String repositoryScopeDigest,
-            String reviewToolCallRef) {
+            SystemGitCliCommandClassifier.Classification commandClassification) {
         ToolResult failure = toFailedToolResult(
-                request,
-                merged,
-                failureCode,
-                errorMessage,
-                command,
-                operationFamily,
-                expectedExitCodes,
-                commandClassification,
-                repositoryScopeDigest,
-                reviewToolCallRef);
+                request, merged, failureCode, errorMessage, command, operationFamily, commandClassification);
         Object stableCode = failure.structuredData().get("stableFailureCode");
         boolean directGitOrGh = commandClassification.target() != SystemGitCliCommandClassifier.Target.OTHER;
         boolean eligible = request.context().origin() == ExecutionOrigin.RUNTIME_TOOL
@@ -835,16 +777,13 @@ public final class ProjectExecutionToolOperations {
             UnaryOperator<String> outputSanitizer,
             String command,
             String operationFamily,
-            List<Integer> expectedExitCodes,
             SystemGitCliCommandClassifier.Classification commandClassification,
             SandboxProfileRef sandboxProfileRef,
             ExecutionScratchSpaceSpec scratchSpace,
-            String repositoryScopeDigest,
-            String runRef,
-            String reviewToolCallRef) {
-        var semantic = semanticOutcome(result, command, expectedExitCodes);
+            String runRef) {
+        boolean exited = result.status() == ExecutionStatus.EXITED;
         String output = merged.text();
-        if (output.isBlank() && !semantic.successfulToolResult()) {
+        if (output.isBlank() && !exited) {
             String fallback = fallbackOutput(result);
             if (fallback.isBlank()) {
                 fallback = switch (result.status()) {
@@ -856,7 +795,7 @@ public final class ProjectExecutionToolOperations {
             }
             output = MergedTailObserver.sanitize(fallback);
         }
-        if (!semantic.successfulToolResult()
+        if (!exited
                 && result.status() == ExecutionStatus.TIMED_OUT
                 && !output.toLowerCase(java.util.Locale.ROOT).contains("timed out")) {
             output = output.isBlank() ? "Command timed out." : output + "\n\n[Command timed out before completion]";
@@ -867,14 +806,8 @@ public final class ProjectExecutionToolOperations {
                 || result.stderr().truncated();
         var data = new LinkedHashMap<String, Object>();
         data.put("executionId", result.id().value());
-        data.put("status", result.status().name());
         data.put("processState", result.status().name());
         result.optionalExitCode().ifPresent(value -> data.put("exitCode", value));
-        data.put("expectedExitCodes", expectedExitCodes);
-        data.put("semanticOutcome", semantic.outcome().name());
-        data.put("semanticReasonCode", semantic.reasonCode());
-        data.put("semanticInterpreterVersion", CommandSemanticOutcomeInterpreter.VERSION);
-        data.put("commandOutcomeCode", commandOutcomeCode(semantic.outcome()));
         if (result.status() == ExecutionStatus.UNKNOWN) {
             data.put("runtimeOutcome", "OUTCOME_UNKNOWN");
         }
@@ -897,11 +830,6 @@ public final class ProjectExecutionToolOperations {
         data.put("riskResolutionCode", riskResolutionCode(commandClassification));
         data.put("riskAction", riskAction(commandClassification));
         data.put("operationHintCode", operationHintCode(operationFamily, commandClassification));
-        var deliveryAction = CodingDeliveryCommandSemantics.action(command, commandClassification);
-        var deliveryVerification = CodingDeliveryCommandSemantics.verification(command, commandClassification);
-        data.put("deliveryAction", deliveryAction.name());
-        data.put("deliveryVerification", deliveryVerification.name());
-        data.put("deliveryRepositoryScopeDigest", repositoryScopeDigest);
         String outputBudgetFamily = outputBudgetFamily(operationFamily, commandClassification);
         data.put("outputBudgetFamily", outputBudgetFamily);
         data.put("outputBudgetBytesPerChannel", outputChannelBudget(outputBudgetFamily, maximumModelOutputBytes));
@@ -916,25 +844,21 @@ public final class ProjectExecutionToolOperations {
             data.put("scratchProvisioned", result.scratchProvisioned());
             data.put("scratchCleanupFailed", result.scratchCleanupFailed());
         }
-        CodingValidationAttemptFactory.create(
-                        operationFamily,
-                        command,
-                        semantic.successfulToolResult(),
-                        verificationProfiles.configurationFor(new AgentRunId(runRef)))
-                .ifPresent(evidence -> {
-                    data.put("validationEvidence", evidence.toStructuredData());
-                    if (!"UNMATCHED".equals(evidence.verificationCandidateDigest())) {
+        if (merged.dispatched()) {
+            CodingValidationAttemptFactory.create(
+                            command, verificationProfiles.configurationFor(new AgentRunId(runRef)))
+                    .ifPresent(evidence -> {
+                        data.put("validationEvidence", evidence.toStructuredData());
                         data.put(
                                 "validationAttemptRef",
                                 PolicyDigest.sha256Fields(List.of(
                                         evidence.schemaVersion(),
-                                        evidence.status().name(),
                                         evidence.verificationProfileDigest(),
                                         evidence.verificationCandidateDigest(),
                                         evidence.claimCode())));
-                    }
-                });
-        if (!semantic.successfulToolResult()) {
+                    });
+        }
+        if (!exited) {
             result.optionalFailure().ifPresent(value -> {
                 data.put("failureCode", value.code());
                 data.put("failureDetail", value.safeDetail());
@@ -968,45 +892,16 @@ public final class ProjectExecutionToolOperations {
                     "observedFiles=" + files + ", observedHunks=" + hunks + ", countsComplete=" + !truncated);
             if (!assets.isEmpty()) data.put("diffArtifactRef", assets.getFirst().assetId());
         }
-        if (semantic.successfulToolResult()) {
-            String deliveryEvidenceCode = deliveryEvidenceCode(deliveryAction, deliveryVerification, output);
-            if (!deliveryEvidenceCode.isEmpty()) {
-                data.put("deliveryEvidenceCode", deliveryEvidenceCode);
-                data.put(
-                        "deliveryEvidenceRef",
-                        PolicyDigest.sha256Fields(List.of(
-                                "coding-delivery-evidence-v1",
-                                result.id().value(),
-                                deliveryEvidenceCode,
-                                commandClassification.reasonCode())));
-            }
-        }
         String headline =
-                switch (semantic.outcome()) {
-                    case SUCCEEDED ->
-                        (result.status() == ExecutionStatus.EXITED
-                                        && result.exitCode() != null
-                                        && result.exitCode() != 0)
-                                ? "Command exited"
-                                : "Command succeeded";
-                    case EXPECTED_VARIANT -> "Command completed with an expected result variant";
-                    case EMPTY_RESULT -> "Command completed with an empty result";
-                    case COMMAND_FAILED ->
-                        switch (result.status()) {
-                            case TIMED_OUT -> "Command timed out";
-                            case OUTPUT_LIMIT_EXCEEDED -> "Command exceeded output limit";
-                            case PROCESS_LIMIT_EXCEEDED -> "Command exceeded process-count limit";
-                            default -> "Command failed";
-                        };
-                    case OUTCOME_UNKNOWN ->
-                        switch (result.status()) {
-                            case OUTPUT_LIMIT_EXCEEDED ->
-                                "Command stopped after reaching its output budget; outcome is unknown";
-                            case PROCESS_LIMIT_EXCEEDED -> "Command stopped after reaching its process-count budget";
-                            case TIMED_OUT -> "Command timed out; outcome is unknown";
-                            case CANCELLED -> "Command was cancelled; outcome is unknown";
-                            default -> "Command outcome is unknown";
-                        };
+                switch (result.status()) {
+                    case EXITED -> "Command exited";
+                    case FAILED -> "Command failed";
+                    case OUTPUT_LIMIT_EXCEEDED ->
+                        "Command stopped after reaching its output budget; outcome is unknown";
+                    case PROCESS_LIMIT_EXCEEDED -> "Command stopped after reaching its process-count budget";
+                    case TIMED_OUT -> "Command timed out";
+                    case CANCELLED -> "Command was cancelled";
+                    case UNKNOWN -> "Command outcome is unknown";
                 };
         if (result.exitCode() != null) headline += " (exit " + result.exitCode() + ")";
         String summary;
@@ -1022,8 +917,7 @@ public final class ProjectExecutionToolOperations {
                             + output.substring(output.length() - SUMMARY_OUTPUT_CHARS / 2);
             summary = summaryOutput.isBlank() ? headline : headline + "\n" + summaryOutput;
         }
-        return new ToolResult(
-                semantic.successfulToolResult(), summary, Map.copyOf(data), List.copyOf(assets), List.of(), truncated);
+        return new ToolResult(exited, summary, Map.copyOf(data), List.copyOf(assets), List.of(), truncated);
     }
 
     private static ToolResult rejectedAbsoluteDirectoryChange(String operationFamily) {
@@ -1032,7 +926,7 @@ public final class ProjectExecutionToolOperations {
                 "Command rejected before execution: absolute directory changes are not allowed; omit cd or use "
                         + "workspaceRef with relativeWorkdir.",
                 Map.of(
-                        "status",
+                        "processState",
                         "FAILED",
                         "operationFamily",
                         operationFamily,
@@ -1049,39 +943,6 @@ public final class ProjectExecutionToolOperations {
                 List.of(),
                 List.of(),
                 false);
-    }
-
-    private static String deliveryEvidenceCode(
-            CodingDeliveryCommandSemantics.Action action,
-            CodingDeliveryCommandSemantics.Verification verification,
-            String output) {
-        if (output.isBlank()
-                && action == CodingDeliveryCommandSemantics.Action.NONE
-                && verification != CodingDeliveryCommandSemantics.Verification.STATUS
-                && verification != CodingDeliveryCommandSemantics.Verification.STAGED_DIFF
-                && verification != CodingDeliveryCommandSemantics.Verification.UPSTREAM) return "";
-        return switch (verification) {
-            case STATUS -> "STATUS_INSPECTED";
-            case REPOSITORY_ROOT -> "REPOSITORY_ROOT_VERIFIED";
-            case BRANCH -> "BRANCH_VERIFIED";
-            case UPSTREAM -> "UPSTREAM_INSPECTED";
-            case STAGED_DIFF -> "STAGED_DIFF_INSPECTED";
-            case HEAD -> "HEAD_VERIFIED";
-            case REMOTE_REF -> "REMOTE_REF_VERIFIED";
-            case PULL_REQUEST -> "PULL_REQUEST_VERIFIED";
-            case NONE ->
-                switch (action) {
-                    case STAGE -> "STAGE_COMPLETED";
-                    case COMMIT -> "COMMIT_COMPLETED";
-                    case PUSH -> "PUSH_COMPLETED";
-                    case PULL_REQUEST -> "PULL_REQUEST_COMPLETED";
-                    case NONE -> "";
-                };
-        };
-    }
-
-    private static String repositoryScopeDigest(String workspaceRef, String relativeWorkdir) {
-        return PolicyDigest.sha256Fields(List.of("coding-delivery-repository-scope-v2", workspaceRef, relativeWorkdir));
     }
 
     private static String workingDirectoryDigest(
@@ -1109,7 +970,7 @@ public final class ProjectExecutionToolOperations {
                 false,
                 "Command rejected before execution: relativeWorkdir must be a normalized workspace-relative path.",
                 Map.of(
-                        "status",
+                        "processState",
                         "FAILED",
                         "operationFamily",
                         operationFamily,
@@ -1143,7 +1004,7 @@ public final class ProjectExecutionToolOperations {
                 false,
                 "Command uses a directory override that belongs in the structured workspace protocol.",
                 Map.of(
-                        "status", "FAILED",
+                        "processState", "FAILED",
                         "operationFamily", operationFamily,
                         "failureCategory", "PROTOCOL_ERROR",
                         "stableFailureCode", "WORKSPACE_PROTOCOL_REQUIRED",
@@ -1163,7 +1024,7 @@ public final class ProjectExecutionToolOperations {
                 false,
                 "Command rejected before execution: the command crosses a protected execution boundary.",
                 Map.ofEntries(
-                        Map.entry("status", "FAILED"),
+                        Map.entry("processState", "FAILED"),
                         Map.entry("operationFamily", operationFamily),
                         Map.entry("effectiveOperationFamily", effectiveOperationFamily(classification)),
                         Map.entry("commandTarget", classification.target().name()),
@@ -1264,16 +1125,6 @@ public final class ProjectExecutionToolOperations {
         };
     }
 
-    private static String commandOutcomeCode(io.haifa.agent.execution.core.command.CommandSemanticOutcome outcome) {
-        return switch (outcome) {
-            case SUCCEEDED -> "COMMAND_EXIT_SUCCEEDED";
-            case EXPECTED_VARIANT -> "COMMAND_EXIT_EXPECTED_VARIANT";
-            case EMPTY_RESULT -> "COMMAND_EMPTY_RESULT";
-            case COMMAND_FAILED -> "COMMAND_EXIT_FAILED";
-            case OUTCOME_UNKNOWN -> "COMMAND_OUTCOME_UNKNOWN";
-        };
-    }
-
     private static boolean hasLeadingAbsoluteDirectoryChange(String command) {
         String remaining = command.stripLeading();
         if (!remaining.startsWith("cd") || (remaining.length() > 2 && !Character.isWhitespace(remaining.charAt(2)))) {
@@ -1308,47 +1159,6 @@ public final class ProjectExecutionToolOperations {
         if (stdout.isBlank()) return stderr;
         if (stderr.isBlank()) return stdout;
         return stdout + "\n" + stderr;
-    }
-
-    static List<Integer> expectedExitCodes(Map<String, Object> values) {
-        Object value = values.get("expectedExitCodes");
-        if (value == null) return List.of(0);
-        if (!(value instanceof List<?> rawCodes) || rawCodes.isEmpty() || rawCodes.size() > 8) {
-            throw new IllegalArgumentException("expectedExitCodes must contain between one and eight integer codes");
-        }
-        var codes = new ArrayList<Integer>(rawCodes.size());
-        for (Object rawCode : rawCodes) {
-            if (!(rawCode instanceof Number number)
-                    || number.longValue() != number.doubleValue()
-                    || number.longValue() < 0
-                    || number.longValue() > 255) {
-                throw new IllegalArgumentException("expectedExitCodes must contain integer codes from 0 through 255");
-            }
-            int code = number.intValue();
-            if (codes.contains(code))
-                throw new IllegalArgumentException("expectedExitCodes must not contain duplicates");
-            codes.add(code);
-        }
-        if (!codes.contains(0)) throw new IllegalArgumentException("expectedExitCodes must include 0");
-        codes.sort(Integer::compareTo);
-        return List.copyOf(codes);
-    }
-
-    private static CommandSemanticOutcomeInterpreter.Interpretation semanticOutcome(
-            ExecutionResult result, String command, List<Integer> expectedExitCodes) {
-        if ((result.status() == ExecutionStatus.EXITED
-                        || result.status() == ExecutionStatus.SUCCEEDED
-                        || result.status() == ExecutionStatus.FAILED)
-                && result.exitCode() != null
-                && result.exitCode() != 0
-                && expectedExitCodes.contains(result.exitCode())
-                && result.optionalFailure()
-                        .map(failure -> failure.code().equals("NON_ZERO_EXIT"))
-                        .orElse(true)) {
-            return new CommandSemanticOutcomeInterpreter.Interpretation(
-                    CommandSemanticOutcome.EXPECTED_VARIANT, "DECLARED_EXPECTED_EXIT_CODE");
-        }
-        return CommandSemanticOutcomeInterpreter.interpret(command, result.status(), result.exitCode());
     }
 
     private static String requiredText(Map<String, Object> values, String key) {
@@ -1471,6 +1281,10 @@ public final class ProjectExecutionToolOperations {
 
         private boolean dispatched() {
             return started.get();
+        }
+
+        private void confirmDispatched() {
+            started.set(true);
         }
 
         private static String keepHeadAndTailLines(String value, int maximumLines) {

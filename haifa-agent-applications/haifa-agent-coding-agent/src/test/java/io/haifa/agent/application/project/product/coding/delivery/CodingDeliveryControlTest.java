@@ -76,6 +76,29 @@ class CodingDeliveryControlTest {
     }
 
     @Test
+    void deliveryIntentResolverCoversBoundAndPendingCommandWindows() {
+        Fixture fixture = fixture("deliver the change", trusted("CHANGE"));
+        InMemoryCodingSessionStore boundCommands = new InMemoryCodingSessionStore();
+        boundCommands.reserveCommand(commandBinding(
+                fixture,
+                CodingDeliveryIntent.LOCAL_COMMIT,
+                Optional.of(fixture.run().id()),
+                "bound"));
+        CodingDeliveryIntentResolver bound = new CodingDeliveryIntentResolver(boundCommands, fixture.store());
+
+        assertThat(bound.resolve(fixture.run())).isEqualTo(CodingDeliveryIntent.LOCAL_COMMIT);
+        assertThat(bound.resolve(fixture.run().id())).isEqualTo(CodingDeliveryIntent.LOCAL_COMMIT);
+
+        InMemoryCodingSessionStore pendingCommands = new InMemoryCodingSessionStore();
+        pendingCommands.reserveCommand(
+                commandBinding(fixture, CodingDeliveryIntent.PULL_REQUEST, Optional.empty(), "pending"));
+        CodingDeliveryIntentResolver pending = new CodingDeliveryIntentResolver(pendingCommands, fixture.store());
+
+        assertThat(pending.resolve(fixture.run())).isEqualTo(CodingDeliveryIntent.PULL_REQUEST);
+        assertThat(pending.resolve(fixture.run().id())).isEqualTo(CodingDeliveryIntent.PULL_REQUEST);
+    }
+
+    @Test
     void changeRequiresWorkspaceValidationAndDeterministicReviewEvidence() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         CodingCompletionPolicy policy = policy(fixture.store());
@@ -96,7 +119,7 @@ class CodingDeliveryControlTest {
         var complete = policy.evaluate(fixture.run(), finalDecision());
         assertThat(complete.allowed()).isTrue();
         assertThat(complete.evidenceCodes())
-                .contains("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT", "VALIDATION_PASSED")
+                .contains("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT")
                 .doesNotContain("DIFF_INSPECTION");
     }
 
@@ -106,12 +129,7 @@ class CodingDeliveryControlTest {
         changeTool(fixture, "file_write", "change-1");
         CodingValidationAttemptEvidence evidence = new CodingValidationAttemptEvidence(
                 CodingValidationAttemptEvidence.SCHEMA_VERSION,
-                CodingValidationStatus.PASSED,
-                null,
-                null,
-                null,
                 CodingValidationScope.FULL,
-                "COUNTS_UNAVAILABLE",
                 "BUILD_CONFIGURATION",
                 "TRUSTED_FULL_SCOPE",
                 "d".repeat(64),
@@ -123,8 +141,8 @@ class CodingDeliveryControlTest {
                 Map.of(
                         "operationFamily",
                         "UNKNOWN",
-                        "status",
-                        "SUCCEEDED",
+                        "processState",
+                        "EXITED",
                         "validationEvidence",
                         evidence.toStructuredData()));
 
@@ -135,12 +153,27 @@ class CodingDeliveryControlTest {
 
         Fixture arbitrary = fixture("fix the implementation", trusted("CHANGE"));
         changeTool(arbitrary, "file_write", "change-1");
-        tool(arbitrary, "execution_run", Map.of(), Map.of("operationFamily", "UNKNOWN", "status", "SUCCEEDED"));
+        tool(arbitrary, "execution_run", Map.of(), Map.of("operationFamily", "UNKNOWN", "processState", "EXITED"));
         assertThat(policy(arbitrary.store())
                         .evaluate(arbitrary.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
                 .contains("VALIDATION_ATTEMPT_MISSING");
+
+        Fixture failedDispatch = fixture("fix the implementation", trusted("CHANGE"));
+        changeTool(failedDispatch, "file_write", "change-1");
+        tool(
+                failedDispatch,
+                "execution_run",
+                Map.of(),
+                Map.of(
+                        "operationFamily", "TEST",
+                        "processState", "FAILED",
+                        "validationEvidence", evidence.toStructuredData()));
+        assertThat(policy(failedDispatch.store())
+                        .evaluate(failedDispatch.run(), finalDecision())
+                        .allowed())
+                .isTrue();
     }
 
     @Test
@@ -155,8 +188,8 @@ class CodingDeliveryControlTest {
                 Map.of(
                         "operationFamily",
                         "DIFF",
-                        "status",
-                        "SUCCEEDED",
+                        "processState",
+                        "EXITED",
                         "commandTarget",
                         "GIT",
                         "commandRisk",
@@ -178,8 +211,8 @@ class CodingDeliveryControlTest {
                 Map.of(
                         "operationFamily",
                         "DIFF",
-                        "status",
-                        "SUCCEEDED",
+                        "processState",
+                        "EXITED",
                         "commandTarget",
                         "GIT",
                         "commandRisk",
@@ -210,9 +243,8 @@ class CodingDeliveryControlTest {
                 Map.of(),
                 Map.of(
                         "operationFamily", "DIFF",
-                        "status", "EXITED",
+                        "processState", "EXITED",
                         "exitCode", 0,
-                        "semanticOutcome", "SUCCEEDED",
                         "commandTarget", "GIT",
                         "commandRisk", "LOCAL_READ",
                         "commandOperation", "DIFF",
@@ -235,7 +267,7 @@ class CodingDeliveryControlTest {
                 Map.ofEntries(
                         Map.entry("operationFamily", "DIFF"),
                         Map.entry("effectiveOperationFamily", "UNKNOWN"),
-                        Map.entry("status", "SUCCEEDED"),
+                        Map.entry("processState", "EXITED"),
                         Map.entry("commandTarget", "OTHER"),
                         Map.entry("commandRisk", "UNKNOWN"),
                         Map.entry("commandOperation", "UNKNOWN")));
@@ -247,7 +279,7 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void expectedDiffVariantCountsAsDiffInspectionWithoutPassingValidation() {
+    void nonZeroDiffExitStillCountsAsAnAttemptedDiffInspection() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         tool(fixture, "file_write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
         validationTool(fixture, false, 1, 1, 0);
@@ -258,9 +290,7 @@ class CodingDeliveryControlTest {
                 Map.ofEntries(
                         Map.entry("operationFamily", "DIFF"),
                         Map.entry("effectiveOperationFamily", "DIFF"),
-                        Map.entry("status", "FAILED"),
-                        Map.entry("semanticOutcome", "EXPECTED_VARIANT"),
-                        Map.entry("semanticReasonCode", "DIFFERENCES_FOUND"),
+                        Map.entry("processState", "EXITED"),
                         Map.entry("commandTarget", "GIT"),
                         Map.entry("commandRisk", "LOCAL_READ"),
                         Map.entry("commandOperation", "DIFF"),
@@ -268,41 +298,33 @@ class CodingDeliveryControlTest {
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
-                        .blockers())
-                .extracting(blocker -> blocker.code())
-                .contains("VALIDATION_NOT_PASSED");
+                        .allowed())
+                .isTrue();
     }
 
     @Test
-    void diffInspectionDoesNotOverrideAFailedValidation() {
+    void validationAttemptIsNotInterpretedAsPassedOrFailed() {
         Fixture fixture = fixture("change the implementation", trusted("CHANGE"));
         tool(fixture, "file_write", Map.of("path", "README.md"), Map.of("changeSetId", "change-1"));
         validationTool(fixture, false, 1, 1, 0);
-        tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "DIFF", "status", "SUCCEEDED"));
+        tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "DIFF", "processState", "EXITED"));
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
-                        .blockers())
-                .extracting(blocker -> blocker.code())
-                .contains("VALIDATION_NOT_PASSED");
-        assertThat(policy(fixture.store())
-                        .evaluate(fixture.run(), finalDecision())
-                        .blockers())
-                .extracting(blocker -> blocker.code())
-                .contains("VALIDATION_NOT_PASSED");
+                        .allowed())
+                .isTrue();
     }
 
     @Test
-    void validationFailureRemainsBlockingWhenTheFailureHasAConfirmedCategory() {
+    void nonZeroValidationExitStillRecordsATrustedAttempt() {
         Fixture fixture = fixture("change the implementation", trusted("CHANGE"));
         changeTool(fixture, "file_write", "change-1");
         validationTool(fixture, false, 1, 1, 0);
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
-                        .blockers())
-                .extracting(blocker -> blocker.code())
-                .contains("VALIDATION_NOT_PASSED");
+                        .allowed())
+                .isTrue();
     }
 
     @Test
@@ -325,7 +347,7 @@ class CodingDeliveryControlTest {
     @Test
     void executionReadEvidenceRequiresTheCurrentTrustedClassificationFields() {
         Fixture fixture = fixture("analyze the repository", trusted("ANALYZE"));
-        tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "INSPECT", "status", "SUCCEEDED"));
+        tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "INSPECT", "processState", "EXITED"));
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
@@ -340,7 +362,7 @@ class CodingDeliveryControlTest {
                 Map.of(
                         "operationFamily", "INSPECT",
                         "effectiveOperationFamily", "INSPECT",
-                        "status", "SUCCEEDED",
+                        "processState", "EXITED",
                         "commandTarget", "GIT",
                         "commandRisk", "LOCAL_READ",
                         "commandOperation", "INSPECT"));
@@ -361,8 +383,8 @@ class CodingDeliveryControlTest {
                 Map.of(
                         "operationFamily",
                         "TEST",
-                        "status",
-                        "SUCCEEDED",
+                        "processState",
+                        "EXITED",
                         "validationEvidence",
                         validationEvidence(true).toStructuredData()));
 
@@ -383,8 +405,8 @@ class CodingDeliveryControlTest {
                 Map.of(
                         "operationFamily",
                         "TEST",
-                        "status",
-                        "SUCCEEDED",
+                        "processState",
+                        "EXITED",
                         "validationEvidence",
                         validationEvidence(true).toStructuredData()));
 
@@ -478,7 +500,7 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void evidenceBackedNoChangeCanComplete() {
+    void genericExecutionCannotManufactureNoChangeEvidence() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         tool(
                 fixture,
@@ -487,8 +509,8 @@ class CodingDeliveryControlTest {
                 Map.of(
                         "operationFamily",
                         "TEST",
-                        "status",
-                        "SUCCEEDED",
+                        "processState",
+                        "EXITED",
                         "exitCode",
                         0,
                         "validationEvidence",
@@ -496,14 +518,13 @@ class CodingDeliveryControlTest {
                         "noChangeJustificationCode",
                         "ALREADY_SATISFIED"));
         var result = policy(fixture.store()).evaluate(fixture.run(), finalDecision());
-        assertThat(result.allowed()).isTrue();
-        assertThat(result.evidenceCodes())
-                .contains("NO_CHANGE_JUSTIFICATION", "VALIDATION_PASSED")
-                .doesNotContain("DIFF_INSPECTION");
+        assertThat(result.allowed()).isFalse();
+        assertThat(result.blockers()).extracting(CompletionBlocker::code).containsExactly("WORKSPACE_CHANGE_MISSING");
+        assertThat(result.evidenceCodes()).containsExactly("VALIDATION_ATTEMPT");
     }
 
     @Test
-    void retainsFailedAndPassingValidationAttemptsAndUsesTheLatestOutcome() {
+    void retainsValidationAttemptsWithoutInterpretingTheirExitCodes() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         changeTool(fixture, "file_write", "change-1");
         validationTool(fixture, false, 4, 4, 0);
@@ -512,21 +533,21 @@ class CodingDeliveryControlTest {
         CodingDeliveryEvidenceLedger.Snapshot snapshot = new CodingDeliveryEvidenceLedger(fixture.store())
                 .reconstruct(fixture.run().id());
 
-        assertThat(snapshot.validationAttempts())
-                .extracting(CodingValidationAttemptEvidence::status)
-                .containsExactly(CodingValidationStatus.FAILED, CodingValidationStatus.PASSED);
-        assertThat(snapshot.latestValidationPassed()).isTrue();
+        assertThat(snapshot.validationAttempts()).hasSize(2);
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
                         .allowed())
                 .isTrue();
 
         validationTool(fixture, false, 1, 1, 0);
+        assertThat(new CodingDeliveryEvidenceLedger(fixture.store())
+                        .reconstruct(fixture.run().id())
+                        .validationAttempts())
+                .hasSize(3);
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
-                        .blockers())
-                .extracting(blocker -> blocker.code())
-                .contains("VALIDATION_NOT_PASSED");
+                        .allowed())
+                .isTrue();
     }
 
     @Test
@@ -607,32 +628,41 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void pullRequestIntentRequiresOrderedAuthoritativeDeliveryEvidence() {
+    void genericNonZeroCommitAndPushCannotManufactureDeliveryCompletionEvidence() {
         Fixture fixture = fixture("fix and open a pull request", trusted("CHANGE"));
-        CodingDeliveryIntentResolver intents = deliveryResolver(fixture, CodingDeliveryIntent.PULL_REQUEST);
-        CodingCompletionPolicy policy = new CodingCompletionPolicy(
-                new CodingTaskModeResolver(fixture.store()),
-                new CodingDeliveryEvidenceLedger(fixture.store()),
-                intents,
-                promisedVerificationProfiles());
+        CodingCompletionPolicy policy = policy(fixture.store());
         changeTool(fixture, "file_write", "change-1");
         validationTool(fixture, true, 1, 1, 0);
-        deliveryEvidence(fixture, "STAGE_COMPLETED");
-        deliveryEvidence(fixture, "HEAD_VERIFIED");
-        deliveryEvidence(fixture, "STAGED_DIFF_INSPECTED");
-        deliveryEvidence(fixture, "COMMIT_COMPLETED");
-
-        assertThat(policy.evaluate(fixture.run(), finalDecision()).blockers())
-                .extracting(blocker -> blocker.code())
-                .contains("HEAD_VERIFIED_MISSING");
-
-        deliveryEvidence(fixture, "HEAD_VERIFIED");
-        deliveryEvidence(fixture, "PUSH_COMPLETED");
-        deliveryEvidence(fixture, "REMOTE_REF_VERIFIED");
-        deliveryEvidence(fixture, "PULL_REQUEST_COMPLETED");
-        deliveryEvidence(fixture, "PULL_REQUEST_VERIFIED");
+        tool(
+                fixture,
+                "execution_run",
+                Map.of(),
+                Map.of(
+                        "processState", "EXITED",
+                        "exitCode", 1,
+                        "operationFamily", "DELIVERY",
+                        "effectiveOperationFamily", "DELIVERY",
+                        "commandTarget", "GIT",
+                        "commandRisk", "NETWORK_WRITE",
+                        "commandOperation", "PUSH"));
+        tool(
+                fixture,
+                "execution_run",
+                Map.of(),
+                Map.of(
+                        "processState", "EXITED",
+                        "exitCode", 128,
+                        "operationFamily", "DELIVERY",
+                        "effectiveOperationFamily", "DELIVERY",
+                        "commandTarget", "GIT",
+                        "commandRisk", "LOCAL_WRITE",
+                        "commandOperation", "COMMIT"));
 
         assertThat(policy.evaluate(fixture.run(), finalDecision()).allowed()).isTrue();
+        assertThat(new CodingDeliveryEvidenceLedger(fixture.store())
+                        .reconstruct(fixture.run().id())
+                        .codes())
+                .containsExactlyInAnyOrder("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT");
     }
 
     private static Map<String, Object> trusted(String intent) {
@@ -646,7 +676,7 @@ class CodingDeliveryControlTest {
     private static CodingCompletionPolicy policy(
             InMemoryRuntimeStore store, CodingVerificationProfileProvider verificationProfiles) {
         return new CodingCompletionPolicy(
-                new CodingTaskModeResolver(store), new CodingDeliveryEvidenceLedger(store), null, verificationProfiles);
+                new CodingTaskModeResolver(store), new CodingDeliveryEvidenceLedger(store), verificationProfiles);
     }
 
     private static CodingVerificationProfileProvider promisedVerificationProfiles() {
@@ -710,10 +740,10 @@ class CodingDeliveryControlTest {
                 Map.of(
                         "operationFamily",
                         "TEST",
-                        "status",
-                        passed ? "SUCCEEDED" : "FAILED",
-                        "failureCategory",
-                        passed ? "NONE" : "ENVIRONMENT",
+                        "processState",
+                        "EXITED",
+                        "exitCode",
+                        passed ? 0 : 1,
                         "validationEvidence",
                         evidence.toStructuredData()));
     }
@@ -725,38 +755,28 @@ class CodingDeliveryControlTest {
     private static CodingValidationAttemptEvidence validationEvidence(boolean passed, int discovered, int selected) {
         return new CodingValidationAttemptEvidence(
                 CodingValidationAttemptEvidence.SCHEMA_VERSION,
-                passed ? CodingValidationStatus.PASSED : CodingValidationStatus.FAILED,
-                null,
-                null,
-                null,
                 selected < discovered ? CodingValidationScope.SELECTED : CodingValidationScope.FULL,
-                "COUNTS_UNAVAILABLE",
                 "BUILD_CONFIGURATION",
                 selected < discovered ? "TRUSTED_SELECTED_SCOPE" : "TRUSTED_FULL_SCOPE",
                 "d".repeat(64),
                 "e".repeat(64));
     }
 
-    private static void deliveryEvidence(Fixture fixture, String code) {
-        tool(fixture, "execution_run", Map.of(), Map.of("status", "SUCCEEDED", "deliveryEvidenceCode", code));
-    }
-
-    private static CodingDeliveryIntentResolver deliveryResolver(Fixture fixture, CodingDeliveryIntent intent) {
-        var sessions = new InMemoryCodingSessionStore();
-        sessions.reserveCommand(new CodingCommandBinding(
-                "caller",
-                "create-session",
-                "idempotency",
-                "request",
-                "dispatch",
+    private static CodingCommandBinding commandBinding(
+            Fixture fixture, CodingDeliveryIntent intent, Optional<AgentRunId> runId, String suffix) {
+        return new CodingCommandBinding(
+                "caller-" + suffix,
+                "submit-turn",
+                "idempotency-" + suffix,
+                "request-" + suffix,
+                "dispatch-" + suffix,
                 fixture.run().sessionId(),
                 new ProjectId("project-1"),
                 "deliver",
                 List.of(),
                 intent,
-                Optional.of(fixture.run().id()),
-                NOW));
-        return new CodingDeliveryIntentResolver(sessions, fixture.store());
+                runId,
+                NOW);
     }
 
     private static Fixture fixture(String request, Map<String, Object> metadata) {

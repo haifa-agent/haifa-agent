@@ -42,10 +42,10 @@ class RuntimeControlTraceReplayTest {
         var result = replay.replay(List.of(
                 new SafeEvent(
                         "delivery.evidence-updated",
-                        Map.of("evidenceCodes", List.of("WORKSPACE_CHANGE", "VALIDATION_PASSED", "DIFF_INSPECTION"))),
+                        Map.of("evidenceCodes", List.of("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT", "DIFF_INSPECTION"))),
                 event("run.completed")));
         assertThat(result.evidenceCodes())
-                .containsExactlyInAnyOrder("WORKSPACE_CHANGE", "VALIDATION_PASSED", "DIFF_INSPECTION");
+                .containsExactlyInAnyOrder("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT", "DIFF_INSPECTION");
         assertThat(result.phase()).isEqualTo("COMPLETED");
     }
 

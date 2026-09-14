@@ -34,7 +34,7 @@ class ProjectExecutionValidationTest {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 invoked.set(true);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -63,7 +63,7 @@ class ProjectExecutionValidationTest {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 invoked.set(true);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -89,7 +89,7 @@ class ProjectExecutionValidationTest {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 invoked.set(true);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -116,7 +116,7 @@ class ProjectExecutionValidationTest {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 invoked.set(true);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -147,7 +147,7 @@ class ProjectExecutionValidationTest {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 invoked.set(true);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
         var operations = operationsWithWorkspaceTargetResolver(
@@ -210,7 +210,7 @@ class ProjectExecutionValidationTest {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 captured.set(request);
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
 
@@ -230,7 +230,7 @@ class ProjectExecutionValidationTest {
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                return result(request.id(), ExecutionStatus.EXITED, 0);
             }
         };
         var operations = operations(broker, 4096, 100);
@@ -246,7 +246,7 @@ class ProjectExecutionValidationTest {
                 invocation(Map.of("command", "git status --short", "operationFamily", "DIFF"), () -> false), access());
 
         assertThat(writeAsRead.structuredData())
-                .containsEntry("status", "SUCCEEDED")
+                .containsEntry("processState", "EXITED")
                 .containsEntry("commandRisk", "EXTERNAL_WRITE")
                 .containsEntry("commandTarget", "GIT")
                 .containsEntry("effectiveOperationFamily", "MUTATE")
@@ -257,7 +257,7 @@ class ProjectExecutionValidationTest {
                 .containsEntry("failureActionCode", "REMOVE_AUTHENTICATION_OVERRIDE")
                 .containsEntry("commandRisk", "DENIED");
         assertThat(statusAsDiff.structuredData())
-                .containsEntry("status", "SUCCEEDED")
+                .containsEntry("processState", "EXITED")
                 .containsEntry("effectiveOperationFamily", "INSPECT")
                 .containsEntry("operationHintCode", "OPERATION_HINT_IGNORED")
                 .containsEntry("commandOperation", "INSPECT")

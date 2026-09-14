@@ -401,7 +401,6 @@ public final class ExecutionToolProvider implements ToolProvider {
                 || result.stdout().truncated()
                 || result.stderr().truncated();
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("status", result.status().name());
         data.put("processState", result.status().name());
         data.put("mode", parsed.mode);
         if (!parsed.language.isEmpty()) data.put("language", parsed.language);
@@ -418,7 +417,6 @@ public final class ExecutionToolProvider implements ToolProvider {
         String headline =
                 switch (result.status()) {
                     case EXITED -> parsed.mode.equals("SCRIPT") ? "Script exited" : "Command exited";
-                    case SUCCEEDED -> parsed.mode.equals("SCRIPT") ? "Script succeeded" : "Command succeeded";
                     case FAILED -> parsed.mode.equals("SCRIPT") ? "Script failed" : "Command failed";
                     case OUTPUT_LIMIT_EXCEEDED -> "Execution stopped after reaching its output budget";
                     case PROCESS_LIMIT_EXCEEDED -> "Execution stopped after reaching its process-count budget";
@@ -429,7 +427,9 @@ public final class ExecutionToolProvider implements ToolProvider {
         if (result.exitCode() != null) headline += " (exit " + result.exitCode() + ")";
         String output = stdout.isBlank() ? stderr : stdout;
         String summary = output.isBlank() ? headline : headline + "\n" + output;
-        boolean successful = result.status() == ExecutionStatus.SUCCEEDED || result.status() == ExecutionStatus.EXITED;
+        // For Execution, successful means that a normal process result was reliably delivered. It
+        // deliberately does not interpret the business meaning of the raw exit code.
+        boolean successful = result.status() == ExecutionStatus.EXITED;
         return new ToolResult(successful, summary, Map.copyOf(data), List.of(), List.of(), truncated);
     }
 
