@@ -8,7 +8,6 @@ import io.haifa.agent.application.project.product.coding.CodingModelPreference;
 import io.haifa.agent.application.project.product.coding.CodingSessionActivity;
 import io.haifa.agent.application.project.product.coding.CodingSessionQuery;
 import io.haifa.agent.application.project.product.coding.CodingSessionStore;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
@@ -106,8 +105,7 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
             if (existing != null) {
                 CodingCommandBinding value = command(existing);
                 if (!value.requestDigest().equals(candidate.requestDigest())
-                        || !value.projectId().equals(candidate.projectId())
-                        || value.deliveryIntent() != candidate.deliveryIntent()) {
+                        || !value.projectId().equals(candidate.projectId())) {
                     throw conflict("idempotency key is bound to another request");
                 }
                 return value;
@@ -124,7 +122,6 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
                             candidate.dispatchKey(),
                             candidate.sessionId().value(),
                             candidate.projectId().value(),
-                            candidate.deliveryIntent().name(),
                             payload.nonce(),
                             payload.ciphertext(),
                             payload.digest(),
@@ -474,7 +471,6 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
                 new ProjectId(row.projectId()),
                 value.message(),
                 value.attachments(),
-                CodingDeliveryIntent.valueOf(row.deliveryIntent()),
                 Optional.ofNullable(row.runId()).map(AgentRunId::new),
                 row.createdAt());
     }

@@ -3,8 +3,6 @@ package io.haifa.agent.application.project.product.coding.delivery;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.application.project.product.coding.CodingCommandBinding;
-import io.haifa.agent.application.project.product.coding.InMemoryCodingSessionStore;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCost;
@@ -43,7 +41,6 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
@@ -72,29 +69,6 @@ class CodingDeliveryControlTest {
         assertThatThrownBy(() -> new CodingTaskModeResolver(invalid.store()).resolve(invalid.run()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("trusted coding task intent is invalid");
-    }
-
-    @Test
-    void deliveryIntentResolverCoversBoundAndPendingCommandWindows() {
-        Fixture fixture = fixture("deliver the change", trusted("CHANGE"));
-        InMemoryCodingSessionStore boundCommands = new InMemoryCodingSessionStore();
-        boundCommands.reserveCommand(commandBinding(
-                fixture,
-                CodingDeliveryIntent.LOCAL_COMMIT,
-                Optional.of(fixture.run().id()),
-                "bound"));
-        CodingDeliveryIntentResolver bound = new CodingDeliveryIntentResolver(boundCommands, fixture.store());
-
-        assertThat(bound.resolve(fixture.run())).isEqualTo(CodingDeliveryIntent.LOCAL_COMMIT);
-        assertThat(bound.resolve(fixture.run().id())).isEqualTo(CodingDeliveryIntent.LOCAL_COMMIT);
-
-        InMemoryCodingSessionStore pendingCommands = new InMemoryCodingSessionStore();
-        pendingCommands.reserveCommand(
-                commandBinding(fixture, CodingDeliveryIntent.PULL_REQUEST, Optional.empty(), "pending"));
-        CodingDeliveryIntentResolver pending = new CodingDeliveryIntentResolver(pendingCommands, fixture.store());
-
-        assertThat(pending.resolve(fixture.run())).isEqualTo(CodingDeliveryIntent.PULL_REQUEST);
-        assertThat(pending.resolve(fixture.run().id())).isEqualTo(CodingDeliveryIntent.PULL_REQUEST);
     }
 
     @Test
@@ -255,7 +229,7 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void genericCommandsRetainDeclaredDeliveryIntentWithoutOverridingGitClassification() {
+    void genericCommandsRetainDeclaredFamilyWithoutOverridingGitClassification() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         tool(fixture, "file_write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
         validationTool(fixture, true, 1, 1, 0);
@@ -754,23 +728,6 @@ class CodingDeliveryControlTest {
                 selected < discovered ? "TRUSTED_SELECTED_SCOPE" : "TRUSTED_FULL_SCOPE",
                 "d".repeat(64),
                 "e".repeat(64));
-    }
-
-    private static CodingCommandBinding commandBinding(
-            Fixture fixture, CodingDeliveryIntent intent, Optional<AgentRunId> runId, String suffix) {
-        return new CodingCommandBinding(
-                "caller-" + suffix,
-                "submit-turn",
-                "idempotency-" + suffix,
-                "request-" + suffix,
-                "dispatch-" + suffix,
-                fixture.run().sessionId(),
-                new ProjectId("project-1"),
-                "deliver",
-                List.of(),
-                intent,
-                runId,
-                NOW);
     }
 
     private static Fixture fixture(String request, Map<String, Object> metadata) {

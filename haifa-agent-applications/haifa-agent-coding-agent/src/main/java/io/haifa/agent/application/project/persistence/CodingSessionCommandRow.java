@@ -11,7 +11,6 @@ public record CodingSessionCommandRow(
         String dispatchKey,
         String sessionId,
         String projectId,
-        String deliveryIntent,
         byte[] contentNonce,
         byte[] contentCiphertext,
         String contentDigest,
