@@ -11,9 +11,9 @@ class CodingAgentPromptTest {
         CodingAgentPrompt.Snapshot second = CodingAgentPrompt.current();
 
         assertThat(second).isEqualTo(first);
-        assertThat(first.version()).isEqualTo("1.8.1");
+        assertThat(first.version()).isEqualTo("1.8.2");
         assertThat(first.digest()).matches("sha256:[0-9a-f]{64}");
-        assertThat(first.identity()).startsWith("coding-agent-prompt@1.8.1#sha256:");
+        assertThat(first.identity()).startsWith("coding-agent-prompt@1.8.2#sha256:");
         assertThat(first.text())
                 .contains(
                         "You are Haifa Coding Agent",
@@ -28,6 +28,9 @@ class CodingAgentPromptTest {
                         "required dynamic values verbatim",
                         "Read applicable repository instructions",
                         "smallest complete change",
+                        "successful file mutation as invalidating earlier snippets",
+                        "re-read the failed path without reusing a stale cursor",
+                        "smallest failed file or hunk with unique exact context",
                         "authoritative tool results show a workspace change",
                         "any required validation attempt",
                         "inspect the current changes",
