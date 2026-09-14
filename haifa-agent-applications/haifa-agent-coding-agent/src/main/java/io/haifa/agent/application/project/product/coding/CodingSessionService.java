@@ -175,7 +175,6 @@ public final class CodingSessionService {
         CodingSessionVerificationConfiguration verification = CodingSessionVerificationConfiguration.freeze(
                 new CodingVerificationProfileResolver().resolve(candidates));
         String requestedModelId = trustedOptions.initialModelId().orElse(models.defaultModelId());
-        requireReadyModel(caller, requestedModelId);
         String requestedModelIdentity = trustedOptions.initialModelId().orElse("DEFAULT_MODEL");
         String requestDigest = requestDigest(
                 projectId.value()
@@ -202,6 +201,11 @@ public final class CodingSessionService {
                 frozenIntent,
                 Optional.empty(),
                 now));
+        if (binding.runId().isPresent()) {
+            ProjectProductSession product = requireProductSession(binding.sessionId(), caller);
+            CodingSessionActivity activity = reconcile(requireActivity(binding.sessionId(), caller), caller);
+            return view(activity, product);
+        }
         String modelId = codingSessions
                 .findModelPreference(binding.sessionId())
                 .map(CodingModelPreference::modelId)
@@ -365,8 +369,6 @@ public final class CodingSessionService {
         ProjectProductSession product = requireProductSession(sessionId, caller);
         CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
         requireActiveSession(activity);
-        String modelId = requireModelPreference(sessionId, caller).modelId();
-        requireReadyModel(caller, modelId);
         String safeMessage = message(message);
         List<AssetRef> safeAttachments = attachments(attachments);
         String keyDigest = digest(idempotencyKey(idempotencyKey));
@@ -394,6 +396,8 @@ public final class CodingSessionService {
         if (activity.activeRunId().isPresent()) {
             throw conflict("CODING_SESSION_ACTIVE", "Coding Session already has an active Run");
         }
+        String modelId = requireModelPreference(sessionId, caller).modelId();
+        requireReadyModel(caller, modelId);
         codingSessions.reserveActive(sessionId, activity.revision(), existing.dispatchKey(), now());
         var started = projectProducts.continueSession(
                 sessionId, existing.message(), existing.attachments(), existing.dispatchKey(), modelId);

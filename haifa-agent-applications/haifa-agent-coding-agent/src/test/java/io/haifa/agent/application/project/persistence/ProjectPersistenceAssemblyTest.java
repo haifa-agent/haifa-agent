@@ -606,6 +606,104 @@ class ProjectPersistenceAssemblyTest {
         }
     }
 
+    @Test
+    void submitTurnIdempotentRetrySucceedsEvenIfModelBecomesUnready() {
+        CodingModelOption ready = readyModel("dynamic-model", "Dynamic Model");
+        CodingModelOption unready =
+                unreadyModel("dynamic-model", "Dynamic Model", CodingModelState.Connection.LOGIN_REQUIRED);
+        java.util.concurrent.atomic.AtomicReference<CodingModelOption> currentModel =
+                new java.util.concurrent.atomic.AtomicReference<>(ready);
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("readiness-idempotency");
+
+        CodingModelCatalog dynamicCatalog = new CodingModelCatalog() {
+            @Override
+            public String defaultModelId() {
+                return "dynamic-model";
+            }
+
+            @Override
+            public List<CodingModelOption> available(TenantRef tenant, PrincipalRef principal) {
+                return List.of(currentModel.get());
+            }
+
+            @Override
+            public Optional<CodingModelOption> find(TenantRef tenant, PrincipalRef principal, String modelId) {
+                return Optional.of(currentModel.get()).filter(m -> m.id().equals(modelId));
+            }
+        };
+
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService service = fixture.codingService(assembly, runtime, ids, dynamicCatalog);
+
+            CodingSessionView created =
+                    service.createSession(fixture.projectId, "first prompt", List.of(), "create-key");
+            AgentSessionId sessionId = created.summary().sessionId();
+            AgentRunId firstRunId = created.activeRun().orElseThrow().runId();
+            runtime.settle(firstRunId);
+            service.reconcileSession(sessionId);
+
+            var receipt = service.submitTurn(sessionId, "second turn", List.of(), "turn-idempotent-key");
+            assertThat(receipt.replayed()).isFalse();
+            assertThat(runtime.startCount()).isEqualTo(2);
+
+            currentModel.set(unready);
+
+            var retried = service.submitTurn(sessionId, "second turn", List.of(), "turn-idempotent-key");
+            assertThat(retried.replayed()).isTrue();
+            assertThat(retried.runId()).isEqualTo(receipt.runId());
+            assertThat(runtime.startCount()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void createSessionIdempotentRetrySucceedsEvenIfModelBecomesUnready() {
+        CodingModelOption ready = readyModel("dynamic-model", "Dynamic Model");
+        CodingModelOption unready =
+                unreadyModel("dynamic-model", "Dynamic Model", CodingModelState.Connection.LOGIN_REQUIRED);
+        java.util.concurrent.atomic.AtomicReference<CodingModelOption> currentModel =
+                new java.util.concurrent.atomic.AtomicReference<>(ready);
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("create-idempotency");
+
+        CodingModelCatalog dynamicCatalog = new CodingModelCatalog() {
+            @Override
+            public String defaultModelId() {
+                return "dynamic-model";
+            }
+
+            @Override
+            public List<CodingModelOption> available(TenantRef tenant, PrincipalRef principal) {
+                return List.of(currentModel.get());
+            }
+
+            @Override
+            public Optional<CodingModelOption> find(TenantRef tenant, PrincipalRef principal, String modelId) {
+                return Optional.of(currentModel.get()).filter(m -> m.id().equals(modelId));
+            }
+        };
+
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService service = fixture.codingService(assembly, runtime, ids, dynamicCatalog);
+
+            var created = service.createSession(fixture.projectId, "first prompt", List.of(), "create-idempotent-key");
+            AgentSessionId sessionId = created.summary().sessionId();
+            AgentRunId runId = created.activeRun().orElseThrow().runId();
+            assertThat(runtime.startCount()).isEqualTo(1);
+
+            currentModel.set(unready);
+
+            var retried = service.createSession(fixture.projectId, "first prompt", List.of(), "create-idempotent-key");
+            assertThat(retried.summary().sessionId()).isEqualTo(sessionId);
+            assertThat(retried.activeRun().orElseThrow().runId()).isEqualTo(runId);
+            assertThat(runtime.startCount()).isEqualTo(1);
+        }
+    }
+
     private static CodingModelCatalog testCatalog(CodingModelOption defaultModel, CodingModelOption... others) {
         List<CodingModelOption> all = new java.util.ArrayList<>();
         all.add(defaultModel);
