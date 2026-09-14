@@ -1523,7 +1523,7 @@ class RuntimeCoreTest {
                                 false,
                                 "execution failed",
                                 Map.of(
-                                        "stableFailureCode", "NON_ZERO_EXIT",
+                                        "stableFailureCode", "PROCESS_START_FAILED",
                                         "operationFamily", "TEST",
                                         "commandTarget", "mvn test",
                                         "sandboxProfileDigest", "sha256:sandbox"),
@@ -1541,7 +1541,7 @@ class RuntimeCoreTest {
                         .orElseThrow()
                         .error()
                         .details())
-                .containsEntry("stableFailureCode", "NON_ZERO_EXIT")
+                .containsEntry("stableFailureCode", "PROCESS_START_FAILED")
                 .doesNotContainKeys("operationFamily", "commandTarget", "sandboxProfileDigest");
     }
 
@@ -1560,7 +1560,7 @@ class RuntimeCoreTest {
                         invocation -> new ToolResult(
                                 true,
                                 "Command exited (exit 1)",
-                                Map.of("status", "EXITED", "exitCode", 1, "truncated", false),
+                                Map.of("processState", "EXITED", "exitCode", 1, "truncated", false),
                                 List.of(),
                                 List.of(),
                                 false)));

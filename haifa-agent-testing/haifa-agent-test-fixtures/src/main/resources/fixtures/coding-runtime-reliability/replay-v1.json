@@ -14,7 +14,7 @@
     "toolCalls": 130,
     "failedToolCalls": 24,
     "classificationOrPolicyFailures": 9,
-    "expectedDiffExitFalseFailures": 2
+    "normalNonzeroExitFacts": 2
   },
   "cases": [
     {
@@ -36,16 +36,16 @@
       "expected": {"effectiveRisk": "HIGH", "toolFailure": false, "shellDispatch": true}
     },
     {
-      "caseId": "diff-expected-exit",
+      "caseId": "diff-normal-exit",
       "syntheticCommand": "git diff --no-index left.txt right.txt",
-      "observation": {"exitCode": 1, "stableFailureCode": "NON_ZERO_EXIT"},
-      "expected": {"semanticOutcome": "EXPECTED_VARIANT", "toolFailure": false}
+      "observation": {"processState": "EXITED", "exitCode": 1},
+      "expected": {"toolCompleted": true, "rawExitCode": 1, "businessOutcomeInferred": false}
     },
     {
       "caseId": "missing-revision",
       "syntheticCommand": "git show missing-revision",
-      "observation": {"exitCode": 128, "stableFailureCode": "NON_ZERO_EXIT"},
-      "expected": {"semanticOutcome": "COMMAND_FAILED", "recoveryAction": "REFRESH_AUTHORITATIVE_REF"}
+      "observation": {"processState": "EXITED", "exitCode": 128},
+      "expected": {"toolCompleted": true, "rawExitCode": 128, "businessOutcomeInferred": false}
     },
     {
       "caseId": "sensitive-path-write",
@@ -80,7 +80,7 @@
     {
       "caseId": "push-outcome-unknown",
       "syntheticCommand": "git push origin feature",
-      "observation": {"dispatchStarted": true, "semanticOutcome": "OUTCOME_UNKNOWN"},
+      "observation": {"dispatchStarted": true, "processState": "UNKNOWN"},
       "expected": {"automaticReplay": false, "recoveryAction": "VERIFY_REMOTE_FACTS"}
     }
   ]

@@ -353,7 +353,7 @@ class TerminalUiReducerTest {
     void retainsLocalShellExecutionInTranscriptWithoutSummaryAggregation() {
         TerminalUiState state = reducer.reduce(
                 TerminalUiState.initial(120, 40),
-                new TerminalUiAction.ShellCompleted("!pwd", "D:/workspace", "SUCCEEDED"));
+                new TerminalUiAction.ShellCompleted("!pwd", "D:/workspace", "EXITED"));
         state = reducer.reduce(
                 state,
                 new TerminalUiAction.RunEventReceived(event(
@@ -362,8 +362,10 @@ class TerminalUiReducerTest {
                         new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"),
                         Instant.parse("2026-07-27T00:00:01Z"))));
 
-        assertThat(state.transcript())
-                .anySatisfy(item -> assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.EXECUTION));
+        assertThat(state.transcript()).anySatisfy(item -> {
+            assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.EXECUTION);
+            assertThat(item.status()).isEqualTo("EXITED");
+        });
         assertThat(state.transcript().getLast().body())
                 .contains("Status: COMPLETED")
                 .doesNotContain("Tools:");

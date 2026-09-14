@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-REPORT_SCHEMA_VERSION = "1.1.0"
+REPORT_SCHEMA_VERSION = "1.2.0"
 REQUIRED_COLUMNS = {
     "runtime_event": {"run_id", "type", "data_payload", "occurred_at"},
     "run": {"run_id", "session_id", "status", "error_payload"},
@@ -202,8 +202,6 @@ def _failure_class(tool_name: str, stable_code: str, failure_category: str) -> s
         return "POLICY_OR_CLASSIFICATION"
     if failure_category in {"POLICY", "POLICY_DENIED"}:
         return "POLICY_DENIAL"
-    if stable_code in {"NON_ZERO_EXIT", "COMMAND_FAILED"}:
-        return "COMMAND_NON_ZERO"
     if tool_name.startswith("file_"):
         return "WORKSPACE_FILE_OPERATION"
     return "TOOL_INFRASTRUCTURE"
@@ -267,10 +265,8 @@ def _required_metrics_empty() -> dict[str, Any]:
         "riskEscalationDistribution": dict(no_samples),
         "approvalAskAllowRateByThreshold": _unavailable("APPROVAL_DECISIONS_NOT_IN_REQUIRED_SOURCE_SCHEMA"),
         "compositeCommandAdmissionCompletionRate": _rate(0, 0, "admitted"),
-        "commandSemanticFailureRate": _rate(0, 0, "failed"),
         "toolInfrastructureFailureRate": _rate(0, 0, "failed"),
         "gitKnownReadLowClassificationRate": _rate(0, 0, "classifiedLow"),
-        "gitExpectedExitFalseFailureRate": _rate(0, 0, "falseFailures"),
         "sameFingerprintRetryAmplification": dict(no_samples),
         "runCompletionFailedCancelled": {"status": "MEASURED", "counts": {}},
         "modelEmptyOutputRecoveryRate": _unavailable("MODEL_ATTEMPT_TRACE_NOT_IN_REQUIRED_SOURCE_SCHEMA"),
@@ -278,7 +274,6 @@ def _required_metrics_empty() -> dict[str, Any]:
             "CONTEXT_PREFLIGHT_TRACE_NOT_IN_REQUIRED_SOURCE_SCHEMA"
         ),
         "timeModelToolCallsToFirstMeaningfulChange": dict(no_samples),
-        "deliveryEvidenceCompleteness": _unavailable("FROZEN_DELIVERY_INTENT_NOT_IN_REQUIRED_SOURCE_SCHEMA"),
         "resumeStateConsistencyRate": _unavailable("RESUME_COMPARISON_TRACE_NOT_IN_REQUIRED_SOURCE_SCHEMA"),
         "costKnownUnknown": {"status": "UNKNOWN", "reason": "COST_NOT_IN_REQUIRED_SOURCE_SCHEMA"},
     }
@@ -366,17 +361,11 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
     composite_total = 0
     composite_admitted = 0
     composite_completed = 0
-    semantic_failures = 0
     infrastructure_failures = 0
     known_read_total = 0
     known_read_low = 0
-    expected_exit_candidates = 0
-    expected_exit_total = 0
-    expected_exit_false_failures = 0
-    expected_exit_unobservable = 0
     first_change_by_run: dict[str, tuple[int, int]] = {}
     calls_by_run: Counter[str] = Counter()
-    delivery_evidence: Counter[str] = Counter()
     for row in tool_rows:
         tool_name = str(row["tool_name"])
         status = _safe_text(row["status"])
@@ -409,22 +398,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
                 known_read_total += 1
                 if effective_risk == "LOW" or risk == "LOCAL_READ":
                     known_read_low += 1
-            semantic_outcome = _safe_text(result.get("semanticOutcome"), "")
-            if semantic_outcome == "COMMAND_FAILED":
-                semantic_failures += 1
-            expected_exit_candidate = bool(
-                isinstance(command, str)
-                and re.match(r"(?is)^\s*git(?:\.exe)?\s+(?:diff\b.*(?:--exit-code|--no-index)|grep\b)", command)
-            )
-            if expected_exit_candidate:
-                expected_exit_candidates += 1
-            if expected_exit_candidate and result.get("exitCode") == 1:
-                expected_exit_total += 1
-                if status == "FAILED" and semantic_outcome != "EXPECTED_VARIANT":
-                    expected_exit_false_failures += 1
-        evidence_code = _safe_text(result.get("deliveryEvidenceCode"), "")
-        if evidence_code:
-            delivery_evidence[evidence_code] += 1
         if ("fileChangeSetId" in result or "changeSetId" in result) and str(row["run_id"]) not in first_change_by_run:
             first_change_by_run[str(row["run_id"])] = (
                 int(row["requested_at"]),
@@ -439,8 +412,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
                 _safe_text(error.get("code"), "UNAVAILABLE"),
             ),
         )
-        if tool_name == "execution_run" and expected_exit_candidate and not isinstance(result.get("exitCode"), int):
-            expected_exit_unobservable += 1
         failure_category = _safe_text(
             result.get("failureCategory"), _safe_text(attributes.get("failureCategory"))
         )
@@ -452,8 +423,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
             hard_boundary_denials += 1
         failure_class = _failure_class(tool_name, stable_code, failure_category)
         failure_classes[failure_class] += 1
-        if tool_name == "execution_run" and failure_class == "COMMAND_NON_ZERO" and semantic_outcome != "COMMAND_FAILED":
-            semantic_failures += 1
         if failure_class == "TOOL_INFRASTRUCTURE":
             infrastructure_failures += 1
         failed_tool_calls.append(
@@ -599,19 +568,8 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
             "completed": composite_completed,
             "completionRatePercent": _percentage(composite_completed, composite_total),
         },
-        "commandSemanticFailureRate": _rate(semantic_failures, execution_total, "failed"),
         "toolInfrastructureFailureRate": _rate(infrastructure_failures, total_tools, "failed"),
         "gitKnownReadLowClassificationRate": _rate(known_read_low, known_read_total, "classifiedLow"),
-        "gitExpectedExitFalseFailureRate": {
-            "status": "MEASURED" if expected_exit_unobservable == 0 else "PARTIALLY_MEASURED",
-            "candidates": expected_exit_candidates,
-            "observableExitOne": expected_exit_total,
-            "unobservableExitCode": expected_exit_unobservable,
-            "falseFailures": expected_exit_false_failures,
-            "ratePercent": (
-                _percentage(expected_exit_false_failures, expected_exit_total) if expected_exit_total else None
-            ),
-        },
         "sameFingerprintRetryAmplification": retry_metric,
         "runCompletionFailedCancelled": {"status": "MEASURED", "counts": run_statuses},
         "modelEmptyOutputRecoveryRate": {
@@ -625,11 +583,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
             "reason": "CONTEXT_PREFLIGHT_TRACE_NOT_IN_REQUIRED_SOURCE_SCHEMA",
         },
         "timeModelToolCallsToFirstMeaningfulChange": first_change_metrics,
-        "deliveryEvidenceCompleteness": {
-            "status": "UNAVAILABLE",
-            "observedEvidenceCounts": dict(sorted(delivery_evidence.items())),
-            "reason": "FROZEN_DELIVERY_INTENT_NOT_IN_REQUIRED_SOURCE_SCHEMA",
-        },
         "resumeStateConsistencyRate": _unavailable("RESUME_COMPARISON_TRACE_NOT_IN_REQUIRED_SOURCE_SCHEMA"),
         "costKnownUnknown": {"status": "UNKNOWN", "reason": "COST_NOT_IN_REQUIRED_SOURCE_SCHEMA"},
     }

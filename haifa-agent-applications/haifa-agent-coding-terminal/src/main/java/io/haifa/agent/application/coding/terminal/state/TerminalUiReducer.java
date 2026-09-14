@@ -182,7 +182,7 @@ public final class TerminalUiReducer {
                     TranscriptItem.Kind.EXECUTION,
                     shell.command(),
                     shell.summary(),
-                    shell.status(),
+                    shell.processState(),
                     true));
             return copyWithTranscript(state, List.copyOf(items));
         }

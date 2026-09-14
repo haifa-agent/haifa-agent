@@ -58,8 +58,8 @@
   ],
   "completionEvidenceCases": [
     {
-      "caseId": "verified-change-without-model-diff-command",
-      "evidence": ["CHANGE_SET", "VALIDATION_PASSED", "DETERMINISTIC_DIFF_SUMMARY"],
+      "caseId": "validation-attempt-without-model-diff-command",
+      "evidence": ["CHANGE_SET", "VALIDATION_ATTEMPT", "DETERMINISTIC_DIFF_SUMMARY"],
       "expected": {"ready": true, "modelDiffCommandRequired": false}
     },
     {

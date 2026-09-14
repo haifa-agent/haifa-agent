@@ -32,15 +32,10 @@ class CodingValidationEvidenceTest {
                 "Tests run: 9, Failures: 0, Errors: 0, Skipped: 0",
                 "test result: ok. 14 passed; 0 failed; 2 ignored;")) {
             CodingValidationAttemptEvidence evidence = CodingValidationAttemptFactory.create(
-                            "TEST", candidate.command(), true, configuration)
+                            candidate.command(), configuration)
                     .orElseThrow();
 
             assertThat(ignoredRunnerOutput).isNotBlank();
-            assertThat(evidence.status()).isEqualTo(CodingValidationStatus.PASSED);
-            assertThat(evidence.discoveredTestCount()).isNull();
-            assertThat(evidence.selectedTestCount()).isNull();
-            assertThat(evidence.ignoredTestCount()).isNull();
-            assertThat(evidence.countSource()).isEqualTo("COUNTS_UNAVAILABLE");
             assertThat(evidence.scope()).isEqualTo(CodingValidationScope.SELECTED);
             assertThat(evidence.verificationSource()).isEqualTo("USER_EXPLICIT");
             assertThat(evidence.claimCode()).isEqualTo("TRUSTED_SELECTED_SCOPE");
@@ -60,18 +55,12 @@ class CodingValidationEvidenceTest {
         CodingSessionVerificationConfiguration configuration =
                 CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
 
-        CodingValidationAttemptEvidence evidence = CodingValidationAttemptFactory.create(
-                        "BUILD", "./mvnw test && echo done", false, configuration)
-                .orElseThrow();
-
-        assertThat(evidence.status()).isEqualTo(CodingValidationStatus.FAILED);
-        assertThat(evidence.scope()).isEqualTo(CodingValidationScope.UNKNOWN);
-        assertThat(evidence.verificationSource()).isEqualTo("UNMATCHED");
-        assertThat(evidence.claimCode()).isEqualTo("COMMAND_NOT_IN_FROZEN_PROFILE");
+        assertThat(CodingValidationAttemptFactory.create("./mvnw test && echo done", configuration))
+                .isEmpty();
     }
 
     @Test
-    void exactFrozenCandidateDoesNotDependOnTheOptionalOperationFamilyHint() {
+    void onlyAnExactFrozenCandidateCanProduceAnAttempt() {
         CodingVerificationCandidate candidate = new CodingVerificationCandidate(
                 "powershell -NoProfile -File verify.ps1",
                 CodingVerificationCost.HIGH,
@@ -83,16 +72,13 @@ class CodingValidationEvidenceTest {
         CodingSessionVerificationConfiguration configuration =
                 CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
 
-        assertThat(CodingValidationAttemptFactory.create("UNKNOWN", candidate.command(), true, configuration))
+        assertThat(CodingValidationAttemptFactory.create(candidate.command(), configuration))
                 .get()
                 .satisfies(evidence -> {
-                    assertThat(evidence.status()).isEqualTo(CodingValidationStatus.PASSED);
                     assertThat(evidence.scope()).isEqualTo(CodingValidationScope.FULL);
                     assertThat(evidence.claimCode()).isEqualTo("TRUSTED_FULL_SCOPE");
                 });
-        assertThat(CodingValidationAttemptFactory.create("INSPECT", candidate.command(), true, configuration))
-                .isEmpty();
-        assertThat(CodingValidationAttemptFactory.create("UNKNOWN", "arbitrary-command", true, configuration))
+        assertThat(CodingValidationAttemptFactory.create("arbitrary-command", configuration))
                 .isEmpty();
     }
 

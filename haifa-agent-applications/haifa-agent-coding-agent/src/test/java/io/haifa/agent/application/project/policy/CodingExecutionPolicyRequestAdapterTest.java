@@ -1,8 +1,10 @@
 package io.haifa.agent.application.project.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
@@ -20,12 +22,15 @@ import io.haifa.agent.policy.api.PolicySideEffect;
 import io.haifa.agent.policy.api.PolicySubject;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.tool.ToolAuthorizationProtocolException;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class CodingExecutionPolicyRequestAdapterTest {
+    private record DeliveryCommand(String command, CodingDeliveryIntent required) {}
+
     @Test
     void resolvesDirectGitAndGithubCommandsIntoEffectivePolicyRisk() {
         PolicyRequest localRead = adapt("git status --short");
@@ -107,6 +112,60 @@ class CodingExecutionPolicyRequestAdapterTest {
                     assertThat(failure.reasonCode()).isEqualTo("WORKSPACE_PROTOCOL_REQUIRED");
                     assertThat(failure.safeExplanation()).contains("workspaceRef", "relativeWorkdir");
                 });
+    }
+
+    @Test
+    void enforcesTheFourLevelFrozenDeliveryIntentBeforeApproval() {
+        List<DeliveryCommand> commands = List.of(
+                new DeliveryCommand("git add src/Main.java", CodingDeliveryIntent.LOCAL_COMMIT),
+                new DeliveryCommand("git commit -m test", CodingDeliveryIntent.LOCAL_COMMIT),
+                new DeliveryCommand("git push origin feature", CodingDeliveryIntent.REMOTE_PUSH),
+                new DeliveryCommand("gh pr create --title test --body test", CodingDeliveryIntent.PULL_REQUEST));
+
+        for (CodingDeliveryIntent permitted : CodingDeliveryIntent.values()) {
+            assertThatCode(() -> enforce(permitted, "git status --short"))
+                    .as(permitted.name())
+                    .doesNotThrowAnyException();
+            assertThatCode(() -> enforce(permitted, "gh pr list --repo owner/repo"))
+                    .as(permitted.name())
+                    .doesNotThrowAnyException();
+            for (DeliveryCommand command : commands) {
+                if (permitted.allows(command.required())) {
+                    assertThatCode(() -> enforce(permitted, command.command()))
+                            .as(permitted + ": " + command.command())
+                            .doesNotThrowAnyException();
+                } else {
+                    assertThatThrownBy(() -> enforce(permitted, command.command()))
+                            .as(permitted + ": " + command.command())
+                            .isInstanceOfSatisfying(
+                                    ToolAuthorizationProtocolException.class,
+                                    failure -> assertThat(failure.reasonCode()).isEqualTo("DELIVERY_INTENT_EXCEEDED"));
+                }
+            }
+        }
+    }
+
+    @Test
+    void treatsUnclassifiedGitOrGithubWrappersConservativelyWithoutReplacingHardDenials() {
+        assertThatThrownBy(() -> enforce(CodingDeliveryIntent.REMOTE_PUSH, "git status && git log -1"))
+                .isInstanceOfSatisfying(ToolAuthorizationProtocolException.class, failure -> {
+                    assertThat(failure.reasonCode()).isEqualTo("DELIVERY_INTENT_EXCEEDED");
+                    assertThat(failure.safeExplanation()).contains("direct git or gh commands");
+                });
+        assertThatCode(() -> enforce(CodingDeliveryIntent.PULL_REQUEST, "git status && git log -1"))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> enforce(CodingDeliveryIntent.WORKTREE_ONLY, "GH_TOKEN=value gh pr list"))
+                .doesNotThrowAnyException();
+
+        assertThatThrownBy(() -> adapt("git -C docs status --short"))
+                .isInstanceOfSatisfying(
+                        ToolAuthorizationProtocolException.class,
+                        failure -> assertThat(failure.reasonCode()).isEqualTo("WORKSPACE_PROTOCOL_REQUIRED"));
+    }
+
+    private static void enforce(CodingDeliveryIntent intent, String command) {
+        CodingExecutionPolicyRequestAdapter.enforceDeliveryIntent(
+                CodingExecutionPolicyRequestAdapter.EXECUTION_RUN, request(command), intent);
     }
 
     private static PolicyRequest adapt(String command) {
