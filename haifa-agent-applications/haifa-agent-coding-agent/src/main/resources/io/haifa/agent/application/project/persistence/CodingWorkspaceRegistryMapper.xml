@@ -64,7 +64,7 @@
           AND version = #{expectedVersion}
     </update>
 
-    <update id="disableCorruptLocation">
+    <update id="disable">
         UPDATE coding_workspace_registry
         SET status = 'DISABLED', revoked_at_ms = #{disabledAt},
             revocation_reason_code = #{reasonCode}, validated_at_ms = #{disabledAt},

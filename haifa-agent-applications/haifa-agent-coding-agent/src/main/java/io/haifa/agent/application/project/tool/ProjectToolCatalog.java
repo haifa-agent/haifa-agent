@@ -41,7 +41,6 @@ public final class ProjectToolCatalog {
             Map.entry("file_diff", "file_read"),
             Map.entry("file_patch", "file_write"),
             Map.entry("workspace_attach", "file_read"),
-            Map.entry(ProjectWorktreeToolOperations.TOOL_NAME, "execution_run"),
             Map.entry("execution_run", "execution_run"));
     private static final Set<String> WRITES =
             Set.of("file_create", "file_write", "file_delete", "file_move", "file_patch");
@@ -258,20 +257,14 @@ public final class ProjectToolCatalog {
             throw new IllegalArgumentException(name + " requires a frozen sandbox profile");
         }
         boolean attach = name.equals("workspace_attach");
-        boolean worktree = name.equals(ProjectWorktreeToolOperations.TOOL_NAME);
         boolean write = WRITES.contains(name);
-        ToolRisk risk = execution || attach || worktree ? ToolRisk.HIGH : write ? ToolRisk.MEDIUM : ToolRisk.LOW;
+        ToolRisk risk = execution || attach ? ToolRisk.HIGH : write ? ToolRisk.MEDIUM : ToolRisk.LOW;
         ToolIdempotency idempotency =
-                execution || write || attach || worktree ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.PURE;
+                execution || write || attach ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.PURE;
         Set<ToolSideEffect> effects = attach
                 ? Set.of(ToolSideEffect.FILE_READ, ToolSideEffect.PERMISSION_ELEVATION)
-                : worktree
-                        ? Set.of(
-                                ToolSideEffect.FILE_WRITE,
-                                ToolSideEffect.PROCESS_EXECUTION,
-                                ToolSideEffect.PERMISSION_ELEVATION)
-                        : executionEffects(execution, write);
-        ToolApprovalRequirement approval = attach || worktree
+                : executionEffects(execution, write);
+        ToolApprovalRequirement approval = attach
                 ? ToolApprovalRequirement.ALWAYS
                 : execution || write ? ToolApprovalRequirement.POLICY : ToolApprovalRequirement.NEVER;
         ToolResourceRequirements resources = new ToolResourceRequirements(
@@ -292,7 +285,6 @@ public final class ProjectToolCatalog {
                             "file_diff",
                             "file_stat" -> "2.0.0";
                     case "workspace_attach" -> "3.0.0";
-                    case ProjectWorktreeToolOperations.TOOL_NAME -> "2.0.0";
                     default -> "1.0.0";
                 };
         return new ToolDefinition(
@@ -309,7 +301,7 @@ public final class ProjectToolCatalog {
                 execution ? ToolExecutionMode.HOST_PROCESS : ToolExecutionMode.IN_PROCESS,
                 true,
                 execution ? Duration.ofMinutes(30) : Duration.ofSeconds(30),
-                write || attach || worktree ? "per-workspace-write" : "per-workspace-read",
+                write || attach ? "per-workspace-write" : "per-workspace-read",
                 idempotency,
                 risk,
                 effects,
@@ -340,7 +332,6 @@ public final class ProjectToolCatalog {
             case "file_diff" -> "Preview file diff";
             case "file_patch" -> "Apply workspace patch";
             case "workspace_attach" -> "Attach a user-approved directory";
-            case ProjectWorktreeToolOperations.TOOL_NAME -> "Create a controlled Git worktree";
             case "execution_run" -> "Run a local shell command";
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         };
@@ -392,11 +383,6 @@ public final class ProjectToolCatalog {
                     + "absolute host path and explicit read or develop mode. The user "
                     + "must approve the exact directory and mode before it becomes available in the scope; "
                     + "successful attachments are revalidated before restoration and returned with their workspaceRef and rootPath.";
-        }
-        if (name.equals(ProjectWorktreeToolOperations.TOOL_NAME)) {
-            return "Create one managed Git worktree from an active executable workspace after exact user approval. "
-                    + "The immutable base commit, new branch, managed target name, and delivery intent "
-                    + "are approved together; no arbitrary host target path is accepted.";
         }
         if (WRITES.contains(name)) {
             return title(name)
@@ -480,13 +466,6 @@ public final class ProjectToolCatalog {
                 properties.put("mode", Map.of("type", "string", "enum", List.of("read", "develop")));
                 required.add("path");
                 required.add("mode");
-            }
-            case ProjectWorktreeToolOperations.TOOL_NAME -> {
-                properties.put("sourceWorkspaceRef", Map.of("type", "string", "minLength", 1, "maxLength", 256));
-                properties.put("baseCommit", Map.of("type", "string", "minLength", 7, "maxLength", 64));
-                properties.put("branchName", Map.of("type", "string", "minLength", 1, "maxLength", 240));
-                properties.put("targetName", Map.of("type", "string", "minLength", 1, "maxLength", 80));
-                required.addAll(List.of("sourceWorkspaceRef", "baseCommit", "branchName", "targetName"));
             }
             case "execution_run" -> {
                 properties.put(
