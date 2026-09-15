@@ -28,16 +28,14 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
                     connection,
                     "execution_run",
                     "COMPLETED",
-                    "TEST",
                     Map.of("status", "EXITED", "scratchProvisioned", true, "exitCode", 0));
             insertTool(
                     connection,
                     "execution_run",
                     "COMPLETED",
-                    "DIFF",
                     Map.of("status", "EXITED", "scratchProvisioned", true, "exitCode", 0));
-            insertTool(connection, "execution_run", "FAILED", "INSPECT", Map.of("status", "FAILED"));
-            insertTool(connection, "execution_run", "DENIED", "UNKNOWN");
+            insertTool(connection, "execution_run", "FAILED", Map.of("status", "FAILED"));
+            insertTool(connection, "execution_run", "DENIED");
             insertEvent(
                     connection, 8, "run.completed", Map.of("status", "COMPLETED", "unsafePrompt", "do not project"));
         }
@@ -51,25 +49,9 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
         assertEquals(4, evidence.toolCalls());
         assertEquals(2, evidence.toolFailures());
         assertEquals(2, evidence.executionCalls());
-        assertTrue(evidence.validationAttempted());
-        assertTrue(evidence.diffInspected());
         assertEquals(0, evidence.scratchCleanupFailures());
         assertTrue(evidence.terminalStateObserved());
         assertFalse(json.writeValueAsString(evidence).contains("do not project"));
-    }
-
-    @Test
-    void doesNotCountFailedOrGenericInspectionAsDiffEvidence(@TempDir Path temporary) throws Exception {
-        Path database = temporary.resolve("runtime.db");
-        try (Connection connection = createDatabase(database)) {
-            insertRun(connection, "FAILED", 10, 5, 2, 2, 0);
-            insertTool(connection, "execution_run", "FAILED", "DIFF");
-            insertTool(connection, "execution_run", "COMPLETED", "INSPECT");
-        }
-
-        var evidence = new AutonomousDeliveryRuntimeEvidenceReader(json).read(database);
-
-        assertFalse(evidence.diffInspected());
     }
 
     @Test
@@ -81,7 +63,6 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
                     connection,
                     "execution_run",
                     "FAILED",
-                    "TEST",
                     Map.of("status", "FAILED", "exitCode", 1, "scratchCleanupFailed", true));
             insertEvent(connection, 3, "run.failed", Map.of("status", "FAILED"));
         }
@@ -100,7 +81,6 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
                     connection,
                     "execution_run",
                     "COMPLETED",
-                    "TEST",
                     Map.of("status", "EXITED", "scratchProvisioned", false, "exitCode", 0));
         }
 
@@ -180,27 +160,19 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
         }
     }
 
-    private void insertTool(Connection connection, String name, String status, String operationFamily)
-            throws Exception {
-        insertTool(connection, name, status, operationFamily, Map.of());
+    private void insertTool(Connection connection, String name, String status) throws Exception {
+        insertTool(connection, name, status, Map.of());
     }
 
-    private void insertTool(
-            Connection connection,
-            String name,
-            String status,
-            String operationFamily,
-            Map<String, Object> structuredData)
+    private void insertTool(Connection connection, String name, String status, Map<String, Object> structuredData)
             throws Exception {
         try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tool_call VALUES (?, ?, ?, ?)")) {
             statement.setString(1, name);
             statement.setString(2, status);
             statement.setBytes(
                     3,
-                    json.writeValueAsBytes(Map.of(
-                            "schemaId", "execution.input",
-                            "schemaVersion", "1",
-                            "values", Map.of("operationFamily", operationFamily))));
+                    json.writeValueAsBytes(
+                            Map.of("schemaId", "execution.input", "schemaVersion", "1", "values", Map.of())));
             statement.setBytes(
                     4,
                     structuredData.isEmpty() ? null : json.writeValueAsBytes(Map.of("structuredData", structuredData)));

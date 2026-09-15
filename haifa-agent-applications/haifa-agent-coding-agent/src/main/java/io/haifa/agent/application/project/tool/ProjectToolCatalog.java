@@ -356,11 +356,11 @@ public final class ProjectToolCatalog {
                     + "available CLI and its complete arguments at runtime instead of expecting command-specific "
                     + "wrappers. Output is always bounded by operation family; use paging or returned artifact refs "
                     + "instead of repeating broad commands, and adapt when a command is unavailable. operationFamily is an "
-                    + "optional declared hint: use BUILD or TEST for validation intent and DIFF only for read-only "
-                    + "final diff inspection; trusted risk and authorization never depend on the hint. System git "
-                    + "and gh commands use the same risk classification, approval, workspace, sandbox, network, and "
-                    + "audit controls as other execution commands; delivery intent is completion metadata, not "
-                    + "command authorization.";
+                    + "optional declared hint used only for bounded output budgeting; it never grants authorization and "
+                    + "is never completion, delivery, or recovery evidence. System git, gh, wrappers, and customer scripts run through the same generic "
+                    + "execution path as any other command, with real exit codes and bounded stdout/stderr; approval "
+                    + "follows the configured policy for the current trusted host. Commands that read, echo, override, "
+                    + "or redirect host authentication material are rejected before dispatch.";
         }
         if (name.equals("file_read")) {
             return "Read one bounded text window from a workspace file. Continue with nextCursor only when hasMore "
@@ -547,9 +547,10 @@ public final class ProjectToolCatalog {
                                 "enum",
                                 List.of("BUILD", "TEST", "DIFF", "INSPECT", "MUTATE", "UNKNOWN"),
                                 "description",
-                                "Stable operation family for delivery and recovery control. Use DIFF only for "
-                                        + "read-only diff inspection and UNKNOWN when the command cannot "
-                                        + "be reliably classified; do not infer it from arbitrary shell syntax."));
+                                "Optional declared output-formatting hint used only for output budgeting. It is "
+                                        + "not completion, delivery, authorization, or recovery evidence; use "
+                                        + "UNKNOWN when the command cannot be classified, and do not infer it from "
+                                        + "arbitrary shell syntax."));
             }
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         }
@@ -623,16 +624,6 @@ public final class ProjectToolCatalog {
             properties.put("failureAction", Map.of("type", "string"));
             properties.put("failureActionCode", Map.of("type", "string"));
             properties.put("operationFamily", Map.of("type", "string"));
-            properties.put("effectiveOperationFamily", Map.of("type", "string"));
-            properties.put("commandTarget", Map.of("type", "string"));
-            properties.put("commandRisk", Map.of("type", "string"));
-            properties.put("effectiveRisk", Map.of("type", "string"));
-            properties.put("commandOperation", Map.of("type", "string"));
-            properties.put("commandClassificationReason", Map.of("type", "string"));
-            properties.put("riskResolverVersion", Map.of("type", "string"));
-            properties.put("riskResolutionCode", Map.of("type", "string"));
-            properties.put("riskAction", Map.of("type", "string"));
-            properties.put("operationHintCode", Map.of("type", "string"));
             properties.put("outputBudgetFamily", Map.of("type", "string"));
             properties.put("outputBudgetBytesPerChannel", Map.of("type", "integer", "minimum", 1));
             properties.put("modelOutputBudgetBytes", Map.of("type", "integer", "minimum", 1));

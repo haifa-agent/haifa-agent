@@ -104,24 +104,9 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
                         "tool-a",
                         "run-a",
                         "execution_run",
-                        payload(
-                            {
-                                "values": {
-                                    "command": "git status && git diff",
-                                    "operationFamily": "INSPECT",
-                                }
-                            }
-                        ),
+                        payload({"values": {"command": "git status && git diff"}}),
                         "COMPLETED",
-                        payload(
-                            {
-                                "structuredData": {
-                                    "commandTarget": "GIT",
-                                    "commandRisk": "LOCAL_READ",
-                                    "commandOperation": "INSPECT",
-                                }
-                            }
-                        ),
+                        payload({"structuredData": {}}),
                         None,
                         end,
                     ),
@@ -129,25 +114,14 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
                         "tool-b",
                         "run-b",
                         "execution_run",
-                        payload(
-                            {
-                                "values": {
-                                    "command": "git push || echo failed",
-                                    "operationFamily": "MUTATE",
-                                }
-                            }
-                        ),
+                        payload({"values": {"command": "git push || echo failed"}}),
                         "FAILED",
                         None,
                         payload(
                             {
                                 "code": "TOOL_BUSINESS_FAILURE",
                                 "category": "TOOL",
-                                "attributes": {
-                                    "stableFailureCode": "COMMAND_CLASSIFICATION_REJECTED",
-                                    "failureCategory": "POLICY",
-                                    "operationFamily": "MUTATE",
-                                },
+                                "attributes": {"failureCategory": "POLICY"},
                             }
                         ),
                         end - 1,
@@ -175,18 +149,11 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
         self.assertEqual(report["window"]["endEpochMsInclusive"], end)
         self.assertEqual(report["scope"], {"sessions": 1, "runs": 2, "toolCalls": 2})
         self.assertEqual(report["toolStatuses"], {"COMPLETED": 1, "FAILED": 1})
-        self.assertEqual(report["failureClasses"], {"POLICY_OR_CLASSIFICATION": 1})
+        self.assertEqual(report["failureClasses"], {"POLICY_DENIAL": 1})
         self.assertEqual(report["recovery"]["maximumAttempts"], 2)
-        self.assertEqual(report["schemaVersion"], "1.2.0")
+        self.assertEqual(report["schemaVersion"], "1.3.0")
         self.assertEqual(report["requiredMetrics"]["rawToolFailureRate"]["ratePercent"], 50.0)
         self.assertEqual(report["requiredMetrics"]["policyDenialRate"]["denied"], 1)
-        self.assertEqual(
-            report["requiredMetrics"]["riskEscalationDistribution"]["counts"],
-            {"LOW": 1, "MEDIUM": 0, "HIGH": 0},
-        )
-        self.assertEqual(
-            report["requiredMetrics"]["compositeCommandAdmissionCompletionRate"]["total"], 2
-        )
         self.assertEqual(
             report["requiredMetrics"]["sameFingerprintRetryAmplification"]["amplifiedAttempts"], 1
         )
@@ -205,7 +172,7 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
             report = analyze(connection, 4)
         self.assertIsNone(report["window"])
         self.assertEqual(report["scope"], {"sessions": 0, "runs": 0, "toolCalls": 0})
-        self.assertEqual(len(report["requiredMetrics"]), 15)
+        self.assertEqual(len(report["requiredMetrics"]), 12)
         self.assertEqual(report["requiredMetrics"]["costKnownUnknown"]["status"], "UNKNOWN")
 
     def test_rejects_non_finite_or_out_of_range_windows(self):
@@ -258,28 +225,6 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
         output.write_text("existing", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "already exists"):
             write_report({"schemaVersion": "test"}, output)
-
-    def test_replay_fixture_is_synthetic_and_privacy_bounded(self):
-        fixture = (
-            Path(__file__).resolve().parents[2]
-            / "haifa-agent-testing"
-            / "haifa-agent-test-fixtures"
-            / "src"
-            / "main"
-            / "resources"
-            / "fixtures"
-            / "coding-runtime-reliability"
-            / "replay-v1.json"
-        )
-        value = json.loads(fixture.read_text(encoding="utf-8"))
-        self.assertEqual(value["schemaVersion"], "1.0.0")
-        self.assertEqual(len(value["cases"]), 12)
-        serialized = json.dumps(value).lower()
-        for forbidden in ("api_key", "authorization:", "bearer ", "reasoning_content", "sk-"):
-            self.assertNotIn(forbidden, serialized)
-        self.assertFalse(value["privacy"]["containsProviderResponses"])
-        self.assertNotRegex(serialized, r"[a-z]:\\")
-        self.assertNotRegex(serialized, r"/(users|home)/")
 
     def test_evaluation_baseline_freezes_required_metrics_without_raw_evidence(self):
         fixture = (
