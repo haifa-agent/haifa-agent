@@ -2,7 +2,6 @@ package io.haifa.agent.mcp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.execution.api.ExecutionCommand;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
@@ -26,23 +25,13 @@ import io.haifa.agent.mcp.config.McpServerId;
 import io.haifa.agent.mcp.config.McpToolImportPolicy;
 import io.haifa.agent.mcp.config.StdioDefinition;
 import io.haifa.agent.mcp.transport.stdio.McpManagedProcessLaunch;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
-import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import java.io.InputStream;
@@ -107,32 +96,14 @@ class HostStdioMcpComponentTest {
     private static Fixture fixture(Path root) {
         WorkspaceId workspaceId = new WorkspaceId("mcp-host-workspace");
         var workspaces = new InMemoryWorkspaceStore();
-        var bindings = new InMemoryWorkspaceBindingStore();
         var locations = new HostWorkspaceLocationStore();
-        var location = new WorkspaceLocationRef("mcp-host-location");
-        locations.register(location, root);
-        var binding = WorkspaceBinding.provision(
-                        new WorkspaceBindingId("mcp-host-binding"),
-                        location,
-                        WorkspaceBindingMode.DIRECT,
-                        new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.executionFiles(),
-                        WorkspacePermissionSet.readWriteExecute(),
-                        HostWorkspaceLocationStore.fingerprintFor(root),
-                        NOW)
-                .activate(NOW);
-        bindings.create(binding);
+        locations.register(workspaceId, root);
         workspaces.create(Workspace.provision(
-                        workspaceId,
-                        new ProjectId("mcp-host-project"),
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), binding.id(), "test"),
-                        WorkspaceRevision.initial(binding.rootFingerprint()),
-                        NOW)
+                        workspaceId, new ProjectId("mcp-host-project"), WorkspaceRevision.initial("test"), NOW)
                 .activate(NOW));
         var ids = new AtomicInteger();
         var host = new HostGuardedSandboxProvider(
-                workspaces, bindings, locations, () -> "host-session-" + ids.incrementAndGet(), Instant::now);
+                workspaces, locations, () -> "host-session-" + ids.incrementAndGet(), Instant::now);
         var profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("host-guarded", "1"),
                 host.configurationDigest(),
@@ -150,8 +121,7 @@ class HostStdioMcpComponentTest {
                 (request, entryPoint) -> {},
                 ignored -> profile,
                 ignored -> host,
-                workspaces,
-                bindings);
+                workspaces);
         return new Fixture(workspaceId, broker);
     }
 

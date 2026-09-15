@@ -341,7 +341,7 @@ public final class ProjectToolCatalog {
         if (name.equals("execution_run")) {
             return "Run complete command text through the frozen "
                     + executionProfile.providerId()
-                    + " execution profile inside an active registered workspace selected by workspaceRef and relativeWorkdir. This is the general OS CLI path for scalable "
+                    + " execution profile inside an active authorized directory selected by workspaceRef and relativeWorkdir. This is the general OS CLI path for scalable "
                     + "repository discovery, content search, source inspection, system git/gh workflows, builds, "
                     + "tests, and diffs; choose an "
                     + "available CLI and its complete arguments at runtime instead of expecting command-specific "
@@ -379,7 +379,7 @@ public final class ProjectToolCatalog {
                     + "and requires a fresh read before regenerating the patch.";
         }
         if (name.equals("workspace_attach")) {
-            return "Request one additional existing local directory for this Coding Agent registry. Supply an "
+            return "Request one additional existing local directory for this Coding Agent. Supply an "
                     + "absolute host path and explicit read or develop mode. The user "
                     + "must approve the exact directory and mode before it becomes available in the scope; "
                     + "successful attachments are revalidated before restoration and returned with their workspaceRef and rootPath.";
@@ -491,7 +491,7 @@ public final class ProjectToolCatalog {
                                 "maxLength",
                                 256,
                                 "description",
-                                "Opaque reference of an active root from the workspace registry."));
+                                "Opaque reference of an active authorized directory."));
                 properties.put(
                         "relativeWorkdir",
                         Map.of(

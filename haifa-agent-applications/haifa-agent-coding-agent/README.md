@@ -97,7 +97,7 @@ Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影�
 
 可信本机产品宿主可以在 Definition instructions 中冻结一个产品私有、Agent-visible 的 L0-L2 Workspace
 环境块，用于表达已经由宿主掌握的安全边界、根仓库/instructions 状态、根静态项目标记和 frozen validation
-candidate。该投影不是公共 `WorkspaceSnapshot`、Capability Detector 或恢复事实源；Coding Agent 模块不新增
+candidate。该投影不是公共 Capability Detector 或恢复事实源；Coding Agent 模块不新增
 对应公共 DTO、持久化 Schema 或动态 executable/version 探测，具体静态发现和路径脱敏仍由 CLI 宿主负责。
 
 `CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别按需投影为
@@ -129,7 +129,7 @@ Grant/Trust Store，也不包含组织、审批路由、待办或业务状态机
 
 `CodingAgentExecutionPolicy` 在 Broker 最终门按可信 `ExecutionOrigin` 分类当前已支持入口：
 Runtime Tool 必须关联 `sourceToolCallId`，用户终端命令不能携带 Tool Call，内部只读 Git 必须是
-`PRODUCT_INTERNAL + git.read`。相关键不是授权凭据；WorkspaceAccess、path、Sandbox、Credential 与
+`PRODUCT_INTERNAL + git.read`。相关键不是授权凭据；授权目录、path、Sandbox、Credential 与
 Broker enforcement 仍实时执行，未知入口 fail closed。Runtime 来源会重新读取 Run、运行中的 frozen
 ToolCall、configuration、当前 Policy 与唯一有效的 exact Interaction；CLI 用户命令和模型触发执行要求
 DEVELOP。只有产品内部固定的 8 条只读 Git probe 可在 READ 下执行，任何 argv、profile、environment、
@@ -154,7 +154,7 @@ Search/Fetch Tool。Web 的 Provider-neutral Java 接口、Tool adapter、URL Po
 SQLite 模式要求数据库文件绝对路径，并显式选择 `NONE` 或 `AES_GCM` payload protection；后者还要求
 `env://` 形式的稳定 continuation protector 引用。JSONL 模式还要求已存在、可写、非符号链接的受控
 绝对目录。Application 使用共享 SQLite 边界唯一的 `HaifaAgentStoreMigrations`；V1000～V1007 已由该
-统一 registry 拥有，WorkspaceAccess 建表已折入 V1007，CA 不再维护产品侧 migration 追加链。
+统一 registry 拥有，授权目录建表 `coding_authorized_directory` 已折入 V1007，CA 不再维护产品侧 migration 追加链。
 每次进程启动生成新的 worker ID，并把完整 `RuntimePersistencePorts` 与 worker ID 注入 `RuntimeCoreBuilder`。
 `SQLITE_BUSY/LOCKED` 的有界重试只在 SQLite `BEGIN IMMEDIATE` 尚未开始事务工作时由 Store 执行；Runtime 不重放
 整个 Unit of Work，事务工作开始后、提交不确定或其他数据库错误均 fail closed。
@@ -168,23 +168,18 @@ Application 自有的 Product/Coding 表通过 MyBatis Mapper XML 接入
 `SqliteRuntimeUnitOfWork`，与 Runtime 共用同一个 `BEGIN IMMEDIATE` 事务边界；应用层 Store
 不直接使用 JDBC。Mapper 仍经过 SQLite Foundation 的静态 XML 校验，禁止 `${...}` 动态 SQL。
 
-`coding_workspace_registry` 是 CA 自有 Host/Application 持久事实，不进入公共 Runtime/Core。SQLite Adapter
-通过当前持久保护器保存本机根位置，并绑定 project、workspace、location 与物理目录身份 physical fingerprint；解密失败、目录缺失、
-canonical 身份漂移、link/reparse point 或根重叠都会禁用记录而不恢复挂载。同一安全 canonical path 删除后重建时，
-ACTIVE 条目保留 workspace identity 并刷新 physical fingerprint；REVOKED、DISABLED、不同 canonical path 或不可验证路径
-都不会自动恢复。模型只能看到脱敏 Registry 与当前 Access 的交集投影；本地
-`file.*` 继续接收宿主绝对路径并在当前活动 Registry/Scope 中重新解析。标准 `CodingSessionClient` 还提供
-脱敏 workspace 清单与撤销入口，供受信产品界面移除非初始根的持久 Access 和挂载。
-
-`coding_workspace_access` 是 CA 唯一持续用户授权关系。领域对象只由现有 `TenantRef + PrincipalRef` 组成的
-owner、`WorkspaceId` 与 `READ / DEVELOP` mode 构成；SQLite 表也严格只有对应五列。`READ` 只允许文件读取，
-`DEVELOP` 才允许文件 mutation 与 execution 进入后续 Policy/Sandbox/Credential 门。启动时只在初始 Access
-缺失时创建 `DEVELOP`，不得覆盖已降级值；attach 由受信控制面替换 mode，撤销先删除 Access。
-每次文件操作和 execution workspace 解析都会读取当前 Access，即使旧 Scope 或 Registry 仍有活动 mount，
-缺失/降级也会 fail closed。Registry、Host Scope 和技术 Binding 均不携带或推导用户权限；CA mount 的
-Binding 固定提供技术读写上限，只能进一步拒绝，不能在 Access 缺失时放行。Registry 终态字段为
-`physicalFingerprint` / `physical_fingerprint`，且不新增第二个 fingerprint。该 Store 不进入公共
-Runtime/SDK/Execution 或 Personal Assistant。
+`coding_authorized_directory` 是 CA 唯一的持续授权事实，不进入公共 Runtime/Core。每条 `AuthorizedDirectoryEntry`
+只由 owner（现有 `TenantRef + PrincipalRef`）、`WorkspaceId`、规范宿主根、`READ / DEVELOP` mode 与 physical
+fingerprint 构成；SQLite Adapter 通过当前持久保护器保存本机根位置。`READ` 只允许 Haifa 自有文件读取，`DEVELOP`
+才允许文件 mutation 与 execution 进入后续 Policy/Sandbox/Credential 门。启动恢复、文件操作和 execution workspace
+解析都只读取当前 tenant/owner 的 ACTIVE 记录，撤销立即 fail closed；恢复时重新校验目录存在性、real path、
+link/reparse point、canonical 身份与 physical fingerprint，同一规范路径被物理替换时禁用记录并要求显式重新授权，
+不再静默刷新 fingerprint。产品/UI 使用的 `AuthorizedDirectoryView` 只披露 `workspaceRef`、安全显示名、mode 与
+状态；CA Host 按授权合同会在新 Run 的 `<workspace_paths>` 提示块和成功的 `workspace_attach` 结果中额外渲染当前
+已授权目录的规范宿主 `rootPath`，但 `physicalFingerprint` 始终不披露；`file.*` 继续接收宿主绝对路径并在当前
+Scope 中重新解析。标准 `CodingSessionClient` 提供脱敏授权清单与撤销入口，供受信产品界面移除非初始根。
+`host-guarded` 只提供受控进程启动、cwd、超时、取消、输出与进程树回收，不提供 OS 文件系统隔离。该 Store 不进入
+公共 Runtime/SDK/Execution 或 Personal Assistant。
 
 ## Coding Session 产品闭环
 
@@ -231,7 +226,7 @@ Catalog 保留 `file_search` 供显式配置兼容，但 Coding CLI 默认不冻
 `execution_run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，
 Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一精确 Profile Ref/version。
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于
-新 Profile；模型可见 Schema 包含 command、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir`、有界 timeout、安全描述和可选
+新 Profile；模型可见 Schema 包含 command、当前授权目录的 `workspaceRef`、该根下的 `relativeWorkdir`、有界 timeout、安全描述和可选
 `operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，只作为有界输出预算
 Hint；省略时使用 `UNKNOWN`，模型声明不能授予授权，也不能作为完成、交付或恢复证据。普通 `git`、`gh`、Wrapper 和客户脚本与其他命令一样
 走同一条通用执行路径，保留真实 exit code 与有界 stdout/stderr；Java 不再解析 Git/GH 子命令、参数、路径
@@ -292,7 +287,7 @@ ExecutionResult 是权威执行事实。Coding 产品不再维护 Change Review 
 Tool Result 不增加第二套命令语义字段；正常进程只返回 `processState=EXITED`、原始 exit code、bounded 输出
 和关联引用。Coding/Runtime 不维护命令或退出码白名单，也不据此生成验证通过或交付完成事实。
 Timeout、Cancel、资源限制与未知终止不能改写为正常退出，未知副作用不得自动重放。
-执行命令已经从受控 Workspace 启动。模型必须从安全 Registry 投影选择 `workspaceRef`，并以 `relativeWorkdir`
+执行命令已经从受控 Workspace 启动。模型必须从当前授权目录投影选择 `workspaceRef`，并以 `relativeWorkdir`
 表达该活动根下的目录；Host Adapter 再解析为 `WorkspacePath` 与受保护物理目录。绝对 workdir、UNC/盘符、遍历、
 链接逃逸、失效或撤销的 root 都在进入 Broker 前结构化拒绝。`workspaceRef` 与 `relativeWorkdir` 只约束执行的
 启动目标，不代表 Java 能控制命令参数中的路径；Host 子进程仍可访问当前 OS 用户可达的路径，审批与文档必须
@@ -300,11 +295,11 @@ Timeout、Cancel、资源限制与未知终止不能改写为正常退出，未�
 dispatch 前的确定性拒绝直接保存失败 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或
 误记为结果未知。
 
-CA 不再提供 Worktree 专用 Tool、Registry 来源或 Sandbox Provider。系统 Git 是 Worktree 的唯一事实源：模型在已经授权的仓库根内通过通用 `execution_run` 直接调用 `git worktree add/remove`，Haifa 不复制 Git 的创建、合并、释放或补偿生命周期，也不会因为 `.worktrees/<name>` 是新目录而要求它成为第二个 Workspace。`file_*` 仍严格要求模型传宿主绝对路径并由
-Registry/Scope 映射，未改成相对路径或 root alias；动态 `<workspace_paths>` 同时标明每个根的 `READ` / `DEVELOP` Access mode，模型通过该块或 `workspace_attach`
+CA 不再提供 Worktree 专用 Tool 或 Sandbox Provider。系统 Git 是 Worktree 的唯一事实源：模型在已经授权的仓库根内通过通用 `execution_run` 直接调用 `git worktree add/remove`，Haifa 不复制 Git 的创建、合并、释放或补偿生命周期，也不会因为 `.worktrees/<name>` 是新目录而要求它成为第二个 Workspace。`file_*` 仍严格要求模型传宿主绝对路径并由
+授权目录/Scope 映射，未改成相对路径或 root alias；动态 `<workspace_paths>` 同时标明每个根的 `READ` / `DEVELOP` mode，模型通过该块或 `workspace_attach`
 成功结果中的 `rootPath` 获取可用绝对路径，通过 `workspaceRef` + 规范化 `relativeWorkdir`（`.` 代表根）调用 `execution_run`。
 
-Workspace Checkpoint Adapter 可由受信 Host 注册为通用 Runtime Capability Checkpoint Participant，并在恢复时重新检查当前授权、Binding、Provider 版本和 Drift；类型存在不等于所有 Host 已完成装配。DIRECT Host 只做 current-state reconcile，永不自动覆盖文件；无人值守 Host 必须使用隔离 Workspace 与可恢复 Snapshot，否则不能声明具备自动恢复等级。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布。`PublishedArtifactRequiredChecker` 只接受 Store 中真实 `PUBLISHED` 的 Artifact；Admin Query 仅返回分页、脱敏、无正文的诊断投影。
+受信 Host 可在自身装配中实现 current-state reconcile，并在恢复时重新检查当前授权与 Provider 版本；DIRECT Host 永不自动覆盖文件。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布。`PublishedArtifactRequiredChecker` 只接受 Store 中真实 `PUBLISHED` 的 Artifact。
 
 Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与证据。Artifact 检查由产品的
 `PublishedArtifactRequiredChecker` 实现该接口；Runtime 不再提供单独的 `RequiredArtifactChecker` 配置入口。

@@ -3,8 +3,6 @@ package io.haifa.agent.cli;
 import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
-import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
-import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.PrincipalRef;
@@ -21,8 +19,8 @@ import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
-import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
+import io.haifa.agent.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier;
 import io.haifa.agent.sandbox.api.SandboxException;
@@ -61,7 +59,6 @@ final class CliExecutionPlatform {
     static CliExecutionPlatform create(
             CliConfiguration.Execution configuration,
             WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
             HostWorkspaceLocationStore locations,
             HostWorkspaceFileService files,
             IdentifierGenerator identifiers,
@@ -71,14 +68,12 @@ final class CliExecutionPlatform {
             Map<String, String> hostEnvironment,
             CodingVerificationProfileProvider verificationProfiles,
             AuthorizedWorkspaceProvisioning provisioning,
-            WorkspaceAccessStore workspaceAccess,
             TenantRef tenant,
             PrincipalRef principal,
             RuntimeToolExecutionVerifier runtimeExecutionVerifier) {
         return create(
                 configuration,
                 workspaces,
-                bindings,
                 locations,
                 files,
                 identifiers,
@@ -88,7 +83,6 @@ final class CliExecutionPlatform {
                 hostEnvironment,
                 verificationProfiles,
                 provisioning,
-                workspaceAccess,
                 tenant,
                 principal,
                 runtimeExecutionVerifier,
@@ -98,7 +92,6 @@ final class CliExecutionPlatform {
     static CliExecutionPlatform create(
             CliConfiguration.Execution configuration,
             WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
             HostWorkspaceLocationStore locations,
             HostWorkspaceFileService files,
             IdentifierGenerator identifiers,
@@ -108,7 +101,6 @@ final class CliExecutionPlatform {
             Map<String, String> hostEnvironment,
             CodingVerificationProfileProvider verificationProfiles,
             AuthorizedWorkspaceProvisioning provisioning,
-            WorkspaceAccessStore workspaceAccess,
             TenantRef tenant,
             PrincipalRef principal,
             RuntimeToolExecutionVerifier runtimeExecutionVerifier,
@@ -116,7 +108,6 @@ final class CliExecutionPlatform {
         Objects.requireNonNull(configuration, "configuration must not be null");
         Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
         Objects.requireNonNull(provisioning, "provisioning must not be null");
-        Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
         Objects.requireNonNull(runtimeExecutionVerifier, "runtimeExecutionVerifier must not be null");
@@ -124,8 +115,7 @@ final class CliExecutionPlatform {
         HostShell shell = shell(configuration);
         Path controlRoot = controlRoot();
         Path scratchRoot = controlRoot.resolve("host-scratch");
-        var host =
-                new HostGuardedSandboxProvider(workspaces, bindings, locations, identifiers, time, shell, scratchRoot);
+        var host = new HostGuardedSandboxProvider(workspaces, locations, identifiers, time, shell, scratchRoot);
         if (!configuration.provider().equals(host.providerId())) {
             throw new IllegalArgumentException(
                     "SANDBOX_ADAPTER_UNAVAILABLE: configured execution provider is unavailable");
@@ -157,7 +147,6 @@ final class CliExecutionPlatform {
                 requestedEnvironment -> io.haifa.agent.execution.api.ResolvedExecutionEnvironment.of(environment),
                 new CodingAgentExecutionPolicy(
                         runtimeExecutionVerifier,
-                        workspaceAccess,
                         provisioning,
                         tenant,
                         principal,
@@ -169,8 +158,7 @@ final class CliExecutionPlatform {
                         configuration.maxProcesses()),
                 profileRegistry,
                 providerRegistry,
-                workspaces,
-                bindings);
+                workspaces);
         ExecutionOutputObserver observer = new CliOutputObserver(output);
         var operations = new ProjectExecutionToolOperations(
                 broker,
@@ -185,7 +173,7 @@ final class CliExecutionPlatform {
                 observer,
                 java.util.function.UnaryOperator.identity(),
                 io.haifa.agent.execution.api.ExecutionScratchSpaceSpec.none(),
-                workspaceTargetResolver(provisioning, workspaceAccess, tenant, principal),
+                workspaceTargetResolver(provisioning, tenant, principal),
                 verificationProfiles);
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
@@ -197,17 +185,13 @@ final class CliExecutionPlatform {
     }
 
     static io.haifa.agent.application.project.tool.ExecutionWorkspaceTargetResolver workspaceTargetResolver(
-            AuthorizedWorkspaceProvisioning provisioning,
-            WorkspaceAccessStore workspaceAccess,
-            TenantRef tenant,
-            PrincipalRef principal) {
+            AuthorizedWorkspaceProvisioning provisioning, TenantRef tenant, PrincipalRef principal) {
         Objects.requireNonNull(provisioning, "provisioning must not be null");
-        Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
         return (access, workspaceRef, relativeWorkdir) -> {
             WorkspaceId target = new WorkspaceId(workspaceRef);
-            workspaceAccess.require(tenant, principal, target, WorkspaceAccessMode.DEVELOP);
+            provisioning.requireAuthorized(tenant, principal, target, WorkspaceAccessMode.DEVELOP);
             return provisioning.scope().resolveExecutionDirectory(target, relativeWorkdir);
         };
     }

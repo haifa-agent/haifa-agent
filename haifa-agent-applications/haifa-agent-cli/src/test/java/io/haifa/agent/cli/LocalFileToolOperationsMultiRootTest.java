@@ -4,22 +4,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.tool.RunWorkspaceAccess;
-import io.haifa.agent.application.project.workspace.InMemoryWorkspaceAccessStore;
-import io.haifa.agent.application.project.workspace.WorkspaceAccess;
-import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.core.ledger.InMemorySessionChangeLedger;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
+import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.directory.AuthorizedDirectoryEntry;
+import io.haifa.agent.project.hostworkspace.directory.InMemoryAuthorizedDirectoryStore;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
+import io.haifa.agent.project.hostworkspace.scope.HostDirectoryIdentity;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.Workspace;
+import io.haifa.agent.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import java.io.IOException;
@@ -31,8 +33,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -50,10 +55,10 @@ class LocalFileToolOperationsMultiRootTest {
     private LocalFileToolOperations operations;
     private WorkspaceId workspaceId;
     private InMemoryWorkspaceStore workspaces;
-    private InMemoryWorkspaceBindingStore bindings;
     private HostWorkspaceLocationStore locations;
     private InMemorySessionChangeLedger ledger;
-    private InMemoryWorkspaceAccessStore workspaceAccess;
+    private InMemoryAuthorizedDirectoryStore registry;
+    private ProjectId projectId;
     private WorkspaceId docsWorkspaceId;
     private WorkspaceId configWorkspaceId;
     private TenantRef tenant;
@@ -71,11 +76,11 @@ class LocalFileToolOperationsMultiRootTest {
         docsWorkspaceId = fixture.docsWorkspaceId();
         configWorkspaceId = fixture.configWorkspaceId();
         workspaces = fixture.workspaces();
-        bindings = fixture.bindings();
         locations = fixture.locations();
         provisioning = fixture.provisioning();
         ledger = fixture.ledger();
-        workspaceAccess = fixture.workspaceAccess();
+        registry = fixture.registry();
+        projectId = fixture.projectId();
         operations = fixture.operations();
         owner = fixture.owner();
         tenant = fixture.tenant();
@@ -197,7 +202,7 @@ class LocalFileToolOperationsMultiRootTest {
                         .toList())
                 .allSatisfy(change -> assertThat(change.path().projectPath()).isEqualTo(ProjectPath.of("same.txt")))
                 .extracting(change -> change.path().workspaceId())
-                .containsExactlyInAnyOrder(workspaceId, new WorkspaceId("ws-config"));
+                .containsExactlyInAnyOrder(workspaceId, configWorkspaceId);
     }
 
     private ToolResult execute(String toolName, Map<String, Object> values) {
@@ -251,9 +256,10 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
-    void currentAccessDeletionRejectsAReadEvenWhileTheMountRemainsActive() throws IOException {
+    void revokeRemovesDirectoryFromScopeAndRejectsReads() throws IOException {
         Files.writeString(configDir.resolve("revoked.txt"), "content", StandardCharsets.UTF_8);
-        assertThat(workspaceAccess.delete(tenant, owner, configWorkspaceId)).isTrue();
+
+        provisioning.revoke(configWorkspaceId);
 
         ToolResult result = execute(
                 "file_read",
@@ -265,25 +271,32 @@ class LocalFileToolOperationsMultiRootTest {
                                 .normalize()
                                 .toString()));
 
+        assertThatThrownBy(() ->
+                        provisioning.requireAuthorized(tenant, owner, configWorkspaceId, WorkspaceAccessMode.READ))
+                .isInstanceOf(SecurityException.class)
+                .hasMessage("WORKSPACE_ACCESS_UNAVAILABLE");
         assertThat(result.successful()).isFalse();
-        assertThat(result.structuredData())
-                .containsEntry("errorCode", "ACCESS_DENIED")
-                .containsEntry("stableFailureCode", "WORKSPACE_ACCESS_UNAVAILABLE");
+        assertThat(result.structuredData()).containsEntry("errorCode", "ACCESS_DENIED");
         assertThat(operations.currentScope().allowedDirectories())
-                .extracting(directory -> directory.workspaceId())
-                .contains(configWorkspaceId);
+                .extracting(AuthorizedHostDirectory::workspaceId)
+                .doesNotContain(configWorkspaceId);
     }
 
     @Test
-    void accessUpgradeEnablesFileMutationAndExecutionWithoutChangingTheMount() throws IOException {
-        var resolver = CliExecutionPlatform.workspaceTargetResolver(provisioning, workspaceAccess, tenant, owner);
+    void explicitReauthorizationUpgradesReadDirectoryToDevelop() throws IOException {
+        var resolver = CliExecutionPlatform.workspaceTargetResolver(provisioning, tenant, owner);
         RunWorkspaceAccess runAccess = new RunWorkspaceAccess(workspaceId, Set.of("execution_run"));
 
         assertThatThrownBy(() -> resolver.resolve(runAccess, docsWorkspaceId.value(), "."))
                 .isInstanceOf(SecurityException.class)
                 .hasMessage("WORKSPACE_ACCESS_MODE_DENIED");
 
-        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, docsWorkspaceId, WorkspaceAccessMode.DEVELOP));
+        provisioning.revoke(docsWorkspaceId);
+        provisioning.authorizeApprovedAttach(docsDir, WorkspaceAccessMode.DEVELOP);
+        assertThat(registry.find(projectId, docsWorkspaceId))
+                .get()
+                .extracting(AuthorizedDirectoryEntry::mode)
+                .isEqualTo(WorkspaceAccessMode.DEVELOP);
 
         assertThat(resolver.resolve(runAccess, docsWorkspaceId.value(), ".").workspaceId())
                 .isEqualTo(docsWorkspaceId);
@@ -299,13 +312,6 @@ class LocalFileToolOperationsMultiRootTest {
                         "allowed"));
         assertThat(write.successful()).isTrue();
         assertThat(Files.readString(docsDir.resolve("after-upgrade.txt"))).isEqualTo("allowed");
-    }
-
-    @Test
-    void executionWorkspaceResolverRejectsMissingWorkspaceAccessAuthority() {
-        assertThatThrownBy(() -> CliExecutionPlatform.workspaceTargetResolver(provisioning, null, tenant, owner))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessage("workspaceAccess must not be null");
     }
 
     @ParameterizedTest(name = "{0}")
@@ -394,9 +400,9 @@ class LocalFileToolOperationsMultiRootTest {
                 .containsEntry("rootPath", extraDir.toRealPath().toString());
         WorkspaceId attachedWorkspace = new WorkspaceId(
                 authorization.structuredData().get("workspaceRef").toString());
-        assertThat(workspaceAccess.find(tenant, owner, attachedWorkspace))
+        assertThat(registry.find(projectId, attachedWorkspace))
                 .get()
-                .extracting(WorkspaceAccess::mode)
+                .extracting(AuthorizedDirectoryEntry::mode)
                 .isEqualTo(WorkspaceAccessMode.DEVELOP);
         assertThat(created.successful()).isTrue();
         assertThat(Files.readString(extraDir.resolve("note.txt"))).isEqualTo("authorized");
@@ -447,7 +453,6 @@ class LocalFileToolOperationsMultiRootTest {
         Path file = workspaceDir.resolve("toctou.txt");
         var resolvedTarget =
                 initialScope.resolve(file.toAbsolutePath().normalize().toString());
-        assertThat(initialScope.version()).isEqualTo(1L);
 
         var authorization = operations.execute(
                 "workspace_attach",
@@ -462,7 +467,7 @@ class LocalFileToolOperationsMultiRootTest {
     }
 
     @Test
-    void reauthorizingTheDefaultDirectoryDoesNotDuplicateItsBoundary() {
+    void reauthorizingTheDefaultDirectoryReusesItsBoundaryWithoutDowngrading() throws IOException {
         int originalDirectoryCount =
                 operations.currentScope().allowedDirectories().size();
         var result = operations.execute(
@@ -473,28 +478,30 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("path", workspaceDir.toString(), "mode", "read")));
 
         assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData()).containsEntry("mode", "DEVELOP");
         assertThat(operations.currentScope().allowedDirectories()).hasSize(originalDirectoryCount);
-        assertThat(workspaceAccess.find(tenant, owner, workspaceId))
+        assertThat(registry.find(projectId, workspaceId))
                 .get()
-                .extracting(WorkspaceAccess::mode)
-                .isEqualTo(WorkspaceAccessMode.READ);
-        ToolResult denied = execute(
+                .extracting(AuthorizedDirectoryEntry::mode)
+                .isEqualTo(WorkspaceAccessMode.DEVELOP);
+        ToolResult allowed = execute(
                 "file_write",
                 Map.of(
                         "path",
                         workspaceDir
-                                .resolve("after-downgrade.txt")
+                                .resolve("after-reauthorization.txt")
                                 .toAbsolutePath()
                                 .normalize()
                                 .toString(),
                         "content",
-                        "denied"));
-        assertThat(denied.successful()).isFalse();
-        assertThat(denied.structuredData()).containsEntry("stableFailureCode", "WORKSPACE_ACCESS_MODE_DENIED");
+                        "allowed"));
+        assertThat(allowed.successful()).isTrue();
+        assertThat(Files.readString(workspaceDir.resolve("after-reauthorization.txt")))
+                .isEqualTo("allowed");
     }
 
     @Test
-    void nestedAttachCannotExpandOrDowngradeTheEnclosingWorkspaceAccess() throws IOException {
+    void nestedAttachReusesEnclosingRootWithoutExpandingOrDowngrading() throws IOException {
         Path nested = Files.createDirectories(docsDir.resolve("approved-child"));
 
         ToolResult expansion = operations.execute(
@@ -504,15 +511,24 @@ class LocalFileToolOperationsMultiRootTest {
                 "run-1",
                 arguments(Map.of("path", nested.toString(), "mode", "develop")));
 
-        assertThat(expansion.successful()).isFalse();
+        assertThat(expansion.successful()).isTrue();
         assertThat(expansion.structuredData())
-                .containsEntry("stableFailureCode", "NESTED_WORKSPACE_MODE_EXPANSION_DENIED");
-        assertThat(workspaceAccess.find(tenant, owner, docsWorkspaceId))
+                .containsEntry("mode", "READ")
+                .containsEntry("rootPath", docsDir.toRealPath().toString());
+        assertThat(expansion.structuredData().get("rootPath"))
+                .isNotEqualTo(nested.toRealPath().toString());
+        assertThatThrownBy(() ->
+                        provisioning.requireAuthorized(tenant, owner, docsWorkspaceId, WorkspaceAccessMode.DEVELOP))
+                .isInstanceOf(SecurityException.class)
+                .hasMessage("WORKSPACE_ACCESS_MODE_DENIED");
+        assertThat(registry.find(projectId, docsWorkspaceId))
                 .get()
-                .extracting(WorkspaceAccess::mode)
+                .extracting(AuthorizedDirectoryEntry::mode)
                 .isEqualTo(WorkspaceAccessMode.READ);
+        int count = operations.currentScope().allowedDirectories().size();
 
-        workspaceAccess.replace(new WorkspaceAccess(tenant, owner, docsWorkspaceId, WorkspaceAccessMode.DEVELOP));
+        provisioning.revoke(docsWorkspaceId);
+        provisioning.authorizeApprovedAttach(docsDir, WorkspaceAccessMode.DEVELOP);
         ToolResult narrowerRequest = operations.execute(
                 "workspace_attach",
                 workspaceId,
@@ -524,12 +540,11 @@ class LocalFileToolOperationsMultiRootTest {
         assertThat(narrowerRequest.structuredData())
                 .containsEntry("mode", "DEVELOP")
                 .containsEntry("rootPath", docsDir.toRealPath().toString());
-        assertThat(narrowerRequest.structuredData().get("rootPath"))
-                .isNotEqualTo(nested.toRealPath().toString());
-        assertThat(workspaceAccess.find(tenant, owner, docsWorkspaceId))
+        assertThat(registry.find(projectId, docsWorkspaceId))
                 .get()
-                .extracting(WorkspaceAccess::mode)
+                .extracting(AuthorizedDirectoryEntry::mode)
                 .isEqualTo(WorkspaceAccessMode.DEVELOP);
+        assertThat(operations.currentScope().allowedDirectories()).hasSize(count);
     }
 
     @Test
@@ -827,6 +842,62 @@ class LocalFileToolOperationsMultiRootTest {
                 arguments(Map.of("path", workspaceDir.toRealPath().toString())));
         assertThat(res.successful()).isTrue();
         assertThat(res.structuredData()).containsKey("entries");
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void rejectsWindowsJunctionRootForWorkspaceAttach() throws Exception {
+        Path target = Files.createDirectories(tempDir.resolve("attach-junction-target"));
+        Path junction = tempDir.resolve("attach-junction-root");
+        Process process = new ProcessBuilder("cmd.exe", "/c", "mklink", "/J", junction.toString(), target.toString())
+                .redirectErrorStream(true)
+                .start();
+        Assumptions.assumeTrue(process.waitFor() == 0, "junction creation is unavailable on this test host");
+
+        int directoriesBefore = operations.currentScope().allowedDirectories().size();
+        ToolResult result = operations.execute(
+                "workspace_attach",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of("path", junction.toString(), "mode", "develop")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "INVALID_ARGUMENT")
+                .containsEntry("failureCategory", "INVALID_INPUT");
+        WorkspaceId targetWorkspace =
+                HostDirectoryIdentity.resolve(target.toRealPath()).workspaceId();
+        assertThat(operations.currentScope().allowedDirectories()).hasSize(directoriesBefore);
+        assertThat(operations.currentScope().allowedDirectories())
+                .extracting(AuthorizedHostDirectory::workspaceId)
+                .doesNotContain(targetWorkspace);
+        assertThat(registry.find(projectId, targetWorkspace)).isEmpty();
+    }
+
+    @Test
+    void rejectsSymbolicLinkRootForWorkspaceAttach() throws Exception {
+        Path target = Files.createDirectories(tempDir.resolve("attach-symlink-target"));
+        Path link = tempDir.resolve("attach-symlink-root");
+        try {
+            Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException | SecurityException exception) {
+            Assumptions.assumeTrue(false, "symbolic links are unavailable on this test host");
+            return;
+        }
+
+        ToolResult result = operations.execute(
+                "workspace_attach",
+                workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                arguments(Map.of("path", link.toString(), "mode", "develop")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("errorCode", "INVALID_ARGUMENT");
+        WorkspaceId targetWorkspace =
+                HostDirectoryIdentity.resolve(target.toRealPath()).workspaceId();
+        assertThat(registry.find(projectId, targetWorkspace)).isEmpty();
     }
 
     private static ToolArguments arguments(Map<String, Object> values) {
