@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-REPORT_SCHEMA_VERSION = "1.2.0"
+REPORT_SCHEMA_VERSION = "1.3.0"
 REQUIRED_COLUMNS = {
     "runtime_event": {"run_id", "type", "data_payload", "occurred_at"},
     "run": {"run_id", "session_id", "status", "error_payload"},
@@ -34,24 +34,13 @@ REQUIRED_COLUMNS = {
         "requested_at",
     },
 }
-GIT_PATTERN = re.compile(r"(?i)(?:^|[\s;&|()])git(?:\.exe)?(?=\s|$)")
-GH_PATTERN = re.compile(r"(?i)(?:^|[\s;&|()])gh(?:\.exe)?(?=\s|$)")
-GIT_KNOWN_READ_PATTERN = re.compile(
-    r"(?i)^\s*git(?:\.exe)?\s+(?:--no-pager\s+|--no-optional-locks\s+|--literal-pathspecs\s+)*"
-    r"(?:status|diff|log|show|blame|grep|ls-files|rev-parse|symbolic-ref|for-each-ref|describe)(?:\s|$)"
-)
 HARD_BOUNDARY_CODES = {
     "ABSOLUTE_WORKDIR_FORBIDDEN",
-    "AUTHENTICATION_COMMAND_DENIED",
     "AUTHENTICATION_ENVIRONMENT_OVERRIDE",
     "GH_AUTHENTICATION_MUTATION_OR_DISCLOSURE",
     "GH_AUTH_TOKEN_DISCLOSURE_DENIED",
-    "GH_PR_MERGE_DENIED",
     "GIT_AUTHENTICATION_CONFIG_OVERRIDE",
     "GIT_CREDENTIAL_PROTOCOL_DENIED",
-    "GIT_EXECUTION_BOUNDARY_OVERRIDE",
-    "GIT_REPOSITORY_PATH_OVERRIDE",
-    "SYSTEM_CLI_PATH_OVERRIDE",
     "PATH_TRAVERSAL",
     "SENSITIVE_PATH",
     "SYMLINK_ESCAPE",
@@ -181,25 +170,9 @@ def _command_digest(command: Any) -> str | None:
     return _digest(normalized)
 
 
-def _command_target(command: Any) -> str:
-    if not isinstance(command, str):
-        return "OTHER"
-    git = GIT_PATTERN.search(command) is not None
-    github = GH_PATTERN.search(command) is not None
-    if git and github:
-        return "MIXED"
-    if git:
-        return "GIT"
-    if github:
-        return "GITHUB"
-    return "OTHER"
-
-
 def _failure_class(tool_name: str, stable_code: str, failure_category: str) -> str:
     if stable_code in HARD_BOUNDARY_CODES:
         return "HARD_BOUNDARY_DENIAL"
-    if stable_code == "COMMAND_CLASSIFICATION_REJECTED":
-        return "POLICY_OR_CLASSIFICATION"
     if failure_category in {"POLICY", "POLICY_DENIED"}:
         return "POLICY_DENIAL"
     if tool_name.startswith("file_"):
@@ -241,32 +214,15 @@ def _is_composite(command: Any) -> bool:
     )
 
 
-def _effective_risk(result: dict[str, Any], attributes: dict[str, Any]) -> str | None:
-    effective = _safe_text(result.get("effectiveRisk"), _safe_text(attributes.get("effectiveRisk"), ""))
-    if effective in {"LOW", "MEDIUM", "HIGH"}:
-        return effective
-    raw = _safe_text(result.get("commandRisk"), _safe_text(attributes.get("commandRisk"), ""))
-    return {
-        "LOCAL_READ": "LOW",
-        "LOCAL_WRITE": "MEDIUM",
-        "NETWORK_READ": "MEDIUM",
-        "EXTERNAL_WRITE": "HIGH",
-        "DESTRUCTIVE": "HIGH",
-        "UNKNOWN": "HIGH",
-    }.get(raw)
-
-
 def _required_metrics_empty() -> dict[str, Any]:
     no_samples = _unavailable("NO_SAMPLES_IN_WINDOW")
     return {
         "rawToolFailureRate": _rate(0, 0, "failed"),
         "policyDenialRate": _rate(0, 0, "denied"),
         "hardBoundaryDenialRate": _rate(0, 0, "denied"),
-        "riskEscalationDistribution": dict(no_samples),
         "approvalAskAllowRateByThreshold": _unavailable("APPROVAL_DECISIONS_NOT_IN_REQUIRED_SOURCE_SCHEMA"),
         "compositeCommandAdmissionCompletionRate": _rate(0, 0, "admitted"),
         "toolInfrastructureFailureRate": _rate(0, 0, "failed"),
-        "gitKnownReadLowClassificationRate": _rate(0, 0, "classifiedLow"),
         "sameFingerprintRetryAmplification": dict(no_samples),
         "runCompletionFailedCancelled": {"status": "MEASURED", "counts": {}},
         "modelEmptyOutputRecoveryRate": _unavailable("MODEL_ATTEMPT_TRACE_NOT_IN_REQUIRED_SOURCE_SCHEMA"),
@@ -296,7 +252,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
             "toolMetrics": [],
             "failureClasses": {},
             "failedToolCalls": [],
-            "executionBreakdown": [],
             "recovery": {"eventsByType": {}, "directives": {}, "maximumAttempts": 0},
             "requiredMetrics": _required_metrics_empty(),
             "privacy": _privacy_contract(),
@@ -351,19 +306,13 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
     )
 
     failed_tool_calls: list[dict[str, Any]] = []
-    execution_counter: Counter[tuple[str, str, str, str]] = Counter()
     tool_counter: dict[str, Counter[str]] = {}
     failure_classes: Counter[str] = Counter()
     policy_denials = 0
-    legacy_classification_denials = 0
     hard_boundary_denials = 0
-    risk_distribution: Counter[str] = Counter()
     composite_total = 0
-    composite_admitted = 0
     composite_completed = 0
     infrastructure_failures = 0
-    known_read_total = 0
-    known_read_low = 0
     first_change_by_run: dict[str, tuple[int, int]] = {}
     calls_by_run: Counter[str] = Counter()
     for row in tool_rows:
@@ -376,28 +325,10 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
         attributes = _attributes(row["error_payload"])
         command = arguments.get("command")
         calls_by_run[str(row["run_id"])] += 1
-        target = _safe_text(result.get("commandTarget"), _command_target(command))
-        operation = _safe_text(result.get("commandOperation"), _safe_text(arguments.get("operationFamily")))
-        risk = _safe_text(result.get("commandRisk"))
-        if tool_name == "execution_run":
-            execution_counter[(target, operation, risk, status)] += 1
-            effective_risk = _effective_risk(result, attributes)
-            if effective_risk:
-                risk_distribution[effective_risk] += 1
-            if _is_composite(command):
-                composite_total += 1
-                stable = _safe_text(
-                    result.get("stableFailureCode"),
-                    _safe_text(attributes.get("stableFailureCode"), _safe_text(error.get("code"), "")),
-                )
-                if stable != "COMMAND_CLASSIFICATION_REJECTED":
-                    composite_admitted += 1
-                if status == "COMPLETED":
-                    composite_completed += 1
-            if isinstance(command, str) and GIT_KNOWN_READ_PATTERN.match(command):
-                known_read_total += 1
-                if effective_risk == "LOW" or risk == "LOCAL_READ":
-                    known_read_low += 1
+        if tool_name == "execution_run" and _is_composite(command):
+            composite_total += 1
+            if status == "COMPLETED":
+                composite_completed += 1
         if ("fileChangeSetId" in result or "changeSetId" in result) and str(row["run_id"]) not in first_change_by_run:
             first_change_by_run[str(row["run_id"])] = (
                 int(row["requested_at"]),
@@ -415,10 +346,8 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
         failure_category = _safe_text(
             result.get("failureCategory"), _safe_text(attributes.get("failureCategory"))
         )
-        if failure_category in {"POLICY", "POLICY_DENIED"} or stable_code == "COMMAND_CLASSIFICATION_REJECTED":
+        if failure_category in {"POLICY", "POLICY_DENIED"}:
             policy_denials += 1
-        if stable_code == "COMMAND_CLASSIFICATION_REJECTED":
-            legacy_classification_denials += 1
         if stable_code in HARD_BOUNDARY_CODES:
             hard_boundary_denials += 1
         failure_class = _failure_class(tool_name, stable_code, failure_category)
@@ -433,8 +362,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
                 "stableFailureCode": stable_code,
                 "failureCategory": failure_category,
                 "failureClass": failure_class,
-                "commandTarget": target if tool_name == "execution_run" else "NOT_APPLICABLE",
-                "operationFamily": _safe_text(attributes.get("operationFamily"), operation),
                 "commandDigest": _command_digest(command),
                 "requestedAtEpochMs": int(row["requested_at"]),
             }
@@ -481,7 +408,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
 
     total_tools = len(tool_rows)
     failed_tools = sum(1 for row in tool_rows if _safe_text(row["status"]) == "FAILED")
-    execution_total = sum(execution_counter.values())
     run_statuses = _status_counts(run_rows)
     first_change_metrics: dict[str, Any]
     if first_change_by_run:
@@ -521,17 +447,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
     else:
         first_change_metrics = _unavailable("NO_AUTHORITATIVE_CHANGE_OBSERVED")
 
-    risk_metric: dict[str, Any] = (
-        {
-            "status": "MEASURED" if sum(risk_distribution.values()) == execution_total else "PARTIALLY_MEASURED",
-            "counts": {level: risk_distribution.get(level, 0) for level in ("LOW", "MEDIUM", "HIGH")},
-            "total": sum(risk_distribution.values()),
-            "executionCalls": execution_total,
-            "unclassified": execution_total - sum(risk_distribution.values()),
-        }
-        if risk_distribution
-        else _unavailable("TRUSTED_EFFECTIVE_RISK_NOT_PRESENT")
-    )
     retry_metric: dict[str, Any] = (
         {
             "status": "MEASURED",
@@ -550,26 +465,18 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
     )
     required_metrics = {
         "rawToolFailureRate": _rate(failed_tools, total_tools, "failed"),
-        "policyDenialRate": {
-            "status": "MEASURED" if legacy_classification_denials == 0 else "PARTIALLY_MEASURED",
-            "denied": policy_denials,
-            "legacyClassificationIncluded": legacy_classification_denials,
-            "total": total_tools,
-            "ratePercent": _percentage(policy_denials, total_tools),
-        },
+        "policyDenialRate": _rate(policy_denials, total_tools, "denied"),
         "hardBoundaryDenialRate": _rate(hard_boundary_denials, total_tools, "denied"),
-        "riskEscalationDistribution": risk_metric,
         "approvalAskAllowRateByThreshold": _unavailable("APPROVAL_DECISIONS_NOT_IN_REQUIRED_SOURCE_SCHEMA"),
         "compositeCommandAdmissionCompletionRate": {
             "status": "MEASURED",
             "total": composite_total,
-            "admitted": composite_admitted,
-            "admissionRatePercent": _percentage(composite_admitted, composite_total),
+            "admitted": composite_total,
+            "admissionRatePercent": _percentage(composite_total, composite_total),
             "completed": composite_completed,
             "completionRatePercent": _percentage(composite_completed, composite_total),
         },
         "toolInfrastructureFailureRate": _rate(infrastructure_failures, total_tools, "failed"),
-        "gitKnownReadLowClassificationRate": _rate(known_read_low, known_read_total, "classifiedLow"),
         "sameFingerprintRetryAmplification": retry_metric,
         "runCompletionFailedCancelled": {"status": "MEASURED", "counts": run_statuses},
         "modelEmptyOutputRecoveryRate": {
@@ -611,16 +518,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
         "toolMetrics": tool_metrics,
         "failureClasses": dict(sorted(failure_classes.items())),
         "failedToolCalls": failed_tool_calls,
-        "executionBreakdown": [
-            {
-                "commandTarget": target,
-                "operationFamily": operation,
-                "commandRisk": risk,
-                "status": status,
-                "count": count,
-            }
-            for (target, operation, risk, status), count in sorted(execution_counter.items())
-        ],
         "recovery": {
             "eventsByType": dict(sorted(recovery_types.items())),
             "directives": dict(sorted(recovery_directives.items())),
