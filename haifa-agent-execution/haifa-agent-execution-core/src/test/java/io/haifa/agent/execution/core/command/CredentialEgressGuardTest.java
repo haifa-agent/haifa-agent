@@ -37,6 +37,9 @@ class CredentialEgressGuardTest {
             "git credential approve",
             "git credential-cache get",
             "/usr/bin/git credential fill",
+            "git --no-pager credential fill",
+            "git -c color.ui=false credential fill",
+            "git --no-pager credential-cache get",
             "git -c credential.helper=other status",
             "git -c http.extraHeader=AUTHORIZATION: secret status",
             "git -c core.sshCommand=/tmp/steal status",
@@ -53,6 +56,12 @@ class CredentialEgressGuardTest {
                 .contains(CredentialEgressGuard.GITHUB_AUTH_STATE_CODE);
         assertThat(CredentialEgressGuard.rejectionCode("gh auth status --show-token"))
                 .contains(CredentialEgressGuard.GITHUB_TOKEN_DISCLOSURE_CODE);
+        assertThat(CredentialEgressGuard.rejectionCode("gh auth status -t"))
+                .contains(CredentialEgressGuard.GITHUB_TOKEN_DISCLOSURE_CODE);
+        assertThat(CredentialEgressGuard.rejectionCode("gh auth status --show-token=true"))
+                .contains(CredentialEgressGuard.GITHUB_TOKEN_DISCLOSURE_CODE);
+        assertThat(CredentialEgressGuard.rejectionCode("gh --hostname github.com auth token"))
+                .contains(CredentialEgressGuard.GITHUB_AUTH_STATE_CODE);
         assertThat(CredentialEgressGuard.rejectionCode("gh auth login"))
                 .contains(CredentialEgressGuard.GITHUB_AUTH_STATE_CODE);
         assertThat(CredentialEgressGuard.rejectionCode("gh auth logout"))
@@ -88,12 +97,15 @@ class CredentialEgressGuardTest {
             "git -c color.ui=false rev-parse HEAD",
             "git --git-dir=.git status",
             "git --work-tree=.. status",
+            "git --no-pager status",
+            "git grep -c credential.helper -- .",
             "git fetch origin",
             "git push origin feature",
             "git reset --hard HEAD",
             "gh pr view 42",
             "gh pr merge 42",
             "gh auth status",
+            "gh --hostname github.com pr view 42",
             "gh repo delete owner/repo",
             "GH_TOKEN_PREFIX=value gh pr list",
             "mvn test && echo done",
