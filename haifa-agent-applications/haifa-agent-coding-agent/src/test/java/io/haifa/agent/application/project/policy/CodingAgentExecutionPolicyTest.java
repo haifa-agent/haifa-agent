@@ -152,17 +152,16 @@ class CodingAgentExecutionPolicyTest {
     }
 
     @Test
-    void userCommandRejectsExistingClassifierHardDeniesAtTheBrokerBoundary() throws Exception {
+    void userCommandAllowsOrdinaryGitButRejectsConfirmedCredentialEgressAtTheBrokerBoundary() throws Exception {
         Fixture fixture = fixture(WorkspaceAccessMode.DEVELOP);
 
-        assertThatThrownBy(() -> fixture.policy()
+        assertThatCode(() -> fixture.policy()
                         .authorize(userCommand("git -C ../other status"), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
-                .isInstanceOf(ExecutionRejectedException.class)
-                .hasMessageContaining("classifier");
+                .doesNotThrowAnyException();
         assertThatThrownBy(() -> fixture.policy()
                         .authorize(userCommand("gh auth token"), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
                 .isInstanceOf(ExecutionRejectedException.class)
-                .hasMessageContaining("classifier");
+                .hasMessageContaining("credential boundary");
     }
 
     @Test

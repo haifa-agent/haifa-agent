@@ -903,9 +903,11 @@ final class LocalCodingAgent implements AutoCloseable {
                 + "Do not treat a non-zero exit as a platform failure or repeat the same command without a new diagnostic hypothesis. "
                 + "For literal rg searches, prefer rg -F -- <text>; use regex only when intended.\n"
                 + "- Keep command output bounded and relevant. Narrow an overly broad query before repeating it.\n"
-                + "- A trusted pre-dispatch network or host-authentication failure may pause for one exact Runtime-owned "
-                + "recovery interaction. Do not copy or resubmit the command; compound commands, wrappers, path escape, "
-                + "credential override, destructive commands, and unknown outcomes remain ineligible.";
+                + "- System git, gh, wrappers, and customer scripts run through the same generic execution path as "
+                + "any other command. Read the real exit code and bounded output to decide what a result means.\n"
+                + "- Commands that read, echo, override, or redirect host authentication material are rejected "
+                + "before dispatch. Verify an unknown outcome from authoritative state before issuing any new "
+                + "command; never blindly replay a dispatched call.";
     }
 
     AgentRunSnapshot start(String message) {

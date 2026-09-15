@@ -150,50 +150,18 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void trustedDiffClassificationRemainsDiagnosticWithoutBecomingACompletionRequirement() {
+    void declaredDiffFamilyRemainsDiagnosticWithoutBecomingACompletionRequirement() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         tool(fixture, "file_write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
         validationTool(fixture, true, 1, 1, 0);
-        tool(
-                fixture,
-                "execution_run",
-                Map.of(),
-                Map.of(
-                        "operationFamily",
-                        "DIFF",
-                        "processState",
-                        "EXITED",
-                        "commandTarget",
-                        "GIT",
-                        "commandRisk",
-                        "LOCAL_READ",
-                        "commandOperation",
-                        "INSPECT",
-                        "commandClassificationReason",
-                        "GIT_STATUS"));
+        tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "DIFF", "processState", "EXITED"));
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
                         .allowed())
                 .isTrue();
 
-        tool(
-                fixture,
-                "execution_run",
-                Map.of(),
-                Map.of(
-                        "operationFamily",
-                        "DIFF",
-                        "processState",
-                        "EXITED",
-                        "commandTarget",
-                        "GIT",
-                        "commandRisk",
-                        "LOCAL_READ",
-                        "commandOperation",
-                        "DIFF",
-                        "commandClassificationReason",
-                        "GIT_DIFF"));
+        tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "DIFF", "processState", "EXITED"));
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
@@ -217,11 +185,7 @@ class CodingDeliveryControlTest {
                 Map.of(
                         "operationFamily", "DIFF",
                         "processState", "EXITED",
-                        "exitCode", 0,
-                        "commandTarget", "GIT",
-                        "commandRisk", "LOCAL_READ",
-                        "commandOperation", "DIFF",
-                        "commandClassificationReason", "GIT_DIFF"));
+                        "exitCode", 0));
 
         CodingDeliveryEvidenceLedger.Snapshot snapshot = new CodingDeliveryEvidenceLedger(fixture.store())
                 .reconstruct(fixture.run().id());
@@ -229,7 +193,7 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void genericCommandsRetainDeclaredFamilyWithoutOverridingGitClassification() {
+    void declaredFamilyDrivesReadOnlyEvidenceWithoutOverridingGenericCommands() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         tool(fixture, "file_write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
         validationTool(fixture, true, 1, 1, 0);
@@ -237,13 +201,7 @@ class CodingDeliveryControlTest {
                 fixture,
                 "execution_run",
                 Map.of(),
-                Map.ofEntries(
-                        Map.entry("operationFamily", "DIFF"),
-                        Map.entry("effectiveOperationFamily", "UNKNOWN"),
-                        Map.entry("processState", "EXITED"),
-                        Map.entry("commandTarget", "OTHER"),
-                        Map.entry("commandRisk", "UNKNOWN"),
-                        Map.entry("commandOperation", "UNKNOWN")));
+                Map.ofEntries(Map.entry("operationFamily", "DIFF"), Map.entry("processState", "EXITED")));
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
@@ -262,11 +220,7 @@ class CodingDeliveryControlTest {
                 Map.of(),
                 Map.ofEntries(
                         Map.entry("operationFamily", "DIFF"),
-                        Map.entry("effectiveOperationFamily", "DIFF"),
                         Map.entry("processState", "EXITED"),
-                        Map.entry("commandTarget", "GIT"),
-                        Map.entry("commandRisk", "LOCAL_READ"),
-                        Map.entry("commandOperation", "DIFF"),
                         Map.entry("exitCode", 1)));
 
         assertThat(policy(fixture.store())
@@ -318,9 +272,9 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void executionReadEvidenceRequiresTheCurrentTrustedClassificationFields() {
+    void executionReadEvidenceUsesTheDeclaredOperationFamilyHint() {
         Fixture fixture = fixture("analyze the repository", trusted("ANALYZE"));
-        tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "INSPECT", "processState", "EXITED"));
+        tool(fixture, "execution_run", Map.of(), Map.of("processState", "EXITED"));
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
@@ -328,17 +282,7 @@ class CodingDeliveryControlTest {
                 .extracting(blocker -> blocker.code())
                 .containsExactly("ANALYSIS_EVIDENCE_MISSING");
 
-        tool(
-                fixture,
-                "execution_run",
-                Map.of(),
-                Map.of(
-                        "operationFamily", "INSPECT",
-                        "effectiveOperationFamily", "INSPECT",
-                        "processState", "EXITED",
-                        "commandTarget", "GIT",
-                        "commandRisk", "LOCAL_READ",
-                        "commandOperation", "INSPECT"));
+        tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "INSPECT", "processState", "EXITED"));
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
                         .allowed())
@@ -613,11 +557,7 @@ class CodingDeliveryControlTest {
                 Map.of(
                         "processState", "EXITED",
                         "exitCode", 1,
-                        "operationFamily", "DELIVERY",
-                        "effectiveOperationFamily", "DELIVERY",
-                        "commandTarget", "GIT",
-                        "commandRisk", "NETWORK_WRITE",
-                        "commandOperation", "PUSH"));
+                        "operationFamily", "DELIVERY"));
         tool(
                 fixture,
                 "execution_run",
@@ -625,11 +565,7 @@ class CodingDeliveryControlTest {
                 Map.of(
                         "processState", "EXITED",
                         "exitCode", 128,
-                        "operationFamily", "DELIVERY",
-                        "effectiveOperationFamily", "DELIVERY",
-                        "commandTarget", "GIT",
-                        "commandRisk", "LOCAL_WRITE",
-                        "commandOperation", "COMMIT"));
+                        "operationFamily", "DELIVERY"));
 
         assertThat(policy.evaluate(fixture.run(), finalDecision()).allowed()).isTrue();
         assertThat(new CodingDeliveryEvidenceLedger(fixture.store())
