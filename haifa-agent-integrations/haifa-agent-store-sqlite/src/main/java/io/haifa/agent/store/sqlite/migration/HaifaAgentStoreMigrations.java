@@ -31,7 +31,7 @@ public final class HaifaAgentStoreMigrations {
             new RegisteredMigration(1_005, "coding_delivery_intent", "V1005__coding_delivery_intent.sql"),
             new RegisteredMigration(
                     1_006, "coding_follow_up_dispatched_run_index", "V1006__coding_follow_up_dispatched_run_index.sql"),
-            new RegisteredMigration(1_007, "coding_workspace_registry", "V1007__coding_workspace_registry.sql"));
+            new RegisteredMigration(1_007, "coding_authorized_directory", "V1007__coding_authorized_directory.sql"));
 
     private HaifaAgentStoreMigrations() {}
 

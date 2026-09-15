@@ -35,7 +35,7 @@ authorities.
 `DefaultApprovalVerificationService` validates approval targets and responder authority independently from policy
 evaluation. Ordinary Tool ASK uses the Interaction-owned target and local verification; external authority
 requirements continue through the dedicated Approval contribution. Approval never converts `DENY` to `ALLOW` and
-cannot replace WorkspaceAccess, host-path checks, Credential enforcement, or Sandbox enforcement.
+cannot replace authorized-directory ownership, host-path checks, Credential enforcement, or Sandbox enforcement.
 
 ## Module boundary
 

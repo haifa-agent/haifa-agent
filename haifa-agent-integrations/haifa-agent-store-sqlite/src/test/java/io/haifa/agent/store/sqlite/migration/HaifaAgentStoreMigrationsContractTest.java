@@ -21,7 +21,7 @@ class HaifaAgentStoreMigrationsContractTest {
     void cleanResourcesOmitV3AndV1008AndPublishOneNeutralArtifact() {
         assertThat(getClass().getResource(RESOURCE_ROOT + "V3__policy_approval_security.sql"))
                 .isNull();
-        assertThat(getClass().getResource(RESOURCE_ROOT + "V1007__coding_workspace_registry.sql"))
+        assertThat(getClass().getResource(RESOURCE_ROOT + "V1007__coding_authorized_directory.sql"))
                 .isNotNull();
         assertThat(getClass().getResource(RESOURCE_ROOT + "V1008__coding_workspace_access.sql"))
                 .isNull();

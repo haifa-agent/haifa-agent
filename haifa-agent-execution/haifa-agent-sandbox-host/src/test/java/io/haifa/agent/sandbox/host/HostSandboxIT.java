@@ -3,7 +3,6 @@ package io.haifa.agent.sandbox.host;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.execution.api.ExecutionCommand;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionInput;
@@ -11,28 +10,17 @@ import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.execution.api.ExecutionScratchBinding;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.SandboxProfileRef;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
-import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.sandbox.api.SandboxExecution;
 import io.haifa.agent.sandbox.api.SandboxProcessResult;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
 import io.haifa.agent.sandbox.api.SandboxProfile;
-import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -60,11 +48,10 @@ class HostSandboxIT {
 
     @Test
     void runsWhitelistedArgvWithBoundedTimeoutAndHonestCapabilities() throws Exception {
-        Fixture fixture = fixture(root, "workspace-1", "binding-1", "location-1");
+        Fixture fixture = fixture(root, "workspace-1");
         AtomicInteger ids = new AtomicInteger();
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces,
-                fixture.bindings,
                 fixture.locations,
                 () -> "session-" + ids.incrementAndGet(),
                 () -> Instant.ofEpochMilli(System.currentTimeMillis()));
@@ -75,7 +62,7 @@ class HostSandboxIT {
                 Set.of("java"),
                 Set.of(),
                 false);
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             AtomicInteger dispatches = new AtomicInteger();
             java.util.concurrent.atomic.AtomicReference<io.haifa.agent.execution.api.ExecutionProcessIdentity>
                     processIdentity = new java.util.concurrent.atomic.AtomicReference<>();
@@ -228,10 +215,10 @@ class HostSandboxIT {
 
     @Test
     void runsGeneralShellTextThroughConfiguredShellAndStreamsBoundedHeadAndTail() throws Exception {
-        Fixture fixture = fixture(root, "workspace-shell", "binding-shell", "location-shell");
+        Fixture fixture = fixture(root, "workspace-shell");
         HostShell shell = HostShell.auto();
         var provider = new HostGuardedSandboxProvider(
-                fixture.workspaces, fixture.bindings, fixture.locations, () -> "shell-session", Instant::now, shell);
+                fixture.workspaces, fixture.locations, () -> "shell-session", Instant::now, shell);
         SandboxProfile profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("shell-test", "1"),
                 provider.configurationDigest(),
@@ -243,7 +230,7 @@ class HostSandboxIT {
                 : "printf 'shell-ok\\n' | tr a-z A-Z > result.txt; cat result.txt";
         var streamed = new java.io.ByteArrayOutputStream();
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             var result = session.execute(
                     new SandboxExecution(
                             ExecutionCommand.shell(command),
@@ -267,7 +254,7 @@ class HostSandboxIT {
                 Set.of(),
                 Set.of("DEEPSEEK_API_KEY"),
                 true);
-        try (var session = provider.open(secretProfile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(secretProfile, fixture.workspaceId)) {
             assertThatThrownBy(() -> session.execute(new SandboxExecution(
                             ExecutionCommand.shell(command),
                             WorkspacePath.root(fixture.workspaceId),
@@ -279,7 +266,7 @@ class HostSandboxIT {
 
         SandboxProfile shellDenied = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("shell-denied", "1"), provider.configurationDigest(), Set.of(), Set.of(), false);
-        try (var session = provider.open(shellDenied, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(shellDenied, fixture.workspaceId)) {
             assertThatThrownBy(() -> session.execute(new SandboxExecution(
                             ExecutionCommand.shell(command),
                             WorkspacePath.root(fixture.workspaceId),
@@ -289,7 +276,7 @@ class HostSandboxIT {
                             .isEqualTo("SHELL_DENIED"));
         }
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             assertThat(session.cancel()).isTrue();
             var cancelledBeforeStart = session.execute(new SandboxExecution(
                     ExecutionCommand.shell(command),
@@ -299,7 +286,7 @@ class HostSandboxIT {
             assertThat(cancelledBeforeStart.status()).isEqualTo(SandboxProcessStatus.CANCELLED);
         }
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             assertThatThrownBy(() -> session.openManagedProcess(new SandboxExecution(
                             ExecutionCommand.shell(command),
                             WorkspacePath.root(fixture.workspaceId),
@@ -312,10 +299,10 @@ class HostSandboxIT {
 
     @Test
     void writesBoundedInitialInputThenClosesStdin() throws Exception {
-        Fixture fixture = fixture(root, "workspace-stdin", "binding-stdin", "location-stdin");
+        Fixture fixture = fixture(root, "workspace-stdin");
         copyProcessClass(root, StdinEchoProcess.class);
         var provider = new HostGuardedSandboxProvider(
-                fixture.workspaces, fixture.bindings, fixture.locations, () -> "stdin-session", Instant::now);
+                fixture.workspaces, fixture.locations, () -> "stdin-session", Instant::now);
         String javaExecutable = Path.of(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java")
                 .toString();
         SandboxProfile profile = SandboxProfile.hostGuarded(
@@ -324,7 +311,7 @@ class HostSandboxIT {
                 Set.of(javaExecutable),
                 Set.of(),
                 false);
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.direct(List.of(javaExecutable, "-cp", ".", StdinEchoProcess.class.getName())),
                     WorkspacePath.root(fixture.workspaceId),
@@ -340,11 +327,10 @@ class HostSandboxIT {
 
     @Test
     void terminatesInspectionWhenItsOutputBudgetIsExceeded() throws Exception {
-        Fixture fixture = fixture(root, "workspace-output-limit", "binding-output-limit", "location-output-limit");
+        Fixture fixture = fixture(root, "workspace-output-limit");
         copyProcessClass(root, LargeOutputProcess.class);
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces,
-                fixture.bindings,
                 fixture.locations,
                 () -> "output-limit-session",
                 Instant::now,
@@ -359,7 +345,7 @@ class HostSandboxIT {
                 Set.of(),
                 false);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.direct(List.of(javaExecutable, "-cp", ".", LargeOutputProcess.class.getName())),
                     WorkspacePath.root(fixture.workspaceId),
@@ -382,10 +368,10 @@ class HostSandboxIT {
 
     @Test
     void supportsTemporaryLoopbackServerRoundTripWithinOneCommand() throws Exception {
-        Fixture fixture = fixture(root, "workspace-loopback", "binding-loopback", "location-loopback");
+        Fixture fixture = fixture(root, "workspace-loopback");
         copyProcessClass(root, LoopbackRoundTripProcess.class);
         var provider = new HostGuardedSandboxProvider(
-                fixture.workspaces, fixture.bindings, fixture.locations, () -> "loopback-session", Instant::now);
+                fixture.workspaces, fixture.locations, () -> "loopback-session", Instant::now);
         String javaExecutable = Path.of(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java")
                 .toString();
         SandboxProfile profile = SandboxProfile.hostGuarded(
@@ -395,7 +381,7 @@ class HostSandboxIT {
                 Set.of(),
                 false);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.direct(
                             List.of(javaExecutable, "-cp", ".", LoopbackRoundTripProcess.class.getName())),
@@ -412,7 +398,7 @@ class HostSandboxIT {
 
     @Test
     void compilesAndRunsWorkspaceProgramWithTheHostToolchain() throws Exception {
-        Fixture fixture = fixture(root, "workspace-build", "binding-build", "location-build");
+        Fixture fixture = fixture(root, "workspace-build");
         Files.writeString(
                 root.resolve("Baseline.java"),
                 "public class Baseline { public static void main(String[] args) { "
@@ -423,7 +409,7 @@ class HostSandboxIT {
         String javacExecutable = Path.of(System.getProperty("java.home"), "bin", "javac" + executableSuffix)
                 .toString();
         var provider = new HostGuardedSandboxProvider(
-                fixture.workspaces, fixture.bindings, fixture.locations, () -> "build-session", Instant::now);
+                fixture.workspaces, fixture.locations, () -> "build-session", Instant::now);
         SandboxProfile profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("build-test", "1"),
                 provider.configurationDigest(),
@@ -431,7 +417,7 @@ class HostSandboxIT {
                 Set.of(),
                 false);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             var compilation = session.execute(new SandboxExecution(
                     ExecutionCommand.direct(List.of(javacExecutable, "Baseline.java")),
                     WorkspacePath.root(fixture.workspaceId),
@@ -455,10 +441,10 @@ class HostSandboxIT {
     @Test
     void reportsReusableRealWorkspaceAndParentPaths() throws Exception {
         Path workspaceRoot = Files.createDirectories(root.resolve("workspace path 空格"));
-        Fixture fixture = fixture(workspaceRoot, "workspace-path", "binding-path", "location-path");
+        Fixture fixture = fixture(workspaceRoot, "workspace-path");
         HostShell shell = HostShell.auto();
         var provider = new HostGuardedSandboxProvider(
-                fixture.workspaces, fixture.bindings, fixture.locations, () -> "path-session", Instant::now, shell);
+                fixture.workspaces, fixture.locations, () -> "path-session", Instant::now, shell);
         SandboxProfile profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("path-test", "1"),
                 provider.configurationDigest(),
@@ -468,7 +454,7 @@ class HostSandboxIT {
         String command =
                 isWindows() ? "(Get-Location).Path; Set-Location ..; (Get-Location).Path" : "pwd -P; cd ..; pwd -P";
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.shell(command),
                     WorkspacePath.root(fixture.workspaceId),
@@ -490,11 +476,10 @@ class HostSandboxIT {
 
     @Test
     void injectsPrivateWritableScratchAndCleansItWithoutClaimingIsolation() throws Exception {
-        Fixture fixture = fixture(root, "workspace-scratch", "binding-scratch", "location-scratch");
+        Fixture fixture = fixture(root, "workspace-scratch");
         Path scratchRoot = isolatedBase.resolve("host-scratch");
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces,
-                fixture.bindings,
                 fixture.locations,
                 () -> "scratch-session",
                 Instant::now,
@@ -510,7 +495,7 @@ class HostSandboxIT {
                 Set.of("TMPDIR", "TMP", "TEMP", "GOTMPDIR"),
                 List.of(new ExecutionScratchBinding("GOCACHE", "go-build")));
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.shell(scratchProbeCommand()),
                     WorkspacePath.root(fixture.workspaceId),
@@ -531,11 +516,10 @@ class HostSandboxIT {
 
     @Test
     void omitsScratchProvisioningWhenScratchSpecIsNone() throws Exception {
-        Fixture fixture = fixture(root, "workspace-no-scratch", "binding-no-scratch", "location-no-scratch");
+        Fixture fixture = fixture(root, "workspace-no-scratch");
         Path scratchRoot = isolatedBase.resolve("host-no-scratch");
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces,
-                fixture.bindings,
                 fixture.locations,
                 () -> "no-scratch-session",
                 Instant::now,
@@ -557,7 +541,7 @@ class HostSandboxIT {
                     : "p=\"${TMPDIR:-/tmp}/" + probeFile
                             + "\" && printf persisted-tmp > \"$p\" && printf \"%s\" \"$p\"";
 
-            try (var session1 = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+            try (var session1 = provider.open(profile, fixture.workspaceId)) {
                 var step1 = session1.execute(new SandboxExecution(
                         ExecutionCommand.shell(writeCommand),
                         WorkspacePath.root(fixture.workspaceId),
@@ -581,7 +565,7 @@ class HostSandboxIT {
                     ? "[IO.File]::ReadAllText((Join-Path $env:TEMP '" + probeFile + "'))"
                     : "cat \"${TMPDIR:-/tmp}/" + probeFile + "\"";
 
-            try (var session2 = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+            try (var session2 = provider.open(profile, fixture.workspaceId)) {
                 var step2 = session2.execute(new SandboxExecution(
                         ExecutionCommand.shell(readCommand),
                         WorkspacePath.root(fixture.workspaceId),
@@ -606,11 +590,9 @@ class HostSandboxIT {
 
     @Test
     void rejectsHomeSystemRootAndWorkspaceOverlappingScratchRoots() throws Exception {
-        Fixture fixture =
-                fixture(root, "workspace-unsafe-scratch", "binding-unsafe-scratch", "location-unsafe-scratch");
+        Fixture fixture = fixture(root, "workspace-unsafe-scratch");
         assertThatThrownBy(() -> new HostGuardedSandboxProvider(
                         fixture.workspaces,
-                        fixture.bindings,
                         fixture.locations,
                         () -> "unsafe-home",
                         Instant::now,
@@ -619,7 +601,6 @@ class HostSandboxIT {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new HostGuardedSandboxProvider(
                         fixture.workspaces,
-                        fixture.bindings,
                         fixture.locations,
                         () -> "unsafe-root",
                         Instant::now,
@@ -629,7 +610,6 @@ class HostSandboxIT {
 
         var overlapsWorkspace = new HostGuardedSandboxProvider(
                 fixture.workspaces,
-                fixture.bindings,
                 fixture.locations,
                 () -> "unsafe-workspace",
                 Instant::now,
@@ -641,7 +621,7 @@ class HostSandboxIT {
                 Set.of(),
                 hostBaselineEnvironment().keySet(),
                 true);
-        try (var session = overlapsWorkspace.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = overlapsWorkspace.open(profile, fixture.workspaceId)) {
             var ok = session.execute(new SandboxExecution(
                     ExecutionCommand.shell(isWindows() ? "[Console]::Out.Write('ok')" : "printf ok"),
                     WorkspacePath.root(fixture.workspaceId),
@@ -666,13 +646,11 @@ class HostSandboxIT {
 
     @Test
     void failsClosedWhenScratchCannotBeProvisioned() throws Exception {
-        Fixture fixture =
-                fixture(root, "workspace-scratch-failure", "binding-scratch-failure", "location-scratch-failure");
+        Fixture fixture = fixture(root, "workspace-scratch-failure");
         Path scratchRoot = isolatedBase.resolve("scratch-root-is-a-file");
         Files.writeString(scratchRoot, "not a directory");
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces,
-                fixture.bindings,
                 fixture.locations,
                 () -> "scratch-provision-failure",
                 Instant::now,
@@ -685,7 +663,7 @@ class HostSandboxIT {
                 Set.of(),
                 false);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             AtomicInteger dispatches = new AtomicInteger();
             assertThatThrownBy(() -> session.execute(
                             new SandboxExecution(
@@ -712,9 +690,9 @@ class HostSandboxIT {
 
     @Test
     void keepsProcessStartFailureUnknownWithoutDispatch() throws Exception {
-        Fixture fixture = fixture(root, "workspace-start-failure", "binding-start-failure", "location-start-failure");
+        Fixture fixture = fixture(root, "workspace-start-failure");
         var provider = new HostGuardedSandboxProvider(
-                fixture.workspaces, fixture.bindings, fixture.locations, () -> "process-start-failure", Instant::now);
+                fixture.workspaces, fixture.locations, () -> "process-start-failure", Instant::now);
         String missingExecutable = "haifa-definitely-missing-executable";
         var profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("process-start-failure", "1"),
@@ -723,7 +701,7 @@ class HostSandboxIT {
                 Set.of(),
                 false);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             AtomicInteger dispatches = new AtomicInteger();
             SandboxProcessResult result = session.execute(
                     new SandboxExecution(
@@ -779,12 +757,10 @@ class HostSandboxIT {
 
     @Test
     void reportsScratchCleanupFailureWithoutExposingItsPhysicalPath() throws Exception {
-        Fixture fixture =
-                fixture(root, "workspace-cleanup-failure", "binding-cleanup-failure", "location-cleanup-failure");
+        Fixture fixture = fixture(root, "workspace-cleanup-failure");
         Path scratchRoot = isolatedBase.resolve("host-cleanup-failure");
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces,
-                fixture.bindings,
                 fixture.locations,
                 () -> "scratch-cleanup-failure",
                 Instant::now,
@@ -800,7 +776,7 @@ class HostSandboxIT {
                 hostBaselineEnvironment().keySet(),
                 true);
 
-        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId))) {
+        try (var session = provider.open(profile, fixture.workspaceId)) {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.shell(
                             isWindows() ? "[Console]::Out.Write('cleanup-probe')" : "printf cleanup-probe"),
@@ -830,35 +806,16 @@ class HostSandboxIT {
         assertThat(scratchRoot).isDirectory().isEmptyDirectory();
     }
 
-    private Fixture fixture(Path workspaceRoot, String workspaceValue, String bindingValue, String locationValue) {
+    private Fixture fixture(Path workspaceRoot, String workspaceValue) {
         var workspaces = new InMemoryWorkspaceStore();
-        var bindings = new InMemoryWorkspaceBindingStore();
         var locations = new HostWorkspaceLocationStore();
         WorkspaceId workspaceId = new WorkspaceId(workspaceValue);
-        WorkspaceBindingId bindingId = new WorkspaceBindingId(bindingValue);
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef(locationValue);
-        locations.register(locationRef, workspaceRoot);
-        WorkspaceBinding binding = WorkspaceBinding.provision(
-                        bindingId,
-                        locationRef,
-                        WorkspaceBindingMode.DIRECT,
-                        new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.executionFiles(),
-                        WorkspacePermissionSet.readWriteExecute(),
-                        HostWorkspaceLocationStore.fingerprintFor(workspaceRoot),
-                        NOW)
-                .activate(NOW);
-        bindings.create(binding);
+        locations.register(workspaceId, workspaceRoot);
         Workspace workspace = Workspace.provision(
-                        workspaceId,
-                        new ProjectId("project-1"),
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
-                        WorkspaceRevision.initial(binding.rootFingerprint()),
-                        NOW)
+                        workspaceId, new ProjectId("project-1"), WorkspaceRevision.initial("test"), NOW)
                 .activate(NOW);
         workspaces.create(workspace);
-        return new Fixture(workspaceId, workspaces, bindings, locations);
+        return new Fixture(workspaceId, workspaces, locations);
     }
 
     private static void copySleepClass(Path target) throws Exception {
@@ -933,8 +890,5 @@ class HostSandboxIT {
     }
 
     private record Fixture(
-            WorkspaceId workspaceId,
-            InMemoryWorkspaceStore workspaces,
-            InMemoryWorkspaceBindingStore bindings,
-            HostWorkspaceLocationStore locations) {}
+            WorkspaceId workspaceId, InMemoryWorkspaceStore workspaces, HostWorkspaceLocationStore locations) {}
 }

@@ -24,25 +24,15 @@ import io.haifa.agent.execution.core.manifest.ManifestDiffService;
 import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
-import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.sandbox.api.SandboxExecution;
@@ -53,7 +43,6 @@ import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxProvider;
 import io.haifa.agent.sandbox.api.SandboxSession;
 import io.haifa.agent.sandbox.api.SandboxSessionId;
-import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -219,7 +208,8 @@ class ExecutionCoreTest {
             }
 
             @Override
-            public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+            public SandboxSession open(
+                    SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
                 return new SandboxSession() {
                     @Override
                     public SandboxSessionId id() {
@@ -490,7 +480,8 @@ class ExecutionCoreTest {
             }
 
             @Override
-            public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+            public SandboxSession open(
+                    SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
                 opens.incrementAndGet();
                 throw new AssertionError("open must not be called");
             }
@@ -515,30 +506,12 @@ class ExecutionCoreTest {
     void executesANewlyAuthorizedWorktreeWorkspaceWithoutChangeObservationPreflight() throws Exception {
         Fixture fixture = fixture();
         WorkspaceId worktreeId = new WorkspaceId("workspace-worktree");
-        WorkspaceBindingId worktreeBindingId = new WorkspaceBindingId("binding-worktree");
-        WorkspaceLocationRef worktreeLocationRef = new WorkspaceLocationRef("location-worktree");
         Path worktreeRoot = root.resolve("worktree");
         Files.createDirectories(worktreeRoot);
-        fixture.locations().register(worktreeLocationRef, worktreeRoot);
-        fixture.bindings()
-                .create(WorkspaceBinding.provision(
-                                worktreeBindingId,
-                                worktreeLocationRef,
-                                WorkspaceBindingMode.DIRECT,
-                                new PrincipalRef("owner", "user"),
-                                WorkspaceCapabilitySet.executionFiles(),
-                                WorkspacePermissionSet.readWriteExecute(),
-                                HostWorkspaceLocationStore.fingerprintFor(worktreeRoot),
-                                NOW)
-                        .activate(NOW));
+        fixture.locations().register(worktreeId, worktreeRoot);
         fixture.workspaces()
                 .create(Workspace.provision(
-                                worktreeId,
-                                new ProjectId("project-1"),
-                                WorkspacePurpose.PRIMARY,
-                                new WorkspaceRoot(ProjectPath.root(), worktreeBindingId, "test"),
-                                WorkspaceRevision.initial("worktree-v1"),
-                                NOW)
+                                worktreeId, new ProjectId("project-1"), WorkspaceRevision.initial("worktree-v1"), NOW)
                         .activate(NOW));
         AtomicInteger opens = new AtomicInteger();
         SandboxProvider provider = new SandboxProvider() {
@@ -553,7 +526,8 @@ class ExecutionCoreTest {
             }
 
             @Override
-            public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+            public SandboxSession open(
+                    SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
                 opens.incrementAndGet();
                 return new SandboxSession() {
                     @Override
@@ -598,37 +572,17 @@ class ExecutionCoreTest {
 
     private Fixture fixture() {
         WorkspaceId workspaceId = new WorkspaceId("workspace-1");
-        WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-1");
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("location-1");
         var workspaces = new InMemoryWorkspaceStore();
-        var bindings = new InMemoryWorkspaceBindingStore();
         var locations = new HostWorkspaceLocationStore();
-        locations.register(locationRef, root);
-        WorkspaceBinding binding = WorkspaceBinding.provision(
-                        bindingId,
-                        locationRef,
-                        WorkspaceBindingMode.DIRECT,
-                        new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.executionFiles(),
-                        WorkspacePermissionSet.readWriteExecute(),
-                        HostWorkspaceLocationStore.fingerprintFor(root),
-                        NOW)
-                .activate(NOW);
-        bindings.create(binding);
+        locations.register(workspaceId, root);
         Workspace workspace = Workspace.provision(
-                        workspaceId,
-                        new ProjectId("project-1"),
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
-                        WorkspaceRevision.initial(binding.rootFingerprint()),
-                        NOW)
+                        workspaceId, new ProjectId("project-1"), WorkspaceRevision.initial("test"), NOW)
                 .activate(NOW);
         workspaces.create(workspace);
-        var fileService = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        var fileService = new HostWorkspaceFileService(workspaces, locations, SensitivePathPolicy.defaults());
         var manifests = new WorkspaceManifestService(
                 workspaces, fileService, new ManifestBudget(100, 1024 * 1024, 1024 * 1024), "test-v1");
-        return new Fixture(
-                workspaceId, root, workspaces, bindings, locations, manifests, new InMemoryExecutionOutputStore());
+        return new Fixture(workspaceId, root, workspaces, locations, manifests, new InMemoryExecutionOutputStore());
     }
 
     @Test
@@ -680,7 +634,8 @@ class ExecutionCoreTest {
             }
 
             @Override
-            public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+            public SandboxSession open(
+                    SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
                 return new SandboxSession() {
                     @Override
                     public SandboxSessionId id() {
@@ -802,7 +757,8 @@ class ExecutionCoreTest {
             }
 
             @Override
-            public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+            public SandboxSession open(
+                    SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
                 return new SandboxSession() {
                     private final java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit>
                             exit = new java.util.concurrent.CompletableFuture<>();
@@ -838,7 +794,6 @@ class ExecutionCoreTest {
             WorkspaceId workspaceId,
             Path root,
             InMemoryWorkspaceStore workspaces,
-            InMemoryWorkspaceBindingStore bindings,
             HostWorkspaceLocationStore locations,
             WorkspaceManifestService manifests,
             InMemoryExecutionOutputStore outputs) {
@@ -886,8 +841,7 @@ class ExecutionCoreTest {
                     policy,
                     ignored -> profile,
                     ignored -> provider,
-                    workspaces,
-                    bindings);
+                    workspaces);
         }
 
         ExecutionRequest request(String id, String key, Set<String> capabilities, List<String> argv) {

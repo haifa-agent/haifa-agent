@@ -13,9 +13,8 @@ import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ExecutionStore;
 import io.haifa.agent.execution.api.ResolvedExecutionEnvironment;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
-import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
-import io.haifa.agent.project.workspace.WorkspacePermission;
+import io.haifa.agent.project.workspace.WorkspaceStatus;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.sandbox.api.SandboxExecution;
 import io.haifa.agent.sandbox.api.SandboxPreflight;
@@ -25,7 +24,6 @@ import io.haifa.agent.sandbox.api.SandboxProvider;
 import io.haifa.agent.sandbox.api.SandboxProviderResolver;
 import io.haifa.agent.sandbox.api.SandboxResolver;
 import io.haifa.agent.sandbox.api.SandboxSession;
-import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.io.ByteArrayOutputStream;
 import java.time.Duration;
 import java.util.List;
@@ -42,7 +40,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
     private final SandboxResolver profiles;
     private final SandboxProviderResolver providers;
     private final WorkspaceStore workspaces;
-    private final WorkspaceBindingStore bindings;
     private final ConcurrentHashMap<ExecutionId, SandboxSession> active = new ConcurrentHashMap<>();
 
     public DefaultExecutionBroker(
@@ -52,8 +49,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             ExecutionPolicy policy,
             SandboxResolver profiles,
             SandboxProviderResolver providers,
-            WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings) {
+            WorkspaceStore workspaces) {
         this.executions = Objects.requireNonNull(executions, "executions must not be null");
         this.outputs = Objects.requireNonNull(outputs, "outputs must not be null");
         this.environments = Objects.requireNonNull(environments, "environments must not be null");
@@ -61,7 +57,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         this.profiles = Objects.requireNonNull(profiles, "profiles must not be null");
         this.providers = Objects.requireNonNull(providers, "providers must not be null");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
-        this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
     }
 
     @Override
@@ -87,7 +82,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         ResolvedExecutionEnvironment environment = environments.resolve(request.environmentRef());
         List<byte[]> secrets = RedactingExecutionOutputObserver.extractSecrets(environment);
         executions.create(request);
-        SandboxSession session = resolved.provider().open(resolved.profile(), resolved.mount());
+        SandboxSession session = resolved.provider().open(resolved.profile(), resolved.workspaceId());
         active.put(request.id(), session);
         try (session) {
             io.haifa.agent.sandbox.api.SandboxProcessResult process;
@@ -160,7 +155,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         ResolvedExecutionEnvironment environment = environments.resolve(request.environmentRef());
         List<byte[]> secrets = RedactingExecutionOutputObserver.extractSecrets(environment);
         executions.create(request);
-        SandboxSession sandbox = resolved.provider().open(resolved.profile(), resolved.mount());
+        SandboxSession sandbox = resolved.provider().open(resolved.profile(), resolved.workspaceId());
         active.put(request.id(), sandbox);
         try {
             var process = sandbox.openManagedProcess(new SandboxExecution(
@@ -195,11 +190,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         var workspace = workspaces
                 .find(request.workspaceId())
                 .orElseThrow(() -> reject("WORKSPACE_NOT_FOUND", "workspace not found"));
-        var binding = bindings.find(workspace.root().bindingId())
-                .orElseThrow(() -> reject("BINDING_NOT_FOUND", "workspace binding not found"));
-        if (!binding.permissions().allows(WorkspacePermission.EXECUTE)
-                || !binding.capabilities().allows("execution_run")) {
-            throw reject("WORKSPACE_EXECUTION_DENIED", "workspace execution capability is denied");
+        if (workspace.status() != WorkspaceStatus.ACTIVE) {
+            throw reject("WORKSPACE_INACTIVE", "workspace is inactive");
         }
     }
 
@@ -220,7 +212,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         if (managedProcess && !preflight.managedProcessSupported()) {
             throw new SandboxException("CAPABILITY_UNAVAILABLE", "sandbox provider does not support managed processes");
         }
-        return new ResolvedSandbox(profile, provider, new WorkspaceMount(request.workspaceId()));
+        return new ResolvedSandbox(profile, provider, request.workspaceId());
     }
 
     private final class BrokerManagedSession implements io.haifa.agent.execution.api.ManagedProcessSession {
@@ -420,5 +412,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         return new ExecutionRejectedException(code, message);
     }
 
-    private record ResolvedSandbox(SandboxProfile profile, SandboxProvider provider, WorkspaceMount mount) {}
+    private record ResolvedSandbox(
+            SandboxProfile profile,
+            SandboxProvider provider,
+            io.haifa.agent.project.workspace.WorkspaceId workspaceId) {}
 }

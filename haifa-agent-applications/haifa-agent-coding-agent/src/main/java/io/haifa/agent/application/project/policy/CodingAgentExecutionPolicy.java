@@ -1,8 +1,6 @@
 package io.haifa.agent.application.project.policy;
 
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
-import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
-import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
@@ -18,6 +16,7 @@ import io.haifa.agent.execution.core.ExecutionRejectedException;
 import io.haifa.agent.execution.core.command.CredentialEgressGuard;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
+import io.haifa.agent.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier;
@@ -42,7 +41,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             List.of("diff", "--numstat", "HEAD", "--"));
 
     private final RuntimeToolExecutionVerifier runtime;
-    private final WorkspaceAccessStore workspaceAccess;
     private final AuthorizedWorkspaceProvisioning provisioning;
     private final TenantRef tenant;
     private final PrincipalRef principal;
@@ -55,7 +53,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
 
     public CodingAgentExecutionPolicy(
             RuntimeToolExecutionVerifier runtime,
-            WorkspaceAccessStore workspaceAccess,
             AuthorizedWorkspaceProvisioning provisioning,
             TenantRef tenant,
             PrincipalRef principal,
@@ -66,7 +63,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             int maximumModelOutputBytes,
             Optional<Integer> maximumProcesses) {
         this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
-        this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
         this.provisioning = Objects.requireNonNull(provisioning, "provisioning must not be null");
         this.tenant = Objects.requireNonNull(tenant, "tenant must not be null");
         this.principal = Objects.requireNonNull(principal, "principal must not be null");
@@ -90,7 +86,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
 
     public CodingAgentExecutionPolicy(
             RuntimeToolExecutionVerifier runtime,
-            WorkspaceAccessStore workspaceAccess,
             AuthorizedWorkspaceProvisioning provisioning,
             TenantRef tenant,
             PrincipalRef principal,
@@ -102,7 +97,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             int maximumProcesses) {
         this(
                 runtime,
-                workspaceAccess,
                 provisioning,
                 tenant,
                 principal,
@@ -116,7 +110,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
 
     public CodingAgentExecutionPolicy(
             RuntimeToolExecutionVerifier runtime,
-            WorkspaceAccessStore workspaceAccess,
             AuthorizedWorkspaceProvisioning provisioning,
             TenantRef tenant,
             PrincipalRef principal,
@@ -126,7 +119,6 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
             int maximumModelOutputBytes) {
         this(
                 runtime,
-                workspaceAccess,
                 provisioning,
                 tenant,
                 principal,
@@ -268,7 +260,7 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
     }
 
     private void requireWorkspace(ExecutionRequest request, WorkspaceAccessMode mode) {
-        workspaceAccess.require(tenant, principal, request.workspaceId(), mode);
+        provisioning.requireAuthorized(tenant, principal, request.workspaceId(), mode);
         String workdir = request.workingDirectory().projectPath().toString();
         if (!provisioning
                 .scope()

@@ -222,9 +222,8 @@ class CodingTerminalInteractionTest {
     void settingsStaysUnavailableWhileTrustListsAndRevokesCurrentWorkspaceAccess() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         client.workspaces = List.of(
-                new CodingWorkspaceView("workspace-initial", "haifa-agent", "DEVELOP", "initial", "active", false),
-                new CodingWorkspaceView(
-                        "workspace-docs", "haifa-agent-docs", "READ", "approved-attach", "active", true));
+                new CodingWorkspaceView("workspace-initial", "haifa-agent", "DEVELOP", "active", false),
+                new CodingWorkspaceView("workspace-docs", "haifa-agent-docs", "READ", "active", true));
         var controller = controller(client);
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, "/settings"));
@@ -237,8 +236,8 @@ class CodingTerminalInteractionTest {
             assertThat(selector.title()).isEqualTo("Workspace trust");
             assertThat(selector.options())
                     .containsExactly(
-                            "haifa-agent · DEVELOP · active · initial · workspace-initial",
-                            "haifa-agent-docs · READ · active · approved-attach · workspace-docs · revocable");
+                            "haifa-agent · DEVELOP · active · workspace-initial",
+                            "haifa-agent-docs · READ · active · workspace-docs · revocable");
         });
 
         controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));

@@ -18,7 +18,7 @@ Public effects are `ALLOW`, `ASK`, and `DENY`. An `ASK` must carry a challenge; 
 Policy cannot expand Tool capabilities, Workspace access, Credential scope, Sandbox availability, or host-path safety.
 
 Snapshot, Decision-ID/Store, Evidence, Grant, Project Trust, and the obsolete full-request digest have been removed.
-`PolicyContext` contains only live request context needed by the pure evaluator; CA authorization comes from current
-WorkspaceAccess and path safety, while PA keeps its own product facts.
+`PolicyContext` contains only live request context needed by the pure evaluator; CA authorization comes from the current
+authorized-directory record and path safety, while PA keeps its own product facts.
 
 This module does not depend on Runtime, Tool, Execution, databases, frameworks, or product-specific policy.

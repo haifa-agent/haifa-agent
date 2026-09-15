@@ -4,18 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.core.diff.DiffService;
-import io.haifa.agent.project.core.mutation.AuthorizedWorkspaceMutationService;
 import io.haifa.agent.project.core.mutation.InMemoryWorkspaceWriteLeaseManager;
 import io.haifa.agent.project.core.patch.ApplyPatchParser;
 import io.haifa.agent.project.core.patch.PatchService;
 import io.haifa.agent.project.core.patch.PatchValidationService;
 import io.haifa.agent.project.core.patch.UnifiedPatchParser;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.diff.DiffFile;
 import io.haifa.agent.project.diff.DiffRequest;
@@ -37,12 +31,8 @@ import io.haifa.agent.project.patch.PatchConflictCode;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -65,10 +55,10 @@ class HostWorkspaceMutationServiceTest {
     @Test
     void createsWritesMovesDeletesAndReplaysWithStableVersions() throws Exception {
         Files.writeString(root.resolve("a.txt"), "alpha\n", StandardCharsets.UTF_8);
-        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
+        Fixture fixture = fixture();
         WorkspaceRevision initial = fixture.workspace().revision();
 
-        var created = fixture.authorized()
+        var created = fixture.local()
                 .create(new CreateFileRequest(
                         fixture.path("b.txt"),
                         bytes("bravo\n"),
@@ -81,7 +71,7 @@ class HostWorkspaceMutationServiceTest {
         assertThat(created.resultRevision().sequence()).isGreaterThan(initial.sequence());
 
         WorkspaceRevision revision = fixture.workspace().revision();
-        var written = fixture.authorized()
+        var written = fixture.local()
                 .write(new WriteFileRequest(
                         fixture.path("a.txt"),
                         bytes("updated\r\n"),
@@ -89,7 +79,7 @@ class HostWorkspaceMutationServiceTest {
                         context("write")));
         revision = written.resultRevision();
 
-        var moved = fixture.authorized()
+        var moved = fixture.local()
                 .move(new MoveFileRequest(
                         fixture.path("b.txt"),
                         fixture.path("c.txt"),
@@ -99,7 +89,7 @@ class HostWorkspaceMutationServiceTest {
         assertThat(Files.exists(root.resolve("b.txt"))).isFalse();
         assertThat(Files.readString(root.resolve("c.txt"))).isEqualTo("bravo\n");
 
-        var deleted = fixture.authorized()
+        var deleted = fixture.local()
                 .delete(new DeleteFileRequest(
                         fixture.path("c.txt"),
                         MutationPrecondition.existing(revision, hash("bravo\n")),
@@ -113,10 +103,10 @@ class HostWorkspaceMutationServiceTest {
         Path generated = root.resolve("generated");
         Files.createDirectories(generated.resolve("nested"));
         Files.writeString(generated.resolve("nested/artifact.txt"), "temporary");
-        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
+        Fixture fixture = fixture();
         WorkspaceRevision revision = fixture.workspace().revision();
 
-        assertThatThrownBy(() -> fixture.authorized()
+        assertThatThrownBy(() -> fixture.local()
                         .delete(new DeleteFileRequest(
                                 fixture.path("generated"),
                                 MutationPrecondition.existing(revision, "directory:empty"),
@@ -127,12 +117,12 @@ class HostWorkspaceMutationServiceTest {
     }
 
     @Test
-    void rejectsWrongHashReadOnlyAndConcurrentLeaseWithoutOverwriting() throws Exception {
+    void rejectsWrongHashAndConcurrentLeaseWithoutOverwriting() throws Exception {
         Files.writeString(root.resolve("a.txt"), "alpha", StandardCharsets.UTF_8);
-        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
+        Fixture fixture = fixture();
         WorkspaceRevision revision = fixture.workspace().revision();
 
-        assertThatThrownBy(() -> fixture.authorized()
+        assertThatThrownBy(() -> fixture.local()
                         .write(new WriteFileRequest(
                                 fixture.path("a.txt"),
                                 bytes("overwrite"),
@@ -143,7 +133,7 @@ class HostWorkspaceMutationServiceTest {
         assertThat(Files.readString(root.resolve("a.txt"))).isEqualTo("alpha");
 
         try (WorkspaceWriteLease ignored = fixture.leases().acquire(fixture.workspaceId(), "holder")) {
-            assertThatThrownBy(() -> fixture.authorized()
+            assertThatThrownBy(() -> fixture.local()
                             .create(new CreateFileRequest(
                                     fixture.path("blocked.txt"),
                                     bytes("blocked"),
@@ -152,38 +142,6 @@ class HostWorkspaceMutationServiceTest {
                     .isInstanceOfSatisfying(WorkspaceMutationException.class, exception -> assertThat(exception.code())
                             .isEqualTo(MutationErrorCode.WRITE_LEASE_UNAVAILABLE));
         }
-
-        Fixture readOnly = fixture(
-                WorkspaceBindingMode.READ_ONLY,
-                WorkspacePermissionSet.readOnly(),
-                "workspace-read-only",
-                "binding-read-only");
-        WorkspaceRevision readOnlyRevision = readOnly.workspace().revision();
-        var create = new CreateFileRequest(
-                readOnly.path("denied.txt"),
-                bytes("denied"),
-                MutationPrecondition.absent(readOnlyRevision),
-                context("ro-create"));
-        var write = new WriteFileRequest(
-                readOnly.path("a.txt"),
-                bytes("denied"),
-                MutationPrecondition.existing(readOnlyRevision, hash("alpha")),
-                context("ro-write"));
-        var delete = new DeleteFileRequest(
-                readOnly.path("a.txt"),
-                MutationPrecondition.existing(readOnlyRevision, hash("alpha")),
-                context("ro-delete"));
-        var move = new MoveFileRequest(
-                readOnly.path("a.txt"), readOnly.path("moved.txt"),
-                MutationPrecondition.existing(readOnlyRevision, hash("alpha")), context("ro-move"));
-        assertReadOnly(() -> readOnly.authorized().create(create));
-        assertReadOnly(() -> readOnly.authorized().write(write));
-        assertReadOnly(() -> readOnly.authorized().delete(delete));
-        assertReadOnly(() -> readOnly.authorized().move(move));
-        assertReadOnly(() -> readOnly.local().create(create));
-        assertReadOnly(() -> readOnly.local().write(write));
-        assertReadOnly(() -> readOnly.local().delete(delete));
-        assertReadOnly(() -> readOnly.local().move(move));
     }
 
     @Test
@@ -194,8 +152,8 @@ class HostWorkspaceMutationServiceTest {
         } catch (UnsupportedOperationException | java.nio.file.FileSystemException exception) {
             Assumptions.assumeTrue(false, "symbolic links are unavailable on this test host");
         }
-        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
-        assertThatThrownBy(() -> fixture.authorized()
+        Fixture fixture = fixture();
+        assertThatThrownBy(() -> fixture.local()
                         .create(new CreateFileRequest(
                                 fixture.path("linked/escape.txt"),
                                 bytes("escape"),
@@ -211,7 +169,7 @@ class HostWorkspaceMutationServiceTest {
         String before = "\uFEFFone\r\ntwo\r\n";
         String after = "\uFEFFONE\r\ntwo\r\n";
         Files.writeString(root.resolve("bom.txt"), before, StandardCharsets.UTF_8);
-        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
+        Fixture fixture = fixture();
 
         var diff = new DiffService()
                 .generate(new DiffRequest(
@@ -219,10 +177,7 @@ class HostWorkspaceMutationServiceTest {
         var document = new UnifiedPatchParser(10, 100, 4096).parse(fixture.workspaceId(), diff.unifiedDiff());
         assertThat(document.sha256()).isEqualTo(diff.sha256());
         var patchService = new PatchService(
-                fixture.workspaceStore(),
-                fixture.files(),
-                fixture.authorized(),
-                new PatchValidationService(10, 20, 100));
+                fixture.workspaceStore(), fixture.files(), fixture.local(), new PatchValidationService(10, 20, 100));
         var result = patchService.apply(new PatchApplyRequest(
                 fixture.workspaceId(),
                 document,
@@ -255,7 +210,7 @@ class HostWorkspaceMutationServiceTest {
             writer.write("tail-anchor\nold-tail\n");
         }
         assertThat(Files.size(large)).isGreaterThan(16L * 1024 * 1024);
-        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
+        Fixture fixture = fixture();
         var document = new ApplyPatchParser(10, 100, 1_000, 64 * 1024)
                 .parse(
                         fixture.workspaceId(),
@@ -271,7 +226,7 @@ class HostWorkspaceMutationServiceTest {
         var result = new PatchService(
                         fixture.workspaceStore(),
                         fixture.files(),
-                        fixture.authorized(),
+                        fixture.local(),
                         new PatchValidationService(10, 100, 1_000))
                 .apply(new PatchApplyRequest(
                         fixture.workspaceId(),
@@ -294,7 +249,7 @@ class HostWorkspaceMutationServiceTest {
     @Test
     void parsesAndAppliesMultiFileContextPatchWithMove() throws Exception {
         Files.writeString(root.resolve("old.txt"), "section\nold\n", StandardCharsets.UTF_8);
-        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
+        Fixture fixture = fixture();
         var document = new ApplyPatchParser(10, 100, 1_000, 64 * 1024)
                 .parse(
                         fixture.workspaceId(),
@@ -312,7 +267,7 @@ class HostWorkspaceMutationServiceTest {
         var result = new PatchService(
                         fixture.workspaceStore(),
                         fixture.files(),
-                        fixture.authorized(),
+                        fixture.local(),
                         new PatchValidationService(10, 100, 1_000))
                 .apply(new PatchApplyRequest(
                         fixture.workspaceId(),
@@ -355,7 +310,7 @@ class HostWorkspaceMutationServiceTest {
     void reportsStructuredPartialPatchResultWithoutClaimingBatchAtomicity() throws Exception {
         Files.writeString(root.resolve("first.txt"), "first\n", StandardCharsets.UTF_8);
         Files.writeString(root.resolve("second.txt"), "second\n", StandardCharsets.UTF_8);
-        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
+        Fixture fixture = fixture();
         var diff = new DiffService()
                 .generate(new DiffRequest(
                         List.of(
@@ -370,7 +325,7 @@ class HostWorkspaceMutationServiceTest {
                 new io.haifa.agent.project.mutation.WorkspaceMutationService() {
                     @Override
                     public io.haifa.agent.project.mutation.MutationResult create(CreateFileRequest request) {
-                        return fixture.authorized().create(request);
+                        return fixture.local().create(request);
                     }
 
                     @Override
@@ -379,17 +334,17 @@ class HostWorkspaceMutationServiceTest {
                             throw new WorkspaceMutationException(
                                     MutationErrorCode.IO_FAILURE, request.path(), "simulated provider rejection");
                         }
-                        return fixture.authorized().write(request);
+                        return fixture.local().write(request);
                     }
 
                     @Override
                     public io.haifa.agent.project.mutation.MutationResult delete(DeleteFileRequest request) {
-                        return fixture.authorized().delete(request);
+                        return fixture.local().delete(request);
                     }
 
                     @Override
                     public io.haifa.agent.project.mutation.MutationResult move(MoveFileRequest request) {
-                        return fixture.authorized().move(request);
+                        return fixture.local().move(request);
                     }
                 };
         var result = new PatchService(
@@ -410,39 +365,17 @@ class HostWorkspaceMutationServiceTest {
         assertThat(Files.readString(root.resolve("second.txt"))).isEqualTo("second\n");
     }
 
-    private Fixture fixture(WorkspaceBindingMode mode, WorkspacePermissionSet permissions) {
-        return fixture(mode, permissions, "workspace-1", "binding-1");
+    private Fixture fixture() {
+        return fixture("workspace-1");
     }
 
-    private Fixture fixture(
-            WorkspaceBindingMode mode, WorkspacePermissionSet permissions, String workspaceValue, String bindingValue) {
+    private Fixture fixture(String workspaceValue) {
         WorkspaceId workspaceId = new WorkspaceId(workspaceValue);
-        WorkspaceBindingId bindingId = new WorkspaceBindingId(bindingValue);
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("location-" + workspaceValue);
-        var bindingStore = new InMemoryWorkspaceBindingStore();
         var workspaceStore = new InMemoryWorkspaceStore();
         var locations = new HostWorkspaceLocationStore();
-        locations.register(locationRef, root);
-        WorkspaceBinding binding = WorkspaceBinding.provision(
-                        bindingId,
-                        locationRef,
-                        mode,
-                        new PrincipalRef("owner", "user"),
-                        mode == WorkspaceBindingMode.READ_ONLY
-                                ? WorkspaceCapabilitySet.readOnlyFiles()
-                                : WorkspaceCapabilitySet.readWriteFiles(),
-                        permissions,
-                        HostWorkspaceLocationStore.fingerprintFor(root),
-                        NOW)
-                .activate(NOW);
-        bindingStore.create(binding);
+        locations.register(workspaceId, root);
         Workspace workspace = Workspace.provision(
-                        workspaceId,
-                        new ProjectId("project-1"),
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
-                        WorkspaceRevision.initial(binding.rootFingerprint()),
-                        NOW)
+                        workspaceId, new ProjectId("project-1"), WorkspaceRevision.initial("test"), NOW)
                 .activate(NOW);
         workspaceStore.create(workspace);
         var identifiers = new AtomicInteger();
@@ -450,17 +383,10 @@ class HostWorkspaceMutationServiceTest {
                 (io.haifa.agent.common.id.IdentifierGenerator) () -> "phase2-" + identifiers.incrementAndGet();
         var leases = new InMemoryWorkspaceWriteLeaseManager();
         var local = new HostWorkspaceMutationService(
-                workspaceStore,
-                bindingStore,
-                locations,
-                SensitivePathPolicy.defaults(),
-                leases,
-                idGenerator,
-                () -> NOW);
-        var authorized = new AuthorizedWorkspaceMutationService(workspaceStore, bindingStore, local);
+                workspaceStore, locations, SensitivePathPolicy.defaults(), leases, idGenerator, () -> NOW);
         var files = new io.haifa.agent.project.hostworkspace.HostWorkspaceFileService(
-                workspaceStore, bindingStore, locations, SensitivePathPolicy.defaults());
-        return new Fixture(workspaceId, workspaceStore, bindingStore, locations, local, authorized, files, leases);
+                workspaceStore, locations, SensitivePathPolicy.defaults());
+        return new Fixture(workspaceId, workspaceStore, locations, local, files, leases);
     }
 
     private static MutationContext context(String operationId) {
@@ -484,19 +410,11 @@ class HostWorkspaceMutationServiceTest {
         return "sha256:" + HexFormat.of().formatHex(digest.digest());
     }
 
-    private static void assertReadOnly(org.assertj.core.api.ThrowableAssert.ThrowingCallable operation) {
-        assertThatThrownBy(operation)
-                .isInstanceOfSatisfying(WorkspaceMutationException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(MutationErrorCode.READ_ONLY));
-    }
-
     private record Fixture(
             WorkspaceId workspaceId,
             InMemoryWorkspaceStore workspaceStore,
-            InMemoryWorkspaceBindingStore bindingStore,
             HostWorkspaceLocationStore locations,
             HostWorkspaceMutationService local,
-            AuthorizedWorkspaceMutationService authorized,
             io.haifa.agent.project.hostworkspace.HostWorkspaceFileService files,
             InMemoryWorkspaceWriteLeaseManager leases) {
         private Workspace workspace() {
