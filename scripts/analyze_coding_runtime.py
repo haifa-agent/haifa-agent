@@ -206,14 +206,6 @@ def _unavailable(reason: str) -> dict[str, str]:
     return {"status": "UNAVAILABLE", "reason": reason}
 
 
-def _is_composite(command: Any) -> bool:
-    if not isinstance(command, str):
-        return False
-    return any(token in command for token in (";", "&&", "||", "|", ">", "<", "\n", "\r", "`")) or bool(
-        re.match(r"(?is)^\s*(?:powershell|pwsh|cmd|bash|sh|env)\b", command)
-    )
-
-
 def _required_metrics_empty() -> dict[str, Any]:
     no_samples = _unavailable("NO_SAMPLES_IN_WINDOW")
     return {
@@ -221,7 +213,6 @@ def _required_metrics_empty() -> dict[str, Any]:
         "policyDenialRate": _rate(0, 0, "denied"),
         "hardBoundaryDenialRate": _rate(0, 0, "denied"),
         "approvalAskAllowRateByThreshold": _unavailable("APPROVAL_DECISIONS_NOT_IN_REQUIRED_SOURCE_SCHEMA"),
-        "compositeCommandAdmissionCompletionRate": _rate(0, 0, "admitted"),
         "toolInfrastructureFailureRate": _rate(0, 0, "failed"),
         "sameFingerprintRetryAmplification": dict(no_samples),
         "runCompletionFailedCancelled": {"status": "MEASURED", "counts": {}},
@@ -310,8 +301,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
     failure_classes: Counter[str] = Counter()
     policy_denials = 0
     hard_boundary_denials = 0
-    composite_total = 0
-    composite_completed = 0
     infrastructure_failures = 0
     first_change_by_run: dict[str, tuple[int, int]] = {}
     calls_by_run: Counter[str] = Counter()
@@ -325,10 +314,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
         attributes = _attributes(row["error_payload"])
         command = arguments.get("command")
         calls_by_run[str(row["run_id"])] += 1
-        if tool_name == "execution_run" and _is_composite(command):
-            composite_total += 1
-            if status == "COMPLETED":
-                composite_completed += 1
         if ("fileChangeSetId" in result or "changeSetId" in result) and str(row["run_id"]) not in first_change_by_run:
             first_change_by_run[str(row["run_id"])] = (
                 int(row["requested_at"]),
@@ -468,14 +453,6 @@ def analyze(connection: sqlite3.Connection, latest_hours: float) -> dict[str, An
         "policyDenialRate": _rate(policy_denials, total_tools, "denied"),
         "hardBoundaryDenialRate": _rate(hard_boundary_denials, total_tools, "denied"),
         "approvalAskAllowRateByThreshold": _unavailable("APPROVAL_DECISIONS_NOT_IN_REQUIRED_SOURCE_SCHEMA"),
-        "compositeCommandAdmissionCompletionRate": {
-            "status": "MEASURED",
-            "total": composite_total,
-            "admitted": composite_total,
-            "admissionRatePercent": _percentage(composite_total, composite_total),
-            "completed": composite_completed,
-            "completionRatePercent": _percentage(composite_completed, composite_total),
-        },
         "toolInfrastructureFailureRate": _rate(infrastructure_failures, total_tools, "failed"),
         "sameFingerprintRetryAmplification": retry_metric,
         "runCompletionFailedCancelled": {"status": "MEASURED", "counts": run_statuses},
