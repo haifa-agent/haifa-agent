@@ -104,6 +104,18 @@ class CredentialEgressGuardTest {
     }
 
     @Test
+    void allowsEnvLaunchedCommandsWithBenignAssignmentLikeArguments() {
+        for (String command : new String[] {
+            "env echo HOME=value",
+            "env printenv GH_TOKEN=value",
+            "env -i echo GIT_ASKPASS=/tmp/pass.sh",
+            "env FOO=1 echo HOME=value"
+        }) {
+            assertThat(CredentialEgressGuard.rejectionCode(command)).as(command).isEmpty();
+        }
+    }
+
+    @Test
     void documentsTheKnownLimitsOfTheLeadingTokenContract() {
         for (String command : new String[] {
             "echo starting && HOME=/tmp git status", "bash -c 'git credential fill'", "sh -c \"gh auth token\""

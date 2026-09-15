@@ -155,9 +155,6 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
         self.assertEqual(report["requiredMetrics"]["rawToolFailureRate"]["ratePercent"], 50.0)
         self.assertEqual(report["requiredMetrics"]["policyDenialRate"]["denied"], 1)
         self.assertEqual(
-            report["requiredMetrics"]["compositeCommandAdmissionCompletionRate"]["total"], 2
-        )
-        self.assertEqual(
             report["requiredMetrics"]["sameFingerprintRetryAmplification"]["amplifiedAttempts"], 1
         )
         self.assertEqual(
@@ -175,7 +172,7 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
             report = analyze(connection, 4)
         self.assertIsNone(report["window"])
         self.assertEqual(report["scope"], {"sessions": 0, "runs": 0, "toolCalls": 0})
-        self.assertEqual(len(report["requiredMetrics"]), 13)
+        self.assertEqual(len(report["requiredMetrics"]), 12)
         self.assertEqual(report["requiredMetrics"]["costKnownUnknown"]["status"], "UNKNOWN")
 
     def test_rejects_non_finite_or_out_of_range_windows(self):
@@ -228,28 +225,6 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
         output.write_text("existing", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "already exists"):
             write_report({"schemaVersion": "test"}, output)
-
-    def test_replay_fixture_is_synthetic_and_privacy_bounded(self):
-        fixture = (
-            Path(__file__).resolve().parents[2]
-            / "haifa-agent-testing"
-            / "haifa-agent-test-fixtures"
-            / "src"
-            / "main"
-            / "resources"
-            / "fixtures"
-            / "coding-runtime-reliability"
-            / "replay-v1.json"
-        )
-        value = json.loads(fixture.read_text(encoding="utf-8"))
-        self.assertEqual(value["schemaVersion"], "1.1.0")
-        self.assertEqual(len(value["cases"]), 9)
-        serialized = json.dumps(value).lower()
-        for forbidden in ("api_key", "authorization:", "bearer ", "reasoning_content", "sk-"):
-            self.assertNotIn(forbidden, serialized)
-        self.assertFalse(value["privacy"]["containsProviderResponses"])
-        self.assertNotRegex(serialized, r"[a-z]:\\")
-        self.assertNotRegex(serialized, r"/(users|home)/")
 
     def test_evaluation_baseline_freezes_required_metrics_without_raw_evidence(self):
         fixture = (

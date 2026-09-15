@@ -51,7 +51,6 @@ public final class CredentialEgressGuard {
             "GIT_SSH_COMMAND",
             "GIT_ASKPASS",
             "SSH_ASKPASS");
-    private static final Set<String> ASSIGNMENT_COMMANDS = Set.of("env", "export", "set");
     private static final Set<String> CREDENTIAL_CONFIG_KEYS =
             Set.of("credential.", "extraheader", "sshcommand", "credentialhelper");
 
@@ -78,8 +77,15 @@ public final class CredentialEgressGuard {
         }
         List<String> commandWords = words.subList(index, words.size());
         String head = commandHead(commandWords.getFirst());
-        if (ASSIGNMENT_COMMANDS.contains(head)
-                && hasProtectedAssignment(commandWords.subList(1, commandWords.size()), head.equals("set"))) {
+        if (head.equals("env") && envPrefixOverridesProtectedEnvironment(commandWords)) {
+            return Optional.of(ENVIRONMENT_OVERRIDE_CODE);
+        }
+        if (head.equals("export") && hasProtectedAssignment(commandWords.subList(1, commandWords.size()))) {
+            return Optional.of(ENVIRONMENT_OVERRIDE_CODE);
+        }
+        if (head.equals("set")
+                && commandWords.size() > 1
+                && isProtectedAssignment(stripSurroundingQuotes(commandWords.get(1)))) {
             return Optional.of(ENVIRONMENT_OVERRIDE_CODE);
         }
         if (head.startsWith(ENV_PREFIX) && isProtectedPowerShellAssignment(commandWords)) {
@@ -122,10 +128,30 @@ public final class CredentialEgressGuard {
         return PROTECTED_ENVIRONMENT.contains(name.toUpperCase(Locale.ROOT));
     }
 
-    private static boolean hasProtectedAssignment(List<String> words, boolean stripQuotes) {
+    /**
+     * {@code env [OPTION]... [NAME=VALUE]... COMMAND} applies only its leading option/assignment
+     * prefix to the launched command. Later tokens are the launched command's own arguments and must
+     * not be read as host environment overrides.
+     */
+    private static boolean envPrefixOverridesProtectedEnvironment(List<String> commandWords) {
+        for (int index = 1; index < commandWords.size(); index++) {
+            String word = commandWords.get(index);
+            if (word.startsWith("-")) {
+                continue;
+            }
+            if (!isAssignment(word)) {
+                return false;
+            }
+            if (isProtectedAssignment(word)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasProtectedAssignment(List<String> words) {
         for (String word : words) {
-            String candidate = stripQuotes ? stripSurroundingQuotes(word) : word;
-            if (isAssignment(candidate) && isProtectedAssignment(candidate)) {
+            if (isAssignment(word) && isProtectedAssignment(word)) {
                 return true;
             }
         }
