@@ -747,8 +747,7 @@ record CliConfiguration(
         }
 
         static Skills defaults() {
-            return new Skills(
-                    Set.of("task-planning", "result-verification", "git", "github", "git-delivery"), List.of());
+            return new Skills(Set.of("task-planning", "result-verification", "git", "github"), List.of());
         }
     }
 

@@ -104,4 +104,48 @@ class BaseSkillsTest {
             assertThat(registration.packageIndex().resources()).hasSize(1);
         });
     }
+
+    @Test
+    void gitSkillChecksDeliveryBoundariesAndCredentialProtection() throws Exception {
+        try (var input = BaseSkillsTest.class.getResourceAsStream("/META-INF/haifa-agent/skills/git/SKILL.md")) {
+            assertThat(input).isNotNull();
+            String skill = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(skill)
+                    .contains(
+                            "has no readable auxiliary resources; do not call `skill_resource_read` to guess resource paths",
+                            "Inspect before mutating",
+                            "Respect repository boundaries",
+                            "In workspaces with separate repositories",
+                            "Precise staging",
+                            "Validation before delivery",
+                            "User authorization",
+                            "Credential hygiene",
+                            "Never read, copy, request, print, or persist tokens, private keys, or credential files",
+                            "Authoritative fact verification",
+                            "blind replay is strictly prohibited",
+                            "Final state confirmation",
+                            "A commit does not imply a push, and a push does not imply a pull request")
+                    .doesNotContain("git-delivery", "workflow.md", "index.md");
+        }
+    }
+
+    @Test
+    void githubSkillChecksRemoteCollaborationBoundariesAndNoAuxiliaryResources() throws Exception {
+        try (var input = BaseSkillsTest.class.getResourceAsStream("/META-INF/haifa-agent/skills/github/SKILL.md")) {
+            assertThat(input).isNotNull();
+            String skill = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(skill)
+                    .contains(
+                            "has no readable auxiliary resources; do not call `skill_resource_read` to guess resource paths",
+                            "System authentication",
+                            "User authorization",
+                            "Policy and boundaries",
+                            "Credential protection",
+                            "Never run commands that reveal tokens or credential files",
+                            "Authoritative fact verification",
+                            "Verification of delivery state",
+                            "A commit does not imply a push, a push does not imply a PR")
+                    .doesNotContain("git-delivery", "workflow.md", "index.md");
+        }
+    }
 }
