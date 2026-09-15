@@ -9,10 +9,6 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.session.AgentSession;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.SessionScope;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.core.store.InMemoryProjectStore;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectId;
@@ -20,8 +16,6 @@ import io.haifa.agent.project.domain.ProjectStatus;
 import io.haifa.agent.project.path.FileSystemSemantics;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.store.ProjectStoreConflictException;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import java.time.Instant;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -88,31 +82,5 @@ class ProjectCoreTest {
             String safe = "dir-" + index + "/file-" + (index * 17) + ".txt";
             assertThat(ProjectPath.of(safe).value()).isEqualTo(safe);
         }
-    }
-
-    @Test
-    void phaseThreeAllowsProviderOwnedIsolationModesAndReadOnlyCannotGrantWrites() {
-        var location = new WorkspaceLocationRef("local-1");
-        assertThat(WorkspaceBinding.provision(
-                                new WorkspaceBindingId("binding-2"),
-                                location,
-                                WorkspaceBindingMode.EPHEMERAL_COPY,
-                                OWNER,
-                                WorkspaceCapabilitySet.readOnlyFiles(),
-                                WorkspacePermissionSet.readOnly(),
-                                "sha256:root",
-                                NOW)
-                        .mode())
-                .isEqualTo(WorkspaceBindingMode.EPHEMERAL_COPY);
-        assertThatThrownBy(() -> WorkspaceBinding.provision(
-                        new WorkspaceBindingId("binding-3"),
-                        location,
-                        WorkspaceBindingMode.READ_ONLY,
-                        OWNER,
-                        WorkspaceCapabilitySet.executionFiles(),
-                        WorkspacePermissionSet.readWriteExecute(),
-                        "sha256:root",
-                        NOW))
-                .isInstanceOf(IllegalArgumentException.class);
     }
 }

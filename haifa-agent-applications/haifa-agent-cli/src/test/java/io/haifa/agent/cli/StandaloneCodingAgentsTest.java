@@ -25,7 +25,6 @@ class StandaloneCodingAgentsTest {
             assertThat(first.client().workspaces()).singleElement().satisfies(workspace -> {
                 assertThat(workspace.safeDisplayName()).isNotBlank();
                 assertThat(workspace.mode()).isEqualTo("DEVELOP");
-                assertThat(workspace.source()).isEqualTo("initial");
                 assertThat(workspace.status()).isEqualTo("active");
                 assertThat(workspace.revocable()).isFalse();
                 assertThat(workspace.toString()).doesNotContain(firstWorkspace.toString());

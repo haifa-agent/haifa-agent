@@ -3,11 +3,6 @@ package io.haifa.agent.project;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.changeset.FileChange;
 import io.haifa.agent.project.changeset.FileVersion;
 import io.haifa.agent.project.configuration.ProjectConfiguration;
@@ -15,7 +10,6 @@ import io.haifa.agent.project.configuration.ProjectConfigurationId;
 import io.haifa.agent.project.configuration.ProjectConfigurationVersion;
 import io.haifa.agent.project.core.configuration.InMemoryProjectConfigurationStore;
 import io.haifa.agent.project.core.index.ProjectIndexService;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.filesystem.FileType;
@@ -26,12 +20,8 @@ import io.haifa.agent.project.index.IndexStatus;
 import io.haifa.agent.project.index.file.FileIndexQuery;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -164,33 +154,14 @@ class ProjectIndexTest {
 
     private Fixture fixture() {
         var workspaces = new InMemoryWorkspaceStore();
-        var bindings = new InMemoryWorkspaceBindingStore();
         var locations = new HostWorkspaceLocationStore();
         WorkspaceId workspaceId = new WorkspaceId("workspace-1");
-        WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-1");
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("location-1");
-        locations.register(locationRef, root);
-        WorkspaceBinding binding = WorkspaceBinding.provision(
-                        bindingId,
-                        locationRef,
-                        WorkspaceBindingMode.DIRECT,
-                        new PrincipalRef("owner", "user"),
-                        WorkspaceCapabilitySet.readWriteFiles(),
-                        WorkspacePermissionSet.readWrite(),
-                        HostWorkspaceLocationStore.fingerprintFor(root),
-                        NOW)
-                .activate(NOW);
-        bindings.create(binding);
+        locations.register(workspaceId, root);
         Workspace workspace = Workspace.provision(
-                        workspaceId,
-                        new ProjectId("project-1"),
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
-                        WorkspaceRevision.initial(binding.rootFingerprint()),
-                        NOW)
+                        workspaceId, new ProjectId("project-1"), WorkspaceRevision.initial("test"), NOW)
                 .activate(NOW);
         workspaces.create(workspace);
-        var fileService = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        var fileService = new HostWorkspaceFileService(workspaces, locations, SensitivePathPolicy.defaults());
         return new Fixture(workspace, fileService, new ProjectIndexService(workspaces, fileService, () -> NOW));
     }
 

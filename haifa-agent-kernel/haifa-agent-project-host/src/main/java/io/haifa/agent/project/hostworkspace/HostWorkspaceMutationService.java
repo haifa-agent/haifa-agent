@@ -2,9 +2,6 @@ package io.haifa.agent.project.hostworkspace;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceBindingStatus;
 import io.haifa.agent.project.changeset.FileChange;
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.changeset.FileVersion;
@@ -24,10 +21,8 @@ import io.haifa.agent.project.patch.PatchFileMutationRequest;
 import io.haifa.agent.project.patch.PatchTransformException;
 import io.haifa.agent.project.patch.StreamingPatchMutationService;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspacePermission;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceStatus;
 import java.io.IOException;
@@ -51,7 +46,6 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
     private static final int MAX_CONTENT_BYTES = 16 * 1024 * 1024;
 
     private final WorkspaceStore workspaces;
-    private final WorkspaceBindingStore bindings;
     private final HostWorkspaceLocationStore locations;
     private final SensitivePathPolicy sensitivePaths;
     private final WorkspaceWriteLeaseManager leases;
@@ -60,14 +54,12 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
 
     public HostWorkspaceMutationService(
             WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
             HostWorkspaceLocationStore locations,
             SensitivePathPolicy sensitivePaths,
             WorkspaceWriteLeaseManager leases,
             IdentifierGenerator identifiers,
             TimeProvider time) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
-        this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
         this.locations = Objects.requireNonNull(locations, "locations must not be null");
         this.sensitivePaths = Objects.requireNonNull(sensitivePaths, "sensitivePaths must not be null");
         this.leases = Objects.requireNonNull(leases, "leases must not be null");
@@ -93,10 +85,10 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
     public MutationResult create(CreateFileRequest request) {
         Objects.requireNonNull(request, "request must not be null");
         ensureContentBudget(request.path(), request.content());
-        access(request.path(), WorkspacePermission.WRITE);
+        access(request.path());
         try (WorkspaceWriteLease ignored =
                 leases.acquire(request.path().workspaceId(), request.context().operationId())) {
-            Access access = access(request.path(), WorkspacePermission.WRITE);
+            Access access = access(request.path());
             validateRevision(access.workspace(), request.precondition(), request.path());
             Path target = resolveAbsent(access, request.path());
             boolean atomic = writeAtomically(
@@ -117,10 +109,10 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
     public MutationResult write(io.haifa.agent.project.mutation.WriteFileRequest request) {
         Objects.requireNonNull(request, "request must not be null");
         ensureContentBudget(request.path(), request.content());
-        access(request.path(), WorkspacePermission.WRITE);
+        access(request.path());
         try (WorkspaceWriteLease ignored =
                 leases.acquire(request.path().workspaceId(), request.context().operationId())) {
-            Access access = access(request.path(), WorkspacePermission.WRITE);
+            Access access = access(request.path());
             validateRevision(access.workspace(), request.precondition(), request.path());
             Path target = resolveExisting(access, request.path());
             FileVersion before = requireRegularVersion(target, request.path());
@@ -146,10 +138,10 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
     @Override
     public MutationResult patch(PatchFileMutationRequest request) {
         Objects.requireNonNull(request, "request must not be null");
-        access(request.path(), WorkspacePermission.WRITE);
+        access(request.path());
         try (WorkspaceWriteLease ignored =
                 leases.acquire(request.path().workspaceId(), request.context().operationId())) {
-            Access access = access(request.path(), WorkspacePermission.WRITE);
+            Access access = access(request.path());
             validateRevision(access.workspace(), request.precondition(), request.path());
             Path target = resolveExisting(access, request.path());
             FileVersion before = requireRegularVersion(target, request.path());
@@ -209,10 +201,10 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
     @Override
     public MutationResult delete(DeleteFileRequest request) {
         Objects.requireNonNull(request, "request must not be null");
-        access(request.path(), WorkspacePermission.DELETE);
+        access(request.path());
         try (WorkspaceWriteLease ignored =
                 leases.acquire(request.path().workspaceId(), request.context().operationId())) {
-            Access access = access(request.path(), WorkspacePermission.DELETE);
+            Access access = access(request.path());
             validateRevision(access.workspace(), request.precondition(), request.path());
             if (request.path().projectPath().isRoot()) {
                 throw failure(MutationErrorCode.PATH_DENIED, request.path(), "cannot delete workspace root");
@@ -242,12 +234,12 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
     @Override
     public MutationResult move(MoveFileRequest request) {
         Objects.requireNonNull(request, "request must not be null");
-        access(request.source(), WorkspacePermission.WRITE);
-        access(request.destination(), WorkspacePermission.WRITE);
+        access(request.source());
+        access(request.destination());
         try (WorkspaceWriteLease ignored =
                 leases.acquire(request.source().workspaceId(), request.context().operationId())) {
-            Access access = access(request.source(), WorkspacePermission.WRITE);
-            access(request.destination(), WorkspacePermission.WRITE);
+            Access access = access(request.source());
+            access(request.destination());
             validateRevision(access.workspace(), request.sourcePrecondition(), request.source());
             Path source = resolveExisting(access, request.source());
             Path destination = resolveAbsent(access, request.destination());
@@ -273,40 +265,22 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
         }
     }
 
-    private Access access(WorkspacePath path, WorkspacePermission permission) {
+    private Access access(WorkspacePath path) {
         Workspace workspace = workspaces
                 .find(path.workspaceId())
                 .orElseThrow(() -> failure(MutationErrorCode.WORKSPACE_NOT_FOUND, path, "workspace not found"));
         if (workspace.status() != WorkspaceStatus.ACTIVE) {
             throw failure(MutationErrorCode.WORKSPACE_INACTIVE, path, "workspace is not active");
         }
-        WorkspaceBinding binding = bindings.find(workspace.root().bindingId())
-                .orElseThrow(() -> failure(MutationErrorCode.BINDING_INACTIVE, path, "workspace binding not found"));
-        if (binding.status() != WorkspaceBindingStatus.ACTIVE) {
-            throw failure(MutationErrorCode.BINDING_INACTIVE, path, "workspace binding is not active");
-        }
-        if (binding.mode() == WorkspaceBindingMode.READ_ONLY) {
-            throw failure(MutationErrorCode.READ_ONLY, path, "read-only workspace rejects mutations");
-        }
-        if (!binding.permissions().allows(permission)) {
-            throw failure(MutationErrorCode.PERMISSION_DENIED, path, "workspace mutation permission denied");
-        }
-        String capability = permission == WorkspacePermission.DELETE ? "files.delete" : "files.write";
-        if (!binding.capabilities().allows(capability)) {
-            throw failure(MutationErrorCode.PERMISSION_DENIED, path, "workspace mutation capability denied");
-        }
         if (!sensitivePaths.mayRead(path.projectPath())) {
             throw failure(MutationErrorCode.PATH_DENIED, path, "protected logical path rejects mutations");
         }
         try {
-            Path root = locations.resolve(binding.locationRef()).toRealPath(LinkOption.NOFOLLOW_LINKS);
-            if (!HostWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint())
-                    || isLinkOrReparse(root)) {
-                throw failure(MutationErrorCode.BINDING_INACTIVE, path, "workspace root identity changed");
-            }
-            return new Access(workspace, binding, root);
-        } catch (IOException | IllegalStateException exception) {
-            throw failure(MutationErrorCode.BINDING_INACTIVE, path, "workspace location is unavailable");
+            Path root = locations.resolveVerified(workspace.id());
+            return new Access(workspace, root);
+        } catch (RuntimeException exception) {
+            throw failure(
+                    MutationErrorCode.BINDING_INACTIVE, path, "workspace root identity changed or is unavailable");
         }
     }
 
@@ -594,5 +568,5 @@ public final class HostWorkspaceMutationService implements WorkspaceMutationProv
         return new WorkspaceMutationException(code, path, message);
     }
 
-    private record Access(Workspace workspace, WorkspaceBinding binding, Path root) {}
+    private record Access(Workspace workspace, Path root) {}
 }

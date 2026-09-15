@@ -4,9 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.application.project.workspace.InMemoryWorkspaceAccessStore;
-import io.haifa.agent.application.project.workspace.WorkspaceAccess;
-import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ToolCallId;
@@ -23,34 +20,30 @@ import io.haifa.agent.execution.core.ExecutionPolicyEntryPoint;
 import io.haifa.agent.execution.core.ExecutionRejectedException;
 import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.policy.api.PolicyEffect;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.core.store.InMemoryProjectStore;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.core.workspace.WorkspaceService;
+import io.haifa.agent.project.domain.Project;
+import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.directory.InMemoryAuthorizedDirectoryStore;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
-import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
+import io.haifa.agent.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.RuntimeToolExecutionVerifier;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -60,7 +53,8 @@ class CodingAgentExecutionPolicyTest {
     private static final Instant NOW = Instant.parse("2026-09-08T00:00:00Z");
     private static final TenantRef TENANT = new TenantRef("tenant");
     private static final PrincipalRef PRINCIPAL = new PrincipalRef("actor", "user");
-    private static final WorkspaceId WORKSPACE = new WorkspaceId("workspace");
+    private static final WorkspaceId INITIAL_WORKSPACE = new WorkspaceId("workspace");
+    private static final ProjectId PROJECT = new ProjectId("project");
     private static final SandboxProfileRef PROFILE = new SandboxProfileRef("test", "1");
 
     @TempDir
@@ -72,16 +66,21 @@ class CodingAgentExecutionPolicyTest {
 
         assertThatCode(() -> fixture.policy()
                         .authorize(
-                                internal(List.of("status", "--porcelain=v1", "--untracked-files=normal")),
+                                internal(
+                                        List.of("status", "--porcelain=v1", "--untracked-files=normal"),
+                                        fixture.workspaceId()),
                                 ExecutionPolicyEntryPoint.FIRST_EXECUTION))
                 .doesNotThrowAnyException();
         assertThatThrownBy(() -> fixture.policy()
                         .authorize(
-                                internal(List.of("push", "origin", "main")), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                                internal(List.of("push", "origin", "main"), fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
                 .isInstanceOf(ExecutionRejectedException.class)
                 .hasMessageContaining("allowlist");
         assertThatThrownBy(() -> fixture.policy()
-                        .authorize(userCommand("git status"), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                        .authorize(
+                                userCommand("git status", fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("MODE_DENIED");
     }
@@ -91,8 +90,9 @@ class CodingAgentExecutionPolicyTest {
         Fixture fixture = fixture(WorkspaceAccessMode.READ);
 
         for (List<String> suffix : allowedInternalGitSuffixes()) {
-            assertThatCode(() ->
-                            fixture.policy().authorize(internal(suffix), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+            assertThatCode(() -> fixture.policy()
+                            .authorize(
+                                    internal(suffix, fixture.workspaceId()), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
                     .as(suffix.toString())
                     .doesNotThrowAnyException();
         }
@@ -103,8 +103,9 @@ class CodingAgentExecutionPolicyTest {
         Fixture fixture = fixture(WorkspaceAccessMode.READ);
 
         for (List<String> suffix : forbiddenInternalGitSuffixes()) {
-            assertThatThrownBy(() ->
-                            fixture.policy().authorize(internal(suffix), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+            assertThatThrownBy(() -> fixture.policy()
+                            .authorize(
+                                    internal(suffix, fixture.workspaceId()), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
                     .as(suffix.toString())
                     .isInstanceOf(ExecutionRejectedException.class)
                     .hasMessageContaining("allowlist");
@@ -114,13 +115,14 @@ class CodingAgentExecutionPolicyTest {
     @Test
     void readAccessRejectsInternalGitWithProcessLimit() throws Exception {
         Fixture fixture = fixture(WorkspaceAccessMode.READ);
+        WorkspaceId workspace = fixture.workspaceId();
         var argv = new java.util.ArrayList<>(List.of("git", "-c", "credential.interactive=never", "rev-parse", "HEAD"));
         var requestWithLimits = new ExecutionRequest(
                 new ExecutionId("internal"),
                 "internal-key",
                 context(ExecutionOrigin.PRODUCT_INTERNAL, Set.of("execution_run", "git.read"), Optional.empty()),
-                WORKSPACE,
-                WorkspacePath.root(WORKSPACE),
+                workspace,
+                WorkspacePath.root(workspace),
                 ExecutionCommand.direct(argv),
                 ExecutionEnvironmentRef.empty(),
                 new ExecutionLimits(Duration.ofSeconds(15), 4096, 64 * 1024, 4),
@@ -139,14 +141,20 @@ class CodingAgentExecutionPolicyTest {
         Fixture fixture = fixture(WorkspaceAccessMode.DEVELOP);
 
         assertThatCode(() -> fixture.policy()
-                        .authorize(userCommand("git status"), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                        .authorize(
+                                userCommand("git status", fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
                 .doesNotThrowAnyException();
         assertThatThrownBy(() -> fixture.policy()
-                        .authorize(userCommand("git status"), ExecutionPolicyEntryPoint.MANAGED_SESSION))
+                        .authorize(
+                                userCommand("git status", fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.MANAGED_SESSION))
                 .isInstanceOf(ExecutionRejectedException.class)
                 .hasMessageContaining("managed");
         assertThatThrownBy(() -> fixture.policy()
-                        .authorize(runtimeRequest(new ToolCallId("forged")), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                        .authorize(
+                                runtimeRequest(new ToolCallId("forged"), fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
                 .isInstanceOf(ExecutionRejectedException.class)
                 .hasMessageContaining("unavailable");
     }
@@ -156,10 +164,14 @@ class CodingAgentExecutionPolicyTest {
         Fixture fixture = fixture(WorkspaceAccessMode.DEVELOP);
 
         assertThatCode(() -> fixture.policy()
-                        .authorize(userCommand("git -C ../other status"), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                        .authorize(
+                                userCommand("git -C ../other status", fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
                 .doesNotThrowAnyException();
         assertThatThrownBy(() -> fixture.policy()
-                        .authorize(userCommand("gh auth token"), ExecutionPolicyEntryPoint.FIRST_EXECUTION))
+                        .authorize(
+                                userCommand("gh auth token", fixture.workspaceId()),
+                                ExecutionPolicyEntryPoint.FIRST_EXECUTION))
                 .isInstanceOf(ExecutionRejectedException.class)
                 .hasMessageContaining("credential boundary");
     }
@@ -167,11 +179,11 @@ class CodingAgentExecutionPolicyTest {
     @Test
     void replayRereadsCurrentWorkspaceAccessAndFailsClosedAfterRevoke() throws Exception {
         Fixture fixture = fixture(WorkspaceAccessMode.DEVELOP);
-        ExecutionRequest request = userCommand("git status");
+        ExecutionRequest request = userCommand("git status", fixture.workspaceId());
 
         assertThatCode(() -> fixture.policy().authorize(request, ExecutionPolicyEntryPoint.FIRST_EXECUTION))
                 .doesNotThrowAnyException();
-        fixture.access().delete(TENANT, PRINCIPAL, WORKSPACE);
+        fixture.provisioning().revoke(fixture.workspaceId());
 
         assertThatThrownBy(() -> fixture.policy().authorize(request, ExecutionPolicyEntryPoint.IDEMPOTENT_REPLAY))
                 .isInstanceOf(SecurityException.class)
@@ -179,44 +191,40 @@ class CodingAgentExecutionPolicyTest {
     }
 
     private Fixture fixture(WorkspaceAccessMode mode) throws Exception {
-        Path realRoot = root.toRealPath();
+        Path realRoot = Files.createDirectories(root.toRealPath().resolve("initial"));
         var projects = new InMemoryProjectStore();
-        var workspaces = new InMemoryWorkspaceStore();
-        var bindings = new InMemoryWorkspaceBindingStore();
-        var locations = new HostWorkspaceLocationStore();
-        ProjectId projectId = new ProjectId("project");
-        WorkspaceBindingId bindingId = new WorkspaceBindingId("binding");
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("location");
-        locations.register(locationRef, realRoot);
-        bindings.create(WorkspaceBinding.provision(
-                        bindingId,
-                        locationRef,
-                        WorkspaceBindingMode.DIRECT,
+        projects.create(Project.create(
+                        PROJECT,
+                        TENANT,
                         PRINCIPAL,
-                        WorkspaceCapabilitySet.executionFiles(),
-                        WorkspacePermissionSet.readWriteExecute(),
-                        HostWorkspaceLocationStore.fingerprintFor(realRoot),
-                        NOW)
+                        "policy-test",
+                        "",
+                        new ProjectConfigurationRef("config-1", "1"),
+                        NOW,
+                        Map.of())
+                .assignDefaultWorkspace(INITIAL_WORKSPACE, NOW));
+        var workspaces = new InMemoryWorkspaceStore();
+        var locations = new HostWorkspaceLocationStore();
+        locations.register(INITIAL_WORKSPACE, realRoot);
+        workspaces.create(Workspace.provision(INITIAL_WORKSPACE, PROJECT, WorkspaceRevision.initial("revision"), NOW)
                 .activate(NOW));
-        workspaces.create(Workspace.provision(
-                        WORKSPACE,
-                        projectId,
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
-                        WorkspaceRevision.initial("revision"),
-                        NOW)
-                .activate(NOW));
+        var registry = new InMemoryAuthorizedDirectoryStore();
         var provisioning = new AuthorizedWorkspaceProvisioning(
-                projectId,
+                PROJECT,
                 workspaces,
-                bindings,
                 locations,
-                new WorkspaceService(projects, workspaces, bindings, () -> "id", () -> NOW),
+                new WorkspaceService(projects, workspaces, () -> NOW),
+                TENANT,
                 PRINCIPAL,
                 () -> NOW,
-                HostWorkspaceScope.initial(AuthorizedHostDirectory.of(WORKSPACE, realRoot)));
-        var access = new InMemoryWorkspaceAccessStore();
-        access.createIfAbsent(new WorkspaceAccess(TENANT, PRINCIPAL, WORKSPACE, mode));
+                HostWorkspaceScope.initial(AuthorizedHostDirectory.of(INITIAL_WORKSPACE, realRoot)),
+                registry,
+                "workspace");
+        Path targetRoot = Files.createDirectories(root.toRealPath().resolve("target"));
+        WorkspaceId workspaceId = provisioning
+                .authorizeApprovedAttach(targetRoot, mode)
+                .directory()
+                .workspaceId();
         RuntimePersistencePorts ports = RuntimePersistencePorts.inMemory();
         var runtime = new RuntimeToolExecutionVerifier(
                 ports.runs(),
@@ -228,7 +236,6 @@ class CodingAgentExecutionPolicyTest {
         return new Fixture(
                 new CodingAgentExecutionPolicy(
                         runtime,
-                        access,
                         provisioning,
                         TENANT,
                         PRINCIPAL,
@@ -238,18 +245,19 @@ class CodingAgentExecutionPolicyTest {
                         Duration.ofSeconds(30),
                         4096,
                         Optional.empty()),
-                access);
+                provisioning,
+                workspaceId);
     }
 
-    private static ExecutionRequest internal(List<String> suffix) {
+    private static ExecutionRequest internal(List<String> suffix, WorkspaceId workspace) {
         var argv = new java.util.ArrayList<>(List.of("git", "-c", "credential.interactive=never"));
         argv.addAll(suffix);
         return new ExecutionRequest(
                 new ExecutionId("internal"),
                 "internal-key",
                 context(ExecutionOrigin.PRODUCT_INTERNAL, Set.of("execution_run", "git.read"), Optional.empty()),
-                WORKSPACE,
-                WorkspacePath.root(WORKSPACE),
+                workspace,
+                WorkspacePath.root(workspace),
                 ExecutionCommand.direct(argv),
                 ExecutionEnvironmentRef.empty(),
                 new ExecutionLimits(Duration.ofSeconds(15), internalGitOutputBudget(suffix), 64 * 1024),
@@ -285,7 +293,7 @@ class CodingAgentExecutionPolicyTest {
                 List.of("config", "user.email", "attacker@example.test"));
     }
 
-    private static ExecutionRequest userCommand(String command) {
+    private static ExecutionRequest userCommand(String command, WorkspaceId workspace) {
         String digest = ExecutionRequest.digestWithScratch(
                 io.haifa.agent.policy.api.PolicyDigest.sha256Fields(List.of(command, ".")),
                 ExecutionScratchSpaceSpec.none());
@@ -293,8 +301,8 @@ class CodingAgentExecutionPolicyTest {
                 new ExecutionId("user"),
                 "user-key",
                 context(ExecutionOrigin.PRODUCT_USER_COMMAND, Set.of("execution_run"), Optional.empty()),
-                WORKSPACE,
-                WorkspacePath.root(WORKSPACE),
+                workspace,
+                WorkspacePath.root(workspace),
                 ExecutionCommand.shell(command),
                 ExecutionEnvironmentRef.empty(),
                 new ExecutionLimits(Duration.ofSeconds(10), 16 * 1024 * 1024, 16 * 1024 * 1024),
@@ -304,13 +312,13 @@ class CodingAgentExecutionPolicyTest {
                 ExecutionScratchSpaceSpec.none());
     }
 
-    private static ExecutionRequest runtimeRequest(ToolCallId source) {
+    private static ExecutionRequest runtimeRequest(ToolCallId source, WorkspaceId workspace) {
         return new ExecutionRequest(
                 new ExecutionId("runtime"),
                 "runtime-key",
                 context(ExecutionOrigin.RUNTIME_TOOL, Set.of("execution_run"), Optional.of(source)),
-                WORKSPACE,
-                WorkspacePath.root(WORKSPACE),
+                workspace,
+                WorkspacePath.root(workspace),
                 ExecutionCommand.shell("git status"),
                 ExecutionEnvironmentRef.empty(),
                 new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 4),
@@ -322,5 +330,6 @@ class CodingAgentExecutionPolicyTest {
         return new TrustedExecutionContext(TENANT, "run", PRINCIPAL, capabilities, origin, source);
     }
 
-    private record Fixture(CodingAgentExecutionPolicy policy, InMemoryWorkspaceAccessStore access) {}
+    private record Fixture(
+            CodingAgentExecutionPolicy policy, AuthorizedWorkspaceProvisioning provisioning, WorkspaceId workspaceId) {}
 }

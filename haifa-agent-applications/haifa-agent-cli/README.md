@@ -29,14 +29,14 @@ Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case
 CLI 宿主保持严格且清晰的路径职责分离，避免模型混淆宿主物理路径与逻辑工作区引用：
 
 1. **动态 `<workspace_paths>` 注入与 Prompt Cache 友好**：
-   CLI 在所有稳定/静态提示词（产品基座 Prompt、执行沙箱环境说明、工作区说明及项目指令）的最尾部，动态注入当前活跃授权工作区的 `<workspace_paths>` 块。
-   该块仅包含当前 undrifted、授权活跃的真实目录投影，每条记录包含 `workspaceRef`、规范化宿主绝对路径 `rootPath`、当前 `READ` / `DEVELOP` Access mode，以及主工作区 `current="true"` 标记。由于置于系统提示词末尾，工作区动态变更（如挂载、注销）不会破坏此前较长静态前缀的 Prompt Cache 命中率。
+   CLI 在所有稳定/静态提示词（产品基座 Prompt、执行环境说明、工作区说明及项目指令）的最尾部，动态注入当前活跃授权工作区的 `<workspace_paths>` 块。
+   该块仅包含当前 undrifted、授权活跃的真实目录投影，每条记录包含 `workspaceRef`、规范化宿主绝对路径 `rootPath`、当前 `READ` / `DEVELOP` Access mode，以及主工作区 `current="true"` 标记。由于置于系统提示词末尾，工作区动态变更（如授权、撤销）不会破坏此前较长静态前缀的 Prompt Cache 命中率。
 2. **`file_*` 工具契约**：
    文件读写等工具严格要求宿主绝对路径（host absolute path），不支持相对路径（如 `.`）或 root alias。当模型误传相对路径时，系统返回清晰明确的引导错误，提示模型使用 `<workspace_paths>` 或工具成功结果中的 `rootPath`。
 3. **`execution_run` 工具契约**：
-   命令执行工具要求传入受控的 `workspaceRef` 以及规范化的 `relativeWorkdir`（根目录固定使用 `.`），在宿主受控沙箱或直接工作区执行。
+   命令执行工具要求传入受控的 `workspaceRef` 以及规范化的 `relativeWorkdir`（根目录固定使用 `.`），在受控宿主进程或直接工作区执行。
 4. **工具结果回传规范**：
-   `workspace_attach` 成功时，结果中包含规范化宿主绝对路径 `rootPath` 与脱敏 `workspaceRef`，使模型在挂载后即可直接以绝对路径调用文件工具，消除路径盲猜。
+   `workspace_attach` 成功时，结果中包含规范化宿主绝对路径 `rootPath` 与脱敏 `workspaceRef`，使模型在授权后即可直接以绝对路径调用文件工具，消除路径盲猜。
 
 ## IDE 单步调试入口
 
@@ -182,8 +182,8 @@ haifa-coding resume --last "继续前面的工作"
 入口未收到 `--workspace` 时默认使用进程当前目录，所以从哪个项目目录发起，该目录就是 Workspace。
 发行配置只使用 `model-auth://deepseek/default` 引用，不包含密钥；首次启动通过掩码输入保存 API Key，默认保持
 `approval=ask`、`host-guarded + network allow + shell auto`，并启用
-`SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Interaction、Workspace
-Registry/Access 等恢复状态的唯一事实源；Policy RuleSet 由产品配置提供，Decision 只瞬态求值，不作为
+`SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Interaction、授权目录
+等恢复状态的唯一事实源；Policy RuleSet 由产品配置提供，Decision 只瞬态求值，不作为
 SQLite 恢复事实。本地默认 payload 在磁盘上可读，不提供保密性，但仍执行格式、binding 和 digest 校验。
 JSONL 只用于审计投影，不参与恢复。启动器按自身目录设置绝对数据路径，因此发行目录整体移动后仍可
 使用；重新打包以原子替换部署经关键类检查的 shaded JAR，只覆盖 JAR、配置和启动器，不删除既有
@@ -580,7 +580,7 @@ binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可�
 
 `tools.enabled`、冻结 Tool Binding、模型披露、ToolCall 持久化和 Provider 执行统一使用
 `file_list`、`file_read`、`file_patch`、`workspace_attach`、`execution_run`
-等 Provider-safe 下划线名称，不执行名称转换。`execution_run` 接收完整命令文本、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
+等 Provider-safe 下划线名称，不执行名称转换。`execution_run` 接收完整命令文本、当前授权目录的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
 命令仅是非穷举示例。Coding Agent 默认使用该通用 OS CLI 路径完成仓库级文件发现、内容搜索、源码
 检查、构建和测试：文件发现优先 `rg --files`，内容搜索优先 `rg`，命令不存在时由模型按当前 Shell
 选择替代方案。产品代码不识别搜索意图，也不拼接 `rg`、`grep` 或其他命令的具体选项。
@@ -599,13 +599,15 @@ Java `file_search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 `USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。
 
 只有当 `tools.enabled` 显式包含 `workspace_attach` 时，用户要求读取或修改当前 Workspace 外的目录，模型才可
-请求 `workspace_attach`：必须给出主机绝对路径和最小 Access mode（`read` 或 `develop`）。默认 `ask` 模式会向
-用户展示这两项并等待明确批准；批准后目录挂载到 CA 自有 Workspace Registry，并由 CA 控制面写入当前用户的
-`WorkspaceAccess`。SQLite 模式会保护物理路径并在进程重启时重新验证；只有状态仍为 ACTIVE、workspace/location
-身份精确匹配、canonical path 未改变且通过 link/reparse point 与互斥根规则的记录才恢复。同一安全 canonical path
-删除后重建可保留 workspace identity 与既有 Access，并只刷新 physical fingerprint；换路径或不可验证时 fail closed。
-MEMORY 模式仍只在当前进程有效。Tool 成功结果和新 Run 的模型投影只包含 `workspaceRef`、安全显示名、当前
-`READ / DEVELOP` mode、来源和状态，不回显真实路径或 fingerprint。未启用该工具的 Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准
+请求 `workspace_attach`：必须给出主机绝对路径和最小 mode（`read` 或 `develop`）。默认 `ask` 模式会向用户
+展示这两项并等待明确批准；批准后目录成为 CA 的又一条 durable `AuthorizedDirectoryEntry`（owner + `WorkspaceId`
++ 规范宿主根 + mode + physical fingerprint）。SQLite 模式会保护物理路径并在进程重启时重新验证：只有当前
+tenant/owner 的 ACTIVE 记录、canonical path 未改变且通过 link/reparse point 与互斥根规则时才恢复。同一规范路径
+被物理替换时记录被禁用并要求显式重新授权；换路径或不可验证时 fail closed。MEMORY 模式仍只在当前进程有效。
+新 Run 的 `<workspace_paths>` 提示块按授权合同只披露当前已授权目录的 `workspaceRef`、规范宿主 `rootPath`、
+`READ / DEVELOP` mode 和 `current` 标记；成功的 `workspace_attach` 结果还包含 `safeDisplayName` 与 `status`。
+`physicalFingerprint` 始终不披露。未启用该工具的
+Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准
 一个不可调用的工具。Terminal 的 `/trust` 展示同一份脱敏授权清单，`/trust revoke <workspaceRef>` 可立即撤销
 非初始根；撤销不会删除用户文件或历史逻辑事实。主目录
 与附加目录的后续文件操作都直接使用主机绝对路径，并统一映射到各自的 `WorkspaceId + WorkspacePath` 后进入同一
@@ -751,11 +753,9 @@ CLI 不再为 OS 执行建立 Workspace Change Observer，也不在产品内维�
 只有 OS 进程创建成功后才进入 DISPATCHED。文件级变更事实由 Coding 产品层从成功的 canonical Mutation
 ToolCall 重建；没有仓库基线或按需 Change Review 的隐藏旁路。
 
-Runtime 会在冻结 Tool Definition 首次出现 `FILE_WRITE` 或 `PROCESS_EXECUTION` 时、实际 dispatch 前创建
-`WORKSPACE_SNAPSHOT` 类型的 Runtime checkpoint。当前本地 CLI 未注册持久
-`WorkspaceCheckpointParticipant`，因此该 checkpoint 用于恢复 Run/Tool/ChangeSet 引用和 current-state
-reconcile，不提供文件副本或自动回滚；CLI 不会在恢复时执行 Git reset/checkout 或覆盖用户文件。托管
-Coding Host 若要声明可恢复文件，必须另行装配隔离 Workspace、持久 Snapshot Store 与 Participant。
+Runtime 在撤销、超时、取消和异常恢复时只收敛 Run/Tool/Interaction 状态，不提供文件副本或自动回滚；CLI 不会在
+恢复时执行 Git reset/checkout 或覆盖用户文件。文件级可恢复性若确有需要，必须由受信 Host 另行装配并明确声明，
+不能把 `host-guarded` 描述成文件系统隔离。
 
 当前已包含 tui4j Terminal、顶层 `resume` 五种形式、最近 100 条安全可见历史、真实 `/resume` 搜索、
 Session 重命名/归档/逻辑删除、线性历史

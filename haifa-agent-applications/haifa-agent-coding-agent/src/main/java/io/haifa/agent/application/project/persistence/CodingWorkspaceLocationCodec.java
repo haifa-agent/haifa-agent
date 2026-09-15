@@ -12,7 +12,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Objects;
 
-/** Protects the host-only physical location stored by the Coding workspace registry. */
+/** Protects the host-only physical location stored by the Coding authorized-directory record. */
 final class CodingWorkspaceLocationCodec {
     private static final int MAXIMUM_LOCATION_BYTES = 16 * 1024;
 
@@ -52,9 +52,8 @@ final class CodingWorkspaceLocationCodec {
         }
     }
 
-    static String binding(String projectId, String workspaceRef, String locationRef, String physicalFingerprint) {
-        return "coding-workspace-location|" + projectId + "|" + workspaceRef + "|" + locationRef + "|"
-                + physicalFingerprint;
+    static String binding(String projectId, String workspaceRef, String physicalFingerprint) {
+        return "coding-authorization-directory|" + projectId + "|" + workspaceRef + "|" + physicalFingerprint;
     }
 
     private static void requireSize(byte[] bytes) {

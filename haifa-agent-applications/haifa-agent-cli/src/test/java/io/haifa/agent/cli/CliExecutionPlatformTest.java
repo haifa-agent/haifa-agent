@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
@@ -90,7 +89,6 @@ class CliExecutionPlatformTest {
     private static HostGuardedSandboxProvider hostProvider() {
         return new HostGuardedSandboxProvider(
                 new InMemoryWorkspaceStore(),
-                new InMemoryWorkspaceBindingStore(),
                 new HostWorkspaceLocationStore(),
                 () -> "session",
                 () -> Instant.parse("2026-07-26T00:00:00Z"),
