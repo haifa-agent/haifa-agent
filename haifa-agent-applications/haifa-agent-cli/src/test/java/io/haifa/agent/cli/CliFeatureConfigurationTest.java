@@ -285,6 +285,15 @@ class CliFeatureConfigurationTest {
     }
 
     @Test
+    void defaultsDiscloseOnlyCoreAndGitGithubSkillsWithoutGitDelivery() {
+        CliConfiguration.Skills skills = CliConfiguration.defaults().skills();
+        assertThat(skills.allowedAliases())
+                .containsExactlyInAnyOrder("task-planning", "result-verification", "git", "github")
+                .doesNotContain("git-delivery");
+        assertThat(skills.localDirectories()).isEmpty();
+    }
+
+    @Test
     void rejectsSecretLikeEnvironmentInheritanceAndInvalidShellConfiguration() {
         CliConfiguration.Execution defaults = CliConfiguration.defaults().execution();
 
