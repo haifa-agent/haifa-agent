@@ -7,7 +7,7 @@ CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVE
 ## Unified approval policy
 
 `ask/auto/deny` 由产品 immutable `PolicyRuleSet` 表达，默认 `ask` 映射为 `LOW`，`auto` 映射为 `NEVER`，
-`deny` 在 Catalog freeze 前移除 `execution_run` 与受控 worktree 入口。也可只配置
+`deny` 在 Catalog freeze 前移除 `execution_run`。也可只配置
 `approval.threshold` 为 `low`、`medium`、`high` 或 `never`；同时配置 mode 和 threshold 时必须使用兼容组合。
 达到阈值的普通执行风险创建一次 Interaction 审批，批准后 Runtime 重验并继续同一 ToolCall，不产生第二个
 控制台审批。`NEVER` 会自动执行包括 HIGH 在内的普通命令，但不覆盖可信分类器的硬拒绝、
@@ -29,14 +29,14 @@ Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case
 CLI 宿主保持严格且清晰的路径职责分离，避免模型混淆宿主物理路径与逻辑工作区引用：
 
 1. **动态 `<workspace_paths>` 注入与 Prompt Cache 友好**：
-   CLI 在所有稳定/静态提示词（产品基座 Prompt、执行沙箱环境说明、工作区说明及项目指令）的最尾部，动态注入当前活跃授权工作区的 `<workspace_paths>` 块。
-   该块仅包含当前 undrifted、授权活跃的真实目录投影，每条记录包含 `workspaceRef`、规范化宿主绝对路径 `rootPath`、当前 `READ` / `DEVELOP` Access mode，以及主工作区 `current="true"` 标记。由于置于系统提示词末尾，工作区动态变更（如挂载、注销）不会破坏此前较长静态前缀的 Prompt Cache 命中率。
+   CLI 在所有稳定/静态提示词（产品基座 Prompt、执行环境说明、工作区说明及项目指令）的最尾部，动态注入当前活跃授权工作区的 `<workspace_paths>` 块。
+   该块仅包含当前 undrifted、授权活跃的真实目录投影，每条记录包含 `workspaceRef`、规范化宿主绝对路径 `rootPath`、当前 `READ` / `DEVELOP` Access mode，以及主工作区 `current="true"` 标记。由于置于系统提示词末尾，工作区动态变更（如授权、撤销）不会破坏此前较长静态前缀的 Prompt Cache 命中率。
 2. **`file_*` 工具契约**：
    文件读写等工具严格要求宿主绝对路径（host absolute path），不支持相对路径（如 `.`）或 root alias。当模型误传相对路径时，系统返回清晰明确的引导错误，提示模型使用 `<workspace_paths>` 或工具成功结果中的 `rootPath`。
 3. **`execution_run` 工具契约**：
-   命令执行工具要求传入受控的 `workspaceRef` 以及规范化的 `relativeWorkdir`（根目录固定使用 `.`），在宿主受控沙箱或直接工作区执行。
+   命令执行工具要求传入受控的 `workspaceRef` 以及规范化的 `relativeWorkdir`（根目录固定使用 `.`），在受控宿主进程或直接工作区执行。
 4. **工具结果回传规范**：
-   `workspace_attach` 与 `workspace_worktree_create` 成功时，结果中均包含规范化宿主绝对路径 `rootPath` 与脱敏 `workspaceRef`，使模型在挂载或新建隔离工作区后即可直接以绝对路径调用文件工具，消除路径盲猜。
+   `workspace_attach` 成功时，结果中包含规范化宿主绝对路径 `rootPath` 与脱敏 `workspaceRef`，使模型在授权后即可直接以绝对路径调用文件工具，消除路径盲猜。
 
 ## IDE 单步调试入口
 
@@ -182,8 +182,8 @@ haifa-coding resume --last "继续前面的工作"
 入口未收到 `--workspace` 时默认使用进程当前目录，所以从哪个项目目录发起，该目录就是 Workspace。
 发行配置只使用 `model-auth://deepseek/default` 引用，不包含密钥；首次启动通过掩码输入保存 API Key，默认保持
 `approval=ask`、`host-guarded + network allow + shell auto`，并启用
-`SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Interaction、Workspace
-Registry/Access 等恢复状态的唯一事实源；Policy RuleSet 由产品配置提供，Decision 只瞬态求值，不作为
+`SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Interaction、授权目录
+等恢复状态的唯一事实源；Policy RuleSet 由产品配置提供，Decision 只瞬态求值，不作为
 SQLite 恢复事实。本地默认 payload 在磁盘上可读，不提供保密性，但仍执行格式、binding 和 digest 校验。
 JSONL 只用于审计投影，不参与恢复。启动器按自身目录设置绝对数据路径，因此发行目录整体移动后仍可
 使用；重新打包以原子替换部署经关键类检查的 shaded JAR，只覆盖 JAR、配置和启动器，不删除既有
@@ -579,8 +579,8 @@ binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可�
 `HAIFA_CONTINUATION_PROTECTOR_REF`。
 
 `tools.enabled`、冻结 Tool Binding、模型披露、ToolCall 持久化和 Provider 执行统一使用
-`file_list`、`file_read`、`file_patch`、`workspace_attach`、`workspace_worktree_create`、`execution_run`
-等 Provider-safe 下划线名称，不执行名称转换。`execution_run` 接收完整命令文本、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
+`file_list`、`file_read`、`file_patch`、`workspace_attach`、`execution_run`
+等 Provider-safe 下划线名称，不执行名称转换。`execution_run` 接收完整命令文本、当前授权目录的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
 命令仅是非穷举示例。Coding Agent 默认使用该通用 OS CLI 路径完成仓库级文件发现、内容搜索、源码
 检查、构建和测试：文件发现优先 `rg --files`，内容搜索优先 `rg`，命令不存在时由模型按当前 Shell
 选择替代方案。产品代码不识别搜索意图，也不拼接 `rg`、`grep` 或其他命令的具体选项。
@@ -599,13 +599,15 @@ Java `file_search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 `USE_FILE_WRITE_OR_PATCH`，不是原样重试信号。
 
 只有当 `tools.enabled` 显式包含 `workspace_attach` 时，用户要求读取或修改当前 Workspace 外的目录，模型才可
-请求 `workspace_attach`：必须给出主机绝对路径和最小 Access mode（`read` 或 `develop`）。默认 `ask` 模式会向
-用户展示这两项并等待明确批准；批准后目录挂载到 CA 自有 Workspace Registry，并由 CA 控制面写入当前用户的
-`WorkspaceAccess`。SQLite 模式会保护物理路径并在进程重启时重新验证；只有状态仍为 ACTIVE、workspace/location
-身份精确匹配、canonical path 未改变且通过 link/reparse point 与互斥根规则的记录才恢复。同一安全 canonical path
-删除后重建可保留 workspace identity 与既有 Access，并只刷新 physical fingerprint；换路径或不可验证时 fail closed。
-MEMORY 模式仍只在当前进程有效。Tool 成功结果和新 Run 的模型投影只包含 `workspaceRef`、安全显示名、当前
-`READ / DEVELOP` mode、来源和状态，不回显真实路径或 fingerprint。未启用该工具的 Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准
+请求 `workspace_attach`：必须给出主机绝对路径和最小 mode（`read` 或 `develop`）。默认 `ask` 模式会向用户
+展示这两项并等待明确批准；批准后目录成为 CA 的又一条 durable `AuthorizedDirectoryEntry`（owner + `WorkspaceId`
++ 规范宿主根 + mode + physical fingerprint）。SQLite 模式会保护物理路径并在进程重启时重新验证：只有当前
+tenant/owner 的 ACTIVE 记录、canonical path 未改变且通过 link/reparse point 与互斥根规则时才恢复。同一规范路径
+被物理替换时记录被禁用并要求显式重新授权；换路径或不可验证时 fail closed。MEMORY 模式仍只在当前进程有效。
+新 Run 的 `<workspace_paths>` 提示块按授权合同只披露当前已授权目录的 `workspaceRef`、规范宿主 `rootPath`、
+`READ / DEVELOP` mode 和 `current` 标记；成功的 `workspace_attach` 结果还包含 `safeDisplayName` 与 `status`。
+`physicalFingerprint` 始终不披露。未启用该工具的
+Run 不会向模型披露它；范围外路径应报告工作区范围不足，而不是要求用户批准
 一个不可调用的工具。Terminal 的 `/trust` 展示同一份脱敏授权清单，`/trust revoke <workspaceRef>` 可立即撤销
 非初始根；撤销不会删除用户文件或历史逻辑事实。主目录
 与附加目录的后续文件操作都直接使用主机绝对路径，并统一映射到各自的 `WorkspaceId + WorkspacePath` 后进入同一
@@ -637,6 +639,10 @@ Windows 缺省值统一为 `host-guarded + shell auto`，三端体验完全一�
 已移除的 `execution.network` 与 `execution.extraPathPolicies` 配置键不再生效：它们只服务于已删除的
 `local-native` bind-mount 与断网机制。旧配置文件中残留这两个键会被忽略，而 `provider: local-native`
 在启动期 fail closed，报 `execution.provider is unsupported`。
+
+已删除的专用 `workspace_worktree_create` Tool 不再注册，也不提供兼容别名或自动转发。升级动作：如果
+`tools.enabled`（或发行 `haifa-coding.yaml` 的自定义副本）仍列出 `workspace_worktree_create`，必须
+移除该项；CLI 会在启动期 fail closed，并提示改用通用 `execution_run` 执行 `git worktree` 命令。
 
 安全摘要显示 Provider、Adapter、宿主网络事实、当前 OS 用户，以及 Workspace 外文件、网络、
 CPU/内存/Kernel 均未隔离。Host Guarded 以当前 OS 用户身份运行，不能阻止 Workspace 外文件、
@@ -703,22 +709,19 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
 
-风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会将原 ToolCall 标记为终态 FAILED，将失败事实（`failureCode` 与 `NOT_DISPATCHED`）回传给模型并继续标准对话循环；模型可据此向用户报告阻塞或在标准策略下发起全新的普通工具调用，Runtime 不再维护双 Profile、专用 `execution-recovery` Interaction 或后继工具调用协议。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run` 与 `workspace_worktree_create`，模型不可见，底层授权仍 fail closed。
+风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。`workspaceRef`/`relativeWorkdir` 只约束启动目标，Host 子进程仍可访问当前 OS 用户可达的路径，审批与文档不虚假承诺更强的隔离；合法 `git -C` 与其他命令参数一样交给通用执行路径，不再返回 `WORKSPACE_PROTOCOL_REQUIRED`。dispatch 前的确定性拒绝直接保存失败 ToolResult（不伪造 `NOT_DISPATCHED` 异常），失败事实回传给模型并在标准对话循环中继续；模型可向用户报告阻塞或在标准策略下发起全新的普通工具调用。`--approval auto` 映射为 `NEVER`，是用户对当前受信 Host 命令的显式广泛授权，会自动执行所有非硬拒绝的普通命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。凭据防泄露硬拒绝与 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run`，模型不可见，底层授权仍 fail closed。
 
-`workspace_worktree_create` 只接受具有当前 `DEVELOP` Access 的 source `workspaceRef`、不可变 base commit、新分支名和受控 target name；模型不能传入目标主机路径或权限。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验、Registry 登记和新 workspace 的 `DEVELOP` Access 写入全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
-
-系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。产品不再维护重复且不可见的 Coding Delivery Intent
+系统 Git/GH、Wrapper、客户脚本与普通命令走同一条通用执行路径，不提供命令专用 Wrapper，也不做业务语义
+分级。产品不再维护重复且不可见的 Coding Delivery Intent
 交付护栏，用户是否要求 Commit、Push 或 PR 继续由任务正文和 Prompt/Skill 行为约束表达；是否允许具体副作用，
 则由可见、统一的 Policy/Approval 和执行边界决定。generic Shell 只返回命令事实，完成策略不要求或生成 Stage、Commit、
 Push、PR 成功证据。
 
 `execution_run` 对每个正常终止的进程返回 `processState=EXITED`、原始 exit code 和 bounded 输出。
 Runtime 和 Coding 产品不判断退出码的业务含义，也不将非零退出归入平台失败或自动恢复；模型依据命令与
-输出决定下一步。Timeout、Cancel、资源限制和未知终止继续保持独立边界。复合命令风险提升返回
-`COMMAND_RISK_ESCALATED`，未知 Git 子命令返回 `GIT_COMMAND_UNKNOWN_HIGH_RISK`，不可信
-`operationFamily` 返回 `OPERATION_HINT_IGNORED` 或 `UNVERIFIED`。认证环境覆盖硬拒绝使用
-`AUTHENTICATION_OVERRIDE_DENIED`，受限网络失败使用 `NETWORK_PERMISSION_REQUIRED`，二者分别引导移除
-覆盖或通过托管的一次性权限请求处理，而不是重复执行原命令。
+输出决定下一步。Timeout、Cancel、资源限制和未知终止继续保持独立边界。凭据防泄露硬拒绝使用
+`AUTHENTICATION_OVERRIDE_DENIED`，引导移除受保护的认证环境变量赋值、`git credential*`、Git 凭据配置覆盖
+或 `gh auth` 披露/修改命令；已 dispatch 且结果未知的调用必须先读取权威状态，不得盲目重放。
 
 `execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI wall timeout 发送 Runtime `TIMEOUT` 并以 `WALL_TIME_EXCEEDED`/退出码 124 结束；Ctrl+C 和关闭钩子仍发送 `CANCEL`。
 
@@ -750,11 +753,9 @@ CLI 不再为 OS 执行建立 Workspace Change Observer，也不在产品内维�
 只有 OS 进程创建成功后才进入 DISPATCHED。文件级变更事实由 Coding 产品层从成功的 canonical Mutation
 ToolCall 重建；没有仓库基线或按需 Change Review 的隐藏旁路。
 
-Runtime 会在冻结 Tool Definition 首次出现 `FILE_WRITE` 或 `PROCESS_EXECUTION` 时、实际 dispatch 前创建
-`WORKSPACE_SNAPSHOT` 类型的 Runtime checkpoint。当前本地 CLI 未注册持久
-`WorkspaceCheckpointParticipant`，因此该 checkpoint 用于恢复 Run/Tool/ChangeSet 引用和 current-state
-reconcile，不提供文件副本或自动回滚；CLI 不会在恢复时执行 Git reset/checkout 或覆盖用户文件。托管
-Coding Host 若要声明可恢复文件，必须另行装配隔离 Workspace、持久 Snapshot Store 与 Participant。
+Runtime 在撤销、超时、取消和异常恢复时只收敛 Run/Tool/Interaction 状态，不提供文件副本或自动回滚；CLI 不会在
+恢复时执行 Git reset/checkout 或覆盖用户文件。文件级可恢复性若确有需要，必须由受信 Host 另行装配并明确声明，
+不能把 `host-guarded` 描述成文件系统隔离。
 
 当前已包含 tui4j Terminal、顶层 `resume` 五种形式、最近 100 条安全可见历史、真实 `/resume` 搜索、
 Session 重命名/归档/逻辑删除、线性历史

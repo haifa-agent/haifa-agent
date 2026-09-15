@@ -26,5 +26,5 @@ public interface SandboxProvider {
                 providerId(), providerId(), configurationDigest(), capabilities(), supportsManagedProcess());
     }
 
-    SandboxSession open(SandboxProfile profile, WorkspaceMount mount);
+    SandboxSession open(SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId);
 }

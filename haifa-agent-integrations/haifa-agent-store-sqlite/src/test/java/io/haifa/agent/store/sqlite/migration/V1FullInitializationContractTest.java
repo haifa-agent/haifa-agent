@@ -57,19 +57,18 @@ class V1FullInitializationContractTest {
     }
 
     @Test
-    void sharedSchemaHasMinimalAccessPhysicalFingerprintAndNoLegacyFamily() throws Exception {
+    void sharedSchemaHasSingleAuthorizedDirectoryAndNoLegacyFamily() throws Exception {
         Path database = directory.resolve("shared.db");
         try (SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(
                         SqliteStoreConfiguration.defaults(database), Clock.systemUTC());
                 Connection connection = foundation.connections().openConnection()) {
             assertThat(queryStrings(
-                            connection, "SELECT name FROM pragma_table_info('coding_workspace_access') ORDER BY cid"))
-                    .containsExactly("tenant_id", "principal_type", "principal_id", "workspace_id", "mode");
-            assertThat(queryStrings(
-                            connection, "SELECT name FROM pragma_table_info('coding_workspace_registry') ORDER BY cid"))
-                    .contains("physical_fingerprint")
-                    .doesNotContain("fingerprint", "permission", "authorization_ref");
+                            connection,
+                            "SELECT name FROM pragma_table_info('coding_authorized_directory') ORDER BY cid"))
+                    .contains("tenant_id", "principal_type", "principal_id", "mode", "physical_fingerprint")
+                    .doesNotContain("location_ref", "source", "fingerprint", "permission", "authorization_ref");
             assertThat(queryStrings(connection, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"))
+                    .doesNotContain("coding_workspace_registry", "coding_workspace_access")
                     .doesNotContainAnyElementsOf(LEGACY_TABLES);
             assertThat(queryRows(
                             connection, "SELECT version, name, checksum FROM schema_migration ORDER BY version", 3))

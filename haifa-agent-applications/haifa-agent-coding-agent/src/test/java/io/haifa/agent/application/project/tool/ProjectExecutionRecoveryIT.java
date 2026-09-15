@@ -1,13 +1,10 @@
 package io.haifa.agent.application.project.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceAssembly;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
-import io.haifa.agent.application.project.workspace.WorkspaceAccess;
-import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
@@ -40,27 +37,19 @@ import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.policy.api.PolicyEffect;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.core.store.InMemoryProjectStore;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.core.workspace.WorkspaceService;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.directory.InMemoryAuthorizedDirectoryStore;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
 import io.haifa.agent.project.hostworkspace.scope.HostWorkspaceScope;
-import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
+import io.haifa.agent.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.DefaultAgentRuntime;
@@ -91,7 +80,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Tag;
@@ -109,12 +97,11 @@ class ProjectExecutionRecoveryIT {
     private static final byte[] PROTECTOR_KEY = new byte[32];
 
     @Test
-    void notDispatchedPreflightFailureMarksToolFailedAndModelContinuesWithoutRecoveryInteraction(
+    void notDispatchedPreflightFailureIsAnOrdinaryFailedResultThatContinuesWithoutRecoveryInteraction(
             @TempDir Path directory) throws Exception {
         AtomicInteger brokerCalls = new AtomicInteger();
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger ids = new AtomicInteger();
-        AtomicBoolean simulateInterruption = new AtomicBoolean(true);
         List<SandboxProfileRef> observedProfiles = new ArrayList<>();
         IdentifierGenerator identifiers = () -> "m4-id-" + ids.incrementAndGet();
         ExecutionBroker broker = broker(brokerCalls, observedProfiles);
@@ -144,25 +131,17 @@ class ProjectExecutionRecoveryIT {
                         "",
                         Map.of())));
         AgentChatModel model = request -> {
-            int call = modelCalls.incrementAndGet();
-            if (call == 2 && simulateInterruption.get()) {
-                throw new AssertionError("simulated node interruption after NOT_DISPATCHED failure checkpoint");
-            }
+            modelCalls.incrementAndGet();
             return responses.remove();
         };
-        AgentRunId runId;
         Path database = directory.resolve("runtime.db").toAbsolutePath();
 
-        try (ProjectPersistenceAssembly first = persistence(database)) {
-            first.workspaceAccess()
-                    .createIfAbsent(new WorkspaceAccess(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP));
-            RuntimeInstance instance = runtime(first, model, broker, identifiers, "m4-worker-a");
-            runId = instance.runtime().start(request()).runId();
-            assertThatThrownBy(instance.scheduler()::runAll)
-                    .isInstanceOf(AssertionError.class)
-                    .hasMessageContaining("simulated node interruption");
+        try (ProjectPersistenceAssembly persistence = persistence(database)) {
+            RuntimeInstance instance = runtime(persistence, model, broker, identifiers, "m4-worker");
+            AgentRunId runId = instance.runtime().start(request()).runId();
+            instance.scheduler().runAll();
 
-            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(instance.ports().interactions().pending(runId)).isEmpty();
 
             var toolCalls = instance.ports().state().toolCalls(runId);
@@ -170,38 +149,8 @@ class ProjectExecutionRecoveryIT {
             var failedCall = toolCalls.getFirst();
             assertThat(failedCall.status()).isEqualTo(ToolCallStatus.FAILED);
             assertThat(failedCall.error()).isPresent();
-            assertThat(failedCall.error().get().error().details())
-                    .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
-                    .containsEntry("dispatchState", "NOT_DISPATCHED");
-
-            assertThat(brokerCalls).hasValue(1);
-            assertLegacyTablesAbsent(database);
-        }
-
-        simulateInterruption.set(false);
-        try (ProjectPersistenceAssembly reopened = persistence(database)) {
-            RuntimeInstance instance = runtime(reopened, model, broker, identifiers, "m4-worker-b");
-            var loadedRun = instance.runtime().find(runId).orElseThrow();
-            assertThat(loadedRun.status()).isEqualTo(AgentRunStatus.RUNNING);
-            assertThat(instance.ports().interactions().pending(runId)).isEmpty();
-
-            instance.runtime().recover(runId);
-            assertThat(instance.scheduler().pending()).isZero();
-            instance.scheduler().runAll();
-
-            var finishedRun = instance.runtime().find(runId).orElseThrow();
-            assertThat(finishedRun.status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(finishedRun.error().orElseThrow().code())
-                    .isEqualTo(io.haifa.agent.core.error.AgentErrorCode.RUNTIME_EXECUTION_INTERRUPTED);
-            assertThat(instance.ports().interactions().pending(runId)).isEmpty();
-
-            var toolCalls = instance.ports().state().toolCalls(runId);
-            assertThat(toolCalls).hasSize(1);
-            var failedCall = toolCalls.getFirst();
-            assertThat(failedCall.status()).isEqualTo(ToolCallStatus.FAILED);
-            assertThat(failedCall.error().get().error().details())
-                    .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
-                    .containsEntry("dispatchState", "NOT_DISPATCHED");
+            assertThat(failedCall.error().orElseThrow().error().details())
+                    .containsEntry("stableFailureCode", "NETWORK_UNAVAILABLE");
 
             assertThat(modelCalls).hasValue(2);
             assertThat(brokerCalls).hasValue(1);
@@ -265,9 +214,6 @@ class ProjectExecutionRecoveryIT {
         Path database = directory.resolve("runtime.db").toAbsolutePath();
 
         try (ProjectPersistenceAssembly persistence = persistence(database)) {
-            persistence
-                    .workspaceAccess()
-                    .createIfAbsent(new WorkspaceAccess(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP));
             RuntimeInstance instance = runtime(persistence, model, broker, identifiers, "m4-worker");
             AgentRunId runId = instance.runtime().start(request()).runId();
             instance.scheduler().runAll();
@@ -286,8 +232,7 @@ class ProjectExecutionRecoveryIT {
                     .findFirst()
                     .orElseThrow();
             assertThat(failedCall.error().orElseThrow().error().details())
-                    .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
-                    .containsEntry("dispatchState", "NOT_DISPATCHED");
+                    .containsEntry("stableFailureCode", "NETWORK_UNAVAILABLE");
             assertThat(completedCall.status()).isEqualTo(ToolCallStatus.COMPLETED);
             assertThat(completedCall.result().orElseThrow().structuredData())
                     .containsEntry("processState", "EXITED")
@@ -306,11 +251,12 @@ class ProjectExecutionRecoveryIT {
             IdentifierGenerator identifiers,
             String workerId) {
         RuntimePersistencePorts ports = persistence.ports();
+        AuthorizedWorkspaceProvisioning provisioning = provisioning();
         ensureSession(ports);
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
         InteractionPort interactions = ports.interactions();
         PublicToolPolicy publicPolicy = (run, binding, request) -> {
-            persistence.workspaceAccess().require(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP);
+            provisioning.requireAuthorized(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP);
             return new PolicyDecision(
                     PolicyEffect.ALLOW,
                     Optional.empty(),
@@ -323,8 +269,7 @@ class ProjectExecutionRecoveryIT {
                 ports.runs(), ports.state(), interactions, canonicalizer, publicPolicy);
         var executionPolicy = new CodingAgentExecutionPolicy(
                 runtimeVerifier,
-                persistence.workspaceAccess(),
-                provisioning(),
+                provisioning,
                 TENANT,
                 PRINCIPAL,
                 new ExecutionEnvironmentRef(List.of("test-environment")),
@@ -341,9 +286,8 @@ class ProjectExecutionRecoveryIT {
         };
         ProjectToolExecutor provider = new ProjectToolExecutor(
                 (runId, principal) -> {
-                    WorkspaceAccess current = persistence
-                            .workspaceAccess()
-                            .require(TENANT, principal, WORKSPACE, WorkspaceAccessMode.READ);
+                    var current =
+                            provisioning.requireAuthorized(TENANT, principal, WORKSPACE, WorkspaceAccessMode.READ);
                     return new RunWorkspaceAccess(
                             WORKSPACE,
                             current.mode() == WorkspaceAccessMode.DEVELOP
@@ -351,8 +295,7 @@ class ProjectExecutionRecoveryIT {
                                     : Set.of("file_read"));
                 },
                 unreachable,
-                normal,
-                null);
+                normal);
         var catalog = new ProjectToolCatalog()
                 .freeze(Set.of("execution_run"), Set.of("execution_run"), true, provider, normalProfile());
         DefaultAgentRuntime runtime = new RuntimeCoreBuilder()
@@ -447,39 +390,22 @@ class ProjectExecutionRecoveryIT {
             Path root = Path.of(System.getProperty("java.io.tmpdir")).toRealPath();
             var projects = new InMemoryProjectStore();
             var workspaces = new InMemoryWorkspaceStore();
-            var bindings = new InMemoryWorkspaceBindingStore();
             var locations = new HostWorkspaceLocationStore();
             ProjectId projectId = new ProjectId("m6-project");
-            WorkspaceBindingId bindingId = new WorkspaceBindingId("m6-binding");
-            WorkspaceLocationRef locationRef = new WorkspaceLocationRef("m6-location");
-            locations.register(locationRef, root);
-            bindings.create(WorkspaceBinding.provision(
-                            bindingId,
-                            locationRef,
-                            WorkspaceBindingMode.DIRECT,
-                            PRINCIPAL,
-                            WorkspaceCapabilitySet.executionFiles(),
-                            WorkspacePermissionSet.readWriteExecute(),
-                            HostWorkspaceLocationStore.fingerprintFor(root),
-                            NOW)
-                    .activate(NOW));
-            workspaces.create(Workspace.provision(
-                            WORKSPACE,
-                            projectId,
-                            WorkspacePurpose.PRIMARY,
-                            new WorkspaceRoot(ProjectPath.root(), bindingId, "test"),
-                            WorkspaceRevision.initial("m6-revision"),
-                            NOW)
+            locations.register(WORKSPACE, root);
+            workspaces.create(Workspace.provision(WORKSPACE, projectId, WorkspaceRevision.initial("m6-revision"), NOW)
                     .activate(NOW));
             return new AuthorizedWorkspaceProvisioning(
                     projectId,
                     workspaces,
-                    bindings,
                     locations,
-                    new WorkspaceService(projects, workspaces, bindings, () -> "m6-id", () -> NOW),
+                    new WorkspaceService(projects, workspaces, () -> NOW),
+                    TENANT,
                     PRINCIPAL,
                     () -> NOW,
-                    HostWorkspaceScope.initial(AuthorizedHostDirectory.of(WORKSPACE, root)));
+                    HostWorkspaceScope.initial(AuthorizedHostDirectory.of(WORKSPACE, root)),
+                    new InMemoryAuthorizedDirectoryStore(),
+                    "m6-workspace");
         } catch (java.io.IOException exception) {
             throw new IllegalStateException("test workspace root is unavailable", exception);
         }

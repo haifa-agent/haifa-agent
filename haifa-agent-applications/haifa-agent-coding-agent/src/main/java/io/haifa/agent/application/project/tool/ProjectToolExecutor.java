@@ -14,28 +14,18 @@ public final class ProjectToolExecutor implements ToolProvider {
     private final RunWorkspaceAccessResolver access;
     private final ProjectToolOperations operations;
     private final ProjectExecutionToolOperations executionOperations;
-    private final ProjectWorktreeToolOperations worktreeOperations;
 
     public ProjectToolExecutor(RunWorkspaceAccessResolver access, ProjectToolOperations operations) {
-        this(access, operations, null, null);
+        this(access, operations, null);
     }
 
     public ProjectToolExecutor(
             RunWorkspaceAccessResolver access,
             ProjectToolOperations operations,
             ProjectExecutionToolOperations executionOperations) {
-        this(access, operations, executionOperations, null);
-    }
-
-    public ProjectToolExecutor(
-            RunWorkspaceAccessResolver access,
-            ProjectToolOperations operations,
-            ProjectExecutionToolOperations executionOperations,
-            ProjectWorktreeToolOperations worktreeOperations) {
         this.access = Objects.requireNonNull(access, "access must not be null");
         this.operations = Objects.requireNonNull(operations, "operations must not be null");
         this.executionOperations = executionOperations;
-        this.worktreeOperations = worktreeOperations;
     }
 
     @Override
@@ -57,11 +47,6 @@ public final class ProjectToolExecutor implements ToolProvider {
                 throw new IllegalStateException("execution_run is not configured for this application");
             }
             return executionOperations.execute(request, binding);
-        } else if (toolName.equals(ProjectWorktreeToolOperations.TOOL_NAME)) {
-            if (worktreeOperations == null) {
-                throw new IllegalStateException("workspace_worktree_create is not configured for this application");
-            }
-            return worktreeOperations.execute(request, binding);
         } else {
             request.observer().dispatched();
             result = operations.execute(

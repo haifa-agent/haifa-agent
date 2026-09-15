@@ -79,7 +79,8 @@ class SandboxRegistryTest {
             }
 
             @Override
-            public SandboxSession open(SandboxProfile profile, io.haifa.agent.sandbox.api.WorkspaceMount mount) {
+            public SandboxSession open(
+                    SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
                 throw new UnsupportedOperationException();
             }
         };

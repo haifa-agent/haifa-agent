@@ -2,9 +2,6 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.tool.ProjectToolCallContext;
 import io.haifa.agent.application.project.tool.ProjectToolOperations;
-import io.haifa.agent.application.project.workspace.WorkspaceAccess;
-import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
-import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.PrincipalRef;
@@ -43,11 +40,10 @@ import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
+import io.haifa.agent.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.tool.api.ToolReconciliation;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -77,7 +73,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private final SessionChangeLedger ledger;
     private final AuthorizedWorkspaceProvisioning provisioning;
     private final boolean workspaceAttachmentDisclosed;
-    private final WorkspaceAccessStore workspaceAccess;
     private final TenantRef tenant;
     private final PrincipalRef principal;
 
@@ -90,7 +85,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             AuthorizedWorkspaceProvisioning provisioning,
             SessionChangeLedger ledger,
             boolean workspaceAttachmentDisclosed,
-            WorkspaceAccessStore workspaceAccess,
             TenantRef tenant,
             PrincipalRef principal) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
@@ -102,7 +96,6 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         this.provisioning = Objects.requireNonNull(provisioning, "provisioning must not be null");
         this.ledger = ledger;
         this.workspaceAttachmentDisclosed = workspaceAttachmentDisclosed;
-        this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
         this.tenant = Objects.requireNonNull(tenant, "tenant must not be null");
         this.principal = Objects.requireNonNull(principal, "principal must not be null");
     }
@@ -453,7 +446,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private void validateScopeUnchanged(ResolvedTarget target) {
         if (target == null || target.scope() == null) return;
-        workspaceAccess.require(tenant, principal, target.workspacePath().workspaceId(), target.requiredMode());
+        provisioning.requireAuthorized(tenant, principal, target.workspacePath().workspaceId(), target.requiredMode());
         provisioning.requireUnchanged(target.scope());
     }
 
@@ -852,51 +845,20 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                     case "develop" -> WorkspaceAccessMode.DEVELOP;
                     default -> throw new IllegalArgumentException("mode must be read or develop");
                 };
-        try {
-            Path normalizedPath = requested.toAbsolutePath().normalize();
-            if (Files.isSymbolicLink(normalizedPath)) {
-                throw new IllegalArgumentException("workspace_attach path must not be a symbolic link");
-            }
-            Path realPath = normalizedPath.toRealPath();
-            if (!Files.isDirectory(realPath)) {
-                throw new IllegalArgumentException("workspace_attach path must be an existing directory");
-            }
-            if (Files.isSymbolicLink(realPath)) {
-                throw new IllegalArgumentException("workspace_attach path must not be a symbolic link");
-            }
-            var result = provisioning.authorizeApprovedAttach(realPath, attachedDirectory -> {
-                WorkspaceAccessMode activationMode = mode;
-                if (!attachedDirectory.realPath().equals(realPath)) {
-                    WorkspaceAccess currentAccess = workspaceAccess
-                            .find(tenant, principal, attachedDirectory.workspaceId())
-                            .orElseThrow(() -> new SecurityException("WORKSPACE_ACCESS_UNAVAILABLE"));
-                    if (!currentAccess.mode().allows(mode)) {
-                        throw new SecurityException("NESTED_WORKSPACE_MODE_EXPANSION_DENIED");
-                    }
-                    activationMode = currentAccess.mode();
-                }
-                workspaceAccess.replace(
-                        new WorkspaceAccess(tenant, principal, attachedDirectory.workspaceId(), activationMode));
-            });
-            WorkspaceAccessMode activatedMode = workspaceAccess
-                    .find(tenant, principal, result.directory().workspaceId())
-                    .orElseThrow(() -> new SecurityException("WORKSPACE_ACCESS_UNAVAILABLE"))
-                    .mode();
-            var view = result.registryView();
-            String rootPath =
-                    result.directory().realPath().normalize().toAbsolutePath().toString();
-            return success(
-                    "Authorized workspace " + view.safeDisplayName() + " as " + activatedMode.name(),
-                    Map.of(
-                            "workspaceRef", view.workspaceRef(),
-                            "rootPath", rootPath,
-                            "safeDisplayName", view.safeDisplayName(),
-                            "mode", activatedMode.name(),
-                            "source", view.source().name(),
-                            "status", view.status().name()));
-        } catch (IOException e) {
-            throw new IllegalArgumentException("workspace_attach path cannot be accessed");
-        }
+        var result =
+                provisioning.authorizeApprovedAttach(requested.toAbsolutePath().normalize(), mode);
+        var view = result.directoryView();
+        String rootPath =
+                result.directory().realPath().normalize().toAbsolutePath().toString();
+        return success(
+                "Authorized workspace " + view.safeDisplayName() + " as "
+                        + view.mode().name(),
+                Map.of(
+                        "workspaceRef", view.workspaceRef(),
+                        "rootPath", rootPath,
+                        "safeDisplayName", view.safeDisplayName(),
+                        "mode", view.mode().name(),
+                        "status", view.status().name()));
     }
 
     private record ResolvedTarget(
@@ -922,7 +884,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         String safeInput = (pathInput == null || pathInput.isBlank()) ? "" : pathInput.trim();
         HostWorkspaceScope scope = currentScope();
         ResolvedAuthorizedPath resolved = scope.resolve(safeInput);
-        workspaceAccess.require(tenant, principal, resolved.directory().workspaceId(), requiredMode);
+        provisioning.requireAuthorized(tenant, principal, resolved.directory().workspaceId(), requiredMode);
         return new ResolvedTarget(
                 resolved.directory().realPath(),
                 resolved.workspacePath(),

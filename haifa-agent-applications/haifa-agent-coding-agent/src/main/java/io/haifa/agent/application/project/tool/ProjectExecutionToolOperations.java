@@ -1,6 +1,5 @@
 package io.haifa.agent.application.project.tool;
 
-import io.haifa.agent.application.project.policy.CodingExecutionRiskResolver;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.AssetRef;
@@ -16,7 +15,6 @@ import io.haifa.agent.execution.api.ExecutionFailure;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionInput;
 import io.haifa.agent.execution.api.ExecutionLimits;
-import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutput;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionPreflightException;
@@ -28,14 +26,12 @@ import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
-import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
+import io.haifa.agent.execution.core.command.CredentialEgressGuard;
 import io.haifa.agent.policy.api.PolicyDigest;
-import io.haifa.agent.policy.api.PolicyRiskLevel;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.tool.api.ToolCancellation;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
-import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolReconciliation;
@@ -52,20 +48,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
-import java.util.regex.Pattern;
 
 /** Adapts the generic project Tool invocation to the single trusted ExecutionBroker path. */
 public final class ProjectExecutionToolOperations {
     private static final int FULL_OUTPUT_BYTES_PER_CHANNEL = 16 * 1024 * 1024;
     private static final int SUMMARY_OUTPUT_CHARS = 12 * 1024;
-    private static final Pattern GIT_DIRECTORY_OVERRIDE = Pattern.compile("(?:^|\\s)[\\\"']?-C[\\\"']?(?:\\s|=)");
-    private static final Set<String> RECOVERABLE_PREFLIGHT_CODES =
-            Set.of("NETWORK_PERMISSION_REQUIRED", "GIT_AUTHENTICATION_UNAVAILABLE", "GH_AUTHENTICATION_UNAVAILABLE");
-    private static final Set<SystemGitCliCommandClassifier.Risk> RECOVERABLE_RISKS = Set.of(
-            SystemGitCliCommandClassifier.Risk.LOCAL_READ,
-            SystemGitCliCommandClassifier.Risk.LOCAL_WRITE,
-            SystemGitCliCommandClassifier.Risk.NETWORK_READ,
-            SystemGitCliCommandClassifier.Risk.EXTERNAL_WRITE);
 
     private final ExecutionBroker broker;
     private final IdentifierGenerator identifiers;
@@ -246,14 +233,9 @@ public final class ProjectExecutionToolOperations {
         Map<String, Object> arguments = invocation.arguments().values();
         String command = requiredText(arguments, "command");
         String operationFamily = operationFamily(arguments.get("operationFamily"));
-        var commandClassification = SystemGitCliCommandClassifier.classify(command);
-        if (commandClassification.target() == SystemGitCliCommandClassifier.Target.GIT
-                && commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED
-                && GIT_DIRECTORY_OVERRIDE.matcher(command).find()) {
-            return withToolCallId(invocation, workspaceProtocolRequired(operationFamily));
-        }
-        if (commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED) {
-            return withToolCallId(invocation, rejectedCommandClassification(operationFamily, commandClassification));
+        var credentialRejection = CredentialEgressGuard.rejectionCode(command);
+        if (credentialRejection.isPresent()) {
+            return withToolCallId(invocation, rejectedCredentialEgress(operationFamily, credentialRejection.get()));
         }
         if (hasLeadingAbsoluteDirectoryChange(command)) {
             return withToolCallId(invocation, rejectedAbsoluteDirectoryChange(operationFamily));
@@ -294,20 +276,14 @@ public final class ProjectExecutionToolOperations {
                 workingDirectory,
                 ExecutionCommand.shell(command),
                 environmentRef,
-                executionLimits(timeout, operationFamily, commandClassification),
+                executionLimits(timeout, operationFamily),
                 sandboxProfileRef,
                 ExecutionInput.none(),
                 invocationDigest(command, workspaceRef, relativeWorkdir, scratchSpace),
                 scratchSpace);
         return withToolCallId(
                 invocation,
-                executeRequest(
-                        request,
-                        invocation.cancellation(),
-                        invocation.observer(),
-                        command,
-                        operationFamily,
-                        commandClassification));
+                executeRequest(request, invocation.cancellation(), invocation.observer(), command, operationFamily));
     }
 
     /** Read-only reconciliation for a previously dispatched local execution. */
@@ -333,7 +309,6 @@ public final class ProjectExecutionToolOperations {
                 .isPresent()) {
             return ToolReconciliation.stillUnknown("WORKING_DIRECTORY_EVIDENCE_MISMATCH");
         }
-        var classification = SystemGitCliCommandClassifier.classify(command);
         Optional<ExecutionResult> persistedExecution = broker.findByIdempotencyKey(invocation.idempotencyKey());
         if (persistedExecution.isPresent()
                 && invocation
@@ -361,7 +336,6 @@ public final class ProjectExecutionToolOperations {
                             outputSanitizer,
                             command,
                             operationFamily,
-                            classification,
                             sandboxProfileRef,
                             scratchSpace);
                 })
@@ -397,13 +371,9 @@ public final class ProjectExecutionToolOperations {
                 result.truncated());
     }
 
-    private ExecutionLimits executionLimits(
-            Duration timeout,
-            String declaredOperationFamily,
-            SystemGitCliCommandClassifier.Classification classification) {
-        String budgetFamily = outputBudgetFamily(declaredOperationFamily, classification);
-        boolean boundedInspection = "INSPECT".equals(budgetFamily);
-        int channelBudget = outputChannelBudget(budgetFamily, maximumModelOutputBytes);
+    private ExecutionLimits executionLimits(Duration timeout, String operationFamily) {
+        boolean boundedInspection = "INSPECT".equals(operationFamily);
+        int channelBudget = outputChannelBudget(operationFamily, maximumModelOutputBytes);
         return new ExecutionLimits(
                 timeout,
                 channelBudget,
@@ -470,17 +440,15 @@ public final class ProjectExecutionToolOperations {
         String workspaceRef = requiredText(values, "workspaceRef");
         String relativeWorkdir = requiredText(values, "relativeWorkdir");
         String declaredOperationFamily = operationFamily(values.get("operationFamily"));
-        var classification = SystemGitCliCommandClassifier.classify(command);
-        if (classification.risk() == SystemGitCliCommandClassifier.Risk.DENIED
+        if (CredentialEgressGuard.rejects(command)
                 || hasLeadingAbsoluteDirectoryChange(command)
                 || isAbsoluteDirectoryPath(relativeWorkdir)) {
             throw new SecurityException("canonical execution command or workdir is denied");
         }
         Duration requestedTimeout = Duration.ofMillis(
                 optionalLong(values, "timeoutMillis", maximumTimeout.toMillis(), 1, maximumTimeout.toMillis()));
-        String budgetFamily = outputBudgetFamily(declaredOperationFamily, classification);
-        boolean boundedInspection = "INSPECT".equals(budgetFamily);
-        int channelBudget = outputChannelBudget(budgetFamily, maximumModelOutputBytes);
+        boolean boundedInspection = "INSPECT".equals(declaredOperationFamily);
+        int channelBudget = outputChannelBudget(declaredOperationFamily, maximumModelOutputBytes);
         String expectedDigest = ExecutionRequest.digestWithScratch(
                 PolicyDigest.sha256Fields(List.of(command, workspaceRef, relativeWorkdir)), scratchSpace);
         if (!request.workspaceId().value().equals(workspaceRef)
@@ -527,10 +495,9 @@ public final class ProjectExecutionToolOperations {
         if (timeout.compareTo(maximumTimeout) > 0) {
             throw new IllegalArgumentException("timeout exceeds maximumTimeout");
         }
-        var commandClassification = SystemGitCliCommandClassifier.classify(command);
-        if (commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED) {
-            throw new SecurityException(commandClassification.reasonCode());
-        }
+        CredentialEgressGuard.rejectionCode(command).ifPresent(code -> {
+            throw new SecurityException(code);
+        });
         ExecutionRequest request = new ExecutionRequest(
                 new ExecutionId(identifiers.nextValue()),
                 Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null"),
@@ -552,8 +519,7 @@ public final class ProjectExecutionToolOperations {
                 ExecutionInput.none(),
                 ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
                 scratchSpace);
-        return executeRequest(
-                request, () -> false, ToolInvocationObserver.noop(), command, "UNKNOWN", commandClassification);
+        return executeRequest(request, () -> false, ToolInvocationObserver.noop(), command, "UNKNOWN");
     }
 
     private ToolResult executeRequest(
@@ -561,8 +527,7 @@ public final class ProjectExecutionToolOperations {
             ToolCancellation cancellationSignal,
             ToolInvocationObserver invocationObserver,
             String command,
-            String operationFamily,
-            SystemGitCliCommandClassifier.Classification commandClassification) {
+            String operationFamily) {
         MergedTailObserver merged = new MergedTailObserver(
                 outputObserver,
                 invocationObserver,
@@ -591,41 +556,16 @@ public final class ProjectExecutionToolOperations {
             ExecutionResult result = broker.execute(request, merged);
             if (merged.dispatched()) invocationObserver.acknowledged();
             return toToolResult(
-                    result,
-                    merged,
-                    outputSanitizer,
-                    command,
-                    operationFamily,
-                    commandClassification,
-                    sandboxProfileRef,
-                    scratchSpace);
+                    result, merged, outputSanitizer, command, operationFamily, sandboxProfileRef, scratchSpace);
         } catch (ExecutionPreflightException exception) {
-            return preflightFailure(
-                    request,
-                    merged,
-                    exception.code(),
-                    exception.getMessage(),
-                    command,
-                    operationFamily,
-                    commandClassification);
+            return toFailedToolResult(
+                    request, merged, exception.code(), exception.getMessage(), command, operationFamily);
         } catch (io.haifa.agent.execution.core.ExecutionRejectedException exception) {
-            return preflightFailure(
-                    request,
-                    merged,
-                    exception.code(),
-                    exception.getMessage(),
-                    command,
-                    operationFamily,
-                    commandClassification);
+            return toFailedToolResult(
+                    request, merged, exception.code(), exception.getMessage(), command, operationFamily);
         } catch (io.haifa.agent.sandbox.api.SandboxException exception) {
-            return preflightFailure(
-                    request,
-                    merged,
-                    exception.code(),
-                    exception.getMessage(),
-                    command,
-                    operationFamily,
-                    commandClassification);
+            return toFailedToolResult(
+                    request, merged, exception.code(), exception.getMessage(), command, operationFamily);
         } catch (RuntimeException exception) {
             return toFailedToolResult(
                     request,
@@ -633,8 +573,7 @@ public final class ProjectExecutionToolOperations {
                     "EXECUTION_FAILED",
                     exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage(),
                     command,
-                    operationFamily,
-                    commandClassification);
+                    operationFamily);
         } finally {
             complete.set(true);
             cancellation.interrupt();
@@ -647,8 +586,7 @@ public final class ProjectExecutionToolOperations {
             String failureCode,
             String errorMessage,
             String command,
-            String operationFamily,
-            SystemGitCliCommandClassifier.Classification commandClassification) {
+            String operationFamily) {
         String safeError = errorMessage == null || errorMessage.isBlank() ? "execution failed" : errorMessage;
         byte[] errBytes = safeError.getBytes(StandardCharsets.UTF_8);
         String safeDigestError = safeError.length() > 16_000 ? safeError.substring(0, 16_000) : safeError;
@@ -671,39 +609,7 @@ public final class ProjectExecutionToolOperations {
                 false,
                 false);
         return toToolResult(
-                failureResult,
-                merged,
-                outputSanitizer,
-                command,
-                operationFamily,
-                commandClassification,
-                sandboxProfileRef,
-                scratchSpace);
-    }
-
-    private ToolResult preflightFailure(
-            ExecutionRequest request,
-            MergedTailObserver merged,
-            String failureCode,
-            String errorMessage,
-            String command,
-            String operationFamily,
-            SystemGitCliCommandClassifier.Classification commandClassification) {
-        ToolResult failure = toFailedToolResult(
-                request, merged, failureCode, errorMessage, command, operationFamily, commandClassification);
-        Object stableCode = failure.structuredData().get("stableFailureCode");
-        boolean directGitOrGh = commandClassification.target() != SystemGitCliCommandClassifier.Target.OTHER;
-        boolean eligible = request.context().origin() == ExecutionOrigin.RUNTIME_TOOL
-                && !merged.dispatched()
-                && directGitOrGh
-                && RECOVERABLE_RISKS.contains(commandClassification.risk())
-                && stableCode instanceof String code
-                && RECOVERABLE_PREFLIGHT_CODES.contains(code);
-        if (eligible) {
-            throw ToolInvocationException.preflight(
-                    (String) stableCode, "Execution was not dispatched because required host access is unavailable.");
-        }
-        return failure;
+                failureResult, merged, outputSanitizer, command, operationFamily, sandboxProfileRef, scratchSpace);
     }
 
     private ToolResult toToolResult(
@@ -712,7 +618,6 @@ public final class ProjectExecutionToolOperations {
             UnaryOperator<String> outputSanitizer,
             String command,
             String operationFamily,
-            SystemGitCliCommandClassifier.Classification commandClassification,
             SandboxProfileRef sandboxProfileRef,
             ExecutionScratchSpaceSpec scratchSpace) {
         boolean exited = result.status() == ExecutionStatus.EXITED;
@@ -751,23 +656,8 @@ public final class ProjectExecutionToolOperations {
         data.put("durationMillis", result.resourceUsage().wallTime().toMillis());
         data.put("observedProcessCount", result.resourceUsage().observedProcessCount());
         data.put("operationFamily", operationFamily);
-        data.put("effectiveOperationFamily", effectiveOperationFamily(commandClassification));
-        data.put("commandTarget", commandClassification.target().name());
-        data.put("commandRisk", commandClassification.risk().name());
-        data.put(
-                "effectiveRisk",
-                CodingExecutionRiskResolver.assess(commandClassification, PolicyRiskLevel.HIGH)
-                        .effectiveRisk()
-                        .name());
-        data.put("commandOperation", commandClassification.operation().name());
-        data.put("commandClassificationReason", commandClassification.reasonCode());
-        data.put("riskResolverVersion", CodingExecutionRiskResolver.VERSION);
-        data.put("riskResolutionCode", riskResolutionCode(commandClassification));
-        data.put("riskAction", riskAction(commandClassification));
-        data.put("operationHintCode", operationHintCode(operationFamily, commandClassification));
-        String outputBudgetFamily = outputBudgetFamily(operationFamily, commandClassification);
-        data.put("outputBudgetFamily", outputBudgetFamily);
-        data.put("outputBudgetBytesPerChannel", outputChannelBudget(outputBudgetFamily, maximumModelOutputBytes));
+        data.put("outputBudgetFamily", operationFamily);
+        data.put("outputBudgetBytesPerChannel", outputChannelBudget(operationFamily, maximumModelOutputBytes));
         data.put("modelOutputBudgetBytes", maximumModelOutputBytes);
         data.put("modelOutputBudgetLines", maximumModelOutputLines);
         data.put(
@@ -784,7 +674,7 @@ public final class ProjectExecutionToolOperations {
                 data.put("failureCode", value.code());
                 data.put("failureDetail", value.safeDetail());
             });
-            var classification = CodingExecutionFailureClassifier.classify(result, output, commandClassification);
+            var classification = CodingExecutionFailureClassifier.classify(result, output);
             data.put("failureCategory", classification.category());
             data.put("stableFailureCode", classification.stableFailureCode());
             data.put("resourceClass", classification.resourceClass());
@@ -800,7 +690,7 @@ public final class ProjectExecutionToolOperations {
             data.put("outputRef", assets.getFirst().assetId());
             data.put("outputRefs", assets.stream().map(AssetRef::assetId).toList());
         }
-        if (outputBudgetFamily.equals("DIFF")) {
+        if (operationFamily.equals("DIFF")) {
             long files = output.lines()
                     .filter(line -> line.startsWith("diff --git "))
                     .count();
@@ -826,7 +716,7 @@ public final class ProjectExecutionToolOperations {
                 };
         if (result.exitCode() != null) headline += " (exit " + result.exitCode() + ")";
         String summary;
-        if (outputBudgetFamily.equals("DIFF")) {
+        if (operationFamily.equals("DIFF")) {
             summary = headline + "\n" + data.get("diffSummary");
             if (data.containsKey("diffArtifactRef")) summary += ", artifactRef=" + data.get("diffArtifactRef");
         } else {
@@ -920,120 +810,29 @@ public final class ProjectExecutionToolOperations {
         return rejectedWorkdir(operationFamily, stableCode);
     }
 
-    private static ToolResult workspaceProtocolRequired(String operationFamily) {
+    private static ToolResult rejectedCredentialEgress(String operationFamily, String reasonCode) {
         return new ToolResult(
                 false,
-                "Command uses a directory override that belongs in the structured workspace protocol.",
+                "Command rejected before execution: the command may expose or override host authentication material.",
                 Map.of(
                         "processState", "FAILED",
                         "operationFamily", operationFamily,
-                        "failureCategory", "PROTOCOL_ERROR",
-                        "stableFailureCode", "WORKSPACE_PROTOCOL_REQUIRED",
-                        "resourceClass", "WORKSPACE",
-                        "failureActionCode", "USE_STRUCTURED_WORKSPACE_TARGET",
-                        "failureAction", "Remove git -C and provide workspaceRef with relativeWorkdir."),
+                        "failureCategory", "POLICY",
+                        "stableFailureCode", "AUTHENTICATION_OVERRIDE_DENIED",
+                        "resourceClass", "AUTHENTICATION",
+                        "credentialBoundaryCode", reasonCode,
+                        "failureActionCode", "REMOVE_AUTHENTICATION_OVERRIDE",
+                        "failureAction",
+                                "Remove the host authentication override; use the managed Credential Lease path."),
                 List.of(),
                 List.of(),
                 false);
-    }
-
-    private static ToolResult rejectedCommandClassification(
-            String operationFamily, SystemGitCliCommandClassifier.Classification classification) {
-        String stableCode = hardBoundaryCode(classification.reasonCode());
-        String resourceClass = hardBoundaryResource(classification.reasonCode());
-        return new ToolResult(
-                false,
-                "Command rejected before execution: the command crosses a protected execution boundary.",
-                Map.ofEntries(
-                        Map.entry("processState", "FAILED"),
-                        Map.entry("operationFamily", operationFamily),
-                        Map.entry("effectiveOperationFamily", effectiveOperationFamily(classification)),
-                        Map.entry("commandTarget", classification.target().name()),
-                        Map.entry("commandRisk", classification.risk().name()),
-                        Map.entry("commandOperation", classification.operation().name()),
-                        Map.entry("commandClassificationReason", classification.reasonCode()),
-                        Map.entry("failureCategory", "POLICY"),
-                        Map.entry("stableFailureCode", stableCode),
-                        Map.entry("resourceClass", resourceClass),
-                        Map.entry("failureActionCode", failureActionCode("POLICY", stableCode)),
-                        Map.entry("failureAction", hardBoundaryAction(stableCode))),
-                List.of(),
-                List.of(),
-                false);
-    }
-
-    private static String effectiveOperationFamily(SystemGitCliCommandClassifier.Classification classification) {
-        return classification.operation().name();
-    }
-
-    private static String outputBudgetFamily(
-            String declaredOperationFamily, SystemGitCliCommandClassifier.Classification classification) {
-        return classification.target() == SystemGitCliCommandClassifier.Target.OTHER
-                ? declaredOperationFamily
-                : effectiveOperationFamily(classification);
-    }
-
-    private static String riskResolutionCode(SystemGitCliCommandClassifier.Classification classification) {
-        if (classification.risk() != SystemGitCliCommandClassifier.Risk.UNKNOWN) return "COMMAND_RISK_RESOLVED";
-        if (classification.target() == SystemGitCliCommandClassifier.Target.GIT
-                && classification.reasonCode().equals("GIT_SUBCOMMAND_UNKNOWN")) {
-            return "GIT_COMMAND_UNKNOWN_HIGH_RISK";
-        }
-        return "COMMAND_RISK_ESCALATED";
-    }
-
-    private static String riskAction(SystemGitCliCommandClassifier.Classification classification) {
-        return classification.risk() == SystemGitCliCommandClassifier.Risk.UNKNOWN
-                ? "Continue with trusted HIGH risk under the configured approval threshold; do not rewrite solely for classification."
-                : "Continue with the trusted resolved risk under the configured approval threshold.";
-    }
-
-    private static String operationHintCode(
-            String declaredOperation, SystemGitCliCommandClassifier.Classification classification) {
-        String effective = effectiveOperationFamily(classification);
-        if (declaredOperation.equals("UNKNOWN")) return "OPERATION_HINT_NOT_PROVIDED";
-        if (effective.equals("UNKNOWN")) return "OPERATION_HINT_UNVERIFIED";
-        return declaredOperation.equals(effective) ? "OPERATION_HINT_ACCEPTED" : "OPERATION_HINT_IGNORED";
-    }
-
-    private static String hardBoundaryCode(String reasonCode) {
-        if (reasonCode.contains("AUTHENTICATION")
-                || reasonCode.contains("CREDENTIAL")
-                || reasonCode.contains("TOKEN")) {
-            return "AUTHENTICATION_OVERRIDE_DENIED";
-        }
-        if (reasonCode.contains("PATH") || reasonCode.contains("REPOSITORY") || reasonCode.contains("BOUNDARY")) {
-            return "REPOSITORY_BOUNDARY_DENIED";
-        }
-        return reasonCode.equals("COMMAND_INVALID") ? "COMMAND_INVALID" : "COMMAND_BOUNDARY_DENIED";
-    }
-
-    private static String hardBoundaryResource(String reasonCode) {
-        String stableCode = hardBoundaryCode(reasonCode);
-        if (stableCode.equals("AUTHENTICATION_OVERRIDE_DENIED")) return "AUTHENTICATION";
-        if (stableCode.equals("REPOSITORY_BOUNDARY_DENIED")) return "REPOSITORY";
-        return "COMMAND";
-    }
-
-    private static String hardBoundaryAction(String stableCode) {
-        return switch (stableCode) {
-            case "AUTHENTICATION_OVERRIDE_DENIED" ->
-                "Remove the authentication override; use the managed Credential Lease path when available.";
-            case "REPOSITORY_BOUNDARY_DENIED" ->
-                "Use an active workspaceRef with a relativeWorkdir inside the authorized repository.";
-            case "COMMAND_INVALID" -> "Provide a non-empty command using the configured shell syntax.";
-            default -> "Remove the executable or command boundary override before retrying.";
-        };
     }
 
     private static String failureActionCode(String category, String stableCode) {
         return switch (stableCode) {
             case "AUTHENTICATION_OVERRIDE_DENIED" -> "REMOVE_AUTHENTICATION_OVERRIDE";
-            case "REPOSITORY_BOUNDARY_DENIED" -> "USE_BOUND_REPOSITORY";
-            case "NETWORK_PERMISSION_REQUIRED" -> "REQUEST_EXACT_PERMISSION_ONCE";
-            case "GIT_REVISION_NOT_FOUND" -> "READ_AUTHORITATIVE_REF_ONCE";
-            case "DEPENDENCY_UNAVAILABLE", "GIT_CLI_UNAVAILABLE", "GH_CLI_UNAVAILABLE" ->
-                "RESTORE_TOOLCHAIN_OR_USE_EQUIVALENT";
+            case "DEPENDENCY_UNAVAILABLE" -> "RESTORE_TOOLCHAIN_OR_USE_EQUIVALENT";
             case "CANCELLED" -> "DO_NOT_AUTOMATICALLY_RETRY";
             case "TIMEOUT", "OUTCOME_UNKNOWN", "OUTPUT_LIMIT_EXCEEDED", "PROCESS_LIMIT_EXCEEDED" ->
                 "VERIFY_OUTCOME_BEFORE_RETRY";

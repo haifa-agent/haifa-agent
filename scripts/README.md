@@ -11,8 +11,8 @@
 ## 1. Coding Runtime 可靠性分析
 
 `analyze-coding-runtime.ps1`（Windows）和 `analyze-coding-runtime.sh`（macOS/Linux）只读打开 Coding
-Agent 的 `runtime.db`，以最新 `runtime_event.occurred_at` 为窗口终点，输出脱敏的 Run/Tool/失败分类、
-Git/GH 目标、Operation Family 和恢复指标。公共逻辑位于 `analyze_coding_runtime.py`。
+Agent 的 `runtime.db`，以最新 `runtime_event.occurred_at` 为窗口终点，输出脱敏的 Run/Tool/失败分类和
+恢复指标。公共逻辑位于 `analyze_coding_runtime.py`。
 
 报告不会包含 Prompt、完整命令、命令输出、Credential、Provider 原始响应、Run/Tool 原始 ID 或主机绝对
 路径；Command 和 Identifier 只输出 SHA-256 摘要。输出必须位于数据目录、源码仓库和独立 docs 仓库

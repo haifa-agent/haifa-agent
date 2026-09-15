@@ -1525,7 +1525,6 @@ class RuntimeCoreTest {
                                 Map.of(
                                         "stableFailureCode", "PROCESS_START_FAILED",
                                         "operationFamily", "TEST",
-                                        "commandTarget", "mvn test",
                                         "sandboxProfileDigest", "sha256:sandbox"),
                                 List.of(),
                                 List.of(),
@@ -1542,7 +1541,7 @@ class RuntimeCoreTest {
                         .error()
                         .details())
                 .containsEntry("stableFailureCode", "PROCESS_START_FAILED")
-                .doesNotContainKeys("operationFamily", "commandTarget", "sandboxProfileDigest");
+                .doesNotContainKeys("operationFamily", "sandboxProfileDigest");
     }
 
     @Test
@@ -2027,7 +2026,7 @@ class RuntimeCoreTest {
                         request -> new ToolResult(true, "not called", Map.of(), List.of(), List.of(), false))
                 .publicToolPolicy((run, binding, request) -> {
                     throw new io.haifa.agent.runtime.core.tool.ToolAuthorizationProtocolException(
-                            "WORKSPACE_PROTOCOL_REQUIRED", "Use the structured workspace fields");
+                            "EXECUTION_PROTOCOL_REQUIRED", "Use the structured workspace fields");
                 }));
 
         var accepted = fixture.runtime.start(request("protocol-error"));

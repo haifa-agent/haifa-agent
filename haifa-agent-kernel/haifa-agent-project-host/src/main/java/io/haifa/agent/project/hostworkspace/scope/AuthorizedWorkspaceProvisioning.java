@@ -2,26 +2,19 @@ package io.haifa.agent.project.hostworkspace.scope;
 
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.PrincipalRef;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.project.core.workspace.WorkspaceService;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.hostworkspace.HostWorkspacePathSafety;
-import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryEntry;
-import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistrySource;
-import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStatus;
-import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStore;
-import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryView;
-import io.haifa.agent.project.hostworkspace.registry.InMemoryHostWorkspaceRegistryStore;
-import io.haifa.agent.project.store.WorkspaceBindingStore;
+import io.haifa.agent.project.hostworkspace.directory.AuthorizedDirectoryEntry;
+import io.haifa.agent.project.hostworkspace.directory.AuthorizedDirectoryStatus;
+import io.haifa.agent.project.hostworkspace.directory.AuthorizedDirectoryStore;
+import io.haifa.agent.project.hostworkspace.directory.AuthorizedDirectoryView;
+import io.haifa.agent.project.hostworkspace.directory.InMemoryAuthorizedDirectoryStore;
 import io.haifa.agent.project.store.WorkspaceStore;
-import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
+import io.haifa.agent.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -31,27 +24,26 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 
 /**
- * Trusted local product boundary that turns an approved directory into a peer member of the
+ * Trusted local product boundary that turns a user-approved directory into a peer member of the
  * {@link HostWorkspaceScope}. It must only be invoked after the user has approved the directory:
  * it resolves the real path, applies the overlap policy, provisions or recovers the logical
- * workspace and binding, and atomically swaps the scope snapshot. Revocation removes the physical
- * authorization immediately; it never deletes user files, the ledger, or the logical workspace and
- * binding audit facts.
+ * workspace, writes the single durable authorization record, and atomically swaps the scope
+ * snapshot. Revocation removes the physical authorization immediately; it never deletes user files
+ * or the logical workspace and authorization audit facts. The Host boundary does not provide any OS
+ * sandbox: ordinary host processes launched through the provider can still reach whatever the OS
+ * user can reach.
  */
 public final class AuthorizedWorkspaceProvisioning {
-    private static final String SEMANTICS_ID = "local-authorized-directory";
-
     private final WorkspaceStore workspaces;
-    private final WorkspaceBindingStore bindings;
     private final HostWorkspaceLocationStore locations;
     private final WorkspaceService workspaceService;
     private final ProjectId projectId;
+    private final TenantRef tenant;
     private final PrincipalRef owner;
     private final TimeProvider time;
-    private final HostWorkspaceRegistryStore registry;
+    private final AuthorizedDirectoryStore registry;
     private final WorkspaceId initialWorkspaceId;
     private final AtomicReference<HostWorkspaceScope> scope;
     private final AtomicBoolean registryMutation = new AtomicBoolean();
@@ -59,41 +51,41 @@ public final class AuthorizedWorkspaceProvisioning {
     public AuthorizedWorkspaceProvisioning(
             ProjectId projectId,
             WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
             HostWorkspaceLocationStore locations,
             WorkspaceService workspaceService,
+            TenantRef tenant,
             PrincipalRef owner,
             TimeProvider time,
             HostWorkspaceScope initialScope) {
         this(
                 projectId,
                 workspaces,
-                bindings,
                 locations,
                 workspaceService,
+                tenant,
                 owner,
                 time,
                 initialScope,
-                new InMemoryHostWorkspaceRegistryStore(),
+                new InMemoryAuthorizedDirectoryStore(),
                 "workspace");
     }
 
     public AuthorizedWorkspaceProvisioning(
             ProjectId projectId,
             WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
             HostWorkspaceLocationStore locations,
             WorkspaceService workspaceService,
+            TenantRef tenant,
             PrincipalRef owner,
             TimeProvider time,
             HostWorkspaceScope initialScope,
-            HostWorkspaceRegistryStore registry,
+            AuthorizedDirectoryStore registry,
             String initialSafeDisplayName) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
-        this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
         this.locations = Objects.requireNonNull(locations, "locations must not be null");
         this.workspaceService = Objects.requireNonNull(workspaceService, "workspaceService must not be null");
+        this.tenant = Objects.requireNonNull(tenant, "tenant must not be null");
         this.owner = Objects.requireNonNull(owner, "owner must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
         this.registry = Objects.requireNonNull(registry, "registry must not be null");
@@ -117,10 +109,32 @@ public final class AuthorizedWorkspaceProvisioning {
     }
 
     /** Safe product/model projection. Physical paths never appear in this view. */
-    public List<HostWorkspaceRegistryView> registryViews() {
+    public List<AuthorizedDirectoryView> directoryViews() {
         return registry.list(projectId).stream()
-                .map(HostWorkspaceRegistryEntry::view)
+                .filter(this::owns)
+                .map(AuthorizedDirectoryEntry::view)
                 .toList();
+    }
+
+    /**
+     * Requires the current durable authorization for the given owner and mode. Failures preserve the
+     * product vocabulary used by the file and execution entry points.
+     */
+    public AuthorizedDirectoryEntry requireAuthorized(
+            TenantRef requestTenant, PrincipalRef requester, WorkspaceId workspaceId, WorkspaceAccessMode required) {
+        Objects.requireNonNull(requestTenant, "requestTenant must not be null");
+        Objects.requireNonNull(requester, "requester must not be null");
+        Objects.requireNonNull(workspaceId, "workspaceId must not be null");
+        Objects.requireNonNull(required, "required must not be null");
+        AuthorizedDirectoryEntry entry = registry.find(projectId, workspaceId)
+                .filter(candidate -> candidate.status() == AuthorizedDirectoryStatus.ACTIVE)
+                .filter(candidate -> candidate.tenant().equals(requestTenant)
+                        && candidate.owner().equals(requester))
+                .orElseThrow(() -> new SecurityException("WORKSPACE_ACCESS_UNAVAILABLE"));
+        if (!entry.mode().allows(required)) {
+            throw new SecurityException("WORKSPACE_ACCESS_MODE_DENIED");
+        }
+        return entry;
     }
 
     /** Fails closed when the scope has changed since the given snapshot was resolved. */
@@ -134,32 +148,24 @@ public final class AuthorizedWorkspaceProvisioning {
 
     /**
      * Authorizes one user-approved directory. If the directory is already covered by an existing
-     * authorized boundary, the existing entry is reused. If it would swallow an existing boundary,
-     * the request is rejected fail closed. User authorization remains in WorkspaceAccess outside
-     * this Host mount boundary.
+     * authorized boundary, the existing entry is reused and its current mode is kept. If it would
+     * swallow an existing boundary, the request is rejected fail closed.
      */
-    ProvisioningResult authorize(Path directory) {
-        return authorizeApprovedAttach(directory, ignored -> {});
+    public ProvisioningResult authorize(Path directory) {
+        return authorizeApprovedAttach(directory, WorkspaceAccessMode.DEVELOP);
     }
 
-    /**
-     * Registers an approved attach and invokes the product-owned access activation after the
-     * Registry write but before the new directory is published in the live Scope. During this
-     * sequence {@link #scope()} fails closed, so no observer can combine a new mount with stale
-     * access.
-     */
-    public synchronized ProvisioningResult authorizeApprovedAttach(
-            Path directory, Consumer<AuthorizedHostDirectory> accessActivation) {
+    public synchronized ProvisioningResult authorizeApprovedAttach(Path directory, WorkspaceAccessMode requestedMode) {
         Objects.requireNonNull(directory, "directory must not be null");
-        Objects.requireNonNull(accessActivation, "accessActivation must not be null");
-        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
-            throw HostWorkspaceScopeException.invalidArgument(
-                    directory.toString(), "Authorized directory must be an existing directory");
-        }
+        Objects.requireNonNull(requestedMode, "requestedMode must not be null");
         if (HostWorkspacePathSafety.isUnsafeNode(directory)) {
             throw HostWorkspaceScopeException.invalidArgument(
                     directory.toString(),
                     "Authorized directory must not be a symbolic link or reparse point: " + directory);
+        }
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            throw HostWorkspaceScopeException.invalidArgument(
+                    directory.toString(), "Authorized directory must be an existing directory");
         }
         Path realPath;
         try {
@@ -177,17 +183,19 @@ public final class AuthorizedWorkspaceProvisioning {
         HostWorkspaceScope current = scope.get();
         for (AuthorizedHostDirectory existing : current.allowedDirectories()) {
             if (existing.encloses(realPath)) {
-                HostWorkspaceRegistryView view = registry.find(projectId, existing.workspaceId())
-                        .map(HostWorkspaceRegistryEntry::view)
-                        .orElseGet(() -> new HostWorkspaceRegistryView(
-                                existing.workspaceId().value(),
-                                safeDisplayName(existing.realPath(), existing.workspaceId()),
-                                existing.workspaceId().equals(initialWorkspaceId)
-                                        ? HostWorkspaceRegistrySource.INITIAL
-                                        : HostWorkspaceRegistrySource.APPROVED_ATTACH,
-                                HostWorkspaceRegistryStatus.ACTIVE));
-                accessActivation.accept(existing);
-                return new ProvisioningResult(existing, true, false, view);
+                AuthorizedDirectoryEntry enclosing = registry.find(projectId, existing.workspaceId())
+                        .filter(this::owns)
+                        .filter(entry -> entry.status() == AuthorizedDirectoryStatus.ACTIVE)
+                        .orElseThrow(() -> HostWorkspaceScopeException.accessDenied(
+                                realPath.toString(),
+                                "Enclosing authorized directory has no current active owned authorization"));
+                try {
+                    locations.resolveVerified(existing.workspaceId());
+                } catch (RuntimeException failure) {
+                    throw HostWorkspaceScopeException.accessDenied(
+                            realPath.toString(), "Enclosing authorized directory is no longer verifiable");
+                }
+                return new ProvisioningResult(existing, true, false, enclosing.view());
             }
             if (existing.realPath().startsWith(realPath)) {
                 throw HostWorkspaceScopeException.invalidArgument(
@@ -199,106 +207,44 @@ public final class AuthorizedWorkspaceProvisioning {
         }
 
         HostDirectoryIdentity identity = HostDirectoryIdentity.resolve(realPath);
-        ProvisioningResult provisioned = provisionDirectory(realPath, identity);
-        AuthorizedHostDirectory allowed = provisioned.directory();
-        HostWorkspaceRegistryEntry entry = HostWorkspaceRegistryEntry.active(
-                projectId,
-                allowed.workspaceId(),
-                identity.locationRef(),
-                safeDisplayName(realPath, allowed.workspaceId()),
-                HostWorkspaceRegistrySource.APPROVED_ATTACH,
-                realPath,
-                identity.physicalFingerprint(),
-                time.now());
+        AuthorizedDirectoryEntry existingEntry =
+                registry.find(projectId, identity.workspaceId()).orElse(null);
+        if (existingEntry != null && !owns(existingEntry)) {
+            throw HostWorkspaceScopeException.accessDenied(
+                    realPath.toString(), "Authorized directory belongs to a different owner");
+        }
+        boolean recovered = existingEntry != null;
+        AuthorizedHostDirectory allowed = provisionDirectory(realPath, identity);
+        Instant now = time.now();
         registryMutation.set(true);
         try {
-            HostWorkspaceRegistryEntry persisted = registry.find(projectId, allowed.workspaceId())
-                    .map(existing -> registry.update(
-                            existing.reactivate(realPath, identity.physicalFingerprint(), time.now()),
-                            existing.version()))
-                    .orElseGet(() -> registry.create(entry));
-            try {
-                accessActivation.accept(allowed);
-            } catch (RuntimeException activationFailure) {
-                try {
-                    registry.update(
-                            persisted.disable("WORKSPACE_ACCESS_ACTIVATION_FAILED", time.now()), persisted.version());
-                } catch (RuntimeException compensationFailure) {
-                    activationFailure.addSuppressed(compensationFailure);
-                }
-                throw activationFailure;
+            AuthorizedDirectoryEntry persisted;
+            if (existingEntry == null) {
+                persisted = registry.create(AuthorizedDirectoryEntry.active(
+                        projectId,
+                        allowed.workspaceId(),
+                        tenant,
+                        owner,
+                        requestedMode,
+                        safeDisplayName(realPath, allowed.workspaceId()),
+                        realPath,
+                        identity.physicalFingerprint(),
+                        now));
+            } else {
+                AuthorizedDirectoryEntry updated = existingEntry.status() == AuthorizedDirectoryStatus.ACTIVE
+                        ? existingEntry.revalidated(realPath, identity.physicalFingerprint(), now)
+                        : existingEntry.reactivate(realPath, identity.physicalFingerprint(), requestedMode, now);
+                persisted = registry.update(updated, existingEntry.version());
             }
             current = scope.get();
             scope.set(current.withDirectory(allowed));
-            return new ProvisioningResult(allowed, false, provisioned.recovered(), persisted.view());
+            return new ProvisioningResult(allowed, false, recovered, persisted.view());
         } finally {
             registryMutation.set(false);
         }
     }
 
-    /** Registers a trusted provider-created Git worktree reached through the approved Tool path. */
-    public synchronized ProvisioningResult authorizeApprovedWorktree(
-            WorkspaceId parentWorkspaceId,
-            WorkspaceId childWorkspaceId,
-            WorkspaceBindingId childBindingId,
-            WorkspaceLocationRef childLocationRef,
-            String safeDisplayName) {
-        Objects.requireNonNull(parentWorkspaceId, "parentWorkspaceId must not be null");
-        Objects.requireNonNull(childWorkspaceId, "childWorkspaceId must not be null");
-        Objects.requireNonNull(childBindingId, "childBindingId must not be null");
-        Objects.requireNonNull(childLocationRef, "childLocationRef must not be null");
-        if (scope.get().allowedDirectories().stream()
-                .noneMatch(directory -> directory.workspaceId().equals(parentWorkspaceId))) {
-            throw HostWorkspaceScopeException.accessDenied(null, "worktree parent workspace is not active");
-        }
-        Workspace child = workspaces
-                .find(childWorkspaceId)
-                .orElseThrow(() -> new IllegalStateException("provider-created child workspace is unavailable"));
-        WorkspaceBinding binding = bindings.find(childBindingId)
-                .orElseThrow(() -> new IllegalStateException("provider-created child binding is unavailable"));
-        if (!child.root().bindingId().equals(childBindingId)
-                || !binding.locationRef().equals(childLocationRef)
-                || binding.mode() != WorkspaceBindingMode.COPY_ON_WRITE
-                || !binding.capabilities().allows("execution_run")) {
-            throw new IllegalStateException("provider-created worktree authority does not match registration");
-        }
-        Path target;
-        try {
-            target = locations.resolveForTrustedProvider(childLocationRef).toRealPath();
-        } catch (IOException exception) {
-            throw new IllegalStateException("provider-created worktree cannot be resolved", exception);
-        }
-        if (!Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS) || HostWorkspacePathSafety.isUnsafeNode(target)) {
-            throw new IllegalStateException("provider-created worktree is not a safe directory");
-        }
-        String bindingFingerprint = HostWorkspaceLocationStore.fingerprintFor(target);
-        if (!binding.rootFingerprint().equals(bindingFingerprint)) {
-            throw new IllegalStateException("provider-created worktree fingerprint does not match its binding");
-        }
-        String physicalFingerprint = HostDirectoryIdentity.resolve(target).physicalFingerprint();
-        AuthorizedHostDirectory directory = AuthorizedHostDirectory.of(childWorkspaceId, target);
-        HostWorkspaceScope current = scope.get();
-        HostWorkspaceScope updated = current.withDirectory(directory);
-        HostWorkspaceRegistryEntry entry = HostWorkspaceRegistryEntry.active(
-                projectId,
-                childWorkspaceId,
-                childLocationRef,
-                safeDisplayName,
-                HostWorkspaceRegistrySource.APPROVED_WORKTREE_CREATE,
-                target,
-                physicalFingerprint,
-                time.now());
-        registryMutation.set(true);
-        try {
-            HostWorkspaceRegistryEntry persisted = registry.create(entry);
-            scope.set(updated);
-            return new ProvisioningResult(directory, false, false, persisted.view());
-        } finally {
-            registryMutation.set(false);
-        }
-    }
-
-    /** Revokes the physical authorization of one directory. Logical facts stay untouched. */
+    /** Revokes the physical authorization of one directory. Logical and audit facts stay untouched. */
     public void revoke(WorkspaceId workspaceId) {
         revoke(workspaceId, "USER_REVOKED");
     }
@@ -308,7 +254,8 @@ public final class AuthorizedWorkspaceProvisioning {
         if (workspaceId.equals(initialWorkspaceId)) {
             throw new IllegalArgumentException("initial workspace authorization cannot be revoked");
         }
-        HostWorkspaceRegistryEntry entry = registry.find(projectId, workspaceId)
+        AuthorizedDirectoryEntry entry = registry.find(projectId, workspaceId)
+                .filter(this::owns)
                 .orElseThrow(() -> new IllegalArgumentException("Directory is not registered"));
         registryMutation.set(true);
         try {
@@ -319,96 +266,77 @@ public final class AuthorizedWorkspaceProvisioning {
                 throw new IllegalArgumentException("Directory is not authorized in this scope");
             }
             scope.set(updated);
+            if (locations.contains(workspaceId)) {
+                locations.unregisterForTrustedProvider(workspaceId, entry.realPath());
+            }
         } finally {
             registryMutation.set(false);
         }
     }
 
-    private ProvisioningResult provisionDirectory(Path realPath) {
-        HostDirectoryIdentity identity = HostDirectoryIdentity.resolve(realPath);
-        return provisionDirectory(realPath, identity);
-    }
-
-    private ProvisioningResult provisionDirectory(Path realPath, HostDirectoryIdentity identity) {
-        boolean recovered = workspaces.find(identity.workspaceId()).isPresent();
-        bindings.find(identity.bindingId()).ifPresent(existing -> {
-            if (existing.mode() != WorkspaceBindingMode.DIRECT) {
-                throw HostWorkspaceScopeException.permissionDenied(
-                        realPath.toString(),
-                        "Directory binding does not provide the required technical mount capability: " + realPath);
-            }
-        });
-        WorkspaceBinding binding = WorkspaceBinding.provision(
-                        identity.bindingId(),
-                        identity.locationRef(),
-                        WorkspaceBindingMode.DIRECT,
-                        owner,
-                        WorkspaceCapabilitySet.readWriteFiles(),
-                        WorkspacePermissionSet.readWrite(),
-                        identity.fingerprint(),
-                        time.now())
-                .activate(time.now());
-        Workspace workspace =
-                workspaceService.provisionDirectory(projectId, identity.workspaceId(), binding, SEMANTICS_ID);
-        if (!locations.contains(identity.locationRef())) {
-            locations.register(identity.locationRef(), realPath);
+    private AuthorizedHostDirectory provisionDirectory(Path realPath, HostDirectoryIdentity identity) {
+        workspaceService.provisionDirectory(projectId, identity.workspaceId(), identity.fingerprint());
+        if (!locations.contains(identity.workspaceId())) {
+            locations.register(identity.workspaceId(), realPath);
         }
-        AuthorizedHostDirectory directory = AuthorizedHostDirectory.of(workspace.id(), realPath);
-        return new ProvisioningResult(
-                directory,
-                false,
-                recovered,
-                new HostWorkspaceRegistryView(
-                        directory.workspaceId().value(),
-                        safeDisplayName(realPath, directory.workspaceId()),
-                        HostWorkspaceRegistrySource.APPROVED_ATTACH,
-                        HostWorkspaceRegistryStatus.ACTIVE));
+        return AuthorizedHostDirectory.of(identity.workspaceId(), realPath);
     }
 
     public record ProvisioningResult(
             AuthorizedHostDirectory directory,
             boolean reusedExistingBoundary,
             boolean recovered,
-            HostWorkspaceRegistryView registryView) {
+            AuthorizedDirectoryView directoryView) {
         public ProvisioningResult {
             Objects.requireNonNull(directory, "directory must not be null");
-            Objects.requireNonNull(registryView, "registryView must not be null");
+            Objects.requireNonNull(directoryView, "directoryView must not be null");
         }
     }
 
     private HostWorkspaceScope restore(HostWorkspaceScope initialScope, String initialSafeDisplayName) {
         AuthorizedHostDirectory initial = initialScope.allowedDirectories().getFirst();
-        Workspace workspace = workspaces
-                .find(initial.workspaceId())
-                .orElseThrow(() -> new IllegalStateException("initial workspace is unavailable"));
-        WorkspaceBinding binding = bindings.find(workspace.root().bindingId())
-                .orElseThrow(() -> new IllegalStateException("initial workspace binding is unavailable"));
         Instant now = time.now();
-        if (registry.find(projectId, initial.workspaceId()).isEmpty()) {
-            registry.create(HostWorkspaceRegistryEntry.active(
+        HostDirectoryIdentity initialIdentity = HostDirectoryIdentity.resolve(initial.realPath());
+        Path initialRealPath = initial.realPath().toAbsolutePath().normalize();
+        AuthorizedDirectoryEntry existingInitial =
+                registry.find(projectId, initial.workspaceId()).orElse(null);
+        if (existingInitial == null) {
+            registry.create(AuthorizedDirectoryEntry.active(
                     projectId,
                     initial.workspaceId(),
-                    binding.locationRef(),
+                    tenant,
+                    owner,
+                    WorkspaceAccessMode.DEVELOP,
                     initialSafeDisplayName,
-                    HostWorkspaceRegistrySource.INITIAL,
-                    initial.realPath(),
-                    HostDirectoryIdentity.resolve(initial.realPath()).physicalFingerprint(),
+                    initialRealPath,
+                    initialIdentity.physicalFingerprint(),
                     now));
+        } else {
+            if (!owns(existingInitial) || existingInitial.status() != AuthorizedDirectoryStatus.ACTIVE) {
+                throw HostWorkspaceScopeException.accessDenied(
+                        initialRealPath.toString(),
+                        "Initial authorized directory has no current active owned authorization");
+            }
+            if (!existingInitial.realPath().equals(initialRealPath)
+                    || !existingInitial.physicalFingerprint().equals(initialIdentity.physicalFingerprint())) {
+                throw HostWorkspaceScopeException.accessDenied(
+                        initialRealPath.toString(),
+                        "Initial authorized directory path or physical identity changed;"
+                                + " explicit re-authorization is required");
+            }
         }
 
         HostWorkspaceScope recovered = initialScope;
-        for (HostWorkspaceRegistryEntry entry : registry.list(projectId)) {
+        for (AuthorizedDirectoryEntry entry : registry.list(projectId)) {
             if (entry.workspaceRef().equals(initial.workspaceId())
-                    || entry.status() != HostWorkspaceRegistryStatus.ACTIVE) {
+                    || !owns(entry)
+                    || entry.status() != AuthorizedDirectoryStatus.ACTIVE) {
                 continue;
             }
             try {
-                if (entry.source() == HostWorkspaceRegistrySource.APPROVED_WORKTREE_CREATE) {
-                    throw new IllegalStateException("worktree recovery requires trusted Git reconciliation");
-                }
                 RestorableDirectory restorable = requireRestorable(entry);
-                ProvisioningResult result = provisionDirectory(restorable.realPath());
-                recovered = recovered.withDirectory(result.directory());
+                AuthorizedHostDirectory directory = provisionDirectory(restorable.realPath(), restorable.identity());
+                recovered = recovered.withDirectory(directory);
                 registry.update(
                         entry.revalidated(restorable.realPath(), restorable.physicalFingerprint(), now),
                         entry.version());
@@ -419,7 +347,11 @@ public final class AuthorizedWorkspaceProvisioning {
         return recovered;
     }
 
-    private RestorableDirectory requireRestorable(HostWorkspaceRegistryEntry entry) {
+    private boolean owns(AuthorizedDirectoryEntry entry) {
+        return entry.tenant().equals(tenant) && entry.owner().equals(owner);
+    }
+
+    private RestorableDirectory requireRestorable(AuthorizedDirectoryEntry entry) {
         Path stored = entry.realPath();
         if (!Files.isDirectory(stored, LinkOption.NOFOLLOW_LINKS) || HostWorkspacePathSafety.isUnsafeNode(stored)) {
             throw new IllegalStateException("registered directory is unavailable");
@@ -430,17 +362,19 @@ public final class AuthorizedWorkspaceProvisioning {
                 throw new IllegalStateException("registered directory is an unsafe node");
             }
             HostDirectoryIdentity identity = HostDirectoryIdentity.resolve(verified);
-            if (!identity.workspaceId().equals(entry.workspaceRef())
-                    || !identity.locationRef().equals(entry.locationRef())) {
+            if (!identity.workspaceId().equals(entry.workspaceRef())) {
                 throw new IllegalStateException("registered directory identity has drifted");
             }
-            return new RestorableDirectory(verified, identity.physicalFingerprint());
+            if (!identity.physicalFingerprint().equals(entry.physicalFingerprint())) {
+                throw new IllegalStateException("registered directory physical identity has changed");
+            }
+            return new RestorableDirectory(verified, identity, entry.physicalFingerprint());
         } catch (IOException exception) {
             throw new IllegalStateException("registered directory cannot be resolved", exception);
         }
     }
 
-    private record RestorableDirectory(Path realPath, String physicalFingerprint) {}
+    private record RestorableDirectory(Path realPath, HostDirectoryIdentity identity, String physicalFingerprint) {}
 
     private static String recoveryReason(RuntimeException failure) {
         return failure instanceof IllegalArgumentException ? "REGISTRY_ROOT_OVERLAP" : "REGISTRY_REVALIDATION_FAILED";

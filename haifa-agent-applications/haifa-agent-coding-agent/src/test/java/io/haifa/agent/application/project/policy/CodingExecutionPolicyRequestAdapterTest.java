@@ -9,7 +9,6 @@ import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
-import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.PolicyAction;
 import io.haifa.agent.policy.api.PolicyContext;
 import io.haifa.agent.policy.api.PolicyRequest;
@@ -28,97 +27,68 @@ import org.junit.jupiter.api.Test;
 class CodingExecutionPolicyRequestAdapterTest {
 
     @Test
-    void resolvesDirectGitAndGithubCommandsIntoEffectivePolicyRisk() {
-        PolicyRequest localRead = adapt("git status --short");
-        PolicyRequest localWrite = adapt("git add src/Main.java");
-        PolicyRequest networkRead = adapt("gh pr list --repo owner/repo");
-        PolicyRequest fetch = adapt("git fetch origin");
-        PolicyRequest ghApi = adapt("gh api repos/owner/repo");
-        PolicyRequest externalWrite = adapt("git push origin feature");
-
-        assertThat(localRead.risk().level()).isEqualTo(PolicyRiskLevel.LOW);
-        assertThat(localRead.risk().sideEffects()).containsExactly(PolicySideEffect.PROCESS_EXECUTION);
-        assertThat(localWrite.risk().level()).isEqualTo(PolicyRiskLevel.MEDIUM);
-        assertThat(localWrite.risk().sideEffects())
-                .contains(PolicySideEffect.PROCESS_EXECUTION, PolicySideEffect.FILE_WRITE);
-        assertThat(networkRead.risk().level()).isEqualTo(PolicyRiskLevel.MEDIUM);
-        assertThat(networkRead.risk().sideEffects()).contains(PolicySideEffect.NETWORK_ACCESS);
-        assertThat(fetch.risk().level()).isEqualTo(PolicyRiskLevel.MEDIUM);
-        assertThat(fetch.risk().sideEffects()).contains(PolicySideEffect.FILE_WRITE, PolicySideEffect.NETWORK_ACCESS);
-        assertThat(ghApi.risk().level()).isEqualTo(PolicyRiskLevel.HIGH);
-        assertThat(externalWrite.risk().level()).isEqualTo(PolicyRiskLevel.HIGH);
-        assertThat(externalWrite.risk().sideEffects())
-                .contains(PolicySideEffect.NETWORK_ACCESS, PolicySideEffect.EXTERNAL_SYSTEM_MUTATION);
-    }
-
-    @Test
-    void treatsCompositionAsHighRiskButPreservesHardDenialsAsCritical() {
-        PolicyRequest compound = adapt("git status && git push origin feature");
-        PolicyRequest protectedOverride = adapt("GH_TOKEN=value gh pr list && echo done");
-
-        assertThat(compound.risk().level()).isEqualTo(PolicyRiskLevel.HIGH);
-        assertThat(compound.risk().sideEffects())
-                .contains(
-                        PolicySideEffect.FILE_WRITE,
-                        PolicySideEffect.NETWORK_ACCESS,
-                        PolicySideEffect.EXTERNAL_SYSTEM_MUTATION);
-        assertThat(protectedOverride.risk().level()).isEqualTo(PolicyRiskLevel.CRITICAL);
-    }
-
-    @Test
-    void sendsShellCompositionWrappersAndUnknownGitToHighRiskPolicy() {
-        for (String command : Set.of(
-                "git status; git log -1",
-                "git status && git log -1",
-                "git status || git log -1",
-                "git status | Out-String",
-                "git status > status.txt",
-                "git status\ngit log -1",
-                "$(git status)",
-                "powershell -Command \"git status\"",
-                "git frobnicate")) {
-            assertThat(adapt(command).risk().level()).as(command).isEqualTo(PolicyRiskLevel.HIGH);
+    void keepsTheGenericExecutionBaselineForEveryOrdinaryCommand() {
+        PolicyRequest baseline = baseline();
+        for (String command : new String[] {
+            "git status --short",
+            "git -C docs status",
+            "git -c color.ui=false rev-parse HEAD",
+            "git grep -c credential.helper -- .",
+            "git --no-pager --no-pager grep -c credential.helper -- .",
+            "git push origin feature",
+            "git reset --hard HEAD",
+            "gh pr view 42",
+            "gh pr merge 42",
+            "mvn test && echo done"
+        }) {
+            PolicyRequest adapted = CodingExecutionPolicyRequestAdapter.applyCredentialBoundary(
+                    baseline, CodingExecutionPolicyRequestAdapter.EXECUTION_RUN, request(command));
+            assertThat(adapted).as(command).isSameAs(baseline);
         }
-        assertThat(adapt("git push --force origin feature").risk().level()).isEqualTo(PolicyRiskLevel.HIGH);
     }
 
     @Test
-    void freezesTheClassifierAssessmentWithoutChangingTheInvocationResourceDigest() {
-        PolicyRequest status = adapt("git status --short");
-        PolicyRequest push = adapt("git push origin feature");
-
-        assertThat(status.resource()).isEqualTo(baseline().resource());
-        assertThat(status.context().securityConfigurationDigest()).isPresent();
-        assertThat(status.context().securityConfigurationDigest())
-                .isNotEqualTo(push.context().securityConfigurationDigest());
+    void leavesNonExecutionToolsUntouched() {
+        PolicyRequest baseline = baseline();
+        assertThat(CodingExecutionPolicyRequestAdapter.applyCredentialBoundary(
+                        baseline, "file_read", request("git status")))
+                .isSameAs(baseline);
     }
 
     @Test
-    void keepsGenericCommandsAtTheStaticExecutionBaseline() {
-        PolicyRequest generic = adapt("mvn test && echo done");
-
-        assertThat(generic.risk().level()).isEqualTo(PolicyRiskLevel.HIGH);
-        assertThat(generic.risk().sideEffects()).containsExactly(PolicySideEffect.PROCESS_EXECUTION);
-    }
-
-    @Test
-    void reportsGitDirectoryOverrideAsWorkspaceProtocolErrorBeforePolicyDecision() {
-        assertThatThrownBy(() -> adapt("git -C docs status --short"))
-                .isInstanceOfSatisfying(ToolAuthorizationProtocolException.class, failure -> {
-                    assertThat(failure.reasonCode()).isEqualTo("WORKSPACE_PROTOCOL_REQUIRED");
-                    assertThat(failure.safeExplanation()).contains("workspaceRef", "relativeWorkdir");
-                });
+    void failsClosedBeforePolicyForConfirmedCredentialEgressCommands() {
+        for (String command : new String[] {
+            "GH_TOKEN=value gh pr list",
+            "git credential fill",
+            "git --no-pager credential fill",
+            "git -c color.ui=false credential fill",
+            "git --no-pager --no-pager --no-pager --no-pager --no-pager --no-pager --no-pager --no-pager credential fill",
+            "gh auth token",
+            "gh auth status --show-token",
+            "gh auth status -t",
+            "gh auth status --show-token=true",
+            "gh --hostname github.com auth token",
+            "gh --hostname=github.com auth token",
+            "gh -h github.com auth token",
+            "git -c credential.helper=other status"
+        }) {
+            assertThatThrownBy(() -> adapt(command))
+                    .as(command)
+                    .isInstanceOf(ToolAuthorizationProtocolException.class)
+                    .satisfies(failure -> assertThat(((ToolAuthorizationProtocolException) failure).reasonCode())
+                            .isNotBlank());
+        }
     }
 
     private static PolicyRequest adapt(String command) {
-        return CodingExecutionPolicyRequestAdapter.withEffectiveExecutionRisk(
+        return CodingExecutionPolicyRequestAdapter.applyCredentialBoundary(
                 baseline(), CodingExecutionPolicyRequestAdapter.EXECUTION_RUN, request(command));
     }
 
     private static PolicyRequest baseline() {
         return new PolicyRequest(
                 new PolicySubject(new TenantRef("tenant"), new PrincipalRef("user", "user"), "haifa-coding-agent"),
-                PolicyContext.run("run", ApprovalMode.ASK),
+                PolicyContext.run("run", io.haifa.agent.policy.api.ApprovalMode.ASK),
                 new PolicyAction("execution_run", "invoke"),
                 new PolicyResource("tool", "execution_run@1", Optional.of("0".repeat(64)), "Execution"),
                 new PolicyRisk(

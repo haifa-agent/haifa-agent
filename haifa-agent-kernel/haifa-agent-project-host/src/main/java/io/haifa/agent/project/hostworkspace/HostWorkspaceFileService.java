@@ -1,7 +1,5 @@
 package io.haifa.agent.project.hostworkspace;
 
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingStatus;
 import io.haifa.agent.project.filesystem.FileContent;
 import io.haifa.agent.project.filesystem.FileEntry;
 import io.haifa.agent.project.filesystem.FileListPage;
@@ -16,10 +14,8 @@ import io.haifa.agent.project.filesystem.WorkspaceFileException;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.spi.WorkspaceProvider;
-import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspacePermission;
 import io.haifa.agent.project.workspace.WorkspaceStatus;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -40,22 +36,16 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Stream;
 
 public final class HostWorkspaceFileService implements WorkspaceProvider {
     private final WorkspaceStore workspaces;
-    private final WorkspaceBindingStore bindings;
     private final HostWorkspaceLocationStore locations;
     private final SensitivePathPolicy sensitivePaths;
 
     public HostWorkspaceFileService(
-            WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
-            HostWorkspaceLocationStore locations,
-            SensitivePathPolicy sensitivePaths) {
+            WorkspaceStore workspaces, HostWorkspaceLocationStore locations, SensitivePathPolicy sensitivePaths) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
-        this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
         this.locations = Objects.requireNonNull(locations, "locations must not be null");
         this.sensitivePaths = Objects.requireNonNull(sensitivePaths, "sensitivePaths must not be null");
     }
@@ -66,16 +56,9 @@ public final class HostWorkspaceFileService implements WorkspaceProvider {
     }
 
     @Override
-    public Set<io.haifa.agent.project.binding.WorkspaceBindingMode> supportedBindingModes() {
-        return Set.of(
-                io.haifa.agent.project.binding.WorkspaceBindingMode.DIRECT,
-                io.haifa.agent.project.binding.WorkspaceBindingMode.READ_ONLY);
-    }
-
-    @Override
     public FileListPage list(FileListRequest request) {
         WorkspacePath directory = request.directory();
-        Access access = access(directory, WorkspacePermission.LIST);
+        Access access = access(directory);
         Path hostDirectory = resolveExisting(access, directory);
         if (!Files.isDirectory(hostDirectory, LinkOption.NOFOLLOW_LINKS)) {
             throw failure(WorkspaceFileErrorCode.WRONG_FILE_TYPE, directory, "logical path is not a directory");
@@ -107,7 +90,7 @@ public final class HostWorkspaceFileService implements WorkspaceProvider {
 
     @Override
     public FileMetadata stat(WorkspacePath path, boolean includeHash) {
-        Access access = access(path, WorkspacePermission.STAT);
+        Access access = access(path);
         Path hostPath = resolveExisting(access, path);
         return metadata(access, path, hostPath, includeHash);
     }
@@ -115,7 +98,7 @@ public final class HostWorkspaceFileService implements WorkspaceProvider {
     @Override
     public FileContent read(WorkspacePath path, ReadOptions options) {
         Objects.requireNonNull(options, "options must not be null");
-        Access access = access(path, WorkspacePermission.READ);
+        Access access = access(path);
         Path hostPath = resolveExisting(access, path);
         if (!Files.isRegularFile(hostPath, LinkOption.NOFOLLOW_LINKS)) {
             throw failure(WorkspaceFileErrorCode.WRONG_FILE_TYPE, path, "logical path is not a regular file");
@@ -184,7 +167,7 @@ public final class HostWorkspaceFileService implements WorkspaceProvider {
     @Override
     public List<SearchResult> search(SearchRequest request) {
         Objects.requireNonNull(request, "request must not be null");
-        Access access = access(request.root(), WorkspacePermission.SEARCH);
+        Access access = access(request.root());
         Path hostRoot = resolveExisting(access, request.root());
         if (!Files.isDirectory(hostRoot, LinkOption.NOFOLLOW_LINKS)) {
             throw failure(WorkspaceFileErrorCode.WRONG_FILE_TYPE, request.root(), "search root is not a directory");
@@ -215,38 +198,26 @@ public final class HostWorkspaceFileService implements WorkspaceProvider {
         }
     }
 
-    private Access access(WorkspacePath path, WorkspacePermission permission) {
+    private Access access(WorkspacePath path) {
         Workspace workspace = workspaces
                 .find(path.workspaceId())
                 .orElseThrow(() -> failure(WorkspaceFileErrorCode.WORKSPACE_NOT_FOUND, path, "workspace not found"));
         if (workspace.status() != WorkspaceStatus.ACTIVE) {
             throw failure(WorkspaceFileErrorCode.WORKSPACE_INACTIVE, path, "workspace is not active");
         }
-        WorkspaceBinding binding = bindings.find(workspace.root().bindingId())
-                .orElseThrow(
-                        () -> failure(WorkspaceFileErrorCode.BINDING_NOT_FOUND, path, "workspace binding not found"));
-        if (binding.status() != WorkspaceBindingStatus.ACTIVE) {
-            throw failure(WorkspaceFileErrorCode.BINDING_INACTIVE, path, "workspace binding is not active");
-        }
-        if (!binding.permissions().allows(permission)) {
-            throw failure(WorkspaceFileErrorCode.PERMISSION_DENIED, path, "workspace permission denied");
-        }
         if (!sensitivePaths.mayRead(path.projectPath())) {
             throw failure(WorkspaceFileErrorCode.SENSITIVE_PATH, path, "sensitive logical path is not readable");
         }
         Path root;
         try {
-            root = locations.resolve(binding.locationRef()).toRealPath(LinkOption.NOFOLLOW_LINKS);
-        } catch (IOException | RuntimeException exception) {
-            throw failure(WorkspaceFileErrorCode.BINDING_INACTIVE, path, "workspace location is unavailable");
+            root = locations.resolveVerified(workspace.id());
+        } catch (RuntimeException exception) {
+            throw failure(
+                    WorkspaceFileErrorCode.WORKSPACE_INACTIVE,
+                    path,
+                    "workspace root identity changed or is unavailable");
         }
-        if (!HostWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint())) {
-            throw failure(WorkspaceFileErrorCode.BINDING_INACTIVE, path, "workspace root fingerprint changed");
-        }
-        if (isLinkOrReparse(root)) {
-            throw failure(WorkspaceFileErrorCode.LINK_REJECTED, path, "workspace root cannot be a link");
-        }
-        return new Access(workspace, binding, root);
+        return new Access(workspace, root);
     }
 
     private Path resolveExisting(Access access, WorkspacePath logical) {
@@ -429,7 +400,7 @@ public final class HostWorkspaceFileService implements WorkspaceProvider {
         return new WorkspaceFileException(code, path, message);
     }
 
-    private record Access(Workspace workspace, WorkspaceBinding binding, Path root) {}
+    private record Access(Workspace workspace, Path root) {}
 
     private record Candidate(Path hostPath, WorkspacePath logical) {}
 
