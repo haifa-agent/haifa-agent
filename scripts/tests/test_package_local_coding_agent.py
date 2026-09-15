@@ -47,6 +47,8 @@ class PackageLocalCodingAgentTest(unittest.TestCase):
         self.assertNotIn("dialectVersion:", rendered)
         self.assertNotIn("__HAIFA_SQLITE_DATABASE_PATH__", rendered)
         self.assertNotIn("__HAIFA_TRANSCRIPT_ROOT__", rendered)
+        self.assertNotIn("git-delivery", rendered)
+        self.assertIn("allowed: [task-planning, result-verification, git, github]", rendered)
 
     def test_rejects_retired_model_configuration(self) -> None:
         with self.assertRaisesRegex(ValueError, "retired model configuration"):
