@@ -614,8 +614,8 @@ MEMORY 模式仍只在当前进程有效。Tool 成功结果和新 Run 的模型
 复用原边界，不创建第二份目录身份；无法确认物理路径边界时拒绝操作。
 
 CLI 不为受管文件写入建立仓库基线或 Git/Plain Change Review，也不为交付证据执行隐藏的 Git 读取。
-本地文件适配器仍记录既有 Session mutation ledger，但它不参与 Coding Completion 判定；完成策略的文件
-变更事实来自成功的 canonical Mutation ToolCall。Git 检查需要 Agent 通过已披露的 `execution_run`
+本地文件适配器仍记录既有 Session mutation ledger，但 Runtime 与 Coding 产品都不再据此判定任务
+完成；文件变更事实来自实际 Tool 结果。Git 检查需要 Agent 通过已披露的 `execution_run`
 显式执行，且不会扩大文件授权范围。
 
 `file_patch` 接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，最多包含同一目录根下 100 个文件的新增或更新。

@@ -46,10 +46,10 @@ Agent-visible、用户不可见的 Session 消息追加；旧请求因此保持�
 Case/Fixture 信息、宿主路径、原始 Tool 输出或模型自报的语义覆盖。
 
 Coding Agent 不再向模型上下文注入 `ORIENT/PLAN/CHANGE/VERIFY/REVIEW/DELIVER/BLOCKED`
-等叙事性阶段，也不再持续派发 `coding.work-phase` 进展事件。模型自主负责规划并决定下一步操作；确定性
-逻辑仅在终态完成时由 `CodingCompletionPolicy` 守住用户明确的交付约束（如必需的变更/验证证据、
-未解决的确定性阻塞、硬预算限制以及提交/推送/PR 意图），不满足要求时阻止任务完成，满足时中性放行。
-ANALYZE/REVIEW 任务保持只读约束；修改工作区不会隐式产生 commit、push 或 PR 意图。
+等叙事性阶段，也不再持续派发 `coding.work-phase` 进展事件。模型自主负责规划并决定下一步操作；
+Runtime 只保留确定性的收尾事实（未完成 ToolCall/Interaction/Child Run、未知副作用、取消、超时、
+预算/资源耗尽和结构化输出协议），不再判断开放式开发任务是否业务完成。修改工作区不会隐式产生
+commit、push 或 PR 意图。
 
 `execution_run` 4.0.0 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
@@ -62,46 +62,32 @@ TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观�
 裁剪。结果只额外暴露 `outputIncomplete`；超时且进程树终止未确认时返回
 `TIMEOUT_TREE_UNCONFIRMED`，保持 unknown 且禁止自动重放。
 
-## 自主交付模式与完成证据
+## 完成判断与 Runtime 收尾
 
-Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/REVIEW` 模式；没有可信模式时保持
-`UNKNOWN`，不从普通用户文本的关键词推断意图。模型消息不能改变模式，也不能制造交付证据。
+Coding 产品不再根据任务模式、Mutation/File/Git Tool 形状、diff/read 证据、验证候选或 repair
+轮次判断开放式开发任务是否“业务完成”。模型依据用户任务、仓库指令、权威 Tool 结果和当前 diff
+自行判断任务进展与完成，并向用户报告；本地任务不会因缺少特定 Tool 证据而被拦下或强制 repair。
+测试/验证建议保留在仓库 `AGENTS.md`、用户任务和基础 Prompt 中，不作为 Runtime 阻断终态的状态机。
 
-`CodingDeliveryEvidenceLedger` 只从当前 canonical ToolCall 的结构化结果重建工作区修改、验证尝试、只读检查
-和阻塞事实；不回退读取 AgentStep 结果，也不兼容旧 dotted Tool identity 或旧验证 schema。模型自由文本
-不构成修改或验证通过证据。文件变更事实来自成功的 Mutation ToolCall；Coding 产品
-不维护仓库基线或 Git/Plain Change Review 链，也不会为此执行隐藏的 Git 探测。
+Runtime 只保留确定性的收尾事实：未完成 ToolCall/Interaction/Child Run、已 dispatch 且 outcome
+unknown 的有副作用调用、取消、超时、预算/资源耗尽以及最终结构化输出协议。这些事实继续阻止错误的
+成功终态；模型明确说明任务部分完成或未运行测试时，Runtime 如实传递，不强行 repair 成“完成”，也
+不进入无限循环。
 
-`CodingCompletionPolicy` 对 CHANGE/CREATE 始终要求权威修改或受限 No-change 事实；验证 blocker 只在
-Session 冻结配置的显式 `requiresValidationEvidence` 事实为真时产生。该事实在会话创建时由
-`CodingSessionVerificationConfiguration.freeze` 一次性推导并随 digest 冻结：来源为用户显式
-（`USER_EXPLICIT`）或仓库指令（`REPOSITORY_INSTRUCTIONS`）的候选构成必须完成的验证要求；
-`BUILD_CONFIGURATION`、`ADJACENT_TEST`、`ECOSYSTEM_DEFAULT` 候选只是推荐，环境恰好存在 Maven/pytest
-不构成验证承诺，普通文档或配置写入不会被强制送入 Build/Test 补救循环。需要验证时只要求最新 Workspace
-修改之后实际尝试了匹配冻结候选的命令，不从 Tool 交付状态或 exit code 推断通过/失败。`DIFF_INSPECTION` 不再作为修改任务
-完成门禁的兼容 fallback，但 DIFF 命令、只读审阅能力和对应诊断事实继续保留。ANALYZE/REVIEW 要求只读证据
-且拒绝意外修改。UNKNOWN 用于普通交互：没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；
-观察到 Workspace 修改时仍要求修改事实，验证要求同样只取决于冻结验证要求。产品不再维护第二份冻结
-`CodingDeliveryIntent` 交付护栏，用户是否要求 Commit、Push 或 PR 继续由任务正文和 Prompt/Skill 行为约束表达，
-具体副作用由可见、统一的 Policy/Approval 和执行边界决定；generic Shell 不推断这些操作是否完成，模型必须依据
-原始命令结果和必要的只读对账判断并报告。需要硬性交付保证时应使用具有独立 typed contract 的专用领域 Tool。
+`execution_run` 的 Tool Result 只提供真实执行事实（`processState`、原始 exit code、bounded
+输出、失败/动作码、关联 ID 和 diff 观测计数），不再生成 `validationEvidence` /
+`validationAttemptRef` 等交付证据字段。文件变更事实来自实际 Tool 结果；Coding 产品不维护仓库
+基线、Change Review 链或验证通过/失败判定，也不会从 Tool 交付状态或 exit code 推断验证结果。
+Shell、生成器、客户脚本、直接 `git` 或未来 Tool 都可以完成修改，不需要伪造特定 Mutation 证据。
 
-轻量 `CodingVerificationProfile` 只保存有界候选、来源、成本与触发层级，按“用户显式配置 →
-仓库指令/构建配置 → 相邻测试 → 生态默认”在每个触发层级独立选择，不引入语言插件框架。验证阶梯仍由
-Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影响模块和最终门禁。TEST/BUILD Tool Result
-保留每次结构化 Validation Attempt；候选在 Coding Session 创建时由可信 Host 冻结到 Session metadata，
-重启后按摘要与精确命令匹配恢复来源和 scope。runner stdout/stderr 不作为数量或 scope 的可信来源，Attempt
-中不保存测试计数字段，也不会扩展 runner 专用解析器来制造虚假的完整覆盖。CLI Host 会把根目录
-现存且非符号链接的 `verify.ps1` 或 `verify.sh` 作为当前 OS 的平台验证候选冻结；精确命中该候选的执行即使
-没有模型提供的可选 operation-family hint，也可产生验证证据，其他未知命令不能据此冒充验证。
+可信本机产品宿主仍可在 Definition instructions 中冻结一个产品私有、Agent-visible 的 L0-L2
+Workspace 环境块，用于表达已经由宿主掌握的安全边界、根仓库/instructions 状态和根静态项目标记。
+该投影不是公共 `WorkspaceSnapshot`、Capability Detector 或恢复事实源；Coding Agent 模块不新增
+对应公共 DTO、持久化 Schema 或动态 executable/version 探测，具体静态发现和路径脱敏仍由 CLI 宿主
+负责。
 
-可信本机产品宿主可以在 Definition instructions 中冻结一个产品私有、Agent-visible 的 L0-L2 Workspace
-环境块，用于表达已经由宿主掌握的安全边界、根仓库/instructions 状态、根静态项目标记和 frozen validation
-candidate。该投影不是公共 `WorkspaceSnapshot`、Capability Detector 或恢复事实源；Coding Agent 模块不新增
-对应公共 DTO、持久化 Schema 或动态 executable/version 探测，具体静态发现和路径脱敏仍由 CLI 宿主负责。
-
-`CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别按需投影为
-`SATISFIED/INCOMPLETE` 和 `CLEAN/PARTIAL/UNCLEAN/IN_PROGRESS`。Coding CLI、Coding Web 与受信 Coding Host 可通过
+`CodingRunOutcomeProjectionService` 只按需投影权威 Run 协议状态
+`CLEAN/PARTIAL/UNCLEAN/IN_PROGRESS` 及安全诊断码。Coding CLI、Coding Web 与受信 Coding Host 可通过
 `CodingSessionClient.findOutcome` 查询权威投影；它作为只读纯推导服务运行，不向 Event Store 写入持久化的
 `coding.task-outcome` 事件，也不是 Benchmark Verifier 结果，不增加新的 Core Run 状态。
 
@@ -114,8 +100,9 @@ Workspace、Sandbox、网络权限和审计边界。generic Shell 结果不投�
 顺序门禁；模型读取命令事实并按需执行只读对账后报告。
 
 默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为控制面事实，
-其中 Wall Time 与 Runtime 一致地排除人工交互/审批等待；预留不增加 Runtime 的总预算或时限，也不逐轮进入模型 Prompt。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
-从持久消息重建次数，耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 稳定失败。
+其中 Wall Time 与 Runtime 一致地排除人工交互/审批等待；预留不增加 Runtime 的总预算或时限，也不逐轮
+进入模型 Prompt。Runtime 仅对最终结构化输出/输出协议等确定性事实做最多两次结构化纠偏，恢复后从持久
+消息重建次数，耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 稳定失败。
 
 生产控制面不维护 Verification Plan/Dimension/Evidence，也不接受模型自报的验证标签。外部
 Evaluation/Trace Replay 继续独立使用隐藏验收、Workspace 快照与 Scratch 清理事实，不与生产完成门禁
@@ -286,9 +273,8 @@ scratch 空间，保持宿主 `TEMP/TMP/TMPDIR` 的普通 OS 语义以支持多�
 显式配置进程数预算且进程树超限收敛时返回 `PROCESS_LIMIT_EXCEEDED`，不会伪装成 `OUTCOME_UNKNOWN`。已持久化的
 ExecutionResult 是权威执行事实。Coding 产品不再维护 Change Review Artifact 或 Repository Baseline；
 需要检查当前变更时，模型通过已披露的只读文件/Diff 能力或 `execution_run` 按需读取，不制造完成证据。
-已实际 dispatch 且精确命中冻结验证候选时生成的 `validationAttemptRef` 同样属于严格 Schema 契约，并在
-直接返回与只读 reconcile 路径使用同一份冻结定义校验；`operationFamily` 标签不能制造验证尝试，正常退出、
-超时或基础执行失败都只保留“已尝试”事实，不推断验证通过或失败。
+Tool Result 不生成 `validationEvidence` / `validationAttemptRef` 等验证尝试字段，也不从
+`operationFamily` 标签、正常退出、超时或基础执行失败推断验证通过或失败。
 Tool Result 不增加第二套命令语义字段；正常进程只返回 `processState=EXITED`、原始 exit code、bounded 输出
 和关联引用。Coding/Runtime 不维护命令或退出码白名单，也不据此生成验证通过或交付完成事实。
 Timeout、Cancel、资源限制与未知终止不能改写为正常退出，未知副作用不得自动重放。

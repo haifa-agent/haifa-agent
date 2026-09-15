@@ -1,6 +1,5 @@
 package io.haifa.agent.application.project.tool;
 
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -48,14 +47,6 @@ final class ProjectExecutionTestSupport {
 
     static ProjectExecutionToolOperations operations(
             ExecutionBroker broker, int maximumOutputBytes, int maximumOutputLines) {
-        return operations(broker, maximumOutputBytes, maximumOutputLines, CodingVerificationProfileProvider.empty());
-    }
-
-    static ProjectExecutionToolOperations operations(
-            ExecutionBroker broker,
-            int maximumOutputBytes,
-            int maximumOutputLines,
-            CodingVerificationProfileProvider verificationProfiles) {
         return new ProjectExecutionToolOperations(
                 broker,
                 () -> "execution-1",
@@ -69,8 +60,7 @@ final class ProjectExecutionTestSupport {
                 ExecutionOutputObserver.noop(),
                 UnaryOperator.identity(),
                 ExecutionScratchSpaceSpec.none(),
-                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
-                verificationProfiles);
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
     }
 
     static ProjectExecutionToolOperations operationsWithSanitizer(
@@ -91,8 +81,7 @@ final class ProjectExecutionTestSupport {
                 ExecutionOutputObserver.noop(),
                 outputSanitizer,
                 ExecutionScratchSpaceSpec.none(),
-                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
-                CodingVerificationProfileProvider.empty());
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
     }
 
     static ProjectExecutionToolOperations operationsWithWorkspaceTargetResolver(
@@ -113,8 +102,7 @@ final class ProjectExecutionTestSupport {
                 ExecutionOutputObserver.noop(),
                 UnaryOperator.identity(),
                 ExecutionScratchSpaceSpec.none(),
-                workspaceTargetResolver,
-                CodingVerificationProfileProvider.empty());
+                workspaceTargetResolver);
     }
 
     static ToolInvocationRequest invocation(Map<String, Object> arguments, ToolCancellation cancellation) {

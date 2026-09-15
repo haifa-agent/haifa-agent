@@ -7,30 +7,23 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class CliVerificationProfileDiscoveryTest {
+class CliWorkspaceSignalDiscoveryTest {
     @TempDir
     Path root;
 
     @Test
-    void discoversBoundedBuildCandidatesWithoutReadingAHiddenTestOrTaskSpecificIdentifier() throws Exception {
+    void discoversBoundedProjectSignalsWithoutReadingHiddenOrTaskSpecificFiles() throws Exception {
         Files.writeString(root.resolve("pom.xml"), "<project/>");
         Files.writeString(root.resolve("mvnw.cmd"), "wrapper");
         Files.writeString(root.resolve("pyproject.toml"), "[tool.pytest.ini_options]");
         Files.writeString(root.resolve("package-lock.json"), "{}");
         Files.createDirectories(root.resolve("src/test"));
 
-        var discovery = CliVerificationProfileDiscovery.discoverWithSignals(root, "Windows 11");
-        var profile = discovery.profile();
+        var discovery = CliWorkspaceSignalDiscovery.discoverWithSignals(root, "Windows 11");
 
-        assertThat(profile.candidates())
-                .extracting(candidate -> candidate.command())
-                .containsExactly(".\\mvnw.cmd test", "python -m pytest");
         assertThat(discovery.projectSignals())
                 .containsExactly("mvnw.cmd", "package-lock.json", "pom.xml", "pyproject.toml", "src/test");
         assertThat(discovery.diagnostics()).isEmpty();
-        assertThat(profile.instructionText())
-                .contains("pom.xml", "pyproject.toml")
-                .doesNotContain("Task ID", "hidden");
     }
 
     @Test
@@ -39,27 +32,20 @@ class CliVerificationProfileDiscoveryTest {
         Path target = Files.writeString(root.resolve("outside-pyproject.toml"), "[tool.pytest.ini_options]");
         createSymbolicLinkOrSkip(root.resolve("pyproject.toml"), target);
 
-        var discovery = CliVerificationProfileDiscovery.discoverWithSignals(root, "Linux");
+        var discovery = CliWorkspaceSignalDiscovery.discoverWithSignals(root, "Linux");
 
         assertThat(discovery.projectSignals()).doesNotContain("pom.xml", "pyproject.toml");
-        assertThat(discovery.profile().candidates()).isEmpty();
         assertThat(discovery.diagnostics()).contains("pom.xml:INVALID", "pyproject.toml:INVALID");
     }
 
     @Test
-    void freezesTheExistingPlatformVerificationEntryForTheCurrentOperatingSystem() throws Exception {
+    void reportsTheExistingPlatformVerificationEntriesAsSignalsForEveryOperatingSystem() throws Exception {
         Files.writeString(root.resolve("verify.ps1"), "exit 0");
         Files.writeString(root.resolve("verify.sh"), "exit 0");
 
-        var windows = CliVerificationProfileDiscovery.discoverWithSignals(root, "Windows 11");
-        var linux = CliVerificationProfileDiscovery.discoverWithSignals(root, "Linux");
+        var windows = CliWorkspaceSignalDiscovery.discoverWithSignals(root, "Windows 11");
+        var linux = CliWorkspaceSignalDiscovery.discoverWithSignals(root, "Linux");
 
-        assertThat(windows.profile().candidates())
-                .extracting(candidate -> candidate.command())
-                .containsExactly("powershell -NoProfile -File verify.ps1");
-        assertThat(linux.profile().candidates())
-                .extracting(candidate -> candidate.command())
-                .containsExactly("sh verify.sh");
         assertThat(windows.projectSignals()).containsExactly("verify.ps1", "verify.sh");
         assertThat(linux.projectSignals()).containsExactly("verify.ps1", "verify.sh");
     }

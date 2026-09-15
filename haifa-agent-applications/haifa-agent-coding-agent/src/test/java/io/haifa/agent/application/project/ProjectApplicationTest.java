@@ -119,7 +119,7 @@ class ProjectApplicationTest {
         @SuppressWarnings("unchecked")
         var outputProperties = (java.util.Map<String, Object>)
                 execution.definition().outputSchema().document().get("properties");
-        assertThat(outputProperties).containsKeys("processState", "validationEvidence", "validationAttemptRef");
+        assertThat(outputProperties).containsKey("processState");
         assertThat(outputProperties.keySet())
                 .noneMatch(key -> key.startsWith("semantic")
                         || key.startsWith("expectedExit")
