@@ -242,9 +242,7 @@ public final class CredentialEgressGuard {
     private static boolean disclosesToken(List<String> commandWords, int from) {
         for (int index = from; index < commandWords.size(); index++) {
             String word = commandWords.get(index);
-            if (word.equals(SHOW_TOKEN)
-                    || word.equals(SHOW_TOKEN_SHORT)
-                    || word.startsWith(SHOW_TOKEN + "=")) {
+            if (word.equals(SHOW_TOKEN) || word.equals(SHOW_TOKEN_SHORT) || word.startsWith(SHOW_TOKEN + "=")) {
                 return true;
             }
         }
