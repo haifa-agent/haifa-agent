@@ -304,10 +304,15 @@ class ProjectExecutionValidationTest {
         for (String command : List.of(
                 "git --no-pager credential fill",
                 "git -c color.ui=false credential fill",
+                "git --no-pager --no-pager --no-pager --no-pager --no-pager --no-pager --no-pager --no-pager credential fill",
+                "git -c color.ui=false -c color.ui=false credential fill",
                 "git -c http.extraHeader=" + secret + " status",
                 "gh auth status -t",
                 "gh auth status --show-token=true",
-                "gh --hostname github.com auth token")) {
+                "gh --hostname github.com auth token",
+                "gh --hostname=github.com auth token",
+                "gh --hostname github.com --hostname github.com auth token",
+                "gh -h github.com auth token")) {
             var result = operations(broker, 4096, 100)
                     .execute(
                             invocation(Map.of("command", command, "operationFamily", "INSPECT"), () -> false),

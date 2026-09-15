@@ -40,10 +40,14 @@ class CredentialEgressGuardTest {
             "git --no-pager credential fill",
             "git -c color.ui=false credential fill",
             "git --no-pager credential-cache get",
+            "git --no-pager --no-pager --no-pager --no-pager --no-pager --no-pager --no-pager --no-pager credential fill",
+            "git -c color.ui=false -c color.ui=false -c color.ui=false credential fill",
+            "git --git-dir=.git --no-pager --work-tree=.. credential fill",
             "git -c credential.helper=other status",
             "git -c http.extraHeader=AUTHORIZATION: secret status",
             "git -c core.sshCommand=/tmp/steal status",
             "git --config-env=credential.helper=SUPPLIED status",
+            "git --config-env credential.helper=SUPPLIED status",
             "git --config-env=http.extraHeader=SUPPLIED status"
         }) {
             assertThat(CredentialEgressGuard.rejectionCode(command)).as(command).isPresent();
@@ -61,6 +65,12 @@ class CredentialEgressGuardTest {
         assertThat(CredentialEgressGuard.rejectionCode("gh auth status --show-token=true"))
                 .contains(CredentialEgressGuard.GITHUB_TOKEN_DISCLOSURE_CODE);
         assertThat(CredentialEgressGuard.rejectionCode("gh --hostname github.com auth token"))
+                .contains(CredentialEgressGuard.GITHUB_AUTH_STATE_CODE);
+        assertThat(CredentialEgressGuard.rejectionCode("gh --hostname=github.com auth token"))
+                .contains(CredentialEgressGuard.GITHUB_AUTH_STATE_CODE);
+        assertThat(CredentialEgressGuard.rejectionCode("gh --hostname github.com --hostname github.com auth token"))
+                .contains(CredentialEgressGuard.GITHUB_AUTH_STATE_CODE);
+        assertThat(CredentialEgressGuard.rejectionCode("gh -h github.com auth token"))
                 .contains(CredentialEgressGuard.GITHUB_AUTH_STATE_CODE);
         assertThat(CredentialEgressGuard.rejectionCode("gh auth login"))
                 .contains(CredentialEgressGuard.GITHUB_AUTH_STATE_CODE);
@@ -98,6 +108,8 @@ class CredentialEgressGuardTest {
             "git --git-dir=.git status",
             "git --work-tree=.. status",
             "git --no-pager status",
+            "git --no-pager --no-pager --no-pager status",
+            "git --no-pager --no-pager grep -c credential.helper -- .",
             "git grep -c credential.helper -- .",
             "git fetch origin",
             "git push origin feature",
@@ -106,6 +118,8 @@ class CredentialEgressGuardTest {
             "gh pr merge 42",
             "gh auth status",
             "gh --hostname github.com pr view 42",
+            "gh --hostname=github.com pr view 42",
+            "gh -h",
             "gh repo delete owner/repo",
             "GH_TOKEN_PREFIX=value gh pr list",
             "mvn test && echo done",
