@@ -15,14 +15,8 @@ import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
-import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionService;
-import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
 import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
-import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileMiddleware;
-import io.haifa.agent.application.project.product.coding.verification.PersistedCodingVerificationProfileProvider;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
@@ -187,7 +181,6 @@ final class LocalCodingAgent implements AutoCloseable {
     private final Optional<CodingShellService> shell;
     private final Optional<CliExecutionPlatform> executionPlatform;
     private final CodingSessionExportService exporter;
-    private final CodingSessionVerificationConfiguration defaultVerification;
     private final CodingRunOutcomeProjectionService outcomes;
     private final CodingAuthenticationClient authentication;
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -212,7 +205,6 @@ final class LocalCodingAgent implements AutoCloseable {
             Optional<CodingShellService> shell,
             Optional<CliExecutionPlatform> executionPlatform,
             CodingSessionExportService exporter,
-            CodingSessionVerificationConfiguration defaultVerification,
             CodingRunOutcomeProjectionService outcomes,
             CodingAuthenticationClient authentication) {
         this.identifiers = identifiers;
@@ -234,7 +226,6 @@ final class LocalCodingAgent implements AutoCloseable {
         this.shell = shell;
         this.executionPlatform = executionPlatform;
         this.exporter = exporter;
-        this.defaultVerification = Objects.requireNonNull(defaultVerification, "defaultVerification must not be null");
         this.outcomes = Objects.requireNonNull(outcomes, "outcomes must not be null");
         this.authentication = Objects.requireNonNull(authentication, "authentication must not be null");
     }
@@ -464,11 +455,8 @@ final class LocalCodingAgent implements AutoCloseable {
             var bindings = new InMemoryWorkspaceBindingStore();
             var locations = new HostWorkspaceLocationStore();
             WorkspaceId workspaceId = workspaceIdentity.workspaceId();
-            var verificationDiscovery = CliVerificationProfileDiscovery.discoverWithSignals(
-                    workspaceRoot, System.getProperty("os.name", ""));
-            var verificationProfile = verificationDiscovery.profile();
-            var verificationProfiles = new PersistedCodingVerificationProfileProvider(
-                    persistence.ports().runs(), persistence.ports().sessions());
+            var signalDiscovery =
+                    CliWorkspaceSignalDiscovery.discoverWithSignals(workspaceRoot, System.getProperty("os.name", ""));
             WorkspaceBindingId bindingId = workspaceIdentity.bindingId();
             WorkspaceLocationRef locationRef = workspaceIdentity.locationRef();
             locations.register(locationRef, workspaceRoot);
@@ -592,7 +580,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             workspaceRoot,
                             output,
                             executionEnvironment != null ? executionEnvironment : System.getenv(),
-                            verificationProfiles,
                             provisioning,
                             persistence.workspaceAccess(),
                             tenant,
@@ -614,7 +601,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     principal);
             TrustedWorkspaceEnvironmentCatalog workspaceEnvironment = new TrustedWorkspaceEnvironmentCatalog(
                     workspaceRoot,
-                    verificationDiscovery,
+                    signalDiscovery,
                     resources.snapshot(),
                     TrustedWorkspaceEnvironmentCatalog.EnvironmentFacts.capture(
                             executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName(),
@@ -681,14 +668,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     .collect(java.util.stream.Collectors.toUnmodifiableMap(
                             CliConfiguration.Model::id, LocalCodingAgent::modelSnapshot));
             List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
-            var taskModes = new CodingTaskModeResolver(persistence.ports().state());
-            var deliveryEvidence =
-                    new CodingDeliveryEvidenceLedger(persistence.ports().state());
-            var completionPolicy = new CodingCompletionPolicy(taskModes, deliveryEvidence, verificationProfiles);
             var outcomeProjection = new CodingRunOutcomeProjectionService(
-                    completionPolicy,
-                    persistence.ports().events(),
-                    persistence.ports().runs());
+                    persistence.ports().events(), persistence.ports().runs());
             var runtimeBuilder = persistence
                     .configure(new RuntimeCoreBuilder())
                     .identifierGenerator(identifiers)
@@ -698,8 +679,6 @@ final class LocalCodingAgent implements AutoCloseable {
                         traceObserver.accept(event);
                     })
                     .failureDiagnostics(CliFailureDiagnosticSink.forPersistence(configuration.persistence()))
-                    .completionPolicy(completionPolicy)
-                    .middleware(new CodingVerificationProfileMiddleware(verificationProfiles))
                     .completionRepair(new CompletionRepairPolicy(2));
             modelAdapters.forEach((key, adapter) ->
                     runtimeBuilder.registerChatModel(key.adapterType(), key.adapterVersion(), adapter));
@@ -818,8 +797,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     runtime,
                     identifiers,
                     clock,
-                    new CliCodingModelCatalog(configuration, connectionState),
-                    verificationProfile);
+                    new CliCodingModelCatalog(configuration, connectionState));
             var sessionHistory = new CodingSessionHistoryService(
                     codingSessions,
                     persistence.ports().state(),
@@ -863,7 +841,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             codingSessions,
                             persistence.ports().state(),
                             webPlatform.credentialBroker().redactor()),
-                    CodingSessionVerificationConfiguration.freeze(verificationProfile),
                     outcomeProjection,
                     authentication);
             runtime.addListener(snapshot -> agent.startedRuns.add(snapshot.runId()));
@@ -911,7 +888,7 @@ final class LocalCodingAgent implements AutoCloseable {
     AgentRunSnapshot start(String message) {
         if (closed.get()) throw new IllegalStateException("coding agent is closed");
         AgentSessionId sessionId = new AgentSessionId(identifiers.nextValue());
-        persistence.provisionUserSession(sessionId, tenant, principal, defaultVerification.sessionMetadata(), clock);
+        persistence.provisionUserSession(sessionId, tenant, principal, Map.of(), clock);
         AgentRunSnapshot accepted = runtime.start(new AgentRunRequest(
                 identifiers.nextValue(),
                 DEFINITION_ID,

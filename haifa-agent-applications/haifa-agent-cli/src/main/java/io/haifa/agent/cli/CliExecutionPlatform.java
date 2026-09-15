@@ -1,7 +1,6 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
@@ -69,7 +68,6 @@ final class CliExecutionPlatform {
             Path workspaceRoot,
             PrintStream output,
             Map<String, String> hostEnvironment,
-            CodingVerificationProfileProvider verificationProfiles,
             AuthorizedWorkspaceProvisioning provisioning,
             WorkspaceAccessStore workspaceAccess,
             TenantRef tenant,
@@ -86,7 +84,6 @@ final class CliExecutionPlatform {
                 workspaceRoot,
                 output,
                 hostEnvironment,
-                verificationProfiles,
                 provisioning,
                 workspaceAccess,
                 tenant,
@@ -106,7 +103,6 @@ final class CliExecutionPlatform {
             Path workspaceRoot,
             PrintStream output,
             Map<String, String> hostEnvironment,
-            CodingVerificationProfileProvider verificationProfiles,
             AuthorizedWorkspaceProvisioning provisioning,
             WorkspaceAccessStore workspaceAccess,
             TenantRef tenant,
@@ -114,7 +110,6 @@ final class CliExecutionPlatform {
             RuntimeToolExecutionVerifier runtimeExecutionVerifier,
             Set<String> deniedEnvironmentNames) {
         Objects.requireNonNull(configuration, "configuration must not be null");
-        Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
         Objects.requireNonNull(provisioning, "provisioning must not be null");
         Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
         Objects.requireNonNull(tenant, "tenant must not be null");
@@ -185,8 +180,7 @@ final class CliExecutionPlatform {
                 observer,
                 java.util.function.UnaryOperator.identity(),
                 io.haifa.agent.execution.api.ExecutionScratchSpaceSpec.none(),
-                workspaceTargetResolver(provisioning, workspaceAccess, tenant, principal),
-                verificationProfiles);
+                workspaceTargetResolver(provisioning, workspaceAccess, tenant, principal));
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary);

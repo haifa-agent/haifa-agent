@@ -1,6 +1,5 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -18,19 +17,17 @@ import java.util.Objects;
 final class TrustedWorkspaceEnvironmentCatalog {
     static final int MAXIMUM_PROMPT_BYTES = 8 * 1024;
     private static final int MAXIMUM_FACT_CHARACTERS = 256;
-    private static final int MAXIMUM_CANDIDATE_CHARACTERS = 512;
     private static final String DYNAMIC_CAPABILITY_UNKNOWN = "executables and versions were not probed";
 
     private final EnvironmentFacts environment;
     private final RepositoryStatus repositoryStatus;
     private final List<String> projectSignals;
-    private final List<String> validationCandidates;
     private final List<String> diagnostics;
     private final Snapshot initialSnapshot;
 
     TrustedWorkspaceEnvironmentCatalog(
             Path workspaceRoot,
-            CliVerificationProfileDiscovery.DiscoveryResult discovery,
+            CliWorkspaceSignalDiscovery.DiscoveryResult discovery,
             TrustedProjectResourceCatalog.Snapshot projectResources,
             EnvironmentFacts environment) {
         Path root = Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null")
@@ -44,9 +41,6 @@ final class TrustedWorkspaceEnvironmentCatalog {
         this.repositoryStatus = repositoryStatus(root, safeDiagnostics);
         this.environment = environment;
         this.projectSignals = discovery.projectSignals();
-        this.validationCandidates = discovery.profile().candidates().stream()
-                .map(CodingVerificationCandidate::command)
-                .toList();
         this.diagnostics = List.copyOf(safeDiagnostics);
         this.initialSnapshot = createSnapshot(projectResources);
     }
@@ -65,15 +59,13 @@ final class TrustedWorkspaceEnvironmentCatalog {
     }
 
     private Snapshot createSnapshot(TrustedProjectResourceCatalog.Snapshot projectResources) {
-        Rendered rendered =
-                render(environment, repositoryStatus, projectResources.status(), projectSignals, validationCandidates);
+        Rendered rendered = render(environment, repositoryStatus, projectResources.status(), projectSignals);
         return new Snapshot(
                 projectResources.generation(),
                 environment,
                 repositoryStatus,
                 projectResources.status(),
                 projectSignals,
-                validationCandidates,
                 List.of(DYNAMIC_CAPABILITY_UNKNOWN),
                 rendered.truncated(),
                 diagnostics,
@@ -106,21 +98,16 @@ final class TrustedWorkspaceEnvironmentCatalog {
             EnvironmentFacts environment,
             RepositoryStatus repositoryStatus,
             TrustedProjectResourceCatalog.InstructionStatus instructionStatus,
-            List<String> projectSignals,
-            List<String> validationCandidates) {
+            List<String> projectSignals) {
         List<String> visibleSignals = new ArrayList<>(projectSignals);
-        List<String> visibleCandidates = new ArrayList<>(validationCandidates);
         boolean truncated = false;
         while (true) {
-            String prompt = prompt(
-                    environment, repositoryStatus, instructionStatus, visibleSignals, visibleCandidates, truncated);
+            String prompt = prompt(environment, repositoryStatus, instructionStatus, visibleSignals, truncated);
             if (prompt.getBytes(StandardCharsets.UTF_8).length <= MAXIMUM_PROMPT_BYTES) {
                 return new Rendered(prompt, truncated);
             }
             truncated = true;
-            if (!visibleCandidates.isEmpty()) {
-                visibleCandidates.removeLast();
-            } else if (!visibleSignals.isEmpty()) {
+            if (!visibleSignals.isEmpty()) {
                 visibleSignals.removeLast();
             } else {
                 throw new IllegalStateException("workspace environment base prompt exceeds its fixed budget");
@@ -133,10 +120,8 @@ final class TrustedWorkspaceEnvironmentCatalog {
             RepositoryStatus repositoryStatus,
             TrustedProjectResourceCatalog.InstructionStatus instructionStatus,
             List<String> projectSignals,
-            List<String> validationCandidates,
             boolean truncated) {
         String signals = joined(projectSignals, MAXIMUM_FACT_CHARACTERS);
-        String candidates = joined(validationCandidates, MAXIMUM_CANDIDATE_CHARACTERS);
         return "\n\n<workspace_environment truncated=\""
                 + truncated
                 + "\">\n"
@@ -173,9 +158,6 @@ final class TrustedWorkspaceEnvironmentCatalog {
                 + "  <project_signals>"
                 + signals
                 + "</project_signals>\n"
-                + "  <validation_candidates>"
-                + candidates
-                + "</validation_candidates>\n"
                 + "  <unknowns>"
                 + DYNAMIC_CAPABILITY_UNKNOWN
                 + "</unknowns>\n"
@@ -286,7 +268,6 @@ final class TrustedWorkspaceEnvironmentCatalog {
             RepositoryStatus gitRepositoryStatus,
             TrustedProjectResourceCatalog.InstructionStatus instructionStatus,
             List<String> projectSignals,
-            List<String> validationCandidates,
             List<String> unknowns,
             boolean truncated,
             List<String> diagnostics,
@@ -296,7 +277,6 @@ final class TrustedWorkspaceEnvironmentCatalog {
             gitRepositoryStatus = Objects.requireNonNull(gitRepositoryStatus, "gitRepositoryStatus must not be null");
             instructionStatus = Objects.requireNonNull(instructionStatus, "instructionStatus must not be null");
             projectSignals = List.copyOf(projectSignals);
-            validationCandidates = List.copyOf(validationCandidates);
             unknowns = List.copyOf(unknowns);
             diagnostics = List.copyOf(diagnostics);
             promptBlock = Objects.requireNonNull(promptBlock, "promptBlock must not be null");

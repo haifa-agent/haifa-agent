@@ -1,12 +1,5 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCost;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileResolver;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationSource;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationTrigger;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -19,8 +12,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
-/** Finds a small set of safe build-entry candidates from root markers without parsing task intent or shell output. */
-final class CliVerificationProfileDiscovery {
+/** Finds a small set of safe root project markers without parsing task intent or shell output. */
+final class CliWorkspaceSignalDiscovery {
     private static final int MAXIMUM_DOTNET_SIGNALS = 8;
     private static final List<String> FILE_SIGNALS = List.of(
             "pom.xml",
@@ -51,57 +44,15 @@ final class CliVerificationProfileDiscovery {
             "verify.sh");
     private static final List<String> DIRECTORY_SIGNALS = List.of("src/test", "test", "tests", "__tests__");
 
-    private CliVerificationProfileDiscovery() {}
+    private CliWorkspaceSignalDiscovery() {}
 
     static DiscoveryResult discoverWithSignals(Path workspaceRoot, String operatingSystem) {
         Path root = Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null")
                 .toAbsolutePath()
                 .normalize();
-        boolean windows = Objects.requireNonNull(operatingSystem, "operatingSystem must not be null")
-                .toLowerCase(Locale.ROOT)
-                .contains("win");
+        Objects.requireNonNull(operatingSystem, "operatingSystem must not be null");
         SignalScan scan = scan(root);
-        List<String> signals = scan.projectSignals();
-        List<CodingVerificationCandidate> build = new ArrayList<>();
-        if (signals.contains("pom.xml")) {
-            String command = signals.contains(windows ? "mvnw.cmd" : "mvnw")
-                    ? windows ? ".\\mvnw.cmd test" : "./mvnw test"
-                    : "mvn test";
-            add(build, command, "pom.xml");
-        }
-        if (signals.contains("build.gradle") || signals.contains("build.gradle.kts")) {
-            String command = signals.contains(windows ? "gradlew.bat" : "gradlew")
-                    ? windows ? ".\\gradlew.bat test" : "./gradlew test"
-                    : "gradle test";
-            add(build, command, signals.contains("build.gradle.kts") ? "build.gradle.kts" : "build.gradle");
-        }
-        if (signals.contains("pyproject.toml") || signals.contains("pytest.ini")) {
-            add(build, "python -m pytest", signals.contains("pyproject.toml") ? "pyproject.toml" : "pytest.ini");
-        }
-        if (signals.contains("package.json")) add(build, "npm test", "package.json");
-        if (signals.contains("Cargo.toml")) add(build, "cargo test", "Cargo.toml");
-        if (signals.contains("go.mod")) add(build, "go test ./...", "go.mod");
-        String verificationEntry = windows ? "verify.ps1" : "verify.sh";
-        if (signals.contains(verificationEntry)) {
-            add(build, windows ? "powershell -NoProfile -File verify.ps1" : "sh verify.sh", verificationEntry);
-        }
-        signals.stream()
-                .filter(CliVerificationProfileDiscovery::isDotnetSignal)
-                .findFirst()
-                .ifPresent(name -> add(build, "dotnet test", name));
-        CodingVerificationProfile profile =
-                new CodingVerificationProfileResolver().resolve(List.of(), build, List.of(), List.of());
-        return new DiscoveryResult(profile, signals, scan.diagnostics());
-    }
-
-    private static void add(List<CodingVerificationCandidate> target, String command, String sourceReference) {
-        target.add(new CodingVerificationCandidate(
-                command,
-                CodingVerificationCost.HIGH,
-                CodingVerificationTrigger.FINAL_GATE,
-                CodingVerificationSource.BUILD_CONFIGURATION,
-                sourceReference,
-                CodingValidationScope.FULL));
+        return new DiscoveryResult(scan.projectSignals(), scan.diagnostics());
     }
 
     private static SignalScan scan(Path root) {
@@ -156,9 +107,8 @@ final class CliVerificationProfileDiscovery {
         return normalized.endsWith(".sln") || normalized.endsWith(".csproj");
     }
 
-    record DiscoveryResult(CodingVerificationProfile profile, List<String> projectSignals, List<String> diagnostics) {
+    record DiscoveryResult(List<String> projectSignals, List<String> diagnostics) {
         DiscoveryResult {
-            profile = Objects.requireNonNull(profile, "profile must not be null");
             projectSignals = List.copyOf(projectSignals);
             diagnostics = List.copyOf(diagnostics);
         }

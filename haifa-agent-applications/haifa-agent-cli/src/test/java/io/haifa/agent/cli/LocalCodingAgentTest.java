@@ -951,8 +951,8 @@ class LocalCodingAgentTest {
             assertThat(request.messages())
                     .anyMatch(message -> message.role() == ModelMessageRole.TOOL
                             && "EXITED".equals(message.toolResultData().get("processState"))
-                            && message.toolResultData().containsKey("validationEvidence")
-                            && message.toolResultData().containsKey("validationAttemptRef")
+                            && !message.toolResultData().containsKey("validationEvidence")
+                            && !message.toolResultData().containsKey("validationAttemptRef")
                             && !message.toolResultData().containsKey("fileChangeSetId"));
             return answer("gradle-cache-validation-complete", "validation completed");
         };
@@ -982,6 +982,73 @@ class LocalCodingAgentTest {
         assertThat(Files.readString(workspace.resolve(".gradle/validation.lock"))
                         .trim())
                 .isEqualTo("cache");
+        assertThat(calls).hasValue(2);
+    }
+
+    @Test
+    void stubModelCompletesShellOnlyMutationWithoutTaskModeOrValidationEvidence() throws Exception {
+        Path shellWorkspace = Files.createDirectory(workspace.resolve("shell-mutation"));
+        String command;
+        if (isWindows()) {
+            Files.writeString(
+                    shellWorkspace.resolve("generate.cmd"),
+                    "@echo off\r\n> generated.txt echo delivered\r\nexit /b 0\r\n",
+                    StandardCharsets.UTF_8);
+            command = ".\\generate.cmd";
+        } else {
+            Path script = shellWorkspace.resolve("generate.sh");
+            Files.writeString(script, "#!/bin/sh\nset -eu\nprintf delivered > generated.txt\n", StandardCharsets.UTF_8);
+            assertThat(script.toFile().setExecutable(true)).isTrue();
+            command = "./generate.sh";
+        }
+        AtomicInteger calls = new AtomicInteger();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            if (calls.incrementAndGet() == 1) {
+                return toolResponse(
+                        "shell-generate",
+                        "execution_run",
+                        Map.of(
+                                "command",
+                                command,
+                                "workspaceRef",
+                                LocalWorkspaceIdentity.resolve(shellWorkspace)
+                                        .workspaceId()
+                                        .value(),
+                                "relativeWorkdir",
+                                ".",
+                                "timeoutMillis",
+                                5_000,
+                                "description",
+                                "Generate the requested file through the shell",
+                                "operationFamily",
+                                "MUTATE"));
+            }
+            assertThat(request.messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && "EXITED".equals(message.toolResultData().get("processState"))
+                            && !message.toolResultData().containsKey("validationEvidence")
+                            && !message.toolResultData().containsKey("validationAttemptRef")
+                            && !message.toolResultData().containsKey("fileChangeSetId"));
+            assertThat(request.messages())
+                    .noneMatch(message ->
+                            message.content() != null && message.content().contains("[COMPLETION_REPAIR]"));
+            return answer("shell-mutation-complete", "shell mutation complete");
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                shellWorkspace,
+                automaticHostConfiguration(),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            var accepted = agent.start("Generate the requested file using the shell.");
+            var snapshot = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(30));
+            assertThat(snapshot.status())
+                    .withFailMessage("run did not complete: %s", snapshot)
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(snapshot.output()).contains("shell mutation complete");
+        }
+        assertThat(Files.readString(shellWorkspace.resolve("generated.txt")).trim())
+                .isEqualTo("delivered");
         assertThat(calls).hasValue(2);
     }
 

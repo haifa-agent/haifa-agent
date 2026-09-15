@@ -4,19 +4,12 @@ import io.haifa.agent.core.run.AgentRunId;
 import java.util.List;
 import java.util.Objects;
 
-/** Product projection that deliberately does not introduce another Core Run terminal state. */
+/** Product projection over authoritative Run facts; it introduces no second Core Run terminal state. */
 public record CodingRunOutcomeProjection(
-        AgentRunId runId,
-        CodingDeliveryEvidenceStatus deliveryEvidenceStatus,
-        CodingRunProtocolStatus protocolStatus,
-        List<String> evidenceCodes,
-        List<String> diagnosticCodes) {
+        AgentRunId runId, CodingRunProtocolStatus protocolStatus, List<String> diagnosticCodes) {
     public CodingRunOutcomeProjection {
         runId = Objects.requireNonNull(runId, "runId must not be null");
-        deliveryEvidenceStatus =
-                Objects.requireNonNull(deliveryEvidenceStatus, "deliveryEvidenceStatus must not be null");
         protocolStatus = Objects.requireNonNull(protocolStatus, "protocolStatus must not be null");
-        evidenceCodes = bounded(evidenceCodes, "evidenceCodes");
         diagnosticCodes = bounded(diagnosticCodes, "diagnosticCodes");
     }
 

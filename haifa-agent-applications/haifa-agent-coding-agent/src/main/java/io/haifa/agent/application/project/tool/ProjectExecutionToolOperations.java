@@ -1,8 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
 import io.haifa.agent.application.project.policy.CodingExecutionRiskResolver;
-import io.haifa.agent.application.project.product.coding.delivery.CodingValidationAttemptFactory;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.AssetRef;
@@ -82,7 +80,6 @@ public final class ProjectExecutionToolOperations {
     private final UnaryOperator<String> outputSanitizer;
     private final ExecutionScratchSpaceSpec scratchSpace;
     private final ExecutionWorkspaceTargetResolver workspaceTargets;
-    private final CodingVerificationProfileProvider verificationProfiles;
 
     public ProjectExecutionToolOperations(
             ExecutionBroker broker,
@@ -108,8 +105,7 @@ public final class ProjectExecutionToolOperations {
                 outputObserver,
                 UnaryOperator.identity(),
                 ExecutionScratchSpaceSpec.none(),
-                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
-                CodingVerificationProfileProvider.empty());
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
     }
 
     public ProjectExecutionToolOperations(
@@ -137,8 +133,7 @@ public final class ProjectExecutionToolOperations {
                 outputObserver,
                 outputSanitizer,
                 ExecutionScratchSpaceSpec.none(),
-                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
-                CodingVerificationProfileProvider.empty());
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
     }
 
     public ProjectExecutionToolOperations(
@@ -167,8 +162,7 @@ public final class ProjectExecutionToolOperations {
                 outputObserver,
                 outputSanitizer,
                 scratchSpace,
-                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly(),
-                CodingVerificationProfileProvider.empty());
+                ExecutionWorkspaceTargetResolver.currentWorkspaceOnly());
     }
 
     public ProjectExecutionToolOperations(
@@ -198,40 +192,7 @@ public final class ProjectExecutionToolOperations {
                 outputObserver,
                 outputSanitizer,
                 scratchSpace,
-                workspaceTargets,
-                CodingVerificationProfileProvider.empty());
-    }
-
-    public ProjectExecutionToolOperations(
-            ExecutionBroker broker,
-            IdentifierGenerator identifiers,
-            TimeProvider time,
-            ExecutionEnvironmentRef environmentRef,
-            SandboxProfileRef sandboxProfileRef,
-            Duration maximumTimeout,
-            int maximumModelOutputBytes,
-            int maximumModelOutputLines,
-            int maximumProcesses,
-            ExecutionOutputObserver outputObserver,
-            UnaryOperator<String> outputSanitizer,
-            ExecutionScratchSpaceSpec scratchSpace,
-            ExecutionWorkspaceTargetResolver workspaceTargets,
-            CodingVerificationProfileProvider verificationProfiles) {
-        this(
-                broker,
-                identifiers,
-                time,
-                environmentRef,
-                sandboxProfileRef,
-                maximumTimeout,
-                maximumModelOutputBytes,
-                maximumModelOutputLines,
-                Optional.of(maximumProcesses),
-                outputObserver,
-                outputSanitizer,
-                scratchSpace,
-                workspaceTargets,
-                verificationProfiles);
+                workspaceTargets);
     }
 
     public ProjectExecutionToolOperations(
@@ -247,8 +208,7 @@ public final class ProjectExecutionToolOperations {
             ExecutionOutputObserver outputObserver,
             UnaryOperator<String> outputSanitizer,
             ExecutionScratchSpaceSpec scratchSpace,
-            ExecutionWorkspaceTargetResolver workspaceTargets,
-            CodingVerificationProfileProvider verificationProfiles) {
+            ExecutionWorkspaceTargetResolver workspaceTargets) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -278,8 +238,6 @@ public final class ProjectExecutionToolOperations {
         this.outputSanitizer = Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
         this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
         this.workspaceTargets = Objects.requireNonNull(workspaceTargets, "workspaceTargets must not be null");
-        this.verificationProfiles =
-                Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -405,8 +363,7 @@ public final class ProjectExecutionToolOperations {
                             operationFamily,
                             classification,
                             sandboxProfileRef,
-                            scratchSpace,
-                            invocation.runId().value());
+                            scratchSpace);
                 })
                 .or(() -> invocation.observedResult())
                 .orElse(null);
@@ -641,8 +598,7 @@ public final class ProjectExecutionToolOperations {
                     operationFamily,
                     commandClassification,
                     sandboxProfileRef,
-                    scratchSpace,
-                    request.context().runRef());
+                    scratchSpace);
         } catch (ExecutionPreflightException exception) {
             return preflightFailure(
                     request,
@@ -722,8 +678,7 @@ public final class ProjectExecutionToolOperations {
                 operationFamily,
                 commandClassification,
                 sandboxProfileRef,
-                scratchSpace,
-                request.context().runRef());
+                scratchSpace);
     }
 
     private ToolResult preflightFailure(
@@ -759,8 +714,7 @@ public final class ProjectExecutionToolOperations {
             String operationFamily,
             SystemGitCliCommandClassifier.Classification commandClassification,
             SandboxProfileRef sandboxProfileRef,
-            ExecutionScratchSpaceSpec scratchSpace,
-            String runRef) {
+            ExecutionScratchSpaceSpec scratchSpace) {
         boolean exited = result.status() == ExecutionStatus.EXITED;
         String output = merged.text();
         if (output.isBlank() && !exited) {
@@ -824,20 +778,6 @@ public final class ProjectExecutionToolOperations {
             data.put("scratchSpecDigest", scratchSpace.canonicalDigest());
             data.put("scratchProvisioned", result.scratchProvisioned());
             data.put("scratchCleanupFailed", result.scratchCleanupFailed());
-        }
-        if (merged.dispatched()) {
-            CodingValidationAttemptFactory.create(
-                            command, verificationProfiles.configurationFor(new AgentRunId(runRef)))
-                    .ifPresent(evidence -> {
-                        data.put("validationEvidence", evidence.toStructuredData());
-                        data.put(
-                                "validationAttemptRef",
-                                PolicyDigest.sha256Fields(List.of(
-                                        evidence.schemaVersion(),
-                                        evidence.verificationProfileDigest(),
-                                        evidence.verificationCandidateDigest(),
-                                        evidence.claimCode())));
-                    });
         }
         if (!exited) {
             result.optionalFailure().ifPresent(value -> {

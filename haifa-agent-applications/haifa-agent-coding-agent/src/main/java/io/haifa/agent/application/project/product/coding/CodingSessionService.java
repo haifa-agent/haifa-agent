@@ -6,9 +6,6 @@ import io.haifa.agent.application.project.product.ProjectProductSession;
 import io.haifa.agent.application.project.product.ProjectProductSessionStore;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.product.TrustedProductCallerProvider;
-import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileResolver;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.TextPart;
@@ -59,7 +56,6 @@ public final class CodingSessionService {
     private final IdentifierGenerator identifiers;
     private final Clock clock;
     private final CodingModelCatalog models;
-    private final CodingVerificationProfile defaultVerificationProfile;
 
     public CodingSessionService(
             ProjectProductService projectProducts,
@@ -81,8 +77,7 @@ public final class CodingSessionService {
                 runtime,
                 identifiers,
                 clock,
-                CodingModelCatalog.fixed("coding-default", "Configured model"),
-                CodingVerificationProfile.empty());
+                CodingModelCatalog.fixed("coding-default", "Configured model"));
     }
 
     public CodingSessionService(
@@ -96,32 +91,6 @@ public final class CodingSessionService {
             IdentifierGenerator identifiers,
             Clock clock,
             CodingModelCatalog models) {
-        this(
-                projectProducts,
-                productSessions,
-                codingSessions,
-                sessionLifecycle,
-                sessionCompactor,
-                callers,
-                runtime,
-                identifiers,
-                clock,
-                models,
-                CodingVerificationProfile.empty());
-    }
-
-    public CodingSessionService(
-            ProjectProductService projectProducts,
-            ProjectProductSessionStore productSessions,
-            CodingSessionStore codingSessions,
-            CodingSessionLifecycle sessionLifecycle,
-            CodingSessionCompactor sessionCompactor,
-            TrustedProductCallerProvider callers,
-            AgentRuntime runtime,
-            IdentifierGenerator identifiers,
-            Clock clock,
-            CodingModelCatalog models,
-            CodingVerificationProfile defaultVerificationProfile) {
         this.projectProducts = Objects.requireNonNull(projectProducts, "projectProducts must not be null");
         this.productSessions = Objects.requireNonNull(productSessions, "productSessions must not be null");
         this.codingSessions = Objects.requireNonNull(codingSessions, "codingSessions must not be null");
@@ -132,8 +101,6 @@ public final class CodingSessionService {
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.models = Objects.requireNonNull(models, "models must not be null");
-        this.defaultVerificationProfile =
-                Objects.requireNonNull(defaultVerificationProfile, "defaultVerificationProfile must not be null");
     }
 
     public CodingSessionView createSession(
@@ -153,17 +120,10 @@ public final class CodingSessionService {
         String message = message(firstTurn);
         String keyDigest = digest(idempotencyKey(idempotencyKey));
         CodingSessionCreateOptions trustedOptions = Objects.requireNonNull(options, "options must not be null");
-        List<io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate> candidates =
-                new java.util.ArrayList<>(trustedOptions.userVerificationCandidates());
-        candidates.addAll(defaultVerificationProfile.candidates());
-        CodingSessionVerificationConfiguration verification = CodingSessionVerificationConfiguration.freeze(
-                new CodingVerificationProfileResolver().resolve(candidates));
         String requestedModelId = trustedOptions.initialModelId().orElse(models.defaultModelId());
         String requestedModelIdentity = trustedOptions.initialModelId().orElse("DEFAULT_MODEL");
-        String requestDigest = requestDigest(
-                projectId.value() + "|" + verification.digest() + "|" + requestedModelIdentity,
-                message,
-                safeAttachments);
+        String requestDigest =
+                requestDigest(projectId.value() + "|" + requestedModelIdentity, message, safeAttachments);
         String scope = callerScope(caller);
         String dispatchKey = dispatchKey(CREATE, scope + "|" + keyDigest);
         CodingCommandBinding binding = codingSessions.reserveCommand(new CodingCommandBinding(
@@ -196,7 +156,7 @@ public final class CodingSessionService {
                 binding.attachments(),
                 binding.dispatchKey(),
                 modelId,
-                verification.sessionMetadata());
+                java.util.Map.of());
         codingSessions.completeCommand(binding.dispatchKey(), started.run().runId());
         ProjectProductSession product = requireProductSession(binding.sessionId(), caller);
         codingSessions.createModelPreference(CodingModelPreference.initial(binding.sessionId(), modelId, now));
