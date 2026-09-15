@@ -256,8 +256,8 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - Checkpoint 仅保存正常暂停／交互的最小续跑计数；SQLite 适配器保留有界持久化耗时指标。
 - 模块不依赖 Spring、模型 Provider SDK、MCP、Docker、JPA、产品模块或管理端。
 
-Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与证据。Artifact 检查由产品的
-`PublishedArtifactRequiredChecker` 实现该接口；Runtime 不再提供单独的 `RequiredArtifactChecker` 配置入口。
+Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与证据；Runtime 不再提供单独的
+`RequiredArtifactChecker` 配置入口。
 
 恢复来源直接读取持久 Attempt 的 `resumedFromCheckpointId`，不再经过进程内 Selector。已记录来源必须精确存在，
 缺失、非最新的来源或缺失状态会拒绝继续；新 Run 无来源时从初始计数开始，不回退历史快照。

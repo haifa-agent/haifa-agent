@@ -1,7 +1,6 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.policy.CodingAgentExecutionPolicy;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
@@ -66,7 +65,6 @@ final class CliExecutionPlatform {
             Path workspaceRoot,
             PrintStream output,
             Map<String, String> hostEnvironment,
-            CodingVerificationProfileProvider verificationProfiles,
             AuthorizedWorkspaceProvisioning provisioning,
             TenantRef tenant,
             PrincipalRef principal,
@@ -81,7 +79,6 @@ final class CliExecutionPlatform {
                 workspaceRoot,
                 output,
                 hostEnvironment,
-                verificationProfiles,
                 provisioning,
                 tenant,
                 principal,
@@ -99,14 +96,12 @@ final class CliExecutionPlatform {
             Path workspaceRoot,
             PrintStream output,
             Map<String, String> hostEnvironment,
-            CodingVerificationProfileProvider verificationProfiles,
             AuthorizedWorkspaceProvisioning provisioning,
             TenantRef tenant,
             PrincipalRef principal,
             RuntimeToolExecutionVerifier runtimeExecutionVerifier,
             Set<String> deniedEnvironmentNames) {
         Objects.requireNonNull(configuration, "configuration must not be null");
-        Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
         Objects.requireNonNull(provisioning, "provisioning must not be null");
         Objects.requireNonNull(tenant, "tenant must not be null");
         Objects.requireNonNull(principal, "principal must not be null");
@@ -173,8 +168,7 @@ final class CliExecutionPlatform {
                 observer,
                 java.util.function.UnaryOperator.identity(),
                 io.haifa.agent.execution.api.ExecutionScratchSpaceSpec.none(),
-                workspaceTargetResolver(provisioning, tenant, principal),
-                verificationProfiles);
+                workspaceTargetResolver(provisioning, tenant, principal));
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary);

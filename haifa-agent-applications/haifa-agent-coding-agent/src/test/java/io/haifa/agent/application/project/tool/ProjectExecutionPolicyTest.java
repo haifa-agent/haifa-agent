@@ -1,6 +1,5 @@
 package io.haifa.agent.application.project.tool;
 
-import static io.haifa.agent.application.project.tool.ProjectExecutionTestSupport.WORKSPACE_ID;
 import static io.haifa.agent.application.project.tool.ProjectExecutionTestSupport.access;
 import static io.haifa.agent.application.project.tool.ProjectExecutionTestSupport.chunk;
 import static io.haifa.agent.application.project.tool.ProjectExecutionTestSupport.invocation;
@@ -9,13 +8,6 @@ import static io.haifa.agent.application.project.tool.ProjectExecutionTestSuppor
 import static io.haifa.agent.application.project.tool.ProjectExecutionTestSupport.result;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
-import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCost;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationSource;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationTrigger;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
@@ -23,180 +15,18 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionOrigin;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
-import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
-import io.haifa.agent.policy.api.PolicyDigest;
-import io.haifa.agent.tool.api.ToolDispatchEvidence;
-import io.haifa.agent.tool.api.ToolInvocationRequest;
-import io.haifa.agent.tool.api.ToolReconciliationRequest;
-import io.haifa.agent.tool.api.ToolReconciliationStatus;
-import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class ProjectExecutionPolicyTest {
-
-    private record KnownResult(ExecutionStatus status, Integer exitCode) {}
-
-    @Test
-    void validatesExactFrozenCandidateScopeAcrossDirectAndReconciledResults() {
-        AtomicReference<ExecutionResult> completed = new AtomicReference<>();
-        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(991));
-                observer.onOutput(chunk("1 passed, 7 deselected in 0.25s\n"));
-                ExecutionResult result = result(request.id(), ExecutionStatus.EXITED, 0);
-                completed.set(result);
-                return result;
-            }
-
-            @Override
-            public Optional<ExecutionResult> findByIdempotencyKey(String idempotencyKey) {
-                return Optional.ofNullable(completed.get());
-            }
-        };
-
-        String command = "python -m pytest focused.py";
-        CodingVerificationCandidate candidate = new CodingVerificationCandidate(
-                command,
-                CodingVerificationCost.LOW,
-                CodingVerificationTrigger.ADJACENT_CHANGE,
-                CodingVerificationSource.USER_EXPLICIT,
-                "trusted-host",
-                CodingValidationScope.SELECTED);
-        CodingSessionVerificationConfiguration configuration =
-                CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
-        ToolInvocationRequest invocation =
-                invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false);
-        var operations = operations(broker, 4096, 100, ignored -> configuration);
-        ToolResult result = operations.execute(invocation, access());
-        String expectedValidationAttemptRef = PolicyDigest.sha256Fields(List.of(
-                "coding-validation-attempt/3",
-                configuration.digest(),
-                configuration.candidateDigest(candidate),
-                "TRUSTED_SELECTED_SCOPE"));
-
-        assertThat(result.structuredData().get("validationEvidence"))
-                .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
-                        .containsEntry("scope", "SELECTED")
-                        .containsEntry("verificationSource", "USER_EXPLICIT")
-                        .containsEntry("claimCode", "TRUSTED_SELECTED_SCOPE")
-                        .hasSize(6));
-        assertThat(result.structuredData()).containsEntry("validationAttemptRef", expectedValidationAttemptRef);
-        var validator = new JsonSchema202012Validator();
-        assertThat(validator
-                        .validate(invocation.binding().definition().outputSchema(), result.structuredData())
-                        .valid())
-                .isTrue();
-
-        var reconciled = operations.reconcile(
-                new ToolReconciliationRequest(
-                        invocation.binding(),
-                        invocation.toolCallId(),
-                        invocation.runId(),
-                        invocation.tenant(),
-                        invocation.principal(),
-                        invocation.arguments(),
-                        invocation.idempotencyKey().orElseThrow(),
-                        Optional.of(new ToolDispatchEvidence(
-                                completed.get().id().value(),
-                                OptionalLong.empty(),
-                                PolicyDigest.sha256Fields(
-                                        List.of("execution-working-directory-v1", WORKSPACE_ID.value(), ".")))),
-                        Optional.empty()),
-                access());
-
-        assertThat(reconciled.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
-        assertThat(reconciled.result()).hasValueSatisfying(reconciledResult -> {
-            assertThat(reconciledResult.structuredData())
-                    .containsEntry("reconcileStatus", "RESOLVED")
-                    .containsEntry("replayAllowed", false)
-                    .containsEntry("validationAttemptRef", expectedValidationAttemptRef);
-            assertThat(validator
-                            .validate(
-                                    invocation.binding().definition().outputSchema(), reconciledResult.structuredData())
-                            .valid())
-                    .isTrue();
-        });
-    }
-
-    @Test
-    void recordsOnlyAnAttemptForEveryKnownResultOfADispatchedExactCandidate() {
-        String command = "python -m pytest focused.py";
-        CodingVerificationCandidate candidate = new CodingVerificationCandidate(
-                command,
-                CodingVerificationCost.LOW,
-                CodingVerificationTrigger.ADJACENT_CHANGE,
-                CodingVerificationSource.USER_EXPLICIT,
-                "trusted-host",
-                CodingValidationScope.SELECTED);
-        CodingSessionVerificationConfiguration configuration =
-                CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
-
-        for (KnownResult fact : List.of(
-                new KnownResult(ExecutionStatus.EXITED, 0),
-                new KnownResult(ExecutionStatus.EXITED, 1),
-                new KnownResult(ExecutionStatus.TIMED_OUT, null))) {
-            ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
-                @Override
-                public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                    observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(992));
-                    return result(request.id(), fact.status(), fact.exitCode());
-                }
-            };
-
-            ToolResult result = operations(broker, 4096, 100, ignored -> configuration)
-                    .execute(
-                            invocation(Map.of("command", command, "operationFamily", "INSPECT"), () -> false),
-                            access());
-
-            assertThat(result.structuredData())
-                    .containsKeys("validationEvidence", "validationAttemptRef")
-                    .doesNotContainKeys("validationStatus", "status", "passed", "failed");
-            assertThat(result.structuredData().get("validationEvidence"))
-                    .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
-                            .containsEntry("claimCode", "TRUSTED_SELECTED_SCOPE")
-                            .doesNotContainKeys("status", "passed", "failed"));
-        }
-    }
-
-    @Test
-    void doesNotRecordAnAttemptWhenTheExactCandidateWasRejectedBeforeDispatch() {
-        String command = "python -m pytest focused.py";
-        CodingVerificationCandidate candidate = new CodingVerificationCandidate(
-                command,
-                CodingVerificationCost.LOW,
-                CodingVerificationTrigger.ADJACENT_CHANGE,
-                CodingVerificationSource.USER_EXPLICIT,
-                "trusted-host",
-                CodingValidationScope.SELECTED);
-        CodingSessionVerificationConfiguration configuration =
-                CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
-        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
-            @Override
-            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                throw new ExecutionPreflightException("SANDBOX_UNAVAILABLE", "sandbox unavailable", null);
-            }
-        };
-
-        ToolResult result = operations(broker, 4096, 100, ignored -> configuration)
-                .execute(invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false), access());
-
-        assertThat(result.structuredData())
-                .containsEntry("processState", "FAILED")
-                .doesNotContainKeys("validationEvidence", "validationAttemptRef");
-    }
 
     @Test
     void genericGitCommandsDoNotProjectDeliveryCompletionEvidence() {

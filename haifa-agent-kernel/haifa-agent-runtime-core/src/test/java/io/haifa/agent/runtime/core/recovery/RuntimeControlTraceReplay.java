@@ -30,8 +30,6 @@ public final class RuntimeControlTraceReplay {
                     phase = safePhase(data.get("phase"), phase);
                     strings(data.get("evidenceCodes")).forEach(evidenceCodes::add);
                 }
-                case "delivery.evidence-updated" ->
-                    strings(data.get("evidenceCodes")).forEach(evidenceCodes::add);
                 case "loop.budget-snapshot" ->
                     remainingPercent = Math.max(0, Math.min(100, integer(data, "remainingPercent", remainingPercent)));
                 case "tool.failed" -> {
