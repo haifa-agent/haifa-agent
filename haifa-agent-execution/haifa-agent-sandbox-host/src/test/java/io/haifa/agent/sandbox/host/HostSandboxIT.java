@@ -902,6 +902,42 @@ class HostSandboxIT {
         assertThat(Files.exists(targetPath)).isFalse();
     }
 
+    @Test
+    void gitWorktreeRejectsTargetInsideGitCheckoutTopLevelWhenRepositoryIsSubdirectory() throws Exception {
+        run(root, "git", "init");
+        run(root, "git", "config", "core.autocrlf", "false");
+        run(root, "git", "config", "user.email", "test@example.invalid");
+        run(root, "git", "config", "user.name", "Haifa Test");
+        Files.writeString(root.resolve("tracked.txt"), "base\n");
+        run(root, "git", "add", "tracked.txt");
+        run(root, "git", "commit", "-m", "base");
+        String commit = run(root, "git", "rev-parse", "HEAD").trim();
+
+        Path subDir = Files.createDirectories(root.resolve("submodule"));
+        Fixture fixture =
+                fixture(subDir, "workspace-git-sub-parent", "binding-git-sub-parent", "location-git-sub-parent");
+        var provider = new HostGitWorktreeIsolationProvider(
+                fixture.workspaces, fixture.bindings, fixture.locations, "git", () -> NOW);
+
+        Path siblingTarget = root.resolve("sibling-worktree");
+
+        assertThatThrownBy(() -> provider.createWorktree(new GitWorktreeRequest(
+                        fixture.workspaceId,
+                        new WorkspaceId("workspace-git-sibling"),
+                        new WorkspaceBindingId("binding-git-sibling"),
+                        new WorkspaceLocationRef("location-git-sibling"),
+                        new PrincipalRef("child", "agent"),
+                        commit,
+                        "feature/nested-sibling",
+                        siblingTarget,
+                        WorkspaceCapabilitySet.executionFiles(),
+                        WorkspacePermissionSet.readWriteExecute())))
+                .isInstanceOf(HostSandboxException.class)
+                .hasMessageContaining("worktree target must not match or reside within source repository");
+
+        assertThat(Files.exists(siblingTarget)).isFalse();
+    }
+
     private Fixture fixture(Path workspaceRoot, String workspaceValue, String bindingValue, String locationValue) {
         var workspaces = new InMemoryWorkspaceStore();
         var bindings = new InMemoryWorkspaceBindingStore();

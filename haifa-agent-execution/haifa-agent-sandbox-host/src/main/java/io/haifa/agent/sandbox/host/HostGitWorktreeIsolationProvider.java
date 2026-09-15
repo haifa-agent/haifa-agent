@@ -78,9 +78,17 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
                     .equals("true")) {
                 throw new UnsupportedOperationException("COPY_ON_WRITE requires a Git repository");
             }
+            String topLevel = run(repository, List.of("rev-parse", "--show-toplevel"), Duration.ofSeconds(5))
+                    .trim();
+            Path gitTopLevel;
+            try {
+                gitTopLevel = Path.of(topLevel).toRealPath(LinkOption.NOFOLLOW_LINKS);
+            } catch (IOException exception) {
+                throw failure("source repository top level is inaccessible");
+            }
             run(repository, List.of("cat-file", "-e", request.baseCommit() + "^{commit}"), Duration.ofSeconds(5));
             run(repository, List.of("check-ref-format", "--branch", request.branchName()), Duration.ofSeconds(5));
-            target = validateTargetPath(request.targetPath(), repository);
+            target = validateTargetPath(request.targetPath(), repository, gitTopLevel);
             run(
                     repository,
                     List.of(
@@ -243,7 +251,7 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
         }
     }
 
-    private Path validateTargetPath(Path targetPath, Path repository) {
+    private Path validateTargetPath(Path targetPath, Path repository, Path gitTopLevel) {
         if (targetPath == null) throw failure("targetPath must not be null");
         Path target = targetPath.toAbsolutePath().normalize();
         if (target.getNameCount() == 0
@@ -256,12 +264,14 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
             throw failure("worktree target already exists");
         }
         Path repoReal;
+        Path gitTopLevelReal;
         try {
             repoReal = repository.toRealPath(LinkOption.NOFOLLOW_LINKS);
+            gitTopLevelReal = gitTopLevel.toRealPath(LinkOption.NOFOLLOW_LINKS);
         } catch (IOException exception) {
             throw failure("source repository is inaccessible");
         }
-        if (target.equals(repoReal) || target.startsWith(repoReal) || repoReal.startsWith(target)) {
+        if (isOverlapping(target, repoReal) || isOverlapping(target, gitTopLevelReal)) {
             throw failure("worktree target must not match or reside within source repository");
         }
         Path existingAncestor = null;
@@ -279,7 +289,10 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
                 if (HostWorkspacePathSafety.isUnsafeNode(realAncestor)) {
                     throw failure("worktree target ancestor real path is an unsafe node: " + realAncestor);
                 }
-                if (realAncestor.equals(repoReal) || realAncestor.startsWith(repoReal)) {
+                if (realAncestor.equals(repoReal)
+                        || realAncestor.startsWith(repoReal)
+                        || realAncestor.equals(gitTopLevelReal)
+                        || realAncestor.startsWith(gitTopLevelReal)) {
                     throw failure("worktree target ancestor must not match or reside within source repository");
                 }
                 if (existingAncestor == null) {
@@ -291,6 +304,10 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
             throw failure("worktree target ancestor does not exist");
         }
         return target;
+    }
+
+    private static boolean isOverlapping(Path target, Path candidate) {
+        return target.equals(candidate) || target.startsWith(candidate) || candidate.startsWith(target);
     }
 
     private void safeDeleteIfPresent(Path target) {
