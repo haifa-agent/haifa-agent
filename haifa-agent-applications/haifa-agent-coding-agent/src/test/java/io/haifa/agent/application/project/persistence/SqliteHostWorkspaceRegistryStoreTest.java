@@ -115,6 +115,57 @@ class SqliteHostWorkspaceRegistryStoreTest {
     }
 
     @Test
+    void legacyApprovedWorktreeCreateSourceFailsClosedWithoutDeletingUserFiles() throws Exception {
+        Path database = directory.resolve("workspace-registry-legacy-worktree.db");
+        Path root = Files.createDirectories(directory.resolve("legacy-worktree-root"))
+                .toRealPath();
+        ProjectId projectId = new ProjectId("project-legacy-worktree");
+        WorkspaceId workspaceRef = new WorkspaceId("workspace-legacy-worktree");
+        var entry = HostWorkspaceRegistryEntry.active(
+                projectId,
+                workspaceRef,
+                new WorkspaceLocationRef("location-legacy-worktree"),
+                "legacy-worktree-root",
+                HostWorkspaceRegistrySource.APPROVED_ATTACH,
+                root,
+                HostDirectoryIdentity.resolve(root).physicalFingerprint(),
+                NOW);
+        try (ProjectPersistenceAssembly first = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"),
+                CLOCK,
+                () -> "legacy-first",
+                protector())) {
+            first.workspaceRegistry().create(entry);
+        }
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database)) {
+            connection
+                    .createStatement()
+                    .executeUpdate("UPDATE coding_workspace_registry SET source = 'APPROVED_WORKTREE_CREATE'"
+                            + " WHERE workspace_ref = 'workspace-legacy-worktree'");
+        }
+
+        try (ProjectPersistenceAssembly reopened = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"),
+                CLOCK,
+                () -> "legacy-second",
+                protector())) {
+            assertThat(reopened.workspaceRegistry().find(projectId, workspaceRef))
+                    .isEmpty();
+            assertThat(reopened.workspaceRegistry().list(projectId)).isEmpty();
+        }
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                var result = connection
+                        .createStatement()
+                        .executeQuery("SELECT source, status FROM coding_workspace_registry"
+                                + " WHERE workspace_ref = 'workspace-legacy-worktree'")) {
+            assertThat(result.next()).isTrue();
+            assertThat(result.getString("source")).isEqualTo("APPROVED_WORKTREE_CREATE");
+            assertThat(result.getString("status")).isEqualTo(HostWorkspaceRegistryStatus.DISABLED.name());
+        }
+        assertThat(root).isDirectory();
+    }
+
+    @Test
     void freshRegistrySchemaKeepsPhysicalFingerprintAndHasNoPermissionColumn() throws Exception {
         Path database = directory.resolve("workspace-registry-schema.db");
         try (ProjectPersistenceAssembly ignored = ProjectPersistenceAssembly.open(

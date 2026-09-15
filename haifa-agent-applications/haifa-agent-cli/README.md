@@ -7,7 +7,7 @@ CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVE
 ## Unified approval policy
 
 `ask/auto/deny` 由产品 immutable `PolicyRuleSet` 表达，默认 `ask` 映射为 `LOW`，`auto` 映射为 `NEVER`，
-`deny` 在 Catalog freeze 前移除 `execution_run` 与受控 worktree 入口。也可只配置
+`deny` 在 Catalog freeze 前移除 `execution_run`。也可只配置
 `approval.threshold` 为 `low`、`medium`、`high` 或 `never`；同时配置 mode 和 threshold 时必须使用兼容组合。
 达到阈值的普通执行风险创建一次 Interaction 审批，批准后 Runtime 重验并继续同一 ToolCall，不产生第二个
 控制台审批。`NEVER` 会自动执行包括 HIGH 在内的普通命令，但不覆盖可信分类器的硬拒绝、
@@ -36,7 +36,7 @@ CLI 宿主保持严格且清晰的路径职责分离，避免模型混淆宿主�
 3. **`execution_run` 工具契约**：
    命令执行工具要求传入受控的 `workspaceRef` 以及规范化的 `relativeWorkdir`（根目录固定使用 `.`），在宿主受控沙箱或直接工作区执行。
 4. **工具结果回传规范**：
-   `workspace_attach` 与 `workspace_worktree_create` 成功时，结果中均包含规范化宿主绝对路径 `rootPath` 与脱敏 `workspaceRef`，使模型在挂载或新建隔离工作区后即可直接以绝对路径调用文件工具，消除路径盲猜。
+   `workspace_attach` 成功时，结果中包含规范化宿主绝对路径 `rootPath` 与脱敏 `workspaceRef`，使模型在挂载后即可直接以绝对路径调用文件工具，消除路径盲猜。
 
 ## IDE 单步调试入口
 
@@ -579,7 +579,7 @@ binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可�
 `HAIFA_CONTINUATION_PROTECTOR_REF`。
 
 `tools.enabled`、冻结 Tool Binding、模型披露、ToolCall 持久化和 Provider 执行统一使用
-`file_list`、`file_read`、`file_patch`、`workspace_attach`、`workspace_worktree_create`、`execution_run`
+`file_list`、`file_read`、`file_patch`、`workspace_attach`、`execution_run`
 等 Provider-safe 下划线名称，不执行名称转换。`execution_run` 接收完整命令文本、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir` 和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
 命令仅是非穷举示例。Coding Agent 默认使用该通用 OS CLI 路径完成仓库级文件发现、内容搜索、源码
 检查、构建和测试：文件发现优先 `rg --files`，内容搜索优先 `rg`，命令不存在时由模型按当前 Shell
@@ -703,9 +703,7 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
 
-风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。`workspaceRef`/`relativeWorkdir` 只约束启动目标，Host 子进程仍可访问当前 OS 用户可达的路径，审批与文档不虚假承诺更强的隔离；合法 `git -C` 与其他命令参数一样交给通用执行路径，不再返回 `WORKSPACE_PROTOCOL_REQUIRED`。dispatch 前的确定性拒绝直接保存失败 ToolResult（不伪造 `NOT_DISPATCHED` 异常），失败事实回传给模型并在标准对话循环中继续；模型可向用户报告阻塞或在标准策略下发起全新的普通工具调用。`--approval auto` 映射为 `NEVER`，是用户对当前受信 Host 命令的显式广泛授权，会自动执行所有非硬拒绝的普通命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。凭据防泄露硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run` 与 `workspace_worktree_create`，模型不可见，底层授权仍 fail closed。
-
-`workspace_worktree_create` 只接受具有当前 `DEVELOP` Access 的 source `workspaceRef`、不可变 base commit、新分支名和受控 target name；模型不能传入目标主机路径或权限。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验、Registry 登记和新 workspace 的 `DEVELOP` Access 写入全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
+风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。`workspaceRef`/`relativeWorkdir` 只约束启动目标，Host 子进程仍可访问当前 OS 用户可达的路径，审批与文档不虚假承诺更强的隔离；合法 `git -C` 与其他命令参数一样交给通用执行路径，不再返回 `WORKSPACE_PROTOCOL_REQUIRED`。dispatch 前的确定性拒绝直接保存失败 ToolResult（不伪造 `NOT_DISPATCHED` 异常），失败事实回传给模型并在标准对话循环中继续；模型可向用户报告阻塞或在标准策略下发起全新的普通工具调用。`--approval auto` 映射为 `NEVER`，是用户对当前受信 Host 命令的显式广泛授权，会自动执行所有非硬拒绝的普通命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。凭据防泄露硬拒绝与 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run`，模型不可见，底层授权仍 fail closed。
 
 系统 Git/GH、Wrapper、客户脚本与普通命令走同一条通用执行路径，不提供命令专用 Wrapper，也不做业务语义
 分级。产品不再维护重复且不可见的 Coding Delivery Intent

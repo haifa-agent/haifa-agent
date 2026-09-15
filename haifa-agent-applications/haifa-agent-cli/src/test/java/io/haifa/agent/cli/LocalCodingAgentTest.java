@@ -118,8 +118,8 @@ class LocalCodingAgentTest {
                         "Do not treat a non-zero exit as a platform failure",
                         "without a new diagnostic hypothesis",
                         "rg -F -- <text>",
-                        "Runtime-owned recovery interaction",
-                        "Do not copy or resubmit the command",
+                        "Verify an unknown outcome from authoritative state before issuing any new command",
+                        "never blindly replay a dispatched call",
                         "Keep command output bounded")
                 .doesNotContain("Host OS:", "repeat the exact command, workdir");
         assertThat(LocalCodingAgent.executionEnvironmentPrompt(" ")).isEmpty();
@@ -842,6 +842,114 @@ class LocalCodingAgentTest {
     }
 
     @Test
+    void executionRunManagesRepoLocalWorktreeWithoutCreatingASecondWorkspaceRecord() throws Exception {
+        runGit(workspace, "init");
+        runGit(workspace, "config", "user.email", "test@example.invalid");
+        runGit(workspace, "config", "user.name", "Haifa Test");
+        Files.writeString(workspace.resolve("tracked.txt"), "base\n");
+        runGit(workspace, "add", "tracked.txt");
+        runGit(workspace, "commit", "-m", "base");
+
+        Path linkedWorktree = workspace.resolve(".worktrees").resolve("feat-a");
+        String modifyAndDiff = isWindows()
+                ? "Set-Content -LiteralPath '.worktrees/feat-a/tracked.txt' -Value 'child';"
+                        + " git -C .worktrees/feat-a diff --stat"
+                : "printf 'child\\n' > .worktrees/feat-a/tracked.txt;" + " git -C .worktrees/feat-a diff --stat";
+        AtomicInteger calls = new AtomicInteger();
+        AtomicReference<List<Map<String, Object>>> toolResults = new AtomicReference<>();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            int call = calls.incrementAndGet();
+            return switch (call) {
+                case 1 ->
+                    toolResponse(
+                            "worktree-create",
+                            "execution_run",
+                            Map.of(
+                                    "command",
+                                    "git worktree add .worktrees/feat-a -b feat-a",
+                                    "relativeWorkdir",
+                                    ".",
+                                    "timeoutMillis",
+                                    30_000,
+                                    "description",
+                                    "Create the repo-local worktree through generic execution"));
+                case 2 ->
+                    toolResponse(
+                            "worktree-modify",
+                            "execution_run",
+                            Map.of(
+                                    "command",
+                                    modifyAndDiff,
+                                    "relativeWorkdir",
+                                    ".",
+                                    "timeoutMillis",
+                                    30_000,
+                                    "description",
+                                    "Modify a file inside the worktree and inspect its diff"));
+                case 3 ->
+                    toolResponse(
+                            "worktree-revert",
+                            "execution_run",
+                            Map.of(
+                                    "command",
+                                    "git -C .worktrees/feat-a checkout -- tracked.txt",
+                                    "relativeWorkdir",
+                                    ".",
+                                    "timeoutMillis",
+                                    30_000,
+                                    "description",
+                                    "Restore the worktree before removal"));
+                case 4 ->
+                    toolResponse(
+                            "worktree-remove",
+                            "execution_run",
+                            Map.of(
+                                    "command",
+                                    "git worktree remove .worktrees/feat-a",
+                                    "relativeWorkdir",
+                                    ".",
+                                    "timeoutMillis",
+                                    30_000,
+                                    "description",
+                                    "Remove the repo-local worktree through generic execution"));
+                default -> {
+                    toolResults.set(request.messages().stream()
+                            .filter(message -> message.role() == ModelMessageRole.TOOL)
+                            .map(ModelMessage::toolResultData)
+                            .toList());
+                    yield answer("worktree-complete", "repo-local worktree managed with generic execution");
+                }
+            };
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                automaticHostConfiguration(),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            int registryRecordsBefore = agent.workspaceViews().size();
+            assertThat(registryRecordsBefore).isEqualTo(1);
+            var accepted = agent.start("Create, use, and remove a repo-local worktree through execution_run.");
+            var completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(60));
+
+            assertThat(completed.status())
+                    .withFailMessage("run failed: %s", completed.error())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(linkedWorktree).doesNotExist();
+            assertThat(agent.workspaceViews())
+                    .as("generic execution_run must not register a second Workspace/Access/Registry record")
+                    .hasSize(registryRecordsBefore);
+        }
+        assertThat(calls).hasValue(5);
+        assertThat(toolResults.get())
+                .hasSize(4)
+                .allSatisfy(result -> assertThat(result.get("processState")).isEqualTo("EXITED"))
+                .allSatisfy(result -> assertThat(result.get("exitCode")).isEqualTo(0));
+        assertThat(toolResults.get()).anySatisfy(result -> assertThat(String.valueOf(result.get("output")))
+                .contains("tracked.txt", "1 file changed"));
+    }
+
+    @Test
     void approvedExecutionRunResumesAndReturnsARealToolResult() throws Exception {
         Files.writeString(workspace.resolve(".gitignore"), "target/\n");
         Path generated = Files.createDirectories(workspace.resolve("target")).resolve("generated.jar");
@@ -1475,6 +1583,23 @@ class LocalCodingAgentTest {
 
     private static String fileExistsCommand(String file) {
         return isWindows() ? "if (Test-Path '" + file + "') { exit 0 } else { exit 1 }" : "test -f '" + file + "'";
+    }
+
+    private static void runGit(Path directory, String... arguments) throws Exception {
+        List<String> command = new java.util.ArrayList<>();
+        command.add("git");
+        command.addAll(List.of(arguments));
+        Process process = new ProcessBuilder(command)
+                .directory(directory.toFile())
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS))
+                .withFailMessage("git command timed out: %s", String.join(" ", command))
+                .isTrue();
+        assertThat(process.exitValue())
+                .withFailMessage("git command failed: %s\n%s", String.join(" ", command), output)
+                .isZero();
     }
 
     private static CliConfiguration automaticHostConfiguration() {

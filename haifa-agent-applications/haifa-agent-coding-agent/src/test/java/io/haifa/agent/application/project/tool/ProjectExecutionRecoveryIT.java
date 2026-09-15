@@ -312,8 +312,7 @@ class ProjectExecutionRecoveryIT {
                                     : Set.of("file_read"));
                 },
                 unreachable,
-                normal,
-                null);
+                normal);
         var catalog = new ProjectToolCatalog()
                 .freeze(Set.of("execution_run"), Set.of("execution_run"), true, provider, normalProfile());
         DefaultAgentRuntime runtime = new RuntimeCoreBuilder()

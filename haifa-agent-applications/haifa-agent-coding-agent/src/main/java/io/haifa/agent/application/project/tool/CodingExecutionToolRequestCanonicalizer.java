@@ -22,20 +22,12 @@ public final class CodingExecutionToolRequestCanonicalizer implements ToolReques
         Objects.requireNonNull(binding, "binding must not be null");
         Objects.requireNonNull(request, "request must not be null");
         String toolName = binding.definition().name().value();
-        if (!EXECUTION_RUN.equals(toolName) && !ProjectWorktreeToolOperations.TOOL_NAME.equals(toolName)) {
+        if (!EXECUTION_RUN.equals(toolName)) {
             return request;
         }
 
         Map<String, Object> values = request.arguments().values();
         var canonicalValues = new LinkedHashMap<String, Object>(values);
-        if (ProjectWorktreeToolOperations.TOOL_NAME.equals(toolName)) {
-            canonicalizeText(canonicalValues, "sourceWorkspaceRef");
-            canonicalizeText(canonicalValues, "baseCommit");
-            canonicalizeText(canonicalValues, "branchName");
-            canonicalizeText(canonicalValues, "targetName");
-            return withArguments(request, values, canonicalValues);
-        }
-
         canonicalizeText(canonicalValues, "workspaceRef");
         Object rawWorkdir = values.get("relativeWorkdir");
         if (rawWorkdir instanceof String workdir && !workdir.isBlank()) {
