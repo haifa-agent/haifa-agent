@@ -48,7 +48,6 @@ public final class ProjectWorktreeToolOperations {
         String baseCommit = text(values, "baseCommit");
         String branchName = text(values, "branchName");
         String targetName = safeTargetName(text(values, "targetName"));
-        String deliveryIntent = deliveryIntent(text(values, "deliveryIntent"));
         workspaceAccess.require(invocation.tenant(), invocation.principal(), parent, WorkspaceAccessMode.DEVELOP);
         provisioning.scope().resolveExecutionDirectory(parent, ".");
         String identity = PolicyDigest.sha256Fields(List.of(
@@ -102,7 +101,6 @@ public final class ProjectWorktreeToolOperations {
             data.put("baseCommit", baseCommit);
             data.put("branchName", branchName);
             data.put("mode", WorkspaceAccessMode.DEVELOP.name());
-            data.put("deliveryIntent", deliveryIntent);
             data.put("source", view.source().name());
             data.put("status", view.status().name());
             return new ToolResult(
@@ -143,13 +141,6 @@ public final class ProjectWorktreeToolOperations {
                     List.of(),
                     false);
         }
-    }
-
-    private static String deliveryIntent(String value) {
-        if (!value.equals("local-change") && !value.equals("pull-request")) {
-            throw new IllegalArgumentException("deliveryIntent must be local-change or pull-request");
-        }
-        return value;
     }
 
     private static String safeTargetName(String value) {

@@ -81,9 +81,10 @@ Session 冻结配置的显式 `requiresValidationEvidence` 事实为真时产生
 修改之后实际尝试了匹配冻结候选的命令，不从 Tool 交付状态或 exit code 推断通过/失败。`DIFF_INSPECTION` 不再作为修改任务
 完成门禁的兼容 fallback，但 DIFF 命令、只读审阅能力和对应诊断事实继续保留。ANALYZE/REVIEW 要求只读证据
 且拒绝意外修改。UNKNOWN 用于普通交互：没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；
-观察到 Workspace 修改时仍要求修改事实，验证要求同样只取决于冻结验证要求。冻结 `CodingDeliveryIntent`
-继续限制 commit/push/PR 的授权上界，但 generic Shell 不推断这些操作是否完成；模型必须依据原始命令结果和
-必要的只读对账判断并报告。需要硬性交付保证时应使用具有独立 typed contract 的专用领域 Tool。
+观察到 Workspace 修改时仍要求修改事实，验证要求同样只取决于冻结验证要求。产品不再维护第二份冻结
+`CodingDeliveryIntent` 交付护栏，用户是否要求 Commit、Push 或 PR 继续由任务正文和 Prompt/Skill 行为约束表达，
+具体副作用由可见、统一的 Policy/Approval 和执行边界决定；generic Shell 不推断这些操作是否完成，模型必须依据
+原始命令结果和必要的只读对账判断并报告。需要硬性交付保证时应使用具有独立 typed contract 的专用领域 Tool。
 
 轻量 `CodingVerificationProfile` 只保存有界候选、来源、成本与触发层级，按“用户显式配置 →
 仓库指令/构建配置 → 相邻测试 → 生态默认”在每个触发层级独立选择，不引入语言插件框架。验证阶梯仍由

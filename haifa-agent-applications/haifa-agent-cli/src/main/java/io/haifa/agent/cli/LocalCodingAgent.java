@@ -559,11 +559,7 @@ final class LocalCodingAgent implements AutoCloseable {
             PublicToolPolicy publicToolPolicy = workspaceAccessPolicy(
                     new DefaultPublicToolPolicy(
                             new io.haifa.agent.application.project.policy.CodingExecutionPolicyRequestAdapter(
-                                    policyMode(configuration.approval()),
-                                    new io.haifa.agent.application.project.product.coding.delivery
-                                            .CodingDeliveryIntentResolver(
-                                            persistence.codingSessions(),
-                                            persistence.ports().runs())),
+                                    policyMode(configuration.approval())),
                             policy.evaluator(),
                             policy.rules()),
                     persistence.workspaceAccess(),
@@ -1207,8 +1203,6 @@ final class LocalCodingAgent implements AutoCloseable {
                 + attachmentApprovalArgument(arguments, "branchName")
                 + "\nManaged target: "
                 + attachmentApprovalArgument(arguments, "targetName")
-                + "\nDelivery intent: "
-                + attachmentApprovalArgument(arguments, "deliveryIntent")
                 + "\nScope: this exact managed worktree target; no arbitrary host path is accepted.";
     }
 

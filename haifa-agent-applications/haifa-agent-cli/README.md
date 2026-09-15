@@ -703,15 +703,13 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
 
-风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会将原 ToolCall 标记为终态 FAILED，将失败事实（`failureCode` 与 `NOT_DISPATCHED`）回传给模型并继续标准对话循环；模型可据此向用户报告阻塞或在标准策略下发起全新的普通工具调用，Runtime 不再维护双 Profile、专用 `execution-recovery` Interaction 或后继工具调用协议。`--approval auto` 映射为 `NEVER`，会自动执行仍处于冻结 `CodingDeliveryIntent` 上界内、且可信分类为 LOW/MEDIUM/HIGH 的普通命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。交付意图越界、可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run` 与 `workspace_worktree_create`，模型不可见，底层授权仍 fail closed。
+风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会将原 ToolCall 标记为终态 FAILED，将失败事实（`failureCode` 与 `NOT_DISPATCHED`）回传给模型并继续标准对话循环；模型可据此向用户报告阻塞或在标准策略下发起全新的普通工具调用，Runtime 不再维护双 Profile、专用 `execution-recovery` Interaction 或后继工具调用协议。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run` 与 `workspace_worktree_create`，模型不可见，底层授权仍 fail closed。
 
-`workspace_worktree_create` 只接受具有当前 `DEVELOP` Access 的 source `workspaceRef`、不可变 base commit、新分支名、受控 target name 和交付意图；模型不能传入目标主机路径或权限。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验、Registry 登记和新 workspace 的 `DEVELOP` Access 写入全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
+`workspace_worktree_create` 只接受具有当前 `DEVELOP` Access 的 source `workspaceRef`、不可变 base commit、新分支名和受控 target name；模型不能传入目标主机路径或权限。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验、Registry 登记和新 workspace 的 `DEVELOP` Access 写入全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
 
-系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。当前本地 Terminal 的 Coding Session 默认冻结
-`WORKTREE_ONLY`；Policy Adapter 在 evaluator/approval 前把它作为仓库副作用上界：Stage/Commit 要求
-`LOCAL_COMMIT`，Push 要求 `REMOTE_PUSH`，PR 写操作要求 `PULL_REQUEST`。可信的直接只读 Git/GH 不受该上界
-影响；无法证明只读的 compound/wrapper 必须拆成直接命令，或由可信调用方预先冻结最高所需意图。
-批准不能把当前 Run 升级到更高交付意图。generic Shell 只返回命令事实，完成策略不要求或生成 Stage、Commit、
+系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。产品不再维护重复且不可见的 Coding Delivery Intent
+交付护栏，用户是否要求 Commit、Push 或 PR 继续由任务正文和 Prompt/Skill 行为约束表达；是否允许具体副作用，
+则由可见、统一的 Policy/Approval 和执行边界决定。generic Shell 只返回命令事实，完成策略不要求或生成 Stage、Commit、
 Push、PR 成功证据。
 
 `execution_run` 对每个正常终止的进程返回 `processState=EXITED`、原始 exit code 和 bounded 输出。

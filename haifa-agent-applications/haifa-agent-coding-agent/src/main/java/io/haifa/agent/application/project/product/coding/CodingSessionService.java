@@ -6,7 +6,6 @@ import io.haifa.agent.application.project.product.ProjectProductSession;
 import io.haifa.agent.application.project.product.ProjectProductSessionStore;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.product.TrustedProductCallerProvider;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileResolver;
@@ -147,20 +146,6 @@ public final class CodingSessionService {
             String firstTurn,
             List<AssetRef> attachments,
             String idempotencyKey,
-            CodingDeliveryIntent deliveryIntent) {
-        return createSession(
-                projectId,
-                firstTurn,
-                attachments,
-                idempotencyKey,
-                new CodingSessionCreateOptions(deliveryIntent, List.of()));
-    }
-
-    public CodingSessionView createSession(
-            ProjectId projectId,
-            String firstTurn,
-            List<AssetRef> attachments,
-            String idempotencyKey,
             CodingSessionCreateOptions options) {
         TrustedProductCaller caller = callers.current();
         Instant now = now();
@@ -168,7 +153,6 @@ public final class CodingSessionService {
         String message = message(firstTurn);
         String keyDigest = digest(idempotencyKey(idempotencyKey));
         CodingSessionCreateOptions trustedOptions = Objects.requireNonNull(options, "options must not be null");
-        CodingDeliveryIntent frozenIntent = trustedOptions.deliveryIntent();
         List<io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate> candidates =
                 new java.util.ArrayList<>(trustedOptions.userVerificationCandidates());
         candidates.addAll(defaultVerificationProfile.candidates());
@@ -177,13 +161,7 @@ public final class CodingSessionService {
         String requestedModelId = trustedOptions.initialModelId().orElse(models.defaultModelId());
         String requestedModelIdentity = trustedOptions.initialModelId().orElse("DEFAULT_MODEL");
         String requestDigest = requestDigest(
-                projectId.value()
-                        + "|"
-                        + frozenIntent.name()
-                        + "|"
-                        + verification.digest()
-                        + "|"
-                        + requestedModelIdentity,
+                projectId.value() + "|" + verification.digest() + "|" + requestedModelIdentity,
                 message,
                 safeAttachments);
         String scope = callerScope(caller);
@@ -198,7 +176,6 @@ public final class CodingSessionService {
                 projectId,
                 message,
                 safeAttachments,
-                frozenIntent,
                 Optional.empty(),
                 now));
         if (binding.runId().isPresent()) {
@@ -356,15 +333,6 @@ public final class CodingSessionService {
 
     public CodingSessionCommandReceipt submitTurn(
             AgentSessionId sessionId, String message, List<AssetRef> attachments, String idempotencyKey) {
-        return submitTurn(sessionId, message, attachments, idempotencyKey, CodingDeliveryIntent.WORKTREE_ONLY);
-    }
-
-    public CodingSessionCommandReceipt submitTurn(
-            AgentSessionId sessionId,
-            String message,
-            List<AssetRef> attachments,
-            String idempotencyKey,
-            CodingDeliveryIntent deliveryIntent) {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);
         CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
@@ -372,9 +340,7 @@ public final class CodingSessionService {
         String safeMessage = message(message);
         List<AssetRef> safeAttachments = attachments(attachments);
         String keyDigest = digest(idempotencyKey(idempotencyKey));
-        CodingDeliveryIntent frozenIntent = Objects.requireNonNull(deliveryIntent, "deliveryIntent must not be null");
-        String requestDigest =
-                requestDigest(sessionId.value() + "|" + frozenIntent.name(), safeMessage, safeAttachments);
+        String requestDigest = requestDigest(sessionId.value(), safeMessage, safeAttachments);
         String dispatchKey = dispatchKey(SUBMIT, callerScope(caller) + "|" + keyDigest);
         CodingCommandBinding existing = codingSessions.reserveCommand(new CodingCommandBinding(
                 callerScope(caller),
@@ -386,7 +352,6 @@ public final class CodingSessionService {
                 product.projectId(),
                 safeMessage,
                 safeAttachments,
-                frozenIntent,
                 Optional.empty(),
                 now()));
         if (existing.runId().isPresent()) {
