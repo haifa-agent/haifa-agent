@@ -156,11 +156,15 @@ class SqliteHostWorkspaceRegistryStoreTest {
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
                 var result = connection
                         .createStatement()
-                        .executeQuery("SELECT source, status FROM coding_workspace_registry"
+                        .executeQuery("SELECT source, status, revocation_reason_code FROM coding_workspace_registry"
                                 + " WHERE workspace_ref = 'workspace-legacy-worktree'")) {
             assertThat(result.next()).isTrue();
             assertThat(result.getString("source")).isEqualTo("APPROVED_WORKTREE_CREATE");
             assertThat(result.getString("status")).isEqualTo(HostWorkspaceRegistryStatus.DISABLED.name());
+            assertThat(result.getString("revocation_reason_code"))
+                    .as("unsupported retired source must not be mislabeled as a location decryption failure")
+                    .isEqualTo("UNSUPPORTED_REGISTRY_SOURCE")
+                    .isNotEqualTo("LOCATION_DECRYPTION_FAILED");
         }
         assertThat(root).isDirectory();
     }

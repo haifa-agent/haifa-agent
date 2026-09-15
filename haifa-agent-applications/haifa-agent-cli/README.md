@@ -638,6 +638,10 @@ Windows 缺省值统一为 `host-guarded + shell auto`，三端体验完全一�
 `local-native` bind-mount 与断网机制。旧配置文件中残留这两个键会被忽略，而 `provider: local-native`
 在启动期 fail closed，报 `execution.provider is unsupported`。
 
+已删除的专用 `workspace_worktree_create` Tool 不再注册，也不提供兼容别名或自动转发。升级动作：如果
+`tools.enabled`（或发行 `haifa-coding.yaml` 的自定义副本）仍列出 `workspace_worktree_create`，必须
+移除该项；CLI 会在启动期 fail closed，并提示改用通用 `execution_run` 执行 `git worktree` 命令。
+
 安全摘要显示 Provider、Adapter、宿主网络事实、当前 OS 用户，以及 Workspace 外文件、网络、
 CPU/内存/Kernel 均未隔离。Host Guarded 以当前 OS 用户身份运行，不能阻止 Workspace 外文件、
 普通网络或系统资源访问，Approval 也不等于隔离，因此不适合陌生仓库无人值守执行；面对完全不可信的

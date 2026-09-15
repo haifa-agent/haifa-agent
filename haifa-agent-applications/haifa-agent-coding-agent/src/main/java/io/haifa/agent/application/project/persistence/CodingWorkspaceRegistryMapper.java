@@ -13,7 +13,7 @@ public interface CodingWorkspaceRegistryMapper {
 
     int update(@Param("row") CodingWorkspaceRegistryRow row, @Param("expectedVersion") long expectedVersion);
 
-    int disableCorruptLocation(
+    int disable(
             @Param("projectId") String projectId,
             @Param("workspaceRef") String workspaceRef,
             @Param("expectedVersion") long expectedVersion,

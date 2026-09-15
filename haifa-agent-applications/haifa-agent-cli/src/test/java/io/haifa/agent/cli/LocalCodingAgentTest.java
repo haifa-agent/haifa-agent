@@ -35,6 +35,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.sql.DriverManager;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -922,13 +923,20 @@ class LocalCodingAgentTest {
             };
         };
 
+        Path database = configuredSkillRoot.resolve("worktree-runtime.db");
         try (var agent = LocalCodingAgent.create(
                 workspace,
-                automaticHostConfiguration(),
+                withSqlitePersistence(automaticHostConfiguration(), database),
                 new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
-                model)) {
-            int registryRecordsBefore = agent.workspaceViews().size();
-            assertThat(registryRecordsBefore).isEqualTo(1);
+                model,
+                ignored -> {},
+                new AesGcmModelContinuationProtector(
+                        new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
+            int registryRowsBefore = countRows(database, "coding_workspace_registry");
+            int accessRowsBefore = countRows(database, "coding_workspace_access");
+            assertThat(registryRowsBefore).isEqualTo(1);
+            assertThat(accessRowsBefore).isEqualTo(1);
+            assertThat(agent.workspaceViews()).hasSize(1);
             var accepted = agent.start("Create, use, and remove a repo-local worktree through execution_run.");
             var completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(60));
 
@@ -936,9 +944,15 @@ class LocalCodingAgentTest {
                     .withFailMessage("run failed: %s", completed.error())
                     .isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(linkedWorktree).doesNotExist();
+            assertThat(countRows(database, "coding_workspace_registry"))
+                    .as("generic execution_run must not add a second coding_workspace_registry row")
+                    .isEqualTo(registryRowsBefore);
+            assertThat(countRows(database, "coding_workspace_access"))
+                    .as("generic execution_run must not add a second coding_workspace_access row")
+                    .isEqualTo(accessRowsBefore);
             assertThat(agent.workspaceViews())
-                    .as("generic execution_run must not register a second Workspace/Access/Registry record")
-                    .hasSize(registryRecordsBefore);
+                    .as("the product workspace projection must stay at the single authorized root")
+                    .hasSize(1);
         }
         assertThat(calls).hasValue(5);
         assertThat(toolResults.get())
@@ -1616,6 +1630,32 @@ class LocalCodingAgentTest {
                 trusted.maxIterations(),
                 trusted.maxToolCalls(),
                 trusted.persistence());
+    }
+
+    private static CliConfiguration withSqlitePersistence(CliConfiguration configuration, Path database) {
+        return new CliConfiguration(
+                configuration.model(),
+                configuration.availableModels(),
+                configuration.enabledTools(),
+                configuration.mcpServers(),
+                configuration.web(),
+                configuration.skills(),
+                configuration.execution(),
+                configuration.approval(),
+                configuration.approvalThreshold(),
+                configuration.timeout(),
+                configuration.maxIterations(),
+                configuration.maxModelCalls(),
+                configuration.maxToolCalls(),
+                ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"));
+    }
+
+    private static int countRows(Path database, String table) throws Exception {
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                var result = connection.createStatement().executeQuery("SELECT COUNT(*) FROM " + table)) {
+            assertThat(result.next()).isTrue();
+            return result.getInt(1);
+        }
     }
 
     private static io.haifa.agent.runtime.api.AgentRunSnapshot awaitTerminal(
