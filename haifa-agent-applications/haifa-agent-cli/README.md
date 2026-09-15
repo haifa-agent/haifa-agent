@@ -703,22 +703,21 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
 
-风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。直接 `git -C` 返回不创建 Policy Decision 的 `WORKSPACE_PROTOCOL_REQUIRED`，调用方必须移除 `-C` 并用结构化目标。可信 CA preflight 若以错误码和 `NOT_DISPATCHED` 双证据拒绝一条直接 Git/GH 调用，Runtime 会将原 ToolCall 标记为终态 FAILED，将失败事实（`failureCode` 与 `NOT_DISPATCHED`）回传给模型并继续标准对话循环；模型可据此向用户报告阻塞或在标准策略下发起全新的普通工具调用，Runtime 不再维护双 Profile、专用 `execution-recovery` Interaction 或后继工具调用协议。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run` 与 `workspace_worktree_create`，模型不可见，底层授权仍 fail closed。
+风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、`workspaceRef`、`relativeWorkdir`、timeout、Shell 类型及 Host 非强隔离提示。`relativeWorkdir` 只接受活动根下的规范相对目录；绝对目录、UNC/盘符、遍历和链接逃逸在执行前拒绝。`workspaceRef`/`relativeWorkdir` 只约束启动目标，Host 子进程仍可访问当前 OS 用户可达的路径，审批与文档不虚假承诺更强的隔离；合法 `git -C` 与其他命令参数一样交给通用执行路径，不再返回 `WORKSPACE_PROTOCOL_REQUIRED`。dispatch 前的确定性拒绝直接保存失败 ToolResult（不伪造 `NOT_DISPATCHED` 异常），失败事实回传给模型并在标准对话循环中继续；模型可向用户报告阻塞或在标准策略下发起全新的普通工具调用。`--approval auto` 映射为 `NEVER`，是用户对当前受信 Host 命令的显式广泛授权，会自动执行所有非硬拒绝的普通命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。凭据防泄露硬拒绝、受控 worktree 创建和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution_run` 与 `workspace_worktree_create`，模型不可见，底层授权仍 fail closed。
 
 `workspace_worktree_create` 只接受具有当前 `DEVELOP` Access 的 source `workspaceRef`、不可变 base commit、新分支名和受控 target name；模型不能传入目标主机路径或权限。CLI 对这组精确参数始终询问批准，并只在 Git 创建、真实路径/fingerprint 校验、Registry 登记和新 workspace 的 `DEVELOP` Access 写入全部成功后返回新的 `workspaceRef`。创建失败、登记失败或重启时无法完成受信 Git reconciliation 都不会留下可用 Registry root；返回投影不暴露受控物理目录。
 
-系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。产品不再维护重复且不可见的 Coding Delivery Intent
+系统 Git/GH、Wrapper、客户脚本与普通命令走同一条通用执行路径，不提供命令专用 Wrapper，也不做业务语义
+分级。产品不再维护重复且不可见的 Coding Delivery Intent
 交付护栏，用户是否要求 Commit、Push 或 PR 继续由任务正文和 Prompt/Skill 行为约束表达；是否允许具体副作用，
 则由可见、统一的 Policy/Approval 和执行边界决定。generic Shell 只返回命令事实，完成策略不要求或生成 Stage、Commit、
 Push、PR 成功证据。
 
 `execution_run` 对每个正常终止的进程返回 `processState=EXITED`、原始 exit code 和 bounded 输出。
 Runtime 和 Coding 产品不判断退出码的业务含义，也不将非零退出归入平台失败或自动恢复；模型依据命令与
-输出决定下一步。Timeout、Cancel、资源限制和未知终止继续保持独立边界。复合命令风险提升返回
-`COMMAND_RISK_ESCALATED`，未知 Git 子命令返回 `GIT_COMMAND_UNKNOWN_HIGH_RISK`，不可信
-`operationFamily` 返回 `OPERATION_HINT_IGNORED` 或 `UNVERIFIED`。认证环境覆盖硬拒绝使用
-`AUTHENTICATION_OVERRIDE_DENIED`，受限网络失败使用 `NETWORK_PERMISSION_REQUIRED`，二者分别引导移除
-覆盖或通过托管的一次性权限请求处理，而不是重复执行原命令。
+输出决定下一步。Timeout、Cancel、资源限制和未知终止继续保持独立边界。凭据防泄露硬拒绝使用
+`AUTHENTICATION_OVERRIDE_DENIED`，引导移除受保护的认证环境变量赋值、`git credential*`、Git 凭据配置覆盖
+或 `gh auth` 披露/修改命令；已 dispatch 且结果未知的调用必须先读取权威状态，不得盲目重放。
 
 `execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI wall timeout 发送 Runtime `TIMEOUT` 并以 `WALL_TIME_EXCEEDED`/退出码 124 结束；Ctrl+C 和关闭钩子仍发送 `CANCEL`。
 

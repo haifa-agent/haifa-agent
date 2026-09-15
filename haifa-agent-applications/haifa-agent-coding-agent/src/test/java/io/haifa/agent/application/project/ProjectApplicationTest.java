@@ -155,8 +155,10 @@ class ProjectApplicationTest {
                         "command-specific wrappers",
                         "operationFamily",
                         "optional declared hint",
-                        "BUILD or TEST",
-                        "final diff inspection");
+                        "output budgeting",
+                        "never grants authorization",
+                        "same generic execution path",
+                        "authentication material");
         @SuppressWarnings("unchecked")
         var commandSchema = (java.util.Map<String, Object>) properties.get("command");
         assertThat(commandSchema.get("description").toString())

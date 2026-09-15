@@ -83,7 +83,7 @@ class ProjectExecutionValidationTest {
     }
 
     @Test
-    void reportsGitDirectoryOverrideAsWorkspaceProtocolError() {
+    void acceptsGitDirectoryOverrideThroughTheGenericExecutionPath() {
         AtomicBoolean invoked = new AtomicBoolean();
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override
@@ -102,11 +102,9 @@ class ProjectExecutionValidationTest {
                                 () -> false),
                         access());
 
-        assertThat(result.structuredData())
-                .containsEntry("failureCategory", "PROTOCOL_ERROR")
-                .containsEntry("stableFailureCode", "WORKSPACE_PROTOCOL_REQUIRED")
-                .containsEntry("failureActionCode", "USE_STRUCTURED_WORKSPACE_TARGET");
-        assertThat(invoked).isFalse();
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData()).containsEntry("processState", "EXITED");
+        assertThat(invoked).isTrue();
     }
 
     @Test
@@ -218,15 +216,15 @@ class ProjectExecutionValidationTest {
                 .execute(invocation(Map.of("command", "git status --short"), () -> false), access());
 
         assertThat(result.structuredData())
-                .containsEntry("effectiveOperationFamily", "INSPECT")
                 .containsEntry("operationFamily", "UNKNOWN")
+                .containsEntry("outputBudgetFamily", "UNKNOWN")
                 .doesNotContainKey("declaredOperationFamily");
-        assertThat(captured.get().limits().maxStdoutBytes()).isEqualTo(4096);
-        assertThat(captured.get().limits().maxStderrBytes()).isEqualTo(4096);
+        assertThat(captured.get().limits().maxStdoutBytes()).isEqualTo(32768);
+        assertThat(captured.get().limits().maxStderrBytes()).isEqualTo(32768);
     }
 
     @Test
-    void ignoresOperationHintsForAuthorizationButStillRejectsHardBoundaries() {
+    void ignoresOperationHintsForAuthorizationButStillRejectsCredentialOverrides() {
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
@@ -247,21 +245,15 @@ class ProjectExecutionValidationTest {
 
         assertThat(writeAsRead.structuredData())
                 .containsEntry("processState", "EXITED")
-                .containsEntry("commandRisk", "EXTERNAL_WRITE")
-                .containsEntry("commandTarget", "GIT")
-                .containsEntry("effectiveOperationFamily", "MUTATE")
-                .containsEntry("operationHintCode", "OPERATION_HINT_IGNORED")
+                .containsEntry("operationFamily", "INSPECT")
                 .doesNotContainKey("declaredOperationFamily");
         assertThat(tokenOverride.structuredData())
                 .containsEntry("stableFailureCode", "AUTHENTICATION_OVERRIDE_DENIED")
                 .containsEntry("failureActionCode", "REMOVE_AUTHENTICATION_OVERRIDE")
-                .containsEntry("commandRisk", "DENIED");
+                .containsEntry("credentialBoundaryCode", "AUTHENTICATION_ENVIRONMENT_OVERRIDE");
         assertThat(statusAsDiff.structuredData())
                 .containsEntry("processState", "EXITED")
-                .containsEntry("effectiveOperationFamily", "INSPECT")
-                .containsEntry("operationHintCode", "OPERATION_HINT_IGNORED")
-                .containsEntry("commandOperation", "INSPECT")
-                .containsEntry("commandClassificationReason", "GIT_STATUS")
+                .containsEntry("operationFamily", "DIFF")
                 .doesNotContainKey("declaredOperationFamily");
     }
 }

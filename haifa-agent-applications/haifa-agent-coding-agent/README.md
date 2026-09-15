@@ -232,25 +232,26 @@ Catalog 保留 `file_search` 供显式配置兼容，但 Coding CLI 默认不冻
 Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一精确 Profile Ref/version。
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于
 新 Profile；模型可见 Schema 包含 command、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir`、有界 timeout、安全描述和可选
-`operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，仅作为交付和诊断 Hint；
-省略时使用 `UNKNOWN`。可信 `SystemGitCliCommandClassifier` 独立解析直接 `git`/`gh` 命令并产出风险事实；Coding
-`ToolPolicyRequestAdapter` 在 Policy 决策前把本地读、写、网络读、外部写和未知形式映射为调用级风险及副作用，
-并把 Resolver 结果冻结进安全配置摘要。复合命令、未知 wrapper/alias 至少为 HIGH，但继续交给系统 Shell；
-认证环境覆盖、Credential 命令/配置和仓库路径逃逸在 Policy 与执行边界硬拒绝。模型自报的操作族不能覆盖
-可信分类、风险、审批或输出预算；直接 Git/GH 和复合形式都不因 Hint 缺失或不匹配被拒绝。结果通过
-稳定的 `riskResolutionCode`、`operationHintCode` 和 `failureActionCode` 区分风险提升、Hint 被忽略与
-基础设施/资源失败，恢复逻辑不解析 stderr 或依赖自然语言描述。
+`operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，只作为输出预算与交付控制
+Hint；省略时使用 `UNKNOWN`，模型声明不能授予授权。普通 `git`、`gh`、Wrapper 和客户脚本与其他命令一样
+走同一条通用执行路径，保留真实 exit code 与有界 stdout/stderr；Java 不再解析 Git/GH 子命令、参数、路径
+覆盖或业务风险，也不据 Hint 拒绝命令。Coding `ToolPolicyRequestAdapter` 只保留一条封闭的凭据防泄露边界：
+受保护认证环境变量赋值、`git credential*`、Git 凭据配置覆盖、`gh auth token`、`gh auth status --show-token`
+以及其他会修改或披露认证状态的 `gh auth` 命令在 Policy 与执行边界 fail closed；它不做一般命令分类，也不
+演变成 Git/GH Grammar。结果通过稳定的 `failureActionCode` 区分基础设施/资源失败，恢复逻辑不解析 stderr
+或依赖自然语言描述。
 
-Coding 审批使用 `LOW/MEDIUM/HIGH/NEVER` 阈值；风险事实先由可信解析器写入调用级 Policy Request，
-再由用户配置的阈值决定是否 ASK。兼容 `ask` 映射 LOW，`auto` 映射 NEVER，`deny` 移除通用执行能力。
-`NEVER` 自动执行所有非硬拒绝的 LOW/MEDIUM/HIGH 普通命令；可信分类硬拒绝仍 DENY，Credential 重认证
-和一次性 Host 权限升级仍是托管 ASK，不受普通风险阈值自动批准。
+Coding 审批使用 `LOW/MEDIUM/HIGH/NEVER` 阈值，直接沿用冻结 Tool Definition 的通用执行基线；Java 不再按
+命令形状提高或降低单次调用的风险。兼容 `ask` 映射 LOW，`auto` 映射 NEVER，`deny` 移除通用执行能力。
+`NEVER` 是用户对当前受信 Host 命令的显式广泛授权，会自动执行所有非硬拒绝的普通命令；它不声称系统能
+识别 push/merge/reset 等业务效果。凭据防泄露等硬拒绝仍 DENY，Credential 重认证等托管 ASK 不受普通风险
+阈值自动批准。
 
-Git/GH 只保留基础分级：`status/diff/log/show/grep/ls-files/rev-parse` 等本地读取为 LOW；本地写入及
-`fetch/pull`、GH 远端读取为 MEDIUM；Push、远端写入、破坏性操作、`gh api`、未知子命令和任意复合/
-Wrapper 形式为 HIGH。HIGH 继续进入用户阈值，不是分类失败；产品不维护完整 Git/GH 参数 DSL。
-
-模型目录不包含权限申请 Tool。当受信 preflight 产生稳定错误码且 Tool 异常与 Journal 同时证明 `NOT_DISPATCHED` 时，Runtime 将原 ToolCall 和 Step 标记为 `FAILED`，记录不可变的失败事实（包含 `failureCode` 与 `dispatchState = NOT_DISPATCHED`），返回 `CONTINUE` 允许模型在下一个 turn 获知失败原因后自主决策（如调整参数、更换能力或向用户报告阻塞）；系统不创建 `execution-recovery` Interaction，不生成 successor 调用，也不维护双重 recovery profile。若工具已派发或结果不确定，或者属于内部协议/配置错误，则一律 Fail Closed（终止 Run 为 `FAILED`），严禁自动重放具有副作用的工具调用。
+模型目录不包含权限申请 Tool。dispatch 前的确定性拒绝（非法 workdir、凭据边界、Sandbox/Host preflight
+失败等）直接保存失败 ToolResult，不创建 Interaction，也不伪造 dispatch/acknowledge 证据。普通 pre-dispatch
+失败作为失败事实回传给模型，模型可在标准策略下发起全新的普通调用或向用户报告阻塞；Coding 不再为 Git/GH
+构造专用 recovery 提示或把 broker preflight 失败升级成 `NOT_DISPATCHED` Tool 异常。若工具已实际 dispatch
+或结果不确定，则一律 Fail Closed 并要求先读取权威状态，严禁自动重放具有副作用的工具调用。
 
 `ProjectSkillPlatform` 从受信 Discovery/Visibility Context 组装 Skill Catalog 与精确内容 Loader。它提供
 `task-planning` 与 `result-verification` Classpath Skill，系统 `git` / `gh` 由 `execution_run` 直接调用，
@@ -279,10 +280,9 @@ scratch 空间，保持宿主 `TEMP/TMP/TMPDIR` 的普通 OS 语义以支持多�
 `maxProcesses` 默认为空（不设上限），避免 Maven Surefire、Gradle、pytest-xdist、npm 等并发构建树被误杀，
 同时完整保留超时、取消后的进程树回收与通道输出预算约束。最终 `ToolResult` 提供状态、
 退出码、有界合并首尾、明确省略标记、Output Ref、耗时、安全失败类别、稳定错误码、
-`failureAction`、可信 `commandOperation`、本次 `toolCallId`、可选 Scratch 状态和 FileChangeSet
+`failureAction`、本次 `toolCallId`、可选 Scratch 状态和 FileChangeSet
 引用。普通命令在固定内存中持续排空输出；`INSPECT` 在通道输出预算耗尽时终止进程树并返回
-`OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
-不包装或解释普通命令语义。
+`OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层不包装或解释命令语义。
 显式配置进程数预算且进程树超限收敛时返回 `PROCESS_LIMIT_EXCEEDED`，不会伪装成 `OUTCOME_UNKNOWN`。已持久化的
 ExecutionResult 是权威执行事实。Coding 产品不再维护 Change Review Artifact 或 Repository Baseline；
 需要检查当前变更时，模型通过已披露的只读文件/Diff 能力或 `execution_run` 按需读取，不制造完成证据。
@@ -294,9 +294,11 @@ Tool Result 不增加第二套命令语义字段；正常进程只返回 `proces
 Timeout、Cancel、资源限制与未知终止不能改写为正常退出，未知副作用不得自动重放。
 执行命令已经从受控 Workspace 启动。模型必须从安全 Registry 投影选择 `workspaceRef`，并以 `relativeWorkdir`
 表达该活动根下的目录；Host Adapter 再解析为 `WorkspacePath` 与受保护物理目录。绝对 workdir、UNC/盘符、遍历、
-链接逃逸、失效或撤销的 root 都在进入 Broker 前结构化拒绝。直接 `git -C` 返回不产生 Policy Decision 的
-`WORKSPACE_PROTOCOL_REQUIRED`，不再升级成不可批准的权限拒绝。dispatch 前的确定性拒绝直接保存失败
-ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
+链接逃逸、失效或撤销的 root 都在进入 Broker 前结构化拒绝。`workspaceRef` 与 `relativeWorkdir` 只约束执行的
+启动目标，不代表 Java 能控制命令参数中的路径；Host 子进程仍可访问当前 OS 用户可达的路径，审批与文档必须
+诚实呈现这一点。合法 `git -C` 与其他命令参数一样交给通用执行路径，不再返回 `WORKSPACE_PROTOCOL_REQUIRED`。
+dispatch 前的确定性拒绝直接保存失败 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或
+误记为结果未知。
 
 `workspace_worktree_create` 是 CA 独有的始终审批能力：精确目标同时绑定 source `workspaceRef`、不可变 base
 commit、新分支、受控 target name 和交付意图，不接受模型指定的主机目标路径或权限；source 必须具有当前

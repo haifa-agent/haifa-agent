@@ -1,7 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceAssembly;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
@@ -91,7 +90,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Tag;
@@ -109,12 +107,11 @@ class ProjectExecutionRecoveryIT {
     private static final byte[] PROTECTOR_KEY = new byte[32];
 
     @Test
-    void notDispatchedPreflightFailureMarksToolFailedAndModelContinuesWithoutRecoveryInteraction(
+    void notDispatchedPreflightFailureIsAnOrdinaryFailedResultThatContinuesWithoutRecoveryInteraction(
             @TempDir Path directory) throws Exception {
         AtomicInteger brokerCalls = new AtomicInteger();
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicInteger ids = new AtomicInteger();
-        AtomicBoolean simulateInterruption = new AtomicBoolean(true);
         List<SandboxProfileRef> observedProfiles = new ArrayList<>();
         IdentifierGenerator identifiers = () -> "m4-id-" + ids.incrementAndGet();
         ExecutionBroker broker = broker(brokerCalls, observedProfiles);
@@ -144,25 +141,20 @@ class ProjectExecutionRecoveryIT {
                         "",
                         Map.of())));
         AgentChatModel model = request -> {
-            int call = modelCalls.incrementAndGet();
-            if (call == 2 && simulateInterruption.get()) {
-                throw new AssertionError("simulated node interruption after NOT_DISPATCHED failure checkpoint");
-            }
+            modelCalls.incrementAndGet();
             return responses.remove();
         };
-        AgentRunId runId;
         Path database = directory.resolve("runtime.db").toAbsolutePath();
 
-        try (ProjectPersistenceAssembly first = persistence(database)) {
-            first.workspaceAccess()
+        try (ProjectPersistenceAssembly persistence = persistence(database)) {
+            persistence
+                    .workspaceAccess()
                     .createIfAbsent(new WorkspaceAccess(TENANT, PRINCIPAL, WORKSPACE, WorkspaceAccessMode.DEVELOP));
-            RuntimeInstance instance = runtime(first, model, broker, identifiers, "m4-worker-a");
-            runId = instance.runtime().start(request()).runId();
-            assertThatThrownBy(instance.scheduler()::runAll)
-                    .isInstanceOf(AssertionError.class)
-                    .hasMessageContaining("simulated node interruption");
+            RuntimeInstance instance = runtime(persistence, model, broker, identifiers, "m4-worker");
+            AgentRunId runId = instance.runtime().start(request()).runId();
+            instance.scheduler().runAll();
 
-            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(instance.ports().interactions().pending(runId)).isEmpty();
 
             var toolCalls = instance.ports().state().toolCalls(runId);
@@ -170,38 +162,8 @@ class ProjectExecutionRecoveryIT {
             var failedCall = toolCalls.getFirst();
             assertThat(failedCall.status()).isEqualTo(ToolCallStatus.FAILED);
             assertThat(failedCall.error()).isPresent();
-            assertThat(failedCall.error().get().error().details())
-                    .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
-                    .containsEntry("dispatchState", "NOT_DISPATCHED");
-
-            assertThat(brokerCalls).hasValue(1);
-            assertLegacyTablesAbsent(database);
-        }
-
-        simulateInterruption.set(false);
-        try (ProjectPersistenceAssembly reopened = persistence(database)) {
-            RuntimeInstance instance = runtime(reopened, model, broker, identifiers, "m4-worker-b");
-            var loadedRun = instance.runtime().find(runId).orElseThrow();
-            assertThat(loadedRun.status()).isEqualTo(AgentRunStatus.RUNNING);
-            assertThat(instance.ports().interactions().pending(runId)).isEmpty();
-
-            instance.runtime().recover(runId);
-            assertThat(instance.scheduler().pending()).isZero();
-            instance.scheduler().runAll();
-
-            var finishedRun = instance.runtime().find(runId).orElseThrow();
-            assertThat(finishedRun.status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(finishedRun.error().orElseThrow().code())
-                    .isEqualTo(io.haifa.agent.core.error.AgentErrorCode.RUNTIME_EXECUTION_INTERRUPTED);
-            assertThat(instance.ports().interactions().pending(runId)).isEmpty();
-
-            var toolCalls = instance.ports().state().toolCalls(runId);
-            assertThat(toolCalls).hasSize(1);
-            var failedCall = toolCalls.getFirst();
-            assertThat(failedCall.status()).isEqualTo(ToolCallStatus.FAILED);
-            assertThat(failedCall.error().get().error().details())
-                    .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
-                    .containsEntry("dispatchState", "NOT_DISPATCHED");
+            assertThat(failedCall.error().orElseThrow().error().details())
+                    .containsEntry("stableFailureCode", "NETWORK_UNAVAILABLE");
 
             assertThat(modelCalls).hasValue(2);
             assertThat(brokerCalls).hasValue(1);
@@ -286,8 +248,7 @@ class ProjectExecutionRecoveryIT {
                     .findFirst()
                     .orElseThrow();
             assertThat(failedCall.error().orElseThrow().error().details())
-                    .containsEntry("failureCode", "NETWORK_PERMISSION_REQUIRED")
-                    .containsEntry("dispatchState", "NOT_DISPATCHED");
+                    .containsEntry("stableFailureCode", "NETWORK_UNAVAILABLE");
             assertThat(completedCall.status()).isEqualTo(ToolCallStatus.COMPLETED);
             assertThat(completedCall.result().orElseThrow().structuredData())
                     .containsEntry("processState", "EXITED")

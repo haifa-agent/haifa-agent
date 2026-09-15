@@ -15,7 +15,7 @@ import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.core.ExecutionPolicy;
 import io.haifa.agent.execution.core.ExecutionPolicyEntryPoint;
 import io.haifa.agent.execution.core.ExecutionRejectedException;
-import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
+import io.haifa.agent.execution.core.command.CredentialEgressGuard;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
@@ -182,11 +182,9 @@ public final class CodingAgentExecutionPolicy implements ExecutionPolicy {
         }
         requireWorkspace(request, WorkspaceAccessMode.DEVELOP);
         requireFixedCommon(request, environmentRef, profileRef, scratchSpace);
-        if (SystemGitCliCommandClassifier.classify(request.command().shellCommand())
-                        .risk()
-                == SystemGitCliCommandClassifier.Risk.DENIED) {
-            throw denied("CODING_USER_EXECUTION_DENIED", "CLI user execution was denied by the system Git classifier");
-        }
+        CredentialEgressGuard.rejectionCode(request.command().shellCommand()).ifPresent(code -> {
+            throw denied("CODING_USER_EXECUTION_DENIED", "CLI user execution crosses the credential boundary: " + code);
+        });
         if (request.limits().maxStdoutBytes() != FULL_OUTPUT_BYTES_PER_CHANNEL
                 || request.limits().maxStderrBytes() != FULL_OUTPUT_BYTES_PER_CHANNEL
                 || !Objects.equals(request.limits().maxProcesses(), maximumProcesses)
