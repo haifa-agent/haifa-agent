@@ -19,6 +19,7 @@ import java.util.Optional;
 /** SQLite CA registry store with protected physical locations and CAS state transitions. */
 public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegistryStore {
     private static final String CORRUPT_LOCATION = "LOCATION_DECRYPTION_FAILED";
+    private static final String UNSUPPORTED_SOURCE = "UNSUPPORTED_REGISTRY_SOURCE";
 
     private final SqliteRuntimeUnitOfWork unitOfWork;
     private final CodingWorkspaceLocationCodec locations;
@@ -83,6 +84,12 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
 
     private Optional<HostWorkspaceRegistryEntry> decodeOrDisable(
             CodingWorkspaceRegistryMapper mapper, CodingWorkspaceRegistryRow row) {
+        HostWorkspaceRegistrySource source;
+        try {
+            source = HostWorkspaceRegistrySource.valueOf(row.source());
+        } catch (IllegalArgumentException unsupportedSource) {
+            return disable(mapper, row, UNSUPPORTED_SOURCE);
+        }
         try {
             String binding = binding(row);
             return Optional.of(new HostWorkspaceRegistryEntry(
@@ -90,7 +97,7 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
                     new WorkspaceId(row.workspaceRef()),
                     new WorkspaceLocationRef(row.locationRef()),
                     row.safeDisplayName(),
-                    HostWorkspaceRegistrySource.valueOf(row.source()),
+                    source,
                     HostWorkspaceRegistryStatus.valueOf(row.status()),
                     locations.decode(row.locationNonce(), row.locationCiphertext(), row.locationDigest(), binding),
                     row.physicalFingerprint(),
@@ -100,18 +107,23 @@ public final class SqliteHostWorkspaceRegistryStore implements HostWorkspaceRegi
                     Optional.ofNullable(row.revocationReasonCode()),
                     row.version()));
         } catch (RuntimeException invalidProtectedLocation) {
-            if (HostWorkspaceRegistryStatus.ACTIVE.name().equals(row.status())) {
-                requireOne(
-                        mapper.disableCorruptLocation(
-                                row.projectId(),
-                                row.workspaceRef(),
-                                row.version(),
-                                Instant.ofEpochMilli(clock.millis()),
-                                CORRUPT_LOCATION),
-                        "workspace registry corrupt location disable");
-            }
-            return Optional.empty();
+            return disable(mapper, row, CORRUPT_LOCATION);
         }
+    }
+
+    private Optional<HostWorkspaceRegistryEntry> disable(
+            CodingWorkspaceRegistryMapper mapper, CodingWorkspaceRegistryRow row, String reasonCode) {
+        if (HostWorkspaceRegistryStatus.ACTIVE.name().equals(row.status())) {
+            requireOne(
+                    mapper.disable(
+                            row.projectId(),
+                            row.workspaceRef(),
+                            row.version(),
+                            Instant.ofEpochMilli(clock.millis()),
+                            reasonCode),
+                    "workspace registry disable");
+        }
+        return Optional.empty();
     }
 
     private CodingWorkspaceRegistryRow row(HostWorkspaceRegistryEntry entry) {

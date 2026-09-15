@@ -71,6 +71,11 @@ record CliConfiguration(
         skills = Objects.requireNonNull(skills, "skills must not be null");
         execution = Objects.requireNonNull(execution, "execution must not be null");
         persistence = Objects.requireNonNull(persistence, "persistence must not be null");
+        if (enabledTools.contains("workspace_worktree_create")) {
+            throw new IllegalArgumentException(
+                    "tools.enabled contains the retired tool 'workspace_worktree_create'; remove it and use the"
+                            + " generic execution_run tool to run git worktree commands");
+        }
         if (!SUPPORTED_TOOLS.containsAll(enabledTools)) {
             throw new IllegalArgumentException("CLI supports only configured tools: " + SUPPORTED_TOOLS);
         }
