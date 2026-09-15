@@ -179,7 +179,7 @@ ACTIVE 条目保留 workspace identity 并刷新 physical fingerprint；REVOKED�
 `coding_workspace_access` 是 CA 唯一持续用户授权关系。领域对象只由现有 `TenantRef + PrincipalRef` 组成的
 owner、`WorkspaceId` 与 `READ / DEVELOP` mode 构成；SQLite 表也严格只有对应五列。`READ` 只允许文件读取，
 `DEVELOP` 才允许文件 mutation 与 execution 进入后续 Policy/Sandbox/Credential 门。启动时只在初始 Access
-缺失时创建 `DEVELOP`，不得覆盖已降级值；attach/worktree 由受信控制面替换 mode，撤销先删除 Access。
+缺失时创建 `DEVELOP`，不得覆盖已降级值；attach 由受信控制面替换 mode，撤销先删除 Access。
 每次文件操作和 execution workspace 解析都会读取当前 Access，即使旧 Scope 或 Registry 仍有活动 mount，
 缺失/降级也会 fail closed。Registry、Host Scope 和技术 Binding 均不携带或推导用户权限；CA mount 的
 Binding 固定提供技术读写上限，只能进一步拒绝，不能在 Access 缺失时放行。Registry 终态字段为
@@ -214,8 +214,8 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 实现：偏好保存内部 Model ID 和独立 revision，只允许在无活动 Run/dispatch 时切换，下一新 Run
 冻结对应快照；配置中已删除的模型要求重选，不静默回退。
 
-`ProjectToolCatalog` 将 `file_list/stat/read/search/create/write/delete/move/diff/patch`、`workspace_attach`、
-`workspace_worktree_create` 与 `execution_run` 共 13 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
+`ProjectToolCatalog` 将 `file_list/stat/read/search/create/write/delete/move/diff/patch`、`workspace_attach`
+与 `execution_run` 共 12 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
 `github.*` Tool；Git/GitHub 操作由
 `execution_run` 直接调用系统 `git` / `gh`。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、
 幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
@@ -300,14 +300,9 @@ Timeout、Cancel、资源限制与未知终止不能改写为正常退出，未�
 dispatch 前的确定性拒绝直接保存失败 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或
 误记为结果未知。
 
-`workspace_worktree_create` 是 CA 独有的始终审批能力：精确目标同时绑定 source `workspaceRef`、不可变 base
-commit、新分支、受控 target name 和交付意图，不接受模型指定的主机目标路径或权限；source 必须具有当前
-`DEVELOP` Access。受信 Git Provider 创建并校验 worktree 后，CA 才把新 root 以
-`APPROVED_WORKTREE_CREATE` 登记、写入新 workspace 的 `DEVELOP` Access 并返回脱敏
-`workspaceRef` 以及规范化宿主绝对路径 `rootPath`；失败时清理且不激活 root。当前重启恢复无法建立受信 Git reconciliation，因此会 fail closed
-禁用对应 root，不能把普通 Registry 测试描述成进程级强隔离证明。`file_*` 仍严格要求模型传宿主绝对路径并由
-Registry/Scope 映射，未改成相对路径或 root alias；动态 `<workspace_paths>` 同时标明每个根的 `READ` / `DEVELOP` Access mode，模型通过该块或 `workspace_attach` /
-`workspace_worktree_create` 成功结果中的 `rootPath` 获取可用绝对路径，通过 `workspaceRef` + 规范化 `relativeWorkdir`（`.` 代表根）调用 `execution_run`。
+CA 不再提供 Worktree 专用 Tool、Registry 来源或 Sandbox Provider。系统 Git 是 Worktree 的唯一事实源：模型在已经授权的仓库根内通过通用 `execution_run` 直接调用 `git worktree add/remove`，Haifa 不复制 Git 的创建、合并、释放或补偿生命周期，也不会因为 `.worktrees/<name>` 是新目录而要求它成为第二个 Workspace。`file_*` 仍严格要求模型传宿主绝对路径并由
+Registry/Scope 映射，未改成相对路径或 root alias；动态 `<workspace_paths>` 同时标明每个根的 `READ` / `DEVELOP` Access mode，模型通过该块或 `workspace_attach`
+成功结果中的 `rootPath` 获取可用绝对路径，通过 `workspaceRef` + 规范化 `relativeWorkdir`（`.` 代表根）调用 `execution_run`。
 
 Workspace Checkpoint Adapter 可由受信 Host 注册为通用 Runtime Capability Checkpoint Participant，并在恢复时重新检查当前授权、Binding、Provider 版本和 Drift；类型存在不等于所有 Host 已完成装配。DIRECT Host 只做 current-state reconcile，永不自动覆盖文件；无人值守 Host 必须使用隔离 Workspace 与可恢复 Snapshot，否则不能声明具备自动恢复等级。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布。`PublishedArtifactRequiredChecker` 只接受 Store 中真实 `PUBLISHED` 的 Artifact；Admin Query 仅返回分页、脱敏、无正文的诊断投影。
 

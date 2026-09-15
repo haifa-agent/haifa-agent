@@ -48,7 +48,6 @@ record CliConfiguration(
             "file_delete",
             "file_move",
             "workspace_attach",
-            "workspace_worktree_create",
             "execution_run");
     private static final Set<String> OPTIONAL_TOOLS = Set.of("file_search", "web_search", "web_fetch");
     private static final Set<String> SUPPORTED_TOOLS = java.util.stream.Stream.concat(
@@ -72,6 +71,11 @@ record CliConfiguration(
         skills = Objects.requireNonNull(skills, "skills must not be null");
         execution = Objects.requireNonNull(execution, "execution must not be null");
         persistence = Objects.requireNonNull(persistence, "persistence must not be null");
+        if (enabledTools.contains("workspace_worktree_create")) {
+            throw new IllegalArgumentException(
+                    "tools.enabled contains the retired tool 'workspace_worktree_create'; remove it and use the"
+                            + " generic execution_run tool to run git worktree commands");
+        }
         if (!SUPPORTED_TOOLS.containsAll(enabledTools)) {
             throw new IllegalArgumentException("CLI supports only configured tools: " + SUPPORTED_TOOLS);
         }

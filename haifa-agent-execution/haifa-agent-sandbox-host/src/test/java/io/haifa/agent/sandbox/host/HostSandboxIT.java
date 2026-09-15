@@ -28,7 +28,6 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
-import io.haifa.agent.sandbox.api.GitWorktreeRequest;
 import io.haifa.agent.sandbox.api.SandboxExecution;
 import io.haifa.agent.sandbox.api.SandboxProcessResult;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
@@ -829,73 +828,6 @@ class HostSandboxIT {
             }
         }
         assertThat(scratchRoot).isDirectory().isEmptyDirectory();
-    }
-
-    @Test
-    void gitWorktreeIsIsolatedAndDirtyReleaseRequiresExplicitDiscard() throws Exception {
-        run(root, "git", "init");
-        run(root, "git", "config", "user.email", "test@example.invalid");
-        run(root, "git", "config", "user.name", "Haifa Test");
-        Files.writeString(root.resolve("tracked.txt"), "base\n");
-        run(root, "git", "add", "tracked.txt");
-        run(root, "git", "commit", "-m", "base");
-        String commit = run(root, "git", "rev-parse", "HEAD").trim();
-        Fixture fixture = fixture(root, "workspace-git-parent", "binding-git-parent", "location-git-parent");
-        var provider = new HostGitWorktreeIsolationProvider(
-                fixture.workspaces, fixture.bindings, fixture.locations, isolatedBase, "git", () -> NOW);
-        var child = provider.createWorktree(new GitWorktreeRequest(
-                fixture.workspaceId,
-                new WorkspaceId("workspace-git-child"),
-                new WorkspaceBindingId("binding-git-child"),
-                new WorkspaceLocationRef("location-git-child"),
-                new PrincipalRef("child", "agent"),
-                commit,
-                "feature/isolated-change",
-                WorkspaceCapabilitySet.executionFiles(),
-                WorkspacePermissionSet.readWriteExecute()));
-        Path childRoot = fixture.locations.resolveForTrustedProvider(child.locationRef());
-        Files.writeString(childRoot.resolve("tracked.txt"), "child\n");
-        assertThat(Files.readString(root.resolve("tracked.txt"))).isEqualTo("base\n");
-        assertThatThrownBy(() -> provider.releaseWorktree(child.childWorkspaceId(), false))
-                .isInstanceOf(HostSandboxException.class)
-                .hasMessageContaining("unconfirmed");
-        provider.releaseWorktree(child.childWorkspaceId(), true);
-        assertThat(Files.exists(childRoot)).isFalse();
-    }
-
-    @Test
-    void failedGitWorktreeRegistrationRemovesTheCreatedWorktreeAndBranch() throws Exception {
-        run(root, "git", "init");
-        run(root, "git", "config", "user.email", "test@example.invalid");
-        run(root, "git", "config", "user.name", "Haifa Test");
-        Files.writeString(root.resolve("tracked.txt"), "base\n");
-        run(root, "git", "add", "tracked.txt");
-        run(root, "git", "commit", "-m", "base");
-        String commit = run(root, "git", "rev-parse", "HEAD").trim();
-        Fixture fixture =
-                fixture(root, "workspace-git-failed-parent", "binding-git-failed-parent", "location-git-failed-parent");
-        var provider = new HostGitWorktreeIsolationProvider(
-                fixture.workspaces, fixture.bindings, fixture.locations, isolatedBase, "git", () -> NOW);
-        var childLocation = new WorkspaceLocationRef("location-git-failed-child");
-        fixture.locations.register(childLocation, root);
-
-        assertThatThrownBy(() -> provider.createWorktree(new GitWorktreeRequest(
-                        fixture.workspaceId,
-                        new WorkspaceId("workspace-git-failed-child"),
-                        new WorkspaceBindingId("binding-git-failed-child"),
-                        childLocation,
-                        new PrincipalRef("child", "agent"),
-                        commit,
-                        "feature/failed-create",
-                        WorkspaceCapabilitySet.executionFiles(),
-                        WorkspacePermissionSet.readWriteExecute())))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("already registered");
-
-        assertThat(run(root, "git", "branch", "--list", "feature/failed-create").trim())
-                .isEmpty();
-        assertThat(Files.exists(isolatedBase.resolve("worktree-workspace-git-failed-child")))
-                .isFalse();
     }
 
     private Fixture fixture(Path workspaceRoot, String workspaceValue, String bindingValue, String locationValue) {

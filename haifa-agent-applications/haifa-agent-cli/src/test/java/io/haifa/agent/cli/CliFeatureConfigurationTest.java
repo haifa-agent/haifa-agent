@@ -201,6 +201,24 @@ class CliFeatureConfigurationTest {
     }
 
     @Test
+    void rejectsRetiredWorktreeToolAndPointsToGenericExecution() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-retired-worktree-tool", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                    tools:
+                      enabled: [file_read, workspace_worktree_create, execution_run]
+                    """);
+
+        assertThatThrownBy(() -> new CliConfigurationLoader()
+                        .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of(".")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("workspace_worktree_create")
+                .hasMessageContaining("retired")
+                .hasMessageContaining("execution_run");
+    }
+
+    @Test
     void loadsExplicitLocalUserSkillDirectoryAndAllowlist() throws Exception {
         Path skillRoot = Files.createTempDirectory("haifa-cli-skills").toAbsolutePath();
         Path configuration = Files.createTempFile("haifa-cli-skills", ".yaml");

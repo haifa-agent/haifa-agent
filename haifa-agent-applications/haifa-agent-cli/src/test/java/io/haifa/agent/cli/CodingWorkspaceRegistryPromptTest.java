@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.application.project.workspace.WorkspaceAccessMode;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class CodingWorkspaceRegistryPromptTest {
@@ -93,23 +92,5 @@ class CodingWorkspaceRegistryPromptTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new CodingWorkspaceRegistryPrompt.Entry("ws", "  ", WorkspaceAccessMode.READ, true))
                 .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    void worktreeApprovalShowsTheExactStructuredTargetWithoutAcceptingAHostPath() {
-        String prompt = LocalCodingAgent.workspaceWorktreeApprovalPrompt(Map.of(
-                "sourceWorkspaceRef", "workspace-ref-1",
-                "baseCommit", "abc123",
-                "branchName", "feat/example",
-                "targetName", "review-copy"));
-
-        assertThat(prompt)
-                .contains(
-                        "Source workspace: workspace-ref-1",
-                        "Base commit: abc123",
-                        "New branch: feat/example",
-                        "Managed target: review-copy",
-                        "no arbitrary host path is accepted")
-                .doesNotContain("Delivery intent", "C:\\", "/home/", "targetPath");
     }
 }

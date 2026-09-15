@@ -89,7 +89,7 @@ public record HostWorkspaceScope(List<AuthorizedHostDirectory> allowedDirectorie
             throw HostWorkspaceScopeException.invalidArgument(
                     trimmed,
                     "File tools require a host absolute path. Use a rootPath from workspace_paths or"
-                            + " from a successful workspace_attach/workspace_worktree_create result.");
+                            + " from a successful workspace_attach result.");
         }
         Path normalized = candidate.normalize();
         AuthorizedHostDirectory directory = findEnclosingDirectory(normalized);

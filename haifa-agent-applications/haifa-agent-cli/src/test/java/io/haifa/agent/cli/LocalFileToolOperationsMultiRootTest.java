@@ -813,7 +813,7 @@ class LocalFileToolOperationsMultiRootTest {
                 .containsEntry("failureActionCode", "USE_ABSOLUTE_HOST_PATH");
         assertThat(res.summary())
                 .contains(
-                        "File tools require a host absolute path. Use a rootPath from workspace_paths or from a successful workspace_attach/workspace_worktree_create result.");
+                        "File tools require a host absolute path. Use a rootPath from workspace_paths or from a successful workspace_attach result.");
     }
 
     @Test
