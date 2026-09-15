@@ -1,6 +1,7 @@
 package io.haifa.agent.application.coding.terminal.state;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.project.product.coding.CodingModelState;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationProgressView;
 import io.haifa.agent.core.run.AgentRunId;
@@ -773,8 +774,14 @@ public final class TerminalUiReducer {
                 : model.contextWindow() >= 1_000
                         ? (model.contextWindow() / 1_000) + "K"
                         : String.valueOf(model.contextWindow());
-        return model.displayName() + " · "
+        String summary = model.displayName() + " · "
                 + model.recommendedPreferences().responseMode().name() + " · " + context;
+        if (model.state().connection() == CodingModelState.Connection.LOGIN_REQUIRED) {
+            return summary + " · [需要登录]";
+        } else if (model.state().connection() == CodingModelState.Connection.REAUTH_REQUIRED) {
+            return summary + " · [登录已失效，请重新认证]";
+        }
+        return summary;
     }
 
     private static TerminalFooter footer(TerminalFooter current, AgentRunEvent event) {

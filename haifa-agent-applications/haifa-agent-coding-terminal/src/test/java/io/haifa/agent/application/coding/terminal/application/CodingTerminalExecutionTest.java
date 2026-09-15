@@ -9,6 +9,8 @@ import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.project.product.ProjectProductException;
+import io.haifa.agent.application.project.product.coding.CodingModelOption;
+import io.haifa.agent.application.project.product.coding.CodingModelState;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import java.util.List;
@@ -229,5 +231,136 @@ class CodingTerminalExecutionTest {
 
         assertThat(client.shellDiscarded).isTrue();
         assertThat(controller.state().selector()).isEmpty();
+    }
+
+    @Test
+    void modelAuthenticationRequiredOpensModelReadinessSelectorAndPreservesDraft() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.submitFailure =
+                new ProjectProductException("MODEL_AUTHENTICATION_REQUIRED", "Model credentials are not ready");
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "draft to preserve"));
+
+        assertThat(controller.state().recoverableError()).contains("MODEL_AUTHENTICATION_REQUIRED");
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve");
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactly(
+                        "Switch model (/model)", "Connect / Log in to model (/login)", "Keep draft and dismiss");
+
+        // Choosing index 2 dismisses selector and keeps draft
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve");
+    }
+
+    @Test
+    void modelReadinessSelectorOptionLoginOpensLoginSelector() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        FakeAuthenticationClient authentication = new FakeAuthenticationClient();
+        client.submitFailure =
+                new ProjectProductException("MODEL_AUTHENTICATION_REQUIRED", "Model credentials are not ready");
+        var controller = controller(client, authentication);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "draft to preserve"));
+
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
+
+        // Select option 1: 登录当前 Provider (/login)
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("auth-login");
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve");
+    }
+
+    @Test
+    void modelAuthenticationRequiredPreservesDraftAndSwitchingToConnectedModelAllowsResubmit() {
+        CodingModelOption unready = model(
+                "unready-model", "Unready Model", "provider", "Provider", CodingModelState.Connection.LOGIN_REQUIRED);
+        CodingModelOption ready =
+                model("ready-model", "Ready Model", "provider", "Provider", CodingModelState.Connection.CONNECTED);
+        FakeClient client = new FakeClient(view(Optional.empty(), 0, "session", unready));
+        client.models = List.of(unready, ready);
+        client.submitFailure =
+                new ProjectProductException("MODEL_AUTHENTICATION_REQUIRED", "Model credentials are not ready");
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        // User enters draft message and submits
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "draft to preserve and retry"));
+
+        // Preflight failed: error recorded, draft preserved in editorBuffer, model-readiness selector opened
+        assertThat(controller.state().recoverableError()).contains("MODEL_AUTHENTICATION_REQUIRED");
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve and retry");
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model-readiness");
+        assertThat(controller.state().selector().orElseThrow().options().get(0)).isEqualTo("Switch model (/model)");
+
+        // User selects default option 0 ("Switch model (/model)")
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        // Selector transitions to model selector; draft remains preserved
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("model");
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve and retry");
+
+        // User selects ready-model (option 1)
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        // Model detail selector opened; select option 0 to confirm model selection
+        if (controller.state().selector().isPresent()
+                && "model-detail"
+                        .equals(controller.state().selector().orElseThrow().kind())) {
+            controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        }
+
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(client.selectedModelId).isEqualTo("ready-model");
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft to preserve and retry");
+
+        // Resubmit the preserved draft now that model is connected
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "draft to preserve and retry"));
+
+        // Succeeded! Editor buffer cleared, message submitted
+        assertThat(controller.state().editorBuffer()).isEmpty();
+        assertThat(client.submittedMessages).contains("draft to preserve and retry");
+    }
+
+    @Test
+    void authenticationCompletedTriggersReconcileToRefreshModelFooter() {
+        CodingModelOption unready = model(
+                "codex-model", "Codex Model", "openai-codex", "OpenAI", CodingModelState.Connection.LOGIN_REQUIRED);
+        CodingModelOption ready =
+                model("codex-model", "Codex Model", "openai-codex", "OpenAI", CodingModelState.Connection.CONNECTED);
+        FakeClient client = new FakeClient(view(Optional.empty(), 0, "session", unready));
+        client.reconciledView = view(Optional.empty(), 0, "session", ready);
+        TerminalEventPump pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                new FakeAuthenticationClient(),
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run);
+        controller.open(SESSION_ID);
+
+        assertThat(controller.state().footer().model()).endsWith(" · [需要登录]");
+
+        pump.offer(new TerminalUiAction.AuthenticationCompleted("OpenAI", false));
+        controller.drainEvents();
+
+        assertThat(client.reconcileCalls).isEqualTo(1);
+        assertThat(controller.state().footer().model()).doesNotContain("· [需要登录]");
     }
 }

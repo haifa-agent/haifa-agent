@@ -175,7 +175,6 @@ public final class CodingSessionService {
         CodingSessionVerificationConfiguration verification = CodingSessionVerificationConfiguration.freeze(
                 new CodingVerificationProfileResolver().resolve(candidates));
         String requestedModelId = trustedOptions.initialModelId().orElse(models.defaultModelId());
-        requireAvailableModel(caller, requestedModelId);
         String requestedModelIdentity = trustedOptions.initialModelId().orElse("DEFAULT_MODEL");
         String requestDigest = requestDigest(
                 projectId.value()
@@ -202,11 +201,16 @@ public final class CodingSessionService {
                 frozenIntent,
                 Optional.empty(),
                 now));
+        if (binding.runId().isPresent()) {
+            ProjectProductSession product = requireProductSession(binding.sessionId(), caller);
+            CodingSessionActivity activity = reconcile(requireActivity(binding.sessionId(), caller), caller);
+            return view(activity, product);
+        }
         String modelId = codingSessions
                 .findModelPreference(binding.sessionId())
                 .map(CodingModelPreference::modelId)
                 .orElse(requestedModelId);
-        requireAvailableModel(caller, modelId);
+        requireReadyModel(caller, modelId);
 
         ProjectProductService.ProjectProductRun started = projectProducts.startWithSessionId(
                 binding.projectId(),
@@ -393,6 +397,7 @@ public final class CodingSessionService {
             throw conflict("CODING_SESSION_ACTIVE", "Coding Session already has an active Run");
         }
         String modelId = requireModelPreference(sessionId, caller).modelId();
+        requireReadyModel(caller, modelId);
         codingSessions.reserveActive(sessionId, activity.revision(), existing.dispatchKey(), now());
         var started = projectProducts.continueSession(
                 sessionId, existing.message(), existing.attachments(), existing.dispatchKey(), modelId);
@@ -673,6 +678,14 @@ public final class CodingSessionService {
     private CodingModelOption requireAvailableModel(TrustedProductCaller caller, String modelId) {
         return models.find(caller.tenant(), caller.principal(), modelId)
                 .orElseThrow(() -> conflict("MODEL_SELECTION_REQUIRED", "Selected model is unavailable"));
+    }
+
+    private CodingModelOption requireReadyModel(TrustedProductCaller caller, String modelId) {
+        CodingModelOption option = requireAvailableModel(caller, modelId);
+        if (option.state().connection() != CodingModelState.Connection.CONNECTED) {
+            throw conflict("MODEL_AUTHENTICATION_REQUIRED", "Selected model credential is unavailable");
+        }
+        return option;
     }
 
     private CodingSessionSummary summary(CodingSessionActivity activity) {

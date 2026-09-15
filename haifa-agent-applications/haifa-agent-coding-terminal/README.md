@@ -90,7 +90,7 @@ Footer
 下方显示已有真实来源的当前模型、Workspace 绝对路径和 Git 分支；后续状态行显示 Session、
 Context/Queue 和 Run 状态；
 Provider/Model 来自 Coding Product Facade 的脱敏投影，Terminal 不读取 Model Core、Provider 配置或
-SQLite。`git: via safe read model`、`sandbox: frozen profile` 等实现占位字段不进入
+SQLite。未就绪模型在页脚显式展示凭据状态（`[需要登录]` 或 `[登录已失效，请重新认证]`）。`git: via safe read model`、`sandbox: frozen profile` 等实现占位字段不进入
 产品界面。
 
 Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、User、Success、Pending、
@@ -159,7 +159,8 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   Assistant Delta、轮询、重复事件和 viewport 操作不重置。`WORKING` 只追加短 Tool
   名称，例如 `WORKING (12s) · execution_run`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
 - 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
-  五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；
+  五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；遇到 `MODEL_AUTHENTICATION_REQUIRED`
+  时保持用户草稿，并弹出模型就绪恢复选择器，安全默认项为通过 `/model` 切换已就绪模型，次选为 `/login`；
 
 失败 Run 的 Transcript 使用 `[AgentErrorCode] 安全文案`，并在存在时显示 Diagnostic ID。
 预算超限、模型限流/超时和 Tool Outcome Unknown 使用稳定 code 选择下一步；终端不解析英文
@@ -239,7 +240,8 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   打开同一连接选择器。显式启用本地兼容测试时，选择器同时展示 Antigravity subscription 并启动独立的
   Google Browser Callback；未启用时不展示该入口。ChatGPT 登录可选 Browser Callback 或 Device Code；设备 URL/设备码作为持久可见的
   Transcript 指引展示；Browser Callback 尝试自动打开浏览器，同时始终展示可复制授权 URL 并继续等待本机
-  回调，避免系统报告已启动但窗口不可见。API Key 输入使用
+  回调，避免系统报告已启动但窗口不可见。认证成功完成（或 API Key 保存成功）后自动触发会话
+  reconcile，实时刷新页脚模型连接状态；API Key 输入使用
   独立掩码缓冲区，不进入 Reducer、Session、Transcript、History 或 Completion；
 - `/trust` 通过标准产品客户端异步展示脱敏的持久 Workspace 授权；
   `/trust revoke <workspaceRef>` 可撤销非初始根，不暴露宿主路径且不阻塞 UI；

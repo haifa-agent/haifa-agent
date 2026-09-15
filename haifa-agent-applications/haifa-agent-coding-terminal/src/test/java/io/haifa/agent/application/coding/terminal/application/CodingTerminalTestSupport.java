@@ -79,11 +79,49 @@ final class CodingTerminalTestSupport {
                 Runnable::run);
     }
 
+    static class FakeAuthenticationClient implements CodingAuthenticationClient {
+        boolean apiKeyConnectionSupported = true;
+
+        @Override
+        public boolean apiKeyConnectionSupported() {
+            return apiKeyConnectionSupported;
+        }
+
+        @Override
+        public List<CodingAuthenticationView> connections() {
+            return List.of();
+        }
+
+        @Override
+        public CodingAuthenticationView loginCodexBrowser() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean logout(String connectionId) {
+            return false;
+        }
+    }
+
     static CodingModelOption model(String id, String displayName) {
         return model(id, displayName, "provider", "Provider");
     }
 
     static CodingModelOption model(String id, String displayName, String providerId, String providerDisplayName) {
+        return model(id, displayName, providerId, providerDisplayName, CodingModelState.Connection.CONNECTED);
+    }
+
+    static CodingModelOption model(
+            String id,
+            String displayName,
+            String providerId,
+            String providerDisplayName,
+            CodingModelState.Connection connection) {
         return new CodingModelOption(
                 id,
                 displayName,
@@ -93,7 +131,7 @@ final class CodingTerminalTestSupport {
                 128_000,
                 16_000,
                 new CodingModelState(
-                        CodingModelState.Connection.CONNECTED,
+                        connection,
                         CodingModelState.BindingAvailability.AVAILABLE,
                         CodingModelState.RuntimeStatus.NORMAL,
                         CodingModelState.RunScope.IDLE),
@@ -175,6 +213,11 @@ final class CodingTerminalTestSupport {
     }
 
     static CodingSessionView view(Optional<InteractionView> interaction, long revision, String displayName) {
+        return view(interaction, revision, displayName, model("cli-coding@1.0.0", "cli-coding@1.0.0"));
+    }
+
+    static CodingSessionView view(
+            Optional<InteractionView> interaction, long revision, String displayName, CodingModelOption modelOption) {
         return new CodingSessionView(
                 new CodingSessionSummary(
                         SESSION_ID,
@@ -190,7 +233,9 @@ final class CodingTerminalTestSupport {
                 interaction,
                 Optional.empty(),
                 "sha256:configuration",
-                "cli-coding@1.0.0");
+                "cli-coding@1.0.0",
+                new io.haifa.agent.application.project.product.coding.CodingModelSelection(
+                        modelOption, revision, true));
     }
 
     static CodingSessionView activeView() {
@@ -287,6 +332,7 @@ final class CodingTerminalTestSupport {
         int acknowledgementFailuresRemaining;
         int acknowledgementCalls;
         RunEventCursor acknowledgedCursor;
+        String selectedModelId;
 
         FakeClient(CodingSessionView view) {
             this.view = view;
@@ -301,6 +347,12 @@ final class CodingTerminalTestSupport {
         @Override
         public CodingSessionView create(
                 ProjectId projectId, String firstTurn, String idempotencyKey, CodingSessionCreateOptions options) {
+            submitAttempts++;
+            if (submitFailure != null) {
+                ProjectProductException failure = submitFailure;
+                submitFailure = null;
+                throw failure;
+            }
             createOptions = options;
             return view;
         }
@@ -420,6 +472,25 @@ final class CodingTerminalTestSupport {
             view = renamed;
             reconciledView = renamed;
             return renamed.summary();
+        }
+
+        @Override
+        public io.haifa.agent.application.project.product.coding.CodingModelSelection selectModel(
+                AgentSessionId sessionId, String modelId, long expectedRevision, String idempotencyKey) {
+            selectedModelId = modelId;
+            CodingModelOption selectedOption = models.stream()
+                    .filter(m -> m.id().equals(modelId))
+                    .findFirst()
+                    .orElseGet(() -> model(modelId, modelId));
+            CodingSessionView updated = view(
+                    view.pendingInteraction(),
+                    expectedRevision + 1,
+                    view.summary().displayName(),
+                    selectedOption);
+            view = updated;
+            reconciledView = updated;
+            return new io.haifa.agent.application.project.product.coding.CodingModelSelection(
+                    selectedOption, expectedRevision + 1, true);
         }
 
         @Override
