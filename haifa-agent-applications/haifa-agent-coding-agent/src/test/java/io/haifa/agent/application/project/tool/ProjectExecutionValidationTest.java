@@ -17,6 +17,7 @@ import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -286,5 +287,62 @@ class ProjectExecutionValidationTest {
                 .containsEntry("credentialBoundaryCode", "AUTHENTICATION_ENVIRONMENT_OVERRIDE");
         assertThat(result.structuredData().toString()).doesNotContain(secret);
         assertThat(dispatches).hasValue(0);
+    }
+
+    @Test
+    void rejectsGlobalOptionPrefixedCredentialFormsBeforeDispatchWithoutLeakingSecrets() {
+        String secret = "ghp_super_secret_token_value";
+        AtomicInteger dispatches = new AtomicInteger();
+        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                dispatches.incrementAndGet();
+                return result(request.id(), ExecutionStatus.EXITED, 0);
+            }
+        };
+
+        for (String command : List.of(
+                "git --no-pager credential fill",
+                "git -c color.ui=false credential fill",
+                "git -c http.extraHeader=" + secret + " status",
+                "gh auth status -t",
+                "gh auth status --show-token=true",
+                "gh --hostname github.com auth token")) {
+            var result = operations(broker, 4096, 100)
+                    .execute(
+                            invocation(Map.of("command", command, "operationFamily", "INSPECT"), () -> false),
+                            access());
+            assertThat(result.successful()).as(command).isFalse();
+            assertThat(result.structuredData())
+                    .as(command)
+                    .containsEntry("stableFailureCode", "AUTHENTICATION_OVERRIDE_DENIED");
+            assertThat(result.structuredData().toString()).as(command).doesNotContain(secret);
+        }
+        assertThat(dispatches).hasValue(0);
+    }
+
+    @Test
+    void allowsGitGrepCredentialConfigLookupThroughTheGenericExecutionPath() {
+        AtomicInteger dispatches = new AtomicInteger();
+        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                dispatches.incrementAndGet();
+                return result(request.id(), ExecutionStatus.EXITED, 0);
+            }
+        };
+
+        var result = operations(broker, 4096, 100)
+                .execute(
+                        invocation(
+                                Map.of(
+                                        "command", "git grep -c credential.helper -- .",
+                                        "operationFamily", "INSPECT"),
+                                () -> false),
+                        access());
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData()).containsEntry("processState", "EXITED");
+        assertThat(dispatches).hasValue(1);
     }
 }

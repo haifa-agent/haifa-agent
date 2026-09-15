@@ -33,6 +33,7 @@ class CodingExecutionPolicyRequestAdapterTest {
             "git status --short",
             "git -C docs status",
             "git -c color.ui=false rev-parse HEAD",
+            "git grep -c credential.helper -- .",
             "git push origin feature",
             "git reset --hard HEAD",
             "gh pr view 42",
@@ -58,8 +59,13 @@ class CodingExecutionPolicyRequestAdapterTest {
         for (String command : new String[] {
             "GH_TOKEN=value gh pr list",
             "git credential fill",
+            "git --no-pager credential fill",
+            "git -c color.ui=false credential fill",
             "gh auth token",
             "gh auth status --show-token",
+            "gh auth status -t",
+            "gh auth status --show-token=true",
+            "gh --hostname github.com auth token",
             "git -c credential.helper=other status"
         }) {
             assertThatThrownBy(() -> adapt(command))

@@ -12,10 +12,10 @@ import java.util.Set;
  * <p>This is intentionally a leading-token recognizer, not a shell parser and not a Git/GitHub
  * command grammar. It inspects only the first words of the command text: optional leading
  * {@code NAME=value} assignments, the {@code env}/{@code export}/{@code set} builtins, PowerShell
- * {@code $env:NAME} forms, and {@code git}/{@code gh} used as the command word with an exact
- * credential subcommand or credential config override. It never interprets shell composition
- * ({@code ;}, {@code &&}, {@code |}), nested interpreters, wrappers, quoting grammar, Git business
- * operations, target, risk, or effect.
+ * {@code $env:NAME} forms, and {@code git}/{@code gh} used as the command word with a credential
+ * subcommand or credential config override located after a small bounded leading global-option
+ * prefix. It never interprets shell composition ({@code ;}, {@code &&}, {@code |}), nested
+ * interpreters, wrappers, quoting grammar, Git business operations, target, risk, or effect.
  *
  * <p>Known limits: a credential read or protected override that is not in the leading command
  * position (for example {@code echo x && HOME=/tmp git status}), handed to a wrapper or nested
@@ -35,8 +35,15 @@ public final class CredentialEgressGuard {
     public static final String GITHUB_AUTH_STATE_CODE = "GH_AUTHENTICATION_MUTATION_OR_DISCLOSURE";
 
     private static final String ENV_PREFIX = "$env:";
+    private static final String CONFIG_ENV_OPTION = "--config-env";
     private static final String CONFIG_ENV_PREFIX = "--config-env=";
     private static final String SHOW_TOKEN = "--show-token";
+    private static final String SHOW_TOKEN_SHORT = "-t";
+    private static final String HOSTNAME_OPTION = "--hostname";
+    private static final int GIT_GLOBAL_OPTION_LIMIT = 8;
+    private static final int GH_GLOBAL_OPTION_LIMIT = 4;
+    private static final Set<String> GIT_GLOBAL_OPTIONS_WITH_SEPARATE_VALUE = Set.of(
+            "-c", "-C", "--config-env", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix");
     private static final Set<String> PROTECTED_ENVIRONMENT = Set.of(
             "GH_TOKEN",
             "GITHUB_TOKEN",
@@ -92,19 +99,27 @@ public final class CredentialEgressGuard {
             return Optional.of(ENVIRONMENT_OVERRIDE_CODE);
         }
         if (head.equals("git")) {
-            if (hasWord(commandWords, 1, "credential") || hasPrefix(commandWords, 1, "credential-")) {
-                return Optional.of(GIT_CREDENTIAL_PROTOCOL_CODE);
-            }
-            if (overridesCredentialConfig(commandWords)) {
-                return Optional.of(GIT_CONFIG_OVERRIDE_CODE);
+            int subcommand = gitSubcommandIndex(commandWords);
+            if (subcommand > 0) {
+                String gitCommand = commandWords.get(subcommand);
+                if (gitCommand.equals("credential") || gitCommand.startsWith("credential-")) {
+                    return Optional.of(GIT_CREDENTIAL_PROTOCOL_CODE);
+                }
+                if (overridesCredentialConfig(commandWords, subcommand)) {
+                    return Optional.of(GIT_CONFIG_OVERRIDE_CODE);
+                }
             }
         }
-        if (head.equals("gh") && hasWord(commandWords, 1, "auth")) {
-            if (!hasWord(commandWords, 2, "status")) {
-                return Optional.of(GITHUB_AUTH_STATE_CODE);
-            }
-            if (commandWords.subList(3, commandWords.size()).contains(SHOW_TOKEN)) {
-                return Optional.of(GITHUB_TOKEN_DISCLOSURE_CODE);
+        if (head.equals("gh")) {
+            int subcommand = ghSubcommandIndex(commandWords);
+            if (subcommand > 0 && commandWords.get(subcommand).equals("auth")) {
+                int authCommand = nextNonOptionWord(commandWords, subcommand + 1);
+                if (authCommand < 0 || !commandWords.get(authCommand).equals("status")) {
+                    return Optional.of(GITHUB_AUTH_STATE_CODE);
+                }
+                if (disclosesToken(commandWords, authCommand + 1)) {
+                    return Optional.of(GITHUB_TOKEN_DISCLOSURE_CODE);
+                }
             }
         }
         return Optional.empty();
@@ -158,20 +173,78 @@ public final class CredentialEgressGuard {
         return false;
     }
 
-    private static boolean overridesCredentialConfig(List<String> commandWords) {
-        for (int index = 1; index + 1 < commandWords.size(); index++) {
+    private static boolean overridesCredentialConfig(List<String> commandWords, int subcommandIndex) {
+        for (int index = 1; index < subcommandIndex; index++) {
             String option = commandWords.get(index);
             String value;
             if (option.equals("-c")) {
                 value = commandWords.get(index + 1);
             } else if (option.startsWith(CONFIG_ENV_PREFIX)) {
                 value = option.substring(CONFIG_ENV_PREFIX.length());
-            } else if (option.equals("--config-env")) {
+            } else if (option.equals(CONFIG_ENV_OPTION)) {
                 value = commandWords.get(index + 1);
             } else {
                 continue;
             }
             if (isCredentialConfigKey(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Locates the Git subcommand after a small bounded prefix of Git global options. Each recognized
+     * option that takes a separate value consumes the following token; any other leading
+     * {@code -option} consumes only itself. The first non-option token is the subcommand, so later
+     * options such as {@code git grep -c ...} are arguments and never treated as global overrides.
+     */
+    private static int gitSubcommandIndex(List<String> commandWords) {
+        int index = 1;
+        int limit = Math.min(commandWords.size(), 1 + GIT_GLOBAL_OPTION_LIMIT);
+        while (index < limit) {
+            String word = commandWords.get(index);
+            if (!word.startsWith("-")) {
+                return index;
+            }
+            index += GIT_GLOBAL_OPTIONS_WITH_SEPARATE_VALUE.contains(word) ? 2 : 1;
+        }
+        return -1;
+    }
+
+    /**
+     * Locates the {@code gh} subcommand after a small bounded prefix of {@code gh} global options.
+     * Only {@code --hostname} is known to consume a separate value; every other leading
+     * {@code -option} consumes itself.
+     */
+    private static int ghSubcommandIndex(List<String> commandWords) {
+        int index = 1;
+        int limit = Math.min(commandWords.size(), 1 + GH_GLOBAL_OPTION_LIMIT);
+        while (index < limit) {
+            String word = commandWords.get(index);
+            if (!word.startsWith("-")) {
+                return index;
+            }
+            index += word.equals(HOSTNAME_OPTION) ? 2 : 1;
+        }
+        return -1;
+    }
+
+    private static int nextNonOptionWord(List<String> commandWords, int from) {
+        for (int index = from; index < commandWords.size(); index++) {
+            if (!commandWords.get(index).startsWith("-")) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean disclosesToken(List<String> commandWords, int from) {
+        for (int index = from; index < commandWords.size(); index++) {
+            String word = commandWords.get(index);
+            if (word.equals(SHOW_TOKEN)
+                    || word.equals(SHOW_TOKEN_SHORT)
+                    || word.startsWith(SHOW_TOKEN + "=")) {
                 return true;
             }
         }
@@ -185,14 +258,6 @@ public final class CredentialEgressGuard {
                 .replace("\"", "")
                 .replace("'", "");
         return CREDENTIAL_CONFIG_KEYS.stream().anyMatch(key::contains);
-    }
-
-    private static boolean hasWord(List<String> words, int index, String value) {
-        return index < words.size() && words.get(index).equals(value);
-    }
-
-    private static boolean hasPrefix(List<String> words, int index, String prefix) {
-        return index < words.size() && words.get(index).startsWith(prefix);
     }
 
     private static boolean isAssignment(String token) {
