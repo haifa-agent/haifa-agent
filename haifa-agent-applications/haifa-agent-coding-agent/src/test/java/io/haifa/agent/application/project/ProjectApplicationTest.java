@@ -288,6 +288,7 @@ class ProjectApplicationTest {
                 .filteredOn(binding -> binding.alias().value().equals("workspace_worktree_create"))
                 .singleElement()
                 .satisfies(binding -> {
+                    assertThat(binding.definition().version().value()).isEqualTo("3.0.0");
                     assertThat(binding.definition().approvalRequirement())
                             .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.ALWAYS);
                     assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
@@ -301,8 +302,8 @@ class ProjectApplicationTest {
                                     .document()
                                     .get("required")
                                     .toString())
-                            .contains("sourceWorkspaceRef", "baseCommit", "branchName", "targetName")
-                            .doesNotContain("deliveryIntent", "permission");
+                            .contains("sourceWorkspaceRef", "baseCommit", "branchName", "targetPath")
+                            .doesNotContain("targetName", "deliveryIntent", "permission");
                     assertThat(binding.definition().inputSchema().document().toString())
                             .doesNotContain("deliveryIntent", "permission", "read-write");
                 });

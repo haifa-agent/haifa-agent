@@ -4,6 +4,7 @@ import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
+import io.haifa.agent.project.hostworkspace.HostWorkspacePathSafety;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
@@ -20,12 +21,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,7 +33,6 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
     private final HostWorkspaceLocationStore locations;
-    private final Path controlledBase;
     private final String gitExecutable;
     private final TimeProvider time;
     private final ConcurrentHashMap<WorkspaceId, OwnedWorktree> owned = new ConcurrentHashMap<>();
@@ -44,15 +41,11 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
             WorkspaceStore workspaces,
             WorkspaceBindingStore bindings,
             HostWorkspaceLocationStore locations,
-            Path controlledBase,
             String gitExecutable,
             TimeProvider time) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
         this.locations = Objects.requireNonNull(locations, "locations must not be null");
-        this.controlledBase = Objects.requireNonNull(controlledBase, "controlledBase must not be null")
-                .toAbsolutePath()
-                .normalize();
         this.gitExecutable = Objects.requireNonNull(gitExecutable, "gitExecutable must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
     }
@@ -77,8 +70,6 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
         Path target = null;
         boolean worktreeAdded = false;
         try {
-            Files.createDirectories(controlledBase);
-            Path base = controlledBase.toRealPath(LinkOption.NOFOLLOW_LINKS);
             repository = locations
                     .resolveForTrustedProvider(parentBinding.locationRef())
                     .toRealPath(LinkOption.NOFOLLOW_LINKS);
@@ -89,12 +80,7 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
             }
             run(repository, List.of("cat-file", "-e", request.baseCommit() + "^{commit}"), Duration.ofSeconds(5));
             run(repository, List.of("check-ref-format", "--branch", request.branchName()), Duration.ofSeconds(5));
-            target = base.resolve(
-                            "worktree-" + safeName(request.childWorkspaceId().value()))
-                    .normalize();
-            if (!target.startsWith(base) || Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-                throw failure("worktree target is unavailable");
-            }
+            target = validateTargetPath(request.targetPath(), repository);
             run(
                     repository,
                     List.of(
@@ -257,29 +243,78 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
         }
     }
 
-    private void safeDeleteIfPresent(Path target) {
-        Path base;
-        try {
-            base = controlledBase.toRealPath(LinkOption.NOFOLLOW_LINKS);
-        } catch (IOException exception) {
-            throw failure("worktree cleanup base is unavailable");
+    private Path validateTargetPath(Path targetPath, Path repository) {
+        if (targetPath == null) throw failure("targetPath must not be null");
+        Path target = targetPath.toAbsolutePath().normalize();
+        if (target.getNameCount() == 0
+                || target.getParent() == null
+                || target.getRoot() == null
+                || target.getRoot().equals(target)) {
+            throw failure("targetPath must be a non-root absolute path");
         }
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            throw failure("worktree target already exists");
+        }
+        Path repoReal;
+        try {
+            repoReal = repository.toRealPath(LinkOption.NOFOLLOW_LINKS);
+        } catch (IOException exception) {
+            throw failure("source repository is inaccessible");
+        }
+        if (target.equals(repoReal) || target.startsWith(repoReal) || repoReal.startsWith(target)) {
+            throw failure("worktree target must not match or reside within source repository");
+        }
+        Path existingAncestor = null;
+        for (Path ancestor = target.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
+            if (Files.exists(ancestor, LinkOption.NOFOLLOW_LINKS)) {
+                if (HostWorkspacePathSafety.isUnsafeNode(ancestor)) {
+                    throw failure("worktree target ancestor is an unsafe node: " + ancestor);
+                }
+                Path realAncestor;
+                try {
+                    realAncestor = ancestor.toRealPath();
+                } catch (IOException exception) {
+                    throw failure("worktree target ancestor is inaccessible: " + ancestor);
+                }
+                if (HostWorkspacePathSafety.isUnsafeNode(realAncestor)) {
+                    throw failure("worktree target ancestor real path is an unsafe node: " + realAncestor);
+                }
+                if (realAncestor.equals(repoReal) || realAncestor.startsWith(repoReal)) {
+                    throw failure("worktree target ancestor must not match or reside within source repository");
+                }
+                if (existingAncestor == null) {
+                    existingAncestor = ancestor;
+                }
+            }
+        }
+        if (existingAncestor == null) {
+            throw failure("worktree target ancestor does not exist");
+        }
+        return target;
+    }
+
+    private void safeDeleteIfPresent(Path target) {
+        if (target == null) return;
         Path normalized = target.toAbsolutePath().normalize();
-        if (!normalized.startsWith(base) || normalized.equals(base)) throw failure("worktree cleanup target is unsafe");
+        if (normalized.getNameCount() == 0
+                || normalized.getParent() == null
+                || normalized.getRoot() == null
+                || normalized.getRoot().equals(normalized)) {
+            throw failure("worktree cleanup target is unsafe");
+        }
         if (!Files.exists(normalized, LinkOption.NOFOLLOW_LINKS)) return;
+        if (HostWorkspacePathSafety.isUnsafeNode(normalized)) {
+            try {
+                Files.deleteIfExists(normalized);
+                return;
+            } catch (IOException exception) {
+                throw failure("worktree cleanup requires reconciliation");
+            }
+        }
         try (var paths = Files.walk(normalized)) {
             for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(path);
         } catch (IOException exception) {
             throw failure("worktree cleanup requires reconciliation");
-        }
-    }
-
-    private static String safeName(String value) {
-        try {
-            return HexFormat.of()
-                    .formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is required", exception);
         }
     }
 

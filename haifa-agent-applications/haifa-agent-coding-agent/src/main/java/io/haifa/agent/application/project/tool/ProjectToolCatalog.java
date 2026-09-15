@@ -292,7 +292,7 @@ public final class ProjectToolCatalog {
                             "file_diff",
                             "file_stat" -> "2.0.0";
                     case "workspace_attach" -> "3.0.0";
-                    case ProjectWorktreeToolOperations.TOOL_NAME -> "2.0.0";
+                    case ProjectWorktreeToolOperations.TOOL_NAME -> "3.0.0";
                     default -> "1.0.0";
                 };
         return new ToolDefinition(
@@ -394,9 +394,10 @@ public final class ProjectToolCatalog {
                     + "successful attachments are revalidated before restoration and returned with their workspaceRef and rootPath.";
         }
         if (name.equals(ProjectWorktreeToolOperations.TOOL_NAME)) {
-            return "Create one managed Git worktree from an active executable workspace after exact user approval. "
-                    + "The immutable base commit, new branch, managed target name, and delivery intent "
-                    + "are approved together; no arbitrary host target path is accepted.";
+            return "Create one Git worktree from an active executable workspace after exact user approval. "
+                    + "The immutable base commit, new branch, explicit target host path, and delivery intent "
+                    + "are approved together; the exact target path is proposed from user tasks or repository conventions "
+                    + "and registered into the workspace registry upon creation.";
         }
         if (WRITES.contains(name)) {
             return title(name)
@@ -485,8 +486,18 @@ public final class ProjectToolCatalog {
                 properties.put("sourceWorkspaceRef", Map.of("type", "string", "minLength", 1, "maxLength", 256));
                 properties.put("baseCommit", Map.of("type", "string", "minLength", 7, "maxLength", 64));
                 properties.put("branchName", Map.of("type", "string", "minLength", 1, "maxLength", 240));
-                properties.put("targetName", Map.of("type", "string", "minLength", 1, "maxLength", 80));
-                required.addAll(List.of("sourceWorkspaceRef", "baseCommit", "branchName", "targetName"));
+                properties.put(
+                        "targetPath",
+                        Map.of(
+                                "type",
+                                "string",
+                                "minLength",
+                                1,
+                                "maxLength",
+                                4096,
+                                "description",
+                                "Host absolute path for the new Git worktree directory."));
+                required.addAll(List.of("sourceWorkspaceRef", "baseCommit", "branchName", "targetPath"));
             }
             case "execution_run" -> {
                 properties.put(

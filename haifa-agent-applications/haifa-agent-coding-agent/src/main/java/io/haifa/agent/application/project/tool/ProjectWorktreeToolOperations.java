@@ -8,6 +8,8 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
+import io.haifa.agent.project.hostworkspace.HostWorkspacePathSafety;
+import io.haifa.agent.project.hostworkspace.scope.AuthorizedHostDirectory;
 import io.haifa.agent.project.hostworkspace.scope.AuthorizedWorkspaceProvisioning;
 import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
@@ -16,6 +18,10 @@ import io.haifa.agent.sandbox.api.GitWorktreeIsolationProvider;
 import io.haifa.agent.sandbox.api.GitWorktreeRequest;
 import io.haifa.agent.sandbox.api.IsolatedWorkspace;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -47,15 +53,28 @@ public final class ProjectWorktreeToolOperations {
         WorkspaceId parent = new WorkspaceId(text(values, "sourceWorkspaceRef"));
         String baseCommit = text(values, "baseCommit");
         String branchName = text(values, "branchName");
-        String targetName = safeTargetName(text(values, "targetName"));
+        String rawTargetPath = text(values, "targetPath");
+        Path targetPath = parseAndValidateTargetPath(rawTargetPath);
         workspaceAccess.require(invocation.tenant(), invocation.principal(), parent, WorkspaceAccessMode.DEVELOP);
-        provisioning.scope().resolveExecutionDirectory(parent, ".");
+        AuthorizedHostDirectory sourceDir = provisioning.scope().allowedDirectories().stream()
+                .filter(candidate -> candidate.workspaceId().equals(parent))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "source workspace is not active in workspace registry: " + parent));
+        Path sourceRealPath;
+        try {
+            sourceRealPath = sourceDir.realPath().toRealPath();
+        } catch (IOException exception) {
+            throw new IllegalArgumentException("source workspace is inaccessible", exception);
+        }
+        validateTargetPathAgainstSource(targetPath, sourceRealPath);
+        String safeName = safeDisplayName(targetPath);
         String identity = PolicyDigest.sha256Fields(List.of(
                 "coding-worktree-v1",
                 parent.value(),
                 baseCommit,
                 branchName,
-                targetName,
+                targetPath.toString(),
                 invocation.toolCallId().value(),
                 identifiers.nextValue()));
         WorkspaceId child = new WorkspaceId("workspace-worktree-" + identity.substring(0, 32));
@@ -72,6 +91,7 @@ public final class ProjectWorktreeToolOperations {
                     invocation.principal(),
                     baseCommit,
                     branchName,
+                    targetPath,
                     WorkspaceCapabilitySet.executionFiles(),
                     WorkspacePermissionSet.readWriteExecute()));
             var registered = provisioning.authorizeApprovedWorktree(
@@ -79,7 +99,7 @@ public final class ProjectWorktreeToolOperations {
                     isolated.childWorkspaceId(),
                     isolated.bindingId(),
                     isolated.locationRef(),
-                    targetName);
+                    safeName);
             workspaceAccess.replace(new WorkspaceAccess(
                     invocation.tenant(),
                     invocation.principal(),
@@ -143,11 +163,75 @@ public final class ProjectWorktreeToolOperations {
         }
     }
 
-    private static String safeTargetName(String value) {
-        if (!value.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,79}")) {
-            throw new IllegalArgumentException("targetName must be a safe managed worktree name");
+    private static Path parseAndValidateTargetPath(String rawTargetPath) {
+        if (rawTargetPath.length() > 4096) {
+            throw new IllegalArgumentException("targetPath exceeds maximum length");
         }
-        return value;
+        Path path;
+        try {
+            path = Path.of(rawTargetPath);
+        } catch (Exception exception) {
+            throw new IllegalArgumentException("targetPath is invalid: " + rawTargetPath, exception);
+        }
+        if (!path.isAbsolute()) {
+            throw new IllegalArgumentException("targetPath must be an absolute host path: " + rawTargetPath);
+        }
+        Path normalized = path.normalize();
+        if (normalized.getNameCount() == 0
+                || normalized.getParent() == null
+                || normalized.getRoot() == null
+                || normalized.getRoot().equals(normalized)) {
+            throw new IllegalArgumentException("targetPath must be a non-root directory path");
+        }
+        if (!path.equals(normalized)) {
+            throw new IllegalArgumentException("targetPath must be a normalized host absolute path: " + rawTargetPath);
+        }
+        String normalizedString = normalized.toString();
+        if (!rawTargetPath.equals(normalizedString)
+                && !rawTargetPath.replace('/', '\\').equals(normalizedString)) {
+            throw new IllegalArgumentException("targetPath must be a normalized host absolute path: " + rawTargetPath);
+        }
+        if (Files.exists(normalized, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalArgumentException("targetPath already exists: " + normalized);
+        }
+        return normalized;
+    }
+
+    private static void validateTargetPathAgainstSource(Path targetPath, Path sourceRealPath) {
+        if (targetPath.equals(sourceRealPath)
+                || targetPath.startsWith(sourceRealPath)
+                || sourceRealPath.startsWith(targetPath)) {
+            throw new IllegalArgumentException("targetPath must not match or reside within source repository");
+        }
+        for (Path ancestor = targetPath.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
+            if (Files.exists(ancestor, LinkOption.NOFOLLOW_LINKS)) {
+                if (HostWorkspacePathSafety.isUnsafeNode(ancestor)) {
+                    throw new IllegalArgumentException("targetPath ancestor is an unsafe node: " + ancestor);
+                }
+                Path realAncestor;
+                try {
+                    realAncestor = ancestor.toRealPath();
+                } catch (IOException exception) {
+                    throw new IllegalArgumentException("targetPath ancestor is inaccessible: " + ancestor, exception);
+                }
+                if (HostWorkspacePathSafety.isUnsafeNode(realAncestor)) {
+                    throw new IllegalArgumentException(
+                            "targetPath ancestor real path is an unsafe node: " + realAncestor);
+                }
+                if (realAncestor.equals(sourceRealPath) || realAncestor.startsWith(sourceRealPath)) {
+                    throw new IllegalArgumentException(
+                            "targetPath ancestor must not match or reside within source repository");
+                }
+            }
+        }
+    }
+
+    static String safeDisplayName(Path targetPath) {
+        Path name = targetPath.getFileName();
+        String candidate = name == null ? "worktree" : name.toString();
+        String safe = candidate.replaceAll("[\\p{Cntrl}\\\\/]", "-").trim();
+        if (safe.isEmpty()) safe = "worktree";
+        return safe.length() <= 80 ? safe : safe.substring(0, 80);
     }
 
     private static String text(Map<String, Object> values, String key) {

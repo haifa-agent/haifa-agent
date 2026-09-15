@@ -842,7 +842,8 @@ class HostSandboxIT {
         String commit = run(root, "git", "rev-parse", "HEAD").trim();
         Fixture fixture = fixture(root, "workspace-git-parent", "binding-git-parent", "location-git-parent");
         var provider = new HostGitWorktreeIsolationProvider(
-                fixture.workspaces, fixture.bindings, fixture.locations, isolatedBase, "git", () -> NOW);
+                fixture.workspaces, fixture.bindings, fixture.locations, "git", () -> NOW);
+        Path targetPath = isolatedBase.resolve("explicit-target");
         var child = provider.createWorktree(new GitWorktreeRequest(
                 fixture.workspaceId,
                 new WorkspaceId("workspace-git-child"),
@@ -851,9 +852,11 @@ class HostSandboxIT {
                 new PrincipalRef("child", "agent"),
                 commit,
                 "feature/isolated-change",
+                targetPath,
                 WorkspaceCapabilitySet.executionFiles(),
                 WorkspacePermissionSet.readWriteExecute()));
         Path childRoot = fixture.locations.resolveForTrustedProvider(child.locationRef());
+        assertThat(childRoot).isEqualTo(targetPath);
         Files.writeString(childRoot.resolve("tracked.txt"), "child\n");
         assertThat(Files.readString(root.resolve("tracked.txt"))).isEqualTo("base\n");
         assertThatThrownBy(() -> provider.releaseWorktree(child.childWorkspaceId(), false))
@@ -875,9 +878,10 @@ class HostSandboxIT {
         Fixture fixture =
                 fixture(root, "workspace-git-failed-parent", "binding-git-failed-parent", "location-git-failed-parent");
         var provider = new HostGitWorktreeIsolationProvider(
-                fixture.workspaces, fixture.bindings, fixture.locations, isolatedBase, "git", () -> NOW);
+                fixture.workspaces, fixture.bindings, fixture.locations, "git", () -> NOW);
         var childLocation = new WorkspaceLocationRef("location-git-failed-child");
         fixture.locations.register(childLocation, root);
+        Path targetPath = isolatedBase.resolve("failed-target");
 
         assertThatThrownBy(() -> provider.createWorktree(new GitWorktreeRequest(
                         fixture.workspaceId,
@@ -887,6 +891,7 @@ class HostSandboxIT {
                         new PrincipalRef("child", "agent"),
                         commit,
                         "feature/failed-create",
+                        targetPath,
                         WorkspaceCapabilitySet.executionFiles(),
                         WorkspacePermissionSet.readWriteExecute())))
                 .isInstanceOf(IllegalStateException.class)
@@ -894,8 +899,7 @@ class HostSandboxIT {
 
         assertThat(run(root, "git", "branch", "--list", "feature/failed-create").trim())
                 .isEmpty();
-        assertThat(Files.exists(isolatedBase.resolve("worktree-workspace-git-failed-child")))
-                .isFalse();
+        assertThat(Files.exists(targetPath)).isFalse();
     }
 
     private Fixture fixture(Path workspaceRoot, String workspaceValue, String bindingValue, String locationValue) {

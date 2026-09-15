@@ -6,6 +6,7 @@ import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.project.workspace.WorkspacePermissionSet;
+import java.nio.file.Path;
 import java.util.Objects;
 
 public record GitWorktreeRequest(
@@ -16,6 +17,7 @@ public record GitWorktreeRequest(
         PrincipalRef owner,
         String baseCommit,
         String branchName,
+        Path targetPath,
         WorkspaceCapabilitySet narrowedCapabilities,
         WorkspacePermissionSet narrowedPermissions) {
     public GitWorktreeRequest {
@@ -36,6 +38,12 @@ public record GitWorktreeRequest(
                 || branchName.indexOf('\0') >= 0
                 || branchName.chars().anyMatch(Character::isWhitespace)) {
             throw new IllegalArgumentException("branchName must be a safe non-option Git branch name");
+        }
+        targetPath = Objects.requireNonNull(targetPath, "targetPath must not be null")
+                .toAbsolutePath()
+                .normalize();
+        if (!targetPath.isAbsolute()) {
+            throw new IllegalArgumentException("targetPath must be an absolute path");
         }
         narrowedCapabilities = Objects.requireNonNull(narrowedCapabilities, "narrowedCapabilities must not be null");
         narrowedPermissions = Objects.requireNonNull(narrowedPermissions, "narrowedPermissions must not be null");

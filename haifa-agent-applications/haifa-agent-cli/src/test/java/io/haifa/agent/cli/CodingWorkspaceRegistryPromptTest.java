@@ -96,20 +96,20 @@ class CodingWorkspaceRegistryPromptTest {
     }
 
     @Test
-    void worktreeApprovalShowsTheExactStructuredTargetWithoutAcceptingAHostPath() {
+    void worktreeApprovalShowsTheExactApprovedTargetPath() {
         String prompt = LocalCodingAgent.workspaceWorktreeApprovalPrompt(Map.of(
                 "sourceWorkspaceRef", "workspace-ref-1",
-                "baseCommit", "abc123",
+                "baseCommit", "abc1234",
                 "branchName", "feat/example",
-                "targetName", "review-copy"));
+                "targetPath", "D:\\workspace\\haifa-agent-worktrees\\feat-example"));
 
         assertThat(prompt)
                 .contains(
                         "Source workspace: workspace-ref-1",
-                        "Base commit: abc123",
+                        "Base commit: abc1234",
                         "New branch: feat/example",
-                        "Managed target: review-copy",
-                        "no arbitrary host path is accepted")
-                .doesNotContain("Delivery intent", "C:\\", "/home/", "targetPath");
+                        "Target path: D:\\workspace\\haifa-agent-worktrees\\feat-example",
+                        "this exact approved target path")
+                .doesNotContain("Managed target:", "targetName", "Delivery intent");
     }
 }

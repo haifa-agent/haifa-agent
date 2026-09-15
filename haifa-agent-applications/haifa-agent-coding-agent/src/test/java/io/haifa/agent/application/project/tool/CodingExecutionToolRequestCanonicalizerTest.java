@@ -29,4 +29,18 @@ class CodingExecutionToolRequestCanonicalizerTest {
                 .isEqualTo(child)
                 .isEqualTo("src/main");
     }
+
+    @Test
+    void canonicalizesAbsoluteTargetPathAndPreservesRelativeTarget() {
+        String currentDir =
+                java.nio.file.Path.of(".").toAbsolutePath().normalize().toString();
+        String redundantAbsolute = currentDir + java.io.File.separator + "sub" + java.io.File.separator + ".."
+                + java.io.File.separator + "target";
+        String expectedNormalized = currentDir + java.io.File.separator + "target";
+
+        assertThat(CodingExecutionToolRequestCanonicalizer.canonicalizeTargetPath("  " + redundantAbsolute + "  "))
+                .isEqualTo(expectedNormalized);
+        assertThat(CodingExecutionToolRequestCanonicalizer.canonicalizeTargetPath("  relative/path  "))
+                .isEqualTo("relative/path");
+    }
 }

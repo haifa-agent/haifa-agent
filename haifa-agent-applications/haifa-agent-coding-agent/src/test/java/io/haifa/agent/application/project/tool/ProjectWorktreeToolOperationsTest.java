@@ -80,7 +80,7 @@ class ProjectWorktreeToolOperationsTest {
     void setUp() throws IOException {
         tempDir = tempDir.toRealPath();
         initialRoot = Files.createDirectories(tempDir.resolve("repository"));
-        childRoot = Files.createDirectories(tempDir.resolve("managed-worktree"));
+        childRoot = tempDir.resolve("managed-worktree");
         projectId = new ProjectId("project-worktree-test");
         workspaces = new InMemoryWorkspaceStore();
         bindings = new InMemoryWorkspaceBindingStore();
@@ -167,7 +167,7 @@ class ProjectWorktreeToolOperationsTest {
                 .containsEntry("sourceWorkspaceRef", initialWorkspace.id().value())
                 .containsEntry("baseCommit", "0123456789abcdef")
                 .containsEntry("branchName", "feat/controlled-worktree")
-                .containsEntry("safeDisplayName", "feature-target")
+                .containsEntry("safeDisplayName", "managed-worktree")
                 .containsEntry("rootPath", childRoot.toString())
                 .containsEntry("source", HostWorkspaceRegistrySource.APPROVED_WORKTREE_CREATE.name())
                 .containsEntry("status", "ACTIVE");
@@ -180,6 +180,7 @@ class ProjectWorktreeToolOperationsTest {
                 .satisfies(access -> assertThat(access.mode()).isEqualTo(WorkspaceAccessMode.DEVELOP));
         assertThat(captured.get().branchName()).isEqualTo("feat/controlled-worktree");
         assertThat(captured.get().baseCommit()).isEqualTo("0123456789abcdef");
+        assertThat(captured.get().targetPath()).isEqualTo(childRoot);
         assertThat(dispatched).hasValue(1);
         assertThat(acknowledged).hasValue(1);
     }
@@ -243,12 +244,97 @@ class ProjectWorktreeToolOperationsTest {
                 .hasMessage("workspaceAccess must not be null");
     }
 
+    @Test
+    void rejectsRelativeTargetPathBeforeDispatch() {
+        AtomicReference<GitWorktreeRequest> captured = new AtomicReference<>();
+        var operations = new ProjectWorktreeToolOperations(
+                provider(captured, new AtomicBoolean()), provisioning, () -> "identity-seed", developWorkspaceAccess());
+
+        assertThatThrownBy(() -> operations.execute(
+                        invocationWithTargetPath("relative/worktree-path", ToolInvocationObserver.noop()), access()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("targetPath must be an absolute host path");
+        assertThat(captured.get()).isNull();
+    }
+
+    @Test
+    void rejectsRootTargetPathBeforeDispatch() {
+        AtomicReference<GitWorktreeRequest> captured = new AtomicReference<>();
+        var operations = new ProjectWorktreeToolOperations(
+                provider(captured, new AtomicBoolean()), provisioning, () -> "identity-seed", developWorkspaceAccess());
+
+        Path rootPath = tempDir.getRoot();
+        assertThatThrownBy(() -> operations.execute(
+                        invocationWithTargetPath(rootPath.toString(), ToolInvocationObserver.noop()), access()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("targetPath must be a non-root directory path");
+        assertThat(captured.get()).isNull();
+    }
+
+    @Test
+    void rejectsTargetPathMatchingOrInsideSourceWorkspace() {
+        AtomicReference<GitWorktreeRequest> captured = new AtomicReference<>();
+        var operations = new ProjectWorktreeToolOperations(
+                provider(captured, new AtomicBoolean()), provisioning, () -> "identity-seed", developWorkspaceAccess());
+
+        assertThatThrownBy(() -> operations.execute(
+                        invocationWithTargetPath(initialRoot.toString(), ToolInvocationObserver.noop()), access()))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        Path insideSource = initialRoot.resolve("nested-worktree");
+        assertThatThrownBy(() -> operations.execute(
+                        invocationWithTargetPath(insideSource.toString(), ToolInvocationObserver.noop()), access()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("targetPath must not match or reside within source repository");
+        assertThat(captured.get()).isNull();
+    }
+
+    @Test
+    void rejectsPreExistingTargetPathBeforeDispatch() throws IOException {
+        Path existingDir = Files.createDirectories(tempDir.resolve("already-exists"));
+        AtomicReference<GitWorktreeRequest> captured = new AtomicReference<>();
+        var operations = new ProjectWorktreeToolOperations(
+                provider(captured, new AtomicBoolean()), provisioning, () -> "identity-seed", developWorkspaceAccess());
+
+        assertThatThrownBy(() -> operations.execute(
+                        invocationWithTargetPath(existingDir.toString(), ToolInvocationObserver.noop()), access()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("targetPath already exists");
+        assertThat(captured.get()).isNull();
+    }
+
+    @Test
+    void rejectsUnnormalizedTargetPathBeforeDispatch() {
+        AtomicReference<GitWorktreeRequest> captured = new AtomicReference<>();
+        var operations = new ProjectWorktreeToolOperations(
+                provider(captured, new AtomicBoolean()), provisioning, () -> "identity-seed", developWorkspaceAccess());
+
+        String unnormalized = childRoot.toString() + "/../other-worktree";
+        assertThatThrownBy(() -> operations.execute(
+                        invocationWithTargetPath(unnormalized, ToolInvocationObserver.noop()), access()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("targetPath must be a normalized host absolute path");
+        assertThat(captured.get()).isNull();
+    }
+
+    private InMemoryWorkspaceAccessStore developWorkspaceAccess() {
+        var workspaceAccess = new InMemoryWorkspaceAccessStore();
+        workspaceAccess.replace(new WorkspaceAccess(
+                new TenantRef("tenant"), OWNER, initialWorkspace.id(), WorkspaceAccessMode.DEVELOP));
+        return workspaceAccess;
+    }
+
     private GitWorktreeIsolationProvider provider(
             AtomicReference<GitWorktreeRequest> captured, AtomicBoolean released) {
         return new GitWorktreeIsolationProvider() {
             @Override
             public IsolatedWorkspace createWorktree(GitWorktreeRequest request) {
                 captured.set(request);
+                try {
+                    Files.createDirectories(request.targetPath());
+                } catch (IOException exception) {
+                    throw new IllegalStateException("failed to create stub worktree directory", exception);
+                }
                 locations.register(request.childLocationRef(), childRoot);
                 WorkspaceBinding binding = WorkspaceBinding.provision(
                                 request.childBindingId(),
@@ -287,6 +373,10 @@ class ProjectWorktreeToolOperationsTest {
     }
 
     private ToolInvocationRequest invocation(ToolInvocationObserver observer) {
+        return invocationWithTargetPath(childRoot.toString(), observer);
+    }
+
+    private ToolInvocationRequest invocationWithTargetPath(String targetPath, ToolInvocationObserver observer) {
         var binding = new ProjectToolCatalog()
                 .freeze(
                         Set.of(ProjectWorktreeToolOperations.TOOL_NAME),
@@ -304,7 +394,7 @@ class ProjectWorktreeToolOperationsTest {
                 OWNER,
                 new ToolArguments(
                         "haifa.workspace.worktree.create.input",
-                        "1.0.0",
+                        "3.0.0",
                         Map.of(
                                 "sourceWorkspaceRef",
                                 initialWorkspace.id().value(),
@@ -312,8 +402,8 @@ class ProjectWorktreeToolOperationsTest {
                                 "0123456789abcdef",
                                 "branchName",
                                 "feat/controlled-worktree",
-                                "targetName",
-                                "feature-target")),
+                                "targetPath",
+                                targetPath)),
                 NOW.plusSeconds(30),
                 Optional.of("worktree-key"),
                 () -> false,

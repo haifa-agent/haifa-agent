@@ -299,10 +299,10 @@ Timeout、Cancel、资源限制与未知终止不能改写为正常退出，未�
 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
 
 `workspace_worktree_create` 是 CA 独有的始终审批能力：精确目标同时绑定 source `workspaceRef`、不可变 base
-commit、新分支、受控 target name 和交付意图，不接受模型指定的主机目标路径或权限；source 必须具有当前
-`DEVELOP` Access。受信 Git Provider 创建并校验 worktree 后，CA 才把新 root 以
+commit、新分支、规范宿主绝对 `targetPath` 和交付意图；目标路径由模型按任务或仓库约定提出、经用户精确批准、Host 校验并登记；source 必须具有当前
+`DEVELOP` Access。受信 Git Provider 校验并精确创建 worktree 后，CA 把新 root 以
 `APPROVED_WORKTREE_CREATE` 登记、写入新 workspace 的 `DEVELOP` Access 并返回脱敏
-`workspaceRef` 以及规范化宿主绝对路径 `rootPath`；失败时清理且不激活 root。当前重启恢复无法建立受信 Git reconciliation，因此会 fail closed
+`workspaceRef` 以及规范化宿主绝对路径 `rootPath`；失败时只补偿清理本次创建的 worktree 与分支，不伤害已有目录或用户改动，且不激活 root。当前重启恢复无法建立受信 Git reconciliation，因此会 fail closed
 禁用对应 root，不能把普通 Registry 测试描述成进程级强隔离证明。`file_*` 仍严格要求模型传宿主绝对路径并由
 Registry/Scope 映射，未改成相对路径或 root alias；动态 `<workspace_paths>` 同时标明每个根的 `READ` / `DEVELOP` Access mode，模型通过该块或 `workspace_attach` /
 `workspace_worktree_create` 成功结果中的 `rootPath` 获取可用绝对路径，通过 `workspaceRef` + 规范化 `relativeWorkdir`（`.` 代表根）调用 `execution_run`。

@@ -6,6 +6,7 @@ import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.tool.ToolRequestCanonicalizer;
 import io.haifa.agent.tool.api.FrozenToolBinding;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -32,7 +33,7 @@ public final class CodingExecutionToolRequestCanonicalizer implements ToolReques
             canonicalizeText(canonicalValues, "sourceWorkspaceRef");
             canonicalizeText(canonicalValues, "baseCommit");
             canonicalizeText(canonicalValues, "branchName");
-            canonicalizeText(canonicalValues, "targetName");
+            canonicalizePath(canonicalValues, "targetPath");
             return withArguments(request, values, canonicalValues);
         }
 
@@ -61,6 +62,27 @@ public final class CodingExecutionToolRequestCanonicalizer implements ToolReques
     private static void canonicalizeText(Map<String, Object> values, String field) {
         Object value = values.get(field);
         if (value instanceof String text) values.put(field, text.trim());
+    }
+
+    private static void canonicalizePath(Map<String, Object> values, String field) {
+        Object value = values.get(field);
+        if (value instanceof String text) {
+            values.put(field, canonicalizeTargetPath(text));
+        }
+    }
+
+    static String canonicalizeTargetPath(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) return rawPath == null ? null : rawPath.trim();
+        String trimmed = rawPath.trim();
+        try {
+            Path path = Path.of(trimmed);
+            if (path.isAbsolute()) {
+                return path.normalize().toString();
+            }
+        } catch (Exception ignored) {
+            // Keep trimmed text
+        }
+        return trimmed;
     }
 
     static String canonicalizeRelativeWorkdir(String workdir) {
