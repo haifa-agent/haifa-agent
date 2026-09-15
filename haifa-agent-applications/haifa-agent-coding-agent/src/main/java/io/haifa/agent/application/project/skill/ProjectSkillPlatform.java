@@ -62,7 +62,6 @@ public record ProjectSkillPlatform(SkillCatalog catalog, SkillContentLoader cont
 
         List<SkillSource> sources = new ArrayList<>();
         sources.add(BaseSkills.source());
-        sources.add(BaseSkills.gitCliSource());
         directories.stream()
                 .sorted(Comparator.comparing(UserDirectorySource::id))
                 .map(directory -> userDirectorySource(tenant, principal, directory))

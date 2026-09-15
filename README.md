@@ -267,8 +267,8 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
   上限的有效日期版本会返回待适配提示且不猜测其协议行为；
 - 兼容 `SKILL.md` 的 Skill API/Core/Base，支持分层发现、内容寻址冻结、摘要披露、Run 级激活和
   资源按需读取；
-- 共享 `git` / `github` CLI Skill，以及 Personal Assistant
-  `github-project-watch` Product Skill；Skill 只提供流程，不授予执行、网络或 Credential 权限；
+- Personal Assistant `github-project-watch` 等业务 Product Skill；Skill 只提供流程，不授予执行、
+  网络或 Credential 权限；系统 `git` / `gh` 由 `execution_run` 直接调用，不依赖内置 Skill；
 - `web_search` 支持 Aliyun IQS、Brave、Tavily；`web_fetch` 支持 Aliyun IQS、Browserless、Tavily；
 - MCP Tool 和 Skill 激活不会绕过 Runtime Tool Pipeline，也不能扩大 Run 已冻结的 Tool 集。
 

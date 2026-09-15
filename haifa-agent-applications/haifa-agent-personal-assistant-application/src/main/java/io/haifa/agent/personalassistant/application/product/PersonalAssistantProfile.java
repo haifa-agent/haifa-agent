@@ -28,8 +28,6 @@ public final class PersonalAssistantProfile {
     public static final String MCP_TOOL_ALIAS = "personal_mcp_echo";
     public static final String BUNDLED_SKILL_ALIAS = "daily-planning";
     public static final String EXECUTION_SKILL_ALIAS = "local-script-execution";
-    public static final String GIT_SKILL_ALIAS = "git";
-    public static final String GITHUB_SKILL_ALIAS = "github";
     public static final String GITHUB_PROJECT_WATCH_SKILL_ALIAS = "github-project-watch";
     public static final String DEEP_RESEARCH_SKILL_ALIAS = "deep-research";
     public static final String EXECUTION_TOOL_ALIAS = "execution_run";
@@ -72,11 +70,7 @@ public final class PersonalAssistantProfile {
 
         Set<String> skills = java.util.stream.Stream.concat(
                         java.util.stream.Stream.of(
-                                BUNDLED_SKILL_ALIAS,
-                                EXECUTION_SKILL_ALIAS,
-                                GIT_SKILL_ALIAS,
-                                GITHUB_SKILL_ALIAS,
-                                GITHUB_PROJECT_WATCH_SKILL_ALIAS),
+                                BUNDLED_SKILL_ALIAS, EXECUTION_SKILL_ALIAS, GITHUB_PROJECT_WATCH_SKILL_ALIAS),
                         localSkillAliases.stream().filter(alias -> !DEEP_RESEARCH_SKILL_ALIAS.equals(alias)))
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         Set<String> allowedTools = java.util.stream.Stream.of(

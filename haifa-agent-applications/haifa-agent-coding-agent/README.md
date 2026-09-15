@@ -253,7 +253,7 @@ Wrapper 形式为 HIGH。HIGH 继续进入用户阈值，不是分类失败；�
 模型目录不包含权限申请 Tool。当受信 preflight 产生稳定错误码且 Tool 异常与 Journal 同时证明 `NOT_DISPATCHED` 时，Runtime 将原 ToolCall 和 Step 标记为 `FAILED`，记录不可变的失败事实（包含 `failureCode` 与 `dispatchState = NOT_DISPATCHED`），返回 `CONTINUE` 允许模型在下一个 turn 获知失败原因后自主决策（如调整参数、更换能力或向用户报告阻塞）；系统不创建 `execution-recovery` Interaction，不生成 successor 调用，也不维护双重 recovery profile。若工具已派发或结果不确定，或者属于内部协议/配置错误，则一律 Fail Closed（终止 Run 为 `FAILED`），严禁自动重放具有副作用的工具调用。
 
 `ProjectSkillPlatform` 从受信 Discovery/Visibility Context 组装 Skill Catalog 与精确内容 Loader。它提供
-`task-planning`、`result-verification` 与共享 `git`/`github` Classpath Skill，
+`task-planning` 与 `result-verification` Classpath Skill，系统 `git` / `gh` 由 `execution_run` 直接调用，
 并允许上层 Application 显式加入
 绑定当前可信 tenant/principal 的只读 `USER` Scope 本地目录 Source。目录 root 不来自模型或 Run 请求，
 Application 必须在扫描前验证绝对路径、可读性和 symlink 边界。普通旧装配路径不隐式加入 Skill，只有产品
