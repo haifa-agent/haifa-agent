@@ -3,16 +3,23 @@ package io.haifa.agent.application.project.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.ProjectProductService;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.product.coding.CodingFollowUp;
 import io.haifa.agent.application.project.product.coding.CodingFollowUpStatus;
 import io.haifa.agent.application.project.product.coding.CodingModelCatalog;
+import io.haifa.agent.application.project.product.coding.CodingModelControls;
+import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingModelPreference;
+import io.haifa.agent.application.project.product.coding.CodingModelPreferences;
+import io.haifa.agent.application.project.product.coding.CodingModelSelection;
+import io.haifa.agent.application.project.product.coding.CodingModelState;
 import io.haifa.agent.application.project.product.coding.CodingSessionActivity;
 import io.haifa.agent.application.project.product.coding.CodingSessionCreateOptions;
 import io.haifa.agent.application.project.product.coding.CodingSessionQuery;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
+import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
@@ -508,6 +515,258 @@ class ProjectPersistenceAssemblyTest {
     }
 
     @Test
+    void createSessionRejectsUnreadyModelBeforeStartingRun() {
+        CodingModelOption unready =
+                unreadyModel("unready-model", "Unready Model", CodingModelState.Connection.LOGIN_REQUIRED);
+        CodingModelOption ready = readyModel("ready-model", "Ready Model");
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("readiness");
+
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService service = fixture.codingService(assembly, runtime, ids, testCatalog(unready, ready));
+
+            assertThatThrownBy(
+                            () -> service.createSession(fixture.projectId, "draft prompt", List.of(), "idempotency-1"))
+                    .isInstanceOf(ProjectProductException.class)
+                    .satisfies(ex -> {
+                        ProjectProductException ppe = (ProjectProductException) ex;
+                        assertThat(ppe.code()).isEqualTo("MODEL_AUTHENTICATION_REQUIRED");
+                    });
+
+            assertThat(runtime.startCount()).isZero();
+            assertThat(service.listSessions(fixture.projectId, CodingSessionQuery.firstPage(10))
+                            .items())
+                    .isEmpty();
+        }
+    }
+
+    @Test
+    void createSessionWithExplicitReadyModelSucceeds() {
+        CodingModelOption unready =
+                unreadyModel("unready-model", "Unready Model", CodingModelState.Connection.LOGIN_REQUIRED);
+        CodingModelOption ready = readyModel("ready-model", "Ready Model");
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("readiness");
+
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService service = fixture.codingService(assembly, runtime, ids, testCatalog(unready, ready));
+
+            CodingSessionCreateOptions options = CodingSessionCreateOptions.withInitialModel("ready-model");
+            CodingSessionView created =
+                    service.createSession(fixture.projectId, "draft prompt", List.of(), "idempotency-1", options);
+
+            assertThat(created.activeRun()).isPresent();
+            assertThat(runtime.startCount()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void selectModelAllowsUnreadyModelButSubmitTurnRejectsIt() {
+        CodingModelOption ready = readyModel("ready-model", "Ready Model");
+        CodingModelOption unready =
+                unreadyModel("unready-model", "Unready Model", CodingModelState.Connection.LOGIN_REQUIRED);
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("readiness");
+
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService service = fixture.codingService(assembly, runtime, ids, testCatalog(ready, unready));
+
+            CodingSessionView created =
+                    service.createSession(fixture.projectId, "first prompt", List.of(), "create-key");
+            AgentSessionId sessionId = created.summary().sessionId();
+            AgentRunId firstRunId = created.activeRun().orElseThrow().runId();
+            assertThat(runtime.startCount()).isEqualTo(1);
+
+            runtime.settle(firstRunId);
+            service.reconcileSession(sessionId);
+
+            CodingModelSelection selection = service.selectModel(sessionId, "unready-model", 0, "select-key");
+            assertThat(selection.model().id()).isEqualTo("unready-model");
+            assertThat(selection.model().state().connection()).isEqualTo(CodingModelState.Connection.LOGIN_REQUIRED);
+
+            assertThatThrownBy(() -> service.submitTurn(sessionId, "second turn", List.of(), "turn-key"))
+                    .isInstanceOf(ProjectProductException.class)
+                    .satisfies(ex -> {
+                        ProjectProductException ppe = (ProjectProductException) ex;
+                        assertThat(ppe.code()).isEqualTo("MODEL_AUTHENTICATION_REQUIRED");
+                    });
+
+            assertThat(runtime.startCount()).isEqualTo(1);
+
+            service.selectModel(sessionId, "ready-model", 1, "select-back-key");
+            var receipt = service.submitTurn(sessionId, "second turn", List.of(), "turn-key-2");
+            assertThat(receipt.operation()).isEqualTo("submit-turn");
+            assertThat(runtime.startCount()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void submitTurnIdempotentRetrySucceedsEvenIfModelBecomesUnready() {
+        CodingModelOption ready = readyModel("dynamic-model", "Dynamic Model");
+        CodingModelOption unready =
+                unreadyModel("dynamic-model", "Dynamic Model", CodingModelState.Connection.LOGIN_REQUIRED);
+        java.util.concurrent.atomic.AtomicReference<CodingModelOption> currentModel =
+                new java.util.concurrent.atomic.AtomicReference<>(ready);
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("readiness-idempotency");
+
+        CodingModelCatalog dynamicCatalog = new CodingModelCatalog() {
+            @Override
+            public String defaultModelId() {
+                return "dynamic-model";
+            }
+
+            @Override
+            public List<CodingModelOption> available(TenantRef tenant, PrincipalRef principal) {
+                return List.of(currentModel.get());
+            }
+
+            @Override
+            public Optional<CodingModelOption> find(TenantRef tenant, PrincipalRef principal, String modelId) {
+                return Optional.of(currentModel.get()).filter(m -> m.id().equals(modelId));
+            }
+        };
+
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService service = fixture.codingService(assembly, runtime, ids, dynamicCatalog);
+
+            CodingSessionView created =
+                    service.createSession(fixture.projectId, "first prompt", List.of(), "create-key");
+            AgentSessionId sessionId = created.summary().sessionId();
+            AgentRunId firstRunId = created.activeRun().orElseThrow().runId();
+            runtime.settle(firstRunId);
+            service.reconcileSession(sessionId);
+
+            var receipt = service.submitTurn(sessionId, "second turn", List.of(), "turn-idempotent-key");
+            assertThat(receipt.replayed()).isFalse();
+            assertThat(runtime.startCount()).isEqualTo(2);
+
+            currentModel.set(unready);
+
+            var retried = service.submitTurn(sessionId, "second turn", List.of(), "turn-idempotent-key");
+            assertThat(retried.replayed()).isTrue();
+            assertThat(retried.runId()).isEqualTo(receipt.runId());
+            assertThat(runtime.startCount()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void createSessionIdempotentRetrySucceedsEvenIfModelBecomesUnready() {
+        CodingModelOption ready = readyModel("dynamic-model", "Dynamic Model");
+        CodingModelOption unready =
+                unreadyModel("dynamic-model", "Dynamic Model", CodingModelState.Connection.LOGIN_REQUIRED);
+        java.util.concurrent.atomic.AtomicReference<CodingModelOption> currentModel =
+                new java.util.concurrent.atomic.AtomicReference<>(ready);
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("create-idempotency");
+
+        CodingModelCatalog dynamicCatalog = new CodingModelCatalog() {
+            @Override
+            public String defaultModelId() {
+                return "dynamic-model";
+            }
+
+            @Override
+            public List<CodingModelOption> available(TenantRef tenant, PrincipalRef principal) {
+                return List.of(currentModel.get());
+            }
+
+            @Override
+            public Optional<CodingModelOption> find(TenantRef tenant, PrincipalRef principal, String modelId) {
+                return Optional.of(currentModel.get()).filter(m -> m.id().equals(modelId));
+            }
+        };
+
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService service = fixture.codingService(assembly, runtime, ids, dynamicCatalog);
+
+            var created = service.createSession(fixture.projectId, "first prompt", List.of(), "create-idempotent-key");
+            AgentSessionId sessionId = created.summary().sessionId();
+            AgentRunId runId = created.activeRun().orElseThrow().runId();
+            assertThat(runtime.startCount()).isEqualTo(1);
+
+            currentModel.set(unready);
+
+            var retried = service.createSession(fixture.projectId, "first prompt", List.of(), "create-idempotent-key");
+            assertThat(retried.summary().sessionId()).isEqualTo(sessionId);
+            assertThat(retried.activeRun().orElseThrow().runId()).isEqualTo(runId);
+            assertThat(runtime.startCount()).isEqualTo(1);
+        }
+    }
+
+    private static CodingModelCatalog testCatalog(CodingModelOption defaultModel, CodingModelOption... others) {
+        List<CodingModelOption> all = new java.util.ArrayList<>();
+        all.add(defaultModel);
+        all.addAll(List.of(others));
+        return new CodingModelCatalog() {
+            @Override
+            public String defaultModelId() {
+                return defaultModel.id();
+            }
+
+            @Override
+            public List<CodingModelOption> available(TenantRef tenant, PrincipalRef principal) {
+                return all;
+            }
+
+            @Override
+            public Optional<CodingModelOption> find(TenantRef tenant, PrincipalRef principal, String modelId) {
+                return all.stream().filter(m -> m.id().equals(modelId)).findFirst();
+            }
+        };
+    }
+
+    private static CodingModelOption readyModel(String id, String name) {
+        return new CodingModelOption(
+                id,
+                name,
+                "provider-1",
+                "Provider 1",
+                java.util.Set.of("TEXT_CHAT", "TOOL_CALLING"),
+                128_000,
+                16_000,
+                new CodingModelState(
+                        CodingModelState.Connection.CONNECTED,
+                        CodingModelState.BindingAvailability.AVAILABLE,
+                        CodingModelState.RuntimeStatus.NORMAL,
+                        CodingModelState.RunScope.IDLE),
+                "",
+                CodingModelControls.unavailable(),
+                CodingModelPreferences.recommended(),
+                Optional.empty());
+    }
+
+    private static CodingModelOption unreadyModel(String id, String name, CodingModelState.Connection connection) {
+        return new CodingModelOption(
+                id,
+                name,
+                "provider-1",
+                "Provider 1",
+                java.util.Set.of("TEXT_CHAT", "TOOL_CALLING"),
+                128_000,
+                16_000,
+                new CodingModelState(
+                        connection,
+                        CodingModelState.BindingAvailability.AVAILABLE,
+                        CodingModelState.RuntimeStatus.NORMAL,
+                        CodingModelState.RunScope.IDLE),
+                "",
+                CodingModelControls.unavailable(),
+                CodingModelPreferences.recommended(),
+                Optional.empty());
+    }
+
+    @Test
     void codingCompletionPolicyConsumesTheVerificationRequirementFrozenAtSessionCreation() {
         ProductFixture fixture = productFixture();
         CapturingRuntime runtime = new CapturingRuntime();
@@ -859,6 +1118,15 @@ class ProjectPersistenceAssemblyTest {
                 ProjectPersistenceAssembly persistence,
                 AgentRuntime runtime,
                 IdentifierGenerator ids,
+                CodingModelCatalog models) {
+            return codingService(persistence, runtime, ids, models, CodingVerificationProfile.empty());
+        }
+
+        private CodingSessionService codingService(
+                ProjectPersistenceAssembly persistence,
+                AgentRuntime runtime,
+                IdentifierGenerator ids,
+                CodingModelCatalog models,
                 CodingVerificationProfile defaultVerificationProfile) {
             var callers = (io.haifa.agent.application.project.product.TrustedProductCallerProvider)
                     () -> new TrustedProductCaller(TENANT, PRINCIPAL);
@@ -877,6 +1145,19 @@ class ProjectPersistenceAssemblyTest {
                     runtime,
                     ids,
                     CLOCK,
+                    models,
+                    defaultVerificationProfile);
+        }
+
+        private CodingSessionService codingService(
+                ProjectPersistenceAssembly persistence,
+                AgentRuntime runtime,
+                IdentifierGenerator ids,
+                CodingVerificationProfile defaultVerificationProfile) {
+            return codingService(
+                    persistence,
+                    runtime,
+                    ids,
                     CodingModelCatalog.fixed("coding-default", "Configured model"),
                     defaultVerificationProfile);
         }
@@ -886,6 +1167,10 @@ class ProjectPersistenceAssemblyTest {
         private final AtomicInteger sequence = new AtomicInteger();
         private final Map<String, AgentRunSnapshot> byIdempotency = new java.util.concurrent.ConcurrentHashMap<>();
         private final Map<AgentRunId, AgentRunSnapshot> snapshots = new java.util.concurrent.ConcurrentHashMap<>();
+
+        int startCount() {
+            return sequence.get();
+        }
 
         @Override
         public AgentRunSnapshot start(AgentRunRequest request) {

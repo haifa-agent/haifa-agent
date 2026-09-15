@@ -322,12 +322,23 @@ public final class CodingTerminalController implements AutoCloseable {
     public void completeMessageSubmission(MessageSubmissionResult result) {
         Objects.requireNonNull(result, "result must not be null");
         if (result.failureCode().isPresent()) {
+            String code = result.failureCode().orElseThrow();
             apply(new TerminalUiAction.UserMessageRejected(result.submission().idempotencyKey()));
             if (state.editorBuffer().isBlank()) {
                 apply(new TerminalUiAction.EditorChanged(
                         result.submission().text(), result.submission().text().length()));
             }
-            apply(new TerminalUiAction.RecoverableFailure(result.failureCode().orElseThrow()));
+            apply(new TerminalUiAction.RecoverableFailure(code));
+            if ("MODEL_AUTHENTICATION_REQUIRED".equals(code) && state.selector().isEmpty()) {
+                apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                        "model-readiness",
+                        "Model credential unavailable",
+                        List.of(
+                                "Switch model (/model)",
+                                "Connect / Log in to model (/login)",
+                                "Keep draft and dismiss"),
+                        0)));
+            }
             return;
         }
         try {
@@ -942,8 +953,7 @@ public final class CodingTerminalController implements AutoCloseable {
                         argument.toLowerCase(java.util.Locale.ROOT).split("\\s+", 2);
                 String method = loginArguments.length == 0 ? "" : loginArguments[0];
                 if (method.isEmpty()) {
-                    apply(new TerminalUiAction.SelectorOpened(
-                            new TerminalSelector("auth-login", "Connect a model", connectionOptions(), 0)));
+                    openAuthenticationLoginSelector();
                 } else if (method.equals("chatgpt") || method.equals("codex")) {
                     if (loginArguments.length == 1 || loginArguments[1].isBlank()) {
                         openChatGptLoginSelector();
@@ -963,16 +973,7 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             case ACCOUNT -> loadAuthenticationOptions(false);
             case LOGOUT -> loadAuthenticationOptions(true);
-            case MODEL -> {
-                Optional<CodingSessionView> current = awaitingNewSessionMessage ? Optional.empty() : state.session();
-                Optional<RunEventCursor> cursor = state.appliedCursor();
-                AgentRunId previousOutputRunId = outputRunId;
-                RunOutputCursor previousOutputCursor = outputCursor;
-                apply(new TerminalUiAction.StatusChanged("Loading models"));
-                submitEffect(
-                        () -> loadModels(current, argument, cursor, previousOutputRunId, previousOutputCursor),
-                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
-            }
+            case MODEL -> openModelSelector(argument);
             case SETTINGS ->
                 apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
             case TRUST -> workspaceTrust(argument);
@@ -1248,6 +1249,22 @@ public final class CodingTerminalController implements AutoCloseable {
                 0)));
     }
 
+    private void openAuthenticationLoginSelector() {
+        apply(new TerminalUiAction.SelectorOpened(
+                new TerminalSelector("auth-login", "Connect a model", connectionOptions(), 0)));
+    }
+
+    private void openModelSelector(String argument) {
+        Optional<CodingSessionView> current = awaitingNewSessionMessage ? Optional.empty() : state.session();
+        Optional<RunEventCursor> cursor = state.appliedCursor();
+        AgentRunId previousOutputRunId = outputRunId;
+        RunOutputCursor previousOutputCursor = outputCursor;
+        apply(new TerminalUiAction.StatusChanged("Loading models"));
+        submitEffect(
+                () -> loadModels(current, argument, cursor, previousOutputRunId, previousOutputCursor),
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
     private List<String> connectionOptions() {
         List<String> options = new java.util.ArrayList<>();
         if (authentication.codexConnectionSupported()) options.add(CHATGPT_CONNECTION);
@@ -1312,8 +1329,10 @@ public final class CodingTerminalController implements AutoCloseable {
                 Runnable completion;
                 try {
                     CodingAuthenticationView connected = authentication.saveApiKey(providerId, owned);
-                    completion = () -> apply(
-                            new TerminalUiAction.StatusChanged("API key connected for " + connected.accountLabel()));
+                    completion = () -> {
+                        apply(new TerminalUiAction.StatusChanged("API key connected for " + connected.accountLabel()));
+                        scheduleReconcile();
+                    };
                 } catch (ProjectProductException exception) {
                     completion = () -> apply(new TerminalUiAction.RecoverableFailure(exception.code()));
                 } catch (IllegalArgumentException
@@ -1494,6 +1513,14 @@ public final class CodingTerminalController implements AutoCloseable {
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case "session", "workspace-trust" -> apply(new TerminalUiAction.SelectorClosed());
+            case "model-readiness" -> {
+                apply(new TerminalUiAction.SelectorClosed());
+                switch (selected) {
+                    case 0 -> openModelSelector("");
+                    case 1 -> openAuthenticationLoginSelector();
+                    default -> {}
+                }
+            }
             case "model-provider" ->
                 openProviderModelList(modelProviderGroups.get(selected).providerId());
             case "model" -> openModelDetails(modelSelectionOptions.get(selected));
@@ -2022,6 +2049,9 @@ public final class CodingTerminalController implements AutoCloseable {
             outputCursor = new RunOutputCursor(received.event().sequence());
         }
         state = reducer.reduce(state, action);
+        if (action instanceof TerminalUiAction.AuthenticationCompleted) {
+            scheduleReconcile();
+        }
         if (action instanceof TerminalUiAction.RunEventReceived received
                 && received.event().payload() instanceof RunEventPayloads.InteractionLifecycle lifecycle
                 && !lifecycle.state().equals("PENDING")
