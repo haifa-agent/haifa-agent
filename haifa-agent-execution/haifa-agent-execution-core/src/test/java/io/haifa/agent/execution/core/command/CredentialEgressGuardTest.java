@@ -17,7 +17,6 @@ class CredentialEgressGuardTest {
             "GIT_ASKPASS=/tmp/echo-pass.sh git fetch origin",
             "SSH_ASKPASS=script SSH_AUTH_SOCK=/tmp/agent.sock git push",
             "FOO=1 GIT_CONFIG_SYSTEM=/etc/other git status",
-            "echo starting && HOME=/tmp git status",
             "$env:GH_CONFIG_DIR='other'; gh auth status",
             "$env:GH_TOKEN = 'value'; gh pr list",
             "set HOME=C:\\other && git status",
@@ -99,6 +98,15 @@ class CredentialEgressGuardTest {
             "GH_TOKEN_PREFIX=value gh pr list",
             "mvn test && echo done",
             "cd docs && git status"
+        }) {
+            assertThat(CredentialEgressGuard.rejectionCode(command)).as(command).isEmpty();
+        }
+    }
+
+    @Test
+    void documentsTheKnownLimitsOfTheLeadingTokenContract() {
+        for (String command : new String[] {
+            "echo starting && HOME=/tmp git status", "bash -c 'git credential fill'", "sh -c \"gh auth token\""
         }) {
             assertThat(CredentialEgressGuard.rejectionCode(command)).as(command).isEmpty();
         }

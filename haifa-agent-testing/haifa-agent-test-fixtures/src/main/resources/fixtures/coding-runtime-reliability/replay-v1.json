@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.1.0",
   "source": "SYNTHETIC_FROM_AGGREGATE_SHAPES",
   "privacy": {
     "containsCredentials": false,
@@ -13,28 +13,9 @@
     "runs": 15,
     "toolCalls": 130,
     "failedToolCalls": 24,
-    "classificationOrPolicyFailures": 9,
     "normalNonzeroExitFacts": 2
   },
   "cases": [
-    {
-      "caseId": "operation-hint-mismatch",
-      "syntheticCommand": "git status",
-      "observation": {"declaredOperationFamily": "DIFF", "trustedOperation": "INSPECT"},
-      "expected": {"effectiveRisk": "LOW", "toolFailure": false, "hintAuthoritative": false}
-    },
-    {
-      "caseId": "git-ls-files-read",
-      "syntheticCommand": "git ls-files",
-      "observation": {"trustedOperation": "UNKNOWN"},
-      "expected": {"effectiveRisk": "LOW", "toolFailure": false}
-    },
-    {
-      "caseId": "composite-shell-expression",
-      "syntheticCommand": "git status && git diff || echo fallback | more",
-      "observation": {"stableFailureCode": "COMMAND_CLASSIFICATION_REJECTED"},
-      "expected": {"effectiveRisk": "HIGH", "toolFailure": false, "shellDispatch": true}
-    },
     {
       "caseId": "diff-normal-exit",
       "syntheticCommand": "git diff --no-index left.txt right.txt",

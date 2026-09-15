@@ -1,32 +1,31 @@
 package io.haifa.agent.execution.core.command;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Predicate;
 
 /**
- * Narrow, fail-closed guard for the confirmed commands that could read, echo, override, or
+ * Narrow, fail-closed guard for confirmed top-level commands that could read, echo, override, or
  * redirect host authentication material into model-visible output.
  *
- * <p>This is deliberately not a Git/GitHub command grammar. It does not classify targets,
- * subcommands, operations, risk, or business effects. General {@code git}, {@code gh}, wrapper,
- * and customer-script semantics belong to the model and the generic execution path. The guard
- * recognizes only the exact credential-disclosure and credential-override shapes that would
- * otherwise place a host secret in model context or mutate the host authentication state.</p>
+ * <p>This is intentionally a leading-token recognizer, not a shell parser and not a Git/GitHub
+ * command grammar. It inspects only the first words of the command text: optional leading
+ * {@code NAME=value} assignments, the {@code env}/{@code export}/{@code set} builtins, PowerShell
+ * {@code $env:NAME} forms, and {@code git}/{@code gh} used as the command word with an exact
+ * credential subcommand or credential config override. It never interprets shell composition
+ * ({@code ;}, {@code &&}, {@code |}), nested interpreters, wrappers, quoting grammar, Git business
+ * operations, target, risk, or effect.
  *
- * <p>Recognition is lexical and command-shaped: protected environment names are only overrides as
- * actual assignments in executable position ({@code NAME=value cmd}, {@code env}/{@code export},
- * cmd {@code set NAME=value}, or PowerShell {@code $env:NAME=value}), and Git/GitHub credential
- * commands only count when they are invoked as the command word of a shell segment. Textual
- * occurrences such as {@code echo "HOME=value"} or {@code echo "gh auth token"} are arguments, not
- * executions, and stay on the generic path.</p>
+ * <p>Known limits: a credential read or protected override that is not in the leading command
+ * position (for example {@code echo x && HOME=/tmp git status}), handed to a wrapper or nested
+ * interpreter, or expressed through an unlisted credential path is not recognized here and must be
+ * handled by general credential-egress protection. Textual occurrences such as
+ * {@code echo "HOME=value"} or {@code echo "gh auth token"} are arguments, not executions, and stay
+ * on the generic path.
  *
- * <p>Every rule here is covered by a regression test proving that a protected credential cannot
- * reach model-visible output. When a general Credential egress boundary exists, this guard can be
- * replaced by it; until then these paths stay fail closed.</p>
+ * <p>Every recognized path has a regression proving the protected value cannot reach model-visible
+ * output. When a general Credential egress boundary exists, this guard can be replaced by it.
  */
 public final class CredentialEgressGuard {
     public static final String ENVIRONMENT_OVERRIDE_CODE = "AUTHENTICATION_ENVIRONMENT_OVERRIDE";
@@ -35,6 +34,9 @@ public final class CredentialEgressGuard {
     public static final String GITHUB_TOKEN_DISCLOSURE_CODE = "GH_AUTH_TOKEN_DISCLOSURE_DENIED";
     public static final String GITHUB_AUTH_STATE_CODE = "GH_AUTHENTICATION_MUTATION_OR_DISCLOSURE";
 
+    private static final String ENV_PREFIX = "$env:";
+    private static final String CONFIG_ENV_PREFIX = "--config-env=";
+    private static final String SHOW_TOKEN = "--show-token";
     private static final Set<String> PROTECTED_ENVIRONMENT = Set.of(
             "GH_TOKEN",
             "GITHUB_TOKEN",
@@ -63,36 +65,41 @@ public final class CredentialEgressGuard {
         if (command == null || command.isBlank() || command.indexOf('\0') >= 0) {
             return Optional.empty();
         }
-        List<List<String>> segments = segments(command);
-        if (overridesProtectedEnvironment(segments)) {
+        List<String> words = List.of(command.strip().split("\\s+"));
+        int index = 0;
+        while (index < words.size() && isAssignment(words.get(index))) {
+            if (isProtectedAssignment(words.get(index))) {
+                return Optional.of(ENVIRONMENT_OVERRIDE_CODE);
+            }
+            index++;
+        }
+        if (index >= words.size()) {
+            return Optional.empty();
+        }
+        List<String> commandWords = words.subList(index, words.size());
+        String head = commandHead(commandWords.getFirst());
+        if (ASSIGNMENT_COMMANDS.contains(head)
+                && hasProtectedAssignment(commandWords.subList(1, commandWords.size()), head.equals("set"))) {
             return Optional.of(ENVIRONMENT_OVERRIDE_CODE);
         }
-        if (anySegment(
-                segments,
-                words -> isCommand(words, "gh")
-                        && words.size() >= 3
-                        && words.get(1).equals("auth")
-                        && words.get(2).equals("status")
-                        && words.subList(3, words.size()).contains("--show-token"))) {
-            return Optional.of(GITHUB_TOKEN_DISCLOSURE_CODE);
+        if (head.startsWith(ENV_PREFIX) && isProtectedPowerShellAssignment(commandWords)) {
+            return Optional.of(ENVIRONMENT_OVERRIDE_CODE);
         }
-        if (anySegment(
-                segments,
-                words -> isCommand(words, "gh")
-                        && words.size() >= 2
-                        && words.get(1).equals("auth")
-                        && (words.size() < 3 || !words.get(2).equals("status")))) {
-            return Optional.of(GITHUB_AUTH_STATE_CODE);
+        if (head.equals("git")) {
+            if (hasWord(commandWords, 1, "credential") || hasPrefix(commandWords, 1, "credential-")) {
+                return Optional.of(GIT_CREDENTIAL_PROTOCOL_CODE);
+            }
+            if (overridesCredentialConfig(commandWords)) {
+                return Optional.of(GIT_CONFIG_OVERRIDE_CODE);
+            }
         }
-        if (anySegment(
-                segments,
-                words -> isCommand(words, "git")
-                        && words.size() >= 2
-                        && (words.get(1).equals("credential") || words.get(1).startsWith("credential-")))) {
-            return Optional.of(GIT_CREDENTIAL_PROTOCOL_CODE);
-        }
-        if (overridesGitCredentialConfig(segments)) {
-            return Optional.of(GIT_CONFIG_OVERRIDE_CODE);
+        if (head.equals("gh") && hasWord(commandWords, 1, "auth")) {
+            if (!hasWord(commandWords, 2, "status")) {
+                return Optional.of(GITHUB_AUTH_STATE_CODE);
+            }
+            if (commandWords.subList(3, commandWords.size()).contains(SHOW_TOKEN)) {
+                return Optional.of(GITHUB_TOKEN_DISCLOSURE_CODE);
+            }
         }
         return Optional.empty();
     }
@@ -101,68 +108,45 @@ public final class CredentialEgressGuard {
         return rejectionCode(command).isPresent();
     }
 
-    private static boolean overridesProtectedEnvironment(List<List<String>> segments) {
-        for (List<String> words : segments) {
-            if (words.isEmpty()) continue;
-            if (hasPowerShellAssignment(words)) return true;
-            String head = commandHead(words.getFirst());
-            if (ASSIGNMENT_COMMANDS.contains(head)
-                    && hasProtectedAssignment(words.subList(1, words.size()), head.equals("set"))) {
-                return true;
-            }
-            int index = 0;
-            while (index < words.size() && isAssignment(words.get(index))) {
-                if (isProtectedAssignment(words.get(index))) return true;
-                index++;
-            }
+    private static boolean isProtectedPowerShellAssignment(List<String> commandWords) {
+        String token = commandWords.getFirst().toLowerCase(Locale.ROOT);
+        int equals = token.indexOf('=');
+        String name;
+        if (equals > ENV_PREFIX.length()) {
+            name = token.substring(ENV_PREFIX.length(), equals);
+        } else if (equals < 0 && commandWords.size() > 1 && commandWords.get(1).equals("=")) {
+            name = token.substring(ENV_PREFIX.length());
+        } else {
+            return false;
         }
-        return false;
-    }
-
-    private static boolean hasPowerShellAssignment(List<String> words) {
-        for (int index = 0; index < words.size(); index++) {
-            String lower = words.get(index).toLowerCase(Locale.ROOT);
-            if (!lower.startsWith("$env:")) continue;
-            int equals = lower.indexOf('=');
-            String name;
-            if (equals > "$env:".length()) {
-                name = lower.substring("$env:".length(), equals);
-            } else if (equals < 0
-                    && index + 1 < words.size()
-                    && words.get(index + 1).equals("=")) {
-                name = lower.substring("$env:".length());
-            } else {
-                continue;
-            }
-            if (PROTECTED_ENVIRONMENT.contains(name.toUpperCase(Locale.ROOT))) return true;
-        }
-        return false;
+        return PROTECTED_ENVIRONMENT.contains(name.toUpperCase(Locale.ROOT));
     }
 
     private static boolean hasProtectedAssignment(List<String> words, boolean stripQuotes) {
         for (String word : words) {
             String candidate = stripQuotes ? stripSurroundingQuotes(word) : word;
-            if (isAssignment(candidate) && isProtectedAssignment(candidate)) return true;
+            if (isAssignment(candidate) && isProtectedAssignment(candidate)) {
+                return true;
+            }
         }
         return false;
     }
 
-    private static boolean overridesGitCredentialConfig(List<List<String>> segments) {
-        for (List<String> words : segments) {
-            if (!isCommand(words, "git")) continue;
-            for (int index = 1; index + 1 < words.size(); index++) {
-                String option = words.get(index);
-                String value;
-                if (option.equals("-c")) {
-                    value = words.get(index + 1);
-                } else if (option.startsWith("--config-env=")) {
-                    value = option.substring("--config-env=".length());
-                } else if (option.equals("--config-env")) {
-                    value = words.get(index + 1);
-                } else {
-                    continue;
-                }
-                if (isCredentialConfigKey(value)) return true;
+    private static boolean overridesCredentialConfig(List<String> commandWords) {
+        for (int index = 1; index + 1 < commandWords.size(); index++) {
+            String option = commandWords.get(index);
+            String value;
+            if (option.equals("-c")) {
+                value = commandWords.get(index + 1);
+            } else if (option.startsWith(CONFIG_ENV_PREFIX)) {
+                value = option.substring(CONFIG_ENV_PREFIX.length());
+            } else if (option.equals("--config-env")) {
+                value = commandWords.get(index + 1);
+            } else {
+                continue;
+            }
+            if (isCredentialConfigKey(value)) {
+                return true;
             }
         }
         return false;
@@ -177,27 +161,33 @@ public final class CredentialEgressGuard {
         return CREDENTIAL_CONFIG_KEYS.stream().anyMatch(key::contains);
     }
 
-    private static boolean anySegment(List<List<String>> segments, Predicate<List<String>> predicate) {
-        return segments.stream().anyMatch(predicate);
+    private static boolean hasWord(List<String> words, int index, String value) {
+        return index < words.size() && words.get(index).equals(value);
     }
 
-    private static boolean isCommand(List<String> words, String name) {
-        return !words.isEmpty() && commandHead(words.getFirst()).equals(name);
+    private static boolean hasPrefix(List<String> words, int index, String prefix) {
+        return index < words.size() && words.get(index).startsWith(prefix);
     }
 
     private static boolean isAssignment(String token) {
         int equals = token.indexOf('=');
-        if (equals <= 0) return false;
+        if (equals <= 0) {
+            return false;
+        }
         for (int index = 0; index < equals; index++) {
             char value = token.charAt(index);
-            if (!(Character.isLetterOrDigit(value) || value == '_')) return false;
+            if (!(Character.isLetterOrDigit(value) || value == '_')) {
+                return false;
+            }
         }
         return true;
     }
 
     private static boolean isProtectedAssignment(String token) {
         int equals = token.indexOf('=');
-        if (equals <= 0) return false;
+        if (equals <= 0) {
+            return false;
+        }
         return PROTECTED_ENVIRONMENT.contains(token.substring(0, equals).toUpperCase(Locale.ROOT));
     }
 
@@ -213,54 +203,5 @@ public final class CredentialEgressGuard {
         int separator = Math.max(lower.lastIndexOf('/'), lower.lastIndexOf('\\'));
         String name = separator >= 0 ? lower.substring(separator + 1) : lower;
         return name.endsWith(".exe") ? name.substring(0, name.length() - 4) : name;
-    }
-
-    /** Splits the command text into command segments of whitespace-separated words, honors quotes. */
-    private static List<List<String>> segments(String command) {
-        List<List<String>> segments = new ArrayList<>();
-        List<String> words = new ArrayList<>();
-        StringBuilder token = new StringBuilder();
-        boolean pending = false;
-        char quote = 0;
-        for (int index = 0; index < command.length(); index++) {
-            char value = command.charAt(index);
-            if (quote != 0) {
-                token.append(value);
-                pending = true;
-                if (value == quote) quote = 0;
-                continue;
-            }
-            if (value == '\'' || value == '"') {
-                quote = value;
-                token.append(value);
-                pending = true;
-                continue;
-            }
-            if (Character.isWhitespace(value)) {
-                if (pending) {
-                    words.add(token.toString());
-                    token.setLength(0);
-                    pending = false;
-                }
-                continue;
-            }
-            if (value == ';' || value == '|' || value == '&' || value == '(' || value == ')') {
-                if (pending) {
-                    words.add(token.toString());
-                    token.setLength(0);
-                    pending = false;
-                }
-                if (!words.isEmpty()) {
-                    segments.add(words);
-                    words = new ArrayList<>();
-                }
-                continue;
-            }
-            token.append(value);
-            pending = true;
-        }
-        if (pending) words.add(token.toString());
-        if (!words.isEmpty()) segments.add(words);
-        return segments;
     }
 }
