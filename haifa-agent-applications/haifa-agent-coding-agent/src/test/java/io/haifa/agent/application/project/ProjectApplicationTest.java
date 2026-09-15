@@ -18,7 +18,6 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.SandboxProfileRef;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.configuration.ProjectConfiguration;
 import io.haifa.agent.project.configuration.ProjectConfigurationId;
 import io.haifa.agent.project.configuration.ProjectConfigurationVersion;
@@ -29,12 +28,9 @@ import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.Workspace;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.runtime.api.AgentRunHandle;
 import io.haifa.agent.runtime.api.AgentRunListener;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
@@ -54,10 +50,17 @@ import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.skill.api.SkillActivation;
 import io.haifa.agent.skill.api.SkillActivationRequest;
+import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.skill.api.SkillContent;
+import io.haifa.agent.skill.api.SkillOrigin;
+import io.haifa.agent.skill.api.SkillParserMode;
+import io.haifa.agent.skill.api.SkillScope;
+import io.haifa.agent.skill.api.SkillVisibilityContext;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -66,6 +69,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ProjectApplicationTest {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
@@ -147,8 +151,10 @@ class ProjectApplicationTest {
                         "command-specific wrappers",
                         "operationFamily",
                         "optional declared hint",
-                        "BUILD or TEST",
-                        "final diff inspection");
+                        "output budgeting",
+                        "never grants authorization",
+                        "same generic execution path",
+                        "authentication material");
         @SuppressWarnings("unchecked")
         var commandSchema = (java.util.Map<String, Object>) properties.get("command");
         assertThat(commandSchema.get("description").toString())
@@ -199,7 +205,8 @@ class ProjectApplicationTest {
         var skills = ProjectSkillPlatform.baseSkills(tenant, principal, Optional.empty(), false);
         assertThat(skills.catalog().snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
-                .containsExactly("git", "github", "result-verification", "task-planning");
+                .containsExactly("result-verification", "task-planning")
+                .doesNotContain("git", "github");
 
         SkillActivationService unusedService = new SkillActivationService() {
             @Override
@@ -232,6 +239,47 @@ class ProjectApplicationTest {
     }
 
     @Test
+    void userDirectoryMayDefineGitAndGithubAsOrdinarySkills(@TempDir Path sourceRoot) throws Exception {
+        for (String name : List.of("git", "github")) {
+            Path skillRoot = Files.createDirectory(sourceRoot.resolve(name));
+            Files.writeString(
+                    skillRoot.resolve("SKILL.md"),
+                    """
+                    ---
+                    name: %s
+                    description: User-owned repository conventions.
+                    ---
+                    # User-owned %s conventions
+                    """
+                            .formatted(name, name));
+        }
+        TenantRef tenant = new TenantRef("tenant");
+        PrincipalRef principal = new PrincipalRef("principal", "user");
+        var platform = ProjectSkillPlatform.baseAndUserDirectorySkills(
+                tenant,
+                principal,
+                Optional.empty(),
+                false,
+                List.of(new ProjectSkillPlatform.UserDirectorySource(
+                        "user-skills", sourceRoot, 100, SkillParserMode.STRICT, SkillOrigin.CREATED)));
+
+        assertThat(platform.catalog().snapshot().bindings())
+                .extracting(binding -> binding.alias().value())
+                .contains("git", "github", "result-verification", "task-planning");
+        var visibility = new SkillVisibilityContext(
+                tenant,
+                principal,
+                Optional.empty(),
+                false,
+                Set.of(SkillScope.USER, SkillScope.PROJECT, SkillScope.TENANT, SkillScope.PRODUCT, SkillScope.SDK));
+        for (String name : List.of("git", "github")) {
+            var binding = platform.catalog().findByAlias(new SkillAlias(name)).orElseThrow();
+            assertThat(platform.contentLoader().load(binding, visibility).instructions())
+                    .contains("User-owned " + name + " conventions");
+        }
+    }
+
+    @Test
     void doesNotPublishAPermissionRequestTool() {
         var catalog = new ProjectToolCatalog();
         var frozen = catalog.freeze(
@@ -242,7 +290,7 @@ class ProjectApplicationTest {
                 executionProfile("host-guarded", "two"));
 
         assertThat(frozen.snapshot().bindings())
-                .hasSize(13)
+                .hasSize(12)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
                         "execution_run",
@@ -256,8 +304,7 @@ class ProjectApplicationTest {
                         "file_search",
                         "file_stat",
                         "file_write",
-                        "workspace_attach",
-                        "workspace_worktree_create");
+                        "workspace_attach");
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
             assertThat(binding.alias().value())
                     .isEqualTo(binding.definition().name().value());
@@ -283,28 +330,6 @@ class ProjectApplicationTest {
                     assertThat(binding.definition().inputSchema().document().toString())
                             .contains("path", "mode", "read", "develop")
                             .doesNotContain("permission", "read-only", "read-write");
-                });
-        assertThat(frozen.snapshot().bindings())
-                .filteredOn(binding -> binding.alias().value().equals("workspace_worktree_create"))
-                .singleElement()
-                .satisfies(binding -> {
-                    assertThat(binding.definition().approvalRequirement())
-                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.ALWAYS);
-                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
-                    assertThat(binding.definition().sideEffects())
-                            .contains(
-                                    io.haifa.agent.tool.api.ToolSideEffect.FILE_WRITE,
-                                    io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION,
-                                    io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
-                    assertThat(binding.definition()
-                                    .inputSchema()
-                                    .document()
-                                    .get("required")
-                                    .toString())
-                            .contains("sourceWorkspaceRef", "baseCommit", "branchName", "targetName")
-                            .doesNotContain("deliveryIntent", "permission");
-                    assertThat(binding.definition().inputSchema().document().toString())
-                            .doesNotContain("deliveryIntent", "permission", "read-write");
                 });
         assertThat(frozen.snapshot().bindings())
                 .filteredOn(binding -> binding.alias().value().equals("file_write"))
@@ -417,13 +442,7 @@ class ProjectApplicationTest {
                 .assignDefaultWorkspace(workspaceId, NOW);
         projects.create(project);
         var workspaces = new InMemoryWorkspaceStore();
-        workspaces.create(Workspace.provision(
-                        workspaceId,
-                        projectId,
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), new WorkspaceBindingId("binding-1"), "test"),
-                        WorkspaceRevision.initial("root"),
-                        NOW)
+        workspaces.create(Workspace.provision(workspaceId, projectId, WorkspaceRevision.initial("root"), NOW)
                 .activate(NOW));
         var configurationStore = new InMemoryProjectConfigurationStore();
         var configuration = ProjectConfiguration.create(

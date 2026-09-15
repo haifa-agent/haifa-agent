@@ -824,10 +824,8 @@ public final class TerminalUiReducer {
 
     private static String nextAction(String reasonCode) {
         return switch (reasonCode) {
-            case "COMMAND_CLASSIFICATION_REJECTED" ->
-                "Split compound or wrapped shell text into one simple command per tool call.";
-            case "ABSOLUTE_WORKDIR_FORBIDDEN", "WORKDIR_INVALID", "CWD_DENIED", "WORKSPACE_PROTOCOL_REQUIRED" ->
-                "Use workspaceRef with relativeWorkdir; remove absolute cd and git -C directory overrides.";
+            case "ABSOLUTE_WORKDIR_FORBIDDEN", "WORKDIR_INVALID", "CWD_DENIED" ->
+                "Use workspaceRef with relativeWorkdir; remove absolute cd directory changes.";
             case "NETWORK_UNAVAILABLE" ->
                 "If the frozen profile denied network access, request permission for this exact failed command.";
             case "HOST_AUTHENTICATION_UNAVAILABLE" ->

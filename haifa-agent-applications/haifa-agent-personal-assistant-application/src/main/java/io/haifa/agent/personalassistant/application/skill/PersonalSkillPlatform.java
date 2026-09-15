@@ -20,7 +20,6 @@ import io.haifa.agent.skill.api.SkillSourceRef;
 import io.haifa.agent.skill.api.SkillTrustSnapshot;
 import io.haifa.agent.skill.api.SkillTrustSubject;
 import io.haifa.agent.skill.api.SkillVisibilityContext;
-import io.haifa.agent.skill.base.BaseSkills;
 import io.haifa.agent.skill.core.ClasspathSkillSource;
 import io.haifa.agent.skill.core.CompositeSkillContentLoader;
 import io.haifa.agent.skill.core.LocalDirectorySkillSource;
@@ -100,7 +99,6 @@ public record PersonalSkillPlatform(
             PersonalTrustedScriptManifest trustManifest,
             Clock clock) {
         List<SkillSource> sources = new ArrayList<>();
-        sources.add(BaseSkills.gitCliSource());
         sources.addAll(bundled());
         configuredLocalRoot.ifPresent(root -> sources.add(local(tenant, principal, root, forbiddenRoots)));
         var visibility = new SkillVisibilityContext(

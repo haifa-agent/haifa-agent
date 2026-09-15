@@ -16,6 +16,7 @@ import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.execution.core.ExecutionRejectedException;
+import io.haifa.agent.execution.core.command.CredentialEgressGuard;
 import io.haifa.agent.execution.core.manifest.ManifestBudgetException;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.path.ProjectPath;
@@ -295,12 +296,9 @@ public final class ExecutionToolProvider implements ToolProvider {
                     throw new IllegalArgumentException("language is only valid for SCRIPT mode");
                 }
                 if (!arguments.isEmpty()) throw new IllegalArgumentException("args are only valid for SCRIPT mode");
-                var classification =
-                        io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier.classify(content);
-                if (classification.risk()
-                        == io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier.Risk.DENIED) {
-                    throw new SecurityException(classification.reasonCode());
-                }
+                CredentialEgressGuard.rejectionCode(content).ifPresent(code -> {
+                    throw new SecurityException(code);
+                });
                 yield new ParsedInvocation(
                         mode,
                         "",
