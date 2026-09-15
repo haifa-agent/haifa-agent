@@ -325,8 +325,8 @@ class RuntimeEventFeedTest {
                         Map.of(
                                 "phase", "COMPLETION",
                                 "status", "COMPLETION_DEFERRED",
-                                "reasonCode", "DIFF_INSPECTION_MISSING",
-                                "missingEvidence", List.of("DIFF_INSPECTION"),
+                                "reasonCode", "PRODUCT_REQUIREMENT_MISSING",
+                                "missingEvidence", List.of("PRODUCT_REQUIREMENT"),
                                 "remainingPercent", 24,
                                 "attempt", 1,
                                 "fullPrompt", "must-not-project",
@@ -340,7 +340,7 @@ class RuntimeEventFeedTest {
 
         assertThat(deferred.eventType()).isEqualTo("completion.deferred");
         assertThat(payload.phase()).isEqualTo("COMPLETION");
-        assertThat(payload.missingEvidence()).containsExactly("DIFF_INSPECTION");
+        assertThat(payload.missingEvidence()).containsExactly("PRODUCT_REQUIREMENT");
         assertThat(payload.toString()).doesNotContain("must-not-project", "/private/workspace");
 
         assertThat(projector.project(new RuntimeEvent(

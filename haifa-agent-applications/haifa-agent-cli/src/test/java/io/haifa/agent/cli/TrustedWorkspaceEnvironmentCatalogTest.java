@@ -2,7 +2,6 @@ package io.haifa.agent.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,7 +22,6 @@ class TrustedWorkspaceEnvironmentCatalogTest {
                 .isEqualTo(TrustedWorkspaceEnvironmentCatalog.RepositoryStatus.NOT_PRESENT);
         assertThat(snapshot.instructionStatus()).isEqualTo(TrustedProjectResourceCatalog.InstructionStatus.NOT_PRESENT);
         assertThat(snapshot.projectSignals()).isEmpty();
-        assertThat(snapshot.validationCandidates()).isEmpty();
         assertThat(snapshot.promptBlock())
                 .contains(
                         "<workspace_root>.</workspace_root>",
@@ -38,7 +36,7 @@ class TrustedWorkspaceEnvironmentCatalogTest {
     }
 
     @Test
-    void mixedRootReusesStableSignalsAndFrozenVerificationCandidates() throws Exception {
+    void mixedRootReusesStableSignals() throws Exception {
         Files.createDirectory(root.resolve(".git"));
         Files.writeString(root.resolve("AGENTS.md"), "Preserve unrelated changes.");
         Files.writeString(root.resolve("pom.xml"), "<project/>");
@@ -48,7 +46,7 @@ class TrustedWorkspaceEnvironmentCatalogTest {
         Files.writeString(root.resolve("pyproject.toml"), "[tool.pytest.ini_options]");
         Files.createDirectories(root.resolve("src/test"));
 
-        var discovery = CliVerificationProfileDiscovery.discoverWithSignals(root, "Windows 11");
+        var discovery = CliWorkspaceSignalDiscovery.discoverWithSignals(root, "Windows 11");
         var snapshot = new TrustedWorkspaceEnvironmentCatalog(
                         root, discovery, new TrustedProjectResourceCatalog(root).snapshot(), enabledEnvironment())
                 .snapshot();
@@ -59,9 +57,11 @@ class TrustedWorkspaceEnvironmentCatalogTest {
         assertThat(snapshot.projectSignals())
                 .containsExactly(
                         "mvnw.cmd", "package-lock.json", "package.json", "pom.xml", "pyproject.toml", "src/test");
-        assertThat(snapshot.validationCandidates()).containsExactly(".\\mvnw.cmd test", "npm test", "python -m pytest");
         assertThat(snapshot.promptBlock())
-                .contains("network=\"DENY\"", "root_agents=\"PRESENT\"", ".\\mvnw.cmd test,npm test,python -m pytest")
+                .contains(
+                        "network=\"DENY\"",
+                        "root_agents=\"PRESENT\"",
+                        "mvnw.cmd,package-lock.json,package.json,pom.xml,pyproject.toml,src/test")
                 .doesNotContain("Preserve unrelated changes.");
         assertThat(snapshot.truncated()).isFalse();
     }
@@ -108,8 +108,7 @@ class TrustedWorkspaceEnvironmentCatalogTest {
         List<String> oversizedSignals = java.util.stream.IntStream.range(0, 100)
                 .mapToObj(index -> "signal-" + index + "-" + "x".repeat(500))
                 .toList();
-        var discovery = new CliVerificationProfileDiscovery.DiscoveryResult(
-                CodingVerificationProfile.empty(), oversizedSignals, List.of());
+        var discovery = new CliWorkspaceSignalDiscovery.DiscoveryResult(oversizedSignals, List.of());
         var resources = new TrustedProjectResourceCatalog(root).snapshot();
 
         var first = new TrustedWorkspaceEnvironmentCatalog(root, discovery, resources, enabledEnvironment()).snapshot();
@@ -127,7 +126,7 @@ class TrustedWorkspaceEnvironmentCatalogTest {
         var resources = new TrustedProjectResourceCatalog(root);
         var catalog = new TrustedWorkspaceEnvironmentCatalog(
                 root,
-                CliVerificationProfileDiscovery.discoverWithSignals(root, "Linux"),
+                CliWorkspaceSignalDiscovery.discoverWithSignals(root, "Linux"),
                 resources.snapshot(),
                 disabledEnvironment());
         var first = catalog.snapshot();
@@ -146,7 +145,7 @@ class TrustedWorkspaceEnvironmentCatalogTest {
             TrustedWorkspaceEnvironmentCatalog.EnvironmentFacts environment) {
         return new TrustedWorkspaceEnvironmentCatalog(
                         root,
-                        CliVerificationProfileDiscovery.discoverWithSignals(root, "Linux"),
+                        CliWorkspaceSignalDiscovery.discoverWithSignals(root, "Linux"),
                         new TrustedProjectResourceCatalog(root).snapshot(),
                         environment)
                 .snapshot();

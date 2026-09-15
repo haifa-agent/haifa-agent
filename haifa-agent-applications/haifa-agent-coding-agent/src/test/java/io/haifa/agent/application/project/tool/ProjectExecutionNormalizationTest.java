@@ -10,13 +10,6 @@ import static io.haifa.agent.application.project.tool.ProjectExecutionTestSuppor
 import static io.haifa.agent.application.project.tool.ProjectExecutionTestSupport.resultWithoutChangeSet;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
-import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCost;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationSource;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationTrigger;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.ExecutionBroker;
@@ -102,7 +95,6 @@ class ProjectExecutionNormalizationTest {
                 .doesNotContainKey("scratchSpecDigest")
                 .doesNotContainKey("scratchProvisioned")
                 .doesNotContainKey("scratchCleanupFailed");
-        assertThat(result.structuredData()).doesNotContainKeys("validationEvidence", "validationAttemptRef");
         assertThat(result.assets()).extracting(AssetRef::assetId).containsExactly("stdout-asset");
     }
 
@@ -117,17 +109,9 @@ class ProjectExecutionNormalizationTest {
             }
         };
         String command = "mvn -pl :module test";
-        var candidate = new CodingVerificationCandidate(
-                command,
-                CodingVerificationCost.MEDIUM,
-                CodingVerificationTrigger.MODULE_CHANGE,
-                CodingVerificationSource.REPOSITORY_INSTRUCTIONS,
-                "AGENTS.md",
-                CodingValidationScope.SELECTED);
-        var frozen = CodingSessionVerificationConfiguration.freeze(new CodingVerificationProfile(List.of(candidate)));
 
-        ToolResult result = operations(broker, 1024, 100, ignored -> frozen)
-                .execute(invocation(Map.of("command", command), () -> false), access());
+        ToolResult result =
+                operations(broker, 1024, 100).execute(invocation(Map.of("command", command), () -> false), access());
 
         assertThat(captured.get().limits().timeout()).isEqualTo(Duration.ofSeconds(30));
         assertThat(result.structuredData())

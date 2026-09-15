@@ -25,13 +25,13 @@ class RunEventPayloadsTest {
     @Test
     void deliveryLifecycleAcceptsOnlyBoundedSafeCodes() {
         var payload = new RunEventPayloads.DeliveryLifecycle(
-                "VERIFYING",
+                "COMPLETION",
                 "COMPLETION_DEFERRED",
-                "DIFF_INSPECTION_MISSING",
-                List.of("DIFF_INSPECTION", "VALIDATION_ATTEMPT"),
+                "PRODUCT_REQUIREMENT_MISSING",
+                List.of("PRODUCT_REQUIREMENT", "SECOND_REQUIREMENT"),
                 25,
                 1);
-        assertThat(payload.missingEvidence()).containsExactly("DIFF_INSPECTION", "VALIDATION_ATTEMPT");
+        assertThat(payload.missingEvidence()).containsExactly("PRODUCT_REQUIREMENT", "SECOND_REQUIREMENT");
         assertThat(payload.limitingResource()).isEqualTo("NONE");
 
         var budget = new RunEventPayloads.DeliveryLifecycle(
@@ -41,10 +41,10 @@ class RunEventPayloadsTest {
         assertThat(budget.limitingLimit()).isEqualTo(32);
 
         assertThatThrownBy(() -> new RunEventPayloads.DeliveryLifecycle(
-                        "VERIFYING", "COMPLETION_DEFERRED", "CODE", List.of("/host/path"), 25, 1))
+                        "COMPLETION", "COMPLETION_DEFERRED", "CODE", List.of("/host/path"), 25, 1))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new RunEventPayloads.DeliveryLifecycle(
-                        "VERIFYING", "COMPLETION_DEFERRED", "CODE", List.of(), 101, 1))
+                        "COMPLETION", "COMPLETION_DEFERRED", "CODE", List.of(), 101, 1))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new RunEventPayloads.DeliveryLifecycle(
                         "BUDGET", "BUDGET_THRESHOLD_REACHED", "CODE", List.of(), 25, 0, "toolCalls", 1, 2))

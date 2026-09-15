@@ -597,8 +597,8 @@ class TerminalUiReducerTest {
                         new RunEventPayloads.DeliveryLifecycle(
                                 "COMPLETION",
                                 "COMPLETION_DEFERRED",
-                                "WORKSPACE_CHANGE_MISSING",
-                                List.of("WORKSPACE_CHANGE"),
+                                "REQUIRED_ARTIFACT_MISSING",
+                                List.of("REQUIRED_ARTIFACT"),
                                 30,
                                 1))));
         TerminalUiState secondDeferral = reducer.reduce(
@@ -609,8 +609,8 @@ class TerminalUiReducerTest {
                         new RunEventPayloads.DeliveryLifecycle(
                                 "COMPLETION",
                                 "COMPLETION_DEFERRED",
-                                "DIFF_INSPECTION_MISSING",
-                                List.of("DIFF_INSPECTION", "VALIDATION_ATTEMPT"),
+                                "PRODUCT_REQUIREMENT_MISSING",
+                                List.of("PRODUCT_REQUIREMENT", "SECOND_REQUIREMENT"),
                                 24,
                                 2))));
         TerminalUiState budget = reducer.reduce(
@@ -637,7 +637,7 @@ class TerminalUiReducerTest {
                 .satisfies(item -> {
                     assertThat(item.title()).isEqualTo("Completion deferred");
                     assertThat(item.body())
-                            .contains("DIFF_INSPECTION", "VALIDATION_ATTEMPT", "Remaining: 24%")
+                            .contains("PRODUCT_REQUIREMENT", "SECOND_REQUIREMENT", "Remaining: 24%")
                             .doesNotContain("/Users/", "stderr", "fingerprint");
                 });
         assertThat(budget.status()).isEqualTo("Budget threshold");

@@ -612,30 +612,6 @@ public final class ProjectToolCatalog {
             properties.put("diffCountsComplete", Map.of("type", "boolean"));
             properties.put("diffSummary", Map.of("type", "string"));
             properties.put("diffArtifactRef", Map.of("type", "string"));
-            properties.put(
-                    "validationEvidence",
-                    Map.of(
-                            "type",
-                            "object",
-                            "properties",
-                            Map.of(
-                                    "schemaVersion", Map.of("type", "string", "const", "coding-validation-attempt/3"),
-                                    "scope", Map.of("type", "string", "enum", List.of("FULL", "SELECTED", "UNKNOWN")),
-                                    "verificationSource", Map.of("type", "string"),
-                                    "claimCode", Map.of("type", "string"),
-                                    "verificationProfileDigest", Map.of("type", "string"),
-                                    "verificationCandidateDigest", Map.of("type", "string")),
-                            "required",
-                            List.of(
-                                    "schemaVersion",
-                                    "scope",
-                                    "verificationSource",
-                                    "claimCode",
-                                    "verificationProfileDigest",
-                                    "verificationCandidateDigest"),
-                            "additionalProperties",
-                            false));
-            properties.put("validationAttemptRef", Map.of("type", "string"));
             properties.put("sandboxProfileDigest", Map.of("type", "string"));
             properties.put("scratchSpecDigest", Map.of("type", "string"));
             properties.put("scratchProvisioned", Map.of("type", "boolean"));

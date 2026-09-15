@@ -21,10 +21,10 @@ class RuntimeControlTraceReplayTest {
     void replaysPrematureFinalAsNeutralCompletion() {
         var result = replay.replay(List.of(new SafeEvent(
                 "completion.deferred",
-                Map.of("attempt", 1, "phase", "COMPLETION", "evidenceCodes", List.of("WORKSPACE_CHANGE")))));
+                Map.of("attempt", 1, "phase", "COMPLETION", "evidenceCodes", List.of("PRODUCT_REQUIREMENT")))));
         assertThat(result.phase()).isEqualTo("COMPLETION");
         assertThat(result.completionRepairAttempts()).isEqualTo(1);
-        assertThat(result.evidenceCodes()).containsExactly("WORKSPACE_CHANGE");
+        assertThat(result.evidenceCodes()).containsExactly("PRODUCT_REQUIREMENT");
     }
 
     @Test
@@ -35,18 +35,6 @@ class RuntimeControlTraceReplayTest {
                 event("run.structured-termination", "reason", "COMPLETION_REPAIR_EXHAUSTED")));
         assertThat(result.completionRepairAttempts()).isEqualTo(2);
         assertThat(result.terminationReason()).isEqualTo("COMPLETION_REPAIR_EXHAUSTED");
-    }
-
-    @Test
-    void replaysChangeValidationDiffCompletion() {
-        var result = replay.replay(List.of(
-                new SafeEvent(
-                        "delivery.evidence-updated",
-                        Map.of("evidenceCodes", List.of("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT", "DIFF_INSPECTION"))),
-                event("run.completed")));
-        assertThat(result.evidenceCodes())
-                .containsExactlyInAnyOrder("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT", "DIFF_INSPECTION");
-        assertThat(result.phase()).isEqualTo("COMPLETED");
     }
 
     @Test
