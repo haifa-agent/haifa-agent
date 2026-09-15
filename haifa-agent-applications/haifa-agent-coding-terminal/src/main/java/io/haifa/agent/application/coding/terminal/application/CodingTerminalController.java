@@ -1079,7 +1079,6 @@ public final class CodingTerminalController implements AutoCloseable {
                         workspace.safeDisplayName(),
                         workspace.mode(),
                         workspace.status(),
-                        workspace.source(),
                         workspace.workspaceRef())
                 + (workspace.revocable() ? " · revocable" : "");
     }

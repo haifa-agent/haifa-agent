@@ -932,10 +932,8 @@ class LocalCodingAgentTest {
                 ignored -> {},
                 new AesGcmModelContinuationProtector(
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
-            int registryRowsBefore = countRows(database, "coding_workspace_registry");
-            int accessRowsBefore = countRows(database, "coding_workspace_access");
-            assertThat(registryRowsBefore).isEqualTo(1);
-            assertThat(accessRowsBefore).isEqualTo(1);
+            int directoryRowsBefore = countRows(database, "coding_authorized_directory");
+            assertThat(directoryRowsBefore).isEqualTo(1);
             assertThat(agent.workspaceViews()).hasSize(1);
             var accepted = agent.start("Create, use, and remove a repo-local worktree through execution_run.");
             var completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(60));
@@ -944,12 +942,9 @@ class LocalCodingAgentTest {
                     .withFailMessage("run failed: %s", completed.error())
                     .isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(linkedWorktree).doesNotExist();
-            assertThat(countRows(database, "coding_workspace_registry"))
-                    .as("generic execution_run must not add a second coding_workspace_registry row")
-                    .isEqualTo(registryRowsBefore);
-            assertThat(countRows(database, "coding_workspace_access"))
-                    .as("generic execution_run must not add a second coding_workspace_access row")
-                    .isEqualTo(accessRowsBefore);
+            assertThat(countRows(database, "coding_authorized_directory"))
+                    .as("generic execution_run must not add a second coding_authorized_directory row")
+                    .isEqualTo(directoryRowsBefore);
             assertThat(agent.workspaceViews())
                     .as("the product workspace projection must stay at the single authorized root")
                     .hasSize(1);

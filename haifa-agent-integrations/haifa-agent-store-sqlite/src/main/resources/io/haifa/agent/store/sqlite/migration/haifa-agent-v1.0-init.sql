@@ -1116,13 +1116,15 @@ CREATE INDEX idx_coding_follow_up_dispatched_run
     ON coding_follow_up(dispatched_run_id)
     WHERE dispatched_run_id IS NOT NULL;
 
--- Migration V1007: coding_workspace_registry
-CREATE TABLE coding_workspace_registry (
+-- Migration V1007: coding_authorized_directory
+CREATE TABLE coding_authorized_directory (
     project_id TEXT NOT NULL,
     workspace_ref TEXT NOT NULL,
-    location_ref TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    principal_type TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('READ', 'DEVELOP')),
     safe_display_name TEXT NOT NULL,
-    source TEXT NOT NULL CHECK (source IN ('INITIAL', 'APPROVED_ATTACH', 'APPROVED_WORKTREE_CREATE')),
     status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'DISABLED', 'REVOKED')),
     location_nonce BLOB NOT NULL,
     location_ciphertext BLOB NOT NULL,
@@ -1134,22 +1136,12 @@ CREATE TABLE coding_workspace_registry (
     revocation_reason_code TEXT,
     version INTEGER NOT NULL CHECK (version >= 0),
     PRIMARY KEY (project_id, workspace_ref),
-    UNIQUE (project_id, location_ref),
     CHECK ((status = 'ACTIVE' AND revoked_at_ms IS NULL AND revocation_reason_code IS NULL)
         OR (status != 'ACTIVE' AND revoked_at_ms IS NOT NULL AND revocation_reason_code IS NOT NULL))
 );
 
-CREATE INDEX idx_coding_workspace_registry_project_status
-    ON coding_workspace_registry(project_id, status, workspace_ref);
-
-CREATE TABLE coding_workspace_access (
-    tenant_id TEXT NOT NULL,
-    principal_type TEXT NOT NULL,
-    principal_id TEXT NOT NULL,
-    workspace_id TEXT NOT NULL,
-    mode TEXT NOT NULL CHECK (mode IN ('READ', 'DEVELOP')),
-    PRIMARY KEY (tenant_id, principal_type, principal_id, workspace_id)
-);
+CREATE INDEX idx_coding_authorized_directory_project_status
+    ON coding_authorized_directory(project_id, status, workspace_ref);
 
 -- Canonical migration metadata; applied_at is the documented V1.0 artifact constant.
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1, 'runtime_store', 'sha256:e7c83a55486c9e383a1e6a7aa9a1959090292e50418d926275745698d9ea56c1', 0);
@@ -1169,6 +1161,6 @@ INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1003, 
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1004, 'coding_session_model_preference', 'sha256:847529404d60be37de66abd65d08f68d3fc188baafeaf448561e8e6fb54840c5', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1005, 'coding_delivery_intent', 'sha256:c9b8955eb79faa6a45d825b43b852bcd7a7483219bafc6a4fec0cb116021ac58', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1006, 'coding_follow_up_dispatched_run_index', 'sha256:3e9897383621e181c925df9a61600e7bd37e867e389b41a633fa849e5d2a5ce2', 0);
-INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1007, 'coding_workspace_registry', 'sha256:240073f28a76ed93943bd329dc7bf06d3133422c6e656aa46111ea4a8dbcf879', 0);
+INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1007, 'coding_authorized_directory', 'sha256:edaf58d79a680af26a42b8e4c6f40a386648552622c6100b91bd22ea20368049', 0);
 
 COMMIT;

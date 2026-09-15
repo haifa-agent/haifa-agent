@@ -6,13 +6,9 @@ import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceBindingStatus;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
-import io.haifa.agent.project.workspace.WorkspacePermission;
 import io.haifa.agent.project.workspace.WorkspaceStatus;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
@@ -23,7 +19,6 @@ import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxProvider;
 import io.haifa.agent.sandbox.api.SandboxSession;
 import io.haifa.agent.sandbox.api.SandboxSessionId;
-import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -55,7 +50,6 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             "GOOGLE_APPLICATION_CREDENTIALS");
 
     private final WorkspaceStore workspaces;
-    private final WorkspaceBindingStore bindings;
     private final HostWorkspaceLocationStore locations;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
@@ -70,13 +64,11 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
     public HostGuardedSandboxProvider(
             WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
             HostWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time) {
         this(
                 workspaces,
-                bindings,
                 locations,
                 identifiers,
                 time,
@@ -86,14 +78,12 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
     public HostGuardedSandboxProvider(
             WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
             HostWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time,
             HostShell shell) {
         this(
                 workspaces,
-                bindings,
                 locations,
                 identifiers,
                 time,
@@ -103,26 +93,16 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
     public HostGuardedSandboxProvider(
             WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
             HostWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time,
             HostShell shell,
             Path scratchRoot) {
-        this(
-                workspaces,
-                bindings,
-                locations,
-                identifiers,
-                time,
-                shell,
-                scratchRoot,
-                HostGuardedSandboxProvider::deleteTree);
+        this(workspaces, locations, identifiers, time, shell, scratchRoot, HostGuardedSandboxProvider::deleteTree);
     }
 
     HostGuardedSandboxProvider(
             WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
             HostWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time,
@@ -130,7 +110,6 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             Path scratchRoot,
             ScratchDirectoryDeleter scratchDirectoryDeleter) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
-        this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
         this.locations = Objects.requireNonNull(locations, "locations must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -178,37 +157,22 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
     }
 
     @Override
-    public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+    public SandboxSession open(SandboxProfile profile, io.haifa.agent.project.workspace.WorkspaceId workspaceId) {
         Objects.requireNonNull(profile, "profile must not be null");
-        Objects.requireNonNull(mount, "mount must not be null");
+        Objects.requireNonNull(workspaceId, "workspaceId must not be null");
         try {
             preflight(profile);
         } catch (io.haifa.agent.sandbox.api.SandboxException exception) {
             throw failure(exception.code(), exception.getMessage());
         }
-        var workspace = workspaces
-                .find(mount.workspaceId())
-                .orElseThrow(() -> failure("WORKSPACE_NOT_FOUND", "workspace not found"));
+        var workspace =
+                workspaces.find(workspaceId).orElseThrow(() -> failure("WORKSPACE_NOT_FOUND", "workspace not found"));
         if (workspace.status() != WorkspaceStatus.ACTIVE) throw failure("WORKSPACE_INACTIVE", "workspace is inactive");
-        var binding = bindings.find(workspace.root().bindingId())
-                .orElseThrow(() -> failure("BINDING_NOT_FOUND", "workspace binding not found"));
-        if (binding.status() != WorkspaceBindingStatus.ACTIVE) throw failure("BINDING_INACTIVE", "binding is inactive");
-        if (binding.mode() == WorkspaceBindingMode.READ_ONLY) {
-            throw failure("READ_ONLY_UNENFORCEABLE", "host provider cannot safely execute against a read-only mount");
-        }
-        if (!binding.permissions().allows(WorkspacePermission.EXECUTE)
-                || !binding.capabilities().allows("execution_run")) {
-            throw failure("EXECUTION_DENIED", "workspace execution capability is denied");
-        }
         try {
-            Path root =
-                    locations.resolveForTrustedProvider(binding.locationRef()).toRealPath(LinkOption.NOFOLLOW_LINKS);
-            if (!HostWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint()) || isLink(root)) {
-                throw failure("ROOT_CHANGED", "workspace root identity changed");
-            }
+            Path root = locations.resolveForTrustedProvider(workspaceId);
             return new Session(new SandboxSessionId(identifiers.nextValue()), profile, workspace.id(), root);
-        } catch (IOException exception) {
-            throw failure("ROOT_UNAVAILABLE", "workspace root is unavailable");
+        } catch (RuntimeException exception) {
+            throw failure("ROOT_CHANGED", "workspace root identity changed or is unavailable");
         }
     }
 

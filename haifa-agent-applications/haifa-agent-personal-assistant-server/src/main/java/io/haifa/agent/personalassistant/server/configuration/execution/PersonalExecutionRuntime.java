@@ -24,24 +24,14 @@ import io.haifa.agent.personalassistant.application.execution.PersonalExecutionP
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.ApprovalVerification;
-import io.haifa.agent.project.binding.WorkspaceBinding;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
-import io.haifa.agent.project.binding.WorkspaceBindingMode;
-import io.haifa.agent.project.binding.WorkspaceLocationRef;
-import io.haifa.agent.project.core.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceFileService;
 import io.haifa.agent.project.hostworkspace.HostWorkspaceLocationStore;
 import io.haifa.agent.project.hostworkspace.SensitivePathPolicy;
-import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.Workspace;
-import io.haifa.agent.project.workspace.WorkspaceCapabilitySet;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePermissionSet;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
 import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
@@ -93,34 +83,18 @@ public final class PersonalExecutionRuntime {
         IdentifierGenerator identifiers = new UuidV7IdentifierGenerator();
         TimeProvider time = clock::instant;
         var workspaces = new InMemoryWorkspaceStore();
-        var bindings = new InMemoryWorkspaceBindingStore();
         var locations = new HostWorkspaceLocationStore();
         WorkspaceId workspaceId = new WorkspaceId("personal-execution");
-        WorkspaceBindingId bindingId = new WorkspaceBindingId("personal-execution-binding");
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("personal-execution-location");
-        locations.register(locationRef, workspaceRoot);
-        bindings.create(WorkspaceBinding.provision(
-                        bindingId,
-                        locationRef,
-                        WorkspaceBindingMode.DIRECT,
-                        principal,
-                        new WorkspaceCapabilitySet(Set.of("execution_run", "workspace.write")),
-                        WorkspacePermissionSet.readWriteExecute(),
-                        HostWorkspaceLocationStore.fingerprintFor(workspaceRoot),
-                        time.now())
-                .activate(time.now()));
+        locations.register(workspaceId, workspaceRoot);
         workspaces.create(Workspace.provision(
                         workspaceId,
                         new ProjectId("personal-internal-execution"),
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), bindingId, "personal-host-guarded"),
                         WorkspaceRevision.initial("personal-execution-v1"),
                         time.now())
                 .activate(time.now()));
 
         HostShell shell = HostShell.auto();
-        var host =
-                new HostGuardedSandboxProvider(workspaces, bindings, locations, identifiers, time, shell, scratchRoot);
+        var host = new HostGuardedSandboxProvider(workspaces, locations, identifiers, time, shell, scratchRoot);
         ScriptRuntimeResolver runtimes = HostScriptRuntimeResolver.currentHost(
                 configuredPath(properties.pythonPath()), configuredPath(properties.powerShellPath()));
         var resolvedEnvironment = resolveHostEnvironment(
@@ -156,7 +130,7 @@ public final class PersonalExecutionRuntime {
                 persistence.interactions(),
                 ToolRequestCanonicalizer.identity(),
                 publicToolPolicy);
-        var files = new HostWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
+        var files = new HostWorkspaceFileService(workspaces, locations, SensitivePathPolicy.defaults());
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
@@ -164,8 +138,7 @@ public final class PersonalExecutionRuntime {
                 new PersonalAssistantExecutionPolicy(runtimeVerifier, configuration, tenant, principal, workspaceId),
                 new ImmutableSandboxProfileRegistry(List.of(profile)),
                 new ImmutableSandboxProviderRegistry(List.of(host)),
-                workspaces,
-                bindings);
+                workspaces);
         var provider = new ExecutionToolProvider(
                 broker,
                 identifiers,
