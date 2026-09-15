@@ -256,4 +256,35 @@ class ProjectExecutionValidationTest {
                 .containsEntry("operationFamily", "DIFF")
                 .doesNotContainKey("declaredOperationFamily");
     }
+
+    @Test
+    void credentialBoundaryRejectsBeforeDispatchWithoutEchoingTheSuppliedSecret() {
+        String secret = "ghp_super_secret_token_value";
+        AtomicInteger dispatches = new AtomicInteger();
+        ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                dispatches.incrementAndGet();
+                return result(request.id(), ExecutionStatus.EXITED, 0);
+            }
+        };
+
+        var result = operations(broker, 4096, 100)
+                .execute(
+                        invocation(
+                                Map.of(
+                                        "command",
+                                        "env GH_TOKEN=" + secret + " gh pr list",
+                                        "operationFamily",
+                                        "UNKNOWN"),
+                                () -> false),
+                        access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("stableFailureCode", "AUTHENTICATION_OVERRIDE_DENIED")
+                .containsEntry("credentialBoundaryCode", "AUTHENTICATION_ENVIRONMENT_OVERRIDE");
+        assertThat(result.structuredData().toString()).doesNotContain(secret);
+        assertThat(dispatches).hasValue(0);
+    }
 }

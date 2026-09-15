@@ -150,96 +150,29 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void declaredDiffFamilyRemainsDiagnosticWithoutBecomingACompletionRequirement() {
-        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
-        tool(fixture, "file_write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
-        validationTool(fixture, true, 1, 1, 0);
-        tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "DIFF", "processState", "EXITED"));
+    void declaredOperationFamilyCannotManufactureDeliveryEvidence() {
+        for (String declared : List.of("DIFF", "INSPECT")) {
+            Fixture fixture = fixture("analyze the repository", trusted("ANALYZE"));
+            tool(
+                    fixture,
+                    "execution_run",
+                    Map.of(),
+                    Map.of("operationFamily", declared, "processState", "EXITED", "exitCode", 0));
 
-        assertThat(policy(fixture.store())
-                        .evaluate(fixture.run(), finalDecision())
-                        .allowed())
-                .isTrue();
-
-        tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "DIFF", "processState", "EXITED"));
-
-        assertThat(policy(fixture.store())
-                        .evaluate(fixture.run(), finalDecision())
-                        .allowed())
-                .isTrue();
-        assertThat(new CodingDeliveryEvidenceLedger(fixture.store())
-                        .reconstruct(fixture.run().id())
-                        .kinds())
-                .contains(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
-    }
-
-    @Test
-    void recognizesZeroExitCodeExitedExecutionAsDiffInspectionEvidenceAndReference() {
-        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
-        changeTool(fixture, "file_write", "change-1");
-        validationTool(fixture, true, 1, 1, 0);
-        tool(
-                fixture,
-                "execution_run",
-                Map.of(),
-                Map.of(
-                        "operationFamily", "DIFF",
-                        "processState", "EXITED",
-                        "exitCode", 0));
-
-        CodingDeliveryEvidenceLedger.Snapshot snapshot = new CodingDeliveryEvidenceLedger(fixture.store())
-                .reconstruct(fixture.run().id());
-        assertThat(snapshot.kinds()).contains(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
-    }
-
-    @Test
-    void declaredFamilyDrivesReadOnlyEvidenceWithoutOverridingGenericCommands() {
-        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
-        tool(fixture, "file_write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
-        validationTool(fixture, true, 1, 1, 0);
-        tool(
-                fixture,
-                "execution_run",
-                Map.of(),
-                Map.ofEntries(Map.entry("operationFamily", "DIFF"), Map.entry("processState", "EXITED")));
-
-        assertThat(policy(fixture.store())
-                        .evaluate(fixture.run(), finalDecision())
-                        .allowed())
-                .isTrue();
-    }
-
-    @Test
-    void nonZeroDiffExitStillCountsAsAnAttemptedDiffInspection() {
-        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
-        tool(fixture, "file_write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
-        validationTool(fixture, false, 1, 1, 0);
-        tool(
-                fixture,
-                "execution_run",
-                Map.of(),
-                Map.ofEntries(
-                        Map.entry("operationFamily", "DIFF"),
-                        Map.entry("processState", "EXITED"),
-                        Map.entry("exitCode", 1)));
-
-        assertThat(policy(fixture.store())
-                        .evaluate(fixture.run(), finalDecision())
-                        .allowed())
-                .isTrue();
-    }
-
-    @Test
-    void validationAttemptIsNotInterpretedAsPassedOrFailed() {
-        Fixture fixture = fixture("change the implementation", trusted("CHANGE"));
-        tool(fixture, "file_write", Map.of("path", "README.md"), Map.of("changeSetId", "change-1"));
-        validationTool(fixture, false, 1, 1, 0);
-        tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "DIFF", "processState", "EXITED"));
-
-        assertThat(policy(fixture.store())
-                        .evaluate(fixture.run(), finalDecision())
-                        .allowed())
-                .isTrue();
+            CodingDeliveryEvidenceLedger.Snapshot snapshot = new CodingDeliveryEvidenceLedger(fixture.store())
+                    .reconstruct(fixture.run().id());
+            assertThat(snapshot.kinds())
+                    .as(declared)
+                    .doesNotContain(
+                            CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION,
+                            CodingDeliveryEvidenceKind.DIFF_INSPECTION);
+            assertThat(policy(fixture.store())
+                            .evaluate(fixture.run(), finalDecision())
+                            .blockers())
+                    .as(declared)
+                    .extracting(CompletionBlocker::code)
+                    .contains("ANALYSIS_EVIDENCE_MISSING");
+        }
     }
 
     @Test
@@ -272,10 +205,9 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void executionReadEvidenceUsesTheDeclaredOperationFamilyHint() {
+    void readOnlyAnalysisEvidenceComesFromInspectionToolsNotExecutionHints() {
         Fixture fixture = fixture("analyze the repository", trusted("ANALYZE"));
         tool(fixture, "execution_run", Map.of(), Map.of("processState", "EXITED"));
-
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
                         .blockers())
@@ -283,6 +215,13 @@ class CodingDeliveryControlTest {
                 .containsExactly("ANALYSIS_EVIDENCE_MISSING");
 
         tool(fixture, "execution_run", Map.of(), Map.of("operationFamily", "INSPECT", "processState", "EXITED"));
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .containsExactly("ANALYSIS_EVIDENCE_MISSING");
+
+        tool(fixture, "file_read", Map.of("path", "README.md"), Map.of("path", "README.md"));
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
                         .allowed())
