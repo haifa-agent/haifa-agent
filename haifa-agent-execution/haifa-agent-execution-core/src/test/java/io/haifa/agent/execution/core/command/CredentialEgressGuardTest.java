@@ -10,11 +10,19 @@ class CredentialEgressGuardTest {
     void rejectsConfirmedHostAuthenticationEnvironmentOverrides() {
         for (String command : new String[] {
             "GH_TOKEN=value gh pr list",
+            "HOME=/tmp git status",
             "env LANG=C GITHUB_TOKEN=value gh repo view",
+            "env -i HOME=/tmp git status",
+            "export GH_TOKEN=value",
             "GIT_ASKPASS=/tmp/echo-pass.sh git fetch origin",
             "SSH_ASKPASS=script SSH_AUTH_SOCK=/tmp/agent.sock git push",
+            "FOO=1 GIT_CONFIG_SYSTEM=/etc/other git status",
+            "echo starting && HOME=/tmp git status",
             "$env:GH_CONFIG_DIR='other'; gh auth status",
+            "$env:GH_TOKEN = 'value'; gh pr list",
             "set HOME=C:\\other && git status",
+            "set \"GH_TOKEN=value\"",
+            "SET USERPROFILE=C:\\other",
             "GIT_CONFIG_GLOBAL=/tmp/other.gitconfig git config --get user.email"
         }) {
             assertThat(CredentialEgressGuard.rejectionCode(command))
@@ -29,6 +37,7 @@ class CredentialEgressGuardTest {
             "git credential fill",
             "git credential approve",
             "git credential-cache get",
+            "/usr/bin/git credential fill",
             "git -c credential.helper=other status",
             "git -c http.extraHeader=AUTHORIZATION: secret status",
             "git -c core.sshCommand=/tmp/steal status",
@@ -51,6 +60,25 @@ class CredentialEgressGuardTest {
                 .contains(CredentialEgressGuard.GITHUB_AUTH_STATE_CODE);
         assertThat(CredentialEgressGuard.rejectionCode("gh auth setup-git"))
                 .contains(CredentialEgressGuard.GITHUB_AUTH_STATE_CODE);
+    }
+
+    @Test
+    void allowsTextualAssignmentsAndEchoedCredentialLiteralsThroughTheGenericPath() {
+        for (String command : new String[] {
+            "echo \"HOME=value\"",
+            "Write-Output 'GH_TOKEN=value'",
+            "echo HOME=value",
+            "printf 'HOME=%s' value",
+            "grep -rn HOME= .",
+            "echo \"set HOME=value\"",
+            "Write-Output '$env:GH_TOKEN=value'",
+            "git log --format=HOME=%h",
+            "echo \"git credential fill\"",
+            "echo \"gh auth token\"",
+            "echo \"git -c credential.helper=other status\""
+        }) {
+            assertThat(CredentialEgressGuard.rejectionCode(command)).as(command).isEmpty();
+        }
     }
 
     @Test

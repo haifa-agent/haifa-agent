@@ -78,9 +78,9 @@ Session 冻结配置的显式 `requiresValidationEvidence` 事实为真时产生
 （`USER_EXPLICIT`）或仓库指令（`REPOSITORY_INSTRUCTIONS`）的候选构成必须完成的验证要求；
 `BUILD_CONFIGURATION`、`ADJACENT_TEST`、`ECOSYSTEM_DEFAULT` 候选只是推荐，环境恰好存在 Maven/pytest
 不构成验证承诺，普通文档或配置写入不会被强制送入 Build/Test 补救循环。需要验证时只要求最新 Workspace
-修改之后实际尝试了匹配冻结候选的命令，不从 Tool 交付状态或 exit code 推断通过/失败。`DIFF_INSPECTION` 不再作为修改任务
-完成门禁的兼容 fallback，但 DIFF 命令、只读审阅能力和对应诊断事实继续保留。ANALYZE/REVIEW 要求只读证据
-且拒绝意外修改。UNKNOWN 用于普通交互：没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；
+修改之后实际尝试了匹配冻结候选的命令，不从 Tool 交付状态或 exit code 推断通过/失败。`DIFF_INSPECTION` 与 `READ_ONLY_INSPECTION` 只来自权威的只读
+文件/Diff Tool 结果；模型在 `execution_run` 中声明的 `DIFF`/`INSPECT` hint 不再制造任何完成证据。ANALYZE/REVIEW
+要求只读证据且拒绝意外修改。UNKNOWN 用于普通交互：没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；
 观察到 Workspace 修改时仍要求修改事实，验证要求同样只取决于冻结验证要求。产品不再维护第二份冻结
 `CodingDeliveryIntent` 交付护栏，用户是否要求 Commit、Push 或 PR 继续由任务正文和 Prompt/Skill 行为约束表达，
 具体副作用由可见、统一的 Policy/Approval 和执行边界决定；generic Shell 不推断这些操作是否完成，模型必须依据
@@ -232,8 +232,8 @@ Catalog 保留 `file_search` 供显式配置兼容，但 Coding CLI 默认不冻
 Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一精确 Profile Ref/version。
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于
 新 Profile；模型可见 Schema 包含 command、活动 Registry 的 `workspaceRef`、该根下的 `relativeWorkdir`、有界 timeout、安全描述和可选
-`operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，只作为输出预算与交付控制
-Hint；省略时使用 `UNKNOWN`，模型声明不能授予授权。普通 `git`、`gh`、Wrapper 和客户脚本与其他命令一样
+`operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，只作为有界输出预算
+Hint；省略时使用 `UNKNOWN`，模型声明不能授予授权，也不能作为完成、交付或恢复证据。普通 `git`、`gh`、Wrapper 和客户脚本与其他命令一样
 走同一条通用执行路径，保留真实 exit code 与有界 stdout/stderr；Java 不再解析 Git/GH 子命令、参数、路径
 覆盖或业务风险，也不据 Hint 拒绝命令。Coding `ToolPolicyRequestAdapter` 只保留一条封闭的凭据防泄露边界：
 受保护认证环境变量赋值、`git credential*`、Git 凭据配置覆盖、`gh auth token`、`gh auth status --show-token`

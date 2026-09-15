@@ -356,8 +356,8 @@ public final class ProjectToolCatalog {
                     + "available CLI and its complete arguments at runtime instead of expecting command-specific "
                     + "wrappers. Output is always bounded by operation family; use paging or returned artifact refs "
                     + "instead of repeating broad commands, and adapt when a command is unavailable. operationFamily is an "
-                    + "optional declared hint used only for output budgeting and delivery control; it never grants "
-                    + "authorization. System git, gh, wrappers, and customer scripts run through the same generic "
+                    + "optional declared hint used only for bounded output budgeting; it never grants authorization and "
+                    + "is never completion, delivery, or recovery evidence. System git, gh, wrappers, and customer scripts run through the same generic "
                     + "execution path as any other command, with real exit codes and bounded stdout/stderr; approval "
                     + "follows the configured policy for the current trusted host. Commands that read, echo, override, "
                     + "or redirect host authentication material are rejected before dispatch.";
@@ -547,9 +547,10 @@ public final class ProjectToolCatalog {
                                 "enum",
                                 List.of("BUILD", "TEST", "DIFF", "INSPECT", "MUTATE", "UNKNOWN"),
                                 "description",
-                                "Stable operation family for delivery and recovery control. Use DIFF only for "
-                                        + "read-only diff inspection and UNKNOWN when the command cannot "
-                                        + "be reliably classified; do not infer it from arbitrary shell syntax."));
+                                "Optional declared output-formatting hint used only for output budgeting. It is "
+                                        + "not completion, delivery, authorization, or recovery evidence; use "
+                                        + "UNKNOWN when the command cannot be classified, and do not infer it from "
+                                        + "arbitrary shell syntax."));
             }
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         }

@@ -69,15 +69,7 @@ public final class CodingDeliveryEvidenceLedger {
         }
         if (!EXECUTION_TOOL.equals(call.toolName()) || data.isEmpty()) return;
 
-        String declaredFamily = String.valueOf(data.getOrDefault("operationFamily", "UNKNOWN"));
-        String processState = String.valueOf(data.getOrDefault("processState", "UNKNOWN"));
-        boolean exited = "EXITED".equals(processState);
-        if (("INSPECT".equals(declaredFamily) || "DIFF".equals(declaredFamily)) && exited) {
-            facts.add(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION);
-        }
-        if ("DIFF".equals(declaredFamily) && exited) {
-            facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
-        }
+        boolean exited = "EXITED".equals(String.valueOf(data.getOrDefault("processState", "UNKNOWN")));
         java.util.Optional<CodingValidationAttemptEvidence> structuredValidation =
                 CodingValidationAttemptEvidence.fromStructuredData(data.get("validationEvidence"));
         if (structuredValidation.isPresent()) {
