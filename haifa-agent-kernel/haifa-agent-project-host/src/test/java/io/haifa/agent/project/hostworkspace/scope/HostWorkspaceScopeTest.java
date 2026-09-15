@@ -33,7 +33,7 @@ class HostWorkspaceScopeTest {
     private HostWorkspaceScope scope;
 
     @Test
-    void mountScopeCarriesIdentityAndPathFactsButNoUserPermission() {
+    void scopeCarriesIdentityAndPathFactsButNoUserAccessModel() {
         assertThat(Stream.of(AuthorizedHostDirectory.class.getRecordComponents())
                         .map(component -> component.getName()))
                 .containsExactly("workspaceId", "realPath");

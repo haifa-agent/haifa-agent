@@ -5,10 +5,12 @@ import java.nio.file.Path;
 import java.util.Objects;
 
 /**
- * One peer directory mounted into the host workspace scope. There is no main or attached role:
- * every directory carries its own logical {@link WorkspaceId}. The host real path remains inside
- * the host adapter and its protected Registry persistence; it must never reach Core DTOs, logs,
- * model prompts or Admin projections. This record does not grant user access.
+ * One peer authorized directory of the host workspace scope. There is no main or attached role:
+ * every directory carries its own logical {@link WorkspaceId}. This host-only record must not be
+ * serialized into public DTOs, Store payloads, logs or model output, and it does not grant user
+ * access; the CA host may deliberately render an authorized canonical rootPath into the approved
+ * {@code <workspace_paths>} model prompt and successful {@code workspace_attach} result, but never
+ * the physical fingerprint.
  */
 public record AuthorizedHostDirectory(WorkspaceId workspaceId, Path realPath) {
 

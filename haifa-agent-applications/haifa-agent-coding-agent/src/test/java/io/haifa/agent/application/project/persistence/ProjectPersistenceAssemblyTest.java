@@ -32,7 +32,6 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelUsage;
-import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.configuration.ProjectConfiguration;
 import io.haifa.agent.project.configuration.ProjectConfigurationId;
 import io.haifa.agent.project.configuration.ProjectConfigurationVersion;
@@ -43,12 +42,9 @@ import io.haifa.agent.project.core.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.domain.Project;
 import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
-import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.Workspace;
 import io.haifa.agent.project.workspace.WorkspaceId;
-import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
-import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.runtime.api.AgentRunHandle;
 import io.haifa.agent.runtime.api.AgentRunListener;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
@@ -898,13 +894,7 @@ class ProjectPersistenceAssemblyTest {
                         Map.of())
                 .assignDefaultWorkspace(workspaceId, NOW));
         InMemoryWorkspaceStore workspaces = new InMemoryWorkspaceStore();
-        workspaces.create(Workspace.provision(
-                        workspaceId,
-                        projectId,
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), new WorkspaceBindingId("binding-1"), "test"),
-                        WorkspaceRevision.initial("root"),
-                        NOW)
+        workspaces.create(Workspace.provision(workspaceId, projectId, WorkspaceRevision.initial("root"), NOW)
                 .activate(NOW));
         InMemoryProjectConfigurationStore configurations = new InMemoryProjectConfigurationStore();
         configurations.publish(ProjectConfiguration.create(

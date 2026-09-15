@@ -7,7 +7,6 @@ import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import io.haifa.agent.application.project.product.ProjectProductService;
-import io.haifa.agent.application.project.workspace.WorkspaceAccess;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.core.DefaultModelParameterResolver;
 import io.haifa.agent.project.workspace.WorkspaceId;
@@ -85,28 +84,17 @@ class ProjectApplicationArchitectureTest {
     }
 
     @Test
-    void workspaceAccessRemainsACodingOwnedMinimalRelation() {
-        assertThat(Arrays.stream(WorkspaceAccess.class.getRecordComponents())
-                        .map(component -> component.getName())
-                        .toList())
-                .containsExactly("tenant", "principal", "workspaceId", "mode");
-        assertThat(Arrays.stream(WorkspaceAccess.class.getRecordComponents())
-                        .map(component -> component.getType().getSimpleName())
-                        .toList())
-                .containsExactly("TenantRef", "PrincipalRef", "WorkspaceId", "WorkspaceAccessMode");
-
-        noClasses()
-                .that()
-                .resideInAPackage("..workspace..")
-                .should()
-                .dependOnClassesThat()
-                .resideInAnyPackage(
-                        "io.haifa.agent.runtime..",
-                        "io.haifa.agent.policy..",
-                        "io.haifa.agent.execution..",
-                        "io.haifa.agent.sandbox..",
-                        "io.haifa.agent.personalassistant..")
-                .check(PROJECT_CLASSES);
+    void codingApplicationDoesNotOwnAShadowWorkspaceAuthorizationModel() {
+        assertThat(PROJECT_CLASSES.stream().map(javaClass -> javaClass.getSimpleName()))
+                .doesNotContain(
+                        "WorkspaceAccess",
+                        "WorkspaceAccessMode",
+                        "WorkspaceAccessStore",
+                        "InMemoryWorkspaceAccessStore",
+                        "WorkspaceBinding",
+                        "WorkspaceBindingStore",
+                        "WorkspaceLocationRef",
+                        "WorkspaceLocationStore");
     }
 
     private static void assertThatNoWorkspaceParameter(String name) {

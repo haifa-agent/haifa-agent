@@ -10,8 +10,6 @@ import io.haifa.agent.application.project.product.coding.CodingSessionCompactor;
 import io.haifa.agent.application.project.product.coding.CodingSessionLifecycle;
 import io.haifa.agent.application.project.product.coding.CodingSessionStore;
 import io.haifa.agent.application.project.product.coding.InMemoryCodingSessionStore;
-import io.haifa.agent.application.project.workspace.InMemoryWorkspaceAccessStore;
-import io.haifa.agent.application.project.workspace.WorkspaceAccessStore;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.compression.CompressionPolicy;
@@ -23,8 +21,8 @@ import io.haifa.agent.core.session.AgentSession;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.core.session.SessionScope;
-import io.haifa.agent.project.hostworkspace.registry.HostWorkspaceRegistryStore;
-import io.haifa.agent.project.hostworkspace.registry.InMemoryHostWorkspaceRegistryStore;
+import io.haifa.agent.project.hostworkspace.directory.AuthorizedDirectoryStore;
+import io.haifa.agent.project.hostworkspace.directory.InMemoryAuthorizedDirectoryStore;
 import io.haifa.agent.runtime.api.AgentRuntime;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
@@ -58,8 +56,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
     private final String workerId;
     private final SqliteStoreFoundation sqlite;
     private final JsonlTranscriptProjector projector;
-    private final HostWorkspaceRegistryStore workspaceRegistry;
-    private final WorkspaceAccessStore workspaceAccess;
+    private final AuthorizedDirectoryStore authorizedDirectories;
     private final AtomicBoolean closing = new AtomicBoolean();
 
     private ProjectPersistenceAssembly(
@@ -70,8 +67,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
             String workerId,
             SqliteStoreFoundation sqlite,
             JsonlTranscriptProjector projector,
-            HostWorkspaceRegistryStore workspaceRegistry,
-            WorkspaceAccessStore workspaceAccess) {
+            AuthorizedDirectoryStore authorizedDirectories) {
         this.mode = mode;
         this.ports = ports;
         this.productSessions = productSessions;
@@ -79,8 +75,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         this.workerId = workerId;
         this.sqlite = sqlite;
         this.projector = projector;
-        this.workspaceRegistry = Objects.requireNonNull(workspaceRegistry, "workspaceRegistry must not be null");
-        this.workspaceAccess = Objects.requireNonNull(workspaceAccess, "workspaceAccess must not be null");
+        this.authorizedDirectories =
+                Objects.requireNonNull(authorizedDirectories, "authorizedDirectories must not be null");
     }
 
     public static ProjectPersistenceAssembly open(
@@ -104,8 +100,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                     workerId,
                     null,
                     null,
-                    new InMemoryHostWorkspaceRegistryStore(),
-                    new InMemoryWorkspaceAccessStore());
+                    new InMemoryAuthorizedDirectoryStore());
         }
         ModelContinuationProtector effectiveProtector = protector;
         if (configuration.protection() == ProjectPersistenceProtection.NONE && effectiveProtector == null) {
@@ -148,8 +143,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                     workerId,
                     foundation,
                     projector,
-                    new SqliteHostWorkspaceRegistryStore(foundation.unitOfWork(), effectiveProtector, clock),
-                    new SqliteWorkspaceAccessStore(foundation.unitOfWork()));
+                    new SqliteAuthorizedDirectoryStore(foundation.unitOfWork(), effectiveProtector, clock));
         } catch (RuntimeException | Error exception) {
             if (foundation != null) {
                 try {
@@ -222,12 +216,8 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         return workerId;
     }
 
-    public HostWorkspaceRegistryStore workspaceRegistry() {
-        return workspaceRegistry;
-    }
-
-    public WorkspaceAccessStore workspaceAccess() {
-        return workspaceAccess;
+    public AuthorizedDirectoryStore authorizedDirectories() {
+        return authorizedDirectories;
     }
 
     public RuntimeCoreBuilder configure(RuntimeCoreBuilder builder) {

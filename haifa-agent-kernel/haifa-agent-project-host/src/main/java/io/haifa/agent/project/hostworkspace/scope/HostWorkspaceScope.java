@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Immutable snapshot of the peer mounted directories of one host session. Roots must be strictly
+ * Immutable snapshot of the peer authorized directories of one host session. Roots must be strictly
  * disjoint so a target can never match two roots; overlap between a parent and a child
  * directory is rejected at construction time instead of being resolved by prefix order. Resolution
  * accepts host absolute paths only, verifies physical containment via real paths (symlink and
@@ -89,7 +89,7 @@ public record HostWorkspaceScope(List<AuthorizedHostDirectory> allowedDirectorie
             throw HostWorkspaceScopeException.invalidArgument(
                     trimmed,
                     "File tools require a host absolute path. Use a rootPath from workspace_paths or"
-                            + " from a successful workspace_attach/workspace_worktree_create result.");
+                            + " from a successful workspace_attach result.");
         }
         Path normalized = candidate.normalize();
         AuthorizedHostDirectory directory = findEnclosingDirectory(normalized);
@@ -116,7 +116,7 @@ public record HostWorkspaceScope(List<AuthorizedHostDirectory> allowedDirectorie
                 .filter(candidate -> candidate.workspaceId().equals(workspaceRef))
                 .findFirst()
                 .orElseThrow(() -> HostWorkspaceScopeException.accessDenied(
-                        null, "workspaceRef is not active in the workspace registry"));
+                        null, "workspaceRef is not active in the authorized directory set"));
         ProjectPath projectPath;
         try {
             projectPath = relativeWorkdir.equals(".") ? ProjectPath.root() : ProjectPath.of(relativeWorkdir);

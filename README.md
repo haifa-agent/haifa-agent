@@ -267,8 +267,8 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
   上限的有效日期版本会返回待适配提示且不猜测其协议行为；
 - 兼容 `SKILL.md` 的 Skill API/Core/Base，支持分层发现、内容寻址冻结、摘要披露、Run 级激活和
   资源按需读取；
-- 共享 `git` / `github` CLI Skill，以及 Personal Assistant
-  `github-project-watch` Product Skill；Skill 只提供流程，不授予执行、网络或 Credential 权限；
+- Personal Assistant `github-project-watch` 等业务 Product Skill；Skill 只提供流程，不授予执行、
+  网络或 Credential 权限；系统 `git` / `gh` 由 `execution_run` 直接调用，不依赖内置 Skill；
 - `web_search` 支持 Aliyun IQS、Brave、Tavily；`web_fetch` 支持 Aliyun IQS、Browserless、Tavily；
 - MCP Tool 和 Skill 激活不会绕过 Runtime Tool Pipeline，也不能扩大 Run 已冻结的 Tool 集。
 
@@ -284,15 +284,17 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 
 ### Project、Execution 与安全
 
-- 受控 Workspace 多根目录授权、安全文件操作、`SessionChangeLedger` 纯内存变更账本、Patch、索引与 Snapshot；
+- 受控 Workspace 多根目录授权、安全文件操作、`SessionChangeLedger` 纯内存变更账本、Patch 与索引；
 - 显式 Artifact Export、内容寻址 payload、provenance、完整性校验与 SQLite 单机持久化；
-- `ExecutionBroker`、Sandbox SPI、受控 Host Provider，以及 macOS Seatbelt / Linux bubblewrap
-  Local Native Provider；
-- 模型通过受控 `execution_run` 直接调用系统 `git` / `gh`；Java Git Integration 只保留不向模型披露的
-  Worktree、Patch 合并、Revision Probe，以及供 Path-local Review 使用的有界仓库检查和只读证据采集，
-  不再注册 `git.*` / `github.*` 子命令 Tool；
-- 五字段瞬态 Policy Decision、`DENY > ASK > ALLOW`、Interaction-owned ASK 恢复、CA WorkspaceAccess、
-  AES-GCM 本地 Credential Store 与短生命周期 Lease；不持久化 Decision/Snapshot/Grant/Project Trust。
+- `ExecutionBroker`、Sandbox SPI 与唯一受控 Host Provider（`host-guarded`：受控进程启动、cwd、超时、
+  取消、输出与进程树回收，不提供 OS 级文件、网络或资源隔离）；
+- 模型通过受控 `execution_run` 直接调用系统 `git` / `gh`；Java 不解析 Git/GH 子命令、参数或业务风险，
+  普通命令、Wrapper 和客户脚本走同一通用执行路径，仅保留防止宿主凭据进入模型的封闭 fail-closed 边界。
+  Java Git Integration 只保留不向模型披露的 Revision Probe，以及供 Path-local
+  Review 使用的有界仓库检查和只读证据采集，不再注册 `git.*` / `github.*` 子命令 Tool；
+- 五字段瞬态 Policy Decision、`DENY > ASK > ALLOW`、Interaction-owned ASK 恢复、CA 单一授权目录记录
+  （owner + `WorkspaceId` + 规范宿主根 + `READ`/`DEVELOP`）、AES-GCM 本地 Credential Store 与短生命周期
+  Lease；不持久化 Decision/Grant/Project Trust。
 
 ### SDK、协议与产品
 

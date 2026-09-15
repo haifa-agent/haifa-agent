@@ -176,7 +176,8 @@ Hermes 等外部 `SKILL.md` 的扩展 front matter；未知或嵌套 metadata �
 边界仍限制 128 个文件、8 层目录、2 MiB 包大小、2000 行指令和 20000 估算 Token，脚本资源只索引为
 待审内容，不直接执行。
 
-Personal 默认装配共享 `git`、`github` 和只读产品 Skill `github-project-watch`。它们只提供 CLI 工作流，
+Personal 默认装配只读产品 Skill `github-project-watch`；系统 `git` / `gh` 由 `execution_run` 直接调用，
+不再内置共享 `git`、`github` Skill。它们只提供 CLI 工作流，
 不保存 Token、不注册 Git/GitHub 子命令 Tool，也不能扩大 frozen Tool 集。PA 继续保持
 `ProductCapabilities.PROJECT/WORKSPACE/GIT = NONE`；远程查询使用 `execution_run` 的 `COMMAND` 模式与
 显式 `gh --repo owner/repo ... --json ...`，不要求本地 clone。每次执行仍走现有 exact Approval、网络策略、
