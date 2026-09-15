@@ -39,8 +39,6 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                     run.costMinorUnits(),
                     tools.toolFailures(),
                     tools.executionCalls(),
-                    tools.validationAttempted(),
-                    tools.diffInspected(),
                     tools.scratchCleanupFailures(),
                     events.terminalStateObserved() || terminal(run.status()));
         } catch (SQLException exception) {
@@ -88,21 +86,15 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
         int failures = 0;
         int executionCalls = 0;
         int scratchCleanupFailures = 0;
-        boolean validationAttempted = false;
-        boolean diffInspected = false;
-        try (PreparedStatement statement = connection.prepareStatement(
-                        "SELECT tool_name, status, arguments_payload, result_payload FROM tool_call");
+        try (PreparedStatement statement =
+                        connection.prepareStatement("SELECT tool_name, status, result_payload FROM tool_call");
                 ResultSet rows = statement.executeQuery()) {
             while (rows.next()) {
                 String toolName = rows.getString(1);
                 String status = rows.getString(2);
                 if (!"COMPLETED".equals(status)) failures++;
                 if (!"execution_run".equals(toolName)) continue;
-                JsonNode arguments = decodeValues(rows.getBytes(3));
-                JsonNode result = decodeValues(rows.getBytes(4)).path("structuredData");
-                String family = arguments.path("operationFamily").asText("UNKNOWN");
-                validationAttempted |= family.equals("TEST") || family.equals("BUILD");
-                diffInspected |= "COMPLETED".equals(status) && family.equals("DIFF");
+                JsonNode result = decodeValues(rows.getBytes(3)).path("structuredData");
                 boolean enteredSandbox = result.path("status").isTextual()
                         && (result.path("scratchProvisioned").asBoolean(false)
                                 || result.has("exitCode")
@@ -111,7 +103,7 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                 if (result.path("scratchCleanupFailed").asBoolean(false)) scratchCleanupFailures++;
             }
         }
-        return new ToolFacts(failures, executionCalls, validationAttempted, diffInspected, scratchCleanupFailures);
+        return new ToolFacts(failures, executionCalls, scratchCleanupFailures);
     }
 
     private EventFacts readEvents(Connection connection) throws SQLException, IOException {
@@ -155,24 +147,17 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
             long costMinorUnits,
             int toolFailures,
             int executionCalls,
-            boolean validationAttempted,
-            boolean diffInspected,
             int scratchCleanupFailures,
             boolean terminalStateObserved) {
         static Evidence unavailable() {
-            return new Evidence("NOT_STARTED", 0, 0, 0, 0, 0, 0, 0, false, false, 0, false);
+            return new Evidence("NOT_STARTED", 0, 0, 0, 0, 0, 0, 0, 0, false);
         }
     }
 
     private record RunFacts(
             String status, long inputTokens, long outputTokens, long modelCalls, long toolCalls, long costMinorUnits) {}
 
-    private record ToolFacts(
-            int toolFailures,
-            int executionCalls,
-            boolean validationAttempted,
-            boolean diffInspected,
-            int scratchCleanupFailures) {}
+    private record ToolFacts(int toolFailures, int executionCalls, int scratchCleanupFailures) {}
 
     private record EventFacts(boolean terminalStateObserved) {}
 }

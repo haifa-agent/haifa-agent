@@ -1,28 +1,28 @@
 package io.haifa.agent.application.project.policy;
 
 import io.haifa.agent.core.run.AgentRun;
-import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
+import io.haifa.agent.execution.core.command.CredentialEgressGuard;
 import io.haifa.agent.policy.api.ApprovalMode;
-import io.haifa.agent.policy.api.PolicyContext;
-import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.policy.api.PolicyRequest;
-import io.haifa.agent.policy.api.PolicyRisk;
-import io.haifa.agent.policy.api.PolicySideEffect;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.ToolAuthorizationProtocolException;
 import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
 import io.haifa.agent.tool.api.FrozenToolBinding;
-import java.util.EnumSet;
-import java.util.List;
-import java.util.Optional;
-import java.util.regex.Pattern;
+import java.util.Objects;
 
-/** Coding-owned execution risk resolver. The execution broker remains the authority for hard boundaries. */
+/**
+ * Coding-owned execution policy request adapter. Approval uses the generic execution baseline from
+ * the frozen Tool definition; this adapter only keeps the narrow credential fail-closed boundary so
+ * confirmed host-credential read, echo, override, or redirect paths never reach the model context.
+ *
+ * <p>It does not classify Git/GitHub commands, infer business effects, or adjust risk. The model
+ * understands commands and their output; the generic execution path owns workspace authorization,
+ * approval, timeout, cancellation, output handling, and unknown-outcome handling.</p>
+ */
 public final class CodingExecutionPolicyRequestAdapter implements ToolPolicyRequestAdapter {
     static final String EXECUTION_RUN = "execution_run";
     private static final String PRODUCT_ID = "haifa-coding-agent";
-    private static final Pattern GIT_DIRECTORY_OVERRIDE = Pattern.compile("(?:^|\\s)[\\\"']?-C[\\\"']?(?:\\s|=)");
 
     private final DefaultToolPolicyRequestAdapter delegate;
 
@@ -33,80 +33,19 @@ public final class CodingExecutionPolicyRequestAdapter implements ToolPolicyRequ
     @Override
     public PolicyRequest adapt(AgentRun run, FrozenToolBinding binding, ToolRequest request) {
         PolicyRequest baseline = delegate.adapt(run, binding, request);
-        String definitionName = binding.definition().name().value();
-        return withEffectiveExecutionRisk(baseline, definitionName, request);
+        return applyCredentialBoundary(baseline, binding.definition().name().value(), request);
     }
 
-    static PolicyRequest withEffectiveExecutionRisk(
-            PolicyRequest baseline, String definitionName, ToolRequest request) {
+    static PolicyRequest applyCredentialBoundary(PolicyRequest baseline, String definitionName, ToolRequest request) {
+        Objects.requireNonNull(baseline, "baseline must not be null");
+        Objects.requireNonNull(request, "request must not be null");
         if (!EXECUTION_RUN.equals(definitionName)) return baseline;
         Object value = request.arguments().values().get("command");
         if (!(value instanceof String command)) return baseline;
-
-        var assessment =
-                CodingExecutionRiskResolver.assess(command, baseline.risk().level());
-        var classification = assessment.classification();
-        if (classification.target() == SystemGitCliCommandClassifier.Target.GIT
-                && classification.risk() == SystemGitCliCommandClassifier.Risk.DENIED
-                && GIT_DIRECTORY_OVERRIDE.matcher(command).find()) {
+        CredentialEgressGuard.rejectionCode(command).ifPresent(code -> {
             throw new ToolAuthorizationProtocolException(
-                    "WORKSPACE_PROTOCOL_REQUIRED",
-                    "Use workspaceRef and relativeWorkdir; remove git -C from the command.");
-        }
-        PolicyRisk risk = resolveRisk(baseline.risk(), assessment);
-        String resolverDigest = PolicyDigest.sha256Fields(List.of(
-                "coding-execution-risk",
-                CodingExecutionRiskResolver.VERSION,
-                classification.target().name(),
-                classification.risk().name(),
-                classification.operation().name(),
-                classification.reasonCode(),
-                baseline.context().securityConfigurationDigest().orElse("")));
-        PolicyContext original = baseline.context();
-        PolicyContext context = new PolicyContext(
-                original.projectRef(),
-                original.sessionRef(),
-                original.runRef(),
-                original.attemptRef(),
-                original.approvalMode(),
-                Optional.of(resolverDigest));
-        return new PolicyRequest(baseline.subject(), context, baseline.action(), baseline.resource(), risk);
-    }
-
-    private static PolicyRisk resolveRisk(PolicyRisk baseline, CodingExecutionRiskResolver.Assessment assessment) {
-        SystemGitCliCommandClassifier.Classification classification = assessment.classification();
-        SystemGitCliCommandClassifier.Risk commandRisk = classification.risk();
-        if (classification.target() == SystemGitCliCommandClassifier.Target.OTHER
-                && commandRisk != SystemGitCliCommandClassifier.Risk.DENIED) {
-            return baseline;
-        }
-        EnumSet<PolicySideEffect> sideEffects = baseline.sideEffects().isEmpty()
-                ? EnumSet.noneOf(PolicySideEffect.class)
-                : EnumSet.copyOf(baseline.sideEffects());
-        switch (commandRisk) {
-            case LOCAL_WRITE -> sideEffects.add(PolicySideEffect.FILE_WRITE);
-            case NETWORK_READ -> sideEffects.add(PolicySideEffect.NETWORK_ACCESS);
-            case EXTERNAL_WRITE -> {
-                sideEffects.add(PolicySideEffect.NETWORK_ACCESS);
-                sideEffects.add(PolicySideEffect.EXTERNAL_SYSTEM_MUTATION);
-            }
-            case DESTRUCTIVE, UNKNOWN, DENIED -> {
-                sideEffects.add(PolicySideEffect.FILE_WRITE);
-                sideEffects.add(PolicySideEffect.NETWORK_ACCESS);
-                sideEffects.add(PolicySideEffect.EXTERNAL_SYSTEM_MUTATION);
-            }
-            case NOT_APPLICABLE, LOCAL_READ -> {
-                // Preserve the static execution side effect and its configured baseline.
-            }
-        }
-        if (classification.reasonCode().equals("GIT_FETCH")
-                || classification.reasonCode().equals("GIT_PULL")) {
-            sideEffects.add(PolicySideEffect.NETWORK_ACCESS);
-        }
-        return new PolicyRisk(
-                assessment.effectiveRisk(),
-                sideEffects,
-                baseline.credentialRequired(),
-                baseline.networkTargetSummary());
+                    code, "Remove the host authentication override and use the managed Credential Lease path.");
+        });
+        return baseline;
     }
 }

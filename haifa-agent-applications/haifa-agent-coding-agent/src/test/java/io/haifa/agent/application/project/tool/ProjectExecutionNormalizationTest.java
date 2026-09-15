@@ -9,7 +9,6 @@ import static io.haifa.agent.application.project.tool.ProjectExecutionTestSuppor
 import static io.haifa.agent.application.project.tool.ProjectExecutionTestSupport.resultWithFailure;
 import static io.haifa.agent.application.project.tool.ProjectExecutionTestSupport.resultWithoutChangeSet;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
@@ -33,8 +32,6 @@ import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
-import io.haifa.agent.tool.api.ToolDispatchState;
-import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolReconciliationRequest;
@@ -509,20 +506,20 @@ class ProjectExecutionNormalizationTest {
                         "TOOLCHAIN",
                         null),
                 Arguments.of(
-                        "github cli command not found",
+                        "missing executable command",
                         "gh pr list --repo owner/repo",
                         "gh: command not found\n",
                         ExecutionStatus.FAILED,
                         null,
                         new ExecutionFailure("EXECUTABLE_NOT_FOUND", "configured executable was not found"),
-                        null,
-                        "GH_CLI_UNAVAILABLE",
-                        null,
-                        "Install GitHub CLI"));
+                        "DEPENDENCY_UNAVAILABLE",
+                        "EXECUTABLE_NOT_FOUND",
+                        "TOOLCHAIN",
+                        null));
     }
 
     @Test
-    void reportsRiskEscalationWithoutInterpretingNormalNetworkCommandExit() {
+    void deliversEveryCommandIncludingCompoundGitThroughOneGenericPath() {
         AtomicInteger calls = new AtomicInteger();
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override
@@ -544,14 +541,9 @@ class ProjectExecutionNormalizationTest {
                 access());
 
         assertThat(compound.successful()).isTrue();
-        assertThat(compound.structuredData())
-                .containsEntry("effectiveRisk", "HIGH")
-                .containsEntry("riskResolutionCode", "COMMAND_RISK_ESCALATED")
-                .containsEntry("operationHintCode", "OPERATION_HINT_UNVERIFIED");
+        assertThat(compound.structuredData()).containsEntry("processState", "EXITED");
         assertThat(unknownGit.successful()).isTrue();
-        assertThat(unknownGit.structuredData())
-                .containsEntry("effectiveRisk", "HIGH")
-                .containsEntry("riskResolutionCode", "GIT_COMMAND_UNKNOWN_HIGH_RISK");
+        assertThat(unknownGit.structuredData()).containsEntry("processState", "EXITED");
         assertThat(network.successful()).isTrue();
         assertThat(network.structuredData())
                 .containsEntry("processState", "EXITED")
@@ -583,7 +575,7 @@ class ProjectExecutionNormalizationTest {
     }
 
     @Test
-    void sendsCompoundGitCommandsToTheBrokerAsHighRiskInsteadOfRejectingShellComposition() {
+    void sendsCompoundGitCommandsToTheBrokerWithoutRejectingShellComposition() {
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override
@@ -605,12 +597,15 @@ class ProjectExecutionNormalizationTest {
         assertThat(captured.get().command().shellCommand()).contains("&&");
         assertThat(result.successful()).isTrue();
         assertThat(result.structuredData())
-                .containsEntry("commandTarget", "GIT")
-                .containsEntry("commandRisk", "UNKNOWN")
-                .containsEntry("effectiveRisk", "HIGH")
-                .containsEntry("commandOperation", "UNKNOWN")
-                .containsEntry("commandClassificationReason", "COMPOUND_OR_WRAPPED_COMMAND")
-                .containsEntry("riskResolverVersion", "2");
+                .containsEntry("processState", "EXITED")
+                .containsEntry("operationFamily", "INSPECT")
+                .doesNotContainKeys(
+                        "commandTarget",
+                        "commandRisk",
+                        "effectiveRisk",
+                        "commandOperation",
+                        "commandClassificationReason",
+                        "riskResolverVersion");
     }
 
     @Test
@@ -689,7 +684,7 @@ class ProjectExecutionNormalizationTest {
     }
 
     @Test
-    void raisesTrustedNotDispatchedFailureOnlyForEligibleDirectGitPreflight() {
+    void returnsNotDispatchedPreflightFailuresAsOrdinaryResultsWithoutGitRecovery() {
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
@@ -698,20 +693,17 @@ class ProjectExecutionNormalizationTest {
             }
         };
 
-        assertThatThrownBy(() -> operations(broker, 1024, 2000)
-                        .execute(invocation(Map.of("command", "git ls-remote origin"), () -> false), access()))
-                .isInstanceOf(ToolInvocationException.class)
-                .satisfies(failure -> {
-                    var invocation = (ToolInvocationException) failure;
-                    assertThat(invocation.failureCode()).isEqualTo("NETWORK_PERMISSION_REQUIRED");
-                    assertThat(invocation.dispatchState()).isEqualTo(ToolDispatchState.NOT_DISPATCHED);
-                });
+        ToolResult result = operations(broker, 1024, 2000)
+                .execute(invocation(Map.of("command", "git ls-remote origin"), () -> false), access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("processState", "FAILED")
+                .containsEntry("stableFailureCode", "NETWORK_UNAVAILABLE");
     }
 
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("directGitAuthenticationPreflights")
-    void mapsDirectGitAndGithubAuthenticationPreflightToProductSpecificRecoveryCodes(
-            String caseName, String command, String expectedFailureCode) {
+    @Test
+    void mapsHostAuthenticationPreflightFailureToAGenericCodeWithoutProductSpecificRecovery() {
         ExecutionBroker broker = new ProjectExecutionTestSupport.StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
@@ -719,18 +711,14 @@ class ProjectExecutionNormalizationTest {
                         "AUTHENTICATION_UNAVAILABLE", "authentication failed before process dispatch", null);
             }
         };
-        ProjectExecutionToolOperations operations = operations(broker, 1024, 2000);
 
-        assertThatThrownBy(() -> operations.execute(invocation(Map.of("command", command), () -> false), access()))
-                .isInstanceOf(ToolInvocationException.class)
-                .satisfies(failure -> assertThat(((ToolInvocationException) failure).failureCode())
-                        .isEqualTo(expectedFailureCode));
-    }
+        ToolResult result = operations(broker, 1024, 2000)
+                .execute(invocation(Map.of("command", "git fetch origin"), () -> false), access());
 
-    static Stream<Arguments> directGitAuthenticationPreflights() {
-        return Stream.of(
-                Arguments.of("git fetch origin", "git fetch origin", "GIT_AUTHENTICATION_UNAVAILABLE"),
-                Arguments.of("gh repo view", "gh repo view", "GH_AUTHENTICATION_UNAVAILABLE"));
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("stableFailureCode", "HOST_AUTHENTICATION_UNAVAILABLE")
+                .doesNotContainKey("commandTarget");
     }
 
     @Test

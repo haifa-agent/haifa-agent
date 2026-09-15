@@ -73,13 +73,24 @@ class ProjectApiArchitectureTest {
                         || name.equals("LocalWorkspaceLocationStore")
                         || name.equals("LocalWorkspacePathSafety")
                         || name.equals("LocalStreamingPatchTransformer")
-                        || name.equals("AuthorizedDirectoryProvisioning"));
+                        || name.equals("AuthorizedDirectoryProvisioning")
+                        || name.equals("WorkspaceBinding")
+                        || name.equals("WorkspaceBindingId")
+                        || name.equals("WorkspaceBindingMode")
+                        || name.equals("WorkspaceBindingStatus")
+                        || name.equals("WorkspaceBindingStore")
+                        || name.equals("WorkspaceLocationRef")
+                        || name.equals("WorkspaceLocationStore")
+                        || name.equals("WorkspacePermission")
+                        || name.equals("WorkspacePermissionSet")
+                        || name.equals("WorkspaceCapabilitySet")
+                        || name.equals("WorkspaceRoot")
+                        || name.equals("WorkspacePurpose"));
     }
 
     private static final com.tngtech.archunit.core.domain.JavaClasses PRODUCTION_CLASSES = new ClassFileImporter()
             .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
             .importPackages(
-                    "io.haifa.agent.project.binding",
                     "io.haifa.agent.project.changeset",
                     "io.haifa.agent.project.configuration",
                     "io.haifa.agent.project.diff",

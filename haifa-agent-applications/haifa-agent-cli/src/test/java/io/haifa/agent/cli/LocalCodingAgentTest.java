@@ -35,6 +35,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.sql.DriverManager;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -118,8 +119,8 @@ class LocalCodingAgentTest {
                         "Do not treat a non-zero exit as a platform failure",
                         "without a new diagnostic hypothesis",
                         "rg -F -- <text>",
-                        "Runtime-owned recovery interaction",
-                        "Do not copy or resubmit the command",
+                        "Verify an unknown outcome from authoritative state before issuing any new command",
+                        "never blindly replay a dispatched call",
                         "Keep command output bounded")
                 .doesNotContain("Host OS:", "repeat the exact command, workdir");
         assertThat(LocalCodingAgent.executionEnvironmentPrompt(" ")).isEmpty();
@@ -842,6 +843,122 @@ class LocalCodingAgentTest {
     }
 
     @Test
+    void executionRunManagesRepoLocalWorktreeWithoutCreatingASecondWorkspaceRecord() throws Exception {
+        runGit(workspace, "init");
+        runGit(workspace, "config", "user.email", "test@example.invalid");
+        runGit(workspace, "config", "user.name", "Haifa Test");
+        Files.writeString(workspace.resolve("tracked.txt"), "base\n");
+        runGit(workspace, "add", "tracked.txt");
+        runGit(workspace, "commit", "-m", "base");
+
+        Path linkedWorktree = workspace.resolve(".worktrees").resolve("feat-a");
+        String modifyAndDiff = isWindows()
+                ? "Set-Content -LiteralPath '.worktrees/feat-a/tracked.txt' -Value 'child';"
+                        + " git -C .worktrees/feat-a diff --stat"
+                : "printf 'child\\n' > .worktrees/feat-a/tracked.txt;" + " git -C .worktrees/feat-a diff --stat";
+        AtomicInteger calls = new AtomicInteger();
+        AtomicReference<List<Map<String, Object>>> toolResults = new AtomicReference<>();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            int call = calls.incrementAndGet();
+            return switch (call) {
+                case 1 ->
+                    toolResponse(
+                            "worktree-create",
+                            "execution_run",
+                            Map.of(
+                                    "command",
+                                    "git worktree add .worktrees/feat-a -b feat-a",
+                                    "relativeWorkdir",
+                                    ".",
+                                    "timeoutMillis",
+                                    30_000,
+                                    "description",
+                                    "Create the repo-local worktree through generic execution"));
+                case 2 ->
+                    toolResponse(
+                            "worktree-modify",
+                            "execution_run",
+                            Map.of(
+                                    "command",
+                                    modifyAndDiff,
+                                    "relativeWorkdir",
+                                    ".",
+                                    "timeoutMillis",
+                                    30_000,
+                                    "description",
+                                    "Modify a file inside the worktree and inspect its diff"));
+                case 3 ->
+                    toolResponse(
+                            "worktree-revert",
+                            "execution_run",
+                            Map.of(
+                                    "command",
+                                    "git -C .worktrees/feat-a checkout -- tracked.txt",
+                                    "relativeWorkdir",
+                                    ".",
+                                    "timeoutMillis",
+                                    30_000,
+                                    "description",
+                                    "Restore the worktree before removal"));
+                case 4 ->
+                    toolResponse(
+                            "worktree-remove",
+                            "execution_run",
+                            Map.of(
+                                    "command",
+                                    "git worktree remove .worktrees/feat-a",
+                                    "relativeWorkdir",
+                                    ".",
+                                    "timeoutMillis",
+                                    30_000,
+                                    "description",
+                                    "Remove the repo-local worktree through generic execution"));
+                default -> {
+                    toolResults.set(request.messages().stream()
+                            .filter(message -> message.role() == ModelMessageRole.TOOL)
+                            .map(ModelMessage::toolResultData)
+                            .toList());
+                    yield answer("worktree-complete", "repo-local worktree managed with generic execution");
+                }
+            };
+        };
+
+        Path database = configuredSkillRoot.resolve("worktree-runtime.db");
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                withSqlitePersistence(automaticHostConfiguration(), database),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model,
+                ignored -> {},
+                new AesGcmModelContinuationProtector(
+                        new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
+            int directoryRowsBefore = countRows(database, "coding_authorized_directory");
+            assertThat(directoryRowsBefore).isEqualTo(1);
+            assertThat(agent.workspaceViews()).hasSize(1);
+            var accepted = agent.start("Create, use, and remove a repo-local worktree through execution_run.");
+            var completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(60));
+
+            assertThat(completed.status())
+                    .withFailMessage("run failed: %s", completed.error())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(linkedWorktree).doesNotExist();
+            assertThat(countRows(database, "coding_authorized_directory"))
+                    .as("generic execution_run must not add a second coding_authorized_directory row")
+                    .isEqualTo(directoryRowsBefore);
+            assertThat(agent.workspaceViews())
+                    .as("the product workspace projection must stay at the single authorized root")
+                    .hasSize(1);
+        }
+        assertThat(calls).hasValue(5);
+        assertThat(toolResults.get())
+                .hasSize(4)
+                .allSatisfy(result -> assertThat(result.get("processState")).isEqualTo("EXITED"))
+                .allSatisfy(result -> assertThat(result.get("exitCode")).isEqualTo(0));
+        assertThat(toolResults.get()).anySatisfy(result -> assertThat(String.valueOf(result.get("output")))
+                .contains("tracked.txt", "1 file changed"));
+    }
+
+    @Test
     void approvedExecutionRunResumesAndReturnsARealToolResult() throws Exception {
         Files.writeString(workspace.resolve(".gitignore"), "target/\n");
         Path generated = Files.createDirectories(workspace.resolve("target")).resolve("generated.jar");
@@ -1477,6 +1594,23 @@ class LocalCodingAgentTest {
         return isWindows() ? "if (Test-Path '" + file + "') { exit 0 } else { exit 1 }" : "test -f '" + file + "'";
     }
 
+    private static void runGit(Path directory, String... arguments) throws Exception {
+        List<String> command = new java.util.ArrayList<>();
+        command.add("git");
+        command.addAll(List.of(arguments));
+        Process process = new ProcessBuilder(command)
+                .directory(directory.toFile())
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS))
+                .withFailMessage("git command timed out: %s", String.join(" ", command))
+                .isTrue();
+        assertThat(process.exitValue())
+                .withFailMessage("git command failed: %s\n%s", String.join(" ", command), output)
+                .isZero();
+    }
+
     private static CliConfiguration automaticHostConfiguration() {
         CliConfiguration trusted = trustedHostConfiguration(CliConfiguration.defaults());
         return new CliConfiguration(
@@ -1491,6 +1625,32 @@ class LocalCodingAgentTest {
                 trusted.maxIterations(),
                 trusted.maxToolCalls(),
                 trusted.persistence());
+    }
+
+    private static CliConfiguration withSqlitePersistence(CliConfiguration configuration, Path database) {
+        return new CliConfiguration(
+                configuration.model(),
+                configuration.availableModels(),
+                configuration.enabledTools(),
+                configuration.mcpServers(),
+                configuration.web(),
+                configuration.skills(),
+                configuration.execution(),
+                configuration.approval(),
+                configuration.approvalThreshold(),
+                configuration.timeout(),
+                configuration.maxIterations(),
+                configuration.maxModelCalls(),
+                configuration.maxToolCalls(),
+                ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"));
+    }
+
+    private static int countRows(Path database, String table) throws Exception {
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                var result = connection.createStatement().executeQuery("SELECT COUNT(*) FROM " + table)) {
+            assertThat(result.next()).isTrue();
+            return result.getInt(1);
+        }
     }
 
     private static io.haifa.agent.runtime.api.AgentRunSnapshot awaitTerminal(
