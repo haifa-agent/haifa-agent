@@ -317,6 +317,19 @@ class CliModelConfigurationTest {
         assertThat(result.enabledTools())
                 .contains("file_read", "file_write", "execution_run")
                 .doesNotContain("file_search");
+        assertThat(result.skills().allowedAliases())
+                .containsExactlyInAnyOrder("task-planning", "result-verification", "git", "github")
+                .doesNotContain("git-delivery");
+        var skillPlatform = io.haifa.agent.application.project.skill.ProjectSkillPlatform.baseAndUserDirectorySkills(
+                new io.haifa.agent.core.reference.TenantRef("local"),
+                new io.haifa.agent.core.reference.PrincipalRef("user", "user"),
+                java.util.Optional.empty(),
+                false,
+                java.util.List.of());
+        assertThat(result.skills().allowedAliases()).allSatisfy(alias -> assertThat(
+                        skillPlatform.catalog().findByAlias(new io.haifa.agent.skill.api.SkillAlias(alias)))
+                .as("allowed skill %s must be discoverable by project skill platform", alias)
+                .isPresent());
     }
 
     @Test
