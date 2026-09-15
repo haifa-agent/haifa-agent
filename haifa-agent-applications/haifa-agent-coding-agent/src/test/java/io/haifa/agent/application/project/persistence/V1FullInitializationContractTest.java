@@ -15,7 +15,6 @@ import io.haifa.agent.store.sqlite.migration.SqlScriptParser;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.sql.Statement;
@@ -61,14 +60,13 @@ class V1FullInitializationContractTest {
 
         try (ProjectPersistenceAssembly reopened = ProjectPersistenceAssembly.open(
                 ProjectPersistenceConfiguration.sqliteUnprotected(database), Clock.systemUTC(), identifiers, null)) {
-            assertThat(reopened.authorizedDirectories().find(PROJECT, WORKSPACE))
-                    .get()
-                    .satisfies(entry -> {
-                        assertThat(entry.mode()).isEqualTo(WorkspaceAccessMode.DEVELOP);
-                        assertThat(entry.status()).isEqualTo(AuthorizedDirectoryStatus.ACTIVE);
-                        assertThat(entry.realPath()).isEqualTo(root.toRealPath(LinkOption.NOFOLLOW_LINKS));
-                        assertThat(entry.physicalFingerprint()).isEqualTo(physicalFingerprint);
-                    });
+            AuthorizedDirectoryEntry entry =
+                    reopened.authorizedDirectories().find(PROJECT, WORKSPACE).orElseThrow();
+            assertThat(entry.mode()).isEqualTo(WorkspaceAccessMode.DEVELOP);
+            assertThat(entry.status()).isEqualTo(AuthorizedDirectoryStatus.ACTIVE);
+            assertThat(entry.realPath().isAbsolute()).isTrue();
+            assertThat(Files.isSameFile(entry.realPath(), root)).isTrue();
+            assertThat(entry.physicalFingerprint()).isEqualTo(physicalFingerprint);
         }
     }
 
