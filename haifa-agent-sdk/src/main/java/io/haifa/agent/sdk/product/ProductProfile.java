@@ -28,7 +28,6 @@ public record ProductProfile(
         Map<ProductCapabilityId, ProductCapabilityRequirement> capabilityRequirements,
         Set<String> allowedTools,
         Set<String> allowedSkills,
-        Set<String> allowedExtensions,
         String configurationDigest) {
 
     public static final String CURRENT_SCHEMA_VERSION = "1.0";
@@ -57,7 +56,6 @@ public record ProductProfile(
         });
         allowedTools = normalized(allowedTools, "allowedTools");
         allowedSkills = normalized(allowedSkills, "allowedSkills");
-        allowedExtensions = normalized(allowedExtensions, "allowedExtensions");
         configurationDigest = ProductValues.requireDigest(configurationDigest, "configurationDigest");
         String expected = digest(
                 schemaVersion,
@@ -73,8 +71,7 @@ public record ProductProfile(
                 policies,
                 capabilityRequirements,
                 allowedTools,
-                allowedSkills,
-                allowedExtensions);
+                allowedSkills);
         if (!expected.equals(configurationDigest)) {
             throw new IllegalArgumentException("product profile digest does not match frozen fields");
         }
@@ -92,8 +89,7 @@ public record ProductProfile(
             AgentRunLimits limits,
             Map<ProductCapabilityId, ProductCapabilityRequirement> requirements,
             Set<String> allowedTools,
-            Set<String> allowedSkills,
-            Set<String> allowedExtensions) {
+            Set<String> allowedSkills) {
         return create(
                 productId,
                 productVersion,
@@ -107,8 +103,7 @@ public record ProductProfile(
                 ProductPolicies.safeDefaults(),
                 requirements,
                 allowedTools,
-                allowedSkills,
-                allowedExtensions);
+                allowedSkills);
     }
 
     public static ProductProfile create(
@@ -124,12 +119,10 @@ public record ProductProfile(
             ProductPolicies policies,
             Map<ProductCapabilityId, ProductCapabilityRequirement> requirements,
             Set<String> allowedTools,
-            Set<String> allowedSkills,
-            Set<String> allowedExtensions) {
+            Set<String> allowedSkills) {
         Map<ProductCapabilityId, ProductCapabilityRequirement> safeRequirements = Map.copyOf(requirements);
         Set<String> safeTools = normalized(allowedTools, "allowedTools");
         Set<String> safeSkills = normalized(allowedSkills, "allowedSkills");
-        Set<String> safeExtensions = normalized(allowedExtensions, "allowedExtensions");
         ProductPolicies safePolicies = Objects.requireNonNull(policies, "policies must not be null");
         return new ProductProfile(
                 CURRENT_SCHEMA_VERSION,
@@ -146,7 +139,6 @@ public record ProductProfile(
                 safeRequirements,
                 safeTools,
                 safeSkills,
-                safeExtensions,
                 digest(
                         CURRENT_SCHEMA_VERSION,
                         productId,
@@ -161,8 +153,7 @@ public record ProductProfile(
                         safePolicies,
                         safeRequirements,
                         safeTools,
-                        safeSkills,
-                        safeExtensions));
+                        safeSkills));
     }
 
     public ProductCapabilityRequirement requirement(ProductCapabilityId capabilityId) {
@@ -183,8 +174,7 @@ public record ProductProfile(
             ProductPolicies policies,
             Map<ProductCapabilityId, ProductCapabilityRequirement> requirements,
             Set<String> allowedTools,
-            Set<String> allowedSkills,
-            Set<String> allowedExtensions) {
+            Set<String> allowedSkills) {
         List<String> fields = new ArrayList<>();
         add(fields, "schema", schemaVersion);
         add(fields, "productId", productId.value());
@@ -237,7 +227,6 @@ public record ProductProfile(
         });
         addSorted(fields, "allowedTool", allowedTools);
         addSorted(fields, "allowedSkill", allowedSkills);
-        addSorted(fields, "allowedExtension", allowedExtensions);
         return SdkConfigurationDigest.sha256(fields.toArray(String[]::new));
     }
 

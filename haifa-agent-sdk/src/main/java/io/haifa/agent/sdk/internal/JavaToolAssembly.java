@@ -293,8 +293,7 @@ public final class JavaToolAssembly {
                 profile.policies(),
                 requirements,
                 aliases,
-                profile.allowedSkills(),
-                profile.allowedExtensions());
+                profile.allowedSkills());
     }
 
     public record Prepared(

@@ -12,11 +12,6 @@ public final class ProductCapabilities {
     public static final ProductCapabilityId POLICY = new ProductCapabilityId("policy");
     public static final ProductCapabilityId APPROVAL = new ProductCapabilityId("approval");
     public static final ProductCapabilityId CREDENTIAL = new ProductCapabilityId("credential");
-    public static final ProductCapabilityId PROJECT = new ProductCapabilityId("project");
-    public static final ProductCapabilityId WORKSPACE = new ProductCapabilityId("workspace");
-    public static final ProductCapabilityId GIT = new ProductCapabilityId("git");
-    public static final ProductCapabilityId SHELL = new ProductCapabilityId("shell");
-    public static final ProductCapabilityId EXECUTION = new ProductCapabilityId("execution");
 
     private ProductCapabilities() {}
 }

@@ -8,7 +8,6 @@ import io.haifa.agent.artifact.InMemoryArtifactPayloadStore;
 import io.haifa.agent.artifact.InMemoryArtifactStore;
 import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
-import io.haifa.agent.sdk.contribution.ExecutionPlatformContribution;
 import io.haifa.agent.sdk.product.ProductAssemblyException;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductCapabilityId;
@@ -23,24 +22,21 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class ProductIsolationAndLifecycleTest {
+    private static final ProductCapabilityId PROJECT = new ProductCapabilityId("project");
     private static final ProductContributionCoordinate PROJECT_COORDINATE =
             new ProductContributionCoordinate("project.coding", "1.0");
 
     @Test
-    void personalProfileRejectsCodingCapabilityWhileCodingProfileSelectsIt() {
-        ProductContribution project = contribution(
-                ProductCapabilities.PROJECT, PROJECT_COORDINATE, new AtomicInteger(), new AtomicInteger(), false);
-        var personal = SdkTestFixtures.profile(
-                "personal",
-                Map.of(ProductCapabilities.PROJECT, ProductCapabilityRequirement.none(ProductCapabilities.PROJECT)));
+    void personalProfileRejectsContributedCapabilityWhileCodingProfileSelectsIt() {
+        ProductContribution project =
+                contribution(PROJECT, PROJECT_COORDINATE, new AtomicInteger(), new AtomicInteger(), false);
+        var personal = SdkTestFixtures.profile("personal", Map.of(PROJECT, ProductCapabilityRequirement.none(PROJECT)));
         var coding = SdkTestFixtures.profile(
                 "coding",
                 Map.of(
-                        ProductCapabilities.PROJECT,
+                        PROJECT,
                         ProductCapabilityRequirement.required(
-                                ProductCapabilities.PROJECT,
-                                Set.of(PROJECT_COORDINATE),
-                                ProductProviderSuitability.DEVELOPMENT)));
+                                PROJECT, Set.of(PROJECT_COORDINATE), ProductProviderSuitability.DEVELOPMENT)));
 
         var personalContributions = new java.util.ArrayList<>(SdkTestFixtures.baseContributions());
         personalContributions.add(project);
@@ -57,7 +53,7 @@ class ProductIsolationAndLifecycleTest {
                 .contributeAll(codingContributions)
                 .timeProvider(() -> Instant.parse("2026-07-28T00:00:00Z"))
                 .build()) {
-            assertThat(agent.assembly().contributions()).containsKey(ProductCapabilities.PROJECT);
+            assertThat(agent.assembly().contributions()).containsKey(PROJECT);
             assertThat(agent.assembly().profile().allowedTools()).isEmpty();
             assertThat(agent.assembly().profile().allowedSkills()).isEmpty();
         }
@@ -132,7 +128,7 @@ class ProductIsolationAndLifecycleTest {
     }
 
     @Test
-    void typedArtifactAndExecutionContributionsRequireExplicitProductPolicies() {
+    void typedArtifactContributionRequiresExplicitProductPolicy() {
         ProductContributionCoordinate artifactCoordinate = new ProductContributionCoordinate("artifact.memory", "1.0");
         var artifactProfile = SdkTestFixtures.profile(
                 "artifact-disabled",
@@ -163,32 +159,6 @@ class ProductIsolationAndLifecycleTest {
                 .isInstanceOf(ProductAssemblyException.class)
                 .extracting("code")
                 .isEqualTo("ARTIFACT_POLICY_DISABLED");
-
-        ProductContributionCoordinate executionCoordinate = new ProductContributionCoordinate("execution.host", "1.0");
-        var executionProfile = SdkTestFixtures.profile(
-                "execution-disabled",
-                Map.of(
-                        ProductCapabilities.EXECUTION,
-                        ProductCapabilityRequirement.required(
-                                ProductCapabilities.EXECUTION,
-                                Set.of(executionCoordinate),
-                                ProductProviderSuitability.DEVELOPMENT)));
-        var execution = new ExecutionPlatformContribution(
-                SdkTestFixtures.metadata(
-                        executionCoordinate,
-                        ProductCapabilities.EXECUTION,
-                        SdkConfigurationDigest.sha256("execution-host-v1"),
-                        ProductProviderSuitability.DEVELOPMENT),
-                "host-guard");
-        var executionContributions = new java.util.ArrayList<>(SdkTestFixtures.baseContributions());
-        executionContributions.add(execution);
-
-        assertThatThrownBy(() -> HaifaAgents.builder(executionProfile)
-                        .contributeAll(executionContributions)
-                        .build())
-                .isInstanceOf(ProductAssemblyException.class)
-                .extracting("code")
-                .isEqualTo("EXECUTION_POLICY_DISABLED");
     }
 
     private static ProductContribution contribution(
