@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.ProjectProductService;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
+import io.haifa.agent.application.project.product.coding.CodingCommandBinding;
 import io.haifa.agent.application.project.product.coding.CodingFollowUp;
 import io.haifa.agent.application.project.product.coding.CodingFollowUpStatus;
 import io.haifa.agent.application.project.product.coding.CodingModelCatalog;
@@ -22,7 +23,6 @@ import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
 import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
@@ -459,7 +459,7 @@ class ProjectPersistenceAssemblyTest {
     }
 
     @Test
-    void codingDeliveryIntentIsFrozenIdempotentAndSurvivesSqliteReopen() {
+    void codingSessionCommandIsFrozenIdempotentAndSurvivesSqliteReopen() {
         Path database = directory.resolve("coding-delivery-intent.db");
         ProductFixture fixture = productFixture();
         AgentRunId runId;
@@ -471,33 +471,24 @@ class ProjectPersistenceAssemblyTest {
             CodingSessionService coding =
                     fixture.codingService(assembly, new CapturingRuntime(), new TestIds("delivery-service"));
             var created = coding.createSession(
-                    fixture.projectId,
-                    "implement and open a pull request",
-                    List.of(),
-                    "delivery-key",
-                    CodingDeliveryIntent.PULL_REQUEST);
+                    fixture.projectId, "implement and open a pull request", List.of(), "delivery-key");
             runId = created.activeRun().orElseThrow().runId();
 
             assertThat(assembly.codingSessions().findCommandByRunId(runId))
                     .get()
-                    .extracting(binding -> binding.deliveryIntent())
-                    .isEqualTo(CodingDeliveryIntent.PULL_REQUEST);
+                    .extracting(CodingCommandBinding::message)
+                    .isEqualTo("implement and open a pull request");
             assertThat(coding.createSession(
-                                    fixture.projectId,
-                                    "implement and open a pull request",
-                                    List.of(),
-                                    "delivery-key",
-                                    CodingDeliveryIntent.PULL_REQUEST)
+                                    fixture.projectId, "implement and open a pull request", List.of(), "delivery-key")
                             .activeRun()
                             .orElseThrow()
                             .runId())
                     .isEqualTo(runId);
             assertThatThrownBy(() -> coding.createSession(
                             fixture.projectId,
-                            "implement and open a pull request",
+                            "a different prompt with same idempotency key",
                             List.of(),
-                            "delivery-key",
-                            CodingDeliveryIntent.WORKTREE_ONLY))
+                            "delivery-key"))
                     .isInstanceOf(RuntimeException.class)
                     .hasRootCauseMessage("idempotency key is bound to another request");
         }
@@ -509,8 +500,8 @@ class ProjectPersistenceAssemblyTest {
                 null)) {
             assertThat(reopened.codingSessions().findCommandByRunId(runId))
                     .get()
-                    .extracting(binding -> binding.deliveryIntent())
-                    .isEqualTo(CodingDeliveryIntent.PULL_REQUEST);
+                    .extracting(CodingCommandBinding::message)
+                    .isEqualTo("implement and open a pull request");
         }
     }
 
@@ -778,9 +769,8 @@ class ProjectPersistenceAssemblyTest {
                 CodingVerificationSource.BUILD_CONFIGURATION,
                 "pom.xml",
                 CodingValidationScope.FULL)));
-        CodingSessionCreateOptions userCommitted = new CodingSessionCreateOptions(
-                CodingDeliveryIntent.WORKTREE_ONLY,
-                List.of(new CodingVerificationCandidate(
+        CodingSessionCreateOptions userCommitted =
+                new CodingSessionCreateOptions(List.of(new CodingVerificationCandidate(
                         "python -m pytest tests/test_api.py",
                         CodingVerificationCost.LOW,
                         CodingVerificationTrigger.ADJACENT_CHANGE,

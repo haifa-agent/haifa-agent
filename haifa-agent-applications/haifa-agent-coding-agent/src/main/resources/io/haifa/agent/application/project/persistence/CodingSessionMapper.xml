@@ -69,7 +69,6 @@
             <arg column="dispatch_key" javaType="java.lang.String"/>
             <arg column="session_id" javaType="java.lang.String"/>
             <arg column="project_id" javaType="java.lang.String"/>
-            <arg column="delivery_intent" javaType="java.lang.String"/>
             <arg column="content_nonce" javaType="[B"/>
             <arg column="content_ciphertext" javaType="[B"/>
             <arg column="content_digest" javaType="java.lang.String"/>
@@ -137,12 +136,12 @@
         INSERT INTO coding_session_command(
             caller_scope_digest, operation, idempotency_key_digest, schema_version,
             request_digest, dispatch_key, session_id, project_id, content_nonce,
-            content_ciphertext, content_digest, run_id, created_at_ms, delivery_intent
+            content_ciphertext, content_digest, run_id, created_at_ms
         ) VALUES (
             #{row.callerScopeDigest}, #{row.operation}, #{row.idempotencyKeyDigest},
             #{row.schemaVersion}, #{row.requestDigest}, #{row.dispatchKey}, #{row.sessionId},
             #{row.projectId}, #{row.contentNonce}, #{row.contentCiphertext}, #{row.contentDigest},
-            #{row.runId}, #{row.createdAt}, #{row.deliveryIntent}
+            #{row.runId}, #{row.createdAt}
         )
     </insert>
 

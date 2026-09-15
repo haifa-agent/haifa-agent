@@ -13,7 +13,6 @@ import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingWorkspaceView;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
 import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjection;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -35,14 +34,6 @@ import java.util.Optional;
 /** Stable Coding Agent product API consumed by local hosts and user interfaces. */
 public interface CodingSessionClient {
     CodingSessionView create(ProjectId projectId, String firstTurn, String idempotencyKey);
-
-    default CodingSessionView create(
-            ProjectId projectId, String firstTurn, String idempotencyKey, CodingDeliveryIntent deliveryIntent) {
-        if (deliveryIntent != CodingDeliveryIntent.WORKTREE_ONLY) {
-            throw new UnsupportedOperationException("Explicit delivery intent is unavailable");
-        }
-        return create(projectId, firstTurn, idempotencyKey);
-    }
 
     default CodingSessionView create(
             ProjectId projectId, String firstTurn, String idempotencyKey, CodingSessionCreateOptions options) {
@@ -84,14 +75,6 @@ public interface CodingSessionClient {
     }
 
     void submit(AgentSessionId sessionId, String message, String idempotencyKey);
-
-    default void submit(
-            AgentSessionId sessionId, String message, String idempotencyKey, CodingDeliveryIntent deliveryIntent) {
-        if (deliveryIntent != CodingDeliveryIntent.WORKTREE_ONLY) {
-            throw new UnsupportedOperationException("Explicit delivery intent is unavailable");
-        }
-        submit(sessionId, message, idempotencyKey);
-    }
 
     void steer(AgentSessionId sessionId, AgentRunId activeRunId, String message, String idempotencyKey);
 

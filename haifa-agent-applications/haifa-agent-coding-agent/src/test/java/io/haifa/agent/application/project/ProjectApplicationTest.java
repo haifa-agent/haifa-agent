@@ -301,10 +301,10 @@ class ProjectApplicationTest {
                                     .document()
                                     .get("required")
                                     .toString())
-                            .contains("sourceWorkspaceRef", "baseCommit", "branchName", "targetName", "deliveryIntent")
-                            .doesNotContain("permission");
+                            .contains("sourceWorkspaceRef", "baseCommit", "branchName", "targetName")
+                            .doesNotContain("deliveryIntent", "permission");
                     assertThat(binding.definition().inputSchema().document().toString())
-                            .doesNotContain("permission", "read-write");
+                            .doesNotContain("deliveryIntent", "permission", "read-write");
                 });
         assertThat(frozen.snapshot().bindings())
                 .filteredOn(binding -> binding.alias().value().equals("file_write"))

@@ -55,7 +55,6 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
                 current.projectId(),
                 current.message(),
                 current.attachments(),
-                current.deliveryIntent(),
                 Optional.of(runId),
                 current.createdAt());
         entry.setValue(completed);
@@ -528,8 +527,7 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
 
     private static boolean sameRequest(CodingCommandBinding first, CodingCommandBinding second) {
         return first.requestDigest().equals(second.requestDigest())
-                && first.projectId().equals(second.projectId())
-                && first.deliveryIntent() == second.deliveryIntent();
+                && first.projectId().equals(second.projectId());
     }
 
     private static CodingFollowUp copyFollowUp(

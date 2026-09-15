@@ -101,8 +101,7 @@ class CodingWorkspaceRegistryPromptTest {
                 "sourceWorkspaceRef", "workspace-ref-1",
                 "baseCommit", "abc123",
                 "branchName", "feat/example",
-                "targetName", "review-copy",
-                "deliveryIntent", "pull-request"));
+                "targetName", "review-copy"));
 
         assertThat(prompt)
                 .contains(
@@ -110,8 +109,7 @@ class CodingWorkspaceRegistryPromptTest {
                         "Base commit: abc123",
                         "New branch: feat/example",
                         "Managed target: review-copy",
-                        "Delivery intent: pull-request",
                         "no arbitrary host path is accepted")
-                .doesNotContain("C:\\", "/home/", "targetPath");
+                .doesNotContain("Delivery intent", "C:\\", "/home/", "targetPath");
     }
 }
