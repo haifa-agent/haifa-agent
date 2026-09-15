@@ -13,8 +13,9 @@ import java.util.Set;
  * command grammar. It inspects only the first words of the command text: optional leading
  * {@code NAME=value} assignments, the {@code env}/{@code export}/{@code set} builtins, PowerShell
  * {@code $env:NAME} forms, and {@code git}/{@code gh} used as the command word with a credential
- * subcommand or credential config override located after a small bounded leading global-option
- * prefix. It never interprets shell composition ({@code ;}, {@code &&}, {@code |}), nested
+ * subcommand or credential config override located after leading global options (traversal stops at
+ * the first non-option token, bounded only by the finite token list, not by a token-count ceiling).
+ * It never interprets shell composition ({@code ;}, {@code &&}, {@code |}), nested
  * interpreters, wrappers, quoting grammar, Git business operations, target, risk, or effect.
  *
  * <p>Known limits: a credential read or protected override that is not in the leading command
@@ -39,11 +40,9 @@ public final class CredentialEgressGuard {
     private static final String CONFIG_ENV_PREFIX = "--config-env=";
     private static final String SHOW_TOKEN = "--show-token";
     private static final String SHOW_TOKEN_SHORT = "-t";
-    private static final String HOSTNAME_OPTION = "--hostname";
-    private static final int GIT_GLOBAL_OPTION_LIMIT = 8;
-    private static final int GH_GLOBAL_OPTION_LIMIT = 4;
     private static final Set<String> GIT_GLOBAL_OPTIONS_WITH_SEPARATE_VALUE = Set.of(
             "-c", "-C", "--config-env", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix");
+    private static final Set<String> GH_GLOBAL_OPTIONS_WITH_SEPARATE_VALUE = Set.of("--hostname", "-h");
     private static final Set<String> PROTECTED_ENVIRONMENT = Set.of(
             "GH_TOKEN",
             "GITHUB_TOKEN",
@@ -194,15 +193,15 @@ public final class CredentialEgressGuard {
     }
 
     /**
-     * Locates the Git subcommand after a small bounded prefix of Git global options. Each recognized
-     * option that takes a separate value consumes the following token; any other leading
-     * {@code -option} consumes only itself. The first non-option token is the subcommand, so later
-     * options such as {@code git grep -c ...} are arguments and never treated as global overrides.
+     * Locates the Git subcommand after the leading Git global options. Each recognized option that
+     * takes a separate value consumes the following token; any other leading {@code -option}
+     * consumes only itself. Traversal stops at the first non-option token, so it is bounded by the
+     * command's finite token list rather than a token-count ceiling, and later options such as
+     * {@code git grep -c ...} are arguments and never treated as global overrides.
      */
     private static int gitSubcommandIndex(List<String> commandWords) {
         int index = 1;
-        int limit = Math.min(commandWords.size(), 1 + GIT_GLOBAL_OPTION_LIMIT);
-        while (index < limit) {
+        while (index < commandWords.size()) {
             String word = commandWords.get(index);
             if (!word.startsWith("-")) {
                 return index;
@@ -213,19 +212,18 @@ public final class CredentialEgressGuard {
     }
 
     /**
-     * Locates the {@code gh} subcommand after a small bounded prefix of {@code gh} global options.
-     * Only {@code --hostname} is known to consume a separate value; every other leading
-     * {@code -option} consumes itself.
+     * Locates the {@code gh} subcommand after the leading {@code gh} global options. Only the
+     * separate-value hostname options consume the following token; every other leading
+     * {@code -option} consumes itself. Traversal stops at the first non-option token.
      */
     private static int ghSubcommandIndex(List<String> commandWords) {
         int index = 1;
-        int limit = Math.min(commandWords.size(), 1 + GH_GLOBAL_OPTION_LIMIT);
-        while (index < limit) {
+        while (index < commandWords.size()) {
             String word = commandWords.get(index);
             if (!word.startsWith("-")) {
                 return index;
             }
-            index += word.equals(HOSTNAME_OPTION) ? 2 : 1;
+            index += GH_GLOBAL_OPTIONS_WITH_SEPARATE_VALUE.contains(word) ? 2 : 1;
         }
         return -1;
     }
