@@ -54,10 +54,17 @@ import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.skill.api.SkillActivation;
 import io.haifa.agent.skill.api.SkillActivationRequest;
+import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.skill.api.SkillContent;
+import io.haifa.agent.skill.api.SkillOrigin;
+import io.haifa.agent.skill.api.SkillParserMode;
+import io.haifa.agent.skill.api.SkillScope;
+import io.haifa.agent.skill.api.SkillVisibilityContext;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -66,6 +73,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ProjectApplicationTest {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
@@ -199,7 +207,8 @@ class ProjectApplicationTest {
         var skills = ProjectSkillPlatform.baseSkills(tenant, principal, Optional.empty(), false);
         assertThat(skills.catalog().snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
-                .containsExactly("git", "github", "result-verification", "task-planning");
+                .containsExactly("result-verification", "task-planning")
+                .doesNotContain("git", "github");
 
         SkillActivationService unusedService = new SkillActivationService() {
             @Override
@@ -229,6 +238,47 @@ class ProjectApplicationTest {
                         .bindings())
                 .extracting(binding -> binding.alias().value())
                 .containsExactly("skill_load", "skill_resource_read");
+    }
+
+    @Test
+    void userDirectoryMayDefineGitAndGithubAsOrdinarySkills(@TempDir Path sourceRoot) throws Exception {
+        for (String name : List.of("git", "github")) {
+            Path skillRoot = Files.createDirectory(sourceRoot.resolve(name));
+            Files.writeString(
+                    skillRoot.resolve("SKILL.md"),
+                    """
+                    ---
+                    name: %s
+                    description: User-owned repository conventions.
+                    ---
+                    # User-owned %s conventions
+                    """
+                            .formatted(name, name));
+        }
+        TenantRef tenant = new TenantRef("tenant");
+        PrincipalRef principal = new PrincipalRef("principal", "user");
+        var platform = ProjectSkillPlatform.baseAndUserDirectorySkills(
+                tenant,
+                principal,
+                Optional.empty(),
+                false,
+                List.of(new ProjectSkillPlatform.UserDirectorySource(
+                        "user-skills", sourceRoot, 100, SkillParserMode.STRICT, SkillOrigin.CREATED)));
+
+        assertThat(platform.catalog().snapshot().bindings())
+                .extracting(binding -> binding.alias().value())
+                .contains("git", "github", "result-verification", "task-planning");
+        var visibility = new SkillVisibilityContext(
+                tenant,
+                principal,
+                Optional.empty(),
+                false,
+                Set.of(SkillScope.USER, SkillScope.PROJECT, SkillScope.TENANT, SkillScope.PRODUCT, SkillScope.SDK));
+        for (String name : List.of("git", "github")) {
+            var binding = platform.catalog().findByAlias(new SkillAlias(name)).orElseThrow();
+            assertThat(platform.contentLoader().load(binding, visibility).instructions())
+                    .contains("User-owned " + name + " conventions");
+        }
     }
 
     @Test
