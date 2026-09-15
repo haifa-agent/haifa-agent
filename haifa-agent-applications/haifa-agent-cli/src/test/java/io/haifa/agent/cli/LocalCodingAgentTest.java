@@ -1053,7 +1053,7 @@ class LocalCodingAgentTest {
     }
 
     @Test
-    void stubModelCompletesChangeAfterDeliveryEvidenceExists() throws Exception {
+    void stubModelCompletesChangeWithoutCompletionJudge() throws Exception {
         Path successfulWorkspace = Files.createDirectory(workspace.resolve("delivery-success"));
         AtomicInteger successfulCalls = new AtomicInteger();
         List<AgentChatRequest> successfulRequests = new CopyOnWriteArrayList<>();
@@ -1066,7 +1066,7 @@ class LocalCodingAgentTest {
                             .anyMatch(message -> message.role() == ModelMessageRole.SYSTEM
                                     && message.content().contains("smallest complete change")
                                     && message.content().contains("result-verification skill")
-                                    && message.content().contains("authoritative tool results show a workspace change"))
+                                    && message.content().contains("confirm the observed outcome"))
                             .noneMatch(message -> message.content().contains("[CODING_RUN_STATE]"));
                     yield toolResponse(
                             "delivery-write",

@@ -341,9 +341,9 @@ class RuntimeCoreHardeningTest {
         Fixture blocked = fixture(request -> response(decisions.remove()), builder -> builder.completionPolicy(
                         (run, decision) -> io.haifa.agent.runtime.core.completion.CompletionPolicyResult.blocked(
                                 List.of(io.haifa.agent.runtime.core.completion.CompletionBlocker.recoverable(
-                                        "VALIDATION_ATTEMPT_MISSING",
-                                        "No authoritative validation attempt exists.",
-                                        "VALIDATION_ATTEMPT")),
+                                        "PRODUCT_REQUIREMENT_MISSING",
+                                        "A product completion requirement is unmet.",
+                                        "PRODUCT_REQUIREMENT")),
                                 List.of()))
                 .completionRepair(new CompletionRepairPolicy(1)));
         var blockedRun = blocked.runtime.start(request("validation-blocked"));
@@ -354,7 +354,7 @@ class RuntimeCoreHardeningTest {
                 .singleElement()
                 .satisfies(event -> assertThat(event.data())
                         .containsEntry("phase", "COMPLETION")
-                        .containsEntry("reasonCode", "VALIDATION_ATTEMPT_MISSING"));
+                        .containsEntry("reasonCode", "PRODUCT_REQUIREMENT_MISSING"));
     }
 
     @Test
