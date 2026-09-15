@@ -15,6 +15,7 @@ import io.haifa.agent.store.sqlite.migration.SqlScriptParser;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.sql.Statement;
@@ -65,7 +66,7 @@ class V1FullInitializationContractTest {
                     .satisfies(entry -> {
                         assertThat(entry.mode()).isEqualTo(WorkspaceAccessMode.DEVELOP);
                         assertThat(entry.status()).isEqualTo(AuthorizedDirectoryStatus.ACTIVE);
-                        assertThat(entry.realPath()).isEqualTo(root.toRealPath());
+                        assertThat(entry.realPath()).isEqualTo(root.toRealPath(LinkOption.NOFOLLOW_LINKS));
                         assertThat(entry.physicalFingerprint()).isEqualTo(physicalFingerprint);
                     });
         }

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -24,9 +25,10 @@ class HostWorkspaceLocationStoreTest {
         var store = new HostWorkspaceLocationStore();
         store.register(WORKSPACE, root);
 
-        assertThat(store.resolveVerified(WORKSPACE)).isEqualTo(root.toRealPath());
+        assertThat(store.resolveVerified(WORKSPACE)).isEqualTo(root.toRealPath(LinkOption.NOFOLLOW_LINKS));
         assertThat(HostWorkspaceLocationStore.physicalFingerprintFor(root))
-                .isEqualTo(HostWorkspaceLocationStore.physicalFingerprintFor(root.toRealPath()));
+                .isEqualTo(
+                        HostWorkspaceLocationStore.physicalFingerprintFor(root.toRealPath(LinkOption.NOFOLLOW_LINKS)));
     }
 
     @Test
@@ -34,10 +36,12 @@ class HostWorkspaceLocationStoreTest {
         Path root = Files.createDirectory(directory.resolve("root"));
         var store = new HostWorkspaceLocationStore();
         store.register(WORKSPACE, root);
+        String originalFingerprint = HostWorkspaceLocationStore.physicalFingerprintFor(root);
 
         deleteRecursively(root);
         Files.createDirectory(root);
 
+        assertThat(HostWorkspaceLocationStore.physicalFingerprintFor(root)).isNotEqualTo(originalFingerprint);
         assertThatThrownBy(() -> store.resolveVerified(WORKSPACE))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("identity changed");

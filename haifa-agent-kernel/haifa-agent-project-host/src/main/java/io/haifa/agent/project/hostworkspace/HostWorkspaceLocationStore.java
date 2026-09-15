@@ -119,9 +119,10 @@ public final class HostWorkspaceLocationStore {
             BasicFileAttributes attributes =
                     java.nio.file.Files.readAttributes(canonical, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
             Object fileKey = attributes.fileKey();
-            String filesystemIdentity = fileKey == null
-                    ? "creation-time\0" + attributes.creationTime()
-                    : "file-key\0" + fileKey.getClass().getName() + "\0" + fileKey;
+            String filesystemIdentity = "file-key\0"
+                    + (fileKey == null ? "unavailable" : fileKey.getClass().getName() + "\0" + fileKey)
+                    + "\0creation-time\0"
+                    + attributes.creationTime();
             var fileStore = java.nio.file.Files.getFileStore(canonical);
             return "physical-directory-v1:"
                     + sha256(String.join(
