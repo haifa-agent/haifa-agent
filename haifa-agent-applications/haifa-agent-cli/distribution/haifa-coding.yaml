@@ -59,7 +59,7 @@ models:
 tools:
   enabled: [file_list, file_stat, file_read, file_create, file_write, file_patch, file_delete, file_move,  workspace_attach, workspace_worktree_create,execution_run]
 skills:
-  allowed: [task-planning, result-verification, git, github, git-delivery]
+  allowed: [task-planning, result-verification, git, github]
 approval:
   mode: ask
   threshold: low
