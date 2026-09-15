@@ -3,6 +3,7 @@ package io.haifa.agent.runtime.core.skill;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.skill.api.SkillActivationRequest;
 import io.haifa.agent.skill.api.SkillAlias;
+import io.haifa.agent.skill.api.SkillResourceRef;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
@@ -17,6 +18,7 @@ import io.haifa.agent.tool.api.ToolResourceRequirements;
 import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSchema;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -62,19 +64,34 @@ public final class SkillToolProvider implements ToolProvider {
             switch (request.binding().definition().name().value()) {
                 case "skill_load" -> {
                     var activation = skills.activate(activationRequest);
-                    result = result(
-                            "Activated Skill " + activation.binding().alias().value(),
-                            Map.of(
-                                    "skill", activation.binding().alias().value(),
-                                    "digest",
-                                            activation
-                                                    .binding()
-                                                    .coordinate()
-                                                    .contentDigest()
-                                                    .value(),
-                                    "activated", true,
-                                    "instructionBytes", activation.instructionBytes(),
-                                    "estimatedTokens", activation.estimatedTokens()));
+                    List<String> readableResources = activation.binding().packageIndex().resources().stream()
+                            .filter(resource -> resource.readableText()
+                                    && !resource.relativePath().equals("SKILL.md"))
+                            .map(SkillResourceRef::relativePath)
+                            .sorted()
+                            .toList();
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put("skill", activation.binding().alias().value());
+                    data.put(
+                            "digest",
+                            activation.binding().coordinate().contentDigest().value());
+                    data.put("activated", true);
+                    data.put("instructionBytes", activation.instructionBytes());
+                    data.put("estimatedTokens", activation.estimatedTokens());
+                    data.put("readableResources", readableResources);
+                    String summary;
+                    if (readableResources.isEmpty()) {
+                        String guidance =
+                                "Entry SKILL.md instructions are fully injected; no auxiliary readable resources exist, do not call skill_resource_read to guess paths.";
+                        data.put("guidance", guidance);
+                        summary = "Activated Skill "
+                                + activation.binding().alias().value() + ": " + guidance;
+                    } else {
+                        summary = "Activated Skill "
+                                + activation.binding().alias().value() + " with readable auxiliary resources: "
+                                + String.join(", ", readableResources);
+                    }
+                    result = result(summary, Map.copyOf(data));
                 }
                 case "skill_resource_read" -> {
                     String path = requiredText(request, "path");
@@ -108,13 +125,19 @@ public final class SkillToolProvider implements ToolProvider {
     }
 
     private static ToolResult failure(SkillRequestRejectedException rejected, String alias) {
-        return new ToolResult(
-                false,
-                rejected.getMessage(),
-                Map.of("failureCode", rejected.failureCode(), "skill", alias),
-                List.of(),
-                List.of(),
-                false);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("failureCode", rejected.failureCode());
+        data.put("skill", alias);
+        String summary = rejected.getMessage();
+        if ("SKILL_RESOURCE_NOT_INDEXED".equals(rejected.failureCode())
+                || "SKILL_RESOURCE_NOT_TEXT".equals(rejected.failureCode())) {
+            data.put("retryable", false);
+            String guidance = "Continue with already injected Skill instructions; do not guess similar resource paths.";
+            data.put("guidance", guidance);
+            data.put("action", guidance);
+            summary = rejected.getMessage() + ". " + guidance;
+        }
+        return new ToolResult(false, summary, Map.copyOf(data), List.of(), List.of(), false);
     }
 
     private static String requiredText(ToolInvocationRequest request, String name) {
@@ -152,8 +175,16 @@ public final class SkillToolProvider implements ToolProvider {
                                 "digest", Map.of("type", "string"),
                                 "activated", Map.of("type", "boolean"),
                                 "instructionBytes", Map.of("type", "integer"),
-                                "estimatedTokens", Map.of("type", "integer")),
-                        List.of("skill", "digest", "activated", "instructionBytes", "estimatedTokens")));
+                                "estimatedTokens", Map.of("type", "integer"),
+                                "readableResources", Map.of("type", "array", "items", Map.of("type", "string")),
+                                "guidance", Map.of("type", "string")),
+                        List.of(
+                                "skill",
+                                "digest",
+                                "activated",
+                                "instructionBytes",
+                                "estimatedTokens",
+                                "readableResources")));
     }
 
     private static ToolDefinition resourceReadDefinition() {
