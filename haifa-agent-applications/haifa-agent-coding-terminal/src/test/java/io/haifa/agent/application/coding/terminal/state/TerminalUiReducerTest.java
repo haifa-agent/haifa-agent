@@ -432,14 +432,14 @@ class TerminalUiReducerTest {
                                 "tool-1",
                                 "execution_run",
                                 "FAILED",
-                                "COMMAND_CLASSIFICATION_REJECTED",
-                                "git status; git log -1",
+                                "ABSOLUTE_WORKDIR_FORBIDDEN",
+                                "cd /workspace && git status",
                                 ""))));
 
         assertThat(failed.transcript()).singleElement().satisfies(item -> assertThat(item.body())
                 .contains(
-                        "Reason: COMMAND_CLASSIFICATION_REJECTED",
-                        "Next: Split compound or wrapped shell text into one simple command per tool call."));
+                        "Reason: ABSOLUTE_WORKDIR_FORBIDDEN",
+                        "Next: Use workspaceRef with relativeWorkdir; remove absolute cd directory changes."));
     }
 
     @Test

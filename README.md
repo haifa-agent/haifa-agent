@@ -288,9 +288,10 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 - 显式 Artifact Export、内容寻址 payload、provenance、完整性校验与 SQLite 单机持久化；
 - `ExecutionBroker`、Sandbox SPI、受控 Host Provider，以及 macOS Seatbelt / Linux bubblewrap
   Local Native Provider；
-- 模型通过受控 `execution_run` 直接调用系统 `git` / `gh`；Java Git Integration 只保留不向模型披露的
-  Worktree、Patch 合并、Revision Probe，以及供 Path-local Review 使用的有界仓库检查和只读证据采集，
-  不再注册 `git.*` / `github.*` 子命令 Tool；
+- 模型通过受控 `execution_run` 直接调用系统 `git` / `gh`；Java 不解析 Git/GH 子命令、参数或业务风险，
+  普通命令、Wrapper 和客户脚本走同一通用执行路径，仅保留防止宿主凭据进入模型的封闭 fail-closed 边界。
+  Java Git Integration 只保留不向模型披露的 Worktree、Patch 合并、Revision Probe，以及供 Path-local
+  Review 使用的有界仓库检查和只读证据采集，不再注册 `git.*` / `github.*` 子命令 Tool；
 - 五字段瞬态 Policy Decision、`DENY > ASK > ALLOW`、Interaction-owned ASK 恢复、CA WorkspaceAccess、
   AES-GCM 本地 Credential Store 与短生命周期 Lease；不持久化 Decision/Snapshot/Grant/Project Trust。
 

@@ -72,14 +72,13 @@ is unchanged.
 Tool 暴露，稳定名称为 `execution_run`；冻结 alias 必须使用同一个值。它不是 Personal
 Assistant 专用实现，也没有新增 Maven 模块。
 
-直接调用系统 `git` / `gh` 时，`SystemGitCliCommandClassifier` 生成可信的目标、风险与
-`INSPECT/DIFF/MUTATE/UNKNOWN` 操作事实；Coding 产品通过自己的 `ToolPolicyRequestAdapter` 在 Policy 前解析同一
-事实，Provider dispatch 时再次执行硬边界校验。复合、Wrapper、管道、重定向和逻辑运算形式整体为
-`UNKNOWN`/HIGH，不会因为分类器不理解 Shell 语法而被拒绝。路径限定的假 CLI、受保护环境变量赋值、
-Git Credential 配置/子命令和 GH Token 披露继续硬拒绝；为了覆盖 Wrapper 内的边界，这些检查对命令文本
-采取保守匹配，疑似的受保护赋值不会降级成普通 HIGH。普通非 Git/GitHub 命令仍走既有通用 Execution 路径。
-分类器只维护少量稳定类别：本地只读 LOW，本地写入或远端读取 MEDIUM，外部写入、破坏性、`gh api`、
-未知和复合形式 HIGH；它不尝试实现完整 Git/GH 参数治理或 Shell Grammar。
+普通 `git`、`gh`、Wrapper 和客户脚本与其他命令一样通过通用 `execution_run` 路径执行；Execution
+Core 不解析 Git/GH 子命令、参数、路径覆盖或业务风险，也不据此调整策略。模型负责理解命令与输出，通用执行
+机制负责目录授权、审批、秘密、超时、取消和真实结果。`CredentialEgressGuard` 只保留一条封闭的凭据
+防泄露边界：会读取、回显、覆盖或重定向宿主认证材料的已确认路径（受保护环境变量赋值、`git credential*`、
+Git 凭据配置覆盖、`gh auth token`/`gh auth status --show-token` 以及其他会修改或披露认证状态的 `gh auth`
+命令）在 dispatch 前 fail closed；它不做一般命令分类，也不演变成 Git/GH Grammar。每条规则都有“秘密不会
+进入模型输出”的回归测试。
 
 Execution Core 只交付进程事实：任何可靠取得的正常终止都是 `EXITED` 与原始 exit code，不判断命令、
 构建、测试或 Git/GH 的业务结果。`ToolResult.successful=true` 在该边界仅表示执行结果已可靠交付。

@@ -69,26 +69,7 @@ public final class CodingDeliveryEvidenceLedger {
         }
         if (!EXECUTION_TOOL.equals(call.toolName()) || data.isEmpty()) return;
 
-        String declaredFamily = String.valueOf(data.getOrDefault("operationFamily", "UNKNOWN"));
-        String effectiveFamily = String.valueOf(data.getOrDefault(
-                "effectiveOperationFamily",
-                data.containsKey("commandOperation") ? data.get("commandOperation") : declaredFamily));
-        String evidenceFamily = "UNKNOWN".equals(effectiveFamily) ? declaredFamily : effectiveFamily;
-        String processState = String.valueOf(data.getOrDefault("processState", "UNKNOWN"));
-        boolean exited = "EXITED".equals(processState);
-        boolean trustedReadOnly = trustedReadOnlyClassification(data);
-        if (("INSPECT".equals(evidenceFamily) || "DIFF".equals(evidenceFamily))
-                && exited
-                && trustedReadOnly
-                && trustedOperationFamily(data, evidenceFamily)) {
-            facts.add(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION);
-        }
-        if ("DIFF".equals(evidenceFamily)
-                && exited
-                && trustedReadOnly
-                && trustedOperationFamily(data, evidenceFamily)) {
-            facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
-        }
+        boolean exited = "EXITED".equals(String.valueOf(data.getOrDefault("processState", "UNKNOWN")));
         java.util.Optional<CodingValidationAttemptEvidence> structuredValidation =
                 CodingValidationAttemptEvidence.fromStructuredData(data.get("validationEvidence"));
         if (structuredValidation.isPresent()) {
@@ -99,30 +80,6 @@ public final class CodingDeliveryEvidenceLedger {
         if (data.containsKey("failureCategory") && !exited) {
             facts.add(CodingDeliveryEvidenceKind.BLOCKER_CONFIRMED);
         }
-    }
-
-    private static boolean trustedReadOnlyClassification(Map<String, Object> data) {
-        if (!data.containsKey("commandTarget") || !data.containsKey("commandRisk")) return false;
-        String target = String.valueOf(data.getOrDefault("commandTarget", "OTHER"));
-        String risk = String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN"));
-        return ("OTHER".equals(target) && ("NOT_APPLICABLE".equals(risk) || "UNKNOWN".equals(risk)))
-                || "LOCAL_READ".equals(risk)
-                || "NETWORK_READ".equals(risk);
-    }
-
-    private static boolean trustedOperationFamily(Map<String, Object> data, String family) {
-        if (!data.containsKey("commandOperation")) return false;
-        if ("OTHER".equals(String.valueOf(data.getOrDefault("commandTarget", "OTHER")))
-                && ("NOT_APPLICABLE".equals(String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN")))
-                        || "UNKNOWN".equals(String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN"))))) {
-            return true; // Generic commands retain the operation hint, never authorization or risk.
-        }
-        String operation = String.valueOf(data.getOrDefault("commandOperation", "UNKNOWN"));
-        return switch (family) {
-            case "DIFF" -> "DIFF".equals(operation);
-            case "INSPECT" -> "INSPECT".equals(operation) || "DIFF".equals(operation);
-            default -> false;
-        };
     }
 
     public record Snapshot(
