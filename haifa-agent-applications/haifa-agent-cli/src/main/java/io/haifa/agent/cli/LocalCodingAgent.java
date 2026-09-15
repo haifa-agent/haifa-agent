@@ -622,21 +622,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             executionPlatform == null ? "UNAVAILABLE" : "ALLOW",
                             configuration.execution().maximumTimeout()));
             var interactions = persistence.ports().interactions();
-            var worktreeOperations = executionPlatform == null
-                            || !configuredTools.contains(
-                                    io.haifa.agent.application.project.tool.ProjectWorktreeToolOperations.TOOL_NAME)
-                    ? null
-                    : new io.haifa.agent.application.project.tool.ProjectWorktreeToolOperations(
-                            new io.haifa.agent.sandbox.host.HostGitWorktreeIsolationProvider(
-                                    workspaces,
-                                    bindings,
-                                    locations,
-                                    controlledWorktreeBase(workspaceRoot, projectId),
-                                    "git",
-                                    time),
-                            provisioning,
-                            identifiers,
-                            persistence.workspaceAccess());
             io.haifa.agent.application.project.tool.RunWorkspaceAccessResolver workspaceAccessResolver =
                     (runId, requestedPrincipal) -> {
                         if (!principal.equals(requestedPrincipal)) {
@@ -654,8 +639,7 @@ final class LocalCodingAgent implements AutoCloseable {
             var provider = new ProjectToolExecutor(
                     workspaceAccessResolver,
                     operations,
-                    executionPlatform == null ? null : executionPlatform.operations(),
-                    worktreeOperations);
+                    executionPlatform == null ? null : executionPlatform.operations());
             var skillService = new DefaultSkillActivationService(
                     persistence.ports().runs(), persistence.ports().state(), skillPlatform.contentLoader(), time);
             List<SkillToolCatalogContribution> skillTools =
@@ -712,11 +696,6 @@ final class LocalCodingAgent implements AutoCloseable {
                         String toolName = binding.definition().name().value();
                         if (toolName.equals("workspace_attach")) {
                             return workspaceAttachmentApprovalPrompt(
-                                    call.arguments().values());
-                        }
-                        if (toolName.equals(
-                                io.haifa.agent.application.project.tool.ProjectWorktreeToolOperations.TOOL_NAME)) {
-                            return workspaceWorktreeApprovalPrompt(
                                     call.arguments().values());
                         }
                         if (!toolName.equals("execution_run")) {
@@ -1193,29 +1172,6 @@ final class LocalCodingAgent implements AutoCloseable {
                 + "\nMode: "
                 + attachmentApprovalArgument(arguments, "mode")
                 + "\nScope: this local Coding Agent registry; the root is persisted locally and remains revocable.";
-    }
-
-    static String workspaceWorktreeApprovalPrompt(Map<String, Object> arguments) {
-        return "Create controlled Git worktree"
-                + "\nSource workspace: "
-                + attachmentApprovalArgument(arguments, "sourceWorkspaceRef")
-                + "\nBase commit: "
-                + attachmentApprovalArgument(arguments, "baseCommit")
-                + "\nNew branch: "
-                + attachmentApprovalArgument(arguments, "branchName")
-                + "\nManaged target: "
-                + attachmentApprovalArgument(arguments, "targetName")
-                + "\nScope: this exact managed worktree target; no arbitrary host path is accepted.";
-    }
-
-    private static Path controlledWorktreeBase(Path workspaceRoot, ProjectId projectId) {
-        Path root = workspaceRoot.toAbsolutePath().normalize();
-        Path parent = root.getParent();
-        if (parent == null) throw new IllegalArgumentException("workspace root must have a parent directory");
-        String projectKey = io.haifa.agent.policy.api.PolicyDigest.sha256Fields(
-                        List.of("coding-controlled-worktrees-v1", projectId.value()))
-                .substring(0, 24);
-        return parent.resolve(".haifa-agent-worktrees").resolve(projectKey);
     }
 
     private static String attachmentApprovalArgument(Map<String, Object> arguments, String name) {

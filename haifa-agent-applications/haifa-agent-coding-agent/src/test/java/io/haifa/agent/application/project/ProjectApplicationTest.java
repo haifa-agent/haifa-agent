@@ -294,7 +294,7 @@ class ProjectApplicationTest {
                 executionProfile("host-guarded", "two"));
 
         assertThat(frozen.snapshot().bindings())
-                .hasSize(13)
+                .hasSize(12)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
                         "execution_run",
@@ -308,8 +308,7 @@ class ProjectApplicationTest {
                         "file_search",
                         "file_stat",
                         "file_write",
-                        "workspace_attach",
-                        "workspace_worktree_create");
+                        "workspace_attach");
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
             assertThat(binding.alias().value())
                     .isEqualTo(binding.definition().name().value());
@@ -335,28 +334,6 @@ class ProjectApplicationTest {
                     assertThat(binding.definition().inputSchema().document().toString())
                             .contains("path", "mode", "read", "develop")
                             .doesNotContain("permission", "read-only", "read-write");
-                });
-        assertThat(frozen.snapshot().bindings())
-                .filteredOn(binding -> binding.alias().value().equals("workspace_worktree_create"))
-                .singleElement()
-                .satisfies(binding -> {
-                    assertThat(binding.definition().approvalRequirement())
-                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.ALWAYS);
-                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
-                    assertThat(binding.definition().sideEffects())
-                            .contains(
-                                    io.haifa.agent.tool.api.ToolSideEffect.FILE_WRITE,
-                                    io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION,
-                                    io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
-                    assertThat(binding.definition()
-                                    .inputSchema()
-                                    .document()
-                                    .get("required")
-                                    .toString())
-                            .contains("sourceWorkspaceRef", "baseCommit", "branchName", "targetName")
-                            .doesNotContain("deliveryIntent", "permission");
-                    assertThat(binding.definition().inputSchema().document().toString())
-                            .doesNotContain("deliveryIntent", "permission", "read-write");
                 });
         assertThat(frozen.snapshot().bindings())
                 .filteredOn(binding -> binding.alias().value().equals("file_write"))

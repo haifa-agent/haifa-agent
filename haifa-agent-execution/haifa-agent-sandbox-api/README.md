@@ -3,7 +3,7 @@
 > 沙箱裁剪声明：平台已放弃 OS namespace / 容器级强隔离，底层统一为受控宿主执行。
 > 详见 `docs/34-sandbox-simplification-and-host-execution-design.md`。
 
-定义 Sandbox Profile、Provider、Session、宿主进程能力声明，以及 Git Worktree 隔离 Workspace 的 SPI。
+定义 Sandbox Profile、Provider、Session 与宿主进程能力声明。
 
 能力声明必须反映 Provider 的真实保证；调用方不得把 Host 受控执行等同于容器或虚拟机强隔离。
 

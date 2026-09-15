@@ -94,17 +94,6 @@ class ProjectCoreTest {
     void phaseThreeAllowsProviderOwnedIsolationModesAndReadOnlyCannotGrantWrites() {
         var location = new WorkspaceLocationRef("local-1");
         assertThat(WorkspaceBinding.provision(
-                                new WorkspaceBindingId("binding-1"),
-                                location,
-                                WorkspaceBindingMode.COPY_ON_WRITE,
-                                OWNER,
-                                WorkspaceCapabilitySet.readOnlyFiles(),
-                                WorkspacePermissionSet.readOnly(),
-                                "sha256:root",
-                                NOW)
-                        .mode())
-                .isEqualTo(WorkspaceBindingMode.COPY_ON_WRITE);
-        assertThat(WorkspaceBinding.provision(
                                 new WorkspaceBindingId("binding-2"),
                                 location,
                                 WorkspaceBindingMode.EPHEMERAL_COPY,

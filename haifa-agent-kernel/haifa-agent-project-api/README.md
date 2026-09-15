@@ -17,7 +17,7 @@
 - 平台已收敛为安全原子替换与 `SessionChangeLedger` 纯内存会话变更账本，不再维护自研文件恢复事务、回收站（Quarantine）与跨重启调和。
 - `HostRepositoryLocator` 只在单个已授权主机目录内向上定位最近仓库边界；Git 有效性由外部 `HostGitInspectionPort` 回答。Project 不运行 Git、不依赖 Execution，也不把仓库物理路径带出 Host Workspace Access。
 
-`COPY_ON_WRITE`、`EPHEMERAL_COPY`、命令执行和 Git 已由 Execution/Sandbox/Git 模块实现；Project 模块不反向依赖这些高层实现。
+`EPHEMERAL_COPY`、命令执行和 Git 已由 Execution/Sandbox/Git 模块实现；Project 模块不反向依赖这些高层实现。
 
 `haifa-agent-project-core` 的 `ProjectIndexService` 提供 generation 原子切换的文件、Java 语法级 Symbol 和 Markdown heading 索引。索引契约只保存逻辑路径和有界派生元数据。
 
