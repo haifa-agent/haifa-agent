@@ -199,7 +199,8 @@ class ProjectApplicationTest {
         var skills = ProjectSkillPlatform.baseSkills(tenant, principal, Optional.empty(), false);
         assertThat(skills.catalog().snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
-                .containsExactly("git", "github", "result-verification", "task-planning");
+                .containsExactly("result-verification", "task-planning")
+                .doesNotContain("git", "github");
 
         SkillActivationService unusedService = new SkillActivationService() {
             @Override

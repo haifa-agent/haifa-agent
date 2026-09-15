@@ -285,11 +285,11 @@ class CliFeatureConfigurationTest {
     }
 
     @Test
-    void defaultsDiscloseOnlyCoreAndGitGithubSkillsWithoutGitDelivery() {
+    void defaultsDiscloseOnlyCoreInstructionSkillsWithoutBuiltInGitOrGithub() {
         CliConfiguration.Skills skills = CliConfiguration.defaults().skills();
         assertThat(skills.allowedAliases())
-                .containsExactlyInAnyOrder("task-planning", "result-verification", "git", "github")
-                .doesNotContain("git-delivery");
+                .containsExactlyInAnyOrder("task-planning", "result-verification")
+                .doesNotContain("git", "github", "git-delivery");
         assertThat(skills.localDirectories()).isEmpty();
     }
 
