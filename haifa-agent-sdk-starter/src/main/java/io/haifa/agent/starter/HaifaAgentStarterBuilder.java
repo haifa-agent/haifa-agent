@@ -373,7 +373,6 @@ public final class HaifaAgentStarterBuilder {
                 new AgentRunLimits(16, 0, 1, 120_000, 60_000, 16, 16, 0),
                 requirements,
                 Set.of(),
-                Set.of(),
                 Set.of());
     }
 

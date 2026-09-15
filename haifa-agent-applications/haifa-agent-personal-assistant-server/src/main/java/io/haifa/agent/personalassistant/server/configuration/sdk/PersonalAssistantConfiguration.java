@@ -242,7 +242,7 @@ public class PersonalAssistantConfiguration {
                     properties.defaultModelId(),
                     properties.allowInsecureLoopbackModel(),
                     mapper,
-                    execution.shell(),
+                    execution.shellRuntime(),
                     modelAuthentication.credentialResolver(),
                     antigravityProjects::resolve,
                     ref -> modelAuthentication

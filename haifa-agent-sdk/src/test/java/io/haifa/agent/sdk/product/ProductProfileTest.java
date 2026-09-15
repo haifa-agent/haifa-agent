@@ -57,7 +57,6 @@ class ProductProfileTest {
                         ProductCapabilityRequirement.required(
                                 EXTRA, Set.of(firstCoordinate), ProductProviderSuitability.DEVELOPMENT)),
                 Set.of(),
-                Set.of(),
                 Set.of());
         ProductProfile differentLimits = ProductProfile.create(
                 new ProductId("profile-test"),
@@ -74,7 +73,6 @@ class ProductProfileTest {
                         EXTRA,
                         ProductCapabilityRequirement.required(
                                 EXTRA, Set.of(firstCoordinate), ProductProviderSuitability.DEVELOPMENT)),
-                Set.of(),
                 Set.of(),
                 Set.of());
 
@@ -96,7 +94,7 @@ class ProductProfileTest {
     }
 
     @Test
-    void strictEnterpriseProfileDoesNotAssembleExecutionShellOrTerminalCapabilities() {
+    void strictEnterpriseProfileDoesNotAssembleTerminalCapabilities() {
         ProductCapabilityId terminal = new ProductCapabilityId("terminal");
         ProductProfile enterprise = ProductProfile.create(
                 new ProductId("strict-enterprise-sdk"),
@@ -112,22 +110,13 @@ class ProductProfileTest {
                         ProductMemoryPolicy.safeDefault(),
                         ProductArtifactPolicy.disabled(),
                         ProductExecutionPolicy.disabled()),
-                Map.of(
-                        ProductCapabilities.EXECUTION,
-                        ProductCapabilityRequirement.none(ProductCapabilities.EXECUTION),
-                        ProductCapabilities.SHELL,
-                        ProductCapabilityRequirement.none(ProductCapabilities.SHELL),
-                        terminal,
-                        ProductCapabilityRequirement.none(terminal)),
+                Map.of(terminal, ProductCapabilityRequirement.none(terminal)),
                 Set.of("memory.search"),
-                Set.of(),
                 Set.of());
 
         assertThat(enterprise.policies().execution().enabled()).isFalse();
-        assertThat(enterprise.requirement(ProductCapabilities.EXECUTION).mode()).isEqualTo(ProductCapabilityMode.NONE);
-        assertThat(enterprise.requirement(ProductCapabilities.SHELL).mode()).isEqualTo(ProductCapabilityMode.NONE);
         assertThat(enterprise.requirement(terminal).mode()).isEqualTo(ProductCapabilityMode.NONE);
-        assertThat(enterprise.allowedTools()).doesNotContain("execution_run", "execution_run", "shell", "terminal");
+        assertThat(enterprise.allowedTools()).doesNotContain("execution_run", "shell", "terminal");
     }
 
     private static ProductProfile profile(ProductPolicies policies, ProductCapabilityRequirement extraRequirement) {
@@ -143,7 +132,6 @@ class ProductProfileTest {
                 new AgentRunLimits(2, 0, 1, 10_000, 10_000),
                 policies,
                 Map.of(EXTRA, extraRequirement),
-                Set.of(),
                 Set.of(),
                 Set.of());
     }

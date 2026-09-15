@@ -30,13 +30,10 @@ import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.sdk.contribution.ApprovalPlatformContribution;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
 import io.haifa.agent.sdk.contribution.CredentialPlatformContribution;
-import io.haifa.agent.sdk.contribution.ExecutionPlatformContribution;
-import io.haifa.agent.sdk.contribution.McpToolCatalogContribution;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.contribution.ProductApprovalPromptFormatter;
-import io.haifa.agent.sdk.contribution.ShellPlatformContribution;
 import io.haifa.agent.sdk.contribution.SkillPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
 import io.haifa.agent.sdk.internal.DefaultConversationService;
@@ -224,17 +221,9 @@ public final class HaifaAgentBuilder {
                 optional(resolution.selected(), ProductCapabilities.APPROVAL, ApprovalPlatformContribution.class);
         CredentialPlatformContribution credential =
                 optional(resolution.selected(), ProductCapabilities.CREDENTIAL, CredentialPlatformContribution.class);
-        optional(resolution.selected(), ProductCapabilities.MCP, McpToolCatalogContribution.class);
-        ExecutionPlatformContribution execution =
-                optional(resolution.selected(), ProductCapabilities.EXECUTION, ExecutionPlatformContribution.class);
-        optional(resolution.selected(), ProductCapabilities.SHELL, ShellPlatformContribution.class);
         if (artifact != null && effectiveProfile.policies().artifact().maxArtifactsPerRun() == 0) {
             throw new ProductAssemblyException(
                     "ARTIFACT_POLICY_DISABLED", "Artifact contribution is forbidden by the Product Profile policy");
-        }
-        if (execution != null && !effectiveProfile.policies().execution().enabled()) {
-            throw new ProductAssemblyException(
-                    "EXECUTION_POLICY_DISABLED", "Execution contribution is forbidden by the Product Profile policy");
         }
         validateDeclaredAliases(effectiveProfile, resolution.selected());
 
@@ -479,15 +468,6 @@ public final class HaifaAgentBuilder {
         if (!availableSkills.containsAll(profile.allowedSkills())) {
             throw new ProductAssemblyException(
                     "SKILL_ALIAS_UNAVAILABLE", "Product Profile allows a Skill alias not supplied by its contribution");
-        }
-        ProductContribution mcp = selected.get(ProductCapabilities.MCP);
-        if (mcp instanceof McpToolCatalogContribution platform) {
-            if (!profile.allowedTools().containsAll(platform.toolAliases())
-                    || !availableTools.containsAll(platform.toolAliases())) {
-                throw new ProductAssemblyException(
-                        "MCP_TOOL_BINDING_INVALID",
-                        "Every MCP Tool alias must be explicitly allowed and supplied by the unified Tool catalog");
-            }
         }
     }
 

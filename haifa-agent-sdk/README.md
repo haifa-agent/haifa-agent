@@ -133,7 +133,7 @@ record、通配泛型、任意 POJO 或非 String Map key。注解式 Tool 不�
 ## Product Profile 与装配
 
 - `ProductProfile` 冻结产品 ID/版本、Definition/Profile 引用、预算、限制、指令、Capability
-  Requirement 及 Tool/Skill/Extension allowlist，并校验 canonical SHA-256 digest。
+  Requirement 及 Tool/Skill allowlist，并校验 canonical SHA-256 digest。
 - 每个 Capability 使用 `NONE`、`OPTIONAL` 或 `REQUIRED`；未声明能力等价于 `NONE`。
 - Contribution 必须声明稳定坐标、能力 ID、配置 digest、生产适用级别和安全摘要。解析拒绝重复坐标、
   多个兼容实现、allowlist 外实现、生产场景中的 Test-only Provider，以及 `NONE` 能力泄漏。
@@ -196,9 +196,9 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
 - `ProductPolicies` 将 Memory 人工审查与查询边界、Artifact 配额/Media Type/本地容量门禁及
   Execution 主机/网络/并发/超时政策冻结进 Profile canonical digest；本阶段不允许关闭
   Memory Candidate 人工审查。
-- Model、Tool Platform、Skill、MCP Tool binding、Context、Memory、Artifact、Policy、Approval、
-  Credential 和 Execution/Sandbox 均通过显式 typed Contribution 注册。MCP 本地 Tool 名称还必须同时
-  出现在 Profile allowlist 与统一 Tool Catalog 中，不存在第二条 MCP 执行通道。
+- Model、Tool Platform、Skill、Context、Memory、Artifact、Policy、Approval 和 Credential 均通过显式
+  typed Contribution 注册。MCP Tool 由 Integration 直接写入统一 Tool Catalog，不再是独立 SDK
+  Capability，也不存在第二条 MCP 执行通道。
 - 应用级 Java Tool 通过 `HaifaAgentBuilder.tool(JavaTool)` 逐个注册；SDK 在构建时生成并合并内部
   Tool Platform Contribution，应用无需理解 Catalog digest 与 frozen binding。
 - 产品可通过 `publicToolPolicyDecorator` 对 Runtime 已选定的公共 Tool Policy 做有界装饰；装饰器

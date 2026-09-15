@@ -238,8 +238,7 @@ public class JavaToolAssemblyTest {
                 base.policies(),
                 requirements,
                 Set.of("existing"),
-                base.allowedSkills(),
-                base.allowedExtensions());
+                base.allowedSkills());
     }
 
     public record WeatherRequest(String city) {}
