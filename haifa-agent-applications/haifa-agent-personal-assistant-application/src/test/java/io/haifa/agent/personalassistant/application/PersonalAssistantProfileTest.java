@@ -31,9 +31,6 @@ class PersonalAssistantProfileTest {
                         coordinate,
                         coordinate,
                         coordinate,
-                        coordinate,
-                        coordinate,
-                        coordinate,
                         coordinate),
                 Set.of(PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS, "user-skill"),
                 Set.of(),
@@ -66,14 +63,11 @@ class PersonalAssistantProfileTest {
     }
 
     @Test
-    void profileRequiresGovernedExecutionButStillDisablesCodingWorkspaceCapabilities() {
+    void profileRequiresGovernedExecutionCapabilities() {
         ProductContributionCoordinate coordinate = new ProductContributionCoordinate("test", "1");
         String mcpAlias = "personal_mcp_calculate";
         var profile = PersonalAssistantProfile.create(
                 new PersonalAssistantProfile.ContributionCoordinates(
-                        coordinate,
-                        coordinate,
-                        coordinate,
                         coordinate,
                         coordinate,
                         coordinate,
@@ -89,16 +83,10 @@ class PersonalAssistantProfileTest {
                 Set.of(PersonalAssistantProfile.WEB_SEARCH_ALIAS, PersonalAssistantProfile.WEB_FETCH_ALIAS));
         assertThat(profile.requirement(ProductCapabilities.TOOL).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
         assertThat(profile.requirement(ProductCapabilities.SKILL).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.MCP).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.SHELL).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.EXECUTION).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
         assertThat(profile.requirement(ProductCapabilities.APPROVAL).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
         assertThat(profile.requirement(ProductCapabilities.CREDENTIAL).mode())
                 .isEqualTo(ProductCapabilityMode.REQUIRED);
         assertThat(profile.requirement(ProductCapabilities.ARTIFACT).mode()).isEqualTo(ProductCapabilityMode.REQUIRED);
-        assertThat(profile.requirement(ProductCapabilities.PROJECT).mode()).isEqualTo(ProductCapabilityMode.NONE);
-        assertThat(profile.requirement(ProductCapabilities.WORKSPACE).mode()).isEqualTo(ProductCapabilityMode.NONE);
-        assertThat(profile.requirement(ProductCapabilities.GIT).mode()).isEqualTo(ProductCapabilityMode.NONE);
         assertThat(profile.allowedTools())
                 .contains(
                         PersonalAssistantProfile.PRODUCT_TOOL_ALIAS,

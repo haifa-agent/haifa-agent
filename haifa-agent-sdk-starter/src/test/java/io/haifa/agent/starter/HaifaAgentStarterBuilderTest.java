@@ -63,12 +63,6 @@ public class HaifaAgentStarterBuilderTest {
                             .mode()
                             .name())
                     .isEqualTo("NONE");
-            assertThat(agent.assembly()
-                            .profile()
-                            .requirement(ProductCapabilities.EXECUTION)
-                            .mode()
-                            .name())
-                    .isEqualTo("NONE");
         }
     }
 

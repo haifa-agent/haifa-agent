@@ -8,7 +8,6 @@ import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.contribution.SkillPlatformContribution;
 import io.haifa.agent.sdk.contribution.SkillToolContributions;
@@ -26,16 +25,11 @@ import java.util.Set;
 
 /** Freezes product, Skill, and MCP Tools into one catalog and one Runtime Tool pipeline. */
 public record PersonalToolPlatform(
-        ToolPlatformContribution tool,
-        SkillPlatformContribution skill,
-        io.haifa.agent.sdk.contribution.McpToolCatalogContribution mcp,
-        Set<String> trustedScriptToolAliases) {
+        ToolPlatformContribution tool, SkillPlatformContribution skill, Set<String> trustedScriptToolAliases) {
     public static final ProductContributionCoordinate TOOL_COORDINATE =
             new ProductContributionCoordinate("haifa-personal-tools", "1.0.0");
     public static final ProductContributionCoordinate SKILL_COORDINATE =
             new ProductContributionCoordinate("haifa-personal-skills", "1.0.0");
-    public static final ProductContributionCoordinate MCP_COORDINATE =
-            new ProductContributionCoordinate("haifa-personal-local-mcp", "1.0.0");
 
     public static PersonalToolPlatform create(
             SdkPersistenceContribution persistence,
@@ -85,17 +79,7 @@ public record PersonalToolPlatform(
                 skills.catalog(),
                 skills.contentLoader(),
                 trust);
-        Set<String> aliases = mcpTools.stream()
-                .map(item -> item.alias().value())
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        var mcpContribution = new io.haifa.agent.sdk.contribution.McpToolCatalogContribution(
-                metadata(
-                        MCP_COORDINATE,
-                        ProductCapabilities.MCP,
-                        SdkConfigurationDigest.sha256(aliases.stream().sorted().toArray(String[]::new)),
-                        "Personal explicit loopback MCP allowlist"),
-                aliases);
-        return new PersonalToolPlatform(tool, skill, mcpContribution, Set.of());
+        return new PersonalToolPlatform(tool, skill, Set.of());
     }
 
     private static SdkContributionMetadata metadata(
