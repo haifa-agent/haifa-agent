@@ -9,18 +9,15 @@ import io.haifa.agent.application.project.admin.WorkspaceSnapshotView;
 import io.haifa.agent.application.project.artifact.ArtifactExportRequest;
 import io.haifa.agent.application.project.artifact.ArtifactExportService;
 import io.haifa.agent.application.project.artifact.ArtifactExportSourceKind;
-import io.haifa.agent.application.project.artifact.PublishedArtifactRequiredChecker;
 import io.haifa.agent.artifact.ArtifactId;
 import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.artifact.ArtifactType;
 import io.haifa.agent.artifact.ArtifactVersion;
 import io.haifa.agent.artifact.InMemoryArtifactPayloadStore;
 import io.haifa.agent.artifact.InMemoryArtifactStore;
-import io.haifa.agent.core.reference.ArtifactRef;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.ProjectRef;
 import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
@@ -44,7 +41,6 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
-import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import java.lang.reflect.RecordComponent;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -58,7 +54,7 @@ class PhaseFiveApplicationTest {
     private static final Instant NOW = Instant.parse("2026-07-21T00:00:00Z");
 
     @Test
-    void explicitPatchExportIsImmutableAndRequiredCheckerUsesPublishedState() throws Exception {
+    void explicitPatchExportIsImmutable() throws Exception {
         var workspaceId = new WorkspaceId("workspace-1");
         var revision = WorkspaceRevision.initial("sha256:workspace");
         var workspaces = new InMemoryWorkspaceStore();
@@ -108,28 +104,6 @@ class PhaseFiveApplicationTest {
                 .orElseThrow();
         assertThat(payloadStore.load(published.payload()).orElseThrow())
                 .startsWith("diff --git".getBytes(StandardCharsets.UTF_8));
-
-        var checker = new PublishedArtifactRequiredChecker(artifactStore);
-        assertThat(checker.evaluate(null, decision(List.of(result.artifact()))).blockers())
-                .isEmpty();
-        for (var invalid : List.of(
-                new ArtifactRef("missing", "patch", "1", "missing"),
-                new ArtifactRef(
-                        result.artifact().artifactId(),
-                        "patch",
-                        "invalid",
-                        result.artifact().title()),
-                new ArtifactRef(
-                        result.artifact().artifactId(),
-                        "wrong-type",
-                        "1",
-                        result.artifact().title()),
-                new ArtifactRef(
-                        result.artifact().artifactId(), result.artifact().artifactType(), "1", "wrong-title"))) {
-            assertThat(checker.evaluate(null, decision(List.of(invalid))).blockers())
-                    .containsExactly(io.haifa.agent.runtime.core.completion.CompletionBlocker.recoverable(
-                            "REQUIRED_ARTIFACT_MISSING", "A required artifact is missing.", "REQUIRED_ARTIFACT"));
-        }
     }
 
     @Test
@@ -315,10 +289,6 @@ class PhaseFiveApplicationTest {
                 .isEqualTo(io.haifa.agent.core.error.AgentErrorCode.TOOL_INVOCATION_FAILED);
         assertThat(failedCall.error().orElseThrow().error().details())
                 .doesNotContainKeys("preflight", "failureKind", "failureCode", "dispatchState");
-    }
-
-    private static FinalAnswerDecision decision(List<ArtifactRef> artifacts) {
-        return new FinalAnswerDecision(AgentRunOutcome.SUCCESS, "done", "result", "1", Map.of(), artifacts, List.of());
     }
 
     private static final class UnusedFileService implements WorkspaceFileService {

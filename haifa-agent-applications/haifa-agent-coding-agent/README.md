@@ -91,14 +91,6 @@ Workspace 环境块，用于表达已经由宿主掌握的安全边界、根仓�
 `CodingSessionClient.findOutcome` 查询权威投影；它作为只读纯推导服务运行，不向 Event Store 写入持久化的
 `coding.task-outcome` 事件，也不是 Benchmark Verifier 结果，不增加新的 Core Run 状态。
 
-可信宿主还可在创建 Session 或提交新 Turn 时冻结 `WORKTREE_ONLY/LOCAL_COMMIT/REMOTE_PUSH/PULL_REQUEST`
-交付意图；默认仍是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。交付意图作为受信产品调用方冻结的
-授权上界保留。Coding Policy Adapter 在 evaluator/approval 前按该上界限制 Stage/Commit、Push 和 PR 写操作，
-审批不能升级当前 Run 的意图；可信的直接只读 Git/GH 不受影响，无法证明只读的 compound/wrapper 必须拆为
-直接命令或预先冻结最高所需意图。命令仍通过唯一的 `execution_run` 进入通用风险分类、Policy/Approval、
-Workspace、Sandbox、网络权限和审计边界。generic Shell 结果不投影 stage/commit/push/PR 完成或核验结论，完成策略也不据此建立
-顺序门禁；模型读取命令事实并按需执行只读对账后报告。
-
 默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为控制面事实，
 其中 Wall Time 与 Runtime 一致地排除人工交互/审批等待；预留不增加 Runtime 的总预算或时限，也不逐轮
 进入模型 Prompt。Runtime 仅对最终结构化输出/输出协议等确定性事实做最多两次结构化纠偏，恢复后从持久
@@ -285,7 +277,7 @@ Timeout、Cancel、资源限制与未知终止不能改写为正常退出，未�
 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
 
 `workspace_worktree_create` 是 CA 独有的始终审批能力：精确目标同时绑定 source `workspaceRef`、不可变 base
-commit、新分支、受控 target name 和交付意图，不接受模型指定的主机目标路径或权限；source 必须具有当前
+commit、新分支和受控 target name，不接受模型指定的主机目标路径或权限；source 必须具有当前
 `DEVELOP` Access。受信 Git Provider 创建并校验 worktree 后，CA 才把新 root 以
 `APPROVED_WORKTREE_CREATE` 登记、写入新 workspace 的 `DEVELOP` Access 并返回脱敏
 `workspaceRef` 以及规范化宿主绝对路径 `rootPath`；失败时清理且不激活 root。当前重启恢复无法建立受信 Git reconciliation，因此会 fail closed
@@ -293,9 +285,8 @@ commit、新分支、受控 target name 和交付意图，不接受模型指定�
 Registry/Scope 映射，未改成相对路径或 root alias；动态 `<workspace_paths>` 同时标明每个根的 `READ` / `DEVELOP` Access mode，模型通过该块或 `workspace_attach` /
 `workspace_worktree_create` 成功结果中的 `rootPath` 获取可用绝对路径，通过 `workspaceRef` + 规范化 `relativeWorkdir`（`.` 代表根）调用 `execution_run`。
 
-Workspace Checkpoint Adapter 可由受信 Host 注册为通用 Runtime Capability Checkpoint Participant，并在恢复时重新检查当前授权、Binding、Provider 版本和 Drift；类型存在不等于所有 Host 已完成装配。DIRECT Host 只做 current-state reconcile，永不自动覆盖文件；无人值守 Host 必须使用隔离 Workspace 与可恢复 Snapshot，否则不能声明具备自动恢复等级。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布。`PublishedArtifactRequiredChecker` 只接受 Store 中真实 `PUBLISHED` 的 Artifact；Admin Query 仅返回分页、脱敏、无正文的诊断投影。
+Workspace Checkpoint Adapter 可由受信 Host 注册为通用 Runtime Capability Checkpoint Participant，并在恢复时重新检查当前授权、Binding、Provider 版本和 Drift；类型存在不等于所有 Host 已完成装配。DIRECT Host 只做 current-state reconcile，永不自动覆盖文件；无人值守 Host 必须使用隔离 Workspace 与可恢复 Snapshot，否则不能声明具备自动恢复等级。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布；Admin Query 仅返回分页、脱敏、无正文的诊断投影。
 
-Completion 产品验收统一通过 `CompletionPolicy` 返回结构化阻塞与证据。Artifact 检查由产品的
-`PublishedArtifactRequiredChecker` 实现该接口；Runtime 不再提供单独的 `RequiredArtifactChecker` 配置入口。
+Runtime 的泛型 `CompletionPolicy` SPI 仍可供其他产品返回结构化完成阻塞与证据；Runtime 不再提供单独的 `RequiredArtifactChecker` 配置入口，Coding Agent 不再内置 Artifact completion checker。
 
-Coding base prompt 1.8.0 将任务进展和方法选择交给主模型；Runtime 不再按普通失败簇次数裁决任务终止。权限、unknown、资源上限与产品 Completion 门禁保持独立。
+Coding base prompt 1.8.4 将任务进展和方法选择交给主模型；Runtime 不再按普通失败簇次数裁决任务终止。权限、unknown、资源上限与产品 Completion 门禁保持独立。
