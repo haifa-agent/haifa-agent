@@ -21,7 +21,7 @@ public final class TrustedCallerExample {
                 .model(DeterministicExampleSupport.model("trusted-answer"), DeterministicExampleSupport.snapshot())
                 .callerProvider(callers)
                 .build()) {
-            System.out.println(agent.assembly().profile().productId().value());
+            System.out.println(agent.profile().productId().value());
         }
     }
 }

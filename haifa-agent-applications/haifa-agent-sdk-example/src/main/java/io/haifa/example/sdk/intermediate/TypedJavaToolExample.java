@@ -53,10 +53,7 @@ public final class TypedJavaToolExample {
                 .build()) {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand("tool-start", "Weather", "Weather in Shanghai?"));
-            System.out.println(agent.runs()
-                    .await(conversation.activeRunId().orElseThrow())
-                    .output()
-                    .orElseThrow());
+            System.out.println(agent.runs().await(conversation.runId()).output().orElseThrow());
         }
     }
 

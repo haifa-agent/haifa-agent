@@ -178,8 +178,8 @@ Hermes 等外部 `SKILL.md` 的扩展 front matter；未知或嵌套 metadata �
 
 Personal 默认装配只读产品 Skill `github-project-watch`；系统 `git` / `gh` 由 `execution_run` 直接调用，
 不再内置共享 `git`、`github` Skill。它们只提供 CLI 工作流，
-不保存 Token、不注册 Git/GitHub 子命令 Tool，也不能扩大 frozen Tool 集。PA 继续保持
-`ProductCapabilities.PROJECT/WORKSPACE/GIT = NONE`；远程查询使用 `execution_run` 的 `COMMAND` 模式与
+不保存 Token、不注册 Git/GitHub 子命令 Tool，也不能扩大 frozen Tool 集。PA 不再声明 Project/Workspace/Git
+capability；远程查询使用 `execution_run` 的 `COMMAND` 模式与
 显式 `gh --repo owner/repo ... --json ...`，不要求本地 clone。每次执行仍走现有 exact Approval、网络策略、
 有界 cwd 和 Host Guarded Sandbox。当前阶段未提供 GitHub 外部写入 Skill 或 Webhook Channel。
 
@@ -197,9 +197,9 @@ bounded arguments, timeout, invocation digest, and risk metadata; script or comm
 fits and otherwise as a marked preview with the original character count. Authorization continues to bind the complete
 arguments digest and frozen Tool target rather than the display prompt.
 
-Personal Profile 通过 SDK 的 `ShellPlatformContribution` 接入共享 `execution_run`；Tool 名称从冻结绑定、
+Personal Profile 直接把共享 `execution_run` Tool 注册进统一 Tool Catalog；Tool 名称从冻结绑定、
 模型披露到 Provider 调用始终为 `execution_run`。`PersonalExecutionPlatform` 负责产品级 Tool 装配、Skill 和审批文案，不复制
-Execution Broker、Sandbox 或 Policy。
+Execution Broker、Sandbox 或 Policy，也不再通过 SDK 暴露单独的 Shell/Execution capability。
 
 PA 的 Broker policy 只接受来自当前持久化 Run 中 `execution_run` frozen ToolCall 的 Runtime 请求，
 并按 server-owned `ExecutionToolConfiguration` 重构命令、输入、cwd、environment、profile、scratch、

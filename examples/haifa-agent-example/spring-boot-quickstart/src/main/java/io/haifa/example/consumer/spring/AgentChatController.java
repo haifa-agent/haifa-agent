@@ -53,7 +53,7 @@ public final class AgentChatController {
                         current.revision(),
                         "web-turn-" + System.currentTimeMillis(),
                         request.prompt()));
-                var runId = continued.activeRunId().orElseThrow();
+                var runId = continued.runId();
                 var result = agent.runs().await(runId);
                 return ResponseEntity.ok(new ChatResponse(
                         current.sessionId().value(),
@@ -66,10 +66,10 @@ public final class AgentChatController {
                 "web-chat-" + System.currentTimeMillis(),
                 agent.metadata().name(),
                 request.prompt()));
-        var runId = started.activeRunId().orElseThrow();
+        var runId = started.runId();
         var result = agent.runs().await(runId);
         return ResponseEntity.ok(new ChatResponse(
-                started.sessionId().value(),
+                started.record().sessionId().value(),
                 runId.value(),
                 result.output().orElse("")));
     }
@@ -86,7 +86,7 @@ public final class AgentChatController {
                         "web-stream-" + System.currentTimeMillis(),
                         agent.metadata().name(),
                         prompt));
-                var runId = started.activeRunId().orElseThrow();
+                var runId = started.runId();
 
                 try (var subscription = agent.runs().subscribeOutput(runId, RunOutputCursor.BEFORE_FIRST, event -> {
                     if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA) {

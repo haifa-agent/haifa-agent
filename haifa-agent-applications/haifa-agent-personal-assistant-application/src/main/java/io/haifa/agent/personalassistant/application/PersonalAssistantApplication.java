@@ -37,6 +37,7 @@ import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.conversation.ChangeConversationStatusCommand;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
 import io.haifa.agent.sdk.conversation.ConversationRecord;
+import io.haifa.agent.sdk.conversation.ConversationRun;
 import io.haifa.agent.sdk.conversation.ConversationStatus;
 import io.haifa.agent.sdk.conversation.ConversationTurn;
 import io.haifa.agent.sdk.conversation.ConversationTurnQuery;
@@ -75,6 +76,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final MissionRuntimeAccess missionRuntime;
     private final ArtifactService artifacts;
     private final Map<String, String> skillBindingReferences;
+    private final String productDigest;
     private final ResearchFetchEvidenceReader fetchEvidenceReader;
     private final ConcurrentMap<String, List<String>> recommendedQuestions = new ConcurrentHashMap<>();
 
@@ -115,6 +117,35 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             ArtifactService artifacts,
             Map<String, String> skillBindingReferences,
             ResearchFetchEvidenceReader fetchEvidenceReader) {
+        this(
+                agent,
+                mcp,
+                clock,
+                capabilities,
+                models,
+                modelPreferences,
+                questionRecommender,
+                missionRuntime,
+                artifacts,
+                skillBindingReferences,
+                agent.profile().productId().value() + "@"
+                        + agent.profile().productVersion().value(),
+                fetchEvidenceReader);
+    }
+
+    public PersonalAssistantApplication(
+            HaifaAgent agent,
+            PersonalMcpPlatform mcp,
+            Clock clock,
+            PersonalCapabilityRegistry capabilities,
+            PersonalModelCatalog models,
+            PersonalModelPreferenceStore modelPreferences,
+            PersonalQuestionRecommender questionRecommender,
+            MissionRuntimeAccess missionRuntime,
+            ArtifactService artifacts,
+            Map<String, String> skillBindingReferences,
+            String productDigest,
+            ResearchFetchEvidenceReader fetchEvidenceReader) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
@@ -125,6 +156,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         this.missionRuntime = Objects.requireNonNull(missionRuntime);
         this.artifacts = Objects.requireNonNull(artifacts);
         this.skillBindingReferences = Map.copyOf(skillBindingReferences);
+        this.productDigest = Objects.requireNonNull(productDigest, "productDigest must not be null");
         this.fetchEvidenceReader = Objects.requireNonNull(fetchEvidenceReader, "fetchEvidenceReader must not be null");
         this.mcpToolAliases = mcp.aliases();
     }
@@ -203,11 +235,13 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             List<ContentPart> inputs) {
         PersonalModelOption selected = selection.option();
         requireMediaInput(selected, inputs);
-        ConversationRecord started = agent.conversations()
+        ConversationRun started = agent.conversations()
                 .start(new StartConversationCommand(
                         idempotencyKey, displayName, message, Optional.of(selection.runProfileId()), inputs));
         modelPreferences.create(
-                started.sessionId().value(), PersonalModelPreferenceDraft.from(selection), TimePrecision.now(clock));
+                started.record().sessionId().value(),
+                PersonalModelPreferenceDraft.from(selection),
+                TimePrecision.now(clock));
         return conversation(started);
     }
 
@@ -340,13 +374,9 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             String sessionId, long expectedRevision, String idempotencyKey, PersonalModelSelectionRequest request) {
         PersonalResolvedModelSelection selection = models.resolve(request);
         PersonalModelOption selected = selection.option();
-        ConversationRecord conversation = agent.conversations()
+        agent.conversations()
                 .find(new AgentSessionId(sessionId))
                 .orElseThrow(() -> new IllegalStateException("CONVERSATION_UNAVAILABLE"));
-        if (conversation.activeRunId().isPresent()
-                || conversation.activeDispatchKey().isPresent()) {
-            throw new IllegalStateException("MODEL_SELECTION_ACTIVE_RUN");
-        }
         PersonalModelPreference changed = modelPreferences.change(
                 sessionId,
                 expectedRevision,
@@ -591,7 +621,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     public String productDigest() {
-        return agent.assembly().assemblyDigest();
+        return productDigest;
     }
 
     public PersonalCapabilityRegistry capabilities() {
@@ -616,12 +646,20 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private ConversationView conversation(ConversationRecord value) {
+        return conversation(value, Optional.empty());
+    }
+
+    private ConversationView conversation(ConversationRun value) {
+        return conversation(value.record(), Optional.of(value.runId().value()));
+    }
+
+    private ConversationView conversation(ConversationRecord value, Optional<String> activeRunId) {
         ModelSelectionView model = modelSelection(value.sessionId().value());
         return new ConversationView(
                 value.sessionId().value(),
                 value.displayName(),
                 value.status().name(),
-                value.activeRunId().map(AgentRunId::value),
+                activeRunId,
                 value.createdAt(),
                 value.lastActivityAt(),
                 value.revision(),

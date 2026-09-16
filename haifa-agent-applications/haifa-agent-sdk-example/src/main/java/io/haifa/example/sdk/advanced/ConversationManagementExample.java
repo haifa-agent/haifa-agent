@@ -12,8 +12,9 @@ public final class ConversationManagementExample {
         try (var agent = DeterministicExampleSupport.inMemory()) {
             var started = agent.conversations()
                     .start(new StartConversationCommand("conversation-start", "Trip", "Introduce Hangzhou."));
-            agent.runs().await(started.activeRunId().orElseThrow());
-            var current = agent.conversations().find(started.sessionId()).orElseThrow();
+            agent.runs().await(started.runId());
+            var current =
+                    agent.conversations().find(started.record().sessionId()).orElseThrow();
             var renamed = agent.conversations()
                     .rename(new RenameConversationCommand(
                             current.sessionId(), current.revision(), "conversation-rename", "Hangzhou trip"));

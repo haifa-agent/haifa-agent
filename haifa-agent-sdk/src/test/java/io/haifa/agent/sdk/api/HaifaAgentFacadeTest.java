@@ -18,8 +18,11 @@ import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.policy.api.PolicyPresets;
+import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.contribution.ModelContribution;
+import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.conversation.ChangeConversationStatusCommand;
 import io.haifa.agent.sdk.conversation.ConversationException;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
@@ -27,9 +30,7 @@ import io.haifa.agent.sdk.conversation.ConversationStatus;
 import io.haifa.agent.sdk.conversation.RenameConversationCommand;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
-import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductProfile;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
 import io.haifa.agent.sdk.tool.JavaToolSpec;
@@ -58,46 +59,55 @@ public class HaifaAgentFacadeTest {
 
     @Test
     void registersOneTypedJavaToolWithoutManualPlatformAssembly() {
-        try (HaifaAgent agent = HaifaAgents.builder()
-                .product(SdkTestFixtures.profile("java-tool", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
-                .tool(new WeatherTool())
-                .build()) {
-            assertThat(agent.assembly().profile().allowedTools()).containsExactly("weather_get");
-            assertThat(agent.assembly()
-                            .profile()
-                            .requirement(ProductCapabilities.TOOL)
-                            .allowedContributions())
-                    .extracting("providerId")
-                    .containsExactly("sdk.java-tools");
+        try (HaifaAgent agent =
+                SdkTestFixtures.builder("java-tool").tool(new WeatherTool()).build()) {
+            assertThat(agent.profile().allowedTools()).isEmpty();
+            assertThat(agent.diagnostics()).isEmpty();
         }
     }
 
     @Test
-    void registersAListOfToolsWithoutMutatingAnotherBuilder() {
-        ProductProfile profile = SdkTestFixtures.profile("java-tool-list", Map.of());
+    void registeringToolsDoesNotMutateTheProductProfile() {
+        ProductProfile profile = SdkTestFixtures.profile("java-tool-list");
 
         try (HaifaAgent withTools = HaifaAgents.builder(profile)
-                        .contributeAll(SdkTestFixtures.baseContributions())
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
                         .tools(List.of(new WeatherTool(), new GeocodeTool()))
+                        .policy(new PolicyPlatformContribution(
+                                PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
                         .build();
                 HaifaAgent withoutTools = HaifaAgents.builder(profile)
-                        .contributeAll(SdkTestFixtures.baseContributions())
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
                         .build()) {
-            assertThat(withTools.assembly().profile().allowedTools())
-                    .containsExactlyInAnyOrder("weather_get", "geocode");
-            assertThat(withoutTools.assembly().profile().allowedTools()).isEmpty();
+            assertThat(withTools.profile().allowedTools()).isEmpty();
+            assertThat(withoutTools.profile().allowedTools()).isEmpty();
             assertThat(profile.allowedTools()).isEmpty();
         }
+    }
+
+    @Test
+    void buildingWithToolsWithoutPolicyFailsClosed() {
+        ProductProfile profile = SdkTestFixtures.profile("no-policy");
+
+        assertThatThrownBy(() -> HaifaAgents.builder(profile)
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
+                        .tool(new WeatherTool())
+                        .build())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("explicit product policy");
     }
 
     @Test
     void appliesProductPublicToolPolicyDecoratorDuringRuntimeAssembly() {
         AtomicBoolean decorated = new AtomicBoolean();
 
-        try (HaifaAgent ignored = HaifaAgents.builder()
-                .product(SdkTestFixtures.profile("personal", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
+        try (HaifaAgent ignored = SdkTestFixtures.builder("personal")
                 .publicToolPolicyDecorator(delegate -> {
                     decorated.set(true);
                     return delegate;
@@ -111,50 +121,52 @@ public class HaifaAgentFacadeTest {
     void completesMultiRunConversationAndLifecycleCommands() throws Exception {
         AtomicInteger ids = new AtomicInteger();
         IdentifierGenerator identifiers = () -> "sdk-test-" + ids.incrementAndGet();
-        try (HaifaAgent agent = HaifaAgents.builder()
-                .product(SdkTestFixtures.profile("personal", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
+        try (HaifaAgent agent = SdkTestFixtures.builder("personal")
                 .identifierGenerator(identifiers)
                 .timeProvider(() -> Instant.parse("2026-07-28T00:00:00Z"))
                 .build()) {
             var started = agent.conversations().start(new StartConversationCommand("start-1", "First chat", "hello"));
             var duplicate = agent.conversations().start(new StartConversationCommand("start-1", "First chat", "hello"));
 
-            assertThat(duplicate.sessionId()).isEqualTo(started.sessionId());
-            agent.runs().await(started.activeRunId().orElseThrow());
-            var idle = agent.conversations().find(started.sessionId()).orElseThrow();
-            assertThat(idle.activeRunId()).isEmpty();
+            assertThat(duplicate.record().sessionId())
+                    .isEqualTo(started.record().sessionId());
+            agent.runs().await(started.runId());
+            var idle = agent.conversations().find(started.record().sessionId()).orElseThrow();
+            assertThat(idle.status()).isEqualTo(ConversationStatus.ACTIVE);
 
             var submitted = agent.conversations()
                     .submit(new SubmitConversationTurnCommand(idle.sessionId(), idle.revision(), "turn-2", "continue"));
-            agent.runs().await(submitted.activeRunId().orElseThrow());
-            var afterSecondRun = agent.conversations().find(started.sessionId()).orElseThrow();
-            assertThat(agent.conversations().turns(started.sessionId()))
+            agent.runs().await(submitted.runId());
+            var afterSecondRun =
+                    agent.conversations().find(started.record().sessionId()).orElseThrow();
+            assertThat(agent.conversations().turns(started.record().sessionId()))
                     .extracting("text")
                     .containsExactly("hello", "answer-1", "continue", "answer-2");
 
             var renamed = agent.conversations()
                     .rename(new RenameConversationCommand(
-                            started.sessionId(), afterSecondRun.revision(), "rename-1", "Renamed"));
+                            started.record().sessionId(), afterSecondRun.revision(), "rename-1", "Renamed"));
             var renameRetry = agent.conversations()
                     .rename(new RenameConversationCommand(
-                            started.sessionId(), afterSecondRun.revision(), "rename-1", "Renamed"));
+                            started.record().sessionId(), afterSecondRun.revision(), "rename-1", "Renamed"));
             assertThat(renameRetry.displayName()).isEqualTo(renamed.displayName());
 
             var archived = agent.conversations()
-                    .archive(new ChangeConversationStatusCommand(started.sessionId(), renamed.revision(), "archive-1"));
+                    .archive(new ChangeConversationStatusCommand(
+                            started.record().sessionId(), renamed.revision(), "archive-1"));
             var archiveRetry = agent.conversations()
-                    .archive(new ChangeConversationStatusCommand(started.sessionId(), renamed.revision(), "archive-1"));
+                    .archive(new ChangeConversationStatusCommand(
+                            started.record().sessionId(), renamed.revision(), "archive-1"));
             assertThat(archiveRetry.status()).isEqualTo(ConversationStatus.ARCHIVED);
             var restored = agent.conversations()
                     .unarchive(new ChangeConversationStatusCommand(
-                            started.sessionId(), archived.revision(), "unarchive-1"));
+                            started.record().sessionId(), archived.revision(), "unarchive-1"));
 
             assertThat(restored.status()).isEqualTo(ConversationStatus.ACTIVE);
             assertThat(agent.conversations().list(ConversationQuery.active(10)).items())
                     .extracting("sessionId")
-                    .containsExactly(started.sessionId());
-            assertThat(agent.assembly().profile().productId().value()).isEqualTo("personal");
+                    .containsExactly(started.record().sessionId());
+            assertThat(agent.profile().productId().value()).isEqualTo("personal");
         }
     }
 
@@ -163,22 +175,23 @@ public class HaifaAgentFacadeTest {
         AtomicInteger ids = new AtomicInteger();
         AtomicReference<SdkCaller> caller =
                 new AtomicReference<>(new SdkCaller(new TenantRef("tenant"), new PrincipalRef("alice", "user")));
-        try (HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("personal", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
+        try (HaifaAgent agent = SdkTestFixtures.builder("personal")
                 .callerProvider(caller::get)
                 .identifierGenerator(() -> "scope-test-" + ids.incrementAndGet())
                 .timeProvider(() -> Instant.parse("2026-07-28T00:00:00Z"))
                 .build()) {
             var conversation =
                     agent.conversations().start(new StartConversationCommand("start", "Private", "secret text"));
-            var runId = conversation.activeRunId().orElseThrow();
+            var runId = conversation.runId();
             agent.runs().await(runId);
             caller.set(new SdkCaller(new TenantRef("tenant"), new PrincipalRef("bob", "user")));
 
-            assertThat(agent.conversations().find(conversation.sessionId())).isEmpty();
+            assertThat(agent.conversations().find(conversation.record().sessionId()))
+                    .isEmpty();
             assertThat(agent.conversations().list(ConversationQuery.active(10)).items())
                     .isEmpty();
-            assertThatThrownBy(() -> agent.conversations().turns(conversation.sessionId()))
+            assertThatThrownBy(() ->
+                            agent.conversations().turns(conversation.record().sessionId()))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("CONVERSATION_UNAVAILABLE");
             assertThat(agent.runs().promptDiagnostics(runId).available()).isFalse();
@@ -188,9 +201,7 @@ public class HaifaAgentFacadeTest {
 
     @Test
     void lightweightChatFailsWithStableClosedError() {
-        HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("personal", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
-                .build();
+        HaifaAgent agent = SdkTestFixtures.builder("personal").build();
         agent.close();
 
         assertThatThrownBy(() -> agent.chat("hello"))
@@ -200,9 +211,7 @@ public class HaifaAgentFacadeTest {
 
     @Test
     void cachedConversationServiceFailsWithStableSafeErrorAfterClose() {
-        HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("personal", Map.of()))
-                .contributeAll(SdkTestFixtures.baseContributions())
-                .build();
+        HaifaAgent agent = SdkTestFixtures.builder("personal").build();
         var conversations = agent.conversations();
 
         agent.close();
@@ -253,24 +262,18 @@ public class HaifaAgentFacadeTest {
                     "req-402-test");
         };
         ModelContribution failingContribution = new ModelContribution(
-                SdkTestFixtures.metadata(
-                        SdkTestFixtures.MODEL_COORDINATE,
-                        ProductCapabilities.MODEL,
-                        snapshot.configurationDigest(),
-                        ProductProviderSuitability.DEVELOPMENT),
                 Map.of(ModelAdapterCoordinate.from(snapshot), failingModel),
                 snapshot,
                 Map.of(snapshot.modelId().value(), snapshot));
 
-        try (HaifaAgent agent = HaifaAgents.builder()
-                .product(SdkTestFixtures.profile("personal", Map.of()))
-                .contribute(failingContribution)
-                .contribute(SdkTestFixtures.persistenceContribution())
-                .contribute(SdkTestFixtures.conversationContribution())
+        try (HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("personal"))
+                .model(failingContribution)
+                .persistence(SdkTestFixtures.persistenceContribution())
+                .conversation(SdkTestFixtures.conversationContribution())
                 .build()) {
             var started = agent.conversations()
                     .start(new StartConversationCommand("start-payment-fail", "Payment test", "hello"));
-            var runId = started.activeRunId().orElseThrow();
+            var runId = started.runId();
             var finalSnapshot = agent.runs().await(runId);
             assertThat(finalSnapshot.status()).isEqualTo(AgentRunStatus.FAILED);
             assertThat(finalSnapshot.error()).isPresent();

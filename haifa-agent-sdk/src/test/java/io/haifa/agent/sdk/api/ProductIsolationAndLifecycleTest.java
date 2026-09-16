@@ -6,229 +6,102 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.artifact.InMemoryArtifactPayloadStore;
 import io.haifa.agent.artifact.InMemoryArtifactStore;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
-import io.haifa.agent.sdk.contribution.ExecutionPlatformContribution;
-import io.haifa.agent.sdk.product.ProductAssemblyException;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductCapabilityId;
-import io.haifa.agent.sdk.product.ProductCapabilityRequirement;
-import io.haifa.agent.sdk.product.ProductContribution;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
+import io.haifa.agent.sdk.conversation.ConversationStore;
+import io.haifa.agent.sdk.conversation.InMemoryConversationStore;
+import io.haifa.agent.sdk.spi.SdkConversationContribution;
+import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
+import io.haifa.agent.sdk.tool.JavaTool;
+import io.haifa.agent.sdk.tool.JavaToolContext;
+import io.haifa.agent.sdk.tool.JavaToolSpec;
 import java.time.Instant;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
-class ProductIsolationAndLifecycleTest {
-    private static final ProductContributionCoordinate PROJECT_COORDINATE =
-            new ProductContributionCoordinate("project.coding", "1.0");
+public class ProductIsolationAndLifecycleTest {
 
     @Test
-    void personalProfileRejectsCodingCapabilityWhileCodingProfileSelectsIt() {
-        ProductContribution project = contribution(
-                ProductCapabilities.PROJECT, PROJECT_COORDINATE, new AtomicInteger(), new AtomicInteger(), false);
-        var personal = SdkTestFixtures.profile(
-                "personal",
-                Map.of(ProductCapabilities.PROJECT, ProductCapabilityRequirement.none(ProductCapabilities.PROJECT)));
-        var coding = SdkTestFixtures.profile(
-                "coding",
-                Map.of(
-                        ProductCapabilities.PROJECT,
-                        ProductCapabilityRequirement.required(
-                                ProductCapabilities.PROJECT,
-                                Set.of(PROJECT_COORDINATE),
-                                ProductProviderSuitability.DEVELOPMENT)));
+    void missingRequiredComponentsFailClosedWithMeaningfulCodes() {
+        var profile = SdkTestFixtures.profile("missing");
 
-        var personalContributions = new java.util.ArrayList<>(SdkTestFixtures.baseContributions());
-        personalContributions.add(project);
-        assertThatThrownBy(() -> HaifaAgents.builder(personal)
-                        .contributeAll(personalContributions)
-                        .build())
-                .isInstanceOf(ProductAssemblyException.class)
+        assertThatThrownBy(() -> HaifaAgents.builder(profile).build())
+                .isInstanceOf(HaifaAgentException.class)
                 .extracting("code")
-                .isEqualTo("CAPABILITY_FORBIDDEN");
+                .isEqualTo("MODEL_REQUIRED");
 
-        var codingContributions = new java.util.ArrayList<>(SdkTestFixtures.baseContributions());
-        codingContributions.add(project);
-        try (HaifaAgent agent = HaifaAgents.builder(coding)
-                .contributeAll(codingContributions)
-                .timeProvider(() -> Instant.parse("2026-07-28T00:00:00Z"))
-                .build()) {
-            assertThat(agent.assembly().contributions()).containsKey(ProductCapabilities.PROJECT);
-            assertThat(agent.assembly().profile().allowedTools()).isEmpty();
-            assertThat(agent.assembly().profile().allowedSkills()).isEmpty();
+        assertThatThrownBy(() -> HaifaAgents.builder(profile)
+                        .model(SdkTestFixtures.modelContribution())
+                        .build())
+                .isInstanceOf(HaifaAgentException.class)
+                .extracting("code")
+                .isEqualTo("PERSISTENCE_REQUIRED");
+
+        assertThatThrownBy(() -> HaifaAgents.builder(profile)
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .build())
+                .isInstanceOf(HaifaAgentException.class)
+                .extracting("code")
+                .isEqualTo("CONVERSATION_REQUIRED");
+    }
+
+    @Test
+    void optionalComponentsMissingMeansCapabilityAbsent() {
+        try (HaifaAgent agent = SdkTestFixtures.builder("optional").build()) {
+            assertThat(agent.memories()).isEmpty();
+            assertThat(agent.artifacts()).isEmpty();
+            assertThat(agent.diagnostics()).isEmpty();
         }
     }
 
     @Test
-    void initializesSelectedResourcesAndClosesOnlyOwnedResources() {
-        ProductCapabilityId extra = new ProductCapabilityId("lifecycle");
-        ProductContributionCoordinate coordinate = new ProductContributionCoordinate("lifecycle.provider", "1.0");
-        AtomicInteger successfulInitialize = new AtomicInteger();
-        AtomicInteger successfulClose = new AtomicInteger();
-        var profile = SdkTestFixtures.profile(
-                "lifecycle",
-                Map.of(
-                        extra,
-                        ProductCapabilityRequirement.required(
-                                extra, Set.of(coordinate), ProductProviderSuitability.DEVELOPMENT)));
-        var contributions = new java.util.ArrayList<>(SdkTestFixtures.baseContributions());
-        contributions.add(contribution(extra, coordinate, successfulInitialize, successfulClose, false));
-        HaifaAgent agent = HaifaAgents.builder(profile)
-                .contributeAll(contributions)
-                .timeProvider(() -> Instant.parse("2026-07-28T00:00:00Z"))
-                .build();
+    void artifactComponentRequiresEnabledArtifactPolicy() {
+        var artifact = new ArtifactPlatformContribution(
+                new ArtifactService(
+                        new InMemoryArtifactStore(),
+                        new InMemoryArtifactPayloadStore(),
+                        () -> "artifact-test-id",
+                        () -> Instant.parse("2026-07-28T00:00:00Z")),
+                io.haifa.agent.sdk.product.ProductArtifactPolicy.disabled());
+        var profile = SdkTestFixtures.profile("artifact-disabled");
 
-        assertThat(successfulInitialize).hasValue(1);
-        agent.close();
-        agent.close();
-        assertThat(successfulClose).hasValue(1);
-
-        AtomicInteger duplicateInitialize = new AtomicInteger();
-        AtomicInteger firstFailureClose = new AtomicInteger();
-        AtomicInteger secondFailureClose = new AtomicInteger();
-        var duplicate = new java.util.ArrayList<>(SdkTestFixtures.baseContributions());
-        duplicate.add(contribution(extra, coordinate, duplicateInitialize, firstFailureClose, false));
-        duplicate.add(contribution(extra, coordinate, duplicateInitialize, secondFailureClose, false));
-
-        assertThatThrownBy(() ->
-                        HaifaAgents.builder(profile).contributeAll(duplicate).build())
-                .isInstanceOf(ProductAssemblyException.class);
-        assertThat(duplicateInitialize).hasValue(0);
-        assertThat(firstFailureClose).hasValue(0);
-        assertThat(secondFailureClose).hasValue(0);
-
-        ProductCapabilityId after = new ProductCapabilityId("lifecycle.z-after");
-        ProductContributionCoordinate afterCoordinate = new ProductContributionCoordinate("lifecycle.after", "1.0");
-        AtomicInteger beforeInitialize = new AtomicInteger();
-        AtomicInteger beforeClose = new AtomicInteger();
-        AtomicInteger failedInitialize = new AtomicInteger();
-        AtomicInteger failedClose = new AtomicInteger();
-        var failingProfile = SdkTestFixtures.profile(
-                "lifecycle-failure",
-                Map.of(
-                        extra,
-                        ProductCapabilityRequirement.required(
-                                extra, Set.of(coordinate), ProductProviderSuitability.DEVELOPMENT),
-                        after,
-                        ProductCapabilityRequirement.required(
-                                after, Set.of(afterCoordinate), ProductProviderSuitability.DEVELOPMENT)));
-        var failing = new java.util.ArrayList<>(SdkTestFixtures.baseContributions());
-        failing.add(contribution(extra, coordinate, beforeInitialize, beforeClose, false));
-        failing.add(contribution(after, afterCoordinate, failedInitialize, failedClose, true));
-
-        assertThatThrownBy(() -> HaifaAgents.builder(failingProfile)
-                        .contributeAll(failing)
+        assertThatThrownBy(() -> HaifaAgents.builder(profile)
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
+                        .artifacts(artifact)
                         .build())
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("initialization failed");
-        assertThat(beforeInitialize).hasValue(1);
-        assertThat(beforeClose).hasValue(1);
-        assertThat(failedInitialize).hasValue(1);
-        assertThat(failedClose).hasValue(0);
+                .isInstanceOf(HaifaAgentException.class)
+                .extracting("code")
+                .isEqualTo("ARTIFACT_POLICY_DISABLED");
     }
 
     @Test
-    void typedArtifactAndExecutionContributionsRequireExplicitProductPolicies() {
-        ProductContributionCoordinate artifactCoordinate = new ProductContributionCoordinate("artifact.memory", "1.0");
-        var artifactProfile = SdkTestFixtures.profile(
-                "artifact-disabled",
-                Map.of(
-                        ProductCapabilities.ARTIFACT,
-                        ProductCapabilityRequirement.required(
-                                ProductCapabilities.ARTIFACT,
-                                Set.of(artifactCoordinate),
-                                ProductProviderSuitability.DEVELOPMENT)));
-        var artifactService = new ArtifactService(
-                new InMemoryArtifactStore(),
-                new InMemoryArtifactPayloadStore(),
-                () -> "artifact-test-id",
-                () -> Instant.parse("2026-07-28T00:00:00Z"));
-        var artifact = new ArtifactPlatformContribution(
-                SdkTestFixtures.metadata(
-                        artifactCoordinate,
-                        ProductCapabilities.ARTIFACT,
-                        SdkConfigurationDigest.sha256("artifact-memory-v1"),
-                        ProductProviderSuitability.DEVELOPMENT),
-                artifactService);
-        var artifactContributions = new java.util.ArrayList<>(SdkTestFixtures.baseContributions());
-        artifactContributions.add(artifact);
+    void profileAllowingUnavailableToolAliasFailsBuild() {
+        var profile = SdkTestFixtures.profile("tool-alias", Set.of("weather_get"), Set.of());
 
-        assertThatThrownBy(() -> HaifaAgents.builder(artifactProfile)
-                        .contributeAll(artifactContributions)
+        assertThatThrownBy(() -> HaifaAgents.builder(profile)
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
                         .build())
-                .isInstanceOf(ProductAssemblyException.class)
+                .isInstanceOf(HaifaAgentException.class)
                 .extracting("code")
-                .isEqualTo("ARTIFACT_POLICY_DISABLED");
-
-        ProductContributionCoordinate executionCoordinate = new ProductContributionCoordinate("execution.host", "1.0");
-        var executionProfile = SdkTestFixtures.profile(
-                "execution-disabled",
-                Map.of(
-                        ProductCapabilities.EXECUTION,
-                        ProductCapabilityRequirement.required(
-                                ProductCapabilities.EXECUTION,
-                                Set.of(executionCoordinate),
-                                ProductProviderSuitability.DEVELOPMENT)));
-        var execution = new ExecutionPlatformContribution(
-                SdkTestFixtures.metadata(
-                        executionCoordinate,
-                        ProductCapabilities.EXECUTION,
-                        SdkConfigurationDigest.sha256("execution-host-v1"),
-                        ProductProviderSuitability.DEVELOPMENT),
-                "host-guard");
-        var executionContributions = new java.util.ArrayList<>(SdkTestFixtures.baseContributions());
-        executionContributions.add(execution);
-
-        assertThatThrownBy(() -> HaifaAgents.builder(executionProfile)
-                        .contributeAll(executionContributions)
-                        .build())
-                .isInstanceOf(ProductAssemblyException.class)
-                .extracting("code")
-                .isEqualTo("EXECUTION_POLICY_DISABLED");
+                .isEqualTo("TOOL_ALIAS_UNAVAILABLE");
     }
 
-    private static ProductContribution contribution(
-            ProductCapabilityId capability,
-            ProductContributionCoordinate coordinate,
-            AtomicInteger initializes,
-            AtomicInteger closes,
-            boolean failInitialize) {
-        return new ProductContribution() {
-            @Override
-            public ProductContributionCoordinate coordinate() {
-                return coordinate;
-            }
+    @Test
+    void closesOwnedComponentsExactlyOnce() {
+        AtomicInteger closes = new AtomicInteger();
+        SdkPersistenceContribution persistence = new SdkPersistenceContribution() {
+            private final RuntimePersistencePorts ports = RuntimePersistencePorts.inMemory();
 
             @Override
-            public ProductCapabilityId capabilityId() {
-                return capability;
-            }
-
-            @Override
-            public String configurationDigest() {
-                return SdkConfigurationDigest.sha256(coordinate.externalForm());
-            }
-
-            @Override
-            public ProductProviderSuitability suitability() {
-                return ProductProviderSuitability.DEVELOPMENT;
-            }
-
-            @Override
-            public String publicSummary() {
-                return "safe lifecycle fixture";
-            }
-
-            @Override
-            public void initialize() {
-                initializes.incrementAndGet();
-                if (failInitialize) {
-                    throw new IllegalStateException("initialization failed");
-                }
+            public RuntimePersistencePorts runtimePersistence() {
+                return ports;
             }
 
             @Override
@@ -236,5 +109,120 @@ class ProductIsolationAndLifecycleTest {
                 closes.incrementAndGet();
             }
         };
+        HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("lifecycle"))
+                .model(SdkTestFixtures.modelContribution())
+                .persistence(persistence)
+                .conversation(SdkTestFixtures.conversationContribution())
+                .build();
+
+        agent.close();
+        agent.close();
+        assertThat(closes).hasValue(1);
+    }
+
+    @Test
+    void closesASharedComponentRegisteredAsBothPersistenceAndConversationOnce() {
+        AtomicInteger closes = new AtomicInteger();
+        CombinedStorage storage = new CombinedStorage(closes);
+        HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("shared-component"))
+                .model(SdkTestFixtures.modelContribution())
+                .persistence(storage)
+                .conversation(storage)
+                .build();
+
+        agent.close();
+        assertThat(closes).hasValue(1);
+    }
+
+    @Test
+    void closesAlreadyAssembledComponentsExactlyOnceWhenRuntimeAssemblyFails() {
+        AtomicInteger closes = new AtomicInteger();
+        SdkPersistenceContribution persistence = new SdkPersistenceContribution() {
+            @Override
+            public RuntimePersistencePorts runtimePersistence() {
+                throw new IllegalStateException("persistence bootstrap failed");
+            }
+
+            @Override
+            public void close() {
+                closes.incrementAndGet();
+            }
+        };
+
+        assertThatThrownBy(() -> HaifaAgents.builder(SdkTestFixtures.profile("failed-build"))
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(persistence)
+                        .conversation(SdkTestFixtures.conversationContribution())
+                        .build())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("persistence bootstrap failed");
+        assertThat(closes).hasValue(1);
+    }
+
+    @Test
+    void duplicateJavaToolAliasesFailBeforeRuntimeAssembly() {
+        assertThatThrownBy(() -> SdkTestFixtures.builder("java-tool-conflict")
+                        .tools(java.util.List.of(new WeatherTool(), new DuplicateWeatherTool()))
+                        .build())
+                .isInstanceOf(HaifaAgentException.class)
+                .extracting("code")
+                .isEqualTo("JAVA_TOOL_ALIAS_CONFLICT");
+    }
+
+    public record WeatherRequest(String city) {}
+
+    public record WeatherResponse(String forecast) {}
+
+    private static final class WeatherTool implements JavaTool<WeatherRequest, WeatherResponse> {
+        @Override
+        public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
+            return JavaToolSpec.builder("weather_get", WeatherRequest.class, WeatherResponse.class)
+                    .pure()
+                    .build();
+        }
+
+        @Override
+        public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
+            return new WeatherResponse("Sunny in " + input.city());
+        }
+    }
+
+    private static final class DuplicateWeatherTool implements JavaTool<WeatherRequest, WeatherResponse> {
+        @Override
+        public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
+            return JavaToolSpec.builder("weather_get", WeatherRequest.class, WeatherResponse.class)
+                    .pure()
+                    .build();
+        }
+
+        @Override
+        public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
+            return new WeatherResponse(input.city());
+        }
+    }
+
+    private static final class CombinedStorage implements SdkPersistenceContribution, SdkConversationContribution {
+        private final RuntimePersistencePorts ports = RuntimePersistencePorts.inMemory();
+        private final ConversationStore conversations = new InMemoryConversationStore();
+        private final AtomicInteger closes;
+
+        private CombinedStorage(AtomicInteger closes) {
+            this.closes = closes;
+        }
+
+        @Override
+        public RuntimePersistencePorts runtimePersistence() {
+            return ports;
+        }
+
+        @Override
+        public ConversationStore conversationStore() {
+            return conversations;
+        }
+
+        @Override
+        public void close() {
+            closes.incrementAndGet();
+        }
     }
 }

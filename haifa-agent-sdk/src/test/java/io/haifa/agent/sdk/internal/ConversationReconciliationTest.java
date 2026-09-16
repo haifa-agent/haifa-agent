@@ -4,11 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.core.run.AgentRunType;
-import io.haifa.agent.core.session.AgentSession;
-import io.haifa.agent.core.session.AgentSessionId;
-import io.haifa.agent.core.session.SessionScope;
-import io.haifa.agent.runtime.api.AgentRunRequest;
-import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
@@ -16,29 +11,24 @@ import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.api.SdkCaller;
-import io.haifa.agent.sdk.conversation.ConversationCommandBinding;
-import io.haifa.agent.sdk.conversation.ConversationRecord;
-import io.haifa.agent.sdk.conversation.ConversationStatus;
+import io.haifa.agent.sdk.conversation.ConversationRun;
 import io.haifa.agent.sdk.conversation.InMemoryConversationStore;
+import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class ConversationReconciliationTest {
     @Test
-    void repairsCrashWindowAfterRuntimeCreatedRunBeforeConversationBinding() {
+    void startRecoversAnAlreadyBoundRunAcrossTheCrashWindowExactlyOnce() {
         Instant now = Instant.parse("2026-07-28T00:00:00Z");
         AtomicInteger idSequence = new AtomicInteger();
         IdentifierGenerator ids = () -> "reconcile-" + idSequence.incrementAndGet();
-        var profile = SdkTestFixtures.profile("personal", Map.of());
+        var profile = SdkTestFixtures.profile("personal");
         var model = SdkTestFixtures.modelContribution();
         var persistence = SdkTestFixtures.persistenceContribution();
-        var conversations = new InMemoryConversationStore();
         var scheduler = new ManualExecutionScheduler();
         SdkCaller caller = SdkCaller.defaultPublicUser();
         var runtime = new RuntimeCoreBuilder()
@@ -57,7 +47,7 @@ class ConversationReconciliationTest {
                         List.of()))
                 .profiles((id, overrides) -> new ResolvedProfile(
                         id,
-                        profile.runProfileVersion(),
+                        profile.defaultRunProfile().version(),
                         AgentRunType.CHAT,
                         profile.budget(),
                         profile.limits(),
@@ -67,93 +57,22 @@ class ConversationReconciliationTest {
                         model.snapshot().adapterVersion(),
                         model.adapters().get(io.haifa.agent.model.api.ModelAdapterCoordinate.from(model.snapshot())))
                 .build();
-        AgentSessionId sessionId = new AgentSessionId("pending-session");
-        String dispatchKey = "sdk:submit:pending";
-        persistence
-                .runtimePersistence()
-                .sessions()
-                .insert(AgentSession.open(
-                        sessionId, caller.tenant(), caller.principal(), null, SessionScope.USER, now, Map.of()));
-        conversations.reserveCommand(new ConversationCommandBinding(
-                "caller-digest",
-                "submit",
-                "key-digest",
-                "request-digest",
-                dispatchKey,
-                sessionId,
-                Optional.empty(),
-                false,
-                OptionalLong.empty(),
-                now));
-        conversations.create(new ConversationRecord(
-                sessionId,
-                caller.tenant(),
-                caller.principal(),
-                "Pending",
-                ConversationStatus.ACTIVE,
-                Optional.empty(),
-                OptionalLong.empty(),
-                Optional.of(dispatchKey),
-                now,
-                now,
-                0));
-        var accepted = runtime.start(new AgentRunRequest(
-                dispatchKey,
-                profile.definitionId(),
-                Optional.of(profile.definitionVersion()),
-                profile.runProfileId(),
-                sessionId,
-                Optional.empty(),
-                "message",
-                List.of(),
-                RuntimeOverrides.NONE));
-        var service = new DefaultConversationService(
-                profile, runtime, persistence, conversations, () -> caller, ids, () -> now);
-
-        ConversationRecord repaired = service.find(sessionId).orElseThrow();
-
-        assertThat(repaired.activeRunId()).contains(accepted.runId());
-        assertThat(repaired.activeDispatchKey()).isEmpty();
-        assertThat(conversations.findCommand(dispatchKey).orElseThrow().completed())
-                .isTrue();
+        var command = new StartConversationCommand("start-window", "Recovery", "hello");
+        var firstStore = new InMemoryConversationStore();
+        var firstService =
+                new DefaultConversationService(profile, runtime, persistence, firstStore, () -> caller, ids, () -> now);
+        ConversationRun first = firstService.start(command);
         assertThat(scheduler.pending()).isEqualTo(1);
 
-        AgentSessionId orphanSessionId = new AgentSessionId("orphan-pending-session");
-        String orphanDispatchKey = "sdk:submit:orphan-pending";
-        persistence
-                .runtimePersistence()
-                .sessions()
-                .insert(AgentSession.open(
-                        orphanSessionId, caller.tenant(), caller.principal(), null, SessionScope.USER, now, Map.of()));
-        conversations.reserveCommand(new ConversationCommandBinding(
-                "caller-digest",
-                "submit",
-                "orphan-key-digest",
-                "orphan-request-digest",
-                orphanDispatchKey,
-                orphanSessionId,
-                Optional.empty(),
-                false,
-                OptionalLong.empty(),
-                now));
-        conversations.create(new ConversationRecord(
-                orphanSessionId,
-                caller.tenant(),
-                caller.principal(),
-                "Orphan pending",
-                ConversationStatus.ACTIVE,
-                Optional.empty(),
-                OptionalLong.empty(),
-                Optional.of(orphanDispatchKey),
-                now,
-                now,
-                0));
+        var recoveredStore = new InMemoryConversationStore();
+        var recoveredService = new DefaultConversationService(
+                profile, runtime, persistence, recoveredStore, () -> caller, ids, () -> now);
+        ConversationRun recovered = recoveredService.start(command);
 
-        ConversationRecord released = service.find(orphanSessionId).orElseThrow();
-
-        assertThat(released.activeRunId()).isEmpty();
-        assertThat(released.activeDispatchKey()).isEmpty();
-        assertThat(conversations.findCommand(orphanDispatchKey).orElseThrow().completed())
-                .isFalse();
+        assertThat(recovered.runId()).isEqualTo(first.runId());
+        assertThat(recovered.record().sessionId()).isEqualTo(first.record().sessionId());
+        assertThat(recoveredService.find(first.record().sessionId())).isPresent();
+        assertThat(runtime.find(first.runId())).isPresent();
+        assertThat(scheduler.pending()).isEqualTo(1);
     }
 }

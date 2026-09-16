@@ -23,7 +23,6 @@ import io.haifa.agent.model.openai.OpenAiCompatibleModelConfiguration;
 import io.haifa.agent.model.openai.OpenAiCompatibleModelConfiguration.Dialect;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.diagnostics.PromptDiagnosticSource;
-import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
 import io.haifa.agent.sdk.tool.JavaToolSpec;
@@ -54,21 +53,10 @@ public class HaifaAgentStarterBuilderTest {
                 .environment(ignored -> "test-secret")
                 .tool(new WeatherTool())
                 .build()) {
-            assertThat(agent.assembly().profile().runProfileId()).isEqualTo("deepseek-v4-flash");
-            assertThat(agent.assembly().profile().instructions()).contains("helpful assistant");
-            assertThat(agent.assembly().profile().allowedTools()).containsExactly("weather_get");
-            assertThat(agent.assembly()
-                            .profile()
-                            .requirement(ProductCapabilities.MEMORY)
-                            .mode()
-                            .name())
-                    .isEqualTo("NONE");
-            assertThat(agent.assembly()
-                            .profile()
-                            .requirement(ProductCapabilities.EXECUTION)
-                            .mode()
-                            .name())
-                    .isEqualTo("NONE");
+            assertThat(agent.profile().defaultRunProfile().id()).isEqualTo("deepseek-v4-flash");
+            assertThat(agent.profile().instructions()).contains("helpful assistant");
+            assertThat(agent.profile().allowedTools()).isEmpty();
+            assertThat(agent.diagnostics()).extracting("code").contains("DEFAULT_INSTRUCTIONS_IN_USE");
         }
     }
 
@@ -84,10 +72,7 @@ public class HaifaAgentStarterBuilderTest {
                 .environment(ignored -> "test-secret")
                 .defaultModel(HaifaAgentStarterBuilder.VISION_MODEL_ID)
                 .build()) {
-            assertThat(agent.assembly().profile().runProfileId()).isEqualTo(HaifaAgentStarterBuilder.VISION_MODEL_ID);
-            var contribution = agent.assembly().contributions().get(ProductCapabilities.MODEL);
-            assertThat(contribution).isNotNull();
-            assertThat(contribution.publicSummary()).isEqualTo("DeepSeek Vision with Thinking disabled");
+            assertThat(agent.profile().defaultRunProfile().id()).isEqualTo(HaifaAgentStarterBuilder.VISION_MODEL_ID);
         }
     }
 
@@ -116,7 +101,7 @@ public class HaifaAgentStarterBuilderTest {
                 HaifaAgentStarter.builder().model(model, testSnapshot()).build()) {
             var conversation =
                     agent.conversations().start(new StartConversationCommand("hello-1", "Hello Haifa", "Say hello."));
-            var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
+            var completed = agent.runs().await(conversation.runId());
 
             assertThat(completed.output()).contains("Hello from Haifa Agent!");
         }
@@ -223,13 +208,8 @@ public class HaifaAgentStarterBuilderTest {
                     .start(new StartConversationCommand(
                             "multi-2", "Selected", "Use the selected model.", Optional.of("second-model")));
 
-            assertThat(agent.runs()
-                            .await(defaultConversation.activeRunId().orElseThrow())
-                            .output())
-                    .contains("first-provider");
-            assertThat(agent.runs()
-                            .await(selectedConversation.activeRunId().orElseThrow())
-                            .output())
+            assertThat(agent.runs().await(defaultConversation.runId()).output()).contains("first-provider");
+            assertThat(agent.runs().await(selectedConversation.runId()).output())
                     .contains("second-provider");
         }
     }
@@ -249,7 +229,7 @@ public class HaifaAgentStarterBuilderTest {
                 .build();
 
         try (var agent = HaifaAgentStarter.builder().model(configured).build()) {
-            assertThat(agent.assembly().profile().runProfileId()).isEqualTo("typed-deepseek");
+            assertThat(agent.profile().defaultRunProfile().id()).isEqualTo("typed-deepseek");
             assertThat(configured.snapshot().invocationOptions()).containsEntry("thinking", "disabled");
             assertThat(configured.snapshot().providerOptions()).containsEntry("haifa_request_timeout_millis", 75_000L);
         }
@@ -301,7 +281,7 @@ public class HaifaAgentStarterBuilderTest {
                 .build()) {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand("tool-1", "Weather", "Weather in Shanghai?"));
-            var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
+            var completed = agent.runs().await(conversation.runId());
 
             assertThat(completed.status())
                     .as(

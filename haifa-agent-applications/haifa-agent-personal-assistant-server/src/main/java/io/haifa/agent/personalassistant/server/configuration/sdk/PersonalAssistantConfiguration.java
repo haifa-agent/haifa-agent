@@ -50,12 +50,7 @@ import io.haifa.agent.personalassistant.server.mission.SqliteMissionStore;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.sdk.api.SdkCaller;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.store.sqlite.SqliteSdkProductContributions;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
 import java.awt.Desktop;
@@ -192,11 +187,9 @@ public class PersonalAssistantConfiguration {
                         dataDirectory.resolve("personal-assistant.sqlite").toAbsolutePath(), 1_250, 4 * 1024 * 1024),
                 personalClock,
                 protector,
-                metadata("haifa-personal-sqlite", ProductCapabilities.PERSISTENCE, "runtime-v1"),
-                metadata("haifa-personal-conversation", ProductCapabilities.CONVERSATION, "conversation-v1"),
-                metadata("haifa-personal-memory", ProductCapabilities.MEMORY, "memory-v1"));
+                io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile.MEMORY_POLICY,
+                io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile.ARTIFACT_POLICY);
         var sharedPolicy = new PolicyPlatformContribution(
-                metadata("haifa-personal-policy", ProductCapabilities.POLICY, "policy-v1"),
                 PersonalAssistantPolicyRules.conservative(),
                 new io.haifa.agent.policy.core.DefaultPolicyDecisionService());
         TenantRef tenant = new TenantRef(properties.caller().tenant());
@@ -242,7 +235,7 @@ public class PersonalAssistantConfiguration {
                     properties.defaultModelId(),
                     properties.allowInsecureLoopbackModel(),
                     mapper,
-                    execution.shell(),
+                    execution.shellRuntime(),
                     modelAuthentication.credentialResolver(),
                     antigravityProjects::resolve,
                     ref -> modelAuthentication
@@ -433,16 +426,6 @@ public class PersonalAssistantConfiguration {
         if (ref != null && ref.startsWith("env://") && ref.length() > "env://".length()) {
             target.add(ref.substring("env://".length()));
         }
-    }
-
-    private static SdkContributionMetadata metadata(
-            String id, io.haifa.agent.sdk.product.ProductCapabilityId capability, String configuration) {
-        return new SdkContributionMetadata(
-                new ProductContributionCoordinate(id, "1.0.0"),
-                capability,
-                SdkConfigurationDigest.sha256(id, configuration),
-                ProductProviderSuitability.PRODUCTION,
-                "Personal Assistant " + capability.value());
     }
 
     private static Path prepare(Path value) {

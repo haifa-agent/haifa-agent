@@ -257,7 +257,8 @@ Outbox 和未结算 Attempt 全部归零。MVP 不自动删除 Mission、Task、
 
 离线备份、校验和恢复通过可执行 Server JAR 运行。备份要求 Server 已停止、Dispatcher 文件锁可获取且
 Mission Store 处于 quiescent 状态；恢复目标必须是全新目录。`product-digest` 取自启动接口的
-`assemblyDigest`，`skill-binding` 使用 Mission 快照中冻结的完整 Deep Research Skill binding：
+`assemblyDigest` 字段（其值即 `PersonalAssistantAssembler.productDigest(...)` 计算的产品装配摘要），
+`skill-binding` 使用 Mission 快照中冻结的完整 Deep Research Skill binding：
 
 ```powershell
 java -jar .\target\haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar `
@@ -465,11 +466,10 @@ Invalid server-side argument failures are logged with correlation ID, HTTP metho
 Execution diagnostics expose bounded `failureCode` and `dispatchState` values. They distinguish preflight rejection
 from failures after a host process was actually launched without exposing command content or physical scratch paths.
 
-## Trusted Skill script manifest
+## Trusted Skill manifest
 
-Trusted script auto-approval is a separate explicit opt-in. The manifest must be an external regular file and
-must pin the reviewed package, registration, script, generated Tool, execution configuration, sandbox,
-capability, network, subject, expiry, and revocation facts. It contains no credential or script source:
+The manifest must be an external regular file and must pin the reviewed package, registration, subject,
+expiry, and revocation facts. It contains no credential or script source:
 
 ```powershell
 $env:HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST='D:\secure-config\trusted-skill-scripts.yml'
@@ -478,9 +478,9 @@ $env:HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST='D:\secure-config\trusted-skill-scri
   -TrustedScriptManifest 'D:\secure-config\trusted-skill-scripts.yml'
 ```
 
-For initial diagnostics, a script entry may be `REVOKED` with an all-zero expected Tool definition hash. The
-server starts and Admin exposes the computed safe binding/digest metadata, but the script cannot be
-auto-approved. After reviewing the exact package, script, fixed Tool Schema, runtime, sandbox, capabilities,
-and hosts, the operator records the real hash, changes the grant to `ACTIVE`, and restarts. Any subsequent
-drift returns that invocation to ordinary approval or rejection. Generic `execution_run` always keeps its
-existing exact human approval.
+Package review grants still gate which reviewed Skill packages enter the effective catalog. Script execution
+auto-approval has been removed: the SDK no longer maps `SkillScriptExecutionGrant` to Tool approval and rejects
+a Skill platform that carries script execution grants, so no grant can pre-authorize a script. Every
+`execution_run` invocation always requires the exact human approval described above; after reviewing the exact
+package, script, fixed Tool Schema, runtime, sandbox, capabilities, and hosts, the operator approves that
+invocation instead of pre-authorizing it.
