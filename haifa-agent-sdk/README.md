@@ -184,9 +184,10 @@ Memory 或 Tool 正文。查询先沿用当前 Caller 的 Run 授权；未授权
 
 ## 边界
 
-- SDK 产品装配可在普通 Public Tool Policy 之前显式组合 `TrustedSkillScriptPublicToolPolicy`。它只对冻结配置中唯一、
-  未失效且全部 Skill／script／Tool／参数策略／profile／sandbox／能力／网络和调用者绑定精确匹配的受信脚本产生
-  `TRUSTED_SKILL_SCRIPT_AUTO_APPROVED`；缺失、歧义或漂移一律回退既有审批策略。Runtime Core 不自动安装该产品策略。
+- SDK 不再拥有 Policy 语义，也不自动批准受信 Skill 脚本：`defaultSdkPolicyRules()` 与
+  `TrustedSkillScriptPublicToolPolicy` 均已删除，注册 Skill 不再隐式改变 Tool approval 行为
+  （`HAIFA-ADR-020` 已 supersede）。标准规则由 Policy 模块的 `PolicyPresets.standardApproval()` 提供，
+  Starter 显式选择该 preset；配置了 Tool 却缺少 `policy` 组件时由 Runtime 明确失败。
 - 公共 API 不暴露 `RuntimeCoreBuilder`、Runtime Core 内部 bootstrap 类型、SQLite/MyBatis、
   Spring、Provider Client、`Path`、Connection 或 Credential 明文。
 - Caller 的 Tenant/Principal 来自可信 `SdkCallerProvider`，不从 Conversation 命令正文接收。
@@ -213,8 +214,9 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
 - Model、Tool Platform、Skill、Context、Memory、Artifact、Policy、Approval 和 Credential 均通过显式
   typed 组件注册。MCP Tool 由 Integration 直接写入统一 Tool Catalog，不再是独立 SDK
   Capability，也不存在第二条 MCP 执行通道。
-- 应用级 Java Tool 通过 `HaifaAgentBuilder.tool(JavaTool)` 逐个注册；SDK 在构建时生成并合并内部
-   Tool Catalog，应用无需理解 Catalog digest 与 frozen binding。
+- 应用级 Java Tool 通过 `HaifaAgentBuilder.tool(JavaTool)` 逐个注册；SDK 在构建时把它们转换为
+  `ToolDefinition` 与 `ToolProvider`，注册进统一 Catalog 并只冻结一次，应用无需理解 Catalog digest
+  与 frozen binding，也不需要构造 Tool Platform Contribution。
 - 产品可通过 `publicToolPolicyDecorator` 对 Runtime 已选定的公共 Tool Policy 做有界装饰；装饰器
   必须为自己拥有的精确动作生成 request-bound Decision，并把其它动作委托给既有 Policy，不得建立
   第二条 Tool 执行通道。
