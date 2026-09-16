@@ -191,7 +191,9 @@ Memory 或 Tool 正文。查询先沿用当前 Caller 的 Run 授权；未授权
 - SDK 不再拥有 Policy 语义，也不自动批准受信 Skill 脚本：`defaultSdkPolicyRules()` 与
   `TrustedSkillScriptPublicToolPolicy` 均已删除，注册 Skill 不再隐式改变 Tool approval 行为
   （`HAIFA-ADR-020` 已 supersede）。标准规则由 Policy 模块的 `PolicyPresets.standardApproval()` 提供，
-  Starter 显式选择该 preset；配置了 Tool 却缺少 `policy` 组件时由 Runtime 明确失败。
+  Starter 显式选择该 preset；配置了 Tool 却缺少 `policy` 组件时由 Runtime 明确失败。由于 grant 已不再
+  影响审批，`SkillPlatformContribution` 直接拒绝携带 `scriptExecutionGrants` 的 `SkillTrustSnapshot`，
+  而不是静默忽略；需要自动批准的产品必须改为显式 Policy 规则。
 - 公共 API 不暴露 `RuntimeCoreBuilder`、Runtime Core 内部 bootstrap 类型、SQLite/MyBatis、
   Spring、Provider Client、`Path`、Connection 或 Credential 明文。
 - Caller 的 Tenant/Principal 来自可信 `SdkCallerProvider`，不从 Conversation 命令正文接收。

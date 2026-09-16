@@ -24,10 +24,9 @@ public interface ConversationStore {
 
     ConversationRecord rename(AgentSessionId sessionId, long expectedRevision, String displayName, Instant at);
 
-    ConversationRecord changeStatus(
-            AgentSessionId sessionId,
-            long expectedRevision,
-            ConversationStatus expected,
-            ConversationStatus target,
-            Instant at);
+    /**
+     * Bumps the conversation revision guarded by {@code expectedRevision}. The conversation status is derived
+     * from the Runtime {@code AgentSession} and is never stored here, so callers mutate the session separately.
+     */
+    ConversationRecord changeStatus(AgentSessionId sessionId, long expectedRevision, Instant at);
 }
