@@ -1,16 +1,9 @@
 package io.haifa.agent.sdk.internal;
 
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.sdk.api.HaifaAgentException;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
-import io.haifa.agent.sdk.product.ProductAssemblyException;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductCapabilityRequirement;
-import io.haifa.agent.sdk.product.ProductContribution;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProfile;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.tool.JavaRecordSchemaGenerator;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
@@ -43,48 +36,21 @@ import java.util.Set;
 
 /** Internal adapter that turns per-Tool Java registrations into the unified Tool platform. */
 public final class JavaToolAssembly {
-    static final ProductContributionCoordinate COORDINATE =
-            new ProductContributionCoordinate("sdk.java-tools", "1.0.0");
-
     private JavaToolAssembly() {}
 
-    public static Prepared prepare(
-            ProductProfile profile,
-            List<? extends ProductContribution> contributions,
-            List<? extends JavaTool<?, ?>> javaTools) {
-        Objects.requireNonNull(profile, "profile must not be null");
-        List<ProductContribution> supplied =
-                List.copyOf(Objects.requireNonNull(contributions, "contributions must not be null"));
+    /**
+     * Registers Java Tools on top of an optional Tool platform and returns the effective platform.
+     *
+     * <p>When no Java Tool is registered the supplied platform is returned unchanged; when the host
+     * supplied no platform a Java-only platform is created.
+     */
+    public static Prepared prepare(ToolPlatformContribution base, List<? extends JavaTool<?, ?>> javaTools) {
         List<JavaTool<?, ?>> tools = List.copyOf(Objects.requireNonNull(javaTools, "javaTools must not be null"));
-        if (tools.isEmpty()) return new Prepared(profile, supplied, Map.of());
-
-        List<ProductContribution> toolContributions = supplied.stream()
-                .filter(value -> ProductCapabilities.TOOL.equals(value.capabilityId()))
-                .toList();
-        if (toolContributions.size() > 1) {
-            throw new ProductAssemblyException(
-                    "JAVA_TOOL_PLATFORM_AMBIGUOUS", "Java Tools cannot be merged with multiple Tool contributions");
-        }
-        ToolPlatformContribution base = null;
-        if (!toolContributions.isEmpty()) {
-            ProductContribution candidate = toolContributions.getFirst();
-            if (!(candidate instanceof ToolPlatformContribution platform)) {
-                throw new ProductAssemblyException(
-                        "JAVA_TOOL_PLATFORM_INVALID", "Java Tools require a ToolPlatformContribution to merge with");
-            }
-            base = platform;
-            base.validate();
-        }
+        if (tools.isEmpty()) return new Prepared(base, Set.of());
 
         RegisteredTools registered = register(tools);
-        MergedPlatform merged = merge(base, registered);
-        ProductProfile effectiveProfile = extendProfile(profile, merged.contribution(), registered.aliases());
-        List<ProductContribution> effectiveContributions = new ArrayList<>(supplied);
-        if (base != null) effectiveContributions.remove(base);
-        effectiveContributions.add(merged.contribution());
-        Map<ProductContribution, ProductContribution> lifecycleReplacements =
-                base == null ? Map.of() : Map.of(merged.contribution(), base);
-        return new Prepared(effectiveProfile, effectiveContributions, lifecycleReplacements);
+        ToolPlatformContribution platform = merge(base, registered);
+        return new Prepared(platform, registered.aliases());
     }
 
     private static RegisteredTools register(List<JavaTool<?, ?>> tools) {
@@ -96,8 +62,11 @@ public final class JavaToolAssembly {
             Objects.requireNonNull(tool, "Java Tool must not be null");
             JavaToolSpec<?, ?> spec = Objects.requireNonNull(tool.spec(), "Java Tool spec must not be null");
             if (!aliases.add(spec.alias().value())) {
-                throw new ProductAssemblyException(
-                        "JAVA_TOOL_ALIAS_CONFLICT", "duplicate Java Tool alias was supplied");
+                throw new HaifaAgentException(
+                        "JAVA_TOOL_ALIAS_CONFLICT",
+                        "product.assemble",
+                        "assembly",
+                        "duplicate Java Tool alias was supplied");
             }
             String schemaPrefix = "urn:haifa:java-tool:" + spec.name().value();
             ToolSchema input = schemasGenerator.generate(
@@ -193,7 +162,7 @@ public final class JavaToolAssembly {
         return typedProvider((JavaTool<Record, Record>) tool, (JavaToolSpec<Record, Record>) spec);
     }
 
-    private static MergedPlatform merge(ToolPlatformContribution base, RegisteredTools registered) {
+    private static ToolPlatformContribution merge(ToolPlatformContribution base, RegisteredTools registered) {
         List<SourceBinding> sources = new ArrayList<>();
         if (base != null) {
             base.catalog()
@@ -221,26 +190,12 @@ public final class JavaToolAssembly {
         MergedCatalog catalog = new MergedCatalog(digest, mergedBindings);
         MergedInvoker invoker = new MergedInvoker(catalog, sources);
         JsonSchema202012Validator recordValidator = new JsonSchema202012Validator();
-        ToolSchemaValidator baseValidator = requireBaseValidator(base);
+        ToolSchemaValidator baseValidator = base == null ? new JsonSchema202012Validator() : base.schemaValidator();
         ToolSchemaValidator validator =
                 (schema, instance) -> registered.schemas().contains(schema)
                         ? recordValidator.validate(schema, instance)
                         : baseValidator.validate(schema, instance);
-        ProductProviderSuitability suitability =
-                base == null ? ProductProviderSuitability.PRODUCTION : base.suitability();
-        SdkContributionMetadata metadata = new SdkContributionMetadata(
-                COORDINATE,
-                ProductCapabilities.TOOL,
-                "sha256:" + digest,
-                suitability,
-                "Unified Tool platform with Java Tool registrations");
-        ToolPlatformContribution contribution = new ToolPlatformContribution(metadata, catalog, invoker, validator);
-        return new MergedPlatform(contribution);
-    }
-
-    private static ToolSchemaValidator requireBaseValidator(ToolPlatformContribution base) {
-        if (base != null) return base.schemaValidator();
-        return new JsonSchema202012Validator();
+        return new ToolPlatformContribution(catalog, invoker, validator);
     }
 
     private static void rejectDuplicates(List<SourceBinding> sources) {
@@ -248,12 +203,17 @@ public final class JavaToolAssembly {
         Set<Object> coordinates = new LinkedHashSet<>();
         for (SourceBinding source : sources) {
             if (!aliases.add(source.binding().alias())) {
-                throw new ProductAssemblyException(
-                        "JAVA_TOOL_ALIAS_CONFLICT", "Java Tool alias conflicts with the existing Tool catalog");
+                throw new HaifaAgentException(
+                        "JAVA_TOOL_ALIAS_CONFLICT",
+                        "product.assemble",
+                        "assembly",
+                        "Java Tool alias conflicts with the existing Tool catalog");
             }
             if (!coordinates.add(source.binding().coordinate())) {
-                throw new ProductAssemblyException(
+                throw new HaifaAgentException(
                         "JAVA_TOOL_COORDINATE_CONFLICT",
+                        "product.assemble",
+                        "assembly",
                         "Java Tool coordinate conflicts with the existing Tool catalog");
             }
         }
@@ -268,50 +228,15 @@ public final class JavaToolAssembly {
                 digest);
     }
 
-    private static ProductProfile extendProfile(
-            ProductProfile profile, ToolPlatformContribution contribution, Set<String> javaAliases) {
-        Map<io.haifa.agent.sdk.product.ProductCapabilityId, ProductCapabilityRequirement> requirements =
-                new LinkedHashMap<>(profile.capabilityRequirements());
-        requirements.put(
-                ProductCapabilities.TOOL,
-                ProductCapabilityRequirement.required(
-                        ProductCapabilities.TOOL,
-                        Set.of(COORDINATE),
-                        profile.requirement(ProductCapabilities.TOOL).minimumSuitability()));
-        Set<String> aliases = new LinkedHashSet<>(profile.allowedTools());
-        aliases.addAll(javaAliases);
-        return ProductProfile.create(
-                profile.productId(),
-                profile.productVersion(),
-                profile.definitionId(),
-                profile.definitionVersion(),
-                profile.runProfileId(),
-                profile.runProfileVersion(),
-                profile.instructions(),
-                profile.budget(),
-                profile.limits(),
-                profile.policies(),
-                requirements,
-                aliases,
-                profile.allowedSkills());
-    }
-
-    public record Prepared(
-            ProductProfile profile,
-            List<ProductContribution> contributions,
-            Map<ProductContribution, ProductContribution> lifecycleReplacements) {
+    /** Effective Tool platform after Java Tool registration and the aliases those Tools added. */
+    public record Prepared(ToolPlatformContribution platform, Set<String> javaToolAliases) {
         public Prepared {
-            profile = Objects.requireNonNull(profile, "profile must not be null");
-            contributions = List.copyOf(Objects.requireNonNull(contributions, "contributions must not be null"));
-            lifecycleReplacements =
-                    Map.copyOf(Objects.requireNonNull(lifecycleReplacements, "lifecycleReplacements must not be null"));
+            javaToolAliases = Set.copyOf(Objects.requireNonNull(javaToolAliases, "javaToolAliases must not be null"));
         }
     }
 
     private record RegisteredTools(
             DefaultToolCatalog catalog, ToolInvoker invoker, Set<ToolSchema> schemas, Set<String> aliases) {}
-
-    private record MergedPlatform(ToolPlatformContribution contribution) {}
 
     private record SourceBinding(FrozenToolBinding binding, ToolInvoker invoker) {}
 

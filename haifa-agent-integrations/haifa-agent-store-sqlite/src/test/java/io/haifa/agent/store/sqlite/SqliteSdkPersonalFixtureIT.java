@@ -28,9 +28,7 @@ import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationPro
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCaller;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.ModelContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.conversation.ConversationException;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
@@ -39,13 +37,8 @@ import io.haifa.agent.sdk.memory.MemoryListQuery;
 import io.haifa.agent.sdk.memory.MemoryScopeSpec;
 import io.haifa.agent.sdk.memory.ProposeMemoryCommand;
 import io.haifa.agent.sdk.memory.ReviewMemoryCandidateCommand;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductCapabilityId;
-import io.haifa.agent.sdk.product.ProductCapabilityRequirement;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductProfile;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.product.ProductVersion;
 import java.net.URI;
 import java.nio.file.Path;
@@ -63,14 +56,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SqliteSdkPersonalFixtureIT {
-    private static final ProductContributionCoordinate MODEL =
-            new ProductContributionCoordinate("model.personal-test", "1.0");
-    private static final ProductContributionCoordinate PERSISTENCE =
-            new ProductContributionCoordinate("persistence.sqlite", "1.0");
-    private static final ProductContributionCoordinate CONVERSATION =
-            new ProductContributionCoordinate("conversation.sqlite", "1.0");
-    private static final ProductContributionCoordinate MEMORY =
-            new ProductContributionCoordinate("memory.sqlite", "1.0");
 
     @Test
     void promotesConversationEvidenceToMemoryAndRecoversItThroughSdk(@TempDir Path directory) throws Exception {
@@ -82,10 +67,10 @@ class SqliteSdkPersonalFixtureIT {
 
         SqliteSdkProductContributions first = sqliteProductContributions(directory, protector);
         try (HaifaAgent agent = HaifaAgents.builder(profile)
-                .contribute(modelContribution())
-                .contribute(first.persistence())
-                .contribute(first.conversation())
-                .contribute(first.memory())
+                .model(modelContribution())
+                .persistence(first.persistence())
+                .conversation(first.conversation())
+                .memory(first.memory())
                 .callerProvider(SqliteSdkPersonalFixtureIT::memoryReviewer)
                 .identifierGenerator(() -> "memory-fixture-" + ids.incrementAndGet())
                 .timeProvider(() -> SqliteTestSupport.NOW)
@@ -116,10 +101,10 @@ class SqliteSdkPersonalFixtureIT {
 
         SqliteSdkProductContributions reopenedStore = sqliteProductContributions(directory, protector);
         try (HaifaAgent reopened = HaifaAgents.builder(profile)
-                .contribute(modelContribution())
-                .contribute(reopenedStore.persistence())
-                .contribute(reopenedStore.conversation())
-                .contribute(reopenedStore.memory())
+                .model(modelContribution())
+                .persistence(reopenedStore.persistence())
+                .conversation(reopenedStore.conversation())
+                .memory(reopenedStore.memory())
                 .callerProvider(SqliteSdkPersonalFixtureIT::memoryReviewer)
                 .identifierGenerator(() -> "memory-reopen-" + ids.incrementAndGet())
                 .timeProvider(() -> SqliteTestSupport.NOW)
@@ -153,18 +138,13 @@ class SqliteSdkPersonalFixtureIT {
 
         SqliteSdkContributions firstStore = sqliteContributions(directory, protector);
         try (HaifaAgent agent = HaifaAgents.builder(profile)
-                .contribute(modelContribution())
-                .contribute(firstStore.persistence())
-                .contribute(firstStore.conversation())
+                .model(modelContribution())
+                .persistence(firstStore.persistence())
+                .conversation(firstStore.conversation())
                 .identifierGenerator(identifiers)
                 .timeProvider(() -> SqliteTestSupport.NOW)
                 .build()) {
-            assemblyDigest = agent.assembly().assemblyDigest();
-            assertThat(agent.assembly().contributions().keySet())
-                    .containsExactlyInAnyOrder(
-                            ProductCapabilities.MODEL,
-                            ProductCapabilities.PERSISTENCE,
-                            ProductCapabilities.CONVERSATION);
+            assemblyDigest = agent.profile().configurationDigest();
 
             var started =
                     agent.conversations().start(new StartConversationCommand("start-1", "Personal chat", "hello"));
@@ -184,13 +164,13 @@ class SqliteSdkPersonalFixtureIT {
 
         SqliteSdkContributions reopenedStore = sqliteContributions(directory, protector);
         try (HaifaAgent reopened = HaifaAgents.builder(profile)
-                .contribute(modelContribution())
-                .contribute(reopenedStore.persistence())
-                .contribute(reopenedStore.conversation())
+                .model(modelContribution())
+                .persistence(reopenedStore.persistence())
+                .conversation(reopenedStore.conversation())
                 .identifierGenerator(identifiers)
                 .timeProvider(() -> SqliteTestSupport.NOW)
                 .build()) {
-            assertThat(reopened.assembly().assemblyDigest()).isEqualTo(assemblyDigest);
+            assertThat(reopened.profile().configurationDigest()).isEqualTo(assemblyDigest);
             var page = reopened.conversations().list(ConversationQuery.active(10));
             assertThat(page.items()).singleElement().satisfies(conversation -> {
                 assertThat(conversation.sessionId().value()).isEqualTo(sessionId);
@@ -290,16 +270,6 @@ class SqliteSdkPersonalFixtureIT {
     }
 
     private static ProductProfile personalProfile() {
-        Map<ProductCapabilityId, ProductCapabilityRequirement> requirements = Map.of(
-                ProductCapabilities.MODEL,
-                ProductCapabilityRequirement.required(
-                        ProductCapabilities.MODEL, Set.of(MODEL), ProductProviderSuitability.DEVELOPMENT),
-                ProductCapabilities.PERSISTENCE,
-                ProductCapabilityRequirement.required(
-                        ProductCapabilities.PERSISTENCE, Set.of(PERSISTENCE), ProductProviderSuitability.PRODUCTION),
-                ProductCapabilities.CONVERSATION,
-                ProductCapabilityRequirement.required(
-                        ProductCapabilities.CONVERSATION, Set.of(CONVERSATION), ProductProviderSuitability.PRODUCTION));
         return ProductProfile.create(
                 new ProductId("personal-assistant"),
                 new ProductVersion("1.0.0"),
@@ -310,41 +280,20 @@ class SqliteSdkPersonalFixtureIT {
                 "Act as a careful personal assistant.",
                 new AgentRunBudget(10_000, 10_000, 10_000, 8, 8, 0, "USD", 1_000),
                 new AgentRunLimits(8, 0, 1, 30_000, 30_000),
-                requirements,
                 Set.of(),
                 Set.of());
     }
 
     private static ProductProfile personalMemoryProfile() {
-        Map<ProductCapabilityId, ProductCapabilityRequirement> requirements =
-                new java.util.HashMap<>(personalProfile().capabilityRequirements());
-        requirements.put(
-                ProductCapabilities.MEMORY,
-                ProductCapabilityRequirement.required(
-                        ProductCapabilities.MEMORY, Set.of(MEMORY), ProductProviderSuitability.PRODUCTION));
-        ProductProfile base = personalProfile();
-        return ProductProfile.create(
-                base.productId(),
-                base.productVersion(),
-                base.definitionId(),
-                base.definitionVersion(),
-                base.runProfileId(),
-                base.runProfileVersion(),
-                base.instructions(),
-                base.budget(),
-                base.limits(),
-                base.policies(),
-                requirements,
-                base.allowedTools(),
-                base.allowedSkills());
+        return personalProfile();
     }
 
     private static HaifaAgent agent(
             ProductProfile profile, SqliteSdkContributions store, AtomicInteger ids, String instance) {
         return HaifaAgents.builder(profile)
-                .contribute(modelContribution())
-                .contribute(store.persistence())
-                .contribute(store.conversation())
+                .model(modelContribution())
+                .persistence(store.persistence())
+                .conversation(store.conversation())
                 .identifierGenerator(() -> "personal-" + instance + "-" + ids.incrementAndGet())
                 .timeProvider(() -> SqliteTestSupport.NOW)
                 .build();
@@ -420,11 +369,6 @@ class SqliteSdkPersonalFixtureIT {
                     Map.of());
         };
         return new ModelContribution(
-                metadata(
-                        MODEL,
-                        ProductCapabilities.MODEL,
-                        snapshot.configurationDigest(),
-                        ProductProviderSuitability.DEVELOPMENT),
                 Map.of(ModelAdapterCoordinate.from(snapshot), model),
                 snapshot,
                 Map.of(snapshot.modelId().value(), snapshot));
@@ -433,42 +377,13 @@ class SqliteSdkPersonalFixtureIT {
     private static SqliteSdkContributions sqliteContributions(
             Path directory, AesGcmModelContinuationProtector protector) {
         return SqliteSdkContributions.initialize(
-                SqliteTestSupport.configuration(directory),
-                SqliteTestSupport.CLOCK,
-                protector,
-                metadata(
-                        PERSISTENCE,
-                        ProductCapabilities.PERSISTENCE,
-                        SdkConfigurationDigest.sha256("sqlite-runtime-v5"),
-                        ProductProviderSuitability.PRODUCTION),
-                metadata(
-                        CONVERSATION,
-                        ProductCapabilities.CONVERSATION,
-                        SdkConfigurationDigest.sha256("sqlite-conversation-v1"),
-                        ProductProviderSuitability.PRODUCTION));
+                SqliteTestSupport.configuration(directory), SqliteTestSupport.CLOCK, protector);
     }
 
     private static SqliteSdkProductContributions sqliteProductContributions(
             Path directory, AesGcmModelContinuationProtector protector) {
         return SqliteSdkProductContributions.initialize(
-                SqliteTestSupport.configuration(directory),
-                SqliteTestSupport.CLOCK,
-                protector,
-                metadata(
-                        PERSISTENCE,
-                        ProductCapabilities.PERSISTENCE,
-                        SdkConfigurationDigest.sha256("sqlite-runtime-v6"),
-                        ProductProviderSuitability.PRODUCTION),
-                metadata(
-                        CONVERSATION,
-                        ProductCapabilities.CONVERSATION,
-                        SdkConfigurationDigest.sha256("sqlite-conversation-v1"),
-                        ProductProviderSuitability.PRODUCTION),
-                metadata(
-                        MEMORY,
-                        ProductCapabilities.MEMORY,
-                        SdkConfigurationDigest.sha256("sqlite-memory-v1"),
-                        ProductProviderSuitability.PRODUCTION));
+                SqliteTestSupport.configuration(directory), SqliteTestSupport.CLOCK, protector);
     }
 
     private static SdkCaller memoryReviewer() {
@@ -490,14 +405,6 @@ class SqliteSdkPersonalFixtureIT {
                 }
             }
         }
-    }
-
-    private static SdkContributionMetadata metadata(
-            ProductContributionCoordinate coordinate,
-            ProductCapabilityId capability,
-            String digest,
-            ProductProviderSuitability suitability) {
-        return new SdkContributionMetadata(coordinate, capability, digest, suitability, "safe test contribution");
     }
 
     private static void assertNoCodingProductState(Path directory) throws Exception {

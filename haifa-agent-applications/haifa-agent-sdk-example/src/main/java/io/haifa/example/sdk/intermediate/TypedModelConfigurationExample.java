@@ -37,7 +37,7 @@ public final class TypedModelConfigurationExample {
                 .instructions("Answer clearly using only disclosed application Tools.")
                 .model(configured)
                 .build()) {
-            System.out.println(agent.assembly().profile().runProfileId());
+            System.out.println(agent.profile().runProfileId());
             System.out.println(configured.snapshot().configurationDigest());
         }
     }

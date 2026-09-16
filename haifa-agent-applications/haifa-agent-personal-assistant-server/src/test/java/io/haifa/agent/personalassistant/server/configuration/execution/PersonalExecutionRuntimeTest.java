@@ -15,10 +15,6 @@ import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -36,14 +32,7 @@ class PersonalExecutionRuntimeTest {
         Path productData = Files.createDirectory(root.resolve("personal-assembly-data"));
         var executionProps = new PersonalAssistantProperties.Execution(15000, 30000, 65536, 1000, true, "", "");
         var policy = new PolicyPlatformContribution(
-                new SdkContributionMetadata(
-                        new ProductContributionCoordinate("pa-policy", "1.0.0"),
-                        ProductCapabilities.POLICY,
-                        "sha256:" + "0".repeat(64),
-                        ProductProviderSuitability.PRODUCTION,
-                        "Personal Assistant policy"),
-                PersonalAssistantPolicyRules.conservative(),
-                new DefaultPolicyDecisionService());
+                PersonalAssistantPolicyRules.conservative(), new DefaultPolicyDecisionService());
         var platform = PersonalExecutionRuntime.create(
                 productData,
                 new TenantRef("tenant-1"),

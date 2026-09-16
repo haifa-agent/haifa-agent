@@ -8,13 +8,8 @@ import io.haifa.agent.memory.core.DefaultMemoryPolicy;
 import io.haifa.agent.memory.core.DefaultMemoryRetriever;
 import io.haifa.agent.memory.core.DefaultMemoryService;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
@@ -34,12 +29,7 @@ public record SqliteSdkProductContributions(
     }
 
     public static SqliteSdkProductContributions initialize(
-            SqliteStoreConfiguration configuration,
-            Clock clock,
-            ModelContinuationProtector protector,
-            SdkContributionMetadata persistenceMetadata,
-            SdkContributionMetadata conversationMetadata,
-            SdkContributionMetadata memoryMetadata) {
+            SqliteStoreConfiguration configuration, Clock clock, ModelContinuationProtector protector) {
         SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(configuration, clock);
         try {
             SqliteMemoryStore store =
@@ -68,21 +58,14 @@ public record SqliteSdkProductContributions(
                     memoryUnitOfWork);
             var retriever = new DefaultMemoryRetriever(store, policy);
             return new SqliteSdkProductContributions(
-                    new SqliteSdkPersistenceContribution(persistenceMetadata, foundation, protector),
-                    new SqliteSdkConversationContribution(conversationMetadata, foundation),
-                    new MemoryPlatformContribution(memoryMetadata, service, retriever),
-                    new ArtifactPlatformContribution(
-                            new SdkContributionMetadata(
-                                    new ProductContributionCoordinate("haifa-sqlite-artifact", "1.0.0"),
-                                    ProductCapabilities.ARTIFACT,
-                                    SdkConfigurationDigest.sha256("sqlite-artifact-v1"),
-                                    ProductProviderSuitability.PRODUCTION,
-                                    "SQLite Artifact metadata and secure local payload storage"),
-                            new ArtifactService(
-                                    foundation.artifacts(),
-                                    foundation.artifactPayloads(),
-                                    new UuidV7IdentifierGenerator(),
-                                    clock::instant)));
+                    new SqliteSdkPersistenceContribution(foundation, protector),
+                    new SqliteSdkConversationContribution(foundation),
+                    new MemoryPlatformContribution(service, retriever),
+                    new ArtifactPlatformContribution(new ArtifactService(
+                            foundation.artifacts(),
+                            foundation.artifactPayloads(),
+                            new UuidV7IdentifierGenerator(),
+                            clock::instant)));
         } catch (RuntimeException | Error exception) {
             foundation.close();
             throw exception;

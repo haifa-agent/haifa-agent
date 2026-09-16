@@ -13,8 +13,8 @@ empty allowlist freezes no Tools, and a non-empty allowlist must be a subset of 
 
 面向上层 Agent 产品的纯 Java 高层装配与应用边界。`HaifaAgent` 表示装配完成、可被宿主长期持有
 并负责资源生命周期的产品 Runtime 实例；它不是 Agent Definition，也不是某一次 Run。SDK 通过可信
-`ProductProfile` 和类型化 `ProductContribution` 确定性解析产品能力，构建唯一 `AgentRuntime`，
-并提供产品中立的 Conversation Session 服务。
+`ProductProfile` 加一组显式 typed 组件装配唯一 `AgentRuntime`，并提供产品中立的 Conversation
+Session 服务。
 
 SDK 不替代 Core/Runtime 状态机，不包含 Spring、SQLite、MCP SDK 或具体模型 Provider，也不会
 扫描 Classpath 自动导入能力。具体实现仍由对应 Integration/Application 模块提供，并在进程启动时
@@ -48,11 +48,10 @@ Prompt、模型或 Tool 选择、Policy、Checkpoint 或恢复协议。Agent `de
 revision、取消或事件订阅时，使用下面的显式 Conversation/Run API。
 
 ```java
-try (HaifaAgent agent = HaifaAgents.builder()
-        .product(profile)
-        .contribute(model)
-        .contribute(persistence)
-        .contribute(conversation)
+try (HaifaAgent agent = HaifaAgents.builder(profile)
+        .model(model)
+        .persistence(persistence)
+        .conversation(conversation)
         .build()) {
     ConversationRecord started = agent.conversations()
             .start(new StartConversationCommand("start-1", "New chat", "Hello"));
@@ -62,9 +61,10 @@ try (HaifaAgent agent = HaifaAgents.builder()
 ```
 
 `start`/`submit` 同步完成命令接收和 Run 创建，Run 本身异步执行；`await` 委托同一个 Runtime，
-不复制 Run 状态。`HaifaAgent` 拥有本次装配已成功初始化的 Contribution 和本地 Scheduler：
-关闭时先停止调度，再按能力确定性初始化顺序逆序关闭 Contribution；重复关闭无副作用。构建中途失败
-只释放已经成功初始化的资源。
+不复制 Run 状态。需要一个组件就显式装配一个：Model、Persistence、Conversation 缺失时构建直接
+fail closed；Memory、Artifact、Policy、Approval、Credential 等可选组件缺失即对应能力不存在。
+`HaifaAgent` 拥有本地 Scheduler 和已装配的可关闭组件：关闭时先停止调度，再逆序关闭组件；重复关闭
+无副作用。构建中途失败只关闭已经装配成功的资源。
 
 ## 类型化最终输出
 
@@ -91,7 +91,7 @@ SDK 不从未经校验的文本 JSON 直接构造业务对象。
 ## 类型化 Java Tool
 
 普通 SDK 使用方可以用 Java record 声明输入输出，并按单个 Tool 注册；不需要手工创建 digest、binding、
-Catalog、Invoker 或 Tool Platform Contribution：
+Catalog 或 Invoker：
 
 ```java
 public record WeatherRequest(String city) {}
@@ -118,29 +118,31 @@ public final class WeatherTool implements JavaTool<WeatherRequest, WeatherRespon
 ```
 
 ```java
-HaifaAgent agent = HaifaAgents.builder()
-        .product(profile)
-        .contributeAll(baseContributions)
+HaifaAgent agent = HaifaAgents.builder(profile)
+        .model(model)
+        .persistence(persistence)
+        .conversation(conversation)
+        .toolPlatform(toolPlatform)
         .tool(new WeatherTool())
         .build();
 ```
 
 SDK 会为 record 生成有界 JSON Schema，完成 Map 与 record 的双向转换，把同一个下划线 Tool 名称加入本次装配的
-有效 Product Profile，并与已有 Catalog 确定性合并。调用仍进入统一的 Schema、Policy、Approval、
-Credential、Journal 和 Tool Pipeline。`Optional<T>` 只用于可选的直接 record component；不支持递归
+有效 Tool allowlist（不改写 `ProductProfile`），并与已有 Catalog 确定性合并。调用仍进入统一的 Schema、Policy、
+Approval、Credential、Journal 和 Tool Pipeline。`Optional<T>` 只用于可选的直接 record component；不支持递归
 record、通配泛型、任意 POJO 或非 String Map key。注解式 Tool 不属于当前版本。
 
-## Product Profile 与装配
+## Product Profile 与显式装配
 
-- `ProductProfile` 冻结产品 ID/版本、Definition/Profile 引用、预算、限制、指令、Capability
-  Requirement 及 Tool/Skill allowlist，并校验 canonical SHA-256 digest。
-- 每个 Capability 使用 `NONE`、`OPTIONAL` 或 `REQUIRED`；未声明能力等价于 `NONE`。
-- Contribution 必须声明稳定坐标、能力 ID、配置 digest、生产适用级别和安全摘要。解析拒绝重复坐标、
-  多个兼容实现、allowlist 外实现、生产场景中的 Test-only Provider，以及 `NONE` 能力泄漏。
-- Contribution 注册顺序不影响选择和 assembly digest。装配结果作为 Runtime
-  `ResolvedCapabilities` 的 `product.profile`、`product.assembly` 及精确 Contribution binding
-  写入既有配置快照，因此每个 Run 冻结产品语义。
-- Tool 和 Skill 只有在 Profile 明确允许且冻结 Catalog 中存在时才进入 Runtime。MCP 先由 Integration
+- `ProductProfile` 冻结产品 ID/版本、Definition/Profile 引用、预算、限制、指令、Policy 及
+  Tool/Skill allowlist，并校验 canonical SHA-256 digest。它不再保存 Capability Requirement 或
+  Contribution coordinate。
+- `HaifaAgentBuilder` 直接接收 typed 组件：`model`、`persistence`、`conversation` 为必需；
+  `toolPlatform`、`skillPlatform`、`memory`、`artifacts`、`policy`、`approval`、`credentials` 为可选。
+  缺少必需组件时构建以稳定错误码失败，可选组件缺失即对应能力不存在；不再存在 candidate resolution、
+  ambiguity、suitability 或 assembly digest。
+- Tool 和 Skill 只有在 Profile 明确允许且冻结 Catalog 中存在时才进入 Runtime，否则构建以
+  `TOOL_ALIAS_UNAVAILABLE` / `SKILL_ALIAS_UNAVAILABLE` 失败。MCP 先由 Integration
   完成连接、发现、schema/risk 映射和逐项 allowlist，再作为统一 Tool Catalog 的一部分注入；SDK
   不提供绕过 Tool Pipeline 的 MCP 执行通道。
 - 命名 `ProductRunProfile` 只由可信产品装配注册，ID 冲突和未知 Profile fail closed；模型请求选项
@@ -197,10 +199,10 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
   Execution 主机/网络/并发/超时政策冻结进 Profile canonical digest；本阶段不允许关闭
   Memory Candidate 人工审查。
 - Model、Tool Platform、Skill、Context、Memory、Artifact、Policy、Approval 和 Credential 均通过显式
-  typed Contribution 注册。MCP Tool 由 Integration 直接写入统一 Tool Catalog，不再是独立 SDK
+  typed 组件注册。MCP Tool 由 Integration 直接写入统一 Tool Catalog，不再是独立 SDK
   Capability，也不存在第二条 MCP 执行通道。
 - 应用级 Java Tool 通过 `HaifaAgentBuilder.tool(JavaTool)` 逐个注册；SDK 在构建时生成并合并内部
-  Tool Platform Contribution，应用无需理解 Catalog digest 与 frozen binding。
+   Tool Catalog，应用无需理解 Catalog digest 与 frozen binding。
 - 产品可通过 `publicToolPolicyDecorator` 对 Runtime 已选定的公共 Tool Policy 做有界装饰；装饰器
   必须为自己拥有的精确动作生成 request-bound Decision，并把其它动作委托给既有 Policy，不得建立
   第二条 Tool 执行通道。
@@ -208,7 +210,7 @@ Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等
   `correlation`。Conversation Adapter、SQLite/Runtime 底层异常和输入正文不会进入公共错误消息。
 - `HaifaAgent.memories()` 暴露受 Product Profile、可信 `SdkCaller` 与权限约束的产品级
   propose/revise/approve/reject/invalidate/list API；调用命令不能注入 Tenant、Principal 或 Reviewer。
-- `HaifaAgent.memory()` 与 `HaifaAgent.artifacts()` 只在 Profile 选中了对应 typed Contribution
-  时返回应用服务；SQLite Product Contributions 已提供 Memory 与 Artifact 的单机持久化实现基线。
+- `HaifaAgent.memory()` 与 `HaifaAgent.artifacts()` 只在显式装配了对应 typed 组件
+  时返回应用服务；SQLite Product Components 已提供 Memory 与 Artifact 的单机持久化实现基线。
 
 当前开发范围由 `docs/20-agent-sdk-product-session-memory-foundation.md` 定义。

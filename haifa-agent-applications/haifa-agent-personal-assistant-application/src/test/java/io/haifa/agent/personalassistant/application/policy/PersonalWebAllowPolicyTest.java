@@ -28,12 +28,7 @@ import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.core.ToolCatalogBuilder;
@@ -129,14 +124,8 @@ class PersonalWebAllowPolicyTest {
                 .forEach(item -> builder.register(
                         item.alias(), item.definition(), item.providerBindingReference(), item.provider()));
         var catalog = builder.freeze();
-        var metadata = new SdkContributionMetadata(
-                new ProductContributionCoordinate("personal-policy-test", "1.0.0"),
-                ProductCapabilities.POLICY,
-                SdkConfigurationDigest.sha256("personal-policy-test"),
-                ProductProviderSuitability.TEST_ONLY,
-                "Personal policy test");
         var policy = new PolicyPlatformContribution(
-                metadata, PersonalAssistantPolicyRules.conservative(), new DefaultPolicyDecisionService());
+                PersonalAssistantPolicyRules.conservative(), new DefaultPolicyDecisionService());
         return new Fixture(web, catalog, policy);
     }
 

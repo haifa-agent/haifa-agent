@@ -17,7 +17,6 @@ import io.haifa.agent.policy.api.PolicyRuleSource;
 import io.haifa.agent.policy.api.PolicySideEffect;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
-import io.haifa.agent.runtime.core.bootstrap.ResolvedCapability;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
@@ -39,16 +38,9 @@ import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
 import io.haifa.agent.sdk.internal.DefaultConversationService;
 import io.haifa.agent.sdk.internal.JavaToolAssembly;
 import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
-import io.haifa.agent.sdk.internal.ProductAssemblyResolver;
 import io.haifa.agent.sdk.internal.SafeConversationService;
 import io.haifa.agent.sdk.memory.AgentMemories;
 import io.haifa.agent.sdk.policy.TrustedSkillScriptPublicToolPolicy;
-import io.haifa.agent.sdk.product.ProductAssembly;
-import io.haifa.agent.sdk.product.ProductAssemblyDiagnostic;
-import io.haifa.agent.sdk.product.ProductAssemblyException;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductCapabilityId;
-import io.haifa.agent.sdk.product.ProductContribution;
 import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ProductRunProfile;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
@@ -57,17 +49,28 @@ import io.haifa.agent.sdk.tool.JavaTool;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 
-/** Fluent bootstrap builder. Product behavior is selected by Profile, not by hard-coded product branches. */
+/** Fluent bootstrap builder with explicit typed component assembly. */
 public final class HaifaAgentBuilder {
     private ProductProfile profile;
-    private final List<ProductContribution> contributions = new ArrayList<>();
+    private ModelContribution model;
+    private SdkPersistenceContribution persistence;
+    private SdkConversationContribution conversation;
+    private ToolPlatformContribution toolPlatform;
+    private SkillPlatformContribution skillPlatform;
+    private MemoryPlatformContribution memory;
+    private ArtifactPlatformContribution artifacts;
+    private PolicyPlatformContribution policy;
+    private ApprovalPlatformContribution approval;
+    private CredentialPlatformContribution credentials;
     private final List<JavaTool<?, ?>> javaTools = new ArrayList<>();
     private SdkCallerProvider callers = SdkCallerProvider.defaultPublicUser();
     private IdentifierGenerator ids = new UuidV7IdentifierGenerator();
@@ -87,6 +90,56 @@ public final class HaifaAgentBuilder {
 
     public HaifaAgentBuilder product(ProductProfile value) {
         profile = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder model(ModelContribution value) {
+        model = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder persistence(SdkPersistenceContribution value) {
+        persistence = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder conversation(SdkConversationContribution value) {
+        conversation = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder toolPlatform(ToolPlatformContribution value) {
+        toolPlatform = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder skillPlatform(SkillPlatformContribution value) {
+        skillPlatform = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder memory(MemoryPlatformContribution value) {
+        memory = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder artifacts(ArtifactPlatformContribution value) {
+        artifacts = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder policy(PolicyPlatformContribution value) {
+        policy = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder approval(ApprovalPlatformContribution value) {
+        approval = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder credentials(CredentialPlatformContribution value) {
+        credentials = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
@@ -169,20 +222,10 @@ public final class HaifaAgentBuilder {
     }
 
     public HaifaAgentBuilder runProfile(ProductRunProfile value) {
-        ProductRunProfile profile = Objects.requireNonNull(value, "value must not be null");
-        if (runProfiles.putIfAbsent(profile.id(), profile) != null) {
+        ProductRunProfile runProfile = Objects.requireNonNull(value, "value must not be null");
+        if (runProfiles.putIfAbsent(runProfile.id(), runProfile) != null) {
             throw new IllegalArgumentException("run profile IDs must be unique");
         }
-        return this;
-    }
-
-    public HaifaAgentBuilder contribute(ProductContribution value) {
-        contributions.add(Objects.requireNonNull(value, "value must not be null"));
-        return this;
-    }
-
-    public HaifaAgentBuilder contributeAll(List<? extends ProductContribution> values) {
-        Objects.requireNonNull(values, "values must not be null").forEach(this::contribute);
         return this;
     }
 
@@ -199,40 +242,33 @@ public final class HaifaAgentBuilder {
     }
 
     public HaifaAgent build() {
-        Objects.requireNonNull(profile, "a Product Profile must be configured");
-        JavaToolAssembly.Prepared prepared = JavaToolAssembly.prepare(profile, contributions, javaTools);
-        ProductProfile effectiveProfile = prepared.profile();
-        ProductAssemblyResolver.Resolution resolution =
-                new ProductAssemblyResolver().resolve(effectiveProfile, prepared.contributions());
-        ModelContribution model;
-        SdkPersistenceContribution persistence;
-        SdkConversationContribution conversation;
-        model = require(resolution.selected(), ProductCapabilities.MODEL, ModelContribution.class);
-        persistence = require(resolution.selected(), ProductCapabilities.PERSISTENCE, SdkPersistenceContribution.class);
-        conversation =
-                require(resolution.selected(), ProductCapabilities.CONVERSATION, SdkConversationContribution.class);
-        MemoryPlatformContribution memory =
-                optional(resolution.selected(), ProductCapabilities.MEMORY, MemoryPlatformContribution.class);
-        ArtifactPlatformContribution artifact =
-                optional(resolution.selected(), ProductCapabilities.ARTIFACT, ArtifactPlatformContribution.class);
-        PolicyPlatformContribution policy =
-                optional(resolution.selected(), ProductCapabilities.POLICY, PolicyPlatformContribution.class);
-        ApprovalPlatformContribution approval =
-                optional(resolution.selected(), ProductCapabilities.APPROVAL, ApprovalPlatformContribution.class);
-        CredentialPlatformContribution credential =
-                optional(resolution.selected(), ProductCapabilities.CREDENTIAL, CredentialPlatformContribution.class);
+        ProductProfile effectiveProfile = Objects.requireNonNull(profile, "a Product Profile must be configured");
+        ModelContribution model = requireComponent(this.model, "MODEL_REQUIRED", "a Model must be configured");
+        SdkPersistenceContribution persistence = requireComponent(
+                this.persistence, "PERSISTENCE_REQUIRED", "a Persistence component must be configured");
+        SdkConversationContribution conversation = requireComponent(
+                this.conversation, "CONVERSATION_REQUIRED", "a Conversation component must be configured");
+        ArtifactPlatformContribution artifact = this.artifacts;
         if (artifact != null && effectiveProfile.policies().artifact().maxArtifactsPerRun() == 0) {
-            throw new ProductAssemblyException(
-                    "ARTIFACT_POLICY_DISABLED", "Artifact contribution is forbidden by the Product Profile policy");
+            throw new HaifaAgentException(
+                    "ARTIFACT_POLICY_DISABLED",
+                    "product.assemble",
+                    "assembly",
+                    "Artifact component is forbidden by the Product Profile policy");
         }
-        validateDeclaredAliases(effectiveProfile, resolution.selected());
+        JavaToolAssembly.Prepared prepared = JavaToolAssembly.prepare(this.toolPlatform, javaTools);
+        ToolPlatformContribution tool = prepared.platform();
+        Set<String> allowedTools = new LinkedHashSet<>(effectiveProfile.allowedTools());
+        allowedTools.addAll(prepared.javaToolAliases());
+        Set<String> effectiveAllowedTools = Set.copyOf(allowedTools);
+        validateDeclaredAliases(effectiveAllowedTools, tool, effectiveProfile.allowedSkills(), skillPlatform);
 
-        List<ProductContribution> initialized = initializeSelected(resolution, prepared.lifecycleReplacements());
+        List<AutoCloseable> lifecycle = collectLifecycle();
         LocalExecutionScheduler scheduler;
         try {
             scheduler = new LocalExecutionScheduler();
         } catch (RuntimeException | Error exception) {
-            closeAfterFailedBuild(initialized, exception);
+            closeAfterFailedBuild(lifecycle, exception);
             throw exception;
         }
         try {
@@ -256,7 +292,7 @@ public final class HaifaAgentBuilder {
                     .definitions((id, requested) -> new ResolvedDefinition(
                             id,
                             requested.orElse(effectiveProfile.definitionVersion()),
-                            effectiveProfile.allowedTools(),
+                            effectiveAllowedTools,
                             effectiveProfile.allowedSkills(),
                             Set.of(),
                             effectiveProfile.instructions(),
@@ -271,10 +307,9 @@ public final class HaifaAgentBuilder {
                                     effectiveProfile.budget(),
                                     effectiveProfile.limits(),
                                     resolveModelSnapshot(model, effectiveProfile, id),
-                                    resolvedCapabilities(effectiveProfile, resolution));
+                                    Map.of());
                         }
-                        var baseSnapshot = java.util.Optional.ofNullable(
-                                        model.snapshots().get(selected.modelId()))
+                        var baseSnapshot = Optional.ofNullable(model.snapshots().get(selected.modelId()))
                                 .orElseThrow(() -> new IllegalArgumentException(
                                         "MODEL_SELECTION_REQUIRED: Run Profile model is unavailable"));
                         var snapshot = selected.effectiveModelParameters()
@@ -287,7 +322,7 @@ public final class HaifaAgentBuilder {
                                 selected.budget(),
                                 selected.limits(),
                                 snapshot,
-                                resolvedCapabilities(effectiveProfile, resolution),
+                                Map.of(),
                                 selected.modelRequestOptions(),
                                 selected.allowedTools());
                     });
@@ -296,14 +331,13 @@ public final class HaifaAgentBuilder {
                             runtimeBuilder.registerChatModel(coordinate.type(), coordinate.version(), adapter));
             runtimeBuilder.policyProductId(effectiveProfile.productId().value());
 
-            ProductContribution tool = resolution.selected().get(ProductCapabilities.TOOL);
-            if (tool instanceof ToolPlatformContribution platform) {
-                runtimeBuilder.toolPlatform(platform.catalog(), platform.invoker(), platform.schemaValidator());
+            if (tool != null) {
+                runtimeBuilder.toolPlatform(tool.catalog(), tool.invoker(), tool.schemaValidator());
             }
-            ProductContribution skill = resolution.selected().get(ProductCapabilities.SKILL);
-            if (skill instanceof SkillPlatformContribution platform) {
-                runtimeBuilder.skillPlatform(platform.catalog(), platform.contentLoader(), platform.trust());
-                if (!platform.trust().scriptExecutionGrants().isEmpty()) {
+            if (skillPlatform != null) {
+                runtimeBuilder.skillPlatform(
+                        skillPlatform.catalog(), skillPlatform.contentLoader(), skillPlatform.trust());
+                if (!skillPlatform.trust().scriptExecutionGrants().isEmpty()) {
                     runtimeBuilder.publicToolPolicyDecorator(
                             delegate -> publicToolPolicyDecorator.apply(new TrustedSkillScriptPublicToolPolicy(
                                     delegate,
@@ -328,8 +362,8 @@ public final class HaifaAgentBuilder {
             if (approval != null) {
                 runtimeBuilder.approvalVerification(approval.verification());
             }
-            if (credential != null) {
-                runtimeBuilder.credentialBroker(credential.broker());
+            if (credentials != null) {
+                runtimeBuilder.credentialBroker(credentials.broker());
             }
 
             var runtime = runtimeBuilder.build();
@@ -339,69 +373,65 @@ public final class HaifaAgentBuilder {
             var safeConversations = new SafeConversationService(conversationService, lifecycleClosed);
             var agentRuns = new AgentRuns(runtime, processPromptDiagnostics);
             var agentMemories = memory == null
-                    ? java.util.Optional.<AgentMemories>empty()
-                    : java.util.Optional.of(new AgentMemories(
+                    ? Optional.<AgentMemories>empty()
+                    : Optional.of(new AgentMemories(
                             memory.service(),
                             effectiveProfile.policies().memory(),
                             callers,
                             safeConversations,
                             agentRuns,
                             lifecycleClosed));
-            ProductAssembly resolvedAssembly = resolution.assembly();
-            ProductAssembly assembly = !starterDefaultInstructionsInUse
-                    ? resolvedAssembly
-                    : new ProductAssembly(
-                            resolvedAssembly.profile(),
-                            resolvedAssembly.assemblyDigest(),
-                            resolvedAssembly.contributions(),
-                            java.util.stream.Stream.concat(
-                                            resolvedAssembly.diagnostics().stream(),
-                                            java.util.stream.Stream.of(
-                                                    new ProductAssemblyDiagnostic(
-                                                            ProductAssemblyDiagnostic.Severity.WARNING,
-                                                            "DEFAULT_INSTRUCTIONS_IN_USE",
-                                                            new ProductCapabilityId("agent"),
-                                                            java.util.Optional.empty(),
-                                                            "Starter quickstart instructions are in use; configure trusted product instructions explicitly")))
-                                    .toList());
             return new HaifaAgent(
-                    assembly,
+                    effectiveProfile,
                     metadata,
+                    diagnostics(),
                     agentRuns,
                     safeConversations,
                     agentMemories,
-                    artifact == null ? java.util.Optional.empty() : java.util.Optional.of(artifact.service()),
+                    artifact == null ? Optional.empty() : Optional.of(artifact.service()),
                     scheduler,
-                    initialized,
+                    lifecycle,
                     lifecycleClosed,
                     ids);
         } catch (RuntimeException | Error exception) {
             scheduler.close();
-            closeAfterFailedBuild(initialized, exception);
+            closeAfterFailedBuild(lifecycle, exception);
             throw exception;
         }
     }
 
-    private static List<ProductContribution> initializeSelected(
-            ProductAssemblyResolver.Resolution resolution,
-            Map<ProductContribution, ProductContribution> lifecycleReplacements) {
-        List<ProductContribution> selected = resolution.selected().entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(Map.Entry::getValue)
-                .map(contribution -> lifecycleReplacements.getOrDefault(contribution, contribution))
-                .distinct()
-                .toList();
-        List<ProductContribution> initialized = new ArrayList<>();
-        try {
-            for (ProductContribution contribution : selected) {
-                contribution.initialize();
-                initialized.add(contribution);
-            }
-            return List.copyOf(initialized);
-        } catch (RuntimeException | Error exception) {
-            closeAfterFailedBuild(initialized, exception);
-            throw exception;
+    private List<AgentDiagnostic> diagnostics() {
+        if (!starterDefaultInstructionsInUse) return List.of();
+        return List.of(new AgentDiagnostic(
+                AgentDiagnostic.Severity.WARNING,
+                "DEFAULT_INSTRUCTIONS_IN_USE",
+                "Starter quickstart instructions are in use; configure trusted product instructions explicitly"));
+    }
+
+    private List<AutoCloseable> collectLifecycle() {
+        Set<AutoCloseable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        List<AutoCloseable> lifecycle = new ArrayList<>();
+        addLifecycle(lifecycle, seen, persistence);
+        addLifecycle(lifecycle, seen, conversation);
+        addLifecycle(lifecycle, seen, toolPlatform);
+        addLifecycle(lifecycle, seen, skillPlatform);
+        addLifecycle(lifecycle, seen, memory);
+        addLifecycle(lifecycle, seen, artifacts);
+        addLifecycle(lifecycle, seen, policy);
+        addLifecycle(lifecycle, seen, approval);
+        addLifecycle(lifecycle, seen, credentials);
+        return List.copyOf(lifecycle);
+    }
+
+    private static void addLifecycle(List<AutoCloseable> lifecycle, Set<AutoCloseable> seen, Object component) {
+        if (component instanceof AutoCloseable closeable && seen.add(closeable)) lifecycle.add(closeable);
+    }
+
+    private static <T> T requireComponent(T component, String code, String message) {
+        if (component == null) {
+            throw new HaifaAgentException(code, "product.assemble", "assembly", message);
         }
+        return component;
     }
 
     private static io.haifa.agent.model.api.ResolvedModelSnapshot resolveModelSnapshot(
@@ -409,93 +439,40 @@ public final class HaifaAgentBuilder {
         String modelId = profileId.equals(profile.runProfileId())
                 ? model.snapshot().modelId().value()
                 : profileId;
-        return java.util.Optional.ofNullable(model.snapshots().get(modelId))
+        return Optional.ofNullable(model.snapshots().get(modelId))
                 .orElseThrow(() ->
                         new IllegalArgumentException("MODEL_SELECTION_REQUIRED: configured model is unavailable"));
     }
 
-    private Map<String, ResolvedCapability> resolvedCapabilities(
-            ProductProfile profile, ProductAssemblyResolver.Resolution resolution) {
-        Map<String, ResolvedCapability> capabilities = new LinkedHashMap<>();
-        resolution
-                .assembly()
-                .contributions()
-                .forEach((id, contribution) -> capabilities.put(
-                        id.value(),
-                        new ResolvedCapability(
-                                id.value(),
-                                contribution.coordinate().version(),
-                                contribution.coordinate().externalForm(),
-                                contribution.configurationDigest(),
-                                true)));
-        capabilities.put(
-                "product.profile",
-                new ResolvedCapability(
-                        "product.profile",
-                        profile.productVersion().value(),
-                        profile.productId().value(),
-                        profile.configurationDigest(),
-                        true));
-        capabilities.put(
-                "product.assembly",
-                new ResolvedCapability(
-                        "product.assembly",
-                        "1.0",
-                        profile.productId().value(),
-                        resolution.assembly().assemblyDigest(),
-                        true));
-        return Map.copyOf(capabilities);
-    }
-
     private static void validateDeclaredAliases(
-            ProductProfile profile, Map<ProductCapabilityId, ProductContribution> selected) {
-        ProductContribution tool = selected.get(ProductCapabilities.TOOL);
-        Set<String> availableTools = tool instanceof ToolPlatformContribution platform
-                ? platform.catalog().snapshot().bindings().stream()
+            Set<String> allowedTools,
+            ToolPlatformContribution tool,
+            Set<String> allowedSkills,
+            SkillPlatformContribution skill) {
+        Set<String> availableTools = tool == null
+                ? Set.of()
+                : tool.catalog().snapshot().bindings().stream()
                         .map(binding -> binding.alias().value())
-                        .collect(java.util.stream.Collectors.toUnmodifiableSet())
-                : Set.of();
-        if (!availableTools.containsAll(profile.allowedTools())) {
-            throw new ProductAssemblyException(
-                    "TOOL_ALIAS_UNAVAILABLE", "Product Profile allows a Tool alias not supplied by its contribution");
+                        .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        if (!availableTools.containsAll(allowedTools)) {
+            throw new HaifaAgentException(
+                    "TOOL_ALIAS_UNAVAILABLE",
+                    "product.assemble",
+                    "assembly",
+                    "Product Profile allows a Tool alias not supplied by its Tool platform");
         }
-        ProductContribution skill = selected.get(ProductCapabilities.SKILL);
-        Set<String> availableSkills = skill instanceof SkillPlatformContribution platform
-                ? platform.catalog().snapshot().bindings().stream()
+        Set<String> availableSkills = skill == null
+                ? Set.of()
+                : skill.catalog().snapshot().bindings().stream()
                         .map(binding -> binding.alias().value())
-                        .collect(java.util.stream.Collectors.toUnmodifiableSet())
-                : Set.of();
-        if (!availableSkills.containsAll(profile.allowedSkills())) {
-            throw new ProductAssemblyException(
-                    "SKILL_ALIAS_UNAVAILABLE", "Product Profile allows a Skill alias not supplied by its contribution");
+                        .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        if (!availableSkills.containsAll(allowedSkills)) {
+            throw new HaifaAgentException(
+                    "SKILL_ALIAS_UNAVAILABLE",
+                    "product.assemble",
+                    "assembly",
+                    "Product Profile allows a Skill alias not supplied by its Skill platform");
         }
-    }
-
-    private static <T> T require(
-            Map<ProductCapabilityId, ProductContribution> selected,
-            ProductCapabilityId capability,
-            Class<T> expectedType) {
-        ProductContribution value = selected.get(capability);
-        if (!expectedType.isInstance(value)) {
-            throw new ProductAssemblyException(
-                    "CAPABILITY_IMPLEMENTATION_INVALID",
-                    "Capability " + capability.value() + " requires " + expectedType.getSimpleName());
-        }
-        return expectedType.cast(value);
-    }
-
-    private static <T> T optional(
-            Map<ProductCapabilityId, ProductContribution> selected,
-            ProductCapabilityId capability,
-            Class<T> expectedType) {
-        ProductContribution value = selected.get(capability);
-        if (value == null) return null;
-        if (!expectedType.isInstance(value)) {
-            throw new ProductAssemblyException(
-                    "CAPABILITY_IMPLEMENTATION_INVALID",
-                    "Capability " + capability.value() + " requires " + expectedType.getSimpleName());
-        }
-        return expectedType.cast(value);
     }
 
     private static PolicyRuleSet defaultSdkPolicyRules() {
@@ -505,17 +482,17 @@ public final class HaifaAgentBuilder {
                 PolicyRuleSource.MANAGED,
                 200,
                 new PolicyRuleMatcher(
-                        java.util.Optional.empty(),
-                        java.util.Optional.empty(),
-                        java.util.Optional.empty(),
-                        java.util.Optional.empty(),
-                        java.util.Optional.empty(),
-                        java.util.Optional.empty(),
-                        java.util.Optional.empty(),
-                        java.util.Optional.of(PolicyRiskLevel.CRITICAL),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.of(PolicyRiskLevel.CRITICAL),
                         Set.of()),
                 PolicyEffect.DENY,
-                java.util.Optional.empty(),
+                Optional.empty(),
                 "SDK_CRITICAL_RISK_DENY",
                 "Critical operations are denied"));
         for (PolicySideEffect effect : List.of(
@@ -529,17 +506,17 @@ public final class HaifaAgentBuilder {
                     PolicyRuleSource.MANAGED,
                     100,
                     new PolicyRuleMatcher(
-                            java.util.Optional.empty(),
-                            java.util.Optional.empty(),
-                            java.util.Optional.empty(),
-                            java.util.Optional.empty(),
-                            java.util.Optional.empty(),
-                            java.util.Optional.empty(),
-                            java.util.Optional.empty(),
-                            java.util.Optional.empty(),
+                            Optional.empty(),
+                            Optional.empty(),
+                            Optional.empty(),
+                            Optional.empty(),
+                            Optional.empty(),
+                            Optional.empty(),
+                            Optional.empty(),
+                            Optional.empty(),
                             Set.of(effect)),
                     PolicyEffect.ASK,
-                    java.util.Optional.of(PolicyChallenge.APPROVAL),
+                    Optional.of(PolicyChallenge.APPROVAL),
                     "SDK_SIDE_EFFECT_APPROVAL_REQUIRED",
                     "Approval is required"));
         }
@@ -549,19 +526,17 @@ public final class HaifaAgentBuilder {
                 0,
                 PolicyRuleMatcher.any(),
                 PolicyEffect.ALLOW,
-                java.util.Optional.empty(),
+                Optional.empty(),
                 "SDK_DEFAULT_ALLOW",
                 "Allowed by default SDK policy");
-        return PolicyRuleSet.of(rules, java.util.Optional.of(defaultRule), ApprovalMode.ASK);
+        return PolicyRuleSet.of(rules, Optional.of(defaultRule), ApprovalMode.ASK);
     }
 
-    private static void closeAfterFailedBuild(
-            java.util.Collection<ProductContribution> contributions, Throwable original) {
-        List<ProductContribution> lifecycle = contributions.stream().distinct().toList();
+    private static void closeAfterFailedBuild(List<AutoCloseable> lifecycle, Throwable original) {
         for (int index = lifecycle.size() - 1; index >= 0; index--) {
             try {
                 lifecycle.get(index).close();
-            } catch (RuntimeException closeFailure) {
+            } catch (Exception closeFailure) {
                 original.addSuppressed(closeFailure);
             }
         }
