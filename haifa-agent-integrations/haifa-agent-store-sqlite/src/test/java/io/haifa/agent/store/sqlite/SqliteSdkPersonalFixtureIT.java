@@ -312,7 +312,6 @@ class SqliteSdkPersonalFixtureIT {
                 new AgentRunLimits(8, 0, 1, 30_000, 30_000),
                 requirements,
                 Set.of(),
-                Set.of(),
                 Set.of());
     }
 
@@ -337,8 +336,7 @@ class SqliteSdkPersonalFixtureIT {
                 base.policies(),
                 requirements,
                 base.allowedTools(),
-                base.allowedSkills(),
-                base.allowedExtensions());
+                base.allowedSkills());
     }
 
     private static HaifaAgent agent(

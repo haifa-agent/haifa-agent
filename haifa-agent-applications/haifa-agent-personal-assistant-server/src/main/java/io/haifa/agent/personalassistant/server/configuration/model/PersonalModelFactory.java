@@ -53,13 +53,13 @@ import io.haifa.agent.personalassistant.application.PersonalModelPreferences;
 import io.haifa.agent.personalassistant.application.PersonalModelProductDefaults;
 import io.haifa.agent.personalassistant.application.PersonalModelSelectionRequest;
 import io.haifa.agent.personalassistant.application.PersonalResolvedModelSelection;
+import io.haifa.agent.personalassistant.application.execution.PersonalShellRuntime;
 import io.haifa.agent.personalassistant.application.mission.MissionModelBinding;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.observability.LoggingAgentChatModel;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.contribution.ShellPlatformContribution;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductProviderSuitability;
@@ -86,7 +86,7 @@ public final class PersonalModelFactory {
             List<PersonalAssistantProperties.ModelProvider> configured,
             String defaultModelId,
             ObjectMapper mapper,
-            ShellPlatformContribution shell) {
+            PersonalShellRuntime shell) {
         return createPlatform(configured, defaultModelId, false, mapper, shell);
     }
 
@@ -95,7 +95,7 @@ public final class PersonalModelFactory {
             String defaultModelId,
             boolean allowInsecureLoopbackModel,
             ObjectMapper mapper,
-            ShellPlatformContribution shell) {
+            PersonalShellRuntime shell) {
         return createPlatform(
                 configured,
                 defaultModelId,
@@ -110,7 +110,7 @@ public final class PersonalModelFactory {
             String defaultModelId,
             boolean allowInsecureLoopbackModel,
             ObjectMapper mapper,
-            ShellPlatformContribution shell,
+            PersonalShellRuntime shell,
             CredentialResolver credentials) {
         return createPlatform(
                 configured,
@@ -127,7 +127,7 @@ public final class PersonalModelFactory {
             String defaultModelId,
             boolean allowInsecureLoopbackModel,
             ObjectMapper mapper,
-            ShellPlatformContribution shell,
+            PersonalShellRuntime shell,
             CredentialResolver credentials,
             AntigravityCloudCodeProjectResolver trustedProjectResolver) {
         return createPlatform(
@@ -146,7 +146,7 @@ public final class PersonalModelFactory {
             String defaultModelId,
             boolean allowInsecureLoopbackModel,
             ObjectMapper mapper,
-            ShellPlatformContribution shell,
+            PersonalShellRuntime shell,
             CredentialResolver credentials,
             AntigravityCloudCodeProjectResolver trustedProjectResolver,
             CodexAccountIdentityResolver codexAccountResolver) {
@@ -167,7 +167,7 @@ public final class PersonalModelFactory {
             String defaultModelId,
             boolean allowInsecureLoopbackModel,
             ObjectMapper mapper,
-            ShellPlatformContribution shell,
+            PersonalShellRuntime shell,
             CredentialResolver credentials,
             AntigravityCloudCodeProjectResolver trustedProjectResolver,
             CodexAccountIdentityResolver codexAccountResolver,
@@ -718,7 +718,7 @@ public final class PersonalModelFactory {
             ConfiguredModel selected,
             boolean deterministic,
             ObjectMapper mapper,
-            ShellPlatformContribution shell,
+            PersonalShellRuntime shell,
             boolean allowInsecureLoopbackModel,
             CredentialResolver credentials,
             AntigravityCloudCodeProjectResolver trustedProjectResolver,
@@ -814,7 +814,7 @@ public final class PersonalModelFactory {
         private final String scriptLanguage;
         private final AtomicLong sequence = new AtomicLong();
 
-        private DeterministicAcceptanceModel(String modelId, ShellPlatformContribution shell) {
+        private DeterministicAcceptanceModel(String modelId, PersonalShellRuntime shell) {
             this.modelId = modelId;
             this.operatingSystem = shell.operatingSystem();
             this.scriptLanguage = "WINDOWS".equals(operatingSystem) ? "powershell" : "bash";

@@ -76,7 +76,6 @@ public final class SdkTestFixtures {
                 new AgentRunLimits(8, 0, 1, 30_000, 30_000),
                 requirements,
                 Set.of(),
-                Set.of(),
                 Set.of());
     }
 

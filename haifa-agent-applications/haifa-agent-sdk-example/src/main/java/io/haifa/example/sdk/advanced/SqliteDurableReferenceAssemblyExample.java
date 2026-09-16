@@ -160,7 +160,6 @@ public final class SqliteDurableReferenceAssemblyExample {
                 policies,
                 requirements,
                 Set.of(),
-                Set.of(),
                 Set.of());
     }
 
