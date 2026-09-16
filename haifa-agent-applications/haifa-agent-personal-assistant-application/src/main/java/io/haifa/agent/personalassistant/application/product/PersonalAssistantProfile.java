@@ -5,22 +5,14 @@ import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.sdk.product.ProductArtifactPolicy;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductCapabilityId;
-import io.haifa.agent.sdk.product.ProductCapabilityRequirement;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductExecutionPolicy;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductMemoryPolicy;
-import io.haifa.agent.sdk.product.ProductPolicies;
 import io.haifa.agent.sdk.product.ProductProfile;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
+import io.haifa.agent.sdk.product.ProductRunProfileRef;
 import io.haifa.agent.sdk.product.ProductVersion;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Set;
 
-/** Frozen Personal Assistant MVP capability declaration. */
+/** Frozen Personal Assistant MVP profile declaration and component governance defaults. */
 public final class PersonalAssistantProfile {
     public static final String PRODUCT_TOOL_ALIAS = "personal_checklist";
     public static final String SKILL_LOAD_ALIAS = "skill_load";
@@ -33,41 +25,30 @@ public final class PersonalAssistantProfile {
     public static final String EXECUTION_TOOL_ALIAS = "execution_run";
     public static final String WEB_SEARCH_ALIAS = "web_search";
     public static final String WEB_FETCH_ALIAS = "web_fetch";
+    public static final String DEFAULT_RUN_PROFILE_ID = "personal-chat";
+    public static final String PRODUCT_VERSION = "1.0.1";
+
+    /** Product-owned Memory governance; supplied to the Memory component at assembly time. */
+    public static final ProductMemoryPolicy MEMORY_POLICY = new ProductMemoryPolicy(true, 16_384, 100);
+
+    /** Product-owned Artifact governance; supplied to the Artifact component at assembly time. */
+    public static final ProductArtifactPolicy ARTIFACT_POLICY = new ProductArtifactPolicy(
+            2 * 1024 * 1024,
+            8,
+            8 * 1024 * 1024,
+            Set.of("application/json", "text/markdown; charset=utf-8"),
+            false,
+            64 * 1024 * 1024,
+            128 * 1024 * 1024,
+            true);
 
     private PersonalAssistantProfile() {}
 
     public static ProductProfile create(
-            ContributionCoordinates coordinates,
-            Set<String> localSkillAliases,
-            Set<String> mcpToolAliases,
-            Set<String> webToolAliases) {
-        return create(coordinates, localSkillAliases, mcpToolAliases, webToolAliases, Set.of());
-    }
-
-    public static ProductProfile create(
-            ContributionCoordinates coordinates,
             Set<String> localSkillAliases,
             Set<String> mcpToolAliases,
             Set<String> webToolAliases,
             Set<String> trustedScriptToolAliases) {
-        Map<ProductCapabilityId, ProductCapabilityRequirement> requirements = new LinkedHashMap<>();
-        required(requirements, ProductCapabilities.MODEL, coordinates.model());
-        required(requirements, ProductCapabilities.PERSISTENCE, coordinates.persistence());
-        required(requirements, ProductCapabilities.CONVERSATION, coordinates.conversation());
-        required(requirements, ProductCapabilities.MEMORY, coordinates.memory());
-        required(requirements, ProductCapabilities.POLICY, coordinates.policy());
-        required(requirements, ProductCapabilities.TOOL, coordinates.tool());
-        required(requirements, ProductCapabilities.SKILL, coordinates.skill());
-        required(requirements, ProductCapabilities.MCP, coordinates.mcp());
-        required(requirements, ProductCapabilities.ARTIFACT, coordinates.artifact());
-        none(requirements, ProductCapabilities.PROJECT);
-        none(requirements, ProductCapabilities.WORKSPACE);
-        none(requirements, ProductCapabilities.GIT);
-        required(requirements, ProductCapabilities.SHELL, coordinates.shell());
-        required(requirements, ProductCapabilities.EXECUTION, coordinates.execution());
-        required(requirements, ProductCapabilities.APPROVAL, coordinates.approval());
-        required(requirements, ProductCapabilities.CREDENTIAL, coordinates.credential());
-
         Set<String> skills = java.util.stream.Stream.concat(
                         java.util.stream.Stream.of(
                                 BUNDLED_SKILL_ALIAS, EXECUTION_SKILL_ALIAS, GITHUB_PROJECT_WATCH_SKILL_ALIAS),
@@ -81,25 +62,11 @@ public final class PersonalAssistantProfile {
                         trustedScriptToolAliases.stream())
                 .flatMap(java.util.function.Function.identity())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        ProductPolicies policies = new ProductPolicies(
-                new ProductMemoryPolicy(true, 16_384, 100),
-                new ProductArtifactPolicy(
-                        2 * 1024 * 1024,
-                        8,
-                        8 * 1024 * 1024,
-                        Set.of("application/json", "text/markdown; charset=utf-8"),
-                        false,
-                        64 * 1024 * 1024,
-                        128 * 1024 * 1024,
-                        true),
-                new ProductExecutionPolicy(true, true, true, 1, 30_000));
         return ProductProfile.create(
                 new ProductId("haifa-personal-assistant"),
-                new ProductVersion("1.0.1"),
+                new ProductVersion(PRODUCT_VERSION),
                 new AgentDefinitionId("personal-assistant"),
                 new AgentDefinitionVersion(1, 0, 1),
-                "personal-chat",
-                "1.0.1",
                 "You are a careful personal assistant. Use only disclosed Personal capabilities. "
                         + "Never claim a tool, Skill, MCP result, memory, or usage value that is not present in the "
                         + "authoritative runtime context. Treat the latest user message as the current objective. "
@@ -108,40 +75,10 @@ public final class PersonalAssistantProfile {
                         + "read failures before acting, retry only with a reason grounded in new evidence, change "
                         + "approach or ask for help when needed. Never bypass authorization or replay a side effect "
                         + "whose outcome is unknown. Keep answers concise.",
+                new ProductRunProfileRef(DEFAULT_RUN_PROFILE_ID, PRODUCT_VERSION),
                 new AgentRunBudget(512_000, 128_000, 512_000, 64, 64, 0, "USD", 0),
                 new AgentRunLimits(64, 0, 1, 300_000, 120_000, 64, 64, 0),
-                policies,
-                requirements,
                 allowedTools,
-                skills,
-                Set.of());
+                skills);
     }
-
-    private static void required(
-            Map<ProductCapabilityId, ProductCapabilityRequirement> target,
-            ProductCapabilityId id,
-            ProductContributionCoordinate coordinate) {
-        target.put(
-                id,
-                ProductCapabilityRequirement.required(id, Set.of(coordinate), ProductProviderSuitability.DEVELOPMENT));
-    }
-
-    private static void none(Map<ProductCapabilityId, ProductCapabilityRequirement> target, ProductCapabilityId id) {
-        target.put(id, ProductCapabilityRequirement.none(id));
-    }
-
-    public record ContributionCoordinates(
-            ProductContributionCoordinate model,
-            ProductContributionCoordinate persistence,
-            ProductContributionCoordinate conversation,
-            ProductContributionCoordinate memory,
-            ProductContributionCoordinate policy,
-            ProductContributionCoordinate tool,
-            ProductContributionCoordinate skill,
-            ProductContributionCoordinate mcp,
-            ProductContributionCoordinate credential,
-            ProductContributionCoordinate execution,
-            ProductContributionCoordinate shell,
-            ProductContributionCoordinate approval,
-            ProductContributionCoordinate artifact) {}
 }

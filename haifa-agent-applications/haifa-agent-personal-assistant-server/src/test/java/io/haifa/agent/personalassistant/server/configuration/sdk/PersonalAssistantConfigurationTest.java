@@ -11,10 +11,6 @@ import io.haifa.agent.personalassistant.server.configuration.product.PersonalAss
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.URI;
@@ -31,14 +27,7 @@ class PersonalAssistantConfigurationTest {
     @Test
     void installsAStorelessPolicyContributionForPersonalAssistant() {
         var policy = new PolicyPlatformContribution(
-                new SdkContributionMetadata(
-                        new ProductContributionCoordinate("pa-policy", "1.0.0"),
-                        ProductCapabilities.POLICY,
-                        "sha256:" + "0".repeat(64),
-                        ProductProviderSuitability.PRODUCTION,
-                        "Personal Assistant policy"),
-                PersonalAssistantPolicyRules.conservative(),
-                new DefaultPolicyDecisionService());
+                PersonalAssistantPolicyRules.conservative(), new DefaultPolicyDecisionService());
 
         assertThat(policy.rules().approvalMode()).isEqualTo(ApprovalMode.ASK);
         assertThat(policy.evaluator()).isInstanceOf(DefaultPolicyDecisionService.class);

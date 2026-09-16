@@ -20,13 +20,8 @@ import io.haifa.agent.personalassistant.application.PersonalModelSelectionReques
 import io.haifa.agent.personalassistant.application.PersonalResponseLength;
 import io.haifa.agent.personalassistant.application.PersonalResponseMode;
 import io.haifa.agent.personalassistant.application.PersonalSelectionCompatibility;
+import io.haifa.agent.personalassistant.application.execution.PersonalShellRuntime;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
-import io.haifa.agent.sdk.api.SdkConfigurationDigest;
-import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
-import io.haifa.agent.sdk.contribution.ShellPlatformContribution;
-import io.haifa.agent.sdk.product.ProductCapabilities;
-import io.haifa.agent.sdk.product.ProductContributionCoordinate;
-import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
@@ -847,15 +842,7 @@ class PersonalModelFactoryTest {
                 8_192);
     }
 
-    private static ShellPlatformContribution shell() {
-        return new ShellPlatformContribution(
-                new SdkContributionMetadata(
-                        new ProductContributionCoordinate("personal-model-test-shell", "1.0.0"),
-                        ProductCapabilities.SHELL,
-                        SdkConfigurationDigest.sha256("personal-model-test-shell"),
-                        ProductProviderSuitability.TEST_ONLY,
-                        "Personal model test shell"),
-                "UNIX",
-                Set.of("bash"));
+    private static PersonalShellRuntime shell() {
+        return new PersonalShellRuntime("UNIX", Set.of("bash"));
     }
 }

@@ -211,12 +211,7 @@ class PersonalAssistantWebFluxTest {
         try (var connection = DriverManager.getConnection(
                 "jdbc:sqlite:" + DATA.resolve("personal-assistant.sqlite").toAbsolutePath())) {
             connection.setAutoCommit(false);
-            try (var commands =
-                            connection.prepareStatement("DELETE FROM sdk_conversation_command WHERE session_id = ?");
-                    var conversation =
-                            connection.prepareStatement("DELETE FROM sdk_conversation WHERE session_id = ?")) {
-                commands.setString(1, conversationId);
-                commands.executeUpdate();
+            try (var conversation = connection.prepareStatement("DELETE FROM sdk_conversation WHERE session_id = ?")) {
                 conversation.setString(1, conversationId);
                 assertThat(conversation.executeUpdate()).isEqualTo(1);
                 connection.commit();

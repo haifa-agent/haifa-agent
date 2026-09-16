@@ -897,6 +897,35 @@
           AND idempotency_key = #{row.idempotencyKey} AND result_payload IS NULL
     </update>
 
+    <resultMap id="appliedCommandRow" type="io.haifa.agent.store.sqlite.mybatis.AppliedCommandRow">
+        <constructor>
+            <arg column="caller_scope" javaType="java.lang.String"/>
+            <arg column="operation" javaType="java.lang.String"/>
+            <arg column="idempotency_key" javaType="java.lang.String"/>
+            <arg column="request_digest" javaType="java.lang.String"/>
+            <arg column="result_version" javaType="_int"/>
+            <arg column="result_payload" javaType="java.lang.String"/>
+            <arg column="applied_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findAppliedCommand" resultMap="appliedCommandRow">
+        SELECT caller_scope, operation, idempotency_key, request_digest, result_version, result_payload, applied_at
+        FROM runtime_applied_command
+        WHERE caller_scope = #{callerScope} AND operation = #{operation} AND idempotency_key = #{key}
+    </select>
+
+    <insert id="insertAppliedCommand">
+        INSERT INTO runtime_applied_command (
+            caller_scope, operation, idempotency_key, request_digest, result_version, result_payload, applied_at
+        ) VALUES (
+            #{row.callerScope}, #{row.operation}, #{row.idempotencyKey}, #{row.requestDigest},
+            #{row.resultVersion}, #{row.resultPayload}, #{row.appliedAt}
+        )
+        ON CONFLICT(caller_scope, operation, idempotency_key) DO NOTHING
+    </insert>
+
     <resultMap id="toolJournalRow" type="io.haifa.agent.store.sqlite.mybatis.ToolJournalRow">
         <constructor>
             <arg column="run_id" javaType="java.lang.String"/>

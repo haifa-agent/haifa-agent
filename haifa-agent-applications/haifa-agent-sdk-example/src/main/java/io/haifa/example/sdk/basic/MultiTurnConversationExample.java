@@ -12,19 +12,17 @@ public final class MultiTurnConversationExample {
         try (var agent = DeterministicExampleSupport.inMemory()) {
             var started = agent.conversations()
                     .start(new StartConversationCommand("basic-start", "Hello", "Introduce Haifa Agent."));
-            agent.runs().await(started.activeRunId().orElseThrow());
+            agent.runs().await(started.runId());
 
-            var current = agent.conversations().find(started.sessionId()).orElseThrow();
+            var current =
+                    agent.conversations().find(started.record().sessionId()).orElseThrow();
             var continued = agent.conversations()
                     .submit(new SubmitConversationTurnCommand(
                             current.sessionId(),
                             current.revision(),
                             "basic-follow-up",
                             "Summarize that in five words."));
-            System.out.println(agent.runs()
-                    .await(continued.activeRunId().orElseThrow())
-                    .output()
-                    .orElseThrow());
+            System.out.println(agent.runs().await(continued.runId()).output().orElseThrow());
         }
     }
 }
