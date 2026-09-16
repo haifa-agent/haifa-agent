@@ -122,15 +122,26 @@ HaifaAgent agent = HaifaAgents.builder(profile)
         .model(model)
         .persistence(persistence)
         .conversation(conversation)
-        .toolPlatform(toolPlatform)
         .tool(new WeatherTool())
         .build();
 ```
 
-SDK 会为 record 生成有界 JSON Schema，完成 Map 与 record 的双向转换，把同一个下划线 Tool 名称加入本次装配的
-有效 Tool allowlist（不改写 `ProductProfile`），并与已有 Catalog 确定性合并。调用仍进入统一的 Schema、Policy、
-Approval、Credential、Journal 和 Tool Pipeline。`Optional<T>` 只用于可选的直接 record component；不支持递归
-record、通配泛型、任意 POJO 或非 String Map key。注解式 Tool 不属于当前版本。
+SDK 把每个 Java Tool 一次性转换为 Tool Core 的 `ToolDefinition` 加 `ToolProvider`，注册进统一的
+`ToolCatalogBuilder` 并只 `freeze()` 一次，随后直接使用 Tool Core 的 Catalog、Invoker 与 Schema 校验器：SDK
+不合并 Catalog、不重算已冻结 binding 的 catalog digest，也不 multiplex 校验器。record 的有界 JSON Schema
+生成、Map 与 record 的双向转换、下划线 Tool 名称加入本次装配的有效 Tool allowlist（不改写 `ProductProfile`）
+都保持不变。调用仍进入统一的 Schema、Policy、Approval、Credential、Journal 和 Tool Pipeline。`Optional<T>`
+只用于可选的直接 record component；不支持递归 record、通配泛型、任意 POJO 或非 String Map key。注解式 Tool
+不属于当前版本。
+
+`JavaToolSpec` 只声明普通 Java Tool 需要的事实：name、input/output record、title、description、timeout，以及
+`pure()` 或 `sideEffects(...)`。provider 身份、并发策略、资源、Credential、Approval、provenance 与 tags 由 SDK
+Tool 平台固定，不再镜像到该入口；需要这些字段的 Tool 直接用 Tool API 的完整 `ToolDefinition` 注册。`pure()`
+是唯一降低 risk、idempotency 与 approval 声明的入口，声明 side effect 会自动取消 pure 声明，其余情况保持
+medium risk、unknown idempotency 与由 Policy 决定的审批。
+
+已经持有 Tool platform 的宿主在该平台上注册自己的 Tool：`.toolPlatform(...)` 与 `.tool(...)` 同时使用会以
+`JAVA_TOOL_PLATFORM_UNSUPPORTED` fail closed，而不是静默改写宿主平台的 Catalog 与 binding。
 
 ## Product Profile 与显式装配
 
