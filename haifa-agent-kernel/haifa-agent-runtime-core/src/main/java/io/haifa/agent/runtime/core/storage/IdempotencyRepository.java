@@ -18,6 +18,10 @@ public interface IdempotencyRepository {
                 .runId();
     }
 
+    Optional<AppliedCommandResult> findAppliedCommand(String callerScope, String operation, String idempotencyKey);
+
+    AppliedCommandResult recordAppliedCommand(AppliedCommandResult result);
+
     boolean markCommandApplied(String callerScope, String key);
 
     Optional<RuntimeCommandResult> findCommandResult(String callerScope, String idempotencyKey);
