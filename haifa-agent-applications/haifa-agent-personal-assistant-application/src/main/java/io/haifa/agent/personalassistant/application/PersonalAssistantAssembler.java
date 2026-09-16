@@ -259,9 +259,8 @@ public final class PersonalAssistantAssembler {
     private static String productDigest(
             io.haifa.agent.sdk.product.ProductProfile profile, Dependencies dependencies, PersonalToolPlatform tools) {
         List<String> fields = new java.util.ArrayList<>();
-        fields.add("personal-assistant-product-v1");
-        fields.add(profile.productId().value());
-        fields.add(profile.productVersion().value());
+        fields.add("personal-assistant-product-v2");
+        appendProfileFields(fields, profile);
         io.haifa.agent.model.api.ResolvedModelSnapshot model =
                 dependencies.model().snapshot();
         fields.add("model.id");
@@ -282,6 +281,10 @@ public final class PersonalAssistantAssembler {
         fields.add(tools.skill().catalog().snapshot().digest().value());
         fields.add("policy.rules.digest");
         fields.add(dependencies.policy().rules().contentDigest());
+        fields.add("memory.policy");
+        fields.add(dependencies.memory().policy().toString());
+        fields.add("artifact.policy");
+        fields.add(dependencies.artifact().policy().toString());
         fields.add("persistence.class");
         fields.add(dependencies.persistence().getClass().getName());
         fields.add("conversation.class");
@@ -295,6 +298,63 @@ public final class PersonalAssistantAssembler {
         fields.add("memory.class");
         fields.add(dependencies.memory().service().getClass().getName());
         return SdkConfigurationDigest.sha256(fields.toArray(String[]::new));
+    }
+
+    private static void appendProfileFields(List<String> fields, io.haifa.agent.sdk.product.ProductProfile profile) {
+        fields.add("product.id");
+        fields.add(profile.productId().value());
+        fields.add("product.version");
+        fields.add(profile.productVersion().value());
+        fields.add("definition.id");
+        fields.add(profile.definitionId().value());
+        fields.add("definition.major");
+        fields.add(String.valueOf(profile.definitionVersion().major()));
+        fields.add("definition.minor");
+        fields.add(String.valueOf(profile.definitionVersion().minor()));
+        fields.add("definition.patch");
+        fields.add(String.valueOf(profile.definitionVersion().patch()));
+        fields.add("instructions");
+        fields.add(profile.instructions());
+        fields.add("defaultRunProfile.id");
+        fields.add(profile.defaultRunProfile().id());
+        fields.add("defaultRunProfile.version");
+        fields.add(profile.defaultRunProfile().version());
+        fields.add("budget.quotaMode");
+        fields.add(profile.budget().quotaMode().name());
+        fields.add("budget.maxInputTokens");
+        fields.add(String.valueOf(profile.budget().maxInputTokens()));
+        fields.add("budget.maxOutputTokens");
+        fields.add(String.valueOf(profile.budget().maxOutputTokens()));
+        fields.add("budget.maxCachedInputTokens");
+        fields.add(String.valueOf(profile.budget().maxCachedInputTokens()));
+        fields.add("budget.maxCostCurrency");
+        fields.add(profile.budget().maxCostCurrency());
+        fields.add("budget.maxCostMinorUnits");
+        fields.add(String.valueOf(profile.budget().maxCostMinorUnits()));
+        fields.add("limits.maxIterations");
+        fields.add(String.valueOf(profile.limits().maxIterations()));
+        fields.add("limits.maxDepth");
+        fields.add(String.valueOf(profile.limits().maxDepth()));
+        fields.add("limits.maxParallelChildren");
+        fields.add(String.valueOf(profile.limits().maxParallelChildren()));
+        fields.add("limits.maxWallTimeMillis");
+        fields.add(String.valueOf(profile.limits().maxWallTimeMillis()));
+        fields.add("limits.maxIdleTimeMillis");
+        fields.add(String.valueOf(profile.limits().maxIdleTimeMillis()));
+        fields.add("limits.maxModelCalls");
+        fields.add(String.valueOf(profile.limits().maxModelCalls()));
+        fields.add("limits.maxToolCalls");
+        fields.add(String.valueOf(profile.limits().maxToolCalls()));
+        fields.add("limits.maxChildRuns");
+        fields.add(String.valueOf(profile.limits().maxChildRuns()));
+        profile.allowedTools().stream().sorted().forEach(alias -> {
+            fields.add("allowedTool");
+            fields.add(alias);
+        });
+        profile.allowedSkills().stream().sorted().forEach(alias -> {
+            fields.add("allowedSkill");
+            fields.add(alias);
+        });
     }
 
     private static List<ProductRunProfile> missionRunProfiles(
