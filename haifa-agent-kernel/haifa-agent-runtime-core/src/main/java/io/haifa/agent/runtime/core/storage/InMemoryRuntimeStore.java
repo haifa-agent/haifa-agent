@@ -80,6 +80,7 @@ public final class InMemoryRuntimeStore
     private final Map<String, RunStartIdempotencyBinding> idempotentRuns = new HashMap<>();
     private final java.util.Set<String> appliedCommands = new java.util.HashSet<>();
     private final Map<String, RuntimeCommandResult> commandResults = new HashMap<>();
+    private final Map<String, AppliedCommandResult> appliedCommandResults = new HashMap<>();
     private final Map<AgentRunId, List<AgentMessage>> messages = new HashMap<>();
     private final Map<io.haifa.agent.core.session.AgentSessionId, List<AgentMessage>> sessionMessages = new HashMap<>();
     private final Map<AgentMessageId, AgentMessage> messagesById = new HashMap<>();
@@ -366,6 +367,29 @@ public final class InMemoryRuntimeStore
         return idempotentRuns.computeIfAbsent(
                 idempotencyKey(binding.callerScope(), binding.operation(), binding.idempotencyKey()),
                 ignored -> binding);
+    }
+
+    @Override
+    public synchronized Optional<AppliedCommandResult> findAppliedCommand(
+            String callerScope, String operation, String idempotencyKey) {
+        return Optional.ofNullable(appliedCommandResults.get(idempotencyKey(callerScope, operation, idempotencyKey)));
+    }
+
+    @Override
+    public synchronized AppliedCommandResult recordAppliedCommand(AppliedCommandResult result) {
+        Objects.requireNonNull(result, "result must not be null");
+        String key = idempotencyKey(result.callerScope(), result.operation(), result.idempotencyKey());
+        AppliedCommandResult existing = appliedCommandResults.putIfAbsent(key, result);
+        if (existing != null && conflicts(existing, result)) {
+            throw new IllegalStateException("applied command idempotency key has conflicting content");
+        }
+        return existing != null ? existing : result;
+    }
+
+    private static boolean conflicts(AppliedCommandResult existing, AppliedCommandResult incoming) {
+        return !existing.requestDigest().equals(incoming.requestDigest())
+                || existing.resultVersion() != incoming.resultVersion()
+                || !existing.resultPayload().equals(incoming.resultPayload());
     }
 
     @Override
