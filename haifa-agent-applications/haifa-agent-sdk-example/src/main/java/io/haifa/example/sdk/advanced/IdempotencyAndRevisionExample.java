@@ -12,7 +12,7 @@ public final class IdempotencyAndRevisionExample {
             var command = new StartConversationCommand("same-intent", "Trip", "Introduce Hangzhou.");
             var first = agent.conversations().start(command);
             var retry = agent.conversations().start(command);
-            System.out.println(first.sessionId().equals(retry.sessionId()));
+            System.out.println(first.record().sessionId().equals(retry.record().sessionId()));
         }
     }
 }

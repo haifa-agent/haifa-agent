@@ -12,7 +12,7 @@ public final class RunEventJournalExample {
         try (var agent = DeterministicExampleSupport.inMemory()) {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand("event-start", "Events", "Give a short answer."));
-            var runId = conversation.activeRunId().orElseThrow();
+            var runId = conversation.runId();
             agent.runs().await(runId);
             var page = agent.runs().events(runId, RunEventCursor.beforeFirst(runId), 50);
             page.items().forEach(event -> System.out.println(event.eventType()));

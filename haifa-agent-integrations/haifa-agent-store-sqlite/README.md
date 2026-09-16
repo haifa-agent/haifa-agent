@@ -6,24 +6,24 @@ Memory 与 Artifact。Action Policy rules 及 evaluator contribution 由产品�
 `SqliteDurableReferenceAssemblyExample`；示例模块不是发布制品或 Stable API。
 
 `HaifaAgentStoreMigrations` 是 CA、PA 与显式 SQLite SDK 唯一的物理 Schema registry。它统一注册
-V1、V2、V4～V11 与 V1000～V1007；V3 legacy Policy family 和独立 V1008 已从 clean baseline 删除。
+V1、V2、V4～V13 与 V1000～V1007；V3 legacy Policy family 和独立 V1008 已从 clean baseline 删除。
 同目录下唯一 `haifa-agent-v1.0-init.sql` 由 `build-support/scripts/generate_haifa_agent_v1_schema.py`
 从该 registry 实际注册资源生成，`--check` 用于 byte-for-byte 门禁。
 
-## V5 SDK Conversation
+## SDK Conversation metadata
 
-Runtime Migration V5 新增产品中立的 `sdk_conversation` 与 `sdk_conversation_command`：
+Runtime Migration V5 新增产品中立的 `sdk_conversation`；V13 将其收敛为纯 display/index metadata：
 
-- `sdk_conversation` 只保存列表、归档和恢复需要的 metadata 及权威 Session/Run 引用，不复制
-  Runtime Message 或 Run 正文；
-- Tenant/Principal、status、last activity、revision、active dispatch/run 具有固定列、索引和
-  CHECK/外键约束；不使用 `ON DELETE CASCADE`，本期也不提供 Session 删除；
-- `sdk_conversation_command` 保存 caller scope、operation、idempotency key、canonical request
-  digest、dispatch key、结果 Run/revision，用于同 key 去重和跨崩溃窗口恢复；
+- `sdk_conversation` 只保存列表/搜索需要的 display name、created/last activity、revision，以及创建时
+  从可信 Caller 复制的不可变 Tenant/Principal 授权索引；不复制 Runtime Message、Run 正文或 status；
+- Session、Run、Turn 与 status 事实只由 Runtime 拥有；查询时由服务读取 Runtime `AgentSession`
+  派生 `ACTIVE`/`ARCHIVED`，`CLOSED`/`DELETED` 视为不可用，因此不再有 active dispatch/run 列；
+- `sdk_conversation_command` 已删除；`start` 通过 Runtime idempotency binding 复用已绑定 Run，
+  `rename`/`archive`/`unarchive` 通过 Runtime applied-command 记录保证 exactly-once；
 - `SqliteConversationStore` 实现 SDK Store Port，所有修改使用 revision 条件更新；列表和搜索使用
   稳定 activity/session Cursor，搜索会转义 SQL `LIKE` 通配符；
 - `SqliteSdkContributions` 基于同一个 `SqliteStoreFoundation` 显式提供 Runtime Persistence 与
-  Conversation 两个 SDK Contribution，SDK 不反向依赖本模块。
+  Conversation 两个 SDK Contribution，SDK 不反向依赖本模块。旧开发数据库必须按 V13 重建。
 
 ## V7 Artifact foundation
 

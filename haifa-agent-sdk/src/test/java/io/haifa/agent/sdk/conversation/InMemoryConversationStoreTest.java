@@ -5,78 +5,52 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
-import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import java.time.Instant;
-import java.util.Optional;
-import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 
 class InMemoryConversationStoreTest {
+    private static final TenantRef TENANT = new TenantRef("tenant");
+    private static final PrincipalRef PRINCIPAL = new PrincipalRef("alice", "user");
+
     @Test
-    void enforcesCommandRevisionAndSingleActiveRunContract() {
+    void persistsMetadataAndEnforcesScopeRevisionAndTouchContract() {
         InMemoryConversationStore store = new InMemoryConversationStore();
         AgentSessionId sessionId = new AgentSessionId("session-1");
         Instant now = Instant.parse("2026-07-28T00:00:00Z");
-        ConversationCommandBinding command = new ConversationCommandBinding(
-                "caller",
-                "submit",
-                "key",
-                "request-a",
-                "dispatch",
-                sessionId,
-                Optional.empty(),
-                false,
-                OptionalLong.empty(),
-                now);
-        ConversationRecord conversation = store.create(new ConversationRecord(
-                sessionId,
-                new TenantRef("tenant"),
-                new PrincipalRef("alice", "user"),
-                "Title",
-                ConversationStatus.ACTIVE,
-                Optional.empty(),
-                OptionalLong.empty(),
-                Optional.empty(),
-                now,
-                now,
-                0));
+        ConversationRecord conversation =
+                new ConversationRecord(sessionId, "Title", now, now, 0, ConversationStatus.ACTIVE);
 
-        assertThat(store.reserveCommand(command)).isEqualTo(command);
-        assertThatThrownBy(() -> store.reserveCommand(new ConversationCommandBinding(
-                        "caller",
-                        "submit",
-                        "key",
-                        "request-b",
-                        "dispatch-other",
-                        sessionId,
-                        Optional.empty(),
-                        false,
-                        OptionalLong.empty(),
-                        now)))
+        assertThat(store.create(conversation, TENANT, PRINCIPAL)).isEqualTo(conversation);
+        assertThat(store.create(conversation, TENANT, PRINCIPAL)).isEqualTo(conversation);
+        assertThatThrownBy(() -> store.create(conversation, TENANT, new PrincipalRef("bob", "user")))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("CONVERSATION_IDEMPOTENCY_CONFLICT");
+                .hasMessage("CONVERSATION_SCOPE_CONFLICT");
+        assertThat(store.find(sessionId)).contains(conversation);
+        assertThat(store.list(TENANT, PRINCIPAL, ConversationQuery.active(10)))
+                .extracting("sessionId")
+                .containsExactly(sessionId);
+        assertThat(store.list(TENANT, new PrincipalRef("bob", "user"), ConversationQuery.active(10)))
+                .isEmpty();
 
-        ConversationRecord reserved = store.reserveActive(sessionId, conversation.revision(), "dispatch", now);
-        assertThatThrownBy(() -> store.reserveActive(sessionId, reserved.revision(), "dispatch-other", now))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("CONVERSATION_ACTIVE");
-        ConversationRecord released =
-                store.releasePendingDispatch(sessionId, "dispatch", reserved.revision(), now.plusSeconds(1));
-        assertThat(released.activeRunId()).isEmpty();
-        assertThat(released.activeDispatchKey()).isEmpty();
-        ConversationRecord reservedAgain =
-                store.reserveActive(sessionId, released.revision(), "dispatch", now.plusSeconds(2));
-        ConversationRecord active =
-                store.activateRun(sessionId, "dispatch", new AgentRunId("run-1"), 2, now.plusSeconds(3));
-        ConversationCommandBinding completed =
-                store.completeCommand("dispatch", Optional.of(new AgentRunId("run-1")), active.revision());
+        ConversationRecord touched = store.touchLastActivity(sessionId, now.plusSeconds(1));
+        assertThat(touched.revision()).isEqualTo(1);
+        assertThat(touched.lastActivityAt()).isEqualTo(now.plusSeconds(1));
 
-        assertThat(reservedAgain.activeDispatchKey()).contains("dispatch");
-        assertThat(completed.completed()).isTrue();
-        assertThat(store.findCommand("dispatch")).contains(completed);
         assertThatThrownBy(() -> store.rename(sessionId, 0, "stale", now))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("CONVERSATION_REVISION_STALE");
+        ConversationRecord renamed = store.rename(sessionId, touched.revision(), "Renamed", now.plusSeconds(2));
+        assertThat(renamed.displayName()).isEqualTo("Renamed");
+        assertThat(renamed.revision()).isEqualTo(2);
+
+        ConversationRecord archived = store.changeStatus(
+                sessionId,
+                renamed.revision(),
+                ConversationStatus.ACTIVE,
+                ConversationStatus.ARCHIVED,
+                now.plusSeconds(3));
+        assertThat(archived.revision()).isEqualTo(3);
+        assertThat(store.find(sessionId)).contains(archived);
     }
 }
