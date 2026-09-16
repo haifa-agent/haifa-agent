@@ -129,6 +129,36 @@ class SemanticCompactionFailureTest {
                         .doesNotContainValue("not-valid-json"));
     }
 
+    @Test
+    void forceCompactOnOverflowFallsBackToDeterministicEvenWhenDegradedFallbackDisabled() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger ids = new AtomicInteger();
+        IdentifierGenerator generator = () -> "compaction-overflow-" + ids.incrementAndGet();
+        CompressionPolicy policy = CompressionPolicy.defaults()
+                .withSemanticCompactionEnabled(true)
+                .withDegradedFallback(false)
+                .withTailTokenBounds(5, 50);
+        RunControlRegistry controls = new RunControlRegistry();
+        SemanticCompactionCoordinator coordinator = coordinator(store, generator, controls, policy);
+        AgentRun run = createRun(store);
+        appendTurn(store, run, "u1", "a1", "first user turn", "first assistant reply");
+        appendTurn(store, run, "u2", "a2", "second user turn", "second assistant reply");
+
+        coordinator.forceCompactOnOverflow(run, 1, binding(store, run, request -> failure()));
+
+        assertThat(store.latestValid(run.sessionId())).hasValueSatisfying(summary -> assertThat(summary.quality())
+                .isEqualTo(CompactionQuality.DETERMINISTIC_DEGRADED));
+        assertThat(store.eventsFor(run.id()))
+                .filteredOn(event -> event.type().equals("session.compaction-failed"))
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.data())
+                            .containsEntry("reason", CompactionTriggerReason.PROVIDER_CONTEXT_TOO_LONG.name())
+                            .containsEntry("failureCategory", "MODEL_OR_RUNTIME")
+                            .containsEntry("degraded", true);
+                });
+    }
+
     private static SemanticCompactionCoordinator coordinator(
             InMemoryRuntimeStore store,
             IdentifierGenerator ids,

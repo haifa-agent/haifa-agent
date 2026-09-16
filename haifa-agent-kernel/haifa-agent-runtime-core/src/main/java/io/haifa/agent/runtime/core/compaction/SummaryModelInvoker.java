@@ -112,7 +112,7 @@ public final class SummaryModelInvoker {
                 ModelMessage.text(ModelMessageRole.SYSTEM, systemPrompt),
                 ModelMessage.text(ModelMessageRole.USER, userPrompt));
 
-        int maxOutput = Math.min(4096, binding.configuration().model().maxOutputTokens());
+        int maxOutput = Math.min(32768, binding.configuration().model().maxOutputTokens());
         Duration timeout = Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis()));
 
         AgentChatRequest request = new AgentChatRequest(

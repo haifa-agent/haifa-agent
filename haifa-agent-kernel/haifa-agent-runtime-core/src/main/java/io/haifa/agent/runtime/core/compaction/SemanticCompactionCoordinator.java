@@ -305,7 +305,7 @@ public final class SemanticCompactionCoordinator {
             throw cancelled;
         } catch (Exception ex) {
             log.warn("Semantic compaction failed: {}", ex.getMessage());
-            boolean degraded = policy.allowDeterministicDegradedFallback();
+            boolean degraded = policy.allowDeterministicDegradedFallback() || overflow;
             events.append(
                     run.id(),
                     "session.compaction-failed",
