@@ -385,7 +385,7 @@ public final class DefaultConversationService implements ConversationService {
                 binding.dispatchKey(),
                 profile.definitionId(),
                 Optional.of(profile.definitionVersion()),
-                runProfileId.orElse(profile.runProfileId()),
+                runProfileId.orElse(profile.defaultRunProfile().id()),
                 binding.sessionId(),
                 Optional.empty(),
                 message,

@@ -249,7 +249,7 @@ public final class HaifaAgentBuilder {
         SdkConversationContribution conversation = requireComponent(
                 this.conversation, "CONVERSATION_REQUIRED", "a Conversation component must be configured");
         ArtifactPlatformContribution artifact = this.artifacts;
-        if (artifact != null && effectiveProfile.policies().artifact().maxArtifactsPerRun() == 0) {
+        if (artifact != null && artifact.policy().maxArtifactsPerRun() == 0) {
             throw new HaifaAgentException(
                     "ARTIFACT_POLICY_DISABLED",
                     "product.assemble",
@@ -302,7 +302,7 @@ public final class HaifaAgentBuilder {
                         if (selected == null) {
                             return new ResolvedProfile(
                                     id,
-                                    effectiveProfile.runProfileVersion(),
+                                    effectiveProfile.defaultRunProfile().version(),
                                     AgentRunType.CHAT,
                                     effectiveProfile.budget(),
                                     effectiveProfile.limits(),
@@ -375,12 +375,7 @@ public final class HaifaAgentBuilder {
             var agentMemories = memory == null
                     ? Optional.<AgentMemories>empty()
                     : Optional.of(new AgentMemories(
-                            memory.service(),
-                            effectiveProfile.policies().memory(),
-                            callers,
-                            safeConversations,
-                            agentRuns,
-                            lifecycleClosed));
+                            memory.service(), memory.policy(), callers, safeConversations, agentRuns, lifecycleClosed));
             return new HaifaAgent(
                     effectiveProfile,
                     metadata,
@@ -436,7 +431,7 @@ public final class HaifaAgentBuilder {
 
     private static io.haifa.agent.model.api.ResolvedModelSnapshot resolveModelSnapshot(
             ModelContribution model, ProductProfile profile, String profileId) {
-        String modelId = profileId.equals(profile.runProfileId())
+        String modelId = profileId.equals(profile.defaultRunProfile().id())
                 ? model.snapshot().modelId().value()
                 : profileId;
         return Optional.ofNullable(model.snapshots().get(modelId))
