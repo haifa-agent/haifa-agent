@@ -13,7 +13,7 @@ public final class RunOutputStreamingExample {
         try (var agent = DeterministicExampleSupport.inMemory()) {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand("output-start", "Output", "Give a short answer."));
-            var runId = conversation.activeRunId().orElseThrow();
+            var runId = conversation.runId();
             try (var subscription = agent.runs().subscribeOutput(runId, RunOutputCursor.BEFORE_FIRST, event -> {
                 if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA) {
                     System.out.print(event.textDelta());

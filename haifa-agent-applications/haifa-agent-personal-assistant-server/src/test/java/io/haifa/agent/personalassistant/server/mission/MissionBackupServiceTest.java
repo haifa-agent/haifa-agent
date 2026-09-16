@@ -35,8 +35,6 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -53,32 +51,18 @@ class MissionBackupServiceTest {
         Path database = directory.resolve("personal-v1.sqlite");
         initializeArtifact(database);
         AgentSessionId sessionId = new AgentSessionId("personal-v1-conversation");
+        TenantRef tenant = new TenantRef("local");
+        PrincipalRef principal = new PrincipalRef("public-user", "user");
         ConversationRecord conversation = new ConversationRecord(
-                sessionId,
-                new TenantRef("local"),
-                new PrincipalRef("public-user", "user"),
-                "Shared V1",
-                ConversationStatus.ACTIVE,
-                Optional.empty(),
-                OptionalLong.empty(),
-                Optional.empty(),
-                CLOCK.instant(),
-                CLOCK.instant(),
-                0);
+                sessionId, "Shared V1", CLOCK.instant(), CLOCK.instant(), 0, ConversationStatus.ACTIVE);
 
         SqliteSdkProductContributions first = personalSqlite(database);
         first.persistence()
                 .runtimePersistence()
                 .sessions()
                 .insert(AgentSession.open(
-                        sessionId,
-                        conversation.tenant(),
-                        conversation.principal(),
-                        null,
-                        SessionScope.USER,
-                        CLOCK.instant(),
-                        Map.of()));
-        first.conversation().conversationStore().create(conversation);
+                        sessionId, tenant, principal, null, SessionScope.USER, CLOCK.instant(), Map.of()));
+        first.conversation().conversationStore().create(conversation, tenant, principal);
         first.persistence().close();
 
         SqliteSdkProductContributions reopened = personalSqlite(database);

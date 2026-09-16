@@ -6,6 +6,8 @@ import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.MessageCursor;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageVisibility;
+import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSession;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.AgentSessionStatus;
@@ -14,14 +16,15 @@ import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.runtime.core.storage.AppliedCommandResult;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.sdk.conversation.ChangeConversationStatusCommand;
-import io.haifa.agent.sdk.conversation.ConversationCommandBinding;
 import io.haifa.agent.sdk.conversation.ConversationCursor;
 import io.haifa.agent.sdk.conversation.ConversationPage;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
 import io.haifa.agent.sdk.conversation.ConversationRecord;
+import io.haifa.agent.sdk.conversation.ConversationRun;
 import io.haifa.agent.sdk.conversation.ConversationService;
 import io.haifa.agent.sdk.conversation.ConversationStatus;
 import io.haifa.agent.sdk.conversation.ConversationStore;
@@ -40,7 +43,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.OptionalLong;
 
 public final class DefaultConversationService implements ConversationService {
     private static final int MESSAGE_PAGE_SIZE = 200;
@@ -71,68 +73,50 @@ public final class DefaultConversationService implements ConversationService {
     }
 
     @Override
-    public ConversationRecord start(StartConversationCommand command) {
+    public ConversationRun start(StartConversationCommand command) {
         Objects.requireNonNull(command, "command must not be null");
         SdkCaller caller = caller();
+        String dispatchKey = dispatchKey("start", callerScope(caller), keyDigest(command.idempotencyKey()));
         Instant now = time.now();
-        AgentSessionId proposedSession = new AgentSessionId(ids.nextValue());
-        ConversationCommandBinding proposal = commandBinding(
-                caller,
-                "start",
-                command.idempotencyKey(),
-                command.displayName()
-                        + "\u0000"
-                        + command.message()
-                        + "\u0000"
-                        + command.runProfileId().orElse("")
-                        + "\u0000"
-                        + inputSignature(command.inputs())
-                        + "\u0000"
-                        + structuredOutputSignature(command.structuredOutput()),
-                proposedSession,
-                now);
         return persistence.inTransaction(() -> {
-            ConversationCommandBinding reserved = conversations.reserveCommand(proposal);
-            AgentSessionId sessionId = reserved.sessionId();
-            Optional<ConversationRecord> existing = conversations.find(sessionId);
-            if (existing.isPresent()) {
-                authorize(existing.orElseThrow(), caller);
-            } else {
-                Optional<AgentSession> persistedSession =
-                        persistence.runtimePersistence().sessions().find(sessionId);
-                if (persistedSession.isPresent()) {
-                    authorize(persistedSession.orElseThrow(), caller);
-                } else {
-                    AgentSession session = AgentSession.open(
-                            sessionId,
-                            caller.tenant(),
-                            caller.principal(),
-                            null,
-                            SessionScope.USER,
-                            now,
-                            Map.of("productId", profile.productId().value()));
-                    persistence.runtimePersistence().sessions().insert(session);
+            Optional<AgentRunId> recovered = idempotency().findRun(runtimeScope(caller), "start", dispatchKey);
+            AgentSessionId sessionId;
+            AgentSession session;
+            if (recovered.isPresent()) {
+                sessionId = resolveSessionId(recovered.orElseThrow(), caller);
+                session = requireAuthorizedSession(sessionId, caller);
+                if (conversations.find(sessionId).isEmpty()) {
+                    conversations.create(
+                            metadata(sessionId, command.displayName(), now), caller.tenant(), caller.principal());
                 }
-                conversations.create(new ConversationRecord(
+            } else {
+                sessionId = new AgentSessionId(ids.nextValue());
+                session = AgentSession.open(
                         sessionId,
                         caller.tenant(),
                         caller.principal(),
-                        command.displayName(),
-                        ConversationStatus.ACTIVE,
-                        Optional.empty(),
-                        OptionalLong.empty(),
-                        Optional.of(reserved.dispatchKey()),
+                        null,
+                        SessionScope.USER,
                         now,
-                        now,
-                        0));
+                        Map.of("productId", profile.productId().value()));
+                sessions().insert(session);
+                conversations.create(
+                        metadata(sessionId, command.displayName(), now), caller.tenant(), caller.principal());
             }
-            if (reserved.completed()) return requireAuthorized(reserved.sessionId(), caller);
             AgentRunSnapshot run = runtime.start(runRequest(
-                    reserved, command.message(), command.runProfileId(), command.inputs(), command.structuredOutput()));
-            ConversationRecord activated = conversations.activateRun(
-                    reserved.sessionId(), reserved.dispatchKey(), run.runId(), run.version(), time.now());
-            conversations.completeCommand(reserved.dispatchKey(), Optional.of(run.runId()), activated.revision());
-            return activated;
+                    dispatchKey,
+                    sessionId,
+                    command.message(),
+                    command.runProfileId(),
+                    command.inputs(),
+                    command.structuredOutput()));
+            if (recovered.isPresent()) {
+                ConversationRecord record =
+                        conversations.find(sessionId).orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
+                return new ConversationRun(withStatus(record, session), run.runId(), run.version());
+            }
+            ConversationRecord touched = conversations.touchLastActivity(sessionId, time.now());
+            return new ConversationRun(withStatus(touched, session), run.runId(), run.version());
         });
     }
 
@@ -140,23 +124,21 @@ public final class DefaultConversationService implements ConversationService {
     public Optional<ConversationRecord> find(AgentSessionId sessionId) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         SdkCaller caller = caller();
-        return conversations
-                .find(sessionId)
-                .filter(value -> value.tenant().equals(caller.tenant())
-                        && value.principal().equals(caller.principal()))
-                .map(this::reconcileTerminalRun);
+        return conversations.find(sessionId).flatMap(metadata -> visible(metadata, caller));
     }
 
     @Override
     public ConversationPage list(ConversationQuery query) {
         Objects.requireNonNull(query, "query must not be null");
         SdkCaller caller = caller();
-        List<ConversationRecord> raw = conversations.list(caller.tenant(), caller.principal(), query);
-        List<ConversationRecord> reconciled =
-                raw.stream().map(this::reconcileTerminalRun).toList();
-        boolean more = reconciled.size() > query.limit();
-        List<ConversationRecord> items =
-                more ? List.copyOf(reconciled.subList(0, query.limit())) : List.copyOf(reconciled);
+        List<ConversationRecord> matched = new ArrayList<>();
+        for (ConversationRecord metadata : conversations.list(caller.tenant(), caller.principal(), query)) {
+            visible(metadata, caller)
+                    .filter(record -> query.statuses().contains(record.status()))
+                    .ifPresent(matched::add);
+        }
+        boolean more = matched.size() > query.limit();
+        List<ConversationRecord> items = more ? List.copyOf(matched.subList(0, query.limit())) : List.copyOf(matched);
         Optional<ConversationCursor> next = more
                 ? Optional.of(new ConversationCursor(
                         items.getLast().lastActivityAt(), items.getLast().sessionId()))
@@ -168,7 +150,7 @@ public final class DefaultConversationService implements ConversationService {
     public ConversationTurnPage turns(AgentSessionId sessionId, ConversationTurnQuery query) {
         Objects.requireNonNull(query, "query must not be null");
         SdkCaller caller = caller();
-        requireAuthorized(Objects.requireNonNull(sessionId, "sessionId must not be null"), caller);
+        requireAuthorizedSession(Objects.requireNonNull(sessionId, "sessionId must not be null"), caller);
         List<ConversationTurn> result = new ArrayList<>();
         MessageCursor cursor =
                 query.after().map(value -> new MessageCursor(value.sequence())).orElse(MessageCursor.BEFORE_FIRST);
@@ -210,41 +192,40 @@ public final class DefaultConversationService implements ConversationService {
     }
 
     @Override
-    public ConversationRecord submit(SubmitConversationTurnCommand command) {
+    public ConversationRun submit(SubmitConversationTurnCommand command) {
         Objects.requireNonNull(command, "command must not be null");
         SdkCaller caller = caller();
-        ConversationRecord current = reconcileTerminalRun(requireAuthorized(command.sessionId(), caller));
-        if (current.status() != ConversationStatus.ACTIVE) {
+        AgentSession session = requireAuthorizedSession(command.sessionId(), caller);
+        String dispatchKey = dispatchKey("submit", callerScope(caller), keyDigest(command.idempotencyKey()));
+        Optional<AgentRunId> recovered = idempotency().findRun(runtimeScope(caller), "start", dispatchKey);
+        if (recovered.isPresent()) {
+            AgentRunId recoveredRunId = recovered.orElseThrow();
+            if (!resolveSessionId(recoveredRunId, caller).equals(command.sessionId())) {
+                throw conflict("CONVERSATION_UNAVAILABLE");
+            }
+            AgentRunSnapshot recoveredRun =
+                    runtime.find(recoveredRunId).orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
+            return new ConversationRun(
+                    requireAuthorizedRecord(command.sessionId(), caller), recoveredRun.runId(), recoveredRun.version());
+        }
+        if (session.status() != AgentSessionStatus.ACTIVE) {
             throw conflict("CONVERSATION_ARCHIVED");
         }
-        Instant now = time.now();
-        ConversationCommandBinding proposal = commandBinding(
-                caller,
-                "submit",
-                command.idempotencyKey(),
-                command.message() + "\u0000" + command.runProfileId().orElse("") + "\u0000"
-                        + inputSignature(command.inputs()) + "\u0000"
-                        + structuredOutputSignature(command.structuredOutput()),
-                command.sessionId(),
-                now);
+        ConversationRecord current =
+                conversations.find(command.sessionId()).orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
+        if (current.revision() != command.expectedRevision()) {
+            throw conflict("CONVERSATION_REVISION_STALE");
+        }
         return persistence.inTransaction(() -> {
-            ConversationCommandBinding reserved = conversations.reserveCommand(proposal);
-            if (!reserved.completed()) {
-                ConversationRecord latest = requireAuthorized(command.sessionId(), caller);
-                if (latest.activeDispatchKey()
-                        .filter(reserved.dispatchKey()::equals)
-                        .isEmpty()) {
-                    conversations.reserveActive(
-                            command.sessionId(), command.expectedRevision(), reserved.dispatchKey(), now);
-                }
-            }
-            if (reserved.completed()) return reconcileTerminalRun(requireAuthorized(command.sessionId(), caller));
             AgentRunSnapshot run = runtime.start(runRequest(
-                    reserved, command.message(), command.runProfileId(), command.inputs(), command.structuredOutput()));
-            ConversationRecord activated = conversations.activateRun(
-                    reserved.sessionId(), reserved.dispatchKey(), run.runId(), run.version(), time.now());
-            conversations.completeCommand(reserved.dispatchKey(), Optional.of(run.runId()), activated.revision());
-            return activated;
+                    dispatchKey,
+                    command.sessionId(),
+                    command.message(),
+                    command.runProfileId(),
+                    command.inputs(),
+                    command.structuredOutput()));
+            ConversationRecord touched = conversations.touchLastActivity(command.sessionId(), time.now());
+            return new ConversationRun(withStatus(touched, session), run.runId(), run.version());
         });
     }
 
@@ -252,20 +233,37 @@ public final class DefaultConversationService implements ConversationService {
     public ConversationRecord rename(RenameConversationCommand command) {
         Objects.requireNonNull(command, "command must not be null");
         SdkCaller caller = caller();
-        requireAuthorized(command.sessionId(), caller);
-        ConversationCommandBinding binding = conversations.reserveCommand(commandBinding(
-                caller,
+        AgentSession session = requireAuthorizedSession(command.sessionId(), caller);
+        String callerScope = callerScope(caller);
+        String dispatchKey = dispatchKey("rename", callerScope, keyDigest(command.idempotencyKey()));
+        String requestDigest = CanonicalSdkDigest.sha256(
+                "conversation-command-v1",
                 "rename",
-                command.idempotencyKey(),
-                command.expectedRevision() + "\u0000" + command.displayName(),
-                command.sessionId(),
-                time.now()));
-        if (binding.completed()) return requireAuthorized(command.sessionId(), caller);
+                command.sessionId().value(),
+                command.expectedRevision() + "\u0000" + command.displayName());
+        Optional<AppliedCommandResult> applied = idempotency().findAppliedCommand(callerScope, "rename", dispatchKey);
+        if (applied.isPresent()) {
+            requireMatchingDigest(applied.orElseThrow(), requestDigest);
+            return requireAuthorizedRecord(command.sessionId(), caller);
+        }
+        ConversationRecord current =
+                conversations.find(command.sessionId()).orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
+        if (current.revision() != command.expectedRevision()) {
+            throw conflict("CONVERSATION_REVISION_STALE");
+        }
         return persistence.inTransaction(() -> {
             ConversationRecord renamed = conversations.rename(
                     command.sessionId(), command.expectedRevision(), command.displayName(), time.now());
-            conversations.completeCommand(binding.dispatchKey(), Optional.empty(), renamed.revision());
-            return renamed;
+            idempotency()
+                    .recordAppliedCommand(new AppliedCommandResult(
+                            callerScope,
+                            "rename",
+                            dispatchKey,
+                            Optional.of(requestDigest),
+                            1,
+                            Long.toString(renamed.revision()),
+                            time.now()));
+            return withStatus(renamed, session);
         });
     }
 
@@ -286,107 +284,67 @@ public final class DefaultConversationService implements ConversationService {
             ConversationStatus target) {
         Objects.requireNonNull(command, "command must not be null");
         SdkCaller caller = caller();
-        ConversationRecord current = reconcileTerminalRun(requireAuthorized(command.sessionId(), caller));
-        ConversationCommandBinding binding = conversations.reserveCommand(commandBinding(
-                caller,
+        requireAuthorizedSession(command.sessionId(), caller);
+        String callerScope = callerScope(caller);
+        String dispatchKey = dispatchKey(operation, callerScope, keyDigest(command.idempotencyKey()));
+        String requestDigest = CanonicalSdkDigest.sha256(
+                "conversation-command-v1",
                 operation,
-                command.idempotencyKey(),
-                Long.toString(command.expectedRevision()),
-                command.sessionId(),
-                time.now()));
-        if (binding.completed()) return requireAuthorized(command.sessionId(), caller);
+                command.sessionId().value(),
+                Long.toString(command.expectedRevision()));
+        Optional<AppliedCommandResult> applied = idempotency().findAppliedCommand(callerScope, operation, dispatchKey);
+        if (applied.isPresent()) {
+            requireMatchingDigest(applied.orElseThrow(), requestDigest);
+            return requireAuthorizedRecord(command.sessionId(), caller);
+        }
+        ConversationRecord current =
+                conversations.find(command.sessionId()).orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
         if (current.revision() != command.expectedRevision()) {
             throw conflict("CONVERSATION_REVISION_STALE");
         }
         return persistence.inTransaction(() -> {
-            AgentSession session = persistence
-                    .runtimePersistence()
-                    .sessions()
-                    .find(command.sessionId())
-                    .orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
-            authorize(session, caller);
+            AgentSession session = requireAuthorizedSession(command.sessionId(), caller);
             long sessionVersion = session.version();
             if (target == ConversationStatus.ARCHIVED) {
                 session.archive(time.now());
             } else {
                 session.unarchive(time.now());
             }
-            persistence.runtimePersistence().sessions().save(session, sessionVersion);
+            sessions().save(session, sessionVersion);
             ConversationRecord changed = conversations.changeStatus(
                     command.sessionId(), command.expectedRevision(), expected, target, time.now());
-            conversations.completeCommand(binding.dispatchKey(), Optional.empty(), changed.revision());
-            return changed;
+            idempotency()
+                    .recordAppliedCommand(new AppliedCommandResult(
+                            callerScope,
+                            operation,
+                            dispatchKey,
+                            Optional.of(requestDigest),
+                            1,
+                            Long.toString(changed.revision()),
+                            time.now()));
+            return withStatus(changed, session);
         });
     }
 
-    private ConversationRecord reconcileTerminalRun(ConversationRecord conversation) {
-        conversation = reconcilePendingDispatch(conversation);
-        if (conversation.activeRunId().isEmpty()) return conversation;
-        AgentRunSnapshot snapshot =
-                runtime.find(conversation.activeRunId().orElseThrow()).orElse(null);
-        if (snapshot == null || !snapshot.status().isTerminal()) return conversation;
-        try {
-            return conversations.clearActive(
-                    conversation.sessionId(), snapshot.runId(), conversation.revision(), time.now());
-        } catch (IllegalStateException stale) {
-            return conversations.find(conversation.sessionId()).orElseThrow();
-        }
-    }
-
-    private ConversationRecord reconcilePendingDispatch(ConversationRecord conversation) {
-        if (conversation.activeDispatchKey().isEmpty()) return conversation;
-        String dispatchKey = conversation.activeDispatchKey().orElseThrow();
-        ConversationCommandBinding binding =
-                conversations.findCommand(dispatchKey).orElse(null);
-        if (binding == null || !binding.sessionId().equals(conversation.sessionId())) {
-            return releasePendingDispatch(conversation, dispatchKey);
-        }
-        Optional<io.haifa.agent.core.run.AgentRunId> recovered = binding.runId();
-        if (recovered.isEmpty()) {
-            String runtimeScope = conversation.tenant().tenantId()
-                    + "|"
-                    + conversation.principal().principalType()
-                    + "|"
-                    + conversation.principal().principalId();
-            recovered = persistence.runtimePersistence().idempotency().findRun(runtimeScope, "start", dispatchKey);
-        }
-        if (recovered.isEmpty()) return releasePendingDispatch(conversation, dispatchKey);
-        AgentRunSnapshot snapshot = runtime.find(recovered.orElseThrow()).orElse(null);
-        if (snapshot == null) return conversation;
-        ConversationRecord pending = conversation;
-        try {
-            return persistence.inTransaction(() -> {
-                ConversationRecord activated = conversations.activateRun(
-                        pending.sessionId(), dispatchKey, snapshot.runId(), snapshot.version(), time.now());
-                conversations.completeCommand(dispatchKey, Optional.of(snapshot.runId()), activated.revision());
-                return activated;
-            });
-        } catch (IllegalStateException stale) {
-            return conversations.find(pending.sessionId()).orElseThrow();
-        }
-    }
-
-    private ConversationRecord releasePendingDispatch(ConversationRecord conversation, String dispatchKey) {
-        try {
-            return persistence.inTransaction(() -> conversations.releasePendingDispatch(
-                    conversation.sessionId(), dispatchKey, conversation.revision(), time.now()));
-        } catch (IllegalStateException stale) {
-            return conversations.find(conversation.sessionId()).orElseThrow();
+    private static void requireMatchingDigest(AppliedCommandResult applied, String requestDigest) {
+        if (applied.requestDigest().filter(requestDigest::equals).isEmpty()) {
+            throw conflict("CONVERSATION_IDEMPOTENCY_CONFLICT");
         }
     }
 
     private AgentRunRequest runRequest(
-            ConversationCommandBinding binding,
+            String dispatchKey,
+            AgentSessionId sessionId,
             String message,
             Optional<String> runProfileId,
             List<io.haifa.agent.core.content.ContentPart> inputs,
             Optional<io.haifa.agent.core.run.StructuredOutputRequirement> structuredOutput) {
         return new AgentRunRequest(
-                binding.dispatchKey(),
+                dispatchKey,
                 profile.definitionId(),
                 Optional.of(profile.definitionVersion()),
                 runProfileId.orElse(profile.defaultRunProfile().id()),
-                binding.sessionId(),
+                sessionId,
                 Optional.empty(),
                 message,
                 inputs,
@@ -394,111 +352,89 @@ public final class DefaultConversationService implements ConversationService {
                 structuredOutput);
     }
 
-    private static String structuredOutputSignature(
-            Optional<io.haifa.agent.core.run.StructuredOutputRequirement> requirement) {
-        return requirement
-                .map(value -> CanonicalSdkDigest.sha256(
-                        "structured-output-v1",
-                        value.schemaId(),
-                        value.schemaVersion(),
-                        value.responseName(),
-                        canonicalValue(value.jsonSchema())))
-                .orElse("");
+    private static ConversationRecord metadata(AgentSessionId sessionId, String displayName, Instant at) {
+        return new ConversationRecord(sessionId, displayName, at, at, 0, ConversationStatus.ACTIVE);
     }
 
-    private static String canonicalValue(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            return map.entrySet().stream()
-                    .sorted(java.util.Comparator.comparing(entry -> String.valueOf(entry.getKey())))
-                    .map(entry -> String.valueOf(entry.getKey()) + "=" + canonicalValue(entry.getValue()))
-                    .collect(java.util.stream.Collectors.joining(",", "{", "}"));
+    private AgentSessionId resolveSessionId(AgentRunId runId, SdkCaller caller) {
+        AgentRun run = persistence
+                .runtimePersistence()
+                .runs()
+                .find(runId)
+                .orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
+        if (!run.tenant().equals(caller.tenant()) || !run.principal().equals(caller.principal())) {
+            throw conflict("CONVERSATION_UNAVAILABLE");
         }
-        if (value instanceof Iterable<?> iterable) {
-            List<String> items = new ArrayList<>();
-            iterable.forEach(item -> items.add(canonicalValue(item)));
-            return String.join(",", items);
-        }
-        return String.valueOf(value);
+        return run.sessionId();
     }
 
-    private static String inputSignature(List<io.haifa.agent.core.content.ContentPart> inputs) {
-        return inputs.stream()
-                .map(value -> switch (value) {
-                    case io.haifa.agent.core.content.ImageUrlContentPart image ->
-                        "url:" + image.url().toASCIIString();
-                    case io.haifa.agent.core.content.StoredImageContentPart image ->
-                        String.join(
-                                ":",
-                                "stored",
-                                image.storeId(),
-                                image.imageId(),
-                                image.mediaType(),
-                                Long.toString(image.sizeBytes()),
-                                image.sha256());
-                    case io.haifa.agent.core.content.StoredAudioContentPart audio ->
-                        String.join(
-                                ":",
-                                "stored-audio",
-                                audio.storeId(),
-                                audio.audioId(),
-                                audio.mediaType(),
-                                Long.toString(audio.sizeBytes()),
-                                audio.sha256());
-                    default -> throw new IllegalArgumentException("unsupported conversation input");
-                })
-                .collect(java.util.stream.Collectors.joining("\u0000"));
+    private Optional<ConversationRecord> visible(ConversationRecord metadata, SdkCaller caller) {
+        return sessions()
+                .find(metadata.sessionId())
+                .filter(session -> isVisible(session, caller))
+                .map(session -> withStatus(metadata, session));
     }
 
-    private ConversationCommandBinding commandBinding(
-            SdkCaller caller,
-            String operation,
-            String idempotencyKey,
-            String message,
-            AgentSessionId sessionId,
-            Instant at) {
-        String callerScope = CanonicalSdkDigest.sha256(
+    private ConversationRecord requireAuthorizedRecord(AgentSessionId sessionId, SdkCaller caller) {
+        ConversationRecord metadata =
+                conversations.find(sessionId).orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
+        AgentSession session = requireAuthorizedSession(sessionId, caller);
+        return withStatus(metadata, session);
+    }
+
+    private AgentSession requireAuthorizedSession(AgentSessionId sessionId, SdkCaller caller) {
+        AgentSession session = sessions()
+                .find(Objects.requireNonNull(sessionId, "sessionId must not be null"))
+                .orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
+        if (!isVisible(session, caller)) throw conflict("CONVERSATION_UNAVAILABLE");
+        return session;
+    }
+
+    private static boolean isVisible(AgentSession session, SdkCaller caller) {
+        return session.tenant().equals(caller.tenant())
+                && session.owner().equals(caller.principal())
+                && (session.status() == AgentSessionStatus.ACTIVE || session.status() == AgentSessionStatus.ARCHIVED);
+    }
+
+    private static ConversationRecord withStatus(ConversationRecord metadata, AgentSession session) {
+        return new ConversationRecord(
+                metadata.sessionId(),
+                metadata.displayName(),
+                metadata.createdAt(),
+                metadata.lastActivityAt(),
+                metadata.revision(),
+                session.status() == AgentSessionStatus.ARCHIVED
+                        ? ConversationStatus.ARCHIVED
+                        : ConversationStatus.ACTIVE);
+    }
+
+    private static String callerScope(SdkCaller caller) {
+        return CanonicalSdkDigest.sha256(
                 "caller-v1",
                 caller.tenant().tenantId(),
                 caller.principal().principalId(),
                 caller.principal().principalType());
-        String keyDigest = CanonicalSdkDigest.sha256("idempotency-v1", idempotencyKey);
-        String sessionBinding = operation.equals("start") ? "" : sessionId.value();
-        String requestDigest = CanonicalSdkDigest.sha256("conversation-command-v1", operation, sessionBinding, message);
-        String dispatchKey = "sdk:" + operation + ":" + callerScope.substring(7, 23) + ":" + keyDigest.substring(7);
-        return new ConversationCommandBinding(
-                callerScope,
-                operation,
-                keyDigest,
-                requestDigest,
-                dispatchKey,
-                sessionId,
-                Optional.empty(),
-                false,
-                OptionalLong.empty(),
-                at);
     }
 
-    private ConversationRecord requireAuthorized(AgentSessionId sessionId, SdkCaller caller) {
-        ConversationRecord conversation =
-                conversations.find(sessionId).orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
-        authorize(conversation, caller);
-        return conversation;
+    private static String keyDigest(String idempotencyKey) {
+        return CanonicalSdkDigest.sha256("idempotency-v1", idempotencyKey);
     }
 
-    private static void authorize(ConversationRecord conversation, SdkCaller caller) {
-        if (!conversation.tenant().equals(caller.tenant())
-                || !conversation.principal().equals(caller.principal())) {
-            throw conflict("CONVERSATION_UNAVAILABLE");
-        }
+    private static String dispatchKey(String operation, String callerScope, String keyDigest) {
+        return "sdk:" + operation + ":" + callerScope.substring(7, 23) + ":" + keyDigest.substring(7);
     }
 
-    private static void authorize(AgentSession session, SdkCaller caller) {
-        if (!session.tenant().equals(caller.tenant()) || !session.owner().equals(caller.principal())) {
-            throw conflict("CONVERSATION_UNAVAILABLE");
-        }
-        if (session.status() != AgentSessionStatus.ACTIVE && session.status() != AgentSessionStatus.ARCHIVED) {
-            throw conflict("CONVERSATION_UNAVAILABLE");
-        }
+    private static String runtimeScope(SdkCaller caller) {
+        return caller.tenant().tenantId() + "|" + caller.principal().principalType() + "|"
+                + caller.principal().principalId();
+    }
+
+    private io.haifa.agent.runtime.core.storage.AgentSessionRepository sessions() {
+        return persistence.runtimePersistence().sessions();
+    }
+
+    private io.haifa.agent.runtime.core.storage.IdempotencyRepository idempotency() {
+        return persistence.runtimePersistence().idempotency();
     }
 
     private SdkCaller caller() {

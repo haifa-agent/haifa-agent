@@ -33,7 +33,7 @@ public final class SafeErrorHandlingExample {
                 .build()) {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand("safe-error-start", "Safe error", "Reply with ready."));
-            var runId = conversation.activeRunId().orElseThrow();
+            var runId = conversation.runId();
             var completed = agent.runs().await(runId, Duration.ofSeconds(5));
             if (completed.isEmpty()) {
                 agent.runs().handle(runId).cancel();

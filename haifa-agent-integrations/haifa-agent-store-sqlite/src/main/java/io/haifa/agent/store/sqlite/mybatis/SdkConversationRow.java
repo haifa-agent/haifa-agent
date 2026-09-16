@@ -8,10 +8,6 @@ public record SdkConversationRow(
         String principalId,
         String principalType,
         String displayName,
-        String status,
-        String activeRunId,
-        Long activeRunVersion,
-        String activeDispatchKey,
         Instant createdAt,
         Instant lastActivityAt,
         long revision) {}

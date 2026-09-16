@@ -7,6 +7,7 @@ import io.haifa.agent.sdk.conversation.ConversationException;
 import io.haifa.agent.sdk.conversation.ConversationPage;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
 import io.haifa.agent.sdk.conversation.ConversationRecord;
+import io.haifa.agent.sdk.conversation.ConversationRun;
 import io.haifa.agent.sdk.conversation.ConversationService;
 import io.haifa.agent.sdk.conversation.ConversationTurnPage;
 import io.haifa.agent.sdk.conversation.ConversationTurnQuery;
@@ -29,7 +30,7 @@ public final class SafeConversationService implements ConversationService {
     }
 
     @Override
-    public ConversationRecord start(StartConversationCommand command) {
+    public ConversationRun start(StartConversationCommand command) {
         return execute(
                 "conversation.start",
                 command == null ? "null" : command.idempotencyKey(),
@@ -56,7 +57,7 @@ public final class SafeConversationService implements ConversationService {
     }
 
     @Override
-    public ConversationRecord submit(SubmitConversationTurnCommand command) {
+    public ConversationRun submit(SubmitConversationTurnCommand command) {
         return execute(
                 "conversation.submit",
                 command == null ? "null" : command.idempotencyKey(),

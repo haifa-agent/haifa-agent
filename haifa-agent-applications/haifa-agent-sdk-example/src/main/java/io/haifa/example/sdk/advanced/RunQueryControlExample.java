@@ -12,7 +12,7 @@ public final class RunQueryControlExample {
         try (var agent = DeterministicExampleSupport.inMemory()) {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand("query-start", "Query", "Give a short answer."));
-            var runId = conversation.activeRunId().orElseThrow();
+            var runId = conversation.runId();
             var completed = agent.runs().await(runId, Duration.ofSeconds(5));
             System.out.println(completed
                     .orElseGet(() -> agent.runs().handle(runId).snapshot())

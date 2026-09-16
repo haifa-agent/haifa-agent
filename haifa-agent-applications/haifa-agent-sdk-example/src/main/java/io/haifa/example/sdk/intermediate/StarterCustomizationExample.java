@@ -24,7 +24,7 @@ public final class StarterCustomizationExample {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand(
                             "custom-starter-start", "Customized Starter", "What support is available?"));
-            var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
+            var completed = agent.runs().await(conversation.runId());
             System.out.println(completed.output().orElseThrow());
         }
     }

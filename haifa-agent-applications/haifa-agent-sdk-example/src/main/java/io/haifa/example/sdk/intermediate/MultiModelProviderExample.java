@@ -24,14 +24,8 @@ public final class MultiModelProviderExample {
             var second = agent.conversations()
                     .start(new StartConversationCommand(
                             "model-selected", "Selected", "Use the selected model.", Optional.of("second-model")));
-            System.out.println(agent.runs()
-                    .await(first.activeRunId().orElseThrow())
-                    .output()
-                    .orElseThrow());
-            System.out.println(agent.runs()
-                    .await(second.activeRunId().orElseThrow())
-                    .output()
-                    .orElseThrow());
+            System.out.println(agent.runs().await(first.runId()).output().orElseThrow());
+            System.out.println(agent.runs().await(second.runId()).output().orElseThrow());
         }
     }
 }
