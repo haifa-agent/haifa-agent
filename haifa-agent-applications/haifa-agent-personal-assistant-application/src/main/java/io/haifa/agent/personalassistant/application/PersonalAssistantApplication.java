@@ -127,7 +127,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 missionRuntime,
                 artifacts,
                 skillBindingReferences,
-                agent.profile().configurationDigest(),
+                agent.profile().productId().value() + "@"
+                        + agent.profile().productVersion().value(),
                 fetchEvidenceReader);
     }
 

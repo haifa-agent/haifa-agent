@@ -203,7 +203,11 @@ class MissionBackupServiceTest {
 
     private static SqliteSdkProductContributions personalSqlite(Path database) {
         return SqliteSdkProductContributions.initialize(
-                SqliteStoreConfiguration.defaults(database), CLOCK, new PlaintextModelContinuationProtector());
+                SqliteStoreConfiguration.defaults(database),
+                CLOCK,
+                new PlaintextModelContinuationProtector(),
+                io.haifa.agent.sdk.product.ProductMemoryPolicy.safeDefault(),
+                io.haifa.agent.sdk.product.ProductArtifactPolicy.disabled());
     }
 
     private static void initializeArtifact(Path database) throws Exception {

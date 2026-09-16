@@ -324,9 +324,9 @@ public final class HaifaAgentStarterBuilder {
                 new ProductVersion(VERSION),
                 new AgentDefinitionId("haifa-sdk-starter-agent"),
                 new AgentDefinitionVersion(1, 0, 0),
-                snapshot.modelId().value(),
-                VERSION,
                 instructions,
+                new io.haifa.agent.sdk.product.ProductRunProfileRef(
+                        snapshot.modelId().value(), VERSION),
                 new AgentRunBudget(65_536, 8_192, 65_536, 16, 16, 0, "USD", 100),
                 new AgentRunLimits(16, 0, 1, 120_000, 60_000, 16, 16, 0),
                 Set.of(),

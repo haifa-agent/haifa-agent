@@ -186,7 +186,9 @@ public class PersonalAssistantConfiguration {
                 new SqliteStoreConfiguration(
                         dataDirectory.resolve("personal-assistant.sqlite").toAbsolutePath(), 1_250, 4 * 1024 * 1024),
                 personalClock,
-                protector);
+                protector,
+                io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile.MEMORY_POLICY,
+                io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile.ARTIFACT_POLICY);
         var sharedPolicy = new PolicyPlatformContribution(
                 PersonalAssistantPolicyRules.conservative(),
                 new io.haifa.agent.policy.core.DefaultPolicyDecisionService());

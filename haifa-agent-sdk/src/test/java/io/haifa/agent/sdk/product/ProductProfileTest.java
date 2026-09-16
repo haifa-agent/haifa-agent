@@ -13,60 +13,43 @@ import org.junit.jupiter.api.Test;
 class ProductProfileTest {
 
     @Test
-    void digestIsStableAndIncludesStructuredPoliciesAndAllowLists() {
-        ProductProfile first = profile(ProductPolicies.safeDefaults(), Set.of("memory.search"), Set.of());
-        ProductProfile repeated = profile(ProductPolicies.safeDefaults(), Set.of("memory.search"), Set.of());
-        ProductProfile differentTools = profile(ProductPolicies.safeDefaults(), Set.of("web_search"), Set.of());
-        ProductProfile differentSkills =
-                profile(ProductPolicies.safeDefaults(), Set.of("memory.search"), Set.of("plan"));
-        ProductProfile differentPolicy = profile(
-                new ProductPolicies(
-                        new ProductMemoryPolicy(true, 32_000, 99),
-                        ProductArtifactPolicy.disabled(),
-                        ProductExecutionPolicy.disabled()),
-                Set.of("memory.search"),
-                Set.of());
-        ProductProfile differentQuotaMode = ProductProfile.create(
-                new ProductId("profile-test"),
-                new ProductVersion("1.0.0"),
-                new AgentDefinitionId("profile-test-agent"),
-                new AgentDefinitionVersion(1, 0, 0),
-                "profile-test-chat",
-                "1.0.0",
-                "Safe instructions.",
-                AgentRunBudget.disabled(),
-                new AgentRunLimits(2, 0, 1, 10_000, 10_000, 64, 32, 8),
-                ProductPolicies.safeDefaults(),
-                Set.of("memory.search"),
-                Set.of());
+    void exposesProductSelectionAndDefaults() {
+        ProductProfile profile = profile(Set.of("memory.search"), Set.of("plan"));
 
-        assertThat(repeated.configurationDigest()).isEqualTo(first.configurationDigest());
-        assertThat(differentTools.configurationDigest()).isNotEqualTo(first.configurationDigest());
-        assertThat(differentSkills.configurationDigest()).isNotEqualTo(first.configurationDigest());
-        assertThat(differentPolicy.configurationDigest()).isNotEqualTo(first.configurationDigest());
-        assertThat(differentQuotaMode.configurationDigest()).isNotEqualTo(first.configurationDigest());
+        assertThat(profile.productId().value()).isEqualTo("profile-test");
+        assertThat(profile.productVersion().value()).isEqualTo("1.0.0");
+        assertThat(profile.definitionId().value()).isEqualTo("profile-test-agent");
+        assertThat(profile.definitionVersion()).isEqualTo(new AgentDefinitionVersion(1, 0, 0));
+        assertThat(profile.defaultRunProfile()).isEqualTo(new ProductRunProfileRef("profile-test-chat", "1.0.0"));
+        assertThat(profile.allowedTools()).containsExactly("memory.search");
+        assertThat(profile.allowedSkills()).containsExactly("plan");
     }
 
     @Test
-    void rejectsDigestThatDoesNotMatchFrozenFields() {
-        ProductProfile valid = profile(ProductPolicies.safeDefaults(), Set.of(), Set.of());
-        assertThatThrownBy(() -> new ProductProfile(
-                        valid.schemaVersion(),
-                        valid.productId(),
-                        valid.productVersion(),
-                        valid.definitionId(),
-                        valid.definitionVersion(),
-                        valid.runProfileId(),
-                        valid.runProfileVersion(),
-                        valid.instructions(),
-                        valid.budget(),
-                        valid.limits(),
-                        valid.policies(),
-                        valid.allowedTools(),
-                        valid.allowedSkills(),
-                        "sha256:" + "0".repeat(64)))
+    void rejectsBlankInstructionsAndMissingFields() {
+        assertThatThrownBy(() -> ProductProfile.create(
+                        new ProductId("profile-test"),
+                        new ProductVersion("1.0.0"),
+                        new AgentDefinitionId("profile-test-agent"),
+                        new AgentDefinitionVersion(1, 0, 0),
+                        " ",
+                        new ProductRunProfileRef("profile-test-chat", "1.0.0"),
+                        new AgentRunBudget(1_000, 1_000, 1_000, 2, 2, 0, "USD", 100),
+                        new AgentRunLimits(2, 0, 1, 10_000, 10_000),
+                        Set.of(),
+                        Set.of()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("digest");
+                .hasMessageContaining("instructions");
+    }
+
+    @Test
+    void rejectsBlankDefaultRunProfileValues() {
+        assertThatThrownBy(() -> new ProductRunProfileRef(" ", "1.0.0"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("id");
+        assertThatThrownBy(() -> new ProductRunProfileRef("profile-test-chat", " "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("version");
     }
 
     @Test
@@ -74,23 +57,21 @@ class ProductProfileTest {
         assertThatThrownBy(() -> new ProductMemoryPolicy(false, 32_000, 100))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("manual review");
-        assertThatThrownBy(() -> new ProductExecutionPolicy(false, true, false, 0, 0))
+        assertThatThrownBy(() -> new ProductArtifactPolicy(1_000, 0, 0, Set.of("text/plain"), false, 0, 0, false))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("disabled execution");
+                .hasMessageContaining("disabled artifact policy");
     }
 
-    private static ProductProfile profile(ProductPolicies policies, Set<String> tools, Set<String> skills) {
+    private static ProductProfile profile(Set<String> tools, Set<String> skills) {
         return ProductProfile.create(
                 new ProductId("profile-test"),
                 new ProductVersion("1.0.0"),
                 new AgentDefinitionId("profile-test-agent"),
                 new AgentDefinitionVersion(1, 0, 0),
-                "profile-test-chat",
-                "1.0.0",
                 "Safe instructions.",
+                new ProductRunProfileRef("profile-test-chat", "1.0.0"),
                 new AgentRunBudget(1_000, 1_000, 1_000, 2, 2, 0, "USD", 100),
                 new AgentRunLimits(2, 0, 1, 10_000, 10_000),
-                policies,
                 tools,
                 skills);
     }

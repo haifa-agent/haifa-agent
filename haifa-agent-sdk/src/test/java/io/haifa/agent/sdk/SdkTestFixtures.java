@@ -22,6 +22,7 @@ import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.internal.InMemoryPersistenceContribution;
 import io.haifa.agent.sdk.product.ProductId;
 import io.haifa.agent.sdk.product.ProductProfile;
+import io.haifa.agent.sdk.product.ProductRunProfileRef;
 import io.haifa.agent.sdk.product.ProductVersion;
 import java.net.URI;
 import java.util.List;
@@ -42,9 +43,8 @@ public final class SdkTestFixtures {
                 new ProductVersion("1.0.0"),
                 new AgentDefinitionId(productId + "-agent"),
                 new AgentDefinitionVersion(1, 0, 0),
-                productId + "-chat",
-                "1.0.0",
                 "Answer the user carefully.",
+                new ProductRunProfileRef(productId + "-chat", "1.0.0"),
                 new AgentRunBudget(10_000, 10_000, 10_000, 8, 8, 0, "USD", 1_000),
                 new AgentRunLimits(8, 0, 1, 30_000, 30_000),
                 allowedTools,
