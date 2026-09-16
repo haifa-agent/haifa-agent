@@ -116,12 +116,7 @@ class SqliteConversationStoreTest {
                 Callable<Boolean> archive = () -> {
                     start.await();
                     try {
-                        store.changeStatus(
-                                competing,
-                                0,
-                                ConversationStatus.ACTIVE,
-                                ConversationStatus.ARCHIVED,
-                                NOW.plusSeconds(2));
+                        store.changeStatus(competing, 0, NOW.plusSeconds(2));
                         return true;
                     } catch (IllegalStateException expected) {
                         return false;

@@ -281,10 +281,45 @@ public final class PersonalAssistantAssembler {
         fields.add(tools.skill().catalog().snapshot().digest().value());
         fields.add("policy.rules.digest");
         fields.add(dependencies.policy().rules().contentDigest());
-        fields.add("memory.policy");
-        fields.add(dependencies.memory().policy().toString());
-        fields.add("artifact.policy");
-        fields.add(dependencies.artifact().policy().toString());
+        io.haifa.agent.sdk.product.ProductMemoryPolicy memoryPolicy =
+                dependencies.memory().policy();
+        fields.add("memory.policy.manualReviewRequired");
+        fields.add(Boolean.toString(memoryPolicy.manualReviewRequired()));
+        fields.add("memory.policy.maxCandidateContentChars");
+        fields.add(Integer.toString(memoryPolicy.maxCandidateContentChars()));
+        fields.add("memory.policy.maxQueryLimit");
+        fields.add(Integer.toString(memoryPolicy.maxQueryLimit()));
+        io.haifa.agent.sdk.product.ProductArtifactPolicy artifactPolicy =
+                dependencies.artifact().policy();
+        fields.add("artifact.policy.maxArtifactBytes");
+        fields.add(Long.toString(artifactPolicy.maxArtifactBytes()));
+        fields.add("artifact.policy.maxArtifactsPerRun");
+        fields.add(Integer.toString(artifactPolicy.maxArtifactsPerRun()));
+        fields.add("artifact.policy.maxArtifactBytesPerRun");
+        fields.add(Long.toString(artifactPolicy.maxArtifactBytesPerRun()));
+        fields.add("artifact.policy.allowedMediaTypes");
+        artifactPolicy.allowedMediaTypes().stream().sorted().forEach(fields::add);
+        fields.add("artifact.policy.rangeSupported");
+        fields.add(Boolean.toString(artifactPolicy.rangeSupported()));
+        fields.add("artifact.policy.localSoftLimitBytes");
+        fields.add(Long.toString(artifactPolicy.localSoftLimitBytes()));
+        fields.add("artifact.policy.localHardLimitBytes");
+        fields.add(Long.toString(artifactPolicy.localHardLimitBytes()));
+        fields.add("artifact.policy.requiredCompletionGate");
+        fields.add(Boolean.toString(artifactPolicy.requiredCompletionGate()));
+        fields.add("web.contribution.binding");
+        dependencies.web().contributions().stream()
+                .sorted(java.util.Comparator.comparing(item -> item.alias().value()))
+                .forEach(item -> {
+                    fields.add(item.alias().value());
+                    fields.add(item.providerBindingReference());
+                });
+        fields.add("execution.shellRuntime.os");
+        fields.add(dependencies.execution().shellRuntime().operatingSystem());
+        fields.add("execution.shellRuntime.languages");
+        dependencies.execution().shellRuntime().scriptLanguages().stream()
+                .sorted()
+                .forEach(fields::add);
         fields.add("persistence.class");
         fields.add(dependencies.persistence().getClass().getName());
         fields.add("conversation.class");

@@ -93,12 +93,7 @@ public final class InMemoryConversationStore implements ConversationStore {
     }
 
     @Override
-    public synchronized ConversationRecord changeStatus(
-            AgentSessionId sessionId,
-            long expectedRevision,
-            ConversationStatus expected,
-            ConversationStatus target,
-            Instant at) {
+    public synchronized ConversationRecord changeStatus(AgentSessionId sessionId, long expectedRevision, Instant at) {
         Objects.requireNonNull(at, "at must not be null");
         ConversationRecord current = requireConversation(sessionId, expectedRevision);
         return save(new ConversationRecord(

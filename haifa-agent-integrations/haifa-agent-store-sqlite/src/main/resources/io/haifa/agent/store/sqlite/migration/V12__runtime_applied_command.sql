@@ -7,4 +7,4 @@ CREATE TABLE IF NOT EXISTS runtime_applied_command (
     result_payload  TEXT NOT NULL,
     applied_at      INTEGER NOT NULL CHECK (applied_at >= 0),
     PRIMARY KEY (caller_scope, operation, idempotency_key)
-);
+) STRICT;

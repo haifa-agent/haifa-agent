@@ -246,6 +246,9 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - `RuntimePersistencePorts` 显式组合 Session、Run、Attempt、Checkpoint、Runtime State、Event、Outbox、
   Idempotency、Unit of Work、Tool Journal、Interaction、Run Input、Summary、Tool Result Asset 与消息脱敏监听注册边界；
   `RuntimeCoreBuilder` 只接受该组合并提供默认内存组合，不依赖 SQLite、JDBC、Jackson 或 JSONL。
+- `IdempotencyRepository` 除 Run start 绑定外，还通过 `findAppliedCommand`/`recordAppliedCommand` 持久化
+  产品命令的 `AppliedCommandResult`（caller scope、operation、幂等键、canonical request digest 与结果
+  版本/载荷），供 SDK Conversation 的 rename/archive/unarchive 等命令在重启后仍 exactly-once。
 - Application 通过 `RuntimeCoreBuilder.persistence(...)` 与 `workerId(...)` 注入完整适配器装配。
   Runtime 不重放 Unit of Work；具体持久化适配器只能在用户事务工作开始前、尚未取得数据库写锁时做有限重试，
   对未知提交结果或已经变更的内存聚合必须 fail closed。
