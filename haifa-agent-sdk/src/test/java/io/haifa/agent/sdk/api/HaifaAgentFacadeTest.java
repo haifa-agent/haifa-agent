@@ -90,6 +90,20 @@ public class HaifaAgentFacadeTest {
     }
 
     @Test
+    void buildingWithToolsWithoutPolicyFailsClosed() {
+        ProductProfile profile = SdkTestFixtures.profile("no-policy");
+
+        assertThatThrownBy(() -> HaifaAgents.builder(profile)
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
+                        .tool(new WeatherTool())
+                        .build())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("explicit product policy");
+    }
+
+    @Test
     void appliesProductPublicToolPolicyDecoratorDuringRuntimeAssembly() {
         AtomicBoolean decorated = new AtomicBoolean();
 
