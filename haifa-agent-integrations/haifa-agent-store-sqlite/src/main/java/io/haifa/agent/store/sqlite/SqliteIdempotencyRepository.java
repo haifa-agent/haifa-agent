@@ -2,10 +2,12 @@ package io.haifa.agent.store.sqlite;
 
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.RuntimeCommandResult;
+import io.haifa.agent.runtime.core.storage.AppliedCommandResult;
 import io.haifa.agent.runtime.core.storage.IdempotencyRepository;
 import io.haifa.agent.runtime.core.storage.RunStartIdempotencyBinding;
 import io.haifa.agent.store.sqlite.codec.EncodedPayload;
 import io.haifa.agent.store.sqlite.codec.VersionedPayloadCodecRegistry;
+import io.haifa.agent.store.sqlite.mybatis.AppliedCommandRow;
 import io.haifa.agent.store.sqlite.mybatis.IdempotencyRow;
 import io.haifa.agent.store.sqlite.mybatis.RuntimeStoreMapper;
 import io.haifa.agent.store.sqlite.payload.CommandResultPayload;
@@ -83,6 +85,54 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
     }
 
     @Override
+    public Optional<AppliedCommandResult> findAppliedCommand(
+            String callerScope, String operation, String idempotencyKey) {
+        return execute(() -> Optional.ofNullable(findApplied(callerScope, operation, idempotencyKey))
+                .map(SqliteIdempotencyRepository::toDomain));
+    }
+
+    @Override
+    public AppliedCommandResult recordAppliedCommand(AppliedCommandResult result) {
+        Objects.requireNonNull(result, "result must not be null");
+        return execute(() -> {
+            RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
+            mapper.insertAppliedCommand(new AppliedCommandRow(
+                    result.callerScope(),
+                    result.operation(),
+                    result.idempotencyKey(),
+                    result.requestDigest().orElse(null),
+                    result.resultVersion(),
+                    result.resultPayload(),
+                    result.appliedAt()));
+            AppliedCommandRow stored =
+                    mapper.findAppliedCommand(result.callerScope(), result.operation(), result.idempotencyKey());
+            if (stored == null) throw new IllegalStateException("applied command was not recorded");
+            AppliedCommandResult storedResult = toDomain(stored);
+            if (conflicts(storedResult, result)) {
+                throw new IllegalStateException("applied command idempotency key has conflicting content");
+            }
+            return storedResult;
+        });
+    }
+
+    private static AppliedCommandResult toDomain(AppliedCommandRow row) {
+        return new AppliedCommandResult(
+                row.callerScope(),
+                row.operation(),
+                row.idempotencyKey(),
+                Optional.ofNullable(row.requestDigest()),
+                row.resultVersion(),
+                row.resultPayload(),
+                row.appliedAt());
+    }
+
+    private static boolean conflicts(AppliedCommandResult stored, AppliedCommandResult incoming) {
+        return !stored.requestDigest().equals(incoming.requestDigest())
+                || stored.resultVersion() != incoming.resultVersion()
+                || !stored.resultPayload().equals(incoming.resultPayload());
+    }
+
+    @Override
     public boolean markCommandApplied(String callerScope, String key) {
         return execute(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
@@ -155,6 +205,13 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
         requireText(operation, "operation");
         requireText(key, "key");
         return unitOfWork.mapper(RuntimeStoreMapper.class).findIdempotency(callerScope, operation, key);
+    }
+
+    private AppliedCommandRow findApplied(String callerScope, String operation, String idempotencyKey) {
+        requireText(callerScope, "callerScope");
+        requireText(operation, "operation");
+        requireText(idempotencyKey, "idempotencyKey");
+        return unitOfWork.mapper(RuntimeStoreMapper.class).findAppliedCommand(callerScope, operation, idempotencyKey);
     }
 
     private static void requireText(String value, String field) {
