@@ -17,7 +17,7 @@ public final class AgentReuseLifecycleExample {
                 var conversation = agent.conversations()
                         .start(new StartConversationCommand(
                                 "reuse-" + index, "Conversation " + (index + 1), questions.get(index)));
-                var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
+                var completed = agent.runs().await(conversation.runId());
                 System.out.println(completed.output().orElseThrow());
             }
         } finally {

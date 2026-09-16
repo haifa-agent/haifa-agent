@@ -53,10 +53,10 @@ try (HaifaAgent agent = HaifaAgents.builder(profile)
         .persistence(persistence)
         .conversation(conversation)
         .build()) {
-    ConversationRecord started = agent.conversations()
+    ConversationRun started = agent.conversations()
             .start(new StartConversationCommand("start-1", "New chat", "Hello"));
     AgentRunSnapshot completed = agent.runs()
-            .await(started.activeRunId().orElseThrow());
+            .await(started.runId());
 }
 ```
 
@@ -162,14 +162,18 @@ medium risk、unknown idempotency 与由 Policy 决定的审批。
 
 ## Conversation 公共边界
 
-一个 Conversation 以 Core `AgentSessionId` 作为权威身份，一个会话可包含多个 Run，但最多一个活动
-Run。当前 API 提供：
+一个 Conversation 以 Core `AgentSessionId` 作为权威身份。Session、Run 与 Turn 事实只由 Runtime 拥有；
+SDK Conversation 层只保存 display/index 元数据（display name、时间、revision，以及创建时从可信 Caller
+复制的不可变授权/列表索引）。`ConversationRecord` 是读模型，其 `status` 由 Runtime
+`AgentSession.status()` 派生：`ACTIVE`/`ARCHIVED` 正常返回，`CLOSED`/`DELETED` 视为不可用。当前 API 提供：
 
-- `start`、`submit`、`rename`、`archive`、`unarchive`；
+- `start`、`submit` 返回 `ConversationRun`（`ConversationRecord` 加本次 Run ID/version），
+  `rename`、`archive`、`unarchive` 返回 `ConversationRecord`；
 - `find`、可信 Caller 范围内的稳定 Cursor 列表/搜索；
 - 只返回用户可见 User/Assistant 内容的 Turn Cursor 分页；
-- 写命令的 caller-scoped idempotency、request digest、expected revision 与单活动 Run 冲突；
-- Runtime 已创建 Run、投影尚未完成，以及活动 Run 已终态时的查询期恢复。
+- 写命令的 caller-scoped idempotency、request digest 与 expected revision；`start` 通过 Runtime Run
+  绑定在跨崩溃窗口内复用同一 Run，`rename`/`archive`/`unarchive` 通过 Runtime applied-command 记录保证
+  exactly-once。
 
 删除、回收站、Tree/Fork/Clone、Follow-up Queue 和 Retention 不属于该公共边界。SQLite 实现位于
 `haifa-agent-store-sqlite`，SDK 自身不依赖 SQLite；`InMemory` 实现只用于开发和确定性测试。

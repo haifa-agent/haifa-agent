@@ -78,8 +78,7 @@ public final class HaifaAgent implements AutoCloseable {
         String idempotencyKey = "sdk-chat-" + ids.nextValue();
         var conversation = conversations.start(new StartConversationCommand(
                 idempotencyKey, metadata.name(), message, Optional.empty(), inputs, Optional.empty()));
-        return new AgentChatHandle(
-                conversation.sessionId(), conversation.activeRunId().orElseThrow(), runs);
+        return new AgentChatHandle(conversation.record().sessionId(), conversation.runId(), runs);
     }
 
     /** Starts a new Conversation and Run with media inputs (such as images) through the existing authoritative services. */
@@ -94,8 +93,7 @@ public final class HaifaAgent implements AutoCloseable {
         String idempotencyKey = "sdk-chat-" + ids.nextValue();
         var conversation = conversations.start(new StartConversationCommand(
                 idempotencyKey, metadata.name(), message, Optional.empty(), List.of(), Optional.of(requirement)));
-        return new AgentResponseHandle<>(
-                conversation.sessionId(), conversation.activeRunId().orElseThrow(), runs, responseType);
+        return new AgentResponseHandle<>(conversation.record().sessionId(), conversation.runId(), runs, responseType);
     }
 
     public AgentRuns runs() {

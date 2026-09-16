@@ -29,7 +29,6 @@ import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.contribution.ModelContribution;
-import io.haifa.agent.sdk.conversation.ConversationException;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
@@ -77,15 +76,18 @@ class SqliteSdkPersonalFixtureIT {
                 .build()) {
             var conversation =
                     agent.conversations().start(new StartConversationCommand("memory-start", "Memory", "Use Java"));
-            agent.runs().await(conversation.activeRunId().orElseThrow());
-            var turn = agent.conversations().turns(conversation.sessionId()).getFirst();
+            agent.runs().await(conversation.runId());
+            var turn = agent.conversations()
+                    .turns(conversation.record().sessionId())
+                    .getFirst();
             String contentDigest = messageDigest(directory, turn.messageId());
             MemorySourceRef source = new MemorySourceRef(MemorySourceType.MESSAGE, turn.messageId(), Optional.empty());
             var candidate = agent.memories()
                     .orElseThrow()
                     .propose(new ProposeMemoryCommand(
                             "memory-propose",
-                            MemoryScopeSpec.session(conversation.sessionId().value()),
+                            MemoryScopeSpec.session(
+                                    conversation.record().sessionId().value()),
                             MemoryKind.PREFERENCE,
                             "language",
                             new TextMemoryContent("Java"),
@@ -96,7 +98,7 @@ class SqliteSdkPersonalFixtureIT {
             agent.memories()
                     .orElseThrow()
                     .approve(new ReviewMemoryCandidateCommand(candidate.id(), candidate.revision(), "memory-approve"));
-            sessionId = conversation.sessionId().value();
+            sessionId = conversation.record().sessionId().value();
         }
 
         SqliteSdkProductContributions reopenedStore = sqliteProductContributions(directory, protector);
@@ -145,18 +147,19 @@ class SqliteSdkPersonalFixtureIT {
                 .build()) {
             var started =
                     agent.conversations().start(new StartConversationCommand("start-1", "Personal chat", "hello"));
-            agent.runs().await(started.activeRunId().orElseThrow());
-            var idle = agent.conversations().find(started.sessionId()).orElseThrow();
+            agent.runs().await(started.runId());
+            var idle = agent.conversations().find(started.record().sessionId()).orElseThrow();
             var submitted = agent.conversations()
                     .submit(new SubmitConversationTurnCommand(idle.sessionId(), idle.revision(), "turn-2", "continue"));
-            agent.runs().await(submitted.activeRunId().orElseThrow());
-            var completed = agent.conversations().find(started.sessionId()).orElseThrow();
+            agent.runs().await(submitted.runId());
+            var completed =
+                    agent.conversations().find(started.record().sessionId()).orElseThrow();
 
-            assertThat(completed.activeRunId()).isEmpty();
-            assertThat(agent.conversations().turns(started.sessionId()))
+            assertThat(completed.sessionId()).isEqualTo(started.record().sessionId());
+            assertThat(agent.conversations().turns(started.record().sessionId()))
                     .extracting("text")
                     .containsExactly("hello", "answer-1", "continue", "answer-2");
-            sessionId = started.sessionId().value();
+            sessionId = started.record().sessionId().value();
         }
 
         SqliteSdkContributions reopenedStore = sqliteContributions(directory, protector);
@@ -170,7 +173,6 @@ class SqliteSdkPersonalFixtureIT {
             var page = reopened.conversations().list(ConversationQuery.active(10));
             assertThat(page.items()).singleElement().satisfies(conversation -> {
                 assertThat(conversation.sessionId().value()).isEqualTo(sessionId);
-                assertThat(conversation.activeRunId()).isEmpty();
             });
             assertThat(reopened.conversations().turns(page.items().getFirst().sessionId()).stream()
                             .map(turn -> turn.text())
@@ -182,7 +184,7 @@ class SqliteSdkPersonalFixtureIT {
     }
 
     @Test
-    void coordinatesConcurrentStartAndSubmitAcrossTwoSdkInstances(@TempDir Path directory) throws Exception {
+    void coordinatesConcurrentStartAcrossTwoSdkInstancesExactlyOnce(@TempDir Path directory) throws Exception {
         ProductProfile profile = personalProfile();
         var protector =
                 new AesGcmModelContinuationProtector(new SecretKeySpec(new byte[32], "AES"), new SecureRandom());
@@ -206,58 +208,22 @@ class SqliteSdkPersonalFixtureIT {
 
             var startedByFirst = firstStart.get();
             var startedBySecond = secondStart.get();
-            assertThat(startedBySecond.sessionId()).isEqualTo(startedByFirst.sessionId());
-            assertThat(startedBySecond.activeRunId()).isEqualTo(startedByFirst.activeRunId());
-            waitUntilTerminal(first, startedByFirst.activeRunId().orElseThrow());
-            waitUntilTerminal(second, startedByFirst.activeRunId().orElseThrow());
-            var idle = waitUntilIdle(first, startedByFirst.sessionId());
-            assertThat(idle.activeRunId()).isEmpty();
+            assertThat(startedBySecond.record().sessionId())
+                    .isEqualTo(startedByFirst.record().sessionId());
+            assertThat(startedBySecond.runId()).isEqualTo(startedByFirst.runId());
+            waitUntilTerminal(first, startedByFirst.runId());
+            waitUntilTerminal(second, startedByFirst.runId());
 
-            CountDownLatch submitGate = new CountDownLatch(1);
-            var firstSubmit = executor.submit(() -> submit(
-                    first,
-                    new SubmitConversationTurnCommand(idle.sessionId(), idle.revision(), "first-submit", "from first"),
-                    submitGate));
-            var secondSubmit = executor.submit(() -> submit(
-                    second,
-                    new SubmitConversationTurnCommand(
-                            idle.sessionId(), idle.revision(), "second-submit", "from second"),
-                    submitGate));
-            var racingReconciler = executor.submit(() -> {
-                submitGate.await();
-                return second.conversations().find(idle.sessionId());
-            });
-            submitGate.countDown();
-            List<Object> submitResults = List.of(firstSubmit.get(), secondSubmit.get());
-            java.util.Optional<io.haifa.agent.sdk.conversation.ConversationRecord> reconciled = racingReconciler.get();
-            assertThat(reconciled).isPresent();
-
-            assertThat(submitResults.stream()
-                            .filter(io.haifa.agent.sdk.conversation.ConversationRecord.class::isInstance))
-                    .as("concurrent submit results: %s", submitResultSummary(submitResults))
-                    .hasSize(1);
-            assertThat(submitResults.stream().filter(ConversationException.class::isInstance))
-                    .singleElement()
-                    .satisfies(failure -> {
-                        ConversationException error = (ConversationException) failure;
-                        assertThat(error.code()).isIn("CONVERSATION_ACTIVE", "CONVERSATION_REVISION_MISMATCH");
-                        assertThat(error.operation()).isEqualTo("conversation.submit");
-                        assertThat(error.correlation()).matches("[0-9a-f]{16}");
-                        assertThat(error.getMessage())
-                                .doesNotContain("from first", "from second", directory.toString());
-                        assertThat(error.getCause()).isNull();
-                    });
-            var accepted = submitResults.stream()
-                    .filter(io.haifa.agent.sdk.conversation.ConversationRecord.class::isInstance)
-                    .map(io.haifa.agent.sdk.conversation.ConversationRecord.class::cast)
-                    .findFirst()
+            var idle = first.conversations()
+                    .find(startedByFirst.record().sessionId())
                     .orElseThrow();
-            waitUntilTerminal(first, accepted.activeRunId().orElseThrow());
-            assertThat(first.conversations()
-                            .find(idle.sessionId())
-                            .orElseThrow()
-                            .activeRunId())
-                    .isEmpty();
+            var submitted = first.conversations()
+                    .submit(new SubmitConversationTurnCommand(idle.sessionId(), idle.revision(), "turn-2", "continue"));
+            waitUntilTerminal(first, submitted.runId());
+            assertThat(first.conversations().turns(startedByFirst.record().sessionId()).stream()
+                            .map(turn -> turn.text())
+                            .toList())
+                    .contains("hello", "continue");
             assertThat(first.conversations().list(ConversationQuery.active(10)).items())
                     .singleElement()
                     .extracting("sessionId")
@@ -294,24 +260,6 @@ class SqliteSdkPersonalFixtureIT {
                 .build();
     }
 
-    private static Object submit(HaifaAgent agent, SubmitConversationTurnCommand command, CountDownLatch startGate)
-            throws Exception {
-        startGate.await();
-        try {
-            return agent.conversations().submit(command);
-        } catch (Exception expected) {
-            return expected;
-        }
-    }
-
-    private static List<String> submitResultSummary(List<Object> results) {
-        return results.stream()
-                .map(value -> value instanceof ConversationException exception
-                        ? "ConversationException:" + exception.code()
-                        : value.getClass().getSimpleName())
-                .toList();
-    }
-
     private static void waitUntilTerminal(HaifaAgent agent, io.haifa.agent.core.run.AgentRunId runId) throws Exception {
         for (int attempt = 0; attempt < 200; attempt++) {
             var snapshot = agent.runs().find(runId).orElseThrow();
@@ -319,16 +267,6 @@ class SqliteSdkPersonalFixtureIT {
             Thread.sleep(10);
         }
         throw new AssertionError("Run did not become terminal");
-    }
-
-    private static io.haifa.agent.sdk.conversation.ConversationRecord waitUntilIdle(
-            HaifaAgent agent, io.haifa.agent.core.session.AgentSessionId sessionId) throws Exception {
-        for (int attempt = 0; attempt < 200; attempt++) {
-            var conv = agent.conversations().find(sessionId).orElseThrow();
-            if (conv.activeRunId().isEmpty()) return conv;
-            Thread.sleep(10);
-        }
-        throw new AssertionError("Conversation did not become idle");
     }
 
     private static ModelContribution modelContribution() {

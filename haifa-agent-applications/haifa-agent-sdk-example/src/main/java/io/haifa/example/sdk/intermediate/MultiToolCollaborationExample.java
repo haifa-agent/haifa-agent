@@ -46,10 +46,7 @@ public final class MultiToolCollaborationExample {
             var conversation = agent.conversations()
                     .start(new StartConversationCommand(
                             "multi-tool-start", "Multi-tool weather", "What is the weather in Shanghai?"));
-            System.out.println(agent.runs()
-                    .await(conversation.activeRunId().orElseThrow())
-                    .output()
-                    .orElseThrow());
+            System.out.println(agent.runs().await(conversation.runId()).output().orElseThrow());
         }
     }
 
