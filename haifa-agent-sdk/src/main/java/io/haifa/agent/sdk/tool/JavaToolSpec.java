@@ -184,6 +184,10 @@ public final class JavaToolSpec<I extends Record, O extends Record> {
         public Builder<I, O> sideEffects(ToolSideEffect... values) {
             sideEffects.clear();
             sideEffects.addAll(Arrays.asList(values));
+            if (sideEffects.contains(ToolSideEffect.NETWORK_ACCESS)) {
+                throw new IllegalArgumentException(
+                        "Java Tools cannot declare NETWORK_ACCESS; register through the Tool API with constrained hosts");
+            }
             if (!sideEffects.isEmpty()) pure = false;
             return this;
         }

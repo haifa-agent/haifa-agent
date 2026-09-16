@@ -65,6 +65,15 @@ class JavaToolSpecTest {
     }
 
     @Test
+    void rejectsNetworkAccessBecauseJavaToolsCannotConstrainHosts() {
+        assertThatThrownBy(() -> JavaToolSpec.builder("weather_get", Request.class, Response.class)
+                        .sideEffects(ToolSideEffect.NETWORK_ACCESS)
+                        .build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("NETWORK_ACCESS");
+    }
+
+    @Test
     void validatesNameRecordTypesAndTimeout() {
         assertThatThrownBy(() -> JavaToolSpec.builder(" ", Request.class, Response.class))
                 .isInstanceOf(IllegalArgumentException.class)

@@ -89,12 +89,7 @@ public final class SqliteConversationStore implements ConversationStore {
     }
 
     @Override
-    public ConversationRecord changeStatus(
-            AgentSessionId sessionId,
-            long expectedRevision,
-            ConversationStatus expected,
-            ConversationStatus target,
-            Instant at) {
+    public ConversationRecord changeStatus(AgentSessionId sessionId, long expectedRevision, Instant at) {
         return update(
                 sessionId,
                 mapper -> mapper.changeStatus(sessionId.value(), expectedRevision, at),

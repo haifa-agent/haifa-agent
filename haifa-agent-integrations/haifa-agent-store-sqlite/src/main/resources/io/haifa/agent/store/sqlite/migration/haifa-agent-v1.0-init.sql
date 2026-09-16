@@ -977,7 +977,7 @@ CREATE TABLE IF NOT EXISTS runtime_applied_command (
     result_payload  TEXT NOT NULL,
     applied_at      INTEGER NOT NULL CHECK (applied_at >= 0),
     PRIMARY KEY (caller_scope, operation, idempotency_key)
-);
+) STRICT;
 
 -- Migration V13: sdk_conversation_metadata_only
 -- SDK conversation metadata only: drop the command ledger and the duplicated Runtime state machine.
@@ -1204,7 +1204,7 @@ INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (8, 'to
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (9, 'optional_interaction_expiry', 'sha256:ddfb9b697b8e7744beeff4905b6639fc7949308c958059f162d9f87ee258033b', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (10, 'human_wait_timing', 'sha256:2a556ed9bc06d467975ba34b146dc3afe90fa63cd6b1e1577ea53311bc54f9b2', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (11, 'separate_run_limits', 'sha256:ace3fa99a7b762fd58cc6bc9274660effd851d31007b9eea1f24dce9818cf4e2', 0);
-INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (12, 'runtime_applied_command', 'sha256:00c41f27b952dc3124d6c6c7df035a93cb41d65c472e312807c54fce8a00e4b6', 0);
+INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (12, 'runtime_applied_command', 'sha256:1d5efbd7ce11075e830de1b696dce06290e6753f5305ab3bf4343c5c33939db2', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (13, 'sdk_conversation_metadata_only', 'sha256:dc19669cfd56953827bd9b72f10c521f7c83eb3ec50cfea8976c941134330082', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1000, 'project_product_session', 'sha256:929d869e45117a3e829be4f9b995bc646874583410c6f3572800f264aa4f418b', 0);
 INSERT INTO schema_migration(version, name, checksum, applied_at) VALUES (1001, 'coding_session_product_loop', 'sha256:109f86f30032eecb16a6d34ab945ce4fba8573eed8d8391f800d7132f2f06fcf', 0);

@@ -135,6 +135,31 @@ public class ProductIsolationAndLifecycleTest {
     }
 
     @Test
+    void closesAlreadyAssembledComponentsExactlyOnceWhenRuntimeAssemblyFails() {
+        AtomicInteger closes = new AtomicInteger();
+        SdkPersistenceContribution persistence = new SdkPersistenceContribution() {
+            @Override
+            public RuntimePersistencePorts runtimePersistence() {
+                throw new IllegalStateException("persistence bootstrap failed");
+            }
+
+            @Override
+            public void close() {
+                closes.incrementAndGet();
+            }
+        };
+
+        assertThatThrownBy(() -> HaifaAgents.builder(SdkTestFixtures.profile("failed-build"))
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(persistence)
+                        .conversation(SdkTestFixtures.conversationContribution())
+                        .build())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("persistence bootstrap failed");
+        assertThat(closes).hasValue(1);
+    }
+
+    @Test
     void duplicateJavaToolAliasesFailBeforeRuntimeAssembly() {
         assertThatThrownBy(() -> SdkTestFixtures.builder("java-tool-conflict")
                         .tools(java.util.List.of(new WeatherTool(), new DuplicateWeatherTool()))

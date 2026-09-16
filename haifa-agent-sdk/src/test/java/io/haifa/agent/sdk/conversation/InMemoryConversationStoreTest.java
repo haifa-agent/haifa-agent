@@ -44,12 +44,7 @@ class InMemoryConversationStoreTest {
         assertThat(renamed.displayName()).isEqualTo("Renamed");
         assertThat(renamed.revision()).isEqualTo(2);
 
-        ConversationRecord archived = store.changeStatus(
-                sessionId,
-                renamed.revision(),
-                ConversationStatus.ACTIVE,
-                ConversationStatus.ARCHIVED,
-                now.plusSeconds(3));
+        ConversationRecord archived = store.changeStatus(sessionId, renamed.revision(), now.plusSeconds(3));
         assertThat(archived.revision()).isEqualTo(3);
         assertThat(store.find(sessionId)).contains(archived);
     }

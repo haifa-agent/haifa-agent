@@ -132,10 +132,24 @@ public final class DefaultConversationService implements ConversationService {
         Objects.requireNonNull(query, "query must not be null");
         SdkCaller caller = caller();
         List<ConversationRecord> matched = new ArrayList<>();
-        for (ConversationRecord metadata : conversations.list(caller.tenant(), caller.principal(), query)) {
-            visible(metadata, caller)
-                    .filter(record -> query.statuses().contains(record.status()))
-                    .ifPresent(matched::add);
+        Optional<ConversationCursor> cursor = query.after();
+        boolean exhausted = false;
+        while (matched.size() <= query.limit() && !exhausted) {
+            List<ConversationRecord> page = conversations.list(
+                    caller.tenant(),
+                    caller.principal(),
+                    new ConversationQuery(query.text(), query.statuses(), cursor, query.limit()));
+            for (ConversationRecord metadata : page) {
+                visible(metadata, caller)
+                        .filter(record -> query.statuses().contains(record.status()))
+                        .ifPresent(matched::add);
+            }
+            if (page.size() <= query.limit()) {
+                exhausted = true;
+            } else {
+                ConversationRecord last = page.getLast();
+                cursor = Optional.of(new ConversationCursor(last.lastActivityAt(), last.sessionId()));
+            }
         }
         boolean more = matched.size() > query.limit();
         List<ConversationRecord> items = more ? List.copyOf(matched.subList(0, query.limit())) : List.copyOf(matched);
@@ -199,24 +213,28 @@ public final class DefaultConversationService implements ConversationService {
         String dispatchKey = dispatchKey("submit", callerScope(caller), keyDigest(command.idempotencyKey()));
         Optional<AgentRunId> recovered = idempotency().findRun(runtimeScope(caller), "start", dispatchKey);
         if (recovered.isPresent()) {
-            AgentRunId recoveredRunId = recovered.orElseThrow();
-            if (!resolveSessionId(recoveredRunId, caller).equals(command.sessionId())) {
+            if (!resolveSessionId(recovered.orElseThrow(), caller).equals(command.sessionId())) {
                 throw conflict("CONVERSATION_UNAVAILABLE");
             }
-            AgentRunSnapshot recoveredRun =
-                    runtime.find(recoveredRunId).orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
+            AgentRunSnapshot recoveredRun = startOrConflict(runRequest(
+                    dispatchKey,
+                    command.sessionId(),
+                    command.message(),
+                    command.runProfileId(),
+                    command.inputs(),
+                    command.structuredOutput()));
             return new ConversationRun(
                     requireAuthorizedRecord(command.sessionId(), caller), recoveredRun.runId(), recoveredRun.version());
         }
         if (session.status() != AgentSessionStatus.ACTIVE) {
             throw conflict("CONVERSATION_ARCHIVED");
         }
-        ConversationRecord current =
-                conversations.find(command.sessionId()).orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
-        if (current.revision() != command.expectedRevision()) {
-            throw conflict("CONVERSATION_REVISION_STALE");
-        }
         return persistence.inTransaction(() -> {
+            ConversationRecord current =
+                    conversations.find(command.sessionId()).orElseThrow(() -> conflict("CONVERSATION_UNAVAILABLE"));
+            if (current.revision() != command.expectedRevision()) {
+                throw conflict("CONVERSATION_REVISION_STALE");
+            }
             AgentRunSnapshot run = runtime.start(runRequest(
                     dispatchKey,
                     command.sessionId(),
@@ -227,6 +245,17 @@ public final class DefaultConversationService implements ConversationService {
             ConversationRecord touched = conversations.touchLastActivity(command.sessionId(), time.now());
             return new ConversationRun(withStatus(touched, session), run.runId(), run.version());
         });
+    }
+
+    private AgentRunSnapshot startOrConflict(AgentRunRequest request) {
+        try {
+            return runtime.start(request);
+        } catch (io.haifa.agent.runtime.api.RuntimeContractException exception) {
+            if (exception.code() == io.haifa.agent.runtime.api.RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT) {
+                throw conflict("CONVERSATION_IDEMPOTENCY_CONFLICT");
+            }
+            throw exception;
+        }
     }
 
     @Override
@@ -269,19 +298,16 @@ public final class DefaultConversationService implements ConversationService {
 
     @Override
     public ConversationRecord archive(ChangeConversationStatusCommand command) {
-        return changeStatus(command, "archive", ConversationStatus.ACTIVE, ConversationStatus.ARCHIVED);
+        return changeStatus(command, "archive", ConversationStatus.ARCHIVED);
     }
 
     @Override
     public ConversationRecord unarchive(ChangeConversationStatusCommand command) {
-        return changeStatus(command, "unarchive", ConversationStatus.ARCHIVED, ConversationStatus.ACTIVE);
+        return changeStatus(command, "unarchive", ConversationStatus.ACTIVE);
     }
 
     private ConversationRecord changeStatus(
-            ChangeConversationStatusCommand command,
-            String operation,
-            ConversationStatus expected,
-            ConversationStatus target) {
+            ChangeConversationStatusCommand command, String operation, ConversationStatus target) {
         Objects.requireNonNull(command, "command must not be null");
         SdkCaller caller = caller();
         requireAuthorizedSession(command.sessionId(), caller);
@@ -311,8 +337,8 @@ public final class DefaultConversationService implements ConversationService {
                 session.unarchive(time.now());
             }
             sessions().save(session, sessionVersion);
-            ConversationRecord changed = conversations.changeStatus(
-                    command.sessionId(), command.expectedRevision(), expected, target, time.now());
+            ConversationRecord changed =
+                    conversations.changeStatus(command.sessionId(), command.expectedRevision(), time.now());
             idempotency()
                     .recordAppliedCommand(new AppliedCommandResult(
                             callerScope,
