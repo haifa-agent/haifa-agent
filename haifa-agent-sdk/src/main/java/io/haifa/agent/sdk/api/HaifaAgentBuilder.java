@@ -409,21 +409,22 @@ public final class HaifaAgentBuilder {
     }
 
     private List<AutoCloseable> collectLifecycle() {
+        Set<AutoCloseable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         List<AutoCloseable> lifecycle = new ArrayList<>();
-        addLifecycle(lifecycle, persistence);
-        addLifecycle(lifecycle, conversation);
-        addLifecycle(lifecycle, toolPlatform);
-        addLifecycle(lifecycle, skillPlatform);
-        addLifecycle(lifecycle, memory);
-        addLifecycle(lifecycle, artifacts);
-        addLifecycle(lifecycle, policy);
-        addLifecycle(lifecycle, approval);
-        addLifecycle(lifecycle, credentials);
+        addLifecycle(lifecycle, seen, persistence);
+        addLifecycle(lifecycle, seen, conversation);
+        addLifecycle(lifecycle, seen, toolPlatform);
+        addLifecycle(lifecycle, seen, skillPlatform);
+        addLifecycle(lifecycle, seen, memory);
+        addLifecycle(lifecycle, seen, artifacts);
+        addLifecycle(lifecycle, seen, policy);
+        addLifecycle(lifecycle, seen, approval);
+        addLifecycle(lifecycle, seen, credentials);
         return List.copyOf(lifecycle);
     }
 
-    private static void addLifecycle(List<AutoCloseable> lifecycle, Object component) {
-        if (component instanceof AutoCloseable closeable) lifecycle.add(closeable);
+    private static void addLifecycle(List<AutoCloseable> lifecycle, Set<AutoCloseable> seen, Object component) {
+        if (component instanceof AutoCloseable closeable && seen.add(closeable)) lifecycle.add(closeable);
     }
 
     private static <T> T requireComponent(T component, String code, String message) {

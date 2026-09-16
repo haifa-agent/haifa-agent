@@ -75,6 +75,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final MissionRuntimeAccess missionRuntime;
     private final ArtifactService artifacts;
     private final Map<String, String> skillBindingReferences;
+    private final String productDigest;
     private final ResearchFetchEvidenceReader fetchEvidenceReader;
     private final ConcurrentMap<String, List<String>> recommendedQuestions = new ConcurrentHashMap<>();
 
@@ -115,6 +116,34 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             ArtifactService artifacts,
             Map<String, String> skillBindingReferences,
             ResearchFetchEvidenceReader fetchEvidenceReader) {
+        this(
+                agent,
+                mcp,
+                clock,
+                capabilities,
+                models,
+                modelPreferences,
+                questionRecommender,
+                missionRuntime,
+                artifacts,
+                skillBindingReferences,
+                agent.profile().configurationDigest(),
+                fetchEvidenceReader);
+    }
+
+    public PersonalAssistantApplication(
+            HaifaAgent agent,
+            PersonalMcpPlatform mcp,
+            Clock clock,
+            PersonalCapabilityRegistry capabilities,
+            PersonalModelCatalog models,
+            PersonalModelPreferenceStore modelPreferences,
+            PersonalQuestionRecommender questionRecommender,
+            MissionRuntimeAccess missionRuntime,
+            ArtifactService artifacts,
+            Map<String, String> skillBindingReferences,
+            String productDigest,
+            ResearchFetchEvidenceReader fetchEvidenceReader) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
@@ -125,6 +154,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         this.missionRuntime = Objects.requireNonNull(missionRuntime);
         this.artifacts = Objects.requireNonNull(artifacts);
         this.skillBindingReferences = Map.copyOf(skillBindingReferences);
+        this.productDigest = Objects.requireNonNull(productDigest, "productDigest must not be null");
         this.fetchEvidenceReader = Objects.requireNonNull(fetchEvidenceReader, "fetchEvidenceReader must not be null");
         this.mcpToolAliases = mcp.aliases();
     }
@@ -591,7 +621,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     public String productDigest() {
-        return agent.profile().configurationDigest();
+        return productDigest;
     }
 
     public PersonalCapabilityRegistry capabilities() {

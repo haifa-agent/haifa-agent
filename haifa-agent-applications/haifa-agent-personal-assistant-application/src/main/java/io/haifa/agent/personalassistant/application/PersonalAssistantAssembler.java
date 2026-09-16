@@ -28,6 +28,7 @@ import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.ModelAudioResolver;
 import io.haifa.agent.sdk.api.ModelImageResolver;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
+import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
@@ -243,6 +244,7 @@ public final class PersonalAssistantAssembler {
                                     dependencies.principal())),
                     dependencies.artifact().service(),
                     skills.bindingReferences(),
+                    productDigest(profile, dependencies, tools),
                     new RuntimeFetchEvidenceReader(dependencies.persistence().runtimePersistence()));
         } catch (RuntimeException | Error exception) {
             try {
@@ -252,6 +254,46 @@ public final class PersonalAssistantAssembler {
             }
             throw exception;
         }
+    }
+
+    private static String productDigest(
+            io.haifa.agent.sdk.product.ProductProfile profile, Dependencies dependencies, PersonalToolPlatform tools) {
+        List<String> fields = new java.util.ArrayList<>();
+        fields.add("personal-assistant-product-v1");
+        fields.add(profile.configurationDigest());
+        io.haifa.agent.model.api.ResolvedModelSnapshot model =
+                dependencies.model().snapshot();
+        fields.add("model.id");
+        fields.add(model.modelId().value());
+        fields.add("model.digest");
+        fields.add(model.configurationDigest());
+        dependencies.model().snapshots().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    fields.add("model.snapshot.id");
+                    fields.add(entry.getKey());
+                    fields.add("model.snapshot.digest");
+                    fields.add(entry.getValue().configurationDigest());
+                });
+        fields.add("tool.catalog.digest");
+        fields.add(tools.tool().catalog().snapshot().digest());
+        fields.add("skill.catalog.digest");
+        fields.add(tools.skill().catalog().snapshot().digest().value());
+        fields.add("policy.rules.digest");
+        fields.add(dependencies.policy().rules().contentDigest());
+        fields.add("persistence.class");
+        fields.add(dependencies.persistence().getClass().getName());
+        fields.add("conversation.class");
+        fields.add(dependencies.conversation().getClass().getName());
+        fields.add("artifact.class");
+        fields.add(dependencies.artifact().service().getClass().getName());
+        fields.add("approval.class");
+        fields.add(dependencies.execution().approval().verification().getClass().getName());
+        fields.add("credential.class");
+        fields.add(dependencies.web().credential().broker().getClass().getName());
+        fields.add("memory.class");
+        fields.add(dependencies.memory().service().getClass().getName());
+        return SdkConfigurationDigest.sha256(fields.toArray(String[]::new));
     }
 
     private static List<ProductRunProfile> missionRunProfiles(
