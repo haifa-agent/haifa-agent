@@ -163,9 +163,8 @@ public final class HaifaAgentBuilder {
     }
 
     /**
-     * Decorates the Runtime-selected public Tool policy after compatibility and trusted-skill
-     * policies have been assembled. Product overrides must preserve request-bound decisions and
-     * delegate every action they do not explicitly own.
+     * Decorates the Runtime-selected public Tool policy. Product overrides must preserve
+     * request-bound decisions and delegate every action they do not explicitly own.
      */
     public HaifaAgentBuilder publicToolPolicyDecorator(java.util.function.UnaryOperator<PublicToolPolicy> value) {
         publicToolPolicyDecorator = Objects.requireNonNull(value, "value must not be null");
