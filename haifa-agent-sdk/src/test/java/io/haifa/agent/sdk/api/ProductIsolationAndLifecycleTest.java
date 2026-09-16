@@ -9,6 +9,9 @@ import io.haifa.agent.artifact.InMemoryArtifactStore;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
+import io.haifa.agent.sdk.conversation.ConversationStore;
+import io.haifa.agent.sdk.conversation.InMemoryConversationStore;
+import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
@@ -116,6 +119,20 @@ public class ProductIsolationAndLifecycleTest {
     }
 
     @Test
+    void closesASharedComponentRegisteredAsBothPersistenceAndConversationOnce() {
+        AtomicInteger closes = new AtomicInteger();
+        CombinedStorage storage = new CombinedStorage(closes);
+        HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("shared-component"))
+                .model(SdkTestFixtures.modelContribution())
+                .persistence(storage)
+                .conversation(storage)
+                .build();
+
+        agent.close();
+        assertThat(closes).hasValue(1);
+    }
+
+    @Test
     void duplicateJavaToolAliasesFailBeforeRuntimeAssembly() {
         assertThatThrownBy(() -> SdkTestFixtures.builder("java-tool-conflict")
                         .tools(java.util.List.of(new WeatherTool(), new DuplicateWeatherTool()))
@@ -154,6 +171,31 @@ public class ProductIsolationAndLifecycleTest {
         @Override
         public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
             return new WeatherResponse(input.city());
+        }
+    }
+
+    private static final class CombinedStorage implements SdkPersistenceContribution, SdkConversationContribution {
+        private final RuntimePersistencePorts ports = RuntimePersistencePorts.inMemory();
+        private final ConversationStore conversations = new InMemoryConversationStore();
+        private final AtomicInteger closes;
+
+        private CombinedStorage(AtomicInteger closes) {
+            this.closes = closes;
+        }
+
+        @Override
+        public RuntimePersistencePorts runtimePersistence() {
+            return ports;
+        }
+
+        @Override
+        public ConversationStore conversationStore() {
+            return conversations;
+        }
+
+        @Override
+        public void close() {
+            closes.incrementAndGet();
         }
     }
 }
