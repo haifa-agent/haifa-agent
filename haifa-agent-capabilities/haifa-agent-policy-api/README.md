@@ -22,3 +22,10 @@ Snapshot, Decision-ID/Store, Evidence, Grant, Project Trust, and the obsolete fu
 authorized-directory record and path safety, while PA keeps its own product facts.
 
 This module does not depend on Runtime, Tool, Execution, databases, frameworks, or product-specific policy.
+
+## 标准 preset
+
+`PolicyPresets.standardApproval()` 是 Policy 模块提供的标准 preset：`CRITICAL` 风险 DENY；`FILE_WRITE`、
+`PROCESS_EXECUTION`、`NETWORK_ACCESS`、`EXTERNAL_SYSTEM_MUTATION`、`PERMISSION_ELEVATION` 要求审批；其余默认
+`ALLOW`，`ApprovalMode.ASK`。preset 只是不可变 `PolicyRuleSet` 数据：产品显式选择它（SDK Starter 选择该
+preset，PA/CLI 提供自有 rules），任何装配层都不得代为构造 Policy 规则。

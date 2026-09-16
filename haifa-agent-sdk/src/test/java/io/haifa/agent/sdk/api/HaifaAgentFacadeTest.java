@@ -18,8 +18,11 @@ import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.policy.api.PolicyPresets;
+import io.haifa.agent.policy.core.DefaultPolicyDecisionService;
 import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.contribution.ModelContribution;
+import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.conversation.ChangeConversationStatusCommand;
 import io.haifa.agent.sdk.conversation.ConversationException;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
@@ -72,6 +75,8 @@ public class HaifaAgentFacadeTest {
                         .persistence(SdkTestFixtures.persistenceContribution())
                         .conversation(SdkTestFixtures.conversationContribution())
                         .tools(List.of(new WeatherTool(), new GeocodeTool()))
+                        .policy(new PolicyPlatformContribution(
+                                PolicyPresets.standardApproval(), new DefaultPolicyDecisionService()))
                         .build();
                 HaifaAgent withoutTools = HaifaAgents.builder(profile)
                         .model(SdkTestFixtures.modelContribution())
@@ -82,6 +87,20 @@ public class HaifaAgentFacadeTest {
             assertThat(withoutTools.profile().allowedTools()).isEmpty();
             assertThat(profile.allowedTools()).isEmpty();
         }
+    }
+
+    @Test
+    void buildingWithToolsWithoutPolicyFailsClosed() {
+        ProductProfile profile = SdkTestFixtures.profile("no-policy");
+
+        assertThatThrownBy(() -> HaifaAgents.builder(profile)
+                        .model(SdkTestFixtures.modelContribution())
+                        .persistence(SdkTestFixtures.persistenceContribution())
+                        .conversation(SdkTestFixtures.conversationContribution())
+                        .tool(new WeatherTool())
+                        .build())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("explicit product policy");
     }
 
     @Test
